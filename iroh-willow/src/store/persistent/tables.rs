@@ -103,27 +103,19 @@ impl<'tx> Tables<'tx> {
 pub struct OpenRead {
     pub namespace_nodes: ReadOnlyTable<NamespaceId, willow_store::NodeId>,
     pub auth_tokens: ReadOnlyTable<ed25519::SignatureBytes, WriteCap>,
-    pub auth_token_refcount: ReadOnlyTable<ed25519::SignatureBytes, u64>,
-    pub user_secrets: ReadOnlyTable<UserId, [u8; 32]>,
-    pub namespace_secrets: ReadOnlyTable<NamespaceId, [u8; 32]>,
     pub read_caps: ReadOnlyMultimapTable<NamespaceId, ReadCap>,
     pub write_caps: ReadOnlyMultimapTable<NamespaceId, WriteCap>,
     pub node_store: willow_store::Snapshot,
-    tx: ReadTransaction,
 }
 
 impl OpenRead {
-    pub fn new(tx: ReadTransaction) -> Result<Self> {
+    pub fn new(tx: &ReadTransaction) -> Result<Self> {
         Ok(Self {
             namespace_nodes: tx.open_table(NAMESPACE_NODES)?,
             auth_tokens: tx.open_table(AUTH_TOKENS)?,
-            auth_token_refcount: tx.open_table(AUTH_TOKEN_REFCOUNT)?,
-            user_secrets: tx.open_table(USER_SECRETS)?,
-            namespace_secrets: tx.open_table(NAMESPACE_SECRETS)?,
             read_caps: tx.open_multimap_table(READ_CAPS)?,
             write_caps: tx.open_multimap_table(WRITE_CAPS)?,
             node_store: willow_store::Snapshot::open(&tx)?,
-            tx,
         })
     }
 }

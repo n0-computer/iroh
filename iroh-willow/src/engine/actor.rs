@@ -464,10 +464,16 @@ impl<S: Storage> Actor<S> {
                     Err(err) => reply.send(Err(err)).await.map_err(send_reply_error),
                     Ok(snapshot) => {
                         self.tasks.spawn_local(async move {
-                            let iter = snapshot.get_authorised_entries(namespace, &range);
-                            for entry in iter {
-                                if reply.send(entry).await.is_err() {
-                                    break;
+                            match snapshot.get_authorised_entries(namespace, &range) {
+                                Ok(iter) => {
+                                    for entry in iter {
+                                        if reply.send(entry).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    let _ = reply.send(Err(err)).await;
                                 }
                             }
                         });

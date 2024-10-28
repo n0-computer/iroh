@@ -24,13 +24,12 @@ use crate::proto::grouping::Area;
 use crate::{
     interest::{CapSelector, CapabilityPack},
     proto::{
-        data_model::{AuthorisedEntry, Entry, EntryExt as _, Path, SubspaceId, WriteCapability},
-        grouping::{Range, Range3d, RangeEnd},
+        data_model::{AuthorisedEntry, Path, SubspaceId, WriteCapability},
+        grouping::Range3d,
         keys::{NamespaceId, NamespaceSecretKey, UserId, UserSecretKey},
         meadowcap::{self, is_wider_than, ReadAuthorisation},
-        wgps::Fingerprint,
     },
-    store::traits::{self, RangeSplit, SplitAction, SplitOpts},
+    store::traits,
 };
 
 use super::glue::{path_to_blobseq, to_query, IrohWillowParams, StoredAuthorisedEntry};
@@ -152,102 +151,18 @@ impl Default for NamespaceStore {
 
 // impl<T: std::ops::Deref<Target = MemoryEntryStore> + 'static> ReadonlyStore for T {
 impl traits::EntryReader for Rc<RefCell<EntryStore>> {
-    fn fingerprint(&self, namespace: NamespaceId, range: &Range3d) -> Result<Fingerprint> {
-        let mut fingerprint = Fingerprint::default();
-        for entry in self.get_entries(namespace, range) {
-            let entry = entry?;
-            fingerprint.add_entry(&entry);
-        }
-        Ok(fingerprint)
-    }
-
-    fn split_range(
-        &self,
-        namespace: NamespaceId,
-        range: &Range3d,
-        config: &SplitOpts,
-    ) -> Result<impl Iterator<Item = Result<RangeSplit>>> {
-        let count = self.get_entries(namespace, range).count();
-        if count <= config.max_set_size {
-            return Ok(
-                vec![Ok((range.clone(), SplitAction::SendEntries(count as u64)))].into_iter(),
-            );
-        }
-        let mut entries: Vec<Entry> = self
-            .get_entries(namespace, range)
-            .filter_map(|e| e.ok())
-            .collect();
-
-        entries.sort_by(|e1, e2| e1.as_sortable_tuple().cmp(&e2.as_sortable_tuple()));
-
-        let split_index = count / 2;
-        let mid = entries.get(split_index).expect("not empty");
-        let mut ranges = vec![];
-        // split in two halves by subspace
-        if *mid.subspace_id() != range.subspaces().start {
-            ranges.push(Range3d::new(
-                Range::new_closed(range.subspaces().start, *mid.subspace_id()).unwrap(),
-                range.paths().clone(),
-                *range.times(),
-            ));
-            ranges.push(Range3d::new(
-                Range::new(*mid.subspace_id(), range.subspaces().end),
-                range.paths().clone(),
-                *range.times(),
-            ));
-        }
-        // split by path
-        else if *mid.path() != range.paths().start {
-            ranges.push(Range3d::new(
-                *range.subspaces(),
-                Range::new(
-                    range.paths().start.clone(),
-                    RangeEnd::Closed(mid.path().clone()),
-                ),
-                *range.times(),
-            ));
-            ranges.push(Range3d::new(
-                *range.subspaces(),
-                Range::new(mid.path().clone(), range.paths().end.clone()),
-                *range.times(),
-            ));
-        // split by time
-        } else {
-            ranges.push(Range3d::new(
-                *range.subspaces(),
-                range.paths().clone(),
-                Range::new(range.times().start, RangeEnd::Closed(mid.timestamp())),
-            ));
-            ranges.push(Range3d::new(
-                *range.subspaces(),
-                range.paths().clone(),
-                Range::new(mid.timestamp(), range.times().end),
-            ));
-        }
-        let mut out = vec![];
-        for range in ranges {
-            let fingerprint = self.fingerprint(namespace, &range)?;
-            out.push(Ok((range, SplitAction::SendFingerprint(fingerprint))));
-        }
-        Ok(out.into_iter())
-    }
-
-    fn count(&self, namespace: NamespaceId, range: &Range3d) -> Result<u64> {
-        Ok(self.get_entries(namespace, range).count() as u64)
-    }
-
     fn get_authorised_entries<'a>(
         &'a self,
         namespace: NamespaceId,
         range: &Range3d,
-    ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a {
+    ) -> Result<impl Iterator<Item = Result<AuthorisedEntry>> + 'a> {
         let slf = self.borrow();
         let Some(ns_store) = slf.stores.get(&namespace) else {
-            return either::Left(std::iter::empty());
+            return Ok(either::Left(std::iter::empty()));
         };
         // TODO(matheus23): Maybe figure out a way to share this more efficiently?
         let atmap = slf.authorisation_tokens.clone();
-        either::Right(
+        Ok(either::Right(
             ns_store
                 .entries
                 .query(&to_query(range), &slf.store)
@@ -263,7 +178,7 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
                 })
                 .collect::<Vec<_>>()
                 .into_iter(),
-        )
+        ))
     }
 
     fn get_entry(

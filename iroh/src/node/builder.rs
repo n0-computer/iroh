@@ -85,7 +85,6 @@ pub enum SpacesStorage {
     /// In-memory storage.
     Memory,
     /// File-based persistent storage.
-    #[allow(unused)]
     Persistent(PathBuf),
 }
 
@@ -335,6 +334,7 @@ where
                 format!("Failed to load blobs database from {}", blob_dir.display())
             })?;
         let docs_storage = DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root));
+        let spaces_storage = SpacesStorage::Persistent(IrohPaths::SpacesDatabase.with_root(root));
 
         let secret_key_path = IrohPaths::SecretKey.with_root(root);
         let secret_key = load_secret_key(secret_key_path).await?;
@@ -352,8 +352,7 @@ where
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
             docs_storage,
-            // TODO: Switch to SpacesStorage::Persistent once we have a store.
-            spaces_storage: SpacesStorage::Disabled,
+            spaces_storage,
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,

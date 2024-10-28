@@ -5,7 +5,7 @@ use std::collections::{hash_map, HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::proto::{
-    data_model::{Entry, SubspaceId},
+    data_model::Entry,
     grouping::{self, Area, AreaExt, AreaOfInterest, Point},
     keys::{NamespaceId, UserId},
     meadowcap::{self, AccessMode, McCapability, ReadAuthorisation},

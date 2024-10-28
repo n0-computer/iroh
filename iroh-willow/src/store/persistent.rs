@@ -1,39 +1,37 @@
 use anyhow::Result;
 use ed25519_dalek::ed25519;
+use futures_util::Stream;
 use redb::{Database, ReadableTable};
 use std::{
     cell::{Ref, RefCell, RefMut},
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     ops::DerefMut,
     path::PathBuf,
-    rc::Rc,
+    pin::Pin,
+    rc::{Rc, Weak},
+    task::{ready, Context, Poll, Waker},
     time::Duration,
 };
-use willow_data_model::{
-    grouping::{Range, RangeEnd},
-    SubspaceId as _,
-};
+use willow_data_model::SubspaceId as _;
 use willow_store::{QueryRange, QueryRange3d};
 
 use crate::{
     interest::{CapSelector, CapabilityPack},
     proto::{
         data_model::{
-            AuthorisationToken, AuthorisedEntry, Entry, EntryExt as _, NamespaceId, Path,
-            PathExt as _, SubspaceId, WriteCapability,
+            AuthorisationToken, AuthorisedEntry, NamespaceId, Path, PathExt as _, SubspaceId,
+            WriteCapability,
         },
-        grouping::Range3d,
+        grouping::{Area, Range3d},
         keys::{NamespaceSecretKey, UserId, UserSecretKey, UserSignature},
         meadowcap,
-        wgps::Fingerprint,
     },
     store::glue::{path_to_blobseq, StoredAuthorisedEntry},
 };
 
 use super::{
     glue::{to_query, IrohWillowParams},
-    memory,
-    traits::{self, SplitAction, StoreEvent},
+    traits::{self, StoreEvent, SubscribeParams},
 };
 
 mod tables;
@@ -49,7 +47,7 @@ pub struct Store<PS: iroh_blobs::store::Store> {
 #[derive(Debug)]
 pub struct WillowStore {
     db: Db,
-    namespace_events: RefCell<HashMap<NamespaceId, memory::EventQueue<StoreEvent>>>,
+    namespace_events: RefCell<HashMap<NamespaceId, EventQueue<StoreEvent>>>,
 }
 
 #[derive(derive_more::Debug)]
@@ -68,11 +66,7 @@ enum CurrentTransaction {
 }
 
 impl WillowStore {
-    fn memory() -> Self {
-        Self::memory_impl().expect("failed to create memory store")
-    }
-
-    fn memory_impl() -> Result<Self> {
+    pub fn memory() -> Result<Self> {
         let db = Database::builder().create_with_backend(redb::backends::InMemoryBackend::new())?;
         Self::new_impl(db)
     }
@@ -81,7 +75,7 @@ impl WillowStore {
     ///
     /// The file will be created if it does not exist, otherwise it will be opened.
     pub fn persistent(path: impl AsRef<std::path::Path>) -> Result<Self> {
-        let db = Database::create(&path)?;
+        let db = Database::create(&path.as_ref())?;
         Self::new_impl(db)
     }
 
@@ -121,12 +115,12 @@ impl Db {
         let tables = match std::mem::take(guard.deref_mut()) {
             CurrentTransaction::None => {
                 let tx = self.redb.begin_read()?;
-                tables::OpenRead::new(tx)?
+                tables::OpenRead::new(&tx)?
             }
             CurrentTransaction::Write(w) => {
                 w.commit()?;
                 let tx = self.redb.begin_read()?;
-                tables::OpenRead::new(tx)?
+                tables::OpenRead::new(&tx)?
             }
             CurrentTransaction::Read(tables) => tables,
         };
@@ -149,7 +143,7 @@ impl Db {
         // make sure the current transaction is committed
         self.flush()?;
         let tx = self.redb.begin_read()?;
-        let tables = tables::OpenRead::new(tx)?;
+        let tables = tables::OpenRead::new(&tx)?;
         Ok(tables)
     }
 
@@ -225,90 +219,7 @@ impl<PS: iroh_blobs::store::Store> traits::Storage for Store<PS> {
 pub struct WillowSnapshot(#[debug(skip)] Rc<tables::OpenRead>);
 
 impl traits::EntryReader for WillowSnapshot {
-    fn fingerprint(&self, namespace: NamespaceId, range: &Range3d) -> Result<Fingerprint> {
-        let mut fingerprint = Fingerprint::default();
-        for entry in self.get_entries(namespace, range) {
-            let entry = entry?;
-            fingerprint.add_entry(&entry);
-        }
-        Ok(fingerprint)
-    }
-
-    fn split_range(
-        &self,
-        namespace: NamespaceId,
-        range: &Range3d,
-        config: &traits::SplitOpts,
-    ) -> Result<impl Iterator<Item = Result<traits::RangeSplit>>> {
-        // TODO(matheus23): Do the split using willow_store directly?
-        let count = self.get_entries(namespace, range).count();
-        if count <= config.max_set_size {
-            return Ok(
-                vec![Ok((range.clone(), SplitAction::SendEntries(count as u64)))].into_iter(),
-            );
-        }
-        let mut entries: Vec<Entry> = self
-            .get_entries(namespace, range)
-            .filter_map(|e| e.ok())
-            .collect();
-
-        entries.sort_by(|e1, e2| e1.as_sortable_tuple().cmp(&e2.as_sortable_tuple()));
-
-        let split_index = count / 2;
-        let mid = entries.get(split_index).expect("not empty");
-        let mut ranges = vec![];
-        // split in two halves by subspace
-        if *mid.subspace_id() != range.subspaces().start {
-            ranges.push(Range3d::new(
-                Range::new_closed(range.subspaces().start, *mid.subspace_id()).unwrap(),
-                range.paths().clone(),
-                *range.times(),
-            ));
-            ranges.push(Range3d::new(
-                Range::new(*mid.subspace_id(), range.subspaces().end),
-                range.paths().clone(),
-                *range.times(),
-            ));
-        }
-        // split by path
-        else if *mid.path() != range.paths().start {
-            ranges.push(Range3d::new(
-                *range.subspaces(),
-                Range::new(
-                    range.paths().start.clone(),
-                    RangeEnd::Closed(mid.path().clone()),
-                ),
-                *range.times(),
-            ));
-            ranges.push(Range3d::new(
-                *range.subspaces(),
-                Range::new(mid.path().clone(), range.paths().end.clone()),
-                *range.times(),
-            ));
-        // split by time
-        } else {
-            ranges.push(Range3d::new(
-                *range.subspaces(),
-                range.paths().clone(),
-                Range::new(range.times().start, RangeEnd::Closed(mid.timestamp())),
-            ));
-            ranges.push(Range3d::new(
-                *range.subspaces(),
-                range.paths().clone(),
-                Range::new(mid.timestamp(), range.times().end),
-            ));
-        }
-        let mut out = vec![];
-        for range in ranges {
-            let fingerprint = self.fingerprint(namespace, &range)?;
-            out.push(Ok((range, SplitAction::SendFingerprint(fingerprint))));
-        }
-        Ok(out.into_iter())
-    }
-
-    fn count(&self, namespace: NamespaceId, range: &Range3d) -> Result<u64> {
-        Ok(self.get_entries(namespace, range).count() as u64)
-    }
+    // TODO(matheus23): Impl faster version of default methods
 
     fn get_entry(
         &self,
@@ -349,20 +260,14 @@ impl traits::EntryReader for WillowSnapshot {
         &'a self,
         namespace: NamespaceId,
         range: &Range3d,
-    ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a {
+    ) -> Result<impl Iterator<Item = Result<AuthorisedEntry>> + 'a> {
         let clone = Rc::clone(&self.0);
         let read = self.0.as_ref();
-        let node_id = match read.namespace_nodes.get(namespace.as_bytes()) {
-            Ok(Some(node_id)) => node_id,
-            Ok(None) => {
-                return either::Left(either::Left(std::iter::empty()));
-            }
-            Err(e) => {
-                return either::Left(either::Right(std::iter::once(Err(anyhow::Error::from(e)))));
-            }
+        let Some(node_id) = read.namespace_nodes.get(namespace.as_bytes())? else {
+            return Ok(either::Left(std::iter::empty()));
         };
         let ns_node = willow_store::Node::<IrohWillowParams>::from(node_id.value());
-        either::Right(
+        Ok(either::Right(
             ns_node
                 .query(&to_query(range), &read.node_store)
                 .map(move |result| {
@@ -373,7 +278,7 @@ impl traits::EntryReader for WillowSnapshot {
                 })
                 .collect::<Vec<_>>()
                 .into_iter(),
-        )
+        ))
     }
 }
 
@@ -411,12 +316,6 @@ impl traits::EntryStorage for Rc<WillowStore> {
                 .map_or(willow_store::NodeId::EMPTY, |guard| guard.value())
                 .into();
 
-            // Insert auth token & entry:
-
-            add_entry_auth_token(entry.token(), write)?;
-
-            let _replaced = ns_node.insert(&insert_point, &insert_entry, &mut write.node_store)?;
-
             // Enforce prefix deletion:
 
             let blobseq_start = path_to_blobseq(entry.entry().path());
@@ -436,10 +335,8 @@ impl traits::EntryStorage for Rc<WillowStore> {
                 .collect::<Result<Vec<_>, _>>()?;
 
             for (prune_pos, prune_candidate) in prune_candidates {
-                let auth_token = get_entry_auth_token(
-                    prune_candidate.authorisation_token_id,
-                    &write.auth_tokens,
-                )?;
+                let pruned_token_id = prune_candidate.authorisation_token_id;
+                let auth_token = get_entry_auth_token(pruned_token_id, &write.auth_tokens)?;
                 let pruned =
                     prune_candidate.into_authorised_entry(namespace, &prune_pos, auth_token)?; // fairly inefficient
                 if entry.entry().is_newer_than(pruned.entry()) {
@@ -455,6 +352,8 @@ impl traits::EntryStorage for Rc<WillowStore> {
                             },
                         )
                     });
+                    // Decrease auth token refcount to allow eventually cleaning up the token
+                    remove_entry_auth_token(write, pruned_token_id)?;
                 }
             }
 
@@ -463,6 +362,12 @@ impl traits::EntryStorage for Rc<WillowStore> {
                 path = %entry.entry().path().fmt_utf8(),
                 "ingest entry"
             );
+
+            // Insert auth token & entry:
+
+            add_entry_auth_token(entry.token(), write)?;
+
+            let _replaced = ns_node.insert(&insert_point, &insert_entry, &mut write.node_store)?;
 
             ns_events.insert(|id| StoreEvent::Ingested(id, entry.clone(), origin));
 
@@ -479,43 +384,42 @@ impl traits::EntryStorage for Rc<WillowStore> {
     fn subscribe_area(
         &self,
         namespace: NamespaceId,
-        area: crate::proto::grouping::Area,
+        area: Area,
         params: traits::SubscribeParams,
-    ) -> impl futures_util::Stream<Item = StoreEvent> + Unpin + 'static {
-        // TODO(matheus23)
-        futures_lite::stream::empty()
+    ) -> impl Stream<Item = StoreEvent> + Unpin + 'static {
+        let namespaces = &mut self.namespace_events.borrow_mut();
+        let ns_events = namespaces.entry(namespace).or_default();
+        let progress_id = ns_events.next_progress_id();
+        EventStream {
+            area,
+            params,
+            namespace,
+            progress_id,
+            store: Rc::downgrade(self),
+        }
     }
 
     fn resume_subscription(
         &self,
         progress_id: u64,
         namespace: NamespaceId,
-        area: crate::proto::grouping::Area,
+        area: Area,
         params: traits::SubscribeParams,
-    ) -> impl futures_util::Stream<Item = StoreEvent> + Unpin + 'static {
-        // TODO(matheus23)
-        futures_lite::stream::empty()
+    ) -> impl Stream<Item = StoreEvent> + Unpin + 'static {
+        EventStream {
+            area,
+            params,
+            progress_id,
+            namespace,
+            store: Rc::downgrade(self),
+        }
     }
 }
 
 impl traits::EntryReader for Rc<WillowStore> {
-    fn fingerprint(&self, namespace: NamespaceId, range: &Range3d) -> Result<Fingerprint> {
-        todo!()
-    }
+    // TODO(matheus23): Impl faster version of default methods
 
-    fn split_range(
-        &self,
-        namespace: NamespaceId,
-        range: &Range3d,
-        config: &traits::SplitOpts,
-    ) -> Result<impl Iterator<Item = Result<traits::RangeSplit>>> {
-        // TODO(matheus23)
-        Ok(std::iter::empty())
-    }
-
-    fn count(&self, namespace: NamespaceId, range: &Range3d) -> Result<u64> {
-        todo!()
-    }
+    // TODO(matheus23): Deduplicate implementation.
 
     fn get_entry(
         &self,
@@ -523,16 +427,59 @@ impl traits::EntryReader for Rc<WillowStore> {
         subspace: SubspaceId,
         path: &Path,
     ) -> Result<Option<AuthorisedEntry>> {
-        todo!()
+        let tables = self.db.tables()?;
+        let read = tables.read();
+        let Some(node_id) = read.namespace_nodes.get(namespace.as_bytes())? else {
+            return Ok(None);
+        };
+        let ns_node = willow_store::Node::<IrohWillowParams>::from(node_id.value());
+        let blobseq = path_to_blobseq(path);
+        let end = blobseq.immediate_successor();
+        let Some(result) = ns_node
+            .query_ordered(
+                &QueryRange3d {
+                    x: QueryRange::new(subspace, subspace.successor()),
+                    y: QueryRange::all(),
+                    z: QueryRange::new(blobseq, Some(end)),
+                },
+                willow_store::SortOrder::YZX,
+                &read.node_store,
+            )
+            .last()
+        else {
+            return Ok(None);
+        };
+
+        let (point, stored_entry) = result?;
+        let id = stored_entry.authorisation_token_id;
+        let auth_token = get_entry_auth_token(id, &read.auth_tokens)?;
+        let entry = stored_entry.into_authorised_entry(namespace, &point, auth_token.clone())?;
+        Ok(Some(entry))
     }
 
     fn get_authorised_entries<'a>(
         &'a self,
         namespace: NamespaceId,
         range: &Range3d,
-    ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a {
-        // TODO(matheus23)
-        std::iter::empty()
+    ) -> Result<impl Iterator<Item = Result<AuthorisedEntry>> + 'a> {
+        let snapshot = Rc::new(self.db.snapshot_owned()?);
+        let read = Rc::clone(&snapshot);
+        let Some(node_id) = read.namespace_nodes.get(namespace.as_bytes())? else {
+            return Ok(either::Left(std::iter::empty()));
+        };
+        let ns_node = willow_store::Node::<IrohWillowParams>::from(node_id.value());
+        Ok(either::Right(
+            ns_node
+                .query(&to_query(range), &read.node_store)
+                .map(move |result| {
+                    let (point, stored_entry) = result?;
+                    let id = stored_entry.authorisation_token_id;
+                    let auth_token = get_entry_auth_token(id, &snapshot.auth_tokens)?;
+                    stored_entry.into_authorised_entry(namespace, &point, auth_token)
+                })
+                .collect::<Vec<_>>()
+                .into_iter(),
+        ))
     }
 }
 
@@ -696,5 +643,121 @@ fn remove_entry_auth_token(
         }))
     } else {
         Ok(None)
+    }
+}
+
+/// Stream of events from a store subscription.
+///
+/// We have weak pointer to the entry store and thus the EventQueue.
+/// Once the store is dropped, the EventQueue wakes all streams a last time in its drop impl,
+/// which then makes the stream return none because Weak::upgrade returns None.
+#[derive(Debug)]
+struct EventStream {
+    progress_id: u64,
+    store: Weak<WillowStore>,
+    namespace: NamespaceId,
+    area: Area,
+    params: SubscribeParams,
+}
+
+impl Stream for EventStream {
+    type Item = StoreEvent;
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let Some(inner) = self.store.upgrade() else {
+            return Poll::Ready(None);
+        };
+        let mut inner_mut = inner.namespace_events.borrow_mut();
+        let events = inner_mut.entry(self.namespace).or_default();
+        let res = ready!(events.poll_next(
+            self.progress_id,
+            |e| e.matches(self.namespace, &self.area, &self.params),
+            cx,
+        ));
+        drop(inner_mut);
+        drop(inner);
+        Poll::Ready(match res {
+            None => None,
+            Some((next_id, event)) => {
+                self.progress_id = next_id;
+                Some(event)
+            }
+        })
+    }
+}
+
+/// A simple in-memory event queue.
+///
+/// Events can be pushed, and get a unique monotonically-increasing *progress id*.
+/// Events can be polled, with a progress id to start at, and an optional filter function.
+///
+/// Current in-memory impl keeps all events, forever.
+// TODO: Add max_len constructor, add a way to truncate old entries.
+// TODO: This would be quite a bit more efficient if we filtered the waker with a closure
+// that is set from the last poll, to not wake everyone for each new event.
+#[derive(Debug)]
+pub(super) struct EventQueue<T> {
+    events: VecDeque<T>,
+    offset: u64,
+    wakers: VecDeque<Waker>,
+}
+
+impl<T> Drop for EventQueue<T> {
+    fn drop(&mut self) {
+        for waker in self.wakers.drain(..) {
+            waker.wake()
+        }
+    }
+}
+
+impl<T> Default for EventQueue<T> {
+    fn default() -> Self {
+        Self {
+            events: Default::default(),
+            offset: 0,
+            wakers: Default::default(),
+        }
+    }
+}
+
+impl<T: Clone> EventQueue<T> {
+    pub(super) fn insert(&mut self, f: impl FnOnce(u64) -> T) {
+        let progress_id = self.next_progress_id();
+        let event = f(progress_id);
+        self.events.push_back(event);
+        for waker in self.wakers.drain(..) {
+            waker.wake()
+        }
+    }
+
+    pub(super) fn next_progress_id(&self) -> u64 {
+        self.offset + self.events.len() as u64
+    }
+
+    pub(super) fn get(&self, progress_id: u64) -> Option<&T> {
+        let index = progress_id.checked_sub(self.offset)?;
+        self.events.get(index as usize)
+    }
+
+    fn poll_next(
+        &mut self,
+        progress_id: u64,
+        filter: impl Fn(&T) -> bool,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<(u64, T)>> {
+        if progress_id < self.offset {
+            return Poll::Ready(None);
+        }
+        let mut i = progress_id;
+        loop {
+            if let Some(event) = self.get(i) {
+                i += 1;
+                if filter(event) {
+                    break Poll::Ready(Some((i, event.clone())));
+                }
+            } else {
+                self.wakers.push_back(cx.waker().clone());
+                break Poll::Pending;
+            }
+        }
     }
 }
