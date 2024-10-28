@@ -52,8 +52,4 @@ iroh-metrics = { path = "./iroh-metrics" }
 iroh-test = { path = "./iroh-test" }
 iroh-router = { path = "./iroh-router" }
 
-iroh-blobs = { git = "https://github.com/n0-computer/iroh-blobs", branch = "refactor-serde-error" }
-
-# iroh-blobs = { path = "../iroh-crates/iroh-blobs" }
-# iroh-gossip = { path = "../iroh-crates/iroh-gossip" }
-# iroh-docs = { path = "../iroh-crates/iroh-docs" }
+iroh-blobs = { git = "https://github.com/n0-computer/iroh-blobs", branch = "main" }

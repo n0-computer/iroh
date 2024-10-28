@@ -2547,7 +2547,7 @@ dependencies = [
 [[package]]
 name = "iroh-blobs"
 version = "0.27.0"
-source = "git+https://github.com/n0-computer/iroh-blobs?branch=refactor-serde-error#77012ee0b7e8ff32e9f7de2551e119fb5c50b1d0"
+source = "git+https://github.com/n0-computer/iroh-blobs?branch=main#f87c3bf59e5040382d29d872ba543351a908f500"
 dependencies = [
  "anyhow",
  "async-channel",
