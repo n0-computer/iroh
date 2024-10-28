@@ -1033,24 +1033,6 @@
 <a href="#1033" id="1033">1033</a>
 <a href="#1034" id="1034">1034</a>
 <a href="#1035" id="1035">1035</a>
-<a href="#1036" id="1036">1036</a>
-<a href="#1037" id="1037">1037</a>
-<a href="#1038" id="1038">1038</a>
-<a href="#1039" id="1039">1039</a>
-<a href="#1040" id="1040">1040</a>
-<a href="#1041" id="1041">1041</a>
-<a href="#1042" id="1042">1042</a>
-<a href="#1043" id="1043">1043</a>
-<a href="#1044" id="1044">1044</a>
-<a href="#1045" id="1045">1045</a>
-<a href="#1046" id="1046">1046</a>
-<a href="#1047" id="1047">1047</a>
-<a href="#1048" id="1048">1048</a>
-<a href="#1049" id="1049">1049</a>
-<a href="#1050" id="1050">1050</a>
-<a href="#1051" id="1051">1051</a>
-<a href="#1052" id="1052">1052</a>
-<a href="#1053" id="1053">1053</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
@@ -1081,7 +1063,6 @@
 <span class="kw">use </span>tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{
-    key::SecretKey,
     relay::http::{LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH},
     stun,
 };
@@ -1103,7 +1084,6 @@
 <span class="kw">const </span>NO_CONTENT_CHALLENGE_HEADER: <span class="kw-2">&amp;</span>str = <span class="string">"X-Tailscale-Challenge"</span>;
 <span class="kw">const </span>NO_CONTENT_RESPONSE_HEADER: <span class="kw-2">&amp;</span>str = <span class="string">"X-Tailscale-Response"</span>;
 <span class="kw">const </span>NOTFOUND: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"Not Found"</span>;
-<span class="kw">const </span>RELAY_DISABLED: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"relay server disabled"</span>;
 <span class="kw">const </span>ROBOTS_TXT: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"User-agent: *\nDisallow: /\n"</span>;
 <span class="kw">const </span>INDEX: <span class="kw-2">&amp;</span>[u8] = <span class="string">br#"&lt;html&gt;&lt;body&gt;
 &lt;h1&gt;Iroh Relay&lt;/h1&gt;
@@ -1147,8 +1127,6 @@
 /// endpoint is only one of the services served.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>RelayConfig&lt;EC: fmt::Debug, EA: fmt::Debug = EC&gt; {
-    <span class="doccomment">/// The iroh secret key of the Relay server.
-    </span><span class="kw">pub </span>secret_key: SecretKey,
     <span class="doccomment">/// The socket address on which the Relay HTTP server should bind.
     ///
     /// Normally you'd choose port `80`.  The bind address for the HTTPS server is
@@ -1297,9 +1275,7 @@
                     <span class="prelude-val">None </span>=&gt; relay_config.http_bind_addr,
                 };
                 <span class="kw">let </span><span class="kw-2">mut </span>builder = http_server::ServerBuilder::new(relay_bind_addr)
-                    .secret_key(<span class="prelude-val">Some</span>(relay_config.secret_key))
                     .headers(headers)
-                    .relay_override(Box::new(relay_disabled_handler))
                     .request_handler(Method::GET, <span class="string">"/"</span>, Box::new(root_handler))
                     .request_handler(Method::GET, <span class="string">"/index.html"</span>, Box::new(root_handler))
                     .request_handler(
@@ -1571,16 +1547,6 @@
     }
 }
 
-<span class="kw">fn </span>relay_disabled_handler(
-    _r: Request&lt;Incoming&gt;,
-    response: ResponseBuilder,
-) -&gt; HyperResult&lt;Response&lt;BytesBody&gt;&gt; {
-    response
-        .status(StatusCode::NOT_FOUND)
-        .body(RELAY_DISABLED.into())
-        .map_err(|err| Box::new(err) <span class="kw">as </span>HyperError)
-}
-
 <span class="kw">fn </span>root_handler(
     _r: Request&lt;Incoming&gt;,
     response: ResponseBuilder,
@@ -1765,7 +1731,7 @@
 
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>http::header::UPGRADE;
-    <span class="kw">use </span>iroh_base::node_addr::RelayUrl;
+    <span class="kw">use </span>iroh_base::{key::SecretKey, node_addr::RelayUrl};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span><span class="kw">crate</span>::relay::{
@@ -1776,7 +1742,6 @@
     <span class="kw">async fn </span>spawn_local_relay() -&gt; <span class="prelude-ty">Result</span>&lt;Server&gt; {
         Server::spawn(ServerConfig::&lt;(), ()&gt; {
             relay: <span class="prelude-val">Some</span>(RelayConfig {
-                secret_key: SecretKey::generate(),
                 http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
                 tls: <span class="prelude-val">None</span>,
                 limits: Default::default(),
@@ -1805,7 +1770,6 @@
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span><span class="kw-2">mut </span>server = Server::spawn(ServerConfig::&lt;(), ()&gt; {
             relay: <span class="prelude-val">Some</span>(RelayConfig {
-                secret_key: SecretKey::generate(),
                 http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">1234</span>).into(),
                 tls: <span class="prelude-val">None</span>,
                 limits: Default::default(),
