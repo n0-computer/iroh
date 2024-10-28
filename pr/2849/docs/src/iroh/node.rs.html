@@ -831,6 +831,7 @@
 <a href="#831" id="831">831</a>
 <a href="#832" id="832">832</a>
 <a href="#833" id="833">833</a>
+<a href="#834" id="834">834</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node API
 //!
 //! An iroh node is a server that is identified by an Ed25519 keypair and is
@@ -906,6 +907,7 @@
 <span class="kw">mod </span>rpc;
 <span class="kw">mod </span>rpc_status;
 
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::rpc::{RpcError, RpcResult};
 <span class="kw">pub use </span><span class="self">self</span>::{
     builder::{
         Builder, DiscoveryConfig, DocsStorage, GcPolicy, ProtocolBuilder, StorageConfig,

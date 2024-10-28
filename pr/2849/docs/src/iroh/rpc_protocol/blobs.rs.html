@@ -346,10 +346,7 @@
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::path::PathBuf;
 
 <span class="kw">use </span>bytes::Bytes;
-<span class="kw">use </span>iroh_base::{
-    hash::Hash,
-    rpc::{RpcError, RpcResult},
-};
+<span class="kw">use </span>iroh_base::hash::Hash;
 <span class="kw">use </span>iroh_blobs::{
     export::ExportProgress,
     format::collection::Collection,
@@ -368,8 +365,11 @@
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="kw">use </span><span class="kw">super</span>::RpcService;
-<span class="kw">use </span><span class="kw">crate</span>::client::blobs::{
-    BlobInfo, BlobStatus, DownloadMode, IncompleteBlobInfo, ReadAtLen, WrapOption,
+<span class="kw">use crate</span>::{
+    client::blobs::{
+        BlobInfo, BlobStatus, DownloadMode, IncompleteBlobInfo, ReadAtLen, WrapOption,
+    },
+    node::{RpcError, RpcResult},
 };
 
 <span class="attr">#[allow(missing_docs)]

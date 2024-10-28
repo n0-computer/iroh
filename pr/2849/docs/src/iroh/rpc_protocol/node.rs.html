@@ -59,16 +59,14 @@
 <a href="#59" id="59">59</a>
 <a href="#60" id="60">60</a>
 <a href="#61" id="61">61</a>
-<a href="#62" id="62">62</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::BTreeMap;
 
-<span class="kw">use </span>iroh_base::rpc::RpcResult;
 <span class="kw">use </span>nested_enum_utils::enum_conversions;
 <span class="kw">use </span>quic_rpc_derive::rpc_requests;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="kw">use </span><span class="kw">super</span>::RpcService;
-<span class="kw">use </span><span class="kw">crate</span>::client::NodeStatus;
+<span class="kw">use crate</span>::{client::NodeStatus, node::RpcResult};
 
 <span class="attr">#[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]

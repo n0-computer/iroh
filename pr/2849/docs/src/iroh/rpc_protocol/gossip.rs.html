@@ -41,7 +41,6 @@
 <a href="#41" id="41">41</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::BTreeSet;
 
-<span class="kw">use </span>iroh_base::rpc::RpcResult;
 <span class="kw">pub use </span>iroh_gossip::net::{Command <span class="kw">as </span>SubscribeUpdate, Event <span class="kw">as </span>SubscribeResponse};
 <span class="kw">use </span>iroh_gossip::proto::TopicId;
 <span class="kw">use </span>iroh_net::NodeId;
@@ -50,6 +49,7 @@
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="kw">use </span><span class="kw">super</span>::RpcService;
+<span class="kw">use </span><span class="kw">crate</span>::node::RpcResult;
 
 <span class="attr">#[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
