@@ -112,7 +112,7 @@ pub struct AddPathRequest {
 #[derive(Debug, Serialize, Deserialize, derive_more::Into)]
 pub struct AddPathResponse(pub AddProgress);
 
-/// Progress response for [`DownloadRequest`]
+/// Progress response for [`BlobDownloadRequest`]
 #[derive(Debug, Clone, Serialize, Deserialize, derive_more::From, derive_more::Into)]
 pub struct DownloadResponse(pub DownloadProgress);
 
