@@ -2,6 +2,12 @@
 name = "portmapper"
 version = "0.1.0"
 edition = "2021"
+readme = "README.md"
+description = "Portmapping utilities"
+license = "MIT OR Apache-2.0"
+authors = ["n0 team"]
+repository = "https://github.com/n0-computer/iroh"
+keywords = ["portmapping", "pmp", "pcp", "upnp"]
 
 [lints]
 workspace = true
