@@ -190,7 +190,7 @@ jobs:
         # uses: obi1kenobi/cargo-semver-checks-action@v2
         uses: n0-computer/cargo-semver-checks-action@feat-baseline
         with:
-          package: iroh, iroh-base, iroh-blobs, iroh-cli, iroh-dns-server, iroh-gossip, iroh-metrics, iroh-net, iroh-net-bench, iroh-docs
+          package: iroh, iroh-base, iroh-cli, iroh-dns-server, iroh-metrics, iroh-net, iroh-net-bench, iroh-router
           baseline-rev: ${{ env.HEAD_COMMIT_SHA }}
           use-cache: false
 
@@ -298,7 +298,7 @@ jobs:
       netsim_branch: "main"
       sim_paths: "sims/iroh/iroh.json,sims/integration"
       pr_number: ${{ github.event.pull_request.number || '' }}
-    
+
   docker_build_and_test:
     name: Docker Test
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"

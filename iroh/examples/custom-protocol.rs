@@ -50,7 +50,7 @@ use iroh::{
         endpoint::{get_remote_node_id, Connecting},
         Endpoint, NodeId,
     },
-    node::ProtocolHandler,
+    router::ProtocolHandler,
 };
 use tracing_subscriber::{prelude::*, EnvFilter};
 

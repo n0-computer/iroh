@@ -1,6 +1,6 @@
 [package]
 name = "iroh-base"
-version = "0.26.0"
+version = "0.27.0"
 edition = "2021"
 readme = "README.md"
 description = "base type and utilities for Iroh"
@@ -22,7 +22,6 @@ hex = "0.4.3"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"], optional = true }
 redb = { version = "2.0.0", optional = true }
 serde = { version = "1", features = ["derive"] }
-serde-error = "0.1.2"
 thiserror = "1"
 
 # key module
@@ -41,7 +40,7 @@ url = { version = "2.5.0", features = ["serde"], optional = true }
 getrandom = { version = "0.2", default-features = false, optional = true }
 
 [dev-dependencies]
-iroh-test = { path = "../iroh-test" }
+iroh-test = "0.27.0"
 proptest = "1.0.0"
 serde_json = "1.0.107"
 serde_test = "1.0.176"

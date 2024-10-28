@@ -118,7 +118,10 @@ async fn empty_files() -> Result<()> {
 
 /// Create new get options with the given node id and addresses, using a
 /// randomly generated secret key.
-fn get_options(node_id: NodeId, addrs: Vec<SocketAddr>) -> (SecretKey, NodeAddr) {
+fn get_options(
+    node_id: NodeId,
+    addrs: impl IntoIterator<Item = SocketAddr>,
+) -> (SecretKey, NodeAddr) {
     let relay_map = default_relay_map();
     let peer = iroh_net::NodeAddr::from_parts(
         node_id,
