@@ -298,7 +298,7 @@ jobs:
       netsim_branch: "main"
       sim_paths: "sims/iroh/iroh.json,sims/integration"
       pr_number: ${{ github.event.pull_request.number || '' }}
-      debug_logs: ${{env.ACTIONS_RUNNER_DEBUG || 'false' }}
+      debug_logs: true
 
   docker_build_and_test:
     name: Docker Test
