@@ -90,7 +90,7 @@ impl Default for ServerActorTask {
 }
 
 impl ServerActorTask {
-    /// Creates a new defualt `ServerActorTask`.
+    /// Creates a new default `ServerActorTask`.
     pub fn new() -> Self {
         Self::default()
     }
