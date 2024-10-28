@@ -2735,8 +2735,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b434d455389493ff2b2ecbab035c12eb3762f24d04080855ecd4956bf7739448"
+source = "git+https://github.com/n0-computer/iroh-gossip?branch=refactor-protocol-impl#57b7038b7cb6d3559d408a0fd4e49f1ee09adbfc"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2751,6 +2750,7 @@ dependencies = [
  "iroh-blake3",
  "iroh-metrics",
  "iroh-net",
+ "iroh-router",
  "postcard",
  "rand",
  "rand_core",
