@@ -18,14 +18,11 @@ use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, warn, Instrument};
 use tungstenite::handshake::derive_accept_key;
 
-use crate::{
-    key::SecretKey,
-    relay::{
-        http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
-        server::{
-            actor::{ClientConnHandler, ServerActorTask},
-            streams::MaybeTlsStream,
-        },
+use crate::relay::{
+    http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
+    server::{
+        actor::{ClientConnHandler, ServerActorTask},
+        streams::MaybeTlsStream,
     },
 };
 
@@ -155,11 +152,6 @@ pub struct TlsConfig {
 /// an error on `spawn`.
 #[derive(derive_more::Debug)]
 pub struct ServerBuilder {
-    /// The secret key for this Server.
-    ///
-    /// When `None`, you must also provide a `relay_override` function that
-    /// will be run when someone hits the relay endpoint.
-    secret_key: Option<SecretKey>,
     /// The ip + port combination for this server.
     addr: SocketAddr,
     /// Optional tls configuration/TlsAcceptor combination.
@@ -189,7 +181,6 @@ impl ServerBuilder {
     /// Creates a new [ServerBuilder].
     pub fn new(addr: SocketAddr) -> Self {
         Self {
-            secret_key: None,
             addr,
             tls_config: None,
             handlers: Default::default(),
@@ -197,14 +188,6 @@ impl ServerBuilder {
             headers: HeaderMap::new(),
             not_found_fn: None,
         }
-    }
-
-    /// The [`SecretKey`] identity for this relay server.
-    ///
-    /// When set to `None`, the builder assumes you do not want to run a relay service.
-    pub fn secret_key(mut self, secret_key: Option<SecretKey>) -> Self {
-        self.secret_key = secret_key;
-        self
     }
 
     /// Serves all requests content using TLS.
@@ -231,14 +214,6 @@ impl ServerBuilder {
         self
     }
 
-    /// Handles the relay endpoint in a custom way.
-    ///
-    /// This is required if no [`SecretKey`] was provided to the builder.
-    pub fn relay_override(mut self, handler: HyperHandler) -> Self {
-        self.relay_override = Some(handler);
-        self
-    }
-
     /// Adds HTTP headers to responses.
     pub fn headers(mut self, headers: HeaderMap) -> Self {
         for (k, v) in headers.iter() {
@@ -249,26 +224,17 @@ impl ServerBuilder {
 
     /// Builds and spawns an HTTP(S) Relay Server.
     pub async fn spawn(self) -> Result<Server> {
-        ensure!(
-            self.secret_key.is_some() || self.relay_override.is_some(),
-            "Must provide a `SecretKey` for the relay server OR pass in an override function for the 'relay' endpoint"
-        );
-        let (relay_handler, relay_server) = if let Some(secret_key) = self.secret_key {
-            // spawns a server actor/task
-            let server = ServerActorTask::new(secret_key.clone());
-            (
-                RelayHandler::ConnHandler(server.client_conn_handler(self.headers.clone())),
-                Some(server),
-            )
-        } else {
-            (
-                RelayHandler::Override(
-                    self.relay_override
-                        .context("no relay handler override but also no secret key")?,
-                ),
-                None,
-            )
+        let (relay_handler, relay_server) = match self.relay_override {
+            Some(relay_override) => (RelayHandler::Override(relay_override), None),
+            None => {
+                let server = ServerActorTask::new();
+                (
+                    RelayHandler::ConnHandler(server.client_conn_handler(self.headers.clone())),
+                    Some(server),
+                )
+            }
         };
+
         let h = self.headers.clone();
         let not_found_fn = match self.not_found_fn {
             Some(f) => f,
@@ -726,13 +692,11 @@ mod tests {
     async fn test_http_clients_and_server() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let server_key = SecretKey::generate();
         let a_key = SecretKey::generate();
         let b_key = SecretKey::generate();
 
         // start server
         let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
-            .secret_key(Some(server_key))
             .spawn()
             .await?;
 
@@ -853,7 +817,6 @@ mod tests {
             .try_init()
             .ok();
 
-        let server_key = SecretKey::generate();
         let a_key = SecretKey::generate();
         let b_key = SecretKey::generate();
 
@@ -862,7 +825,6 @@ mod tests {
 
         // start server
         let mut server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
-            .secret_key(Some(server_key))
             .tls_config(Some(tls_config))
             .spawn()
             .await?;

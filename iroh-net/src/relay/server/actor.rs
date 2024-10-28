@@ -23,7 +23,7 @@ use tungstenite::protocol::Role;
 
 use crate::{
     defaults::timeouts::relay::SERVER_WRITE_TIMEOUT as WRITE_TIMEOUT,
-    key::{PublicKey, SecretKey},
+    key::PublicKey,
     relay::{
         codec::{
             recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
@@ -58,10 +58,6 @@ pub struct ServerActorTask {
     /// Optionally specifies how long to wait before failing when writing
     /// to a client
     write_timeout: Option<Duration>,
-    /// secret_key of the client
-    secret_key: SecretKey,
-    /// The DER encoded x509 cert to send after `LetsEncrypt` cert+intermediate.
-    meta_cert: Vec<u8>,
     /// Channel on which to communicate to the [`ServerActor`]
     server_channel: mpsc::Sender<ServerMessage>,
     /// When true, the server has been shutdown.
@@ -73,37 +69,30 @@ pub struct ServerActorTask {
     // TODO: stats collection
 }
 
-impl ServerActorTask {
-    /// TODO: replace with builder
-    pub fn new(key: SecretKey) -> Self {
+impl Default for ServerActorTask {
+    fn default() -> Self {
         let (server_channel_s, server_channel_r) = mpsc::channel(SERVER_CHANNEL_SIZE);
-        let server_actor = ServerActor::new(key.public(), server_channel_r);
+        let server_actor = ServerActor::new(server_channel_r);
         let cancel_token = CancellationToken::new();
         let done = cancel_token.clone();
         let server_task = AbortOnDropHandle::new(tokio::spawn(
-            async move { server_actor.run(done).await }
-                .instrument(info_span!("relay.server", me = %key.public().fmt_short())),
+            async move { server_actor.run(done).await }.instrument(info_span!("relay.server")),
         ));
-        let meta_cert = init_meta_cert(&key.public());
+
         Self {
             write_timeout: Some(WRITE_TIMEOUT),
-            secret_key: key,
-            meta_cert,
             server_channel: server_channel_s,
             closed: false,
             loop_handler: server_task,
             cancel: cancel_token,
         }
     }
+}
 
-    /// Returns the server's secret key.
-    pub fn secret_key(&self) -> &SecretKey {
-        &self.secret_key
-    }
-
-    /// Returns the server's public key.
-    pub fn public_key(&self) -> PublicKey {
-        self.secret_key.public()
+impl ServerActorTask {
+    /// Creates a new defualt `ServerActorTask`.
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Closes the server and waits for the connections to disconnect.
@@ -142,16 +131,9 @@ impl ServerActorTask {
     pub fn client_conn_handler(&self, default_headers: HeaderMap) -> ClientConnHandler {
         ClientConnHandler {
             server_channel: self.server_channel.clone(),
-            secret_key: self.secret_key.clone(),
             write_timeout: self.write_timeout,
             default_headers: Arc::new(default_headers),
         }
-    }
-
-    /// Returns the server metadata cert that can be sent by the TLS server to
-    /// let the client skip a round trip during start-up.
-    pub fn meta_cert(&self) -> &[u8] {
-        &self.meta_cert
     }
 }
 
@@ -163,7 +145,6 @@ impl ServerActorTask {
 #[derive(Debug)]
 pub struct ClientConnHandler {
     server_channel: mpsc::Sender<ServerMessage>,
-    secret_key: SecretKey,
     write_timeout: Option<Duration>,
     pub(crate) default_headers: Arc<HeaderMap>,
 }
@@ -172,7 +153,6 @@ impl Clone for ClientConnHandler {
     fn clone(&self) -> Self {
         Self {
             server_channel: self.server_channel.clone(),
-            secret_key: self.secret_key.clone(),
             write_timeout: self.write_timeout,
             default_headers: Arc::clone(&self.default_headers),
         }
@@ -236,7 +216,6 @@ impl ClientConnHandler {
 }
 
 struct ServerActor {
-    key: PublicKey,
     receiver: mpsc::Receiver<ServerMessage>,
     /// All clients connected to this server
     clients: Clients,
@@ -244,9 +223,8 @@ struct ServerActor {
 }
 
 impl ServerActor {
-    fn new(key: PublicKey, receiver: mpsc::Receiver<ServerMessage>) -> Self {
+    fn new(receiver: mpsc::Receiver<ServerMessage>) -> Self {
         Self {
-            key,
             receiver,
             clients: Clients::new(),
             client_counter: ClientCounter::default(),
@@ -310,7 +288,7 @@ impl ServerActor {
 
                             report_usage_stats(&UsageStatsReport::new(
                                 "relay_accepts".to_string(),
-                                self.key.to_string(),
+                                "relay_server".to_string(), // TODO: other id?
                                 1,
                                 None, // TODO(arqu): attribute to user id; possibly with the re-introduction of request tokens or other auth
                                 Some(key.to_string()),
@@ -344,36 +322,6 @@ impl ServerActor {
             }
         }
     }
-}
-
-/// Initializes the [`ServerActor`] with a self-signed x509 cert
-/// encoding this server's public key and protocol version. "cmd/relay_server
-/// then sends this after the Let's Encrypt leaf + intermediate certs after
-/// the ServerHello (encrypted in TLS 1.3, not that is matters much).
-///
-/// Then the client can save a round trime getting that and can start speaking
-/// relay right away. (we don't use ALPN because that's sent in the clear and
-/// we're being paranoid to not look too weird to any middleboxes, given that
-/// relay is an ultimate fallback path). But since the post-ServerHello certs
-/// are encrypted we can have the client also use them as a signal to be able
-/// to start speaking relay right away, starting with its identity proof,
-/// encrypted to the server's public key.
-///
-/// This RTT optimization fails where there's a corp-mandated TLS proxy with
-/// corp-mandated root certs on employee machines and TLS proxy cleans up
-/// unnecessary certs. In that case we just fall back to the extra RTT.
-fn init_meta_cert(server_key: &PublicKey) -> Vec<u8> {
-    let mut params =
-        rcgen::CertificateParams::new([format!("derpkey{}", hex::encode(server_key.as_bytes()))]);
-    params.serial_number = Some((PROTOCOL_VERSION as u64).into());
-    // Windows requires not_after and not_before set:
-    params.not_after = time::OffsetDateTime::now_utc().saturating_add(30 * time::Duration::DAY);
-    params.not_before = time::OffsetDateTime::now_utc().saturating_sub(30 * time::Duration::DAY);
-
-    rcgen::Certificate::from_params(params)
-        .expect("fixed inputs")
-        .serialize_der()
-        .expect("fixed allocations")
 }
 
 struct ClientCounter {
@@ -412,6 +360,7 @@ impl ClientCounter {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
+    use iroh_base::key::SecretKey;
     use tokio::io::DuplexStream;
     use tokio_util::codec::{FramedRead, FramedWrite};
     use tracing_subscriber::{prelude::*, EnvFilter};
@@ -446,11 +395,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_actor() -> Result<()> {
-        let server_key = SecretKey::generate().public();
-
         // make server actor
         let (server_channel, server_channel_r) = mpsc::channel(20);
-        let server_actor: ServerActor = ServerActor::new(server_key, server_channel_r);
+        let server_actor: ServerActor = ServerActor::new(server_channel_r);
         let done = CancellationToken::new();
         let server_done = done.clone();
 
@@ -518,7 +465,6 @@ mod tests {
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
         let client_key = SecretKey::generate();
         let handler = ClientConnHandler {
-            secret_key: client_key.clone(),
             write_timeout: None,
             server_channel: server_channel_s,
             default_headers: Default::default(),
@@ -580,8 +526,7 @@ mod tests {
         let _guard = iroh_test::logging::setup();
 
         // create the server!
-        let server_key = SecretKey::generate();
-        let server: ServerActorTask = ServerActorTask::new(server_key);
+        let server: ServerActorTask = ServerActorTask::new();
 
         // create client a and connect it to the server
         let key_a = SecretKey::generate();
@@ -656,8 +601,7 @@ mod tests {
             .ok();
 
         // create the server!
-        let server_key = SecretKey::generate();
-        let server: ServerActorTask = ServerActorTask::new(server_key);
+        let server: ServerActorTask = ServerActorTask::new();
 
         // create client a and connect it to the server
         let key_a = SecretKey::generate();
