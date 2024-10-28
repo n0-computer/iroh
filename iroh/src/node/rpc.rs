@@ -14,6 +14,7 @@ use iroh_blobs::{
     export::ExportProgress,
     format::collection::Collection,
     get::db::DownloadProgress,
+    net_protocol::{BlobDownloadRequest, Blobs as BlobsProtocol},
     provider::{AddProgress, BatchAddPathProgress},
     store::{
         ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry, Store as BaoStore,
@@ -43,10 +44,7 @@ use crate::{
         tags::TagInfo,
         NodeStatus,
     },
-    node::{
-        protocol::{blobs::BlobsProtocol, docs::DocsProtocol},
-        NodeInner,
-    },
+    node::{protocol::docs::DocsProtocol, NodeInner},
     rpc_protocol::{
         authors,
         blobs::{
@@ -55,9 +53,8 @@ use crate::{
             BatchAddStreamResponse, BatchAddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
             BatchCreateTempTagRequest, BatchUpdate, BlobStatusRequest, BlobStatusResponse,
             ConsistencyCheckRequest, CreateCollectionRequest, CreateCollectionResponse,
-            DeleteRequest, DownloadRequest as BlobDownloadRequest, DownloadResponse, ExportRequest,
-            ExportResponse, ListIncompleteRequest, ListRequest, ReadAtRequest, ReadAtResponse,
-            ValidateRequest,
+            DeleteRequest, DownloadResponse, ExportRequest, ExportResponse, ListIncompleteRequest,
+            ListRequest, ReadAtRequest, ReadAtResponse, ValidateRequest,
         },
         docs::{
             ExportFileRequest, ExportFileResponse, ImportFileRequest, ImportFileResponse,

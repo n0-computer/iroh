@@ -2547,7 +2547,7 @@ dependencies = [
 [[package]]
 name = "iroh-blobs"
 version = "0.27.0"
-source = "git+https://github.com/n0-computer/iroh-blobs?branch=main#f87c3bf59e5040382d29d872ba543351a908f500"
+source = "git+https://github.com/n0-computer/iroh-blobs?branch=refactor-blobs-protocol#bc2b56036436d011fd0fa4abd4eaf02a15f7d64b"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2565,6 +2565,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-net",
  "iroh-quinn",
+ "iroh-router",
  "num_cpus",
  "oneshot",
  "parking_lot",
