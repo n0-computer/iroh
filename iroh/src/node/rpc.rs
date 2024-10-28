@@ -27,7 +27,7 @@ use iroh_blobs::{
     BlobFormat, HashAndFormat, Tag,
 };
 use iroh_docs::net::DOCS_ALPN;
-use iroh_gossip::net::GOSSIP_ALPN;
+use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
 use iroh_net::{relay::RelayUrl, NodeAddr, NodeId};
 use iroh_router::Router;
@@ -44,7 +44,7 @@ use crate::{
         NodeStatus,
     },
     node::{
-        protocol::{blobs::BlobsProtocol, docs::DocsProtocol, gossip::GossipProtocol},
+        protocol::{blobs::BlobsProtocol, docs::DocsProtocol},
         NodeInner,
     },
     rpc_protocol::{
@@ -257,7 +257,7 @@ impl<D: BaoStore> Handler<D> {
                 chan.bidi_streaming(msg, self, |handler, req, updates| {
                     let stream = handler
                         .router
-                        .get_protocol::<GossipProtocol>(GOSSIP_ALPN)
+                        .get_protocol::<Gossip>(GOSSIP_ALPN)
                         .expect("missing gossip")
                         .join_with_stream(
                             req.topic,
