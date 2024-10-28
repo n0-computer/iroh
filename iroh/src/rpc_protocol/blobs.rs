@@ -1,10 +1,7 @@
 use std::path::PathBuf;
 
 use bytes::Bytes;
-use iroh_base::{
-    hash::Hash,
-    rpc::{RpcError, RpcResult},
-};
+use iroh_base::hash::Hash;
 use iroh_blobs::{
     export::ExportProgress,
     format::collection::Collection,
@@ -23,8 +20,11 @@ use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
 use super::RpcService;
-use crate::client::blobs::{
-    BlobInfo, BlobStatus, DownloadMode, IncompleteBlobInfo, ReadAtLen, WrapOption,
+use crate::{
+    client::blobs::{
+        BlobInfo, BlobStatus, DownloadMode, IncompleteBlobInfo, ReadAtLen, WrapOption,
+    },
+    node::{RpcError, RpcResult},
 };
 
 #[allow(missing_docs)]
