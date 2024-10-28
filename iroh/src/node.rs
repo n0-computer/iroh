@@ -126,8 +126,6 @@ struct NodeInner<D> {
     cancel_token: CancellationToken,
     client: crate::client::Iroh,
     local_pool_handle: LocalPoolHandle,
-    #[allow(dead_code)]
-    metrics_exporter_handle: Option<AbortOnDropHandle<()>>,
 }
 
 /// In memory node.
