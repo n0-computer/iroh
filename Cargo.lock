@@ -2735,7 +2735,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.27.0"
-source = "git+https://github.com/n0-computer/iroh-gossip?branch=refactor-protocol-impl#57b7038b7cb6d3559d408a0fd4e49f1ee09adbfc"
+source = "git+https://github.com/n0-computer/iroh-gossip?branch=main#85c32cd86195a7ff54474b9cf153579ca04ae06f"
 dependencies = [
  "anyhow",
  "async-channel",
