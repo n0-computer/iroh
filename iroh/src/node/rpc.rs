@@ -244,10 +244,10 @@ impl<D: BaoStore> Handler<D> {
 
     async fn handle_gossip_request(
         self,
-        msg: iroh_gossip::rpc::Request,
+        msg: iroh_gossip::RpcRequest,
         chan: RpcChannel<RpcService, IrohServerEndpoint>,
     ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
-        let chan = chan.map::<iroh_gossip::rpc::RpcService>();
+        let chan = chan.map::<iroh_gossip::RpcService>();
 
         let gossip = self.protocols.get_typed::<Gossip>(GOSSIP_ALPN).unwrap();
         gossip.handle_rpc_request(msg, chan).await

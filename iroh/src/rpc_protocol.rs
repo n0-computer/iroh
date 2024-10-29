@@ -39,7 +39,7 @@ pub enum Request {
     Docs(docs::Request),
     Tags(tags::Request),
     Authors(authors::Request),
-    Gossip(iroh_gossip::rpc::Request),
+    Gossip(iroh_gossip::RpcRequest),
 }
 
 /// The response enum, listing all possible responses.
@@ -53,7 +53,7 @@ pub enum Response {
     Tags(tags::Response),
     Docs(docs::Response),
     Authors(authors::Response),
-    Gossip(iroh_gossip::rpc::Response),
+    Gossip(iroh_gossip::RpcResponse),
 }
 
 impl quic_rpc::Service for RpcService {
