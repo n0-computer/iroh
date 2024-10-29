@@ -81,7 +81,6 @@ axum = { version = "0.7.4", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 regex = { version = "1.7.1", optional = true }
 rustls-pemfile = { version = "2.1", optional = true }
-serde_with = { version = "3.3", optional = true }
 toml = { version = "0.8", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 tokio-rustls-acme = { version = "0.4", optional = true }
@@ -140,7 +139,6 @@ iroh-relay = [
     "dep:toml",
     "dep:rustls-pemfile",
     "dep:regex",
-    "dep:serde_with",
     "dep:tracing-subscriber"
 ]
 metrics = ["iroh-metrics/metrics"]

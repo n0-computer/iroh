@@ -50,7 +50,7 @@ use futures_lite::StreamExt;
 use futures_util::future::{MapErr, Shared};
 use iroh_base::key::PublicKey;
 use iroh_blobs::{
-    protocol::Closed,
+    net_protocol::Blobs as BlobsProtocol,
     store::Store as BaoStore,
     util::local_pool::{LocalPool, LocalPoolHandle},
 };
@@ -59,16 +59,13 @@ use iroh_net::{
     endpoint::{DirectAddrsStream, RemoteInfo},
     AddrInfo, Endpoint, NodeAddr,
 };
-use protocol::blobs::BlobsProtocol;
+use iroh_router::{ProtocolHandler, Router};
 use quic_rpc::{transport::ServerEndpoint as _, RpcServer};
 use tokio::task::{JoinError, JoinSet};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
-use crate::node::{
-    nodes_storage::store_node_addrs,
-    protocol::{docs::DocsProtocol, ProtocolMap},
-};
+use crate::node::{nodes_storage::store_node_addrs, protocol::docs::DocsProtocol};
 
 mod builder;
 mod nodes_storage;
@@ -76,8 +73,7 @@ mod protocol;
 mod rpc;
 mod rpc_status;
 
-pub use protocol::ProtocolHandler;
-
+pub(crate) use self::rpc::{RpcError, RpcResult};
 pub use self::{
     builder::{
         Builder, DiscoveryConfig, DocsStorage, GcPolicy, ProtocolBuilder, StorageConfig,
@@ -117,7 +113,7 @@ pub struct Node<D> {
     // - `AbortOnDropHandle` to make sure that the `task` is cancelled when all `Node`s are dropped
     //   (`Shared` acts like an `Arc` around its inner future).
     task: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
-    protocols: Arc<ProtocolMap>,
+    router: Router,
 }
 
 pub(crate) type JoinErrToStr = Box<dyn Fn(JoinError) -> String + Send + Sync + 'static>;
@@ -246,7 +242,7 @@ impl<D: BaoStore> Node<D> {
     /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
     /// does not match the passed type.
     pub fn get_protocol<P: ProtocolHandler>(&self, alpn: &[u8]) -> Option<Arc<P>> {
-        self.protocols.get_typed(alpn)
+        self.router.get_protocol(alpn)
     }
 }
 
@@ -274,7 +270,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         self: Arc<Self>,
         external_rpc: IrohServerEndpoint,
         internal_rpc: IrohServerEndpoint,
-        protocols: Arc<ProtocolMap>,
+        router: Router,
         gc_policy: GcPolicy,
         gc_done_callback: Option<Box<dyn Fn() + Send>>,
         nodes_data_path: Option<PathBuf>,
@@ -296,11 +292,11 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
 
         // Spawn a task for the garbage collection.
         if let GcPolicy::Interval(gc_period) = gc_policy {
-            let protocols = protocols.clone();
+            let router = router.clone();
             let handle = local_pool.spawn(move || async move {
-                let docs_engine = protocols.get_typed::<DocsProtocol>(DOCS_ALPN);
-                let blobs = protocols
-                    .get_typed::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
+                let docs_engine = router.get_protocol::<DocsProtocol>(DOCS_ALPN);
+                let blobs = router
+                    .get_protocol::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
                     .expect("missing blobs");
 
                 blobs
@@ -400,7 +396,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 request = external_rpc.accept() => {
                     match request {
                         Ok(accepting) => {
-                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting, protocols.clone());
+                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting, router.clone());
                         }
                         Err(e) => {
                             info!("rpc request error: {:?}", e);
@@ -411,20 +407,12 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 request = internal_rpc.accept() => {
                     match request {
                         Ok(accepting) => {
-                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting, protocols.clone());
+                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting, router.clone());
                         }
                         Err(e) => {
                             info!("internal rpc request error: {:?}", e);
                         }
                     }
-                },
-                // handle incoming p2p connections.
-                Some(incoming) = self.endpoint.accept() => {
-                    let protocols = protocols.clone();
-                    join_set.spawn(async move {
-                        handle_connection(incoming, protocols).await;
-                        Ok(())
-                    });
                 },
                 // handle task terminations and quit on panics.
                 res = join_set.join_next(), if !join_set.is_empty() => {
@@ -450,7 +438,9 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
             }
         }
 
-        self.shutdown(protocols).await;
+        if let Err(err) = router.shutdown().await {
+            tracing::warn!("Error when shutting down router: {:?}", err);
+        };
 
         // Abort remaining tasks.
         join_set.shutdown().await;
@@ -459,48 +449,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         // Abort remaining local tasks.
         tracing::info!("Shutting down local pool");
         local_pool.shutdown().await;
-    }
-
-    /// Shutdown the different parts of the node concurrently.
-    async fn shutdown(&self, protocols: Arc<ProtocolMap>) {
-        let error_code = Closed::ProviderTerminating;
-
-        // We ignore all errors during shutdown.
-        let _ = tokio::join!(
-            // Close the endpoint.
-            // Closing the Endpoint is the equivalent of calling Connection::close on all
-            // connections: Operations will immediately fail with ConnectionError::LocallyClosed.
-            // All streams are interrupted, this is not graceful.
-            self.endpoint
-                .clone()
-                .close(error_code.into(), error_code.reason()),
-            // Shutdown protocol handlers.
-            protocols.shutdown(),
-        );
-    }
-}
-
-async fn handle_connection(incoming: iroh_net::endpoint::Incoming, protocols: Arc<ProtocolMap>) {
-    let mut connecting = match incoming.accept() {
-        Ok(conn) => conn,
-        Err(err) => {
-            warn!("Ignoring connection: accepting failed: {err:#}");
-            return;
-        }
-    };
-    let alpn = match connecting.alpn().await {
-        Ok(alpn) => alpn,
-        Err(err) => {
-            warn!("Ignoring connection: invalid handshake: {err:#}");
-            return;
-        }
-    };
-    let Some(handler) = protocols.get(&alpn) else {
-        warn!("Ignoring connection: unsupported ALPN protocol");
-        return;
-    };
-    if let Err(err) = handler.accept(connecting).await {
-        warn!("Handling incoming connection ended with error: {err}");
     }
 }
 

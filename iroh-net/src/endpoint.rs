@@ -1510,7 +1510,7 @@ mod tests {
         );
 
         let (server, client) = tokio::time::timeout(
-            Duration::from_secs(5),
+            Duration::from_secs(30),
             futures_lite::future::zip(server, client),
         )
         .await

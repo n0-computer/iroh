@@ -1,10 +1,7 @@
 use std::path::PathBuf;
 
 use bytes::Bytes;
-use iroh_base::{
-    node_addr::AddrInfoOptions,
-    rpc::{RpcError, RpcResult},
-};
+use iroh_base::node_addr::AddrInfoOptions;
 use iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
 use iroh_docs::{
     actor::OpenState,
@@ -19,7 +16,10 @@ use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
 use super::RpcService;
-use crate::client::docs::{ImportProgress, ShareMode};
+use crate::{
+    client::docs::{ImportProgress, ShareMode},
+    node::{RpcError, RpcResult},
+};
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]

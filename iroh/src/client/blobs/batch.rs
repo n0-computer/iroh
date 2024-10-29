@@ -11,6 +11,7 @@ use futures_lite::StreamExt;
 use futures_util::{sink::Buffer, FutureExt, SinkExt, Stream};
 use iroh_blobs::{
     format::collection::Collection,
+    net_protocol::BatchId,
     provider::BatchAddPathProgress,
     store::ImportMode,
     util::{SetTagOption, TagDrop},
@@ -27,7 +28,7 @@ use crate::{
     rpc_protocol::{
         blobs::{
             BatchAddPathRequest, BatchAddStreamRequest, BatchAddStreamResponse,
-            BatchAddStreamUpdate, BatchCreateTempTagRequest, BatchId, BatchUpdate,
+            BatchAddStreamUpdate, BatchCreateTempTagRequest, BatchUpdate,
         },
         tags::{self, SyncMode},
     },
