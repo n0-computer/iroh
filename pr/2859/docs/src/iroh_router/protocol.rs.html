@@ -90,7 +90,7 @@
 ///
 /// Implement this trait on a struct that should handle incoming connections.
 /// The protocol handler must then be registered on the node for an ALPN protocol with
-/// [`crate::node::builder::ProtocolBuilder::accept`].
+/// [`crate::RouterBuilder::accept`].
 </span><span class="kw">pub trait </span>ProtocolHandler: Send + Sync + IntoArcAny + std::fmt::Debug + <span class="lifetime">'static </span>{
     <span class="doccomment">/// Handle an incoming connection.
     ///

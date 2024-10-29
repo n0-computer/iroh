@@ -12,7 +12,7 @@
 <p>With this trait, you can handle incoming connections for any protocol.</p>
 <p>Implement this trait on a struct that should handle incoming connections.
 The protocol handler must then be registered on the node for an ALPN protocol with
-[<code>crate::node::builder::ProtocolBuilder::accept</code>].</p>
+<a href="struct.RouterBuilder.html#method.accept" title="method iroh::router::RouterBuilder::accept"><code>crate::RouterBuilder::accept</code></a>.</p>
 </div></details><h2 id="required-methods" class="section-header">Required Methods<a href="#required-methods" class="anchor">§</a></h2><div class="methods"><details class="toggle method-toggle" open><summary><section id="tymethod.accept" class="method"><a class="src rightside" href="../../src/iroh_router/protocol.rs.html#21">source</a><h4 class="code-header">fn <a href="#tymethod.accept" class="fn">accept</a>(
     self: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;Self&gt;,
     conn: <a class="struct" href="../net/endpoint/struct.Connecting.html" title="struct iroh::net::endpoint::Connecting">Connecting</a>
