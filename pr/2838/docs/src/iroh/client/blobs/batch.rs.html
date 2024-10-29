@@ -460,6 +460,7 @@
 <a href="#460" id="460">460</a>
 <a href="#461" id="461">461</a>
 <a href="#462" id="462">462</a>
+<a href="#463" id="463">463</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     path::PathBuf,
@@ -473,6 +474,7 @@
 <span class="kw">use </span>futures_util::{sink::Buffer, FutureExt, SinkExt, Stream};
 <span class="kw">use </span>iroh_blobs::{
     format::collection::Collection,
+    net_protocol::BatchId,
     provider::BatchAddPathProgress,
     store::ImportMode,
     util::{SetTagOption, TagDrop},
@@ -489,7 +491,7 @@
     rpc_protocol::{
         blobs::{
             BatchAddPathRequest, BatchAddStreamRequest, BatchAddStreamResponse,
-            BatchAddStreamUpdate, BatchCreateTempTagRequest, BatchId, BatchUpdate,
+            BatchAddStreamUpdate, BatchCreateTempTagRequest, BatchUpdate,
         },
         tags::{<span class="self">self</span>, SyncMode},
     },

@@ -957,17 +957,6 @@
 <a href="#957" id="957">957</a>
 <a href="#958" id="958">958</a>
 <a href="#959" id="959">959</a>
-<a href="#960" id="960">960</a>
-<a href="#961" id="961">961</a>
-<a href="#962" id="962">962</a>
-<a href="#963" id="963">963</a>
-<a href="#964" id="964">964</a>
-<a href="#965" id="965">965</a>
-<a href="#966" id="966">966</a>
-<a href="#967" id="967">967</a>
-<a href="#968" id="968">968</a>
-<a href="#969" id="969">969</a>
-<a href="#970" id="970">970</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -981,6 +970,7 @@
 <span class="kw">use </span>iroh_base::key::SecretKey;
 <span class="kw">use </span>iroh_blobs::{
     downloader::Downloader,
+    net_protocol::Blobs <span class="kw">as </span>BlobsProtocol,
     provider::EventSender,
     store::{Map, Store <span class="kw">as </span>BaoStore},
     util::local_pool::{<span class="self">self</span>, LocalPool, LocalPoolHandle, PanicMode},
@@ -996,6 +986,7 @@
     relay::{force_staging_infra, RelayMode},
     Endpoint,
 };
+<span class="kw">use </span>iroh_router::{ProtocolHandler, RouterBuilder};
 <span class="kw">use </span>quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::task::JoinError;
@@ -1005,11 +996,7 @@
 <span class="kw">use super</span>::{rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner};
 <span class="kw">use crate</span>::{
     client::RPC_ALPN,
-    node::{
-        nodes_storage::load_node_addrs,
-        protocol::{blobs::BlobsProtocol, docs::DocsProtocol, ProtocolMap},
-        ProtocolHandler,
-    },
+    node::{nodes_storage::load_node_addrs, protocol::docs::DocsProtocol},
     rpc_protocol::RpcService,
     util::{fs::load_secret_key, path::IrohPaths},
 };
@@ -1644,7 +1631,7 @@
         <span class="kw">let </span>inner = Arc::new(NodeInner {
             rpc_addr: <span class="self">self</span>.rpc_addr,
             db: Default::default(),
-            endpoint,
+            endpoint: endpoint.clone(),
             client,
             cancel_token: CancellationToken::new(),
             local_pool_handle: lp.handle().clone(),
@@ -1652,7 +1639,7 @@
 
         <span class="kw">let </span>protocol_builder = ProtocolBuilder {
             inner,
-            protocols: Default::default(),
+            router: RouterBuilder::new(endpoint),
             internal_rpc,
             external_rpc: <span class="self">self</span>.rpc_endpoint,
             gc_policy: <span class="self">self</span>.gc_policy,
@@ -1686,7 +1673,7 @@
     inner: Arc&lt;NodeInner&lt;D&gt;&gt;,
     internal_rpc: IrohServerEndpoint,
     external_rpc: IrohServerEndpoint,
-    protocols: ProtocolMap,
+    router: RouterBuilder,
     <span class="attr">#[debug(<span class="string">"callback"</span>)]
     </span>gc_done_callback: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() + Send&gt;&gt;,
     gc_policy: GcPolicy,
@@ -1708,7 +1695,7 @@
     /// # use std::sync::Arc;
     /// # use anyhow::Result;
     /// # use futures_lite::future::Boxed as BoxedFuture;
-    /// # use iroh::{node::{Node, ProtocolHandler}, net::endpoint::Connecting, client::Iroh};
+    /// # use iroh::{node::{Node}, net::endpoint::Connecting, client::Iroh, router::ProtocolHandler};
     /// #
     /// # #[tokio::main]
     /// # async fn main() -&gt; Result&lt;()&gt; {
@@ -1744,7 +1731,7 @@
     ///
     ///
     </span><span class="kw">pub fn </span>accept(<span class="kw-2">mut </span><span class="self">self</span>, alpn: Vec&lt;u8&gt;, handler: Arc&lt;<span class="kw">dyn </span>ProtocolHandler&gt;) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.protocols.insert(alpn, handler);
+        <span class="self">self</span>.router = <span class="self">self</span>.router.accept(alpn, handler);
         <span class="self">self
     </span>}
 
@@ -1771,7 +1758,7 @@
     /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
     /// does not match the passed type.
     </span><span class="kw">pub fn </span>get_protocol&lt;P: ProtocolHandler&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, alpn: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;P&gt;&gt; {
-        <span class="self">self</span>.protocols.get_typed(alpn)
+        <span class="self">self</span>.router.get_protocol::&lt;P&gt;(alpn)
     }
 
     <span class="doccomment">/// Registers the core iroh protocols (blobs, gossip, docs).
@@ -1809,24 +1796,15 @@
             inner,
             internal_rpc,
             external_rpc,
-            protocols,
+            router,
             gc_done_callback,
             gc_policy,
             nodes_data_path,
             local_pool: rt,
         } = <span class="self">self</span>;
-        <span class="kw">let </span>protocols = Arc::new(protocols);
         <span class="kw">let </span>node_id = inner.endpoint.node_id();
 
-        <span class="comment">// Update the endpoint with our alpns.
-        </span><span class="kw">let </span>alpns = protocols
-            .alpns()
-            .map(|alpn| alpn.to_vec())
-            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = inner.endpoint.set_alpns(alpns) {
-            inner.shutdown(protocols).<span class="kw">await</span>;
-            <span class="kw">return </span><span class="prelude-val">Err</span>(err);
-        }
+        <span class="kw">let </span>router = router.spawn().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// Spawn the main task and store it in the node for structured termination in shutdown.
         </span><span class="kw">let </span>fut = inner
@@ -1834,7 +1812,7 @@
             .run(
                 external_rpc,
                 internal_rpc,
-                protocols.clone(),
+                router.clone(),
                 gc_policy,
                 gc_done_callback,
                 nodes_data_path,
@@ -1845,7 +1823,7 @@
 
         <span class="kw">let </span>node = Node {
             inner,
-            protocols,
+            router,
             task: AbortOnDropHandle::new(task)
                 .map_err(Box::new(|e: JoinError| e.to_string()) <span class="kw">as </span>JoinErrToStr)
                 .shared(),

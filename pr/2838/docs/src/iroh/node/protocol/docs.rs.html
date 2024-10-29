@@ -61,6 +61,7 @@
 <a href="#61" id="61">61</a>
 <a href="#62" id="62">62</a>
 <a href="#63" id="63">63</a>
+<a href="#64" id="64">64</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{ops::Deref, sync::Arc};
 
 <span class="kw">use </span>anyhow::Result;
@@ -69,8 +70,9 @@
 <span class="kw">use </span>iroh_docs::engine::{DefaultAuthorStorage, Engine};
 <span class="kw">use </span>iroh_gossip::net::Gossip;
 <span class="kw">use </span>iroh_net::{endpoint::Connecting, Endpoint};
+<span class="kw">use </span>iroh_router::ProtocolHandler;
 
-<span class="kw">use </span><span class="kw">crate</span>::node::{DocsStorage, ProtocolHandler};
+<span class="kw">use </span><span class="kw">crate</span>::node::DocsStorage;
 
 <span class="doccomment">/// Wrapper around [`Engine`] so that we can implement our RPC methods directly.
 </span><span class="attr">#[derive(Debug, Clone)]

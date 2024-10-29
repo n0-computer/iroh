@@ -76,13 +76,13 @@ catastrophic packet loss, without a possibility of repair. Prefer
 adapts to the network.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.mtu_discovery_config" class="method"><h4 class="code-header">pub fn <a href="#method.mtu_discovery_config" class="fn">mtu_discovery_config</a>(
     &amp;mut self,
-    value: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;MtuDiscoveryConfig&gt;
-) -&gt; &amp;mut <a class="struct" href="struct.TransportConfig.html" title="struct iroh_net::endpoint::TransportConfig">TransportConfig</a></h4></section></summary><div class="docblock"><p>Specifies the MTU discovery config (see [<code>MtuDiscoveryConfig</code>] for details).</p>
+    value: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="struct.MtuDiscoveryConfig.html" title="struct iroh_net::endpoint::MtuDiscoveryConfig">MtuDiscoveryConfig</a>&gt;
+) -&gt; &amp;mut <a class="struct" href="struct.TransportConfig.html" title="struct iroh_net::endpoint::TransportConfig">TransportConfig</a></h4></section></summary><div class="docblock"><p>Specifies the MTU discovery config (see <a href="struct.MtuDiscoveryConfig.html" title="struct iroh_net::endpoint::MtuDiscoveryConfig"><code>MtuDiscoveryConfig</code></a> for details).</p>
 <p>Enabled by default.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.ack_frequency_config" class="method"><h4 class="code-header">pub fn <a href="#method.ack_frequency_config" class="fn">ack_frequency_config</a>(
     &amp;mut self,
-    value: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;AckFrequencyConfig&gt;
-) -&gt; &amp;mut <a class="struct" href="struct.TransportConfig.html" title="struct iroh_net::endpoint::TransportConfig">TransportConfig</a></h4></section></summary><div class="docblock"><p>Specifies the ACK frequency config (see [<code>AckFrequencyConfig</code>] for details)</p>
+    value: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="struct.AckFrequencyConfig.html" title="struct iroh_net::endpoint::AckFrequencyConfig">AckFrequencyConfig</a>&gt;
+) -&gt; &amp;mut <a class="struct" href="struct.TransportConfig.html" title="struct iroh_net::endpoint::TransportConfig">TransportConfig</a></h4></section></summary><div class="docblock"><p>Specifies the ACK frequency config (see <a href="struct.AckFrequencyConfig.html" title="struct iroh_net::endpoint::AckFrequencyConfig"><code>AckFrequencyConfig</code></a> for details)</p>
 <p>The provided configuration will be ignored if the peer does not support the acknowledgement
 frequency QUIC extension.</p>
 <p>Defaults to <code>None</code>, which disables controlling the peer’s acknowledgement frequency. Even
@@ -122,7 +122,7 @@ memory that may be consumed in that case. When the send buffer is full and a new
 sent, older datagrams are dropped until sufficient space is available.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.congestion_controller_factory" class="method"><h4 class="code-header">pub fn <a href="#method.congestion_controller_factory" class="fn">congestion_controller_factory</a>(
     &amp;mut self,
-    factory: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;dyn ControllerFactory + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Send.html" title="trait core::marker::Send">Send</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Sync.html" title="trait core::marker::Sync">Sync</a>&gt;
+    factory: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;dyn <a class="trait" href="trait.ControllerFactory.html" title="trait iroh_net::endpoint::ControllerFactory">ControllerFactory</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Send.html" title="trait core::marker::Send">Send</a> + <a class="trait" href="https://doc.rust-lang.org/nightly/core/marker/trait.Sync.html" title="trait core::marker::Sync">Sync</a>&gt;
 ) -&gt; &amp;mut <a class="struct" href="struct.TransportConfig.html" title="struct iroh_net::endpoint::TransportConfig">TransportConfig</a></h4></section></summary><div class="docblock"><p>How to construct new <code>congestion::Controller</code>s</p>
 <p>Typically the refcounted configuration of a <code>congestion::Controller</code>,
 e.g. a <code>congestion::NewRenoConfig</code>.</p>

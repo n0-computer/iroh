@@ -317,43 +317,15 @@
 <a href="#317" id="317">317</a>
 <a href="#318" id="318">318</a>
 <a href="#319" id="319">319</a>
-<a href="#320" id="320">320</a>
-<a href="#321" id="321">321</a>
-<a href="#322" id="322">322</a>
-<a href="#323" id="323">323</a>
-<a href="#324" id="324">324</a>
-<a href="#325" id="325">325</a>
-<a href="#326" id="326">326</a>
-<a href="#327" id="327">327</a>
-<a href="#328" id="328">328</a>
-<a href="#329" id="329">329</a>
-<a href="#330" id="330">330</a>
-<a href="#331" id="331">331</a>
-<a href="#332" id="332">332</a>
-<a href="#333" id="333">333</a>
-<a href="#334" id="334">334</a>
-<a href="#335" id="335">335</a>
-<a href="#336" id="336">336</a>
-<a href="#337" id="337">337</a>
-<a href="#338" id="338">338</a>
-<a href="#339" id="339">339</a>
-<a href="#340" id="340">340</a>
-<a href="#341" id="341">341</a>
-<a href="#342" id="342">342</a>
-<a href="#343" id="343">343</a>
-<a href="#344" id="344">344</a>
-<a href="#345" id="345">345</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::path::PathBuf;
 
 <span class="kw">use </span>bytes::Bytes;
-<span class="kw">use </span>iroh_base::{
-    hash::Hash,
-    rpc::{RpcError, RpcResult},
-};
+<span class="kw">use </span>iroh_base::hash::Hash;
 <span class="kw">use </span>iroh_blobs::{
     export::ExportProgress,
     format::collection::Collection,
     get::db::DownloadProgress,
+    net_protocol::{BatchId, BlobDownloadRequest},
     provider::{AddProgress, BatchAddPathProgress},
     store::{
         BaoBlobSize, ConsistencyCheckProgress, ExportFormat, ExportMode, ImportMode,
@@ -362,14 +334,14 @@
     util::SetTagOption,
     BlobFormat, HashAndFormat, Tag,
 };
-<span class="kw">use </span>iroh_net::NodeAddr;
 <span class="kw">use </span>nested_enum_utils::enum_conversions;
 <span class="kw">use </span>quic_rpc_derive::rpc_requests;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="kw">use </span><span class="kw">super</span>::RpcService;
-<span class="kw">use </span><span class="kw">crate</span>::client::blobs::{
-    BlobInfo, BlobStatus, DownloadMode, IncompleteBlobInfo, ReadAtLen, WrapOption,
+<span class="kw">use crate</span>::{
+    client::blobs::{BlobInfo, BlobStatus, IncompleteBlobInfo, ReadAtLen, WrapOption},
+    node::{RpcError, RpcResult},
 };
 
 <span class="attr">#[allow(missing_docs)]
@@ -385,7 +357,7 @@
     <span class="attr">#[server_streaming(response = AddPathResponse)]
     </span>AddPath(AddPathRequest),
     <span class="attr">#[server_streaming(response = DownloadResponse)]
-    </span>Download(DownloadRequest),
+    </span>Download(BlobDownloadRequest),
     <span class="attr">#[server_streaming(response = ExportResponse)]
     </span>Export(ExportRequest),
     <span class="attr">#[server_streaming(response = RpcResult&lt;BlobInfo&gt;)]
@@ -459,28 +431,7 @@
 </span><span class="attr">#[derive(Debug, Serialize, Deserialize, derive_more::Into)]
 </span><span class="kw">pub struct </span>AddPathResponse(<span class="kw">pub </span>AddProgress);
 
-<span class="doccomment">/// A request to the node to download and share the data specified by the hash.
-</span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize)]
-</span><span class="kw">pub struct </span>DownloadRequest {
-    <span class="doccomment">/// This mandatory field contains the hash of the data to download and share.
-    </span><span class="kw">pub </span>hash: Hash,
-    <span class="doccomment">/// If the format is [`BlobFormat::HashSeq`], all children are downloaded and shared as
-    /// well.
-    </span><span class="kw">pub </span>format: BlobFormat,
-    <span class="doccomment">/// This mandatory field specifies the nodes to download the data from.
-    ///
-    /// If set to more than a single node, they will all be tried. If `mode` is set to
-    /// [`DownloadMode::Direct`], they will be tried sequentially until a download succeeds.
-    /// If `mode` is set to [`DownloadMode::Queued`], the nodes may be dialed in parallel,
-    /// if the concurrency limits permit.
-    </span><span class="kw">pub </span>nodes: Vec&lt;NodeAddr&gt;,
-    <span class="doccomment">/// Optional tag to tag the data with.
-    </span><span class="kw">pub </span>tag: SetTagOption,
-    <span class="doccomment">/// Whether to directly start the download or add it to the download queue.
-    </span><span class="kw">pub </span>mode: DownloadMode,
-}
-
-<span class="doccomment">/// Progress response for [`DownloadRequest`]
+<span class="doccomment">/// Progress response for [`BlobDownloadRequest`]
 </span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, derive_more::From, derive_more::Into)]
 </span><span class="kw">pub struct </span>DownloadResponse(<span class="kw">pub </span>DownloadProgress);
 
@@ -685,7 +636,4 @@
 <span class="doccomment">/// Response to a batch add path request
 </span><span class="attr">#[derive(Serialize, Deserialize, Debug)]
 </span><span class="kw">pub struct </span>BatchAddPathResponse(<span class="kw">pub </span>BatchAddPathProgress);
-
-<span class="attr">#[derive(Debug, PartialEq, Eq, PartialOrd, Serialize, Deserialize, Ord, Clone, Copy, Hash)]
-</span><span class="kw">pub struct </span>BatchId(<span class="kw">pub</span>(<span class="kw">crate</span>) u64);
 </code></pre></div></section></main></body></html>

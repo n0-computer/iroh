@@ -445,11 +445,6 @@
 <a href="#445" id="445">445</a>
 <a href="#446" id="446">446</a>
 <a href="#447" id="447">447</a>
-<a href="#448" id="448">448</a>
-<a href="#449" id="449">449</a>
-<a href="#450" id="450">450</a>
-<a href="#451" id="451">451</a>
-<a href="#452" id="452">452</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
@@ -458,12 +453,9 @@
 <span class="kw">pub use </span>dns_server::create_dns_resolver;
 <span class="kw">use </span>tokio::sync::oneshot;
 
-<span class="kw">use crate</span>::{
-    key::SecretKey,
-    relay::{
-        server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
-        RelayMap, RelayNode, RelayUrl,
-    },
+<span class="kw">use </span><span class="kw">crate</span>::relay::{
+    server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
+    RelayMap, RelayNode, RelayUrl,
 };
 
 <span class="doccomment">/// A drop guard to clean up test infrastructure.
@@ -481,7 +473,6 @@
 /// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
 /// When dropped, the returned [`Server`] does will stop running.
 </span><span class="kw">pub async fn </span>run_relay_server() -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server)&gt; {
-    <span class="kw">let </span>secret_key = SecretKey::generate();
     <span class="kw">let </span>cert = rcgen::generate_simple_self_signed(<span class="macro">vec!</span>[<span class="string">"localhost"</span>.to_string()]).unwrap();
     <span class="kw">let </span>rustls_cert = rustls::pki_types::CertificateDer::from(cert.serialize_der().unwrap());
     <span class="kw">let </span>private_key =
@@ -491,7 +482,6 @@
     <span class="kw">let </span>config = ServerConfig {
         relay: <span class="prelude-val">Some</span>(RelayConfig {
             http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
-            secret_key,
             tls: <span class="prelude-val">Some</span>(TlsConfig {
                 cert: CertConfig::&lt;(), ()&gt;::Manual {
                     private_key,
