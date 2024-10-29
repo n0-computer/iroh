@@ -106,7 +106,7 @@ use iroh_base::node_addr::NodeAddr;
 use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{debug, error_span, warn, Instrument};
 
-use crate::{AddrInfo, Endpoint, NodeId};
+use crate::{Endpoint, NetworkPaths, NodeId};
 
 pub mod dns;
 
@@ -140,7 +140,7 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     ///
     /// This will be called from a tokio task, so it is safe to spawn new tasks.
     /// These tasks will be run on the runtime of the [`super::Endpoint`].
-    fn publish(&self, _info: &AddrInfo) {}
+    fn publish(&self, _info: &NetworkPaths) {}
 
     /// Resolves the [`AddrInfo`] for the given [`NodeId`].
     ///
@@ -196,7 +196,7 @@ pub struct DiscoveryItem {
     // TODO(ramfox): this is currently unused. As we develop more `DiscoveryService`s, we may discover that we do not need this. It is only truly relevant when comparing `relay_urls`, since we can attempt to dial any number of socket addresses, but expect each node to have one "home relay" that we will attempt to contact them on. This means we would need some way to determine which relay url to choose between, if more than one relay url is reported.
     pub last_updated: Option<u64>,
     /// The address info for the node being resolved.
-    pub addr_info: AddrInfo,
+    pub addr_info: NetworkPaths,
 }
 
 /// A discovery service that combines multiple discovery sources.
@@ -235,7 +235,7 @@ where
 }
 
 impl Discovery for ConcurrentDiscovery {
-    fn publish(&self, info: &AddrInfo) {
+    fn publish(&self, info: &NetworkPaths) {
         for service in &self.services {
             service.publish(info);
         }
@@ -448,7 +448,7 @@ mod tests {
 
     #[derive(Debug, Clone, Default)]
     struct TestDiscoveryShared {
-        nodes: Arc<Mutex<HashMap<NodeId, (AddrInfo, u64)>>>,
+        nodes: Arc<Mutex<HashMap<NodeId, (NetworkPaths, u64)>>>,
     }
     impl TestDiscoveryShared {
         pub fn create_discovery(&self, node_id: NodeId) -> TestDiscovery {
@@ -481,7 +481,7 @@ mod tests {
     }
 
     impl Discovery for TestDiscovery {
-        fn publish(&self, info: &AddrInfo) {
+        fn publish(&self, info: &NetworkPaths) {
             if !self.publish {
                 return;
             }
@@ -504,7 +504,7 @@ mod tests {
                     let port: u16 = rand::thread_rng().gen_range(10_000..20_000);
                     // "240.0.0.0/4" is reserved and unreachable
                     let addr: SocketAddr = format!("240.0.0.1:{port}").parse().unwrap();
-                    let addr_info = AddrInfo {
+                    let addr_info = NetworkPaths {
                         relay_url: None,
                         direct_addresses: BTreeSet::from([addr]),
                     };
@@ -540,7 +540,7 @@ mod tests {
     #[derive(Debug)]
     struct EmptyDiscovery;
     impl Discovery for EmptyDiscovery {
-        fn publish(&self, _info: &AddrInfo) {}
+        fn publish(&self, _info: &NetworkPaths) {}
 
         fn resolve(
             &self,
@@ -675,7 +675,7 @@ mod tests {
         ep1.node_addr().await?;
         let ep1_wrong_addr = NodeAddr {
             node_id: ep1.node_id(),
-            info: AddrInfo {
+            info: NetworkPaths {
                 relay_url: None,
                 direct_addresses: BTreeSet::from(["240.0.0.1:1000".parse().unwrap()]),
             },
@@ -742,7 +742,7 @@ mod test_dns_pkarr {
             pkarr_dns_state::State,
             run_relay_server, DnsPkarrServer,
         },
-        AddrInfo, Endpoint, NodeAddr,
+        Endpoint, NetworkPaths, NodeAddr,
     };
 
     const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
@@ -783,7 +783,7 @@ mod test_dns_pkarr {
         let secret_key = SecretKey::generate();
         let node_id = secret_key.public();
 
-        let addr_info = AddrInfo {
+        let addr_info = NetworkPaths {
             relay_url: Some("https://relay.example".parse().unwrap()),
             ..Default::default()
         };

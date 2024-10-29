@@ -251,7 +251,7 @@ pub mod ticket;
 pub mod tls;
 pub(crate) mod util;
 
-pub use endpoint::{AddrInfo, Endpoint, NodeAddr};
+pub use endpoint::{Endpoint, NetworkPaths, NodeAddr};
 pub use iroh_base::{key, key::NodeId};
 
 #[cfg(any(test, feature = "test-utils"))]

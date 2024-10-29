@@ -67,7 +67,7 @@ use crate::{
     net::{interfaces, ip::LocalAddresses, netmon},
     netcheck, portmapper,
     relay::{RelayMap, RelayUrl},
-    stun, AddrInfo,
+    stun, NetworkPaths,
 };
 
 mod metrics;
@@ -1258,7 +1258,7 @@ impl MagicSock {
     /// Called whenever our addresses or home relay node changes.
     fn publish_my_addr(&self) {
         if let Some(ref discovery) = self.discovery {
-            let info = AddrInfo {
+            let info = NetworkPaths {
                 relay_url: self.my_relay(),
                 direct_addresses: self.direct_addrs.sockaddrs(),
             };
@@ -2867,7 +2867,7 @@ mod tests {
 
                 let addr = NodeAddr {
                     node_id: me.public(),
-                    info: crate::AddrInfo {
+                    info: crate::NetworkPaths {
                         relay_url: None,
                         direct_addresses: new_addrs.iter().map(|ep| ep.addr).collect(),
                     },
@@ -3733,7 +3733,7 @@ mod tests {
 
         let node_addr_2 = NodeAddr {
             node_id: node_id_2,
-            info: AddrInfo {
+            info: NetworkPaths {
                 relay_url: None,
                 direct_addresses: msock_2
                     .direct_addresses()
@@ -3805,7 +3805,7 @@ mod tests {
         msock_1.node_map.add_node_addr(
             NodeAddr {
                 node_id: node_id_2,
-                info: AddrInfo::default(),
+                info: NetworkPaths::default(),
             },
             Source::NamedApp {
                 name: "test".into(),
@@ -3840,7 +3840,7 @@ mod tests {
         msock_1.node_map.add_node_addr(
             NodeAddr {
                 node_id: node_id_2,
-                info: AddrInfo {
+                info: NetworkPaths {
                     relay_url: None,
                     direct_addresses: msock_2
                         .direct_addresses()

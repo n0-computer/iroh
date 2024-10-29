@@ -42,7 +42,7 @@ use crate::{
 
 mod rtt_actor;
 
-pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
+pub use iroh_base::node_addr::{NetworkPaths, NodeAddr};
 pub use quinn::{
     ApplicationClose, Connection, ConnectionClose, ConnectionError, ReadError, RecvStream,
     RetryError, SendStream, ServerConfig, TransportConfig, VarInt, WriteError,
@@ -1389,7 +1389,7 @@ mod tests {
 
     #[test]
     fn test_addr_info_debug() {
-        let info = AddrInfo {
+        let info = NetworkPaths {
             relay_url: Some("https://relay.example.com".parse().unwrap()),
             direct_addresses: vec![SocketAddr::from(([1, 2, 3, 4], 1234))]
                 .into_iter()

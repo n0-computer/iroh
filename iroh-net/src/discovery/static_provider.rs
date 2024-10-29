@@ -8,7 +8,7 @@ use std::{
 use futures_lite::stream::{self, StreamExt};
 use iroh_base::{
     key::NodeId,
-    node_addr::{AddrInfo, NodeAddr},
+    node_addr::{NetworkPaths, NodeAddr},
 };
 
 use super::{Discovery, DiscoveryItem};
@@ -22,7 +22,7 @@ pub struct StaticProvider {
 
 #[derive(Debug)]
 struct NodeInfo {
-    info: AddrInfo,
+    info: NetworkPaths,
     last_updated: SystemTime,
 }
 
@@ -131,7 +131,7 @@ impl StaticProvider {
 }
 
 impl Discovery for StaticProvider {
-    fn publish(&self, _info: &AddrInfo) {}
+    fn publish(&self, _info: &NetworkPaths) {}
 
     fn resolve(
         &self,

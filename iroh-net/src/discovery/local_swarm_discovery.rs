@@ -57,7 +57,7 @@ use watchable::Watchable;
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
-    AddrInfo, Endpoint, NodeId,
+    Endpoint, NetworkPaths, NodeId,
 };
 
 /// The n0 local swarm node discovery name
@@ -80,7 +80,7 @@ pub struct LocalSwarmDiscovery {
     handle: AbortOnDropHandle<()>,
     sender: mpsc::Sender<Message>,
     /// When `local_addrs` changes, we re-publish our [`AddrInfo`]
-    local_addrs: Watchable<Option<AddrInfo>>,
+    local_addrs: Watchable<Option<NetworkPaths>>,
 }
 
 #[derive(Debug)]
@@ -153,7 +153,7 @@ impl LocalSwarmDiscovery {
             &rt,
         )?;
 
-        let local_addrs: Watchable<Option<AddrInfo>> = Watchable::new(None);
+        let local_addrs: Watchable<Option<NetworkPaths>> = Watchable::new(None);
         let addrs_change = local_addrs.watch();
         let discovery_fut = async move {
             let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
@@ -357,7 +357,7 @@ fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
         node_id: *node_id,
         provenance: NAME,
         last_updated: None,
-        addr_info: AddrInfo {
+        addr_info: NetworkPaths {
             relay_url: None,
             direct_addresses,
         },
@@ -378,7 +378,7 @@ impl Discovery for LocalSwarmDiscovery {
         Some(Box::pin(stream.flatten_stream()))
     }
 
-    fn publish(&self, info: &AddrInfo) {
+    fn publish(&self, info: &NetworkPaths) {
         self.local_addrs.replace(Some(info.clone()));
     }
 
@@ -411,7 +411,7 @@ mod tests {
             let (node_id_b, discovery_b) = make_discoverer()?;
 
             // make addr info for discoverer b
-            let addr_info = AddrInfo {
+            let addr_info = NetworkPaths {
                 relay_url: None,
                 direct_addresses: BTreeSet::from(["0.0.0.0:11111".parse()?]),
             };
@@ -447,7 +447,7 @@ mod tests {
             let mut discoverers = vec![];
 
             let (_, discovery) = make_discoverer()?;
-            let addr_info = AddrInfo {
+            let addr_info = NetworkPaths {
                 relay_url: None,
                 direct_addresses: BTreeSet::from(["0.0.0.0:11111".parse()?]),
             };

@@ -19,7 +19,7 @@ use super::{
 };
 use crate::{
     disco::{self, SendAddr},
-    endpoint::AddrInfo,
+    endpoint::NetworkPaths,
     key::PublicKey,
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
     net::ip::is_unicast_link_local,
@@ -629,7 +629,7 @@ impl NodeState {
         ping_msgs
     }
 
-    pub(super) fn update_from_node_addr(&mut self, n: &AddrInfo, source: super::Source) {
+    pub(super) fn update_from_node_addr(&mut self, n: &NetworkPaths, source: super::Source) {
         if self.udp_paths.best_addr.is_empty() {
             // we do not have a direct connection, so changing the relay information may
             // have an effect on our connection status
@@ -1175,7 +1175,7 @@ impl From<RemoteInfo> for NodeAddr {
 
         NodeAddr {
             node_id: info.node_id,
-            info: AddrInfo {
+            info: NetworkPaths {
                 relay_url: info.relay_url.map(Into::into),
                 direct_addresses,
             },

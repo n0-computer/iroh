@@ -26,7 +26,7 @@ use crate::{
     },
     dns::node_info::NodeInfo,
     key::SecretKey,
-    AddrInfo, Endpoint, NodeId,
+    Endpoint, NetworkPaths, NodeId,
 };
 
 /// Republish delay for the DHT.
@@ -362,7 +362,7 @@ impl DhtDiscovery {
 }
 
 impl Discovery for DhtDiscovery {
-    fn publish(&self, info: &AddrInfo) {
+    fn publish(&self, info: &NetworkPaths) {
         let Some(keypair) = &self.0.secret_key else {
             tracing::debug!("no keypair set, not publishing");
             return;
@@ -432,7 +432,7 @@ mod tests {
             .build()?;
         let relay_url: RelayUrl = Url::parse("https://example.com")?.into();
 
-        discovery.publish(&AddrInfo {
+        discovery.publish(&NetworkPaths {
             relay_url: Some(relay_url.clone()),
             direct_addresses: Default::default(),
         });

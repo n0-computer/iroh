@@ -43,7 +43,7 @@ pub struct NodeAddr {
     /// The node's identifier.
     pub node_id: NodeId,
     /// Addressing information to connect to [`Self::node_id`].
-    pub info: AddrInfo,
+    pub info: NetworkPaths,
 }
 
 impl NodeAddr {
@@ -78,7 +78,7 @@ impl NodeAddr {
     ) -> Self {
         Self {
             node_id,
-            info: AddrInfo {
+            info: NetworkPaths {
                 relay_url,
                 direct_addresses: direct_addresses.into_iter().collect(),
             },
@@ -112,7 +112,7 @@ impl From<(PublicKey, Option<RelayUrl>, &[SocketAddr])> for NodeAddr {
         let (node_id, relay_url, direct_addresses_iter) = value;
         NodeAddr {
             node_id,
-            info: AddrInfo {
+            info: NetworkPaths {
                 relay_url,
                 direct_addresses: direct_addresses_iter.iter().copied().collect(),
             },
@@ -126,7 +126,7 @@ impl From<NodeId> for NodeAddr {
     }
 }
 
-/// Network paths to contact an iroh-net node.
+/// Network paths on which an iroh-net node might be reachable.
 ///
 /// This contains zero or more network paths to establish a connection to an iroh-net node.
 /// Unless a [discovery service] is used at least one path is required to connect to an
@@ -134,14 +134,14 @@ impl From<NodeId> for NodeAddr {
 ///
 /// [discovery]: https://docs.rs/iroh_net/*/iroh_net/index.html#node-discovery
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, PartialOrd, Ord)]
-pub struct AddrInfo {
+pub struct NetworkPaths {
     /// The node's home relay url.
     pub relay_url: Option<RelayUrl>,
     /// Socket addresses where the peer might be reached directly.
     pub direct_addresses: BTreeSet<SocketAddr>,
 }
 
-impl AddrInfo {
+impl NetworkPaths {
     /// Returns whether this addressing information is empty.
     pub fn is_empty(&self) -> bool {
         self.relay_url.is_none() && self.direct_addresses.is_empty()

@@ -56,7 +56,7 @@ use iroh_blobs::{
 use iroh_docs::net::DOCS_ALPN;
 use iroh_net::{
     endpoint::{DirectAddrsStream, RemoteInfo},
-    AddrInfo, Endpoint, NodeAddr,
+    Endpoint, NetworkPaths, NodeAddr,
 };
 use iroh_router::{ProtocolHandler, Router};
 use protocol::blobs::BlobsProtocol;
@@ -486,7 +486,7 @@ fn node_address_for_storage(info: RemoteInfo) -> Option<NodeAddr> {
     } else {
         Some(NodeAddr {
             node_id: info.node_id,
-            info: AddrInfo {
+            info: NetworkPaths {
                 relay_url: info.relay_url.map(|u| u.into()),
                 direct_addresses,
             },

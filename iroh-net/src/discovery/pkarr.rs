@@ -62,7 +62,7 @@ use crate::{
     dns::node_info::NodeInfo,
     key::SecretKey,
     relay::force_staging_infra,
-    AddrInfo, Endpoint, NodeId,
+    Endpoint, NetworkPaths, NodeId,
 };
 
 #[cfg(feature = "discovery-pkarr-dht")]
@@ -196,7 +196,7 @@ impl PkarrPublisher {
     /// Publishes [`AddrInfo`] about this node to a pkarr relay.
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
-    pub fn update_addr_info(&self, info: &AddrInfo) {
+    pub fn update_addr_info(&self, info: &NetworkPaths) {
         let (relay_url, direct_addresses) = if let Some(relay_url) = info.relay_url.as_ref() {
             (Some(relay_url.clone().into()), Default::default())
         } else {
@@ -208,7 +208,7 @@ impl PkarrPublisher {
 }
 
 impl Discovery for PkarrPublisher {
-    fn publish(&self, info: &AddrInfo) {
+    fn publish(&self, info: &NetworkPaths) {
         self.update_addr_info(info);
     }
 }
