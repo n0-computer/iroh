@@ -7,7 +7,7 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use hyper::{service::service_fn, Request, Response};
 use tokio::{io::AsyncWriteExt as _, net::TcpListener};
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::{core::Core, parse_prometheus_metrics};
 
@@ -115,4 +115,54 @@ async fn dump_metrics(
         }
     }
     Ok(())
+}
+
+/// Export metrics to a push gateway.
+pub async fn exporter(
+    gateway_endpoint: String,
+    service_name: String,
+    instance_name: String,
+    username: Option<String>,
+    password: String,
+    interval: Duration,
+) {
+    let Some(core) = Core::get() else {
+        error!("metrics disabled");
+        return;
+    };
+    let push_client = reqwest::Client::new();
+    let prom_gateway_uri = format!(
+        "{}/metrics/job/{}/instance/{}",
+        gateway_endpoint, service_name, instance_name
+    );
+    loop {
+        tokio::time::sleep(interval).await;
+        let buff = core.encode();
+        match buff {
+            Err(e) => error!("Failed to encode metrics: {e:#}"),
+            Ok(buff) => {
+                let mut req = push_client.post(&prom_gateway_uri);
+                if let Some(username) = username.clone() {
+                    req = req.basic_auth(username, Some(password.clone()));
+                }
+                let res = match req.body(buff).send().await {
+                    Ok(res) => res,
+                    Err(e) => {
+                        warn!("failed to push metrics: {}", e);
+                        continue;
+                    }
+                };
+                match res.status() {
+                    reqwest::StatusCode::OK => {
+                        debug!("pushed metrics to gateway");
+                    }
+                    _ => {
+                        warn!("failed to push metrics to gateway: {:?}", res);
+                        let body = res.text().await.unwrap();
+                        warn!("error body: {}", body);
+                    }
+                }
+            }
+        }
+    }
 }
