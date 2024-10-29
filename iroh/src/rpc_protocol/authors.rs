@@ -1,10 +1,10 @@
-use iroh_base::rpc::RpcResult;
 use iroh_docs::{Author, AuthorId};
 use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
 use super::RpcService;
+use crate::node::RpcResult;
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]

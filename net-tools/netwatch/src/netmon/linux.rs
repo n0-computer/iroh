@@ -13,7 +13,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{info, trace, warn};
 
 use super::actor::NetworkMessage;
-use crate::net::ip::is_link_local;
+use crate::ip::is_link_local;
 
 #[derive(Debug)]
 pub(super) struct RouteMonitor {

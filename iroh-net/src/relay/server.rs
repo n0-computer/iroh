@@ -28,7 +28,6 @@ use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
 use crate::{
-    key::SecretKey,
     relay::http::{LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH},
     stun,
 };
@@ -50,7 +49,6 @@ pub use self::{
 const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Tailscale-Challenge";
 const NO_CONTENT_RESPONSE_HEADER: &str = "X-Tailscale-Response";
 const NOTFOUND: &[u8] = b"Not Found";
-const RELAY_DISABLED: &[u8] = b"relay server disabled";
 const ROBOTS_TXT: &[u8] = b"User-agent: *\nDisallow: /\n";
 const INDEX: &[u8] = br#"<html><body>
 <h1>Iroh Relay</h1>
@@ -94,8 +92,6 @@ pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
 /// endpoint is only one of the services served.
 #[derive(Debug)]
 pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
-    /// The iroh secret key of the Relay server.
-    pub secret_key: SecretKey,
     /// The socket address on which the Relay HTTP server should bind.
     ///
     /// Normally you'd choose port `80`.  The bind address for the HTTPS server is
@@ -244,9 +240,7 @@ impl Server {
                     None => relay_config.http_bind_addr,
                 };
                 let mut builder = http_server::ServerBuilder::new(relay_bind_addr)
-                    .secret_key(Some(relay_config.secret_key))
                     .headers(headers)
-                    .relay_override(Box::new(relay_disabled_handler))
                     .request_handler(Method::GET, "/", Box::new(root_handler))
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
                     .request_handler(
@@ -518,16 +512,6 @@ async fn handle_stun_request(src_addr: SocketAddr, pkt: Vec<u8>, sock: Arc<UdpSo
     }
 }
 
-fn relay_disabled_handler(
-    _r: Request<Incoming>,
-    response: ResponseBuilder,
-) -> HyperResult<Response<BytesBody>> {
-    response
-        .status(StatusCode::NOT_FOUND)
-        .body(RELAY_DISABLED.into())
-        .map_err(|err| Box::new(err) as HyperError)
-}
-
 fn root_handler(
     _r: Request<Incoming>,
     response: ResponseBuilder,
@@ -712,7 +696,7 @@ mod tests {
 
     use bytes::Bytes;
     use http::header::UPGRADE;
-    use iroh_base::node_addr::RelayUrl;
+    use iroh_base::{key::SecretKey, node_addr::RelayUrl};
 
     use super::*;
     use crate::relay::{
@@ -723,7 +707,6 @@ mod tests {
     async fn spawn_local_relay() -> Result<Server> {
         Server::spawn(ServerConfig::<(), ()> {
             relay: Some(RelayConfig {
-                secret_key: SecretKey::generate(),
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
                 tls: None,
                 limits: Default::default(),
@@ -752,7 +735,6 @@ mod tests {
         let _guard = iroh_test::logging::setup();
         let mut server = Server::spawn(ServerConfig::<(), ()> {
             relay: Some(RelayConfig {
-                secret_key: SecretKey::generate(),
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 1234).into(),
                 tls: None,
                 limits: Default::default(),

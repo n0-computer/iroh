@@ -2,10 +2,11 @@
 
 use std::{net::Ipv4Addr, num::NonZeroU16, time::Duration};
 
+use netwatch::UdpSocket;
 use rand::RngCore;
 use tracing::{debug, trace};
 
-use crate::{defaults::timeouts::PCP_RECV_TIMEOUT as RECV_TIMEOUT, net::UdpSocket};
+use crate::defaults::PCP_RECV_TIMEOUT as RECV_TIMEOUT;
 
 mod protocol;
 

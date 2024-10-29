@@ -7,10 +7,10 @@
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
 use anyhow::{ensure, Result};
+use netwatch::interfaces;
 use tokio::time::Duration;
 
 use crate::{
-    net::interfaces,
     netcheck::Report,
     relay::{RelayMap, RelayNode, RelayUrl},
 };

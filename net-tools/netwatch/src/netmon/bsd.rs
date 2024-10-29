@@ -6,8 +6,8 @@ use tracing::{trace, warn};
 
 use super::actor::NetworkMessage;
 #[cfg(any(target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))]
-use crate::net::interfaces::bsd::{RTAX_DST, RTAX_IFP};
-use crate::net::{interfaces::bsd::WireMessage, ip::is_link_local};
+use crate::interfaces::bsd::{RTAX_DST, RTAX_IFP};
+use crate::{interfaces::bsd::WireMessage, ip::is_link_local};
 
 #[derive(Debug)]
 pub(super) struct RouteMonitor {

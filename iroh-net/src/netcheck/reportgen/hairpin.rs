@@ -15,13 +15,13 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use anyhow::{bail, Context, Result};
+use netwatch::UdpSocket;
 use tokio::{sync::oneshot, time::Instant};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::{
     defaults::timeouts::HAIRPIN_CHECK_TIMEOUT,
-    net::UdpSocket,
     netcheck::{self, reportgen, Inflight},
     stun,
 };

@@ -15,7 +15,9 @@ use std::{
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
+use hickory_resolver::TokioAsyncResolver as DnsResolver;
 use iroh_metrics::inc;
+use netwatch::{IpFamily, UdpSocket};
 use tokio::{
     sync::{self, mpsc, oneshot},
     time::{Duration, Instant},
@@ -23,12 +25,8 @@ use tokio::{
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-use super::{portmapper, relay::RelayMap, stun};
-use crate::{
-    dns::DnsResolver,
-    net::{IpFamily, UdpSocket},
-    relay::RelayUrl,
-};
+use super::{relay::RelayMap, stun};
+use crate::relay::RelayUrl;
 
 mod metrics;
 mod reportgen;
