@@ -1,4 +1,4 @@
-//! This module contains an impl block on [`DocsProtocol`] with handlers for RPC requests
+//! This module contains an impl block on [`Handler`] to handle docs related requests.
 
 use anyhow::anyhow;
 use futures_lite::{Stream, StreamExt};

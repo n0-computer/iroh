@@ -13,7 +13,7 @@ use iroh_net::endpoint::Connecting;
 ///
 /// Implement this trait on a struct that should handle incoming connections.
 /// The protocol handler must then be registered on the node for an ALPN protocol with
-/// [`crate::node::builder::ProtocolBuilder::accept`].
+/// [`crate::RouterBuilder::accept`].
 pub trait ProtocolHandler: Send + Sync + IntoArcAny + std::fmt::Debug + 'static {
     /// Handle an incoming connection.
     ///
