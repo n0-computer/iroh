@@ -16,7 +16,10 @@ use iroh_blobs::{
     store::{Map, Store as BaoStore},
     util::local_pool::{self, LocalPool, LocalPoolHandle, PanicMode},
 };
-use iroh_docs::{engine::DefaultAuthorStorage, net::DOCS_ALPN};
+use iroh_docs::{
+    engine::{DefaultAuthorStorage, Engine},
+    net::DOCS_ALPN,
+};
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 #[cfg(not(test))]
 use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
@@ -37,7 +40,7 @@ use tracing::{debug, error_span, trace, Instrument};
 use super::{rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner};
 use crate::{
     client::RPC_ALPN,
-    node::{nodes_storage::load_node_addrs, protocol::docs::DocsProtocol},
+    node::nodes_storage::load_node_addrs,
     rpc_protocol::RpcService,
     util::{fs::load_secret_key, path::IrohPaths},
 };
@@ -69,6 +72,32 @@ pub enum DocsStorage {
     Memory,
     /// File-based persistent storage.
     Persistent(PathBuf),
+}
+
+/// Start the engine, and prepare the selected storage version.
+async fn spawn_docs<S: iroh_blobs::store::Store>(
+    storage: DocsStorage,
+    blobs_store: S,
+    default_author_storage: DefaultAuthorStorage,
+    endpoint: Endpoint,
+    gossip: Gossip,
+    downloader: Downloader,
+) -> anyhow::Result<Option<Engine>> {
+    let docs_store = match storage {
+        DocsStorage::Disabled => return Ok(None),
+        DocsStorage::Memory => iroh_docs::store::fs::Store::memory(),
+        DocsStorage::Persistent(path) => iroh_docs::store::fs::Store::persistent(path)?,
+    };
+    let engine = Engine::spawn(
+        endpoint,
+        gossip,
+        docs_store,
+        blobs_store,
+        downloader,
+        default_author_storage,
+    )
+    .await?;
+    Ok(Some(engine))
 }
 
 /// Builder for the [`Node`].
@@ -651,7 +680,7 @@ where
 
         // Spawn the docs engine, if enabled.
         // This returns None for DocsStorage::Disabled, otherwise Some(DocsProtocol).
-        let docs = DocsProtocol::spawn(
+        let docs = spawn_docs(
             self.docs_storage,
             self.blobs_store.clone(),
             self.storage.default_author_storage(),
@@ -809,7 +838,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         store: D,
         gossip: Gossip,
         downloader: Downloader,
-        docs: Option<DocsProtocol>,
+        docs: Option<Engine>,
     ) -> Self {
         // Register blobs.
         let blobs_proto = BlobsProtocol::new_with_events(
