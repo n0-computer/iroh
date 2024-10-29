@@ -26,7 +26,7 @@ use crate::{
         keys::{NamespaceSecretKey, UserId, UserSecretKey, UserSignature},
         meadowcap,
     },
-    store::glue::{path_to_blobseq, StoredAuthorisedEntry},
+    store::glue::{path_to_blobseq, StoredAuthorisedEntry, StoredTimestamp},
 };
 
 use super::{
@@ -42,6 +42,22 @@ const MAX_COMMIT_DELAY: Duration = Duration::from_millis(500);
 pub struct Store<PS: iroh_blobs::store::Store> {
     payloads: PS,
     willow: Rc<WillowStore>,
+}
+
+impl<PS: iroh_blobs::store::Store> Store<PS> {
+    pub fn new(db_path: PathBuf, payload_store: PS) -> Result<Self> {
+        Ok(Self {
+            payloads: payload_store,
+            willow: Rc::new(WillowStore::persistent(db_path)?),
+        })
+    }
+
+    pub fn new_memory(payload_store: PS) -> Result<Self> {
+        Ok(Self {
+            payloads: payload_store,
+            willow: Rc::new(WillowStore::memory()?),
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -183,15 +199,6 @@ impl Db {
     }
 }
 
-impl<PS: iroh_blobs::store::Store> Store<PS> {
-    pub fn new(db_path: PathBuf, payload_store: PS) -> Result<Self> {
-        Ok(Self {
-            payloads: payload_store,
-            willow: Rc::new(WillowStore::persistent(db_path)?),
-        })
-    }
-}
-
 impl<PS: iroh_blobs::store::Store> traits::Storage for Store<PS> {
     type Entries = Rc<WillowStore>;
     type Secrets = Rc<WillowStore>;
@@ -266,7 +273,10 @@ impl traits::EntryReader for WillowSnapshot {
         let Some(node_id) = read.namespace_nodes.get(namespace.as_bytes())? else {
             return Ok(either::Left(std::iter::empty()));
         };
-        let ns_node = willow_store::Node::<IrohWillowParams>::from(node_id.value());
+        let node_id = node_id.value();
+        println!("READING FROM {}", node_id);
+        println!("QUERY: {range:?}");
+        let ns_node = willow_store::Node::<IrohWillowParams>::from(node_id);
         Ok(either::Right(
             ns_node
                 .query(&to_query(range), &read.node_store)
@@ -326,7 +336,10 @@ impl traits::EntryStorage for Rc<WillowStore> {
                     *entry.entry().subspace_id(),
                     entry.entry().subspace_id().successor(),
                 ),
-                y: QueryRange::new(0, Some(entry.entry().timestamp())),
+                y: QueryRange::new(
+                    StoredTimestamp::new(0),
+                    Some(StoredTimestamp::new(entry.entry().timestamp())),
+                ),
                 z: QueryRange::new(blobseq_start, blobseq_end),
             };
 
@@ -369,11 +382,15 @@ impl traits::EntryStorage for Rc<WillowStore> {
 
             let _replaced = ns_node.insert(&insert_point, &insert_entry, &mut write.node_store)?;
 
+            println!("AFTER WRITE:");
+            ns_node.dump(&write.node_store)?;
+            println!("Namespace node is {}", ns_node.id());
+
             ns_events.insert(|id| StoreEvent::Ingested(id, entry.clone(), origin));
 
             write
                 .namespace_nodes
-                .insert(namespace.to_bytes(), willow_store::NodeId::from(ns_node))?;
+                .insert(namespace.to_bytes(), ns_node.id())?;
 
             Ok(())
         })?;

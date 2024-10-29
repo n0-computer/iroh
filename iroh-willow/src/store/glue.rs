@@ -1,11 +1,14 @@
 //! Code required for willow-rs and willow-store to interface together.
 
+use std::fmt::Display;
+
 use anyhow::Result;
 use ed25519_dalek::ed25519;
 use iroh_blobs::Hash;
 use willow_data_model::grouping::{Range, RangeEnd};
 use willow_store::{
-    BlobSeq, BlobSeqRef, FixedSize, KeyParams, Point, QueryRange, QueryRange3d, TreeParams,
+    BlobSeq, BlobSeqRef, FixedSize, IsLowerBound, KeyParams, LowerBound, Point, QueryRange,
+    QueryRange3d, TreeParams,
 };
 
 use crate::proto::{
@@ -42,7 +45,7 @@ impl StoredAuthorisedEntry {
     pub fn from_authorised_entry(entry: &AuthorisedEntry) -> (Point<IrohWillowParams>, Self) {
         let point = willow_store::Point::<IrohWillowParams>::new(
             entry.entry().subspace_id(),
-            &entry.entry().timestamp(),
+            &StoredTimestamp::new(entry.entry().timestamp()),
             &path_to_blobseq(entry.entry().path()),
         );
         let entry = Self {
@@ -83,10 +86,60 @@ impl StoredAuthorisedEntry {
             namespace,
             *subspace,
             path,
-            *timestamp,
+            timestamp.timestamp(),
             self.payload_size,
             PayloadDigest(Hash::from_bytes(self.payload_digest)),
         ))
+    }
+}
+
+/// A newtype around memory that represents a timestamp.
+///
+/// This newtype is needed to avoid alignment issues.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    zerocopy_derive::FromBytes,
+    zerocopy_derive::AsBytes,
+    zerocopy_derive::FromZeroes,
+)]
+#[repr(packed)]
+pub(crate) struct StoredTimestamp([u8; 8]);
+
+impl LowerBound for StoredTimestamp {
+    fn min_value() -> Self {
+        Self([0u8; 8])
+    }
+}
+
+impl IsLowerBound for StoredTimestamp {
+    fn is_min_value(&self) -> bool {
+        self.0 == [0u8; 8]
+    }
+}
+
+impl FixedSize for StoredTimestamp {
+    const SIZE: usize = std::mem::size_of::<StoredTimestamp>();
+}
+
+impl Display for StoredTimestamp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.timestamp().fmt(f)
+    }
+}
+
+impl StoredTimestamp {
+    pub(crate) fn new(ts: Timestamp) -> Self {
+        Self(ts.to_le_bytes())
+    }
+
+    pub(crate) fn timestamp(&self) -> Timestamp {
+        u64::from_le_bytes(self.0)
     }
 }
 
@@ -100,7 +153,7 @@ impl TreeParams for IrohWillowParams {
 
 impl KeyParams for IrohWillowParams {
     type X = SubspaceId;
-    type Y = Timestamp;
+    type Y = StoredTimestamp;
     type ZOwned = BlobSeq;
     type Z = BlobSeqRef;
 }
@@ -122,7 +175,7 @@ pub(crate) fn to_query(range3d: &Range3d) -> QueryRange3d<IrohWillowParams> {
     };
     QueryRange3d {
         x: to_query_range(range3d.subspaces()),
-        y: to_query_range(range3d.times()),
+        y: to_query_range(&map_range(range3d.times(), |ts| StoredTimestamp::new(*ts))),
         z: QueryRange::new(path_start, path_end),
     }
 }
@@ -135,4 +188,14 @@ pub(crate) fn to_query_range<T: Ord + Clone>(range: &Range<T>) -> QueryRange<T> 
             RangeEnd::Open => None,
         },
     )
+}
+
+pub(crate) fn map_range<S: Ord, T: Ord>(range: &Range<S>, f: impl Fn(&S) -> T) -> Range<T> {
+    Range {
+        start: f(&range.start),
+        end: match &range.end {
+            RangeEnd::Closed(end) => RangeEnd::Closed(f(end)),
+            RangeEnd::Open => RangeEnd::Open,
+        },
+    }
 }

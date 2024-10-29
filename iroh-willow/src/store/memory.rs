@@ -21,6 +21,7 @@ use willow_store::{QueryRange, QueryRange3d};
 
 use crate::proto::data_model::{AuthorisationToken, PathExt};
 use crate::proto::grouping::Area;
+use crate::store::glue::StoredTimestamp;
 use crate::{
     interest::{CapSelector, CapabilityPack},
     proto::{
@@ -249,7 +250,10 @@ impl EntryStore {
                 *entry.entry().subspace_id(),
                 entry.entry().subspace_id().successor(),
             ),
-            y: QueryRange::new(0, Some(entry.entry().timestamp())),
+            y: QueryRange::new(
+                StoredTimestamp::new(0),
+                Some(StoredTimestamp::new(entry.entry().timestamp())),
+            ),
             z: QueryRange::new(blobseq_start, blobseq_end),
         };
 
@@ -282,6 +286,9 @@ impl EntryStore {
                 });
             }
         }
+
+        println!("AFTER WRITE:");
+        ns_store.entries.dump(&self.store)?;
 
         debug!(
             subspace = %entry.entry().subspace_id().fmt_short(),

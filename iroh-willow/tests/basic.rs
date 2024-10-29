@@ -7,6 +7,7 @@ use futures_lite::StreamExt;
 
 use iroh_blobs::store::{Map, MapEntry};
 use iroh_io::AsyncSliceReaderExt;
+use iroh_net::key::SecretKey;
 use iroh_willow::{
     form::EntryForm,
     interest::{CapSelector, DelegateTo, Interests, IntoAreaOfInterest, RestrictArea},
@@ -280,6 +281,37 @@ async fn peer_manager_twoway_loop() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn read_back_write() -> Result<()> {
+    iroh_test::logging::setup_multithreaded();
+    let mut rng = create_rng("read_back_write");
+
+    let alfie = Peer::spawn(SecretKey::generate_with_rng(&mut rng), Default::default()).await?;
+
+    let user_alfie = alfie.create_user().await?;
+    let namespace_id = alfie
+        .create_namespace(NamespaceKind::Owned, user_alfie)
+        .await?;
+
+    for i in 0u64..2 {
+        let path = Path::from_bytes(&[b"foo", &i.to_le_bytes()])?;
+        let entry = EntryForm::new_bytes(namespace_id, path, "foo");
+        alfie.insert_entry(entry, user_alfie).await?;
+    }
+
+    let entries: Vec<_> = alfie
+        .get_entries(namespace_id, Range3d::new_full())
+        .await?
+        .try_collect()
+        .await?;
+
+    println!("{entries:#?}");
+
+    assert_eq!(entries.len(), 2);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn owned_namespace_subspace_write_sync() -> Result<()> {
     iroh_test::logging::setup_multithreaded();
     let mut rng = create_rng("owned_namespace_subspace_write_sync");
@@ -383,7 +415,10 @@ mod util {
                 .await?;
             let blobs = iroh_blobs::store::mem::Store::default();
             let payloads = blobs.clone();
-            let create_store = move || iroh_willow::store::memory::Store::new(payloads);
+            let create_store = move || {
+                iroh_willow::store::persistent::Store::new_memory(payloads).expect("create store")
+                // iroh_willow::store::memory::Store::new(payloads)
+            };
             let engine = Engine::spawn(endpoint.clone(), create_store, accept_opts);
             let accept_task = tokio::task::spawn({
                 let engine = engine.clone();
