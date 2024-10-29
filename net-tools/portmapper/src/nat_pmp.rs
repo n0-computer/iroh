@@ -2,10 +2,11 @@
 
 use std::{net::Ipv4Addr, num::NonZeroU16, time::Duration};
 
+use netwatch::UdpSocket;
 use tracing::{debug, trace};
 
 use self::protocol::{MapProtocol, Request, Response};
-use crate::{defaults::timeouts::NAT_PMP_RECV_TIMEOUT as RECV_TIMEOUT, net::UdpSocket};
+use crate::defaults::NAT_PMP_RECV_TIMEOUT as RECV_TIMEOUT;
 
 mod protocol;
 

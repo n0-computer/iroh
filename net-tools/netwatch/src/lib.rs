@@ -1,6 +1,6 @@
 //! Networking related utilities
 
-pub(crate) mod interfaces;
+pub mod interfaces;
 pub mod ip;
 mod ip_family;
 pub mod netmon;
