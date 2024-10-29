@@ -213,14 +213,6 @@
 <a href="#213" id="213">213</a>
 <a href="#214" id="214">214</a>
 <a href="#215" id="215">215</a>
-<a href="#216" id="216">216</a>
-<a href="#217" id="217">217</a>
-<a href="#218" id="218">218</a>
-<a href="#219" id="219">219</a>
-<a href="#220" id="220">220</a>
-<a href="#221" id="221">221</a>
-<a href="#222" id="222">222</a>
-<a href="#223" id="223">223</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::time::Instant;
 
 <span class="kw">use </span>anyhow::Result;
@@ -326,27 +318,19 @@
 <span class="kw">pub struct </span>OpenRead {
     <span class="kw">pub </span>namespace_nodes: ReadOnlyTable&lt;NamespaceId, willow_store::NodeId&gt;,
     <span class="kw">pub </span>auth_tokens: ReadOnlyTable&lt;ed25519::SignatureBytes, WriteCap&gt;,
-    <span class="kw">pub </span>auth_token_refcount: ReadOnlyTable&lt;ed25519::SignatureBytes, u64&gt;,
-    <span class="kw">pub </span>user_secrets: ReadOnlyTable&lt;UserId, [u8; <span class="number">32</span>]&gt;,
-    <span class="kw">pub </span>namespace_secrets: ReadOnlyTable&lt;NamespaceId, [u8; <span class="number">32</span>]&gt;,
     <span class="kw">pub </span>read_caps: ReadOnlyMultimapTable&lt;NamespaceId, ReadCap&gt;,
     <span class="kw">pub </span>write_caps: ReadOnlyMultimapTable&lt;NamespaceId, WriteCap&gt;,
     <span class="kw">pub </span>node_store: willow_store::Snapshot,
-    tx: ReadTransaction,
 }
 
 <span class="kw">impl </span>OpenRead {
-    <span class="kw">pub fn </span>new(tx: ReadTransaction) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    <span class="kw">pub fn </span>new(tx: <span class="kw-2">&amp;</span>ReadTransaction) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             namespace_nodes: tx.open_table(NAMESPACE_NODES)<span class="question-mark">?</span>,
             auth_tokens: tx.open_table(AUTH_TOKENS)<span class="question-mark">?</span>,
-            auth_token_refcount: tx.open_table(AUTH_TOKEN_REFCOUNT)<span class="question-mark">?</span>,
-            user_secrets: tx.open_table(USER_SECRETS)<span class="question-mark">?</span>,
-            namespace_secrets: tx.open_table(NAMESPACE_SECRETS)<span class="question-mark">?</span>,
             read_caps: tx.open_multimap_table(READ_CAPS)<span class="question-mark">?</span>,
             write_caps: tx.open_multimap_table(WRITE_CAPS)<span class="question-mark">?</span>,
             node_store: willow_store::Snapshot::open(<span class="kw-2">&amp;</span>tx)<span class="question-mark">?</span>,
-            tx,
         })
     }
 }

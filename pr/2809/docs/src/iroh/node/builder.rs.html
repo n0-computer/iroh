@@ -1006,7 +1006,6 @@
 <a href="#1006" id="1006">1006</a>
 <a href="#1007" id="1007">1007</a>
 <a href="#1008" id="1008">1008</a>
-<a href="#1009" id="1009">1009</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -1094,7 +1093,6 @@
     <span class="doccomment">/// In-memory storage.
     </span>Memory,
     <span class="doccomment">/// File-based persistent storage.
-    </span><span class="attr">#[allow(unused)]
     </span>Persistent(PathBuf),
 }
 
@@ -1344,6 +1342,7 @@
                 <span class="macro">format!</span>(<span class="string">"Failed to load blobs database from {}"</span>, blob_dir.display())
             })<span class="question-mark">?</span>;
         <span class="kw">let </span>docs_storage = DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root));
+        <span class="kw">let </span>spaces_storage = SpacesStorage::Persistent(IrohPaths::SpacesDatabase.with_root(root));
 
         <span class="kw">let </span>secret_key_path = IrohPaths::SecretKey.with_root(root);
         <span class="kw">let </span>secret_key = load_secret_key(secret_key_path).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1361,8 +1360,7 @@
             dns_resolver: <span class="self">self</span>.dns_resolver,
             gc_policy: <span class="self">self</span>.gc_policy,
             docs_storage,
-            <span class="comment">// TODO: Switch to SpacesStorage::Persistent once we have a store.
-            </span>spaces_storage: SpacesStorage::Disabled,
+            spaces_storage,
             node_discovery: <span class="self">self</span>.node_discovery,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,

@@ -64,6 +64,9 @@
 <a href="#64" id="64">64</a>
 <a href="#65" id="65">65</a>
 <a href="#66" id="66">66</a>
+<a href="#67" id="67">67</a>
+<a href="#68" id="68">68</a>
+<a href="#69" id="69">69</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Configuration paths for iroh.
 
 </span><span class="kw">use </span>std::path::{Path, PathBuf};
@@ -81,6 +84,9 @@
     <span class="doccomment">/// Path to the [iroh-docs document database](iroh_docs::store::fs::Store)
     </span><span class="attr">#[strum(serialize = <span class="string">"docs.redb"</span>)]
     </span>DocsDatabase,
+    <span class="doccomment">/// Path to the iroh-willow database
+    </span><span class="attr">#[strum(serialize = <span class="string">"spaces.redb"</span>)]
+    </span>SpacesDatabase,
     <span class="doccomment">/// Path to the console state
     </span><span class="attr">#[strum(serialize = <span class="string">"console"</span>)]
     </span>Console,

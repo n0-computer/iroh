@@ -1186,8 +1186,8 @@
                 shared
                     .store
                     .entries()
-                    .get_authorised_entries(<span class="self">self</span>.namespace(), range)
-                    .peekable(),
+                    .get_authorised_entries(<span class="self">self</span>.namespace(), range)<span class="question-mark">?
+                    </span>.peekable(),
             )
         };
         <span class="comment">// Find out if we will send any entries at all.

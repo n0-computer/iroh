@@ -698,42 +698,120 @@
 <a href="#698" id="698">698</a>
 <a href="#699" id="699">699</a>
 <a href="#700" id="700">700</a>
+<a href="#701" id="701">701</a>
+<a href="#702" id="702">702</a>
+<a href="#703" id="703">703</a>
+<a href="#704" id="704">704</a>
+<a href="#705" id="705">705</a>
+<a href="#706" id="706">706</a>
+<a href="#707" id="707">707</a>
+<a href="#708" id="708">708</a>
+<a href="#709" id="709">709</a>
+<a href="#710" id="710">710</a>
+<a href="#711" id="711">711</a>
+<a href="#712" id="712">712</a>
+<a href="#713" id="713">713</a>
+<a href="#714" id="714">714</a>
+<a href="#715" id="715">715</a>
+<a href="#716" id="716">716</a>
+<a href="#717" id="717">717</a>
+<a href="#718" id="718">718</a>
+<a href="#719" id="719">719</a>
+<a href="#720" id="720">720</a>
+<a href="#721" id="721">721</a>
+<a href="#722" id="722">722</a>
+<a href="#723" id="723">723</a>
+<a href="#724" id="724">724</a>
+<a href="#725" id="725">725</a>
+<a href="#726" id="726">726</a>
+<a href="#727" id="727">727</a>
+<a href="#728" id="728">728</a>
+<a href="#729" id="729">729</a>
+<a href="#730" id="730">730</a>
+<a href="#731" id="731">731</a>
+<a href="#732" id="732">732</a>
+<a href="#733" id="733">733</a>
+<a href="#734" id="734">734</a>
+<a href="#735" id="735">735</a>
+<a href="#736" id="736">736</a>
+<a href="#737" id="737">737</a>
+<a href="#738" id="738">738</a>
+<a href="#739" id="739">739</a>
+<a href="#740" id="740">740</a>
+<a href="#741" id="741">741</a>
+<a href="#742" id="742">742</a>
+<a href="#743" id="743">743</a>
+<a href="#744" id="744">744</a>
+<a href="#745" id="745">745</a>
+<a href="#746" id="746">746</a>
+<a href="#747" id="747">747</a>
+<a href="#748" id="748">748</a>
+<a href="#749" id="749">749</a>
+<a href="#750" id="750">750</a>
+<a href="#751" id="751">751</a>
+<a href="#752" id="752">752</a>
+<a href="#753" id="753">753</a>
+<a href="#754" id="754">754</a>
+<a href="#755" id="755">755</a>
+<a href="#756" id="756">756</a>
+<a href="#757" id="757">757</a>
+<a href="#758" id="758">758</a>
+<a href="#759" id="759">759</a>
+<a href="#760" id="760">760</a>
+<a href="#761" id="761">761</a>
+<a href="#762" id="762">762</a>
+<a href="#763" id="763">763</a>
+<a href="#764" id="764">764</a>
+<a href="#765" id="765">765</a>
+<a href="#766" id="766">766</a>
+<a href="#767" id="767">767</a>
+<a href="#768" id="768">768</a>
+<a href="#769" id="769">769</a>
+<a href="#770" id="770">770</a>
+<a href="#771" id="771">771</a>
+<a href="#772" id="772">772</a>
+<a href="#773" id="773">773</a>
+<a href="#774" id="774">774</a>
+<a href="#775" id="775">775</a>
+<a href="#776" id="776">776</a>
+<a href="#777" id="777">777</a>
+<a href="#778" id="778">778</a>
+<a href="#779" id="779">779</a>
+<a href="#780" id="780">780</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>ed25519_dalek::ed25519;
+<span class="kw">use </span>futures_util::Stream;
 <span class="kw">use </span>redb::{Database, ReadableTable};
 <span class="kw">use </span>std::{
     cell::{Ref, RefCell, RefMut},
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     ops::DerefMut,
     path::PathBuf,
-    rc::Rc,
+    pin::Pin,
+    rc::{Rc, Weak},
+    task::{ready, Context, Poll, Waker},
     time::Duration,
 };
-<span class="kw">use </span>willow_data_model::{
-    grouping::{Range, RangeEnd},
-    SubspaceId <span class="kw">as _</span>,
-};
+<span class="kw">use </span>willow_data_model::SubspaceId <span class="kw">as _</span>;
 <span class="kw">use </span>willow_store::{QueryRange, QueryRange3d};
 
 <span class="kw">use crate</span>::{
     interest::{CapSelector, CapabilityPack},
     proto::{
         data_model::{
-            AuthorisationToken, AuthorisedEntry, Entry, EntryExt <span class="kw">as _</span>, NamespaceId, Path,
-            PathExt <span class="kw">as _</span>, SubspaceId, WriteCapability,
+            AuthorisationToken, AuthorisedEntry, NamespaceId, Path, PathExt <span class="kw">as _</span>, SubspaceId,
+            WriteCapability,
         },
-        grouping::Range3d,
+        grouping::{Area, Range3d},
         keys::{NamespaceSecretKey, UserId, UserSecretKey, UserSignature},
         meadowcap,
-        wgps::Fingerprint,
     },
-    store::glue::{path_to_blobseq, StoredAuthorisedEntry},
+    store::glue::{path_to_blobseq, StoredAuthorisedEntry, StoredTimestamp},
 };
 
 <span class="kw">use super</span>::{
     glue::{to_query, IrohWillowParams},
-    memory,
-    traits::{<span class="self">self</span>, SplitAction, StoreEvent},
+    traits::{<span class="self">self</span>, StoreEvent, SubscribeParams},
 };
 
 <span class="kw">mod </span>tables;
@@ -746,10 +824,26 @@
     willow: Rc&lt;WillowStore&gt;,
 }
 
+<span class="kw">impl</span>&lt;PS: iroh_blobs::store::Store&gt; Store&lt;PS&gt; {
+    <span class="kw">pub fn </span>new(db_path: PathBuf, payload_store: PS) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+            payloads: payload_store,
+            willow: Rc::new(WillowStore::persistent(db_path)<span class="question-mark">?</span>),
+        })
+    }
+
+    <span class="kw">pub fn </span>new_memory(payload_store: PS) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+            payloads: payload_store,
+            willow: Rc::new(WillowStore::memory()<span class="question-mark">?</span>),
+        })
+    }
+}
+
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>WillowStore {
     db: Db,
-    namespace_events: RefCell&lt;HashMap&lt;NamespaceId, memory::EventQueue&lt;StoreEvent&gt;&gt;&gt;,
+    namespace_events: RefCell&lt;HashMap&lt;NamespaceId, EventQueue&lt;StoreEvent&gt;&gt;&gt;,
 }
 
 <span class="attr">#[derive(derive_more::Debug)]
@@ -768,11 +862,7 @@
 }
 
 <span class="kw">impl </span>WillowStore {
-    <span class="kw">fn </span>memory() -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::memory_impl().expect(<span class="string">"failed to create memory store"</span>)
-    }
-
-    <span class="kw">fn </span>memory_impl() -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    <span class="kw">pub fn </span>memory() -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>db = Database::builder().create_with_backend(redb::backends::InMemoryBackend::new())<span class="question-mark">?</span>;
         <span class="self">Self</span>::new_impl(db)
     }
@@ -781,7 +871,7 @@
     ///
     /// The file will be created if it does not exist, otherwise it will be opened.
     </span><span class="kw">pub fn </span>persistent(path: <span class="kw">impl </span>AsRef&lt;std::path::Path&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>db = Database::create(<span class="kw-2">&amp;</span>path)<span class="question-mark">?</span>;
+        <span class="kw">let </span>db = Database::create(<span class="kw-2">&amp;</span>path.as_ref())<span class="question-mark">?</span>;
         <span class="self">Self</span>::new_impl(db)
     }
 
@@ -821,12 +911,12 @@
         <span class="kw">let </span>tables = <span class="kw">match </span>std::mem::take(guard.deref_mut()) {
             CurrentTransaction::None =&gt; {
                 <span class="kw">let </span>tx = <span class="self">self</span>.redb.begin_read()<span class="question-mark">?</span>;
-                tables::OpenRead::new(tx)<span class="question-mark">?
+                tables::OpenRead::new(<span class="kw-2">&amp;</span>tx)<span class="question-mark">?
             </span>}
             CurrentTransaction::Write(w) =&gt; {
                 w.commit()<span class="question-mark">?</span>;
                 <span class="kw">let </span>tx = <span class="self">self</span>.redb.begin_read()<span class="question-mark">?</span>;
-                tables::OpenRead::new(tx)<span class="question-mark">?
+                tables::OpenRead::new(<span class="kw-2">&amp;</span>tx)<span class="question-mark">?
             </span>}
             CurrentTransaction::Read(tables) =&gt; tables,
         };
@@ -849,7 +939,7 @@
         <span class="comment">// make sure the current transaction is committed
         </span><span class="self">self</span>.flush()<span class="question-mark">?</span>;
         <span class="kw">let </span>tx = <span class="self">self</span>.redb.begin_read()<span class="question-mark">?</span>;
-        <span class="kw">let </span>tables = tables::OpenRead::new(tx)<span class="question-mark">?</span>;
+        <span class="kw">let </span>tables = tables::OpenRead::new(<span class="kw-2">&amp;</span>tx)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(tables)
     }
 
@@ -889,15 +979,6 @@
     }
 }
 
-<span class="kw">impl</span>&lt;PS: iroh_blobs::store::Store&gt; Store&lt;PS&gt; {
-    <span class="kw">pub fn </span>new(db_path: PathBuf, payload_store: PS) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-            payloads: payload_store,
-            willow: Rc::new(WillowStore::persistent(db_path)<span class="question-mark">?</span>),
-        })
-    }
-}
-
 <span class="kw">impl</span>&lt;PS: iroh_blobs::store::Store&gt; traits::Storage <span class="kw">for </span>Store&lt;PS&gt; {
     <span class="kw">type </span>Entries = Rc&lt;WillowStore&gt;;
     <span class="kw">type </span>Secrets = Rc&lt;WillowStore&gt;;
@@ -925,92 +1006,9 @@
 </span><span class="kw">pub struct </span>WillowSnapshot(<span class="attr">#[debug(skip)] </span>Rc&lt;tables::OpenRead&gt;);
 
 <span class="kw">impl </span>traits::EntryReader <span class="kw">for </span>WillowSnapshot {
-    <span class="kw">fn </span>fingerprint(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>Range3d) -&gt; <span class="prelude-ty">Result</span>&lt;Fingerprint&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>fingerprint = Fingerprint::default();
-        <span class="kw">for </span>entry <span class="kw">in </span><span class="self">self</span>.get_entries(namespace, range) {
-            <span class="kw">let </span>entry = entry<span class="question-mark">?</span>;
-            fingerprint.add_entry(<span class="kw-2">&amp;</span>entry);
-        }
-        <span class="prelude-val">Ok</span>(fingerprint)
-    }
+    <span class="comment">// TODO(matheus23): Impl faster version of default methods
 
-    <span class="kw">fn </span>split_range(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        namespace: NamespaceId,
-        range: <span class="kw-2">&amp;</span>Range3d,
-        config: <span class="kw-2">&amp;</span>traits::SplitOpts,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;traits::RangeSplit&gt;&gt;&gt; {
-        <span class="comment">// TODO(matheus23): Do the split using willow_store directly?
-        </span><span class="kw">let </span>count = <span class="self">self</span>.get_entries(namespace, range).count();
-        <span class="kw">if </span>count &lt;= config.max_set_size {
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(
-                <span class="macro">vec!</span>[<span class="prelude-val">Ok</span>((range.clone(), SplitAction::SendEntries(count <span class="kw">as </span>u64)))].into_iter(),
-            );
-        }
-        <span class="kw">let </span><span class="kw-2">mut </span>entries: Vec&lt;Entry&gt; = <span class="self">self
-            </span>.get_entries(namespace, range)
-            .filter_map(|e| e.ok())
-            .collect();
-
-        entries.sort_by(|e1, e2| e1.as_sortable_tuple().cmp(<span class="kw-2">&amp;</span>e2.as_sortable_tuple()));
-
-        <span class="kw">let </span>split_index = count / <span class="number">2</span>;
-        <span class="kw">let </span>mid = entries.get(split_index).expect(<span class="string">"not empty"</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>ranges = <span class="macro">vec!</span>[];
-        <span class="comment">// split in two halves by subspace
-        </span><span class="kw">if </span><span class="kw-2">*</span>mid.subspace_id() != range.subspaces().start {
-            ranges.push(Range3d::new(
-                Range::new_closed(range.subspaces().start, <span class="kw-2">*</span>mid.subspace_id()).unwrap(),
-                range.paths().clone(),
-                <span class="kw-2">*</span>range.times(),
-            ));
-            ranges.push(Range3d::new(
-                Range::new(<span class="kw-2">*</span>mid.subspace_id(), range.subspaces().end),
-                range.paths().clone(),
-                <span class="kw-2">*</span>range.times(),
-            ));
-        }
-        <span class="comment">// split by path
-        </span><span class="kw">else if </span><span class="kw-2">*</span>mid.path() != range.paths().start {
-            ranges.push(Range3d::new(
-                <span class="kw-2">*</span>range.subspaces(),
-                Range::new(
-                    range.paths().start.clone(),
-                    RangeEnd::Closed(mid.path().clone()),
-                ),
-                <span class="kw-2">*</span>range.times(),
-            ));
-            ranges.push(Range3d::new(
-                <span class="kw-2">*</span>range.subspaces(),
-                Range::new(mid.path().clone(), range.paths().end.clone()),
-                <span class="kw-2">*</span>range.times(),
-            ));
-        <span class="comment">// split by time
-        </span>} <span class="kw">else </span>{
-            ranges.push(Range3d::new(
-                <span class="kw-2">*</span>range.subspaces(),
-                range.paths().clone(),
-                Range::new(range.times().start, RangeEnd::Closed(mid.timestamp())),
-            ));
-            ranges.push(Range3d::new(
-                <span class="kw-2">*</span>range.subspaces(),
-                range.paths().clone(),
-                Range::new(mid.timestamp(), range.times().end),
-            ));
-        }
-        <span class="kw">let </span><span class="kw-2">mut </span>out = <span class="macro">vec!</span>[];
-        <span class="kw">for </span>range <span class="kw">in </span>ranges {
-            <span class="kw">let </span>fingerprint = <span class="self">self</span>.fingerprint(namespace, <span class="kw-2">&amp;</span>range)<span class="question-mark">?</span>;
-            out.push(<span class="prelude-val">Ok</span>((range, SplitAction::SendFingerprint(fingerprint))));
-        }
-        <span class="prelude-val">Ok</span>(out.into_iter())
-    }
-
-    <span class="kw">fn </span>count(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>Range3d) -&gt; <span class="prelude-ty">Result</span>&lt;u64&gt; {
-        <span class="prelude-val">Ok</span>(<span class="self">self</span>.get_entries(namespace, range).count() <span class="kw">as </span>u64)
-    }
-
-    <span class="kw">fn </span>get_entry(
+    </span><span class="kw">fn </span>get_entry(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         namespace: NamespaceId,
         subspace: SubspaceId,
@@ -1049,20 +1047,17 @@
         <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="self">self</span>,
         namespace: NamespaceId,
         range: <span class="kw-2">&amp;</span>Range3d,
-    ) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;AuthorisedEntry&gt;&gt; + <span class="lifetime">'a </span>{
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;AuthorisedEntry&gt;&gt; + <span class="lifetime">'a</span>&gt; {
         <span class="kw">let </span>clone = Rc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>);
         <span class="kw">let </span>read = <span class="self">self</span>.<span class="number">0</span>.as_ref();
-        <span class="kw">let </span>node_id = <span class="kw">match </span>read.namespace_nodes.get(namespace.as_bytes()) {
-            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(node_id)) =&gt; node_id,
-            <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
-                <span class="kw">return </span>either::Left(either::Left(std::iter::empty()));
-            }
-            <span class="prelude-val">Err</span>(e) =&gt; {
-                <span class="kw">return </span>either::Left(either::Right(std::iter::once(<span class="prelude-val">Err</span>(anyhow::Error::from(e)))));
-            }
+        <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = read.namespace_nodes.get(namespace.as_bytes())<span class="question-mark">? </span><span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(either::Left(std::iter::empty()));
         };
-        <span class="kw">let </span>ns_node = willow_store::Node::&lt;IrohWillowParams&gt;::from(node_id.value());
-        either::Right(
+        <span class="kw">let </span>node_id = node_id.value();
+        <span class="macro">println!</span>(<span class="string">"READING FROM {}"</span>, node_id);
+        <span class="macro">println!</span>(<span class="string">"QUERY: {range:?}"</span>);
+        <span class="kw">let </span>ns_node = willow_store::Node::&lt;IrohWillowParams&gt;::from(node_id);
+        <span class="prelude-val">Ok</span>(either::Right(
             ns_node
                 .query(<span class="kw-2">&amp;</span>to_query(range), <span class="kw-2">&amp;</span>read.node_store)
                 .map(<span class="kw">move </span>|result| {
@@ -1073,7 +1068,7 @@
                 })
                 .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
                 .into_iter(),
-        )
+        ))
     }
 }
 
@@ -1111,12 +1106,6 @@
                 </span>.map_or(willow_store::NodeId::EMPTY, |guard| guard.value())
                 .into();
 
-            <span class="comment">// Insert auth token &amp; entry:
-
-            </span>add_entry_auth_token(entry.token(), write)<span class="question-mark">?</span>;
-
-            <span class="kw">let </span>_replaced = ns_node.insert(<span class="kw-2">&amp;</span>insert_point, <span class="kw-2">&amp;</span>insert_entry, <span class="kw-2">&amp;mut </span>write.node_store)<span class="question-mark">?</span>;
-
             <span class="comment">// Enforce prefix deletion:
 
             </span><span class="kw">let </span>blobseq_start = path_to_blobseq(entry.entry().path());
@@ -1127,7 +1116,10 @@
                     <span class="kw-2">*</span>entry.entry().subspace_id(),
                     entry.entry().subspace_id().successor(),
                 ),
-                y: QueryRange::new(<span class="number">0</span>, <span class="prelude-val">Some</span>(entry.entry().timestamp())),
+                y: QueryRange::new(
+                    StoredTimestamp::new(<span class="number">0</span>),
+                    <span class="prelude-val">Some</span>(StoredTimestamp::new(entry.entry().timestamp())),
+                ),
                 z: QueryRange::new(blobseq_start, blobseq_end),
             };
 
@@ -1136,10 +1128,8 @@
                 .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
 
             <span class="kw">for </span>(prune_pos, prune_candidate) <span class="kw">in </span>prune_candidates {
-                <span class="kw">let </span>auth_token = get_entry_auth_token(
-                    prune_candidate.authorisation_token_id,
-                    <span class="kw-2">&amp;</span>write.auth_tokens,
-                )<span class="question-mark">?</span>;
+                <span class="kw">let </span>pruned_token_id = prune_candidate.authorisation_token_id;
+                <span class="kw">let </span>auth_token = get_entry_auth_token(pruned_token_id, <span class="kw-2">&amp;</span>write.auth_tokens)<span class="question-mark">?</span>;
                 <span class="kw">let </span>pruned =
                     prune_candidate.into_authorised_entry(namespace, <span class="kw-2">&amp;</span>prune_pos, auth_token)<span class="question-mark">?</span>; <span class="comment">// fairly inefficient
                 </span><span class="kw">if </span>entry.entry().is_newer_than(pruned.entry()) {
@@ -1155,6 +1145,8 @@
                             },
                         )
                     });
+                    <span class="comment">// Decrease auth token refcount to allow eventually cleaning up the token
+                    </span>remove_entry_auth_token(write, pruned_token_id)<span class="question-mark">?</span>;
                 }
             }
 
@@ -1164,11 +1156,21 @@
                 <span class="string">"ingest entry"
             </span>);
 
+            <span class="comment">// Insert auth token &amp; entry:
+
+            </span>add_entry_auth_token(entry.token(), write)<span class="question-mark">?</span>;
+
+            <span class="kw">let </span>_replaced = ns_node.insert(<span class="kw-2">&amp;</span>insert_point, <span class="kw-2">&amp;</span>insert_entry, <span class="kw-2">&amp;mut </span>write.node_store)<span class="question-mark">?</span>;
+
+            <span class="macro">println!</span>(<span class="string">"AFTER WRITE:"</span>);
+            ns_node.dump(<span class="kw-2">&amp;</span>write.node_store)<span class="question-mark">?</span>;
+            <span class="macro">println!</span>(<span class="string">"Namespace node is {}"</span>, ns_node.id());
+
             ns_events.insert(|id| StoreEvent::Ingested(id, entry.clone(), origin));
 
             write
                 .namespace_nodes
-                .insert(namespace.to_bytes(), willow_store::NodeId::from(ns_node))<span class="question-mark">?</span>;
+                .insert(namespace.to_bytes(), ns_node.id())<span class="question-mark">?</span>;
 
             <span class="prelude-val">Ok</span>(())
         })<span class="question-mark">?</span>;
@@ -1179,60 +1181,102 @@
     <span class="kw">fn </span>subscribe_area(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         namespace: NamespaceId,
-        area: <span class="kw">crate</span>::proto::grouping::Area,
+        area: Area,
         params: traits::SubscribeParams,
-    ) -&gt; <span class="kw">impl </span>futures_util::Stream&lt;Item = StoreEvent&gt; + Unpin + <span class="lifetime">'static </span>{
-        <span class="comment">// TODO(matheus23)
-        </span>futures_lite::stream::empty()
+    ) -&gt; <span class="kw">impl </span>Stream&lt;Item = StoreEvent&gt; + Unpin + <span class="lifetime">'static </span>{
+        <span class="kw">let </span>namespaces = <span class="kw-2">&amp;mut </span><span class="self">self</span>.namespace_events.borrow_mut();
+        <span class="kw">let </span>ns_events = namespaces.entry(namespace).or_default();
+        <span class="kw">let </span>progress_id = ns_events.next_progress_id();
+        EventStream {
+            area,
+            params,
+            namespace,
+            progress_id,
+            store: Rc::downgrade(<span class="self">self</span>),
+        }
     }
 
     <span class="kw">fn </span>resume_subscription(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         progress_id: u64,
         namespace: NamespaceId,
-        area: <span class="kw">crate</span>::proto::grouping::Area,
+        area: Area,
         params: traits::SubscribeParams,
-    ) -&gt; <span class="kw">impl </span>futures_util::Stream&lt;Item = StoreEvent&gt; + Unpin + <span class="lifetime">'static </span>{
-        <span class="comment">// TODO(matheus23)
-        </span>futures_lite::stream::empty()
+    ) -&gt; <span class="kw">impl </span>Stream&lt;Item = StoreEvent&gt; + Unpin + <span class="lifetime">'static </span>{
+        EventStream {
+            area,
+            params,
+            progress_id,
+            namespace,
+            store: Rc::downgrade(<span class="self">self</span>),
+        }
     }
 }
 
 <span class="kw">impl </span>traits::EntryReader <span class="kw">for </span>Rc&lt;WillowStore&gt; {
-    <span class="kw">fn </span>fingerprint(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>Range3d) -&gt; <span class="prelude-ty">Result</span>&lt;Fingerprint&gt; {
-        <span class="macro">todo!</span>()
-    }
+    <span class="comment">// TODO(matheus23): Impl faster version of default methods
 
-    <span class="kw">fn </span>split_range(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        namespace: NamespaceId,
-        range: <span class="kw-2">&amp;</span>Range3d,
-        config: <span class="kw-2">&amp;</span>traits::SplitOpts,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;traits::RangeSplit&gt;&gt;&gt; {
-        <span class="comment">// TODO(matheus23)
-        </span><span class="prelude-val">Ok</span>(std::iter::empty())
-    }
+    // TODO(matheus23): Deduplicate implementation.
 
-    <span class="kw">fn </span>count(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>Range3d) -&gt; <span class="prelude-ty">Result</span>&lt;u64&gt; {
-        <span class="macro">todo!</span>()
-    }
-
-    <span class="kw">fn </span>get_entry(
+    </span><span class="kw">fn </span>get_entry(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         namespace: NamespaceId,
         subspace: SubspaceId,
         path: <span class="kw-2">&amp;</span>Path,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;AuthorisedEntry&gt;&gt; {
-        <span class="macro">todo!</span>()
+        <span class="kw">let </span>tables = <span class="self">self</span>.db.tables()<span class="question-mark">?</span>;
+        <span class="kw">let </span>read = tables.read();
+        <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = read.namespace_nodes.get(namespace.as_bytes())<span class="question-mark">? </span><span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+        };
+        <span class="kw">let </span>ns_node = willow_store::Node::&lt;IrohWillowParams&gt;::from(node_id.value());
+        <span class="kw">let </span>blobseq = path_to_blobseq(path);
+        <span class="kw">let </span>end = blobseq.immediate_successor();
+        <span class="kw">let </span><span class="prelude-val">Some</span>(result) = ns_node
+            .query_ordered(
+                <span class="kw-2">&amp;</span>QueryRange3d {
+                    x: QueryRange::new(subspace, subspace.successor()),
+                    y: QueryRange::all(),
+                    z: QueryRange::new(blobseq, <span class="prelude-val">Some</span>(end)),
+                },
+                willow_store::SortOrder::YZX,
+                <span class="kw-2">&amp;</span>read.node_store,
+            )
+            .last()
+        <span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+        };
+
+        <span class="kw">let </span>(point, stored_entry) = result<span class="question-mark">?</span>;
+        <span class="kw">let </span>id = stored_entry.authorisation_token_id;
+        <span class="kw">let </span>auth_token = get_entry_auth_token(id, <span class="kw-2">&amp;</span>read.auth_tokens)<span class="question-mark">?</span>;
+        <span class="kw">let </span>entry = stored_entry.into_authorised_entry(namespace, <span class="kw-2">&amp;</span>point, auth_token.clone())<span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(entry))
     }
 
     <span class="kw">fn </span>get_authorised_entries&lt;<span class="lifetime">'a</span>&gt;(
         <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="self">self</span>,
         namespace: NamespaceId,
         range: <span class="kw-2">&amp;</span>Range3d,
-    ) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;AuthorisedEntry&gt;&gt; + <span class="lifetime">'a </span>{
-        <span class="comment">// TODO(matheus23)
-        </span>std::iter::empty()
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;AuthorisedEntry&gt;&gt; + <span class="lifetime">'a</span>&gt; {
+        <span class="kw">let </span>snapshot = Rc::new(<span class="self">self</span>.db.snapshot_owned()<span class="question-mark">?</span>);
+        <span class="kw">let </span>read = Rc::clone(<span class="kw-2">&amp;</span>snapshot);
+        <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = read.namespace_nodes.get(namespace.as_bytes())<span class="question-mark">? </span><span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(either::Left(std::iter::empty()));
+        };
+        <span class="kw">let </span>ns_node = willow_store::Node::&lt;IrohWillowParams&gt;::from(node_id.value());
+        <span class="prelude-val">Ok</span>(either::Right(
+            ns_node
+                .query(<span class="kw-2">&amp;</span>to_query(range), <span class="kw-2">&amp;</span>read.node_store)
+                .map(<span class="kw">move </span>|result| {
+                    <span class="kw">let </span>(point, stored_entry) = result<span class="question-mark">?</span>;
+                    <span class="kw">let </span>id = stored_entry.authorisation_token_id;
+                    <span class="kw">let </span>auth_token = get_entry_auth_token(id, <span class="kw-2">&amp;</span>snapshot.auth_tokens)<span class="question-mark">?</span>;
+                    stored_entry.into_authorised_entry(namespace, <span class="kw-2">&amp;</span>point, auth_token)
+                })
+                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+                .into_iter(),
+        ))
     }
 }
 
@@ -1396,6 +1440,122 @@
         }))
     } <span class="kw">else </span>{
         <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
+    }
+}
+
+<span class="doccomment">/// Stream of events from a store subscription.
+///
+/// We have weak pointer to the entry store and thus the EventQueue.
+/// Once the store is dropped, the EventQueue wakes all streams a last time in its drop impl,
+/// which then makes the stream return none because Weak::upgrade returns None.
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">struct </span>EventStream {
+    progress_id: u64,
+    store: Weak&lt;WillowStore&gt;,
+    namespace: NamespaceId,
+    area: Area,
+    params: SubscribeParams,
+}
+
+<span class="kw">impl </span>Stream <span class="kw">for </span>EventStream {
+    <span class="kw">type </span>Item = StoreEvent;
+    <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
+        <span class="kw">let </span><span class="prelude-val">Some</span>(inner) = <span class="self">self</span>.store.upgrade() <span class="kw">else </span>{
+            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">None</span>);
+        };
+        <span class="kw">let </span><span class="kw-2">mut </span>inner_mut = inner.namespace_events.borrow_mut();
+        <span class="kw">let </span>events = inner_mut.entry(<span class="self">self</span>.namespace).or_default();
+        <span class="kw">let </span>res = <span class="macro">ready!</span>(events.poll_next(
+            <span class="self">self</span>.progress_id,
+            |e| e.matches(<span class="self">self</span>.namespace, <span class="kw-2">&amp;</span><span class="self">self</span>.area, <span class="kw-2">&amp;</span><span class="self">self</span>.params),
+            cx,
+        ));
+        drop(inner_mut);
+        drop(inner);
+        Poll::Ready(<span class="kw">match </span>res {
+            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
+            <span class="prelude-val">Some</span>((next_id, event)) =&gt; {
+                <span class="self">self</span>.progress_id = next_id;
+                <span class="prelude-val">Some</span>(event)
+            }
+        })
+    }
+}
+
+<span class="doccomment">/// A simple in-memory event queue.
+///
+/// Events can be pushed, and get a unique monotonically-increasing *progress id*.
+/// Events can be polled, with a progress id to start at, and an optional filter function.
+///
+/// Current in-memory impl keeps all events, forever.
+</span><span class="comment">// TODO: Add max_len constructor, add a way to truncate old entries.
+// TODO: This would be quite a bit more efficient if we filtered the waker with a closure
+// that is set from the last poll, to not wake everyone for each new event.
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>EventQueue&lt;T&gt; {
+    events: VecDeque&lt;T&gt;,
+    offset: u64,
+    wakers: VecDeque&lt;Waker&gt;,
+}
+
+<span class="kw">impl</span>&lt;T&gt; Drop <span class="kw">for </span>EventQueue&lt;T&gt; {
+    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="kw">for </span>waker <span class="kw">in </span><span class="self">self</span>.wakers.drain(..) {
+            waker.wake()
+        }
+    }
+}
+
+<span class="kw">impl</span>&lt;T&gt; Default <span class="kw">for </span>EventQueue&lt;T&gt; {
+    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            events: Default::default(),
+            offset: <span class="number">0</span>,
+            wakers: Default::default(),
+        }
+    }
+}
+
+<span class="kw">impl</span>&lt;T: Clone&gt; EventQueue&lt;T&gt; {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>insert(<span class="kw-2">&amp;mut </span><span class="self">self</span>, f: <span class="kw">impl </span>FnOnce(u64) -&gt; T) {
+        <span class="kw">let </span>progress_id = <span class="self">self</span>.next_progress_id();
+        <span class="kw">let </span>event = f(progress_id);
+        <span class="self">self</span>.events.push_back(event);
+        <span class="kw">for </span>waker <span class="kw">in </span><span class="self">self</span>.wakers.drain(..) {
+            waker.wake()
+        }
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>next_progress_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
+        <span class="self">self</span>.offset + <span class="self">self</span>.events.len() <span class="kw">as </span>u64
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, progress_id: u64) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>T&gt; {
+        <span class="kw">let </span>index = progress_id.checked_sub(<span class="self">self</span>.offset)<span class="question-mark">?</span>;
+        <span class="self">self</span>.events.get(index <span class="kw">as </span>usize)
+    }
+
+    <span class="kw">fn </span>poll_next(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        progress_id: u64,
+        filter: <span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>T) -&gt; bool,
+        cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;(u64, T)&gt;&gt; {
+        <span class="kw">if </span>progress_id &lt; <span class="self">self</span>.offset {
+            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">None</span>);
+        }
+        <span class="kw">let </span><span class="kw-2">mut </span>i = progress_id;
+        <span class="kw">loop </span>{
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(event) = <span class="self">self</span>.get(i) {
+                i += <span class="number">1</span>;
+                <span class="kw">if </span>filter(event) {
+                    <span class="kw">break </span>Poll::Ready(<span class="prelude-val">Some</span>((i, event.clone())));
+                }
+            } <span class="kw">else </span>{
+                <span class="self">self</span>.wakers.push_back(cx.waker().clone());
+                <span class="kw">break </span>Poll::Pending;
+            }
+        }
     }
 }
 </code></pre></div></section></main></body></html>
