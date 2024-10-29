@@ -594,9 +594,6 @@
 <a href="#594" id="594">594</a>
 <a href="#595" id="595">595</a>
 <a href="#596" id="596">596</a>
-<a href="#597" id="597">597</a>
-<a href="#598" id="598">598</a>
-<a href="#599" id="599">599</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! In-memory storage implementation for testing purposes.
 //!
 //! This is a minimal, but spec-compliant (unless there's bugs) implementation of a willow store.
@@ -885,9 +882,6 @@
                 });
             }
         }
-
-        <span class="macro">println!</span>(<span class="string">"AFTER WRITE:"</span>);
-        ns_store.entries.dump(<span class="kw-2">&amp;</span><span class="self">self</span>.store)<span class="question-mark">?</span>;
 
         <span class="macro">debug!</span>(
             subspace = %entry.entry().subspace_id().fmt_short(),

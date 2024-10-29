@@ -771,13 +771,6 @@
 <a href="#771" id="771">771</a>
 <a href="#772" id="772">772</a>
 <a href="#773" id="773">773</a>
-<a href="#774" id="774">774</a>
-<a href="#775" id="775">775</a>
-<a href="#776" id="776">776</a>
-<a href="#777" id="777">777</a>
-<a href="#778" id="778">778</a>
-<a href="#779" id="779">779</a>
-<a href="#780" id="780">780</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>ed25519_dalek::ed25519;
 <span class="kw">use </span>futures_util::Stream;
@@ -1053,10 +1046,7 @@
         <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = read.namespace_nodes.get(namespace.as_bytes())<span class="question-mark">? </span><span class="kw">else </span>{
             <span class="kw">return </span><span class="prelude-val">Ok</span>(either::Left(std::iter::empty()));
         };
-        <span class="kw">let </span>node_id = node_id.value();
-        <span class="macro">println!</span>(<span class="string">"READING FROM {}"</span>, node_id);
-        <span class="macro">println!</span>(<span class="string">"QUERY: {range:?}"</span>);
-        <span class="kw">let </span>ns_node = willow_store::Node::&lt;IrohWillowParams&gt;::from(node_id);
+        <span class="kw">let </span>ns_node = willow_store::Node::&lt;IrohWillowParams&gt;::from(node_id.value());
         <span class="prelude-val">Ok</span>(either::Right(
             ns_node
                 .query(<span class="kw-2">&amp;</span>to_query(range), <span class="kw-2">&amp;</span>read.node_store)
@@ -1161,10 +1151,6 @@
             </span>add_entry_auth_token(entry.token(), write)<span class="question-mark">?</span>;
 
             <span class="kw">let </span>_replaced = ns_node.insert(<span class="kw-2">&amp;</span>insert_point, <span class="kw-2">&amp;</span>insert_entry, <span class="kw-2">&amp;mut </span>write.node_store)<span class="question-mark">?</span>;
-
-            <span class="macro">println!</span>(<span class="string">"AFTER WRITE:"</span>);
-            ns_node.dump(<span class="kw-2">&amp;</span>write.node_store)<span class="question-mark">?</span>;
-            <span class="macro">println!</span>(<span class="string">"Namespace node is {}"</span>, ns_node.id());
 
             ns_events.insert(|id| StoreEvent::Ingested(id, entry.clone(), origin));
 
