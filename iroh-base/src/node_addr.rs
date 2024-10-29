@@ -43,7 +43,7 @@ pub struct NodeAddr {
     /// The node's identifier.
     pub node_id: NodeId,
     /// Addressing information to connect to [`Self::node_id`].
-    pub info: NetworkPaths,
+    pub paths: NetworkPaths,
 }
 
 impl NodeAddr {
@@ -51,13 +51,13 @@ impl NodeAddr {
     pub fn new(node_id: PublicKey) -> Self {
         NodeAddr {
             node_id,
-            info: Default::default(),
+            paths: Default::default(),
         }
     }
 
     /// Adds a relay url to the node's [`AddrInfo`].
     pub fn with_relay_url(mut self, relay_url: RelayUrl) -> Self {
-        self.info.relay_url = Some(relay_url);
+        self.paths.relay_url = Some(relay_url);
         self
     }
 
@@ -66,7 +66,7 @@ impl NodeAddr {
         mut self,
         addresses: impl IntoIterator<Item = SocketAddr>,
     ) -> Self {
-        self.info.direct_addresses = addresses.into_iter().collect();
+        self.paths.direct_addresses = addresses.into_iter().collect();
         self
     }
 
@@ -78,7 +78,7 @@ impl NodeAddr {
     ) -> Self {
         Self {
             node_id,
-            info: NetworkPaths {
+            paths: NetworkPaths {
                 relay_url,
                 direct_addresses: direct_addresses.into_iter().collect(),
             },
@@ -92,18 +92,32 @@ impl NodeAddr {
     /// `AddrInfoOptions::Id`] option could be used to remove all other addressing details.
     ///
     /// [discovery]: https://docs.rs/iroh_net/*/iroh_net/index.html#node-discovery
-    pub fn apply_options(&mut self, opts: AddrInfoOptions) {
-        self.info.apply_options(opts);
+    pub fn apply_options(&mut self, opts: NodeAddrOptions) {
+        match opts {
+            NodeAddrOptions::Id => {
+                self.paths.direct_addresses.clear();
+                self.paths.relay_url = None;
+            }
+            NodeAddrOptions::RelayAndAddresses => {
+                // nothing to do
+            }
+            NodeAddrOptions::Relay => {
+                self.paths.direct_addresses.clear();
+            }
+            NodeAddrOptions::Addresses => {
+                self.paths.relay_url = None;
+            }
+        }
     }
 
     /// Returns the direct addresses of this peer.
     pub fn direct_addresses(&self) -> impl Iterator<Item = &SocketAddr> {
-        self.info.direct_addresses.iter()
+        self.paths.direct_addresses.iter()
     }
 
     /// Returns the relay url of this peer.
     pub fn relay_url(&self) -> Option<&RelayUrl> {
-        self.info.relay_url.as_ref()
+        self.paths.relay_url.as_ref()
     }
 }
 
@@ -112,7 +126,7 @@ impl From<(PublicKey, Option<RelayUrl>, &[SocketAddr])> for NodeAddr {
         let (node_id, relay_url, direct_addresses_iter) = value;
         NodeAddr {
             node_id,
-            info: NetworkPaths {
+            paths: NetworkPaths {
                 relay_url,
                 direct_addresses: direct_addresses_iter.iter().copied().collect(),
             },
@@ -146,34 +160,9 @@ impl NetworkPaths {
     pub fn is_empty(&self) -> bool {
         self.relay_url.is_none() && self.direct_addresses.is_empty()
     }
-
-    /// Applies the options to `self`.
-    ///
-    /// This is used to more tightly control the information stored in ab [`AddrInfo`]
-    /// received from another API.  E.g. to ensure a [discovery] service is used the
-    /// `AddrInfoOptions::Id`] option could be used to remove all other addressing details.
-    ///
-    /// [discovery]: https://docs.rs/iroh_net/*/iroh_net/index.html#node-discovery
-    pub fn apply_options(&mut self, opts: AddrInfoOptions) {
-        match opts {
-            AddrInfoOptions::Id => {
-                self.direct_addresses.clear();
-                self.relay_url = None;
-            }
-            AddrInfoOptions::RelayAndAddresses => {
-                // nothing to do
-            }
-            AddrInfoOptions::Relay => {
-                self.direct_addresses.clear();
-            }
-            AddrInfoOptions::Addresses => {
-                self.relay_url = None;
-            }
-        }
-    }
 }
 
-/// Options to configure what is included in a [`NodeAddr`] and [`AddrInfo`].
+/// Options to configure what is included in a [`NodeAddr`].
 #[derive(
     Copy,
     Clone,
@@ -186,7 +175,7 @@ impl NetworkPaths {
     Serialize,
     Deserialize,
 )]
-pub enum AddrInfoOptions {
+pub enum NodeAddrOptions {
     /// Only the Node ID is added.
     ///
     /// This usually means that iroh-dns discovery is used to find address information.

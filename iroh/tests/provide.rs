@@ -10,7 +10,7 @@ use bao_tree::{blake3, ChunkNum, ChunkRanges};
 use bytes::Bytes;
 use futures_lite::FutureExt;
 use iroh::node::{Builder, DocsStorage};
-use iroh_base::node_addr::AddrInfoOptions;
+use iroh_base::node_addr::NodeAddrOptions;
 use iroh_blobs::{
     format::collection::Collection,
     get::{
@@ -391,7 +391,7 @@ async fn test_run_ticket() {
         .share(
             hash,
             BlobFormat::HashSeq,
-            AddrInfoOptions::RelayAndAddresses,
+            NodeAddrOptions::RelayAndAddresses,
         )
         .await
         .unwrap();

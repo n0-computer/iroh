@@ -364,12 +364,12 @@ impl MagicSock {
     pub fn add_node_addr(&self, mut addr: NodeAddr, source: node_map::Source) -> Result<()> {
         let mut pruned = 0;
         for my_addr in self.direct_addrs.sockaddrs() {
-            if addr.info.direct_addresses.remove(&my_addr) {
+            if addr.paths.direct_addresses.remove(&my_addr) {
                 warn!( node_id=addr.node_id.fmt_short(), %my_addr, %source, "not adding our addr for node");
                 pruned += 1;
             }
         }
-        if !addr.info.is_empty() {
+        if !addr.paths.is_empty() {
             self.node_map.add_node_addr(addr, source);
             Ok(())
         } else if pruned != 0 {
@@ -1817,7 +1817,7 @@ impl Actor {
                 }
                 Some(discovery_item) = discovery_events.next() => {
                     trace!("tick: discovery event, address discovered: {discovery_item:?}");
-                    let node_addr = NodeAddr {node_id: discovery_item.node_id, info: discovery_item.addr_info};
+                    let node_addr = NodeAddr {node_id: discovery_item.node_id, paths: discovery_item.addr_info};
                     if let Err(e) = self.msock.add_node_addr(node_addr.clone(), Source::Discovery { name: discovery_item.provenance.into() }) {
                         warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
                     }
@@ -2867,7 +2867,7 @@ mod tests {
 
                 let addr = NodeAddr {
                     node_id: me.public(),
-                    info: crate::NetworkPaths {
+                    paths: crate::NetworkPaths {
                         relay_url: None,
                         direct_addresses: new_addrs.iter().map(|ep| ep.addr).collect(),
                     },
@@ -3733,7 +3733,7 @@ mod tests {
 
         let node_addr_2 = NodeAddr {
             node_id: node_id_2,
-            info: NetworkPaths {
+            paths: NetworkPaths {
                 relay_url: None,
                 direct_addresses: msock_2
                     .direct_addresses()
@@ -3805,7 +3805,7 @@ mod tests {
         msock_1.node_map.add_node_addr(
             NodeAddr {
                 node_id: node_id_2,
-                info: NetworkPaths::default(),
+                paths: NetworkPaths::default(),
             },
             Source::NamedApp {
                 name: "test".into(),
@@ -3840,7 +3840,7 @@ mod tests {
         msock_1.node_map.add_node_addr(
             NodeAddr {
                 node_id: node_id_2,
-                info: NetworkPaths {
+                paths: NetworkPaths {
                     relay_url: None,
                     direct_addresses: msock_2
                         .direct_addresses()

@@ -16,7 +16,7 @@ use futures_buffered::BufferedStreamExt;
 use futures_lite::{Stream, StreamExt};
 use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressStyle};
 use iroh::{
-    base::{base32::fmt_short, node_addr::AddrInfoOptions},
+    base::{base32::fmt_short, node_addr::NodeAddrOptions},
     blobs::{provider::AddProgress, util::SetTagOption, Hash, Tag},
     client::{
         blobs::WrapOption,
@@ -122,8 +122,8 @@ pub enum DocCommands {
         /// Options to configure the address information in the generated ticket.
         ///
         /// Use `relay-and-addresses` in networks with no internet connectivity.
-        #[clap(long, default_value_t = AddrInfoOptions::Id)]
-        addr_options: AddrInfoOptions,
+        #[clap(long, default_value_t = NodeAddrOptions::Id)]
+        addr_options: NodeAddrOptions,
     },
     /// Set an entry in a document.
     Set {

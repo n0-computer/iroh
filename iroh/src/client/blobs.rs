@@ -73,7 +73,7 @@ use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
 use futures_util::SinkExt;
 use genawaiter::sync::{Co, Gen};
-use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
+use iroh_base::{node_addr::NodeAddrOptions, ticket::BlobTicket};
 use iroh_blobs::{
     export::ExportProgress as BytesExportProgress,
     format::collection::{Collection, SimpleStore},
@@ -458,7 +458,7 @@ impl Client {
         &self,
         hash: Hash,
         blob_format: BlobFormat,
-        addr_options: AddrInfoOptions,
+        addr_options: NodeAddrOptions,
     ) -> Result<BlobTicket> {
         let mut addr = self.rpc.rpc(StatusRequest).await??.addr;
         addr.apply_options(addr_options);

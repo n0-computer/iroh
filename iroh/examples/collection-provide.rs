@@ -7,7 +7,7 @@
 //! run this example from the project root:
 //!     $ cargo run --example collection-provide
 use iroh::blobs::{format::collection::Collection, util::SetTagOption, BlobFormat};
-use iroh_base::node_addr::AddrInfoOptions;
+use iroh_base::node_addr::NodeAddrOptions;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -49,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
         .share(
             hash,
             BlobFormat::HashSeq,
-            AddrInfoOptions::RelayAndAddresses,
+            NodeAddrOptions::RelayAndAddresses,
         )
         .await?;
 

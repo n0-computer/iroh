@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use derive_more::{Display, FromStr};
 use futures_lite::{Stream, StreamExt};
-use iroh_base::{key::PublicKey, node_addr::AddrInfoOptions};
+use iroh_base::{key::PublicKey, node_addr::NodeAddrOptions};
 use iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
 #[doc(inline)]
 pub use iroh_docs::engine::{Origin, SyncEvent, SyncReason};
@@ -338,7 +338,7 @@ impl Doc {
     pub async fn share(
         &self,
         mode: ShareMode,
-        addr_options: AddrInfoOptions,
+        addr_options: NodeAddrOptions,
     ) -> anyhow::Result<DocTicket> {
         self.ensure_open()?;
         let res = self

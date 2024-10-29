@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use bytes::Bytes;
-use iroh_base::node_addr::AddrInfoOptions;
+use iroh_base::node_addr::NodeAddrOptions;
 use iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
 use iroh_docs::{
     actor::OpenState,
@@ -158,7 +158,7 @@ pub struct ShareRequest {
     /// Whether to share read or write access to the document
     pub mode: ShareMode,
     /// Configuration of the addresses in the ticket.
-    pub addr_options: AddrInfoOptions,
+    pub addr_options: NodeAddrOptions,
 }
 
 /// The response to [`ShareRequest`]

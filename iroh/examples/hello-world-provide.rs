@@ -3,7 +3,7 @@
 //! This is using an in memory database and a random node id.
 //! run this example from the project root:
 //!     $ cargo run --example hello-world-provide
-use iroh_base::node_addr::AddrInfoOptions;
+use iroh_base::node_addr::NodeAddrOptions;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -29,7 +29,7 @@ async fn main() -> anyhow::Result<()> {
     // create a ticket
     let ticket = node
         .blobs()
-        .share(res.hash, res.format, AddrInfoOptions::RelayAndAddresses)
+        .share(res.hash, res.format, NodeAddrOptions::RelayAndAddresses)
         .await?;
 
     // print some info about the node

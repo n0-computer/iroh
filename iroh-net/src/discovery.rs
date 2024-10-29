@@ -402,7 +402,7 @@ impl DiscoveryTask {
                     }
                     debug!(provenance = %r.provenance, addr = ?r.addr_info, "discovery: new address found");
                     let addr = NodeAddr {
-                        info: r.addr_info,
+                        paths: r.addr_info,
                         node_id,
                     };
                     ep.add_node_addr_with_source(addr, r.provenance).ok();
@@ -675,7 +675,7 @@ mod tests {
         ep1.node_addr().await?;
         let ep1_wrong_addr = NodeAddr {
             node_id: ep1.node_id(),
-            info: NetworkPaths {
+            paths: NetworkPaths {
                 relay_url: None,
                 direct_addresses: BTreeSet::from(["240.0.0.1:1000".parse().unwrap()]),
             },
@@ -797,7 +797,7 @@ mod test_dns_pkarr {
         let resolved = resolver.lookup_by_id(&node_id, &origin).await?;
 
         let expected = NodeAddr {
-            info: addr_info,
+            paths: addr_info,
             node_id,
         };
 

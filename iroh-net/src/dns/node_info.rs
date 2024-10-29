@@ -140,7 +140,7 @@ impl From<NodeInfo> for NodeAddr {
     fn from(value: NodeInfo) -> Self {
         NodeAddr {
             node_id: value.node_id,
-            info: value.into(),
+            paths: value.into(),
         }
     }
 }

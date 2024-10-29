@@ -1175,7 +1175,7 @@ impl From<RemoteInfo> for NodeAddr {
 
         NodeAddr {
             node_id: info.node_id,
-            info: NetworkPaths {
+            paths: NetworkPaths {
                 relay_url: info.relay_url.map(Into::into),
                 direct_addresses,
             },

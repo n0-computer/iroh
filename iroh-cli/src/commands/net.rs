@@ -65,13 +65,13 @@ impl NetCommands {
                 let addr = iroh.net().node_addr().await?;
                 println!("Node ID: {}", addr.node_id);
                 let relay = addr
-                    .info
+                    .paths
                     .relay_url
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "Not Available".to_string());
                 println!("Home Relay: {}", relay);
-                println!("Direct Addresses ({}):", addr.info.direct_addresses.len());
-                for da in &addr.info.direct_addresses {
+                println!("Direct Addresses ({}):", addr.paths.direct_addresses.len());
+                for da in &addr.paths.direct_addresses {
                     println!(" {}", da);
                 }
             }

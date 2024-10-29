@@ -10,7 +10,7 @@ use bytes::Bytes;
 use futures_lite::Stream;
 use futures_util::{FutureExt, StreamExt, TryStreamExt};
 use iroh::{
-    base::node_addr::AddrInfoOptions,
+    base::node_addr::NodeAddrOptions,
     client::{
         docs::{Entry, LiveEvent, ShareMode},
         Doc,
@@ -91,7 +91,7 @@ async fn sync_simple() -> Result<()> {
         .await?;
     assert_latest(&doc0, b"k1", b"v1").await;
     let ticket = doc0
-        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .share(ShareMode::Write, NodeAddrOptions::RelayAndAddresses)
         .await?;
 
     let mut events0 = doc0.subscribe().await?;
@@ -167,7 +167,7 @@ async fn sync_gossip_bulk() -> Result<()> {
     let author0 = clients[0].authors().create().await?;
     let doc0 = clients[0].docs().create().await?;
     let mut ticket = doc0
-        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .share(ShareMode::Write, NodeAddrOptions::RelayAndAddresses)
         .await?;
     // unset peers to not yet start sync
     let peers = ticket.nodes.clone();
@@ -272,7 +272,7 @@ async fn sync_full_basic() -> Result<()> {
     );
     assert_latest(&doc0, key0, value0).await;
     let ticket = doc0
-        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .share(ShareMode::Write, NodeAddrOptions::RelayAndAddresses)
         .await?;
 
     info!("peer1: spawn");
@@ -511,11 +511,11 @@ async fn test_sync_via_relay() -> Result<()> {
         .set_bytes(author1, b"foo".to_vec(), b"bar".to_vec())
         .await?;
     let mut ticket = doc1
-        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .share(ShareMode::Write, NodeAddrOptions::RelayAndAddresses)
         .await?;
 
     // remove direct addrs to force connect via relay
-    ticket.nodes[0].info.direct_addresses = Default::default();
+    ticket.nodes[0].paths.direct_addresses = Default::default();
 
     // join
     let doc2 = node2.docs().import(ticket).await?;
@@ -604,7 +604,7 @@ async fn sync_restart_node() -> Result<()> {
     let doc1 = node1.docs().create().await?;
     let mut events1 = doc1.subscribe().await?;
     let ticket = doc1
-        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .share(ShareMode::Write, NodeAddrOptions::RelayAndAddresses)
         .await?;
 
     // create node2
@@ -756,7 +756,7 @@ async fn test_download_policies() -> Result<()> {
     let doc_a = clients[0].docs().create().await?;
     let author_a = clients[0].authors().create().await?;
     let ticket = doc_a
-        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .share(ShareMode::Write, NodeAddrOptions::RelayAndAddresses)
         .await?;
 
     let doc_b = clients[1].docs().import(ticket).await?;
@@ -880,7 +880,7 @@ async fn sync_big() -> Result<()> {
 
     let doc0 = clients[0].docs().create().await?;
     let mut ticket = doc0
-        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .share(ShareMode::Write, NodeAddrOptions::RelayAndAddresses)
         .await?;
     // do not join for now, just import without any peer info
     let peer0 = ticket.nodes[0].clone();

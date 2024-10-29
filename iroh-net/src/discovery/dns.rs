@@ -78,7 +78,7 @@ impl Discovery for DnsDiscovery {
                 node_id,
                 provenance: "dns",
                 last_updated: None,
-                addr_info: node_addr.info,
+                addr_info: node_addr.paths,
             })
         };
         let stream = futures_lite::stream::once_future(fut);

@@ -647,7 +647,7 @@ where
         trace!("endpoint address: {addr:?}");
 
         // Initialize the gossip protocol.
-        let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.info);
+        let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.paths);
         // Initialize the downloader.
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
 

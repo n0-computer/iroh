@@ -16,7 +16,7 @@ use indicatif::{
     ProgressStyle,
 };
 use iroh::{
-    base::{node_addr::AddrInfoOptions, ticket::BlobTicket},
+    base::{node_addr::NodeAddrOptions, ticket::BlobTicket},
     blobs::{
         get::{db::DownloadProgress, progress::BlobProgress, Stats},
         provider::AddProgress,
@@ -151,8 +151,8 @@ pub enum BlobCommands {
         /// Options to configure the address information in the generated ticket.
         ///
         /// Use `relay-and-addresses` in networks with no internet connectivity.
-        #[clap(long, default_value_t = AddrInfoOptions::Id)]
-        addr_options: AddrInfoOptions,
+        #[clap(long, default_value_t = NodeAddrOptions::Id)]
+        addr_options: NodeAddrOptions,
         /// If the blob is a collection, the requester will also fetch the listed blobs.
         #[clap(long, default_value_t = false)]
         recursive: bool,
@@ -205,7 +205,10 @@ impl BlobCommands {
 
                         // create the node address with the appropriate overrides
                         let node_addr = {
-                            let NodeAddr { node_id, info } = node_addr;
+                            let NodeAddr {
+                                node_id,
+                                paths: info,
+                            } = node_addr;
                             let addresses = if override_addresses {
                                 // use only the cli supplied ones
                                 address

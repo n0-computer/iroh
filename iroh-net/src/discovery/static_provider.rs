@@ -76,13 +76,13 @@ impl StaticProvider {
         let previous = guard.insert(
             info.node_id,
             NodeInfo {
-                info: info.info,
+                info: info.paths,
                 last_updated,
             },
         );
         previous.map(|x| NodeAddr {
             node_id: info.node_id,
-            info: x.info,
+            paths: x.info,
         })
     }
 
@@ -99,13 +99,13 @@ impl StaticProvider {
                 existing
                     .info
                     .direct_addresses
-                    .extend(info.info.direct_addresses);
-                existing.info.relay_url = info.info.relay_url;
+                    .extend(info.paths.direct_addresses);
+                existing.info.relay_url = info.paths.relay_url;
                 existing.last_updated = last_updated;
             }
             Entry::Vacant(entry) => {
                 entry.insert(NodeInfo {
-                    info: info.info,
+                    info: info.paths,
                     last_updated,
                 });
             }
@@ -116,7 +116,10 @@ impl StaticProvider {
     pub fn get_node_addr(&self, node_id: NodeId) -> Option<NodeAddr> {
         let guard = self.nodes.read().unwrap();
         let info = guard.get(&node_id).map(|x| x.info.clone())?;
-        Some(NodeAddr { node_id, info })
+        Some(NodeAddr {
+            node_id,
+            paths: info,
+        })
     }
 
     /// Remove node info for the given node id.
@@ -125,7 +128,7 @@ impl StaticProvider {
         let res = guard.remove(&node_id)?;
         Some(NodeAddr {
             node_id,
-            info: res.info,
+            paths: res.info,
         })
     }
 }

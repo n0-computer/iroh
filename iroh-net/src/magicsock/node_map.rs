@@ -301,7 +301,10 @@ impl NodeMapInner {
     /// Add the contact information for a node.
     #[instrument(skip_all, fields(node = %node_addr.node_id.fmt_short()))]
     fn add_node_addr(&mut self, node_addr: NodeAddr, source: Source) {
-        let NodeAddr { node_id, info } = node_addr;
+        let NodeAddr {
+            node_id,
+            paths: info,
+        } = node_addr;
 
         let source0 = source.clone();
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(node_id), || Options {
@@ -700,7 +703,7 @@ mod tests {
             .into_iter()
             .filter_map(|info| {
                 let addr: NodeAddr = info.into();
-                if addr.info.is_empty() {
+                if addr.paths.is_empty() {
                     return None;
                 }
                 Some(addr)
@@ -713,7 +716,7 @@ mod tests {
             .into_iter()
             .filter_map(|info| {
                 let addr: NodeAddr = info.into();
-                if addr.info.is_empty() {
+                if addr.paths.is_empty() {
                     return None;
                 }
                 Some(addr)

@@ -163,7 +163,7 @@ impl<S: iroh_blobs::store::Store> BlobsProtocol<S> {
         let mut any_added = false;
         for node in nodes {
             node_ids.push(node.node_id);
-            if !node.info.is_empty() {
+            if !node.paths.is_empty() {
                 endpoint.add_node_addr_with_source(node, BLOB_DOWNLOAD_SOURCE_NAME)?;
                 any_added = true;
             }

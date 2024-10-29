@@ -486,7 +486,7 @@ fn node_address_for_storage(info: RemoteInfo) -> Option<NodeAddr> {
     } else {
         Some(NodeAddr {
             node_id: info.node_id,
-            info: NetworkPaths {
+            paths: NetworkPaths {
                 relay_url: info.relay_url.map(|u| u.into()),
                 direct_addresses,
             },
@@ -498,7 +498,7 @@ fn node_address_for_storage(info: RemoteInfo) -> Option<NodeAddr> {
 mod tests {
     use anyhow::{bail, Context};
     use bytes::Bytes;
-    use iroh_base::node_addr::AddrInfoOptions;
+    use iroh_base::node_addr::NodeAddrOptions;
     use iroh_blobs::{provider::AddProgress, util::SetTagOption, BlobFormat};
     use iroh_net::{key::SecretKey, relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
 
@@ -521,11 +521,11 @@ mod tests {
         let _drop_guard = node.cancel_token().drop_guard();
         let ticket = node
             .blobs()
-            .share(hash, BlobFormat::Raw, AddrInfoOptions::RelayAndAddresses)
+            .share(hash, BlobFormat::Raw, NodeAddrOptions::RelayAndAddresses)
             .await
             .unwrap();
-        println!("addrs: {:?}", ticket.node_addr().info);
-        assert!(!ticket.node_addr().info.direct_addresses.is_empty());
+        println!("addrs: {:?}", ticket.node_addr().paths);
+        assert!(!ticket.node_addr().paths.direct_addresses.is_empty());
     }
 
     #[tokio::test]

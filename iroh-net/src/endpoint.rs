@@ -575,11 +575,14 @@ impl Endpoint {
             );
         }
 
-        if !node_addr.info.is_empty() {
+        if !node_addr.paths.is_empty() {
             self.add_node_addr(node_addr.clone())?;
         }
 
-        let NodeAddr { node_id, info } = node_addr.clone();
+        let NodeAddr {
+            node_id,
+            paths: info,
+        } = node_addr.clone();
 
         // Get the mapped IPv6 address from the magic socket. Quinn will connect to this address.
         // Start discovery for this node if it's enabled and we have no valid or verified
@@ -1018,7 +1021,7 @@ impl Endpoint {
                 // If the user provided addresses in this connect call, we will add a delay
                 // followed by a recheck before starting the discovery, to give the magicsocket a
                 // chance to test the newly provided addresses.
-                let delay = (!node_addr.info.is_empty()).then_some(DISCOVERY_WAIT_PERIOD);
+                let delay = (!node_addr.paths.is_empty()).then_some(DISCOVERY_WAIT_PERIOD);
                 let discovery = DiscoveryTask::maybe_start_after_delay(self, node_id, delay)
                     .ok()
                     .flatten();
