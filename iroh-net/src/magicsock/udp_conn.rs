@@ -196,11 +196,12 @@ where
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
+    use netwatch::IpFamily;
     use tokio::sync::mpsc;
     use tracing::{info_span, Instrument};
 
     use super::*;
-    use crate::{key, net::IpFamily, tls};
+    use crate::{key, tls};
 
     const ALPN: &[u8] = b"n0/test/1";
 
