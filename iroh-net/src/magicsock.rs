@@ -35,7 +35,7 @@ use futures_lite::{FutureExt, Stream, StreamExt};
 use futures_util::stream::BoxStream;
 use iroh_base::key::NodeId;
 use iroh_metrics::{inc, inc_by};
-use net::{interfaces, ip::LocalAddresses, netmon};
+use netwatch::{interfaces, ip::LocalAddresses, netmon};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use smallvec::{smallvec, SmallVec};

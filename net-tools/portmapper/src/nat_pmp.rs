@@ -2,7 +2,7 @@
 
 use std::{net::Ipv4Addr, num::NonZeroU16, time::Duration};
 
-use net::UdpSocket;
+use netwatch::UdpSocket;
 use tracing::{debug, trace};
 
 use self::protocol::{MapProtocol, Request, Response};

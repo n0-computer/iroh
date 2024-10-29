@@ -22,7 +22,7 @@ futures-util = "0.3.25"
 igd-next = { version = "0.15.1", features = ["aio_tokio"] }
 iroh-metrics = { version = "0.27.0", default-features = false }
 libc = "0.2.139"
-net = { version = "0.1.0", path = "../net" }
+netwatch = { version = "0.1.0", path = "../netwatch" }
 num_enum = "0.7"
 rand = "0.8"
 serde = { version = "1", features = ["derive", "rc"] }

@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::{bail, Context as _};
-use net::UdpSocket;
+use netwatch::UdpSocket;
 use quinn::AsyncUdpSocket;
 use quinn_udp::{Transmit, UdpSockRef};
 use tokio::io::Interest;

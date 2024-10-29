@@ -2833,11 +2833,11 @@ dependencies = [
  "iroh-test",
  "libc",
  "mainline",
- "net",
  "netdev",
  "netlink-packet-core",
  "netlink-packet-route",
  "netlink-sys",
+ "netwatch",
  "ntest",
  "num_enum",
  "once_cell",
@@ -3285,35 +3285,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "net"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "derive_more",
- "futures-lite 2.3.0",
- "futures-sink",
- "futures-util",
- "iroh-test",
- "libc",
- "netdev",
- "netlink-packet-core",
- "netlink-packet-route",
- "netlink-sys",
- "once_cell",
- "rtnetlink",
- "serde",
- "socket2",
- "thiserror",
- "time",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "windows 0.51.1",
- "wmi",
-]
-
-[[package]]
 name = "netdev"
 version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3393,6 +3364,35 @@ dependencies = [
  "libc",
  "log",
  "tokio",
+]
+
+[[package]]
+name = "netwatch"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "derive_more",
+ "futures-lite 2.3.0",
+ "futures-sink",
+ "futures-util",
+ "iroh-test",
+ "libc",
+ "netdev",
+ "netlink-packet-core",
+ "netlink-packet-route",
+ "netlink-sys",
+ "once_cell",
+ "rtnetlink",
+ "serde",
+ "socket2",
+ "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "windows 0.51.1",
+ "wmi",
 ]
 
 [[package]]
@@ -4014,7 +4014,7 @@ dependencies = [
  "igd-next",
  "iroh-metrics",
  "libc",
- "net",
+ "netwatch",
  "ntest",
  "num_enum",
  "rand",

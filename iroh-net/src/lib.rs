@@ -252,7 +252,7 @@ pub(crate) mod util;
 pub use endpoint::{AddrInfo, Endpoint, NodeAddr};
 pub use iroh_base::{key, key::NodeId};
 // TODO(@divma): re-evaluate this re-export
-pub use net;
+pub use netwatch as net;
 // TODO(@divma): re-evaluate this re-export
 pub use portmapper;
 

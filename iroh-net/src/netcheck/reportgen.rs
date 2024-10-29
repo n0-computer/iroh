@@ -26,7 +26,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use iroh_metrics::inc;
-use net::{interfaces, UdpSocket};
+use netwatch::{interfaces, UdpSocket};
 use rand::seq::IteratorRandom;
 use tokio::{
     sync::{mpsc, oneshot},

@@ -2,7 +2,7 @@
 
 use std::{net::Ipv4Addr, num::NonZeroU16, time::Duration};
 
-use net::UdpSocket;
+use netwatch::UdpSocket;
 use rand::RngCore;
 use tracing::{debug, trace};
 

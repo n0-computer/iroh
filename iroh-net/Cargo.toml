@@ -95,7 +95,7 @@ swarm-discovery = { version = "0.2.1", optional = true }
 
 # dht_discovery
 genawaiter = { version = "0.99.1", features = ["futures03"], optional = true }
-net = { version = "0.1.0", path = "../net-tools/net" }
+netwatch = { version = "0.1.0", path = "../net-tools/netwatch" }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"

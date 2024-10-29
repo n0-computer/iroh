@@ -7,7 +7,7 @@
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
 use anyhow::{ensure, Result};
-use net::interfaces;
+use netwatch::interfaces;
 use tokio::time::Duration;
 
 use crate::{
