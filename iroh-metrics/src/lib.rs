@@ -76,3 +76,33 @@ pub fn parse_prometheus_metrics(data: &str) -> anyhow::Result<HashMap<String, f6
     }
     Ok(metrics)
 }
+
+/// Configuration for pushing metrics to a remote endpoint.
+#[derive(PartialEq, Eq, Debug, Default, serde::Deserialize, Clone)]
+pub struct PushMetricsConfig {
+    /// The push interval in seconds.
+    pub interval: u64,
+    /// The endpoint url for the push metrics collector.
+    pub endpoint: String,
+    /// The name of the service you're exporting metrics for.
+    ///
+    /// Generally, `metrics_exporter` is good enough for use
+    /// outside of production deployments.
+    pub service_name: String,
+    /// The name of the instance you're exporting metrics for.
+    ///
+    /// This should be device-unique. If not, this will sum up
+    /// metrics from different devices.
+    ///
+    /// E.g. `username-laptop`, `username-phone`, etc.
+    ///
+    /// Another potential scheme with good privacy would be a
+    /// keyed blake3 hash of the secret key. (This gives you
+    /// an identifier that is as unique as a `NodeID`, but
+    /// can't be correlated to `NodeID`s.)
+    pub instance_name: String,
+    /// The username for basic auth for the push metrics collector.
+    pub username: Option<String>,
+    /// The password for basic auth for the push metrics collector.
+    pub password: String,
+}

@@ -50,26 +50,25 @@ use futures_lite::StreamExt;
 use futures_util::future::{MapErr, Shared};
 use iroh_base::key::PublicKey;
 use iroh_blobs::{
+    net_protocol::Blobs as BlobsProtocol,
     store::Store as BaoStore,
     util::local_pool::{LocalPool, LocalPoolHandle},
 };
-use iroh_docs::net::DOCS_ALPN;
+use iroh_docs::{engine::Engine, net::DOCS_ALPN};
 use iroh_net::{
     endpoint::{DirectAddrsStream, RemoteInfo},
     AddrInfo, Endpoint, NodeAddr,
 };
 use iroh_router::{ProtocolHandler, Router};
-use protocol::blobs::BlobsProtocol;
 use quic_rpc::{transport::ServerEndpoint as _, RpcServer};
 use tokio::task::{JoinError, JoinSet};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
-use crate::node::{nodes_storage::store_node_addrs, protocol::docs::DocsProtocol};
+use crate::node::nodes_storage::store_node_addrs;
 
 mod builder;
 mod nodes_storage;
-mod protocol;
 mod rpc;
 mod rpc_status;
 
@@ -294,7 +293,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         if let GcPolicy::Interval(gc_period) = gc_policy {
             let router = router.clone();
             let handle = local_pool.spawn(move || async move {
-                let docs_engine = router.get_protocol::<DocsProtocol>(DOCS_ALPN);
+                let docs_engine = router.get_protocol::<Engine>(DOCS_ALPN);
                 let blobs = router
                     .get_protocol::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
                     .expect("missing blobs");
