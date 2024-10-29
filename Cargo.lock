@@ -2618,6 +2618,7 @@ dependencies = [
  "parking_lot",
  "pkarr",
  "portable-atomic",
+ "portmapper",
  "postcard",
  "quic-rpc",
  "rand",
@@ -2837,12 +2838,14 @@ dependencies = [
  "netlink-packet-core",
  "netlink-packet-route",
  "netlink-sys",
+ "netwatch",
  "ntest",
  "num_enum",
  "once_cell",
  "parking_lot",
  "pin-project",
  "pkarr",
+ "portmapper",
  "postcard",
  "pretty_assertions",
  "proptest",
@@ -2864,7 +2867,6 @@ dependencies = [
  "stun-rs",
  "surge-ping",
  "swarm-discovery",
- "testdir",
  "testresult",
  "thiserror",
  "time",
@@ -3363,6 +3365,35 @@ dependencies = [
  "libc",
  "log",
  "tokio",
+]
+
+[[package]]
+name = "netwatch"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "derive_more",
+ "futures-lite 2.3.0",
+ "futures-sink",
+ "futures-util",
+ "iroh-test",
+ "libc",
+ "netdev",
+ "netlink-packet-core",
+ "netlink-packet-route",
+ "netlink-sys",
+ "once_cell",
+ "rtnetlink",
+ "serde",
+ "socket2",
+ "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "windows 0.51.1",
+ "wmi",
 ]
 
 [[package]]
@@ -3970,6 +4001,35 @@ name = "portable-atomic"
 version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da544ee218f0d287a911e9c99a39a8c9bc8fcad3cb8db5959940044ecfc67265"
+
+[[package]]
+name = "portmapper"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "bytes",
+ "derive_more",
+ "futures-lite 2.3.0",
+ "futures-util",
+ "igd-next",
+ "iroh-metrics",
+ "libc",
+ "netwatch",
+ "ntest",
+ "num_enum",
+ "rand",
+ "rand_chacha",
+ "serde",
+ "smallvec",
+ "socket2",
+ "thiserror",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+]
 
 [[package]]
 name = "positioned-io"
