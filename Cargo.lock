@@ -2697,7 +2697,7 @@ dependencies = [
 [[package]]
 name = "iroh-docs"
 version = "0.27.0"
-source = "git+https://github.com/n0-computer/iroh-docs?branch=refactor-protocol-handler#ff1381eac07d4aee5b3906e292e72e1743b93c5f"
+source = "git+https://github.com/n0-computer/iroh-docs?branch=main#16bc7fe4c7dee1b1b88f54390856c3fafa3d7656"
 dependencies = [
  "anyhow",
  "async-channel",
