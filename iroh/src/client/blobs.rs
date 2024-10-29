@@ -74,10 +74,12 @@ use futures_lite::{Stream, StreamExt};
 use futures_util::SinkExt;
 use genawaiter::sync::{Co, Gen};
 use iroh_base::{node_addr::NodeAddrOptions, ticket::BlobTicket};
+pub use iroh_blobs::net_protocol::DownloadMode;
 use iroh_blobs::{
     export::ExportProgress as BytesExportProgress,
     format::collection::{Collection, SimpleStore},
     get::db::DownloadProgress as BytesDownloadProgress,
+    net_protocol::BlobDownloadRequest,
     store::{BaoBlobSize, ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
     util::SetTagOption,
     BlobFormat, Hash, Tag,
@@ -90,6 +92,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
 use tracing::warn;
+
 mod batch;
 pub use batch::{AddDirOpts, AddFileOpts, AddReaderOpts, Batch};
 
@@ -98,8 +101,8 @@ use crate::rpc_protocol::{
     blobs::{
         AddPathRequest, AddStreamRequest, AddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
         BlobStatusRequest, ConsistencyCheckRequest, CreateCollectionRequest,
-        CreateCollectionResponse, DeleteRequest, DownloadRequest, ExportRequest,
-        ListIncompleteRequest, ListRequest, ReadAtRequest, ReadAtResponse, ValidateRequest,
+        CreateCollectionResponse, DeleteRequest, ExportRequest, ListIncompleteRequest, ListRequest,
+        ReadAtRequest, ReadAtResponse, ValidateRequest,
     },
     node::StatusRequest,
 };
@@ -357,7 +360,7 @@ impl Client {
         } = opts;
         let stream = self
             .rpc
-            .server_streaming(DownloadRequest {
+            .server_streaming(BlobDownloadRequest {
                 hash,
                 format,
                 nodes,
@@ -978,20 +981,6 @@ pub struct DownloadOptions {
     pub tag: SetTagOption,
     /// Whether to directly start the download or add it to the download queue.
     pub mode: DownloadMode,
-}
-
-/// Set the mode for whether to directly start the download or add it to the download queue.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum DownloadMode {
-    /// Start the download right away.
-    ///
-    /// No concurrency limits or queuing will be applied. It is up to the user to manage download
-    /// concurrency.
-    Direct,
-    /// Queue the download.
-    ///
-    /// The download queue will be processed in-order, while respecting the downloader concurrency limits.
-    Queued,
 }
 
 #[cfg(test)]

@@ -11,6 +11,7 @@ use futures_util::{FutureExt as _, TryFutureExt as _};
 use iroh_base::key::SecretKey;
 use iroh_blobs::{
     downloader::Downloader,
+    net_protocol::Blobs as BlobsProtocol,
     provider::EventSender,
     store::{Map, Store as BaoStore},
     util::local_pool::{self, LocalPool, LocalPoolHandle, PanicMode},
@@ -36,10 +37,7 @@ use tracing::{debug, error_span, trace, Instrument};
 use super::{rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner};
 use crate::{
     client::RPC_ALPN,
-    node::{
-        nodes_storage::load_node_addrs,
-        protocol::{blobs::BlobsProtocol, docs::DocsProtocol},
-    },
+    node::{nodes_storage::load_node_addrs, protocol::docs::DocsProtocol},
     rpc_protocol::RpcService,
     util::{fs::load_secret_key, path::IrohPaths},
 };

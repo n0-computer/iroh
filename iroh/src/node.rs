@@ -50,6 +50,7 @@ use futures_lite::StreamExt;
 use futures_util::future::{MapErr, Shared};
 use iroh_base::key::PublicKey;
 use iroh_blobs::{
+    net_protocol::Blobs as BlobsProtocol,
     store::Store as BaoStore,
     util::local_pool::{LocalPool, LocalPoolHandle},
 };
@@ -59,7 +60,6 @@ use iroh_net::{
     Endpoint, NetworkPaths, NodeAddr,
 };
 use iroh_router::{ProtocolHandler, Router};
-use protocol::blobs::BlobsProtocol;
 use quic_rpc::{transport::ServerEndpoint as _, RpcServer};
 use tokio::task::{JoinError, JoinSet};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};

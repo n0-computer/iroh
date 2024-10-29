@@ -1,9 +1,9 @@
-use iroh_blobs::{HashAndFormat, Tag};
+use iroh_blobs::{net_protocol::BatchId, HashAndFormat, Tag};
 use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
-use super::{blobs::BatchId, RpcService};
+use super::RpcService;
 use crate::{client::tags::TagInfo, node::RpcResult};
 
 #[allow(missing_docs)]
