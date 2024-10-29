@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
+use quic_rpc::client::BoxedServiceConnection;
 use ref_cast::RefCast;
 
 use crate::rpc_protocol::node::{CounterStats, ShutdownRequest, StatsRequest, StatusRequest};
@@ -24,13 +25,12 @@ pub mod net;
 pub mod tags;
 
 /// Iroh rpc connection - boxed so that we can have a concrete type.
-pub(crate) type RpcConnection = quic_rpc::transport::boxed::Connection<RpcService>;
+pub(crate) type RpcConnection = BoxedServiceConnection<RpcService>;
 
 // Keep this type exposed, otherwise every occurrence of `RpcClient` in the API
 // will show up as `RpcClient<RpcService, Connection<RpcService>>` in the docs.
 /// Iroh rpc client - boxed so that we can have a concrete type.
-pub type RpcClient =
-    quic_rpc::RpcClient<RpcService, quic_rpc::transport::boxed::Connection<RpcService>>;
+pub type RpcClient = quic_rpc::RpcClient<RpcService>;
 
 /// An iroh client.
 ///

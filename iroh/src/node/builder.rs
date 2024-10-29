@@ -42,7 +42,7 @@ use crate::{
         protocol::{BlobsProtocol, ProtocolMap},
         ProtocolHandler,
     },
-    rpc_protocol::RpcService,
+    rpc_protocol::{Request, Response, RpcService},
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
@@ -666,7 +666,8 @@ where
         .await?;
 
         // Initialize the internal RPC connection.
-        let (internal_rpc, controller) = quic_rpc::transport::flume::connection::<RpcService>(32);
+        let (internal_rpc, controller) =
+            quic_rpc::transport::flume::service_connection::<RpcService>(32);
         let internal_rpc = quic_rpc::transport::boxed::ServerEndpoint::new(internal_rpc);
         // box the controller. Boxing has a special case for the flume channel that avoids allocations,
         // so this has zero overhead.
@@ -935,7 +936,7 @@ pub const DEFAULT_RPC_ADDR: SocketAddr =
 fn make_rpc_endpoint(
     secret_key: &SecretKey,
     mut rpc_addr: SocketAddr,
-) -> Result<(QuinnServerEndpoint<RpcService>, u16)> {
+) -> Result<(QuinnServerEndpoint<Request, Response>, u16)> {
     let mut transport_config = quinn::TransportConfig::default();
     transport_config
         .max_concurrent_bidi_streams(MAX_RPC_STREAMS.into())
@@ -966,7 +967,7 @@ fn make_rpc_endpoint(
     };
 
     let actual_rpc_port = rpc_quinn_endpoint.local_addr()?.port();
-    let rpc_endpoint = QuinnServerEndpoint::<RpcService>::new(rpc_quinn_endpoint)?;
+    let rpc_endpoint = QuinnServerEndpoint::new(rpc_quinn_endpoint)?;
 
     Ok((rpc_endpoint, actual_rpc_port))
 }
