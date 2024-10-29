@@ -43,6 +43,10 @@ pub struct Config {
 
     /// Config for the mainline lookup.
     pub mainline: Option<MainlineConfig>,
+
+    /// Config for pkarr rate limit
+    #[serde(default)]
+    pub pkarr_put_rate_limit: RateLimitConfig,
 }
 
 /// The config for the metrics server.
@@ -161,7 +165,6 @@ impl Default for Config {
             http: Some(HttpConfig {
                 port: 8080,
                 bind_addr: None,
-                rate_limit: RateLimitConfig::default(),
             }),
             https: Some(HttpsConfig {
                 port: 8443,
@@ -170,7 +173,6 @@ impl Default for Config {
                 cert_mode: CertMode::SelfSigned,
                 letsencrypt_contact: None,
                 letsencrypt_prod: None,
-                rate_limit: None,
             }),
             dns: DnsConfig {
                 port: 5300,
@@ -187,6 +189,7 @@ impl Default for Config {
             },
             metrics: None,
             mainline: None,
+            pkarr_put_rate_limit: RateLimitConfig::default(),
         }
     }
 }

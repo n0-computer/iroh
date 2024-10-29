@@ -40,9 +40,6 @@ pub struct HttpConfig {
     pub port: u16,
     /// Optionally set a custom bind address (will use 0.0.0.0 if unset)
     pub bind_addr: Option<IpAddr>,
-    /// Config for http rate limit
-    #[serde(default)]
-    pub rate_limit: RateLimitConfig,
 }
 
 /// Config for the HTTPS server
@@ -60,8 +57,6 @@ pub struct HttpsConfig {
     pub letsencrypt_contact: Option<String>,
     /// Whether to use the letsenrypt production servers (only applies to [`CertMode::LetsEncrypt`])
     pub letsencrypt_prod: Option<bool>,
-    /// Config for https rate limit
-    pub rate_limit: Option<RateLimitConfig>,
 }
 
 /// The HTTP(S) server part of iroh-dns-server
@@ -76,20 +71,14 @@ impl HttpServer {
     pub async fn spawn(
         http_config: Option<HttpConfig>,
         https_config: Option<HttpsConfig>,
+        rate_limit_config: RateLimitConfig,
         state: AppState,
     ) -> Result<HttpServer> {
         if http_config.is_none() && https_config.is_none() {
             bail!("Either http or https config is required");
         }
 
-        let app = create_app(
-            state,
-            https_config
-                .as_ref()
-                .and_then(|h| h.rate_limit.as_ref())
-                .or_else(|| http_config.as_ref().map(|h| &h.rate_limit))
-                .unwrap_or_default(),
-        );
+        let app = create_app(state, &rate_limit_config);
 
         let mut tasks = JoinSet::new();
 

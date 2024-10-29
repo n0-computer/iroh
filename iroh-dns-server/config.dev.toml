@@ -1,7 +1,8 @@
+pkarr_put_rate_limit = "disabled"
+
 [http]
 port = 8080
 bind_addr = "127.0.0.1"
-rate_limit = "disabled"
 
 [https]
 port = 8443
