@@ -52,7 +52,13 @@ impl Server {
             }
             Ok(())
         });
-        let http_server = HttpServer::spawn(config.http, config.https, state.clone()).await?;
+        let http_server = HttpServer::spawn(
+            config.http,
+            config.https,
+            config.pkarr_put_rate_limit,
+            state.clone(),
+        )
+        .await?;
         let dns_server = DnsServer::spawn(config.dns, state.dns_handler.clone()).await?;
         Ok(Self {
             http_server,
