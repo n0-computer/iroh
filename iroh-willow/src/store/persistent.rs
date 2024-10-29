@@ -273,10 +273,7 @@ impl traits::EntryReader for WillowSnapshot {
         let Some(node_id) = read.namespace_nodes.get(namespace.as_bytes())? else {
             return Ok(either::Left(std::iter::empty()));
         };
-        let node_id = node_id.value();
-        println!("READING FROM {}", node_id);
-        println!("QUERY: {range:?}");
-        let ns_node = willow_store::Node::<IrohWillowParams>::from(node_id);
+        let ns_node = willow_store::Node::<IrohWillowParams>::from(node_id.value());
         Ok(either::Right(
             ns_node
                 .query(&to_query(range), &read.node_store)
@@ -381,10 +378,6 @@ impl traits::EntryStorage for Rc<WillowStore> {
             add_entry_auth_token(entry.token(), write)?;
 
             let _replaced = ns_node.insert(&insert_point, &insert_entry, &mut write.node_store)?;
-
-            println!("AFTER WRITE:");
-            ns_node.dump(&write.node_store)?;
-            println!("Namespace node is {}", ns_node.id());
 
             ns_events.insert(|id| StoreEvent::Ingested(id, entry.clone(), origin));
 

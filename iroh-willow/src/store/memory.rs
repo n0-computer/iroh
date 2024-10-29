@@ -287,9 +287,6 @@ impl EntryStore {
             }
         }
 
-        println!("AFTER WRITE:");
-        ns_store.entries.dump(&self.store)?;
-
         debug!(
             subspace = %entry.entry().subspace_id().fmt_short(),
             path = %entry.entry().path().fmt_utf8(),
