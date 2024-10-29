@@ -4,20 +4,20 @@
 </div></details><details class="toggle method-toggle" open><summary><section id="method.set_bytes" class="method"><a class="src rightside" href="../../../src/iroh/client/docs.rs.html#194-210">source</a><h4 class="code-header">pub async fn <a href="#method.set_bytes" class="fn">set_bytes</a>(
     &amp;self,
     author_id: <a class="struct" href="../../docs/struct.AuthorId.html" title="struct iroh::docs::AuthorId">AuthorId</a>,
-    key: impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;Bytes&gt;,
-    value: impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;Bytes&gt;
+    key: impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../net/endpoint/struct.Bytes.html" title="struct iroh::net::endpoint::Bytes">Bytes</a>&gt;,
+    value: impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../net/endpoint/struct.Bytes.html" title="struct iroh::net::endpoint::Bytes">Bytes</a>&gt;
 ) -&gt; <a class="type" href="https://docs.rs/anyhow/1.0.91/anyhow/type.Result.html" title="type anyhow::Result">Result</a>&lt;<a class="struct" href="../../blobs/struct.Hash.html" title="struct iroh::blobs::Hash">Hash</a>&gt;</h4></section></summary><div class="docblock"><p>Sets the content of a key to a byte array.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.set_hash" class="method"><a class="src rightside" href="../../../src/iroh/client/docs.rs.html#213-230">source</a><h4 class="code-header">pub async fn <a href="#method.set_hash" class="fn">set_hash</a>(
     &amp;self,
     author_id: <a class="struct" href="../../docs/struct.AuthorId.html" title="struct iroh::docs::AuthorId">AuthorId</a>,
-    key: impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;Bytes&gt;,
+    key: impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../net/endpoint/struct.Bytes.html" title="struct iroh::net::endpoint::Bytes">Bytes</a>&gt;,
     hash: <a class="struct" href="../../blobs/struct.Hash.html" title="struct iroh::blobs::Hash">Hash</a>,
     size: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u64.html">u64</a>
 ) -&gt; <a class="type" href="https://docs.rs/anyhow/1.0.91/anyhow/type.Result.html" title="type anyhow::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;</h4></section></summary><div class="docblock"><p>Sets an entries on the doc via its key, hash, and size.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.import_file" class="method"><a class="src rightside" href="../../../src/iroh/client/docs.rs.html#233-253">source</a><h4 class="code-header">pub async fn <a href="#method.import_file" class="fn">import_file</a>(
     &amp;self,
     author: <a class="struct" href="../../docs/struct.AuthorId.html" title="struct iroh::docs::AuthorId">AuthorId</a>,
-    key: Bytes,
+    key: <a class="struct" href="../../net/endpoint/struct.Bytes.html" title="struct iroh::net::endpoint::Bytes">Bytes</a>,
     path: impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.AsRef.html" title="trait core::convert::AsRef">AsRef</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/std/path/struct.Path.html" title="struct std::path::Path">Path</a>&gt;,
     in_place: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.bool.html">bool</a>
 ) -&gt; <a class="type" href="https://docs.rs/anyhow/1.0.91/anyhow/type.Result.html" title="type anyhow::Result">Result</a>&lt;<a class="struct" href="struct.ImportFileProgress.html" title="struct iroh::client::docs::ImportFileProgress">ImportFileProgress</a>&gt;</h4></section></summary><div class="docblock"><p>Adds an entry from an absolute file path</p>
@@ -30,7 +30,7 @@
 </div></details><details class="toggle method-toggle" open><summary><section id="method.del" class="method"><a class="src rightside" href="../../../src/iroh/client/docs.rs.html#281-292">source</a><h4 class="code-header">pub async fn <a href="#method.del" class="fn">del</a>(
     &amp;self,
     author_id: <a class="struct" href="../../docs/struct.AuthorId.html" title="struct iroh::docs::AuthorId">AuthorId</a>,
-    prefix: impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;Bytes&gt;
+    prefix: impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../../net/endpoint/struct.Bytes.html" title="struct iroh::net::endpoint::Bytes">Bytes</a>&gt;
 ) -&gt; <a class="type" href="https://docs.rs/anyhow/1.0.91/anyhow/type.Result.html" title="type anyhow::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>&gt;</h4></section></summary><div class="docblock"><p>Deletes entries that match the given <code>author</code> and key <code>prefix</code>.</p>
 <p>This inserts an empty entry with the key set to <code>prefix</code>, effectively clearing all other
 entries whose key starts with or is equal to the given <code>prefix</code>.</p>

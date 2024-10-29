@@ -18,7 +18,7 @@ returning.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.send" class="method"><a class="src rightside" href="../../src/iroh_net/relay/client.rs.html#454-456">source</a><h4 class="code-header">pub async fn <a href="#method.send" class="fn">send</a>(
     &amp;self,
     dst_key: <a class="struct" href="../key/struct.PublicKey.html" title="struct iroh_net::key::PublicKey">PublicKey</a>,
-    b: Bytes
+    b: <a class="struct" href="../endpoint/struct.Bytes.html" title="struct iroh_net::endpoint::Bytes">Bytes</a>
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>, <a class="enum" href="enum.HttpClientError.html" title="enum iroh_net::relay::HttpClientError">ClientError</a>&gt;</h4></section></summary><div class="docblock"><p>Send a packet to the server.</p>
 <p>If there is no underlying active relay connection, it creates one before attempting to
 send the message.</p>

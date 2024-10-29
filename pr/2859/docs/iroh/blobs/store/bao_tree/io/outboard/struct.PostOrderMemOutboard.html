@@ -4,7 +4,7 @@
     pub data: T,
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>A post order outboard that is optimized for memory storage.</p>
 <p>The <a href="struct.PostOrderOutboard.html" title="struct iroh::blobs::store::bao_tree::io::outboard::PostOrderOutboard">PostOrderOutboard</a> will work just fine using e.g. a <a href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec"><code>Vec&lt;u8&gt;</code></a> as storage.
-However, it will not work for types such as [bytes::Bytes] or [bytes::BytesMut]
+However, it will not work for types such as <a href="../../../../../net/endpoint/struct.Bytes.html" title="struct iroh::net::endpoint::Bytes">bytes::Bytes</a> or [bytes::BytesMut]
 that do not implement the io traits.</p>
 <p>The traits are implemented for fixed size slices or mutable slices, so
 unlike the <a href="struct.PostOrderOutboard.html" title="struct iroh::blobs::store::bao_tree::io::outboard::PostOrderOutboard">PostOrderOutboard</a>, you must make sure that the data is already
