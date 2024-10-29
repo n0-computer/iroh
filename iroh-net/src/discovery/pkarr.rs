@@ -19,7 +19,7 @@
 //!   the Mainline DHT on behalf on the client as well as cache lookups performed on the DHT
 //!   to improve performance.
 //!
-//! For node discovery in iroh-net the pkarr Resource Records contain the [`AddrInfo`]
+//! For node discovery in iroh-net the pkarr Resource Records contain the [`NetworkPaths`]
 //! information, providing nodes which retrieve the pkarr Resource Record with enough detail
 //! to contact the iroh-net node.
 //!
@@ -107,8 +107,8 @@ pub const DEFAULT_REPUBLISH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 /// that it only publishes node discovery information, for the corresponding resolver use
 /// the [`PkarrResolver`] together with [`ConcurrentDiscovery`].
 ///
-/// This publisher will **only** publish the [`RelayUrl`] if the [`AddrInfo`] contains a
-/// [`RelayUrl`].  If the [`AddrInfo`] does not contain a [`RelayUrl`] the *direct
+/// This publisher will **only** publish the [`RelayUrl`] if the [`NetworkPaths`] contains a
+/// [`RelayUrl`].  If the [`NetworkPaths`] does not contain a [`RelayUrl`] the *direct
 /// addresses* are published instead.
 ///
 /// [pkarr]: https://pkarr.org
@@ -193,7 +193,7 @@ impl PkarrPublisher {
         Self::new(secret_key, pkarr_relay)
     }
 
-    /// Publishes [`AddrInfo`] about this node to a pkarr relay.
+    /// Publishes [`NetworkPaths`] about this node to a pkarr relay.
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
     pub fn update_addr_info(&self, info: &NetworkPaths) {

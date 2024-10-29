@@ -47,7 +47,7 @@ pub struct NodeAddr {
 }
 
 impl NodeAddr {
-    /// Creates a new [`NodeAddr`] with empty [`AddrInfo`].
+    /// Creates a new [`NodeAddr`] with empty [`NetworkPaths`].
     pub fn new(node_id: PublicKey) -> Self {
         NodeAddr {
             node_id,
@@ -55,13 +55,13 @@ impl NodeAddr {
         }
     }
 
-    /// Adds a relay url to the node's [`AddrInfo`].
+    /// Adds a relay url to the node's [`NetworkPaths`].
     pub fn with_relay_url(mut self, relay_url: RelayUrl) -> Self {
         self.paths.relay_url = Some(relay_url);
         self
     }
 
-    /// Adds the given direct addresses to the peer's [`AddrInfo`].
+    /// Adds the given direct addresses to the peer's [`NetworkPaths`].
     pub fn with_direct_addresses(
         mut self,
         addresses: impl IntoIterator<Item = SocketAddr>,
@@ -89,7 +89,7 @@ impl NodeAddr {
     ///
     /// This is used to more tightly control the information stored in a [`NodeAddr`]
     /// received from another API.  E.g. to ensure a [discovery] service is used the
-    /// `AddrInfoOptions::Id`] option could be used to remove all other addressing details.
+    /// `NodeAddrOptions::Id`] option could be used to remove all other addressing details.
     ///
     /// [discovery]: https://docs.rs/iroh_net/*/iroh_net/index.html#node-discovery
     pub fn apply_options(&mut self, opts: NodeAddrOptions) {

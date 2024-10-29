@@ -133,7 +133,7 @@ pub mod static_provider;
 ///
 /// [`RelayUrl`]: crate::relay::RelayUrl
 pub trait Discovery: std::fmt::Debug + Send + Sync {
-    /// Publishes the given [`AddrInfo`] to the discovery mechanism.
+    /// Publishes the given [`NetworkPaths`] to the discovery mechanism.
     ///
     /// This is fire and forget, since the [`Endpoint`] can not wait for successful
     /// publishing. If publishing is async, the implementation should start it's own task.
@@ -142,7 +142,7 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     /// These tasks will be run on the runtime of the [`super::Endpoint`].
     fn publish(&self, _info: &NetworkPaths) {}
 
-    /// Resolves the [`AddrInfo`] for the given [`NodeId`].
+    /// Resolves the [`NetworkPaths`] for the given [`NodeId`].
     ///
     /// Once the returned [`BoxStream`] is dropped, the service should stop any pending
     /// work.
@@ -168,7 +168,7 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     /// to the `subscribe` stream.
     ///
     /// Discovery systems that are capable of receiving information about [`NodeId`]s
-    /// and their [`AddrInfo`]s without explicitly calling `resolve`, i.e.,
+    /// and their [`NetworkPaths`]s without explicitly calling `resolve`, i.e.,
     /// systems that do "passive" discovery, should implement this method. If
     /// `subscribe` is called multiple times, the passively discovered addresses
     /// should be sent on all streams.
