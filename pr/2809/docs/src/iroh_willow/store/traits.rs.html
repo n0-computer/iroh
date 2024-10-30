@@ -452,15 +452,15 @@
 <span class="doccomment">/// Storage for user and namespace secrets.
 </span><span class="kw">pub trait </span>SecretStorage: Debug + Clone + <span class="lifetime">'static </span>{
     <span class="kw">fn </span>insert(<span class="kw-2">&amp;</span><span class="self">self</span>, secret: meadowcap::SecretKey) -&gt; <span class="prelude-ty">Result</span>&lt;(), SecretStoreError&gt;;
-    <span class="kw">fn </span>get_user(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>UserId) -&gt; <span class="prelude-ty">Option</span>&lt;UserSecretKey&gt;;
-    <span class="kw">fn </span>get_namespace(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>NamespaceId) -&gt; <span class="prelude-ty">Option</span>&lt;NamespaceSecretKey&gt;;
+    <span class="kw">fn </span>get_user(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>UserId) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;UserSecretKey&gt;&gt;;
+    <span class="kw">fn </span>get_namespace(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>NamespaceId) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;NamespaceSecretKey&gt;&gt;;
 
-    <span class="kw">fn </span>has_user(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>UserId) -&gt; bool {
-        <span class="self">self</span>.get_user(id).is_some()
+    <span class="kw">fn </span>has_user(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>UserId) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>.get_user(id)<span class="question-mark">?</span>.is_some())
     }
 
-    <span class="kw">fn </span>has_namespace(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>UserId) -&gt; bool {
-        <span class="self">self</span>.get_user(id).is_some()
+    <span class="kw">fn </span>has_namespace(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>UserId) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>.get_user(id)<span class="question-mark">?</span>.is_some())
     }
 
     <span class="kw">fn </span>insert_user(<span class="kw-2">&amp;</span><span class="self">self</span>, secret: UserSecretKey) -&gt; <span class="prelude-ty">Result</span>&lt;UserId, SecretStoreError&gt; {
@@ -479,8 +479,8 @@
 
     <span class="kw">fn </span>sign_user(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>UserId, message: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;UserSignature, SecretStoreError&gt; {
         <span class="prelude-val">Ok</span>(<span class="self">self
-            </span>.get_user(id)
-            .ok_or(SecretStoreError::MissingKey)<span class="question-mark">?
+            </span>.get_user(id)<span class="question-mark">?
+            </span>.ok_or(SecretStoreError::MissingKey)<span class="question-mark">?
             </span>.sign(message))
     }
     <span class="kw">fn </span>sign_namespace(
@@ -489,8 +489,8 @@
         message: <span class="kw-2">&amp;</span>[u8],
     ) -&gt; <span class="prelude-ty">Result</span>&lt;NamespaceSignature, SecretStoreError&gt; {
         <span class="prelude-val">Ok</span>(<span class="self">self
-            </span>.get_namespace(id)
-            .ok_or(SecretStoreError::MissingKey)<span class="question-mark">?
+            </span>.get_namespace(id)<span class="question-mark">?
+            </span>.ok_or(SecretStoreError::MissingKey)<span class="question-mark">?
             </span>.sign(message))
     }
 }

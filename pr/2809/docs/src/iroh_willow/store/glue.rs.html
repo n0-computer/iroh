@@ -199,6 +199,42 @@
 <a href="#199" id="199">199</a>
 <a href="#200" id="200">200</a>
 <a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
+<a href="#210" id="210">210</a>
+<a href="#211" id="211">211</a>
+<a href="#212" id="212">212</a>
+<a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
+<a href="#218" id="218">218</a>
+<a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a>
+<a href="#224" id="224">224</a>
+<a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Code required for willow-rs and willow-store to interface together.
 
 </span><span class="kw">use </span>std::fmt::Display;
@@ -277,12 +313,7 @@
         <span class="kw">let </span>subspace = key.x();
         <span class="kw">let </span>timestamp = key.y();
         <span class="kw">let </span>blobseq = key.z().to_owned();
-        <span class="kw">let </span>components = blobseq
-            .components()
-            .map(|c| Component::new(c).unwrap()) <span class="comment">// TODO err
-            </span>.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-        <span class="kw">let </span>total_length = components.iter().map(|c| c.len()).sum::&lt;usize&gt;();
-        <span class="kw">let </span>path = Path::new_from_iter(total_length, <span class="kw-2">&amp;mut </span>components.into_iter())<span class="question-mark">?</span>;
+        <span class="kw">let </span>path = blobseq_to_path(<span class="kw-2">&amp;</span>blobseq)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(Entry::new(
             namespace,
             <span class="kw-2">*</span>subspace,
@@ -368,6 +399,19 @@
     BlobSeq::from(path_bytes)
 }
 
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>blobseq_to_path(blobseq: <span class="kw-2">&amp;</span>BlobSeq) -&gt; <span class="prelude-ty">Result</span>&lt;Path&gt; {
+    <span class="kw">let </span>components = blobseq
+        .components()
+        .map(|c| {
+            Component::new(c)
+                .ok_or_else(|| <span class="macro">anyhow::anyhow!</span>(<span class="string">"Path component exceeded length restriction"</span>))
+        })
+        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;&gt;()<span class="question-mark">?</span>;
+    <span class="kw">let </span>total_length = components.iter().map(|c| c.len()).sum::&lt;usize&gt;();
+    <span class="kw">let </span>path = Path::new_from_iter(total_length, <span class="kw-2">&amp;mut </span>components.into_iter())<span class="question-mark">?</span>;
+    <span class="prelude-val">Ok</span>(path)
+}
+
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>to_query(range3d: <span class="kw-2">&amp;</span>Range3d) -&gt; QueryRange3d&lt;IrohWillowParams&gt; {
     <span class="kw">let </span>path_start = path_to_blobseq(<span class="kw-2">&amp;</span>range3d.paths().start);
     <span class="kw">let </span>path_end = <span class="kw">match </span><span class="kw-2">&amp;</span>range3d.paths().end {
@@ -389,6 +433,34 @@
             RangeEnd::Open =&gt; <span class="prelude-val">None</span>,
         },
     )
+}
+
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>to_range3d(query_range3d: QueryRange3d&lt;IrohWillowParams&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;Range3d&gt; {
+    <span class="kw">let </span>path_max = <span class="kw">match </span>query_range3d.z.max {
+        <span class="prelude-val">Some</span>(max) =&gt; RangeEnd::Closed(blobseq_to_path(<span class="kw-2">&amp;</span>max)<span class="question-mark">?</span>),
+        <span class="prelude-val">None </span>=&gt; RangeEnd::Open,
+    };
+    <span class="prelude-val">Ok</span>(Range3d::new(
+        to_range(query_range3d.x),
+        Range {
+            start: blobseq_to_path(<span class="kw-2">&amp;</span>query_range3d.z.min)<span class="question-mark">?</span>,
+            end: path_max,
+        },
+        Range {
+            start: query_range3d.y.min.timestamp(),
+            end: query_range3d
+                .y
+                .max
+                .map_or(RangeEnd::Open, |ts| RangeEnd::Closed(ts.timestamp())),
+        },
+    ))
+}
+
+<span class="kw">fn </span>to_range&lt;T: Ord + Clone&gt;(qr: QueryRange&lt;T&gt;) -&gt; Range&lt;T&gt; {
+    Range {
+        start: qr.min,
+        end: qr.max.map_or(RangeEnd::Open, RangeEnd::Closed),
+    }
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>map_range&lt;S: Ord, T: Ord&gt;(range: <span class="kw-2">&amp;</span>Range&lt;S&gt;, f: <span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>S) -&gt; T) -&gt; Range&lt;T&gt; {

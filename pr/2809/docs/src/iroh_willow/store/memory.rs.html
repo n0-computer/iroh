@@ -695,12 +695,12 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>get_user(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>UserId) -&gt; <span class="prelude-ty">Option</span>&lt;UserSecretKey&gt; {
-        <span class="self">self</span>.borrow().user.get(id).cloned()
+    <span class="kw">fn </span>get_user(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>UserId) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;UserSecretKey&gt;&gt; {
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>.borrow().user.get(id).cloned())
     }
 
-    <span class="kw">fn </span>get_namespace(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>NamespaceId) -&gt; <span class="prelude-ty">Option</span>&lt;NamespaceSecretKey&gt; {
-        <span class="self">self</span>.borrow().namespace.get(id).cloned()
+    <span class="kw">fn </span>get_namespace(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>NamespaceId) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;NamespaceSecretKey&gt;&gt; {
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>.borrow().namespace.get(id).cloned())
     }
 }
 
@@ -1047,7 +1047,7 @@
         <span class="self">self</span>.events.get(index <span class="kw">as </span>usize)
     }
 
-    <span class="kw">fn </span>poll_next(
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_next(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         progress_id: u64,
         filter: <span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>T) -&gt; bool,

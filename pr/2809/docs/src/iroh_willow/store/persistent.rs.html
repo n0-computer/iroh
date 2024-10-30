@@ -750,39 +750,18 @@
 <a href="#750" id="750">750</a>
 <a href="#751" id="751">751</a>
 <a href="#752" id="752">752</a>
-<a href="#753" id="753">753</a>
-<a href="#754" id="754">754</a>
-<a href="#755" id="755">755</a>
-<a href="#756" id="756">756</a>
-<a href="#757" id="757">757</a>
-<a href="#758" id="758">758</a>
-<a href="#759" id="759">759</a>
-<a href="#760" id="760">760</a>
-<a href="#761" id="761">761</a>
-<a href="#762" id="762">762</a>
-<a href="#763" id="763">763</a>
-<a href="#764" id="764">764</a>
-<a href="#765" id="765">765</a>
-<a href="#766" id="766">766</a>
-<a href="#767" id="767">767</a>
-<a href="#768" id="768">768</a>
-<a href="#769" id="769">769</a>
-<a href="#770" id="770">770</a>
-<a href="#771" id="771">771</a>
-<a href="#772" id="772">772</a>
-<a href="#773" id="773">773</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>ed25519_dalek::ed25519;
 <span class="kw">use </span>futures_util::Stream;
 <span class="kw">use </span>redb::{Database, ReadableTable};
 <span class="kw">use </span>std::{
     cell::{Ref, RefCell, RefMut},
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     ops::DerefMut,
     path::PathBuf,
     pin::Pin,
     rc::{Rc, Weak},
-    task::{ready, Context, Poll, Waker},
+    task::{ready, Context, Poll},
     time::Duration,
 };
 <span class="kw">use </span>willow_data_model::SubspaceId <span class="kw">as _</span>;
@@ -798,13 +777,15 @@
         grouping::{Area, Range3d},
         keys::{NamespaceSecretKey, UserId, UserSecretKey, UserSignature},
         meadowcap,
+        wgps::Fingerprint,
     },
-    store::glue::{path_to_blobseq, StoredAuthorisedEntry, StoredTimestamp},
+    store::glue::{path_to_blobseq, to_range3d, StoredAuthorisedEntry, StoredTimestamp},
 };
 
 <span class="kw">use super</span>::{
     glue::{to_query, IrohWillowParams},
-    traits::{<span class="self">self</span>, StoreEvent, SubscribeParams},
+    memory,
+    traits::{<span class="self">self</span>, SplitAction, StoreEvent, SubscribeParams},
 };
 
 <span class="kw">mod </span>tables;
@@ -836,7 +817,7 @@
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>WillowStore {
     db: Db,
-    namespace_events: RefCell&lt;HashMap&lt;NamespaceId, EventQueue&lt;StoreEvent&gt;&gt;&gt;,
+    namespace_events: RefCell&lt;HashMap&lt;NamespaceId, memory::EventQueue&lt;StoreEvent&gt;&gt;&gt;,
 }
 
 <span class="attr">#[derive(derive_more::Debug)]
@@ -881,6 +862,10 @@
             },
             namespace_events: Default::default(),
         })
+    }
+
+    <span class="kw">pub fn </span>snapshot(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;WillowSnapshot&gt; {
+        <span class="prelude-val">Ok</span>(WillowSnapshot(Rc::new(<span class="self">self</span>.db.snapshot_owned()<span class="question-mark">?</span>)))
     }
 }
 
@@ -928,7 +913,7 @@
     ///
     /// This has the side effect of committing any open write transaction,
     /// so it can be used as a way to ensure that the data is persisted.
-    </span><span class="kw">pub fn </span>snapshot_owned(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;tables::OpenRead&gt; {
+    </span><span class="kw">fn </span>snapshot_owned(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;tables::OpenRead&gt; {
         <span class="comment">// make sure the current transaction is committed
         </span><span class="self">self</span>.flush()<span class="question-mark">?</span>;
         <span class="kw">let </span>tx = <span class="self">self</span>.redb.begin_read()<span class="question-mark">?</span>;
@@ -998,10 +983,113 @@
 <span class="attr">#[derive(derive_more::Debug, Clone)]
 </span><span class="kw">pub struct </span>WillowSnapshot(<span class="attr">#[debug(skip)] </span>Rc&lt;tables::OpenRead&gt;);
 
-<span class="kw">impl </span>traits::EntryReader <span class="kw">for </span>WillowSnapshot {
-    <span class="comment">// TODO(matheus23): Impl faster version of default methods
+<span class="kw">impl </span>WillowSnapshot {
+    <span class="kw">fn </span>split_range_owned(
+        <span class="self">self</span>,
+        namespace: NamespaceId,
+        range: <span class="kw-2">&amp;</span>Range3d,
+        config: <span class="kw-2">&amp;</span>traits::SplitOpts,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;traits::RangeSplit&gt;&gt;&gt; {
+        <span class="kw">let </span>max_set_size = config.max_set_size <span class="kw">as </span>u64;
+        <span class="kw">let </span>split_factor = config.split_factor <span class="kw">as </span>u64;
 
-    </span><span class="kw">fn </span>get_entry(
+        <span class="kw">let </span>count = traits::EntryReader::count(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace, range)<span class="question-mark">?</span>;
+        <span class="kw">if </span>count &lt;= max_set_size {
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(either::Left(
+                <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>((range.clone(), SplitAction::SendEntries(count)))).into_iter(),
+            ));
+        }
+
+        <span class="kw">let </span>node_id = <span class="self">self
+            </span>.<span class="number">0
+            </span>.as_ref()
+            .namespace_nodes
+            .get(namespace.as_bytes())<span class="question-mark">?
+            </span>.expect(<span class="string">"node must be set if count &gt; 0 (checked above)"</span>);
+        <span class="kw">let </span>ns_node = willow_store::Node::&lt;IrohWillowParams&gt;::from(node_id.value());
+
+        <span class="prelude-val">Ok</span>(either::Right(
+            ns_node
+                .split_range_owned(to_query(<span class="kw-2">&amp;</span>range), split_factor, <span class="self">self</span>.clone())
+                .map({
+                    <span class="kw">let </span>ns_node = ns_node.clone();
+                    <span class="kw">move </span>|result| {
+                        <span class="kw">let </span>(range, count) = result<span class="question-mark">?</span>;
+                        <span class="kw">if </span>count &lt;= max_set_size {
+                            <span class="prelude-val">Ok</span>((to_range3d(range)<span class="question-mark">?</span>, traits::SplitAction::SendEntries(count)))
+                        } <span class="kw">else </span>{
+                            <span class="kw">let </span>fingerprint = ns_node.range_summary(<span class="kw-2">&amp;</span>range, <span class="kw-2">&amp;</span><span class="self">self</span>)<span class="question-mark">?</span>;
+                            <span class="prelude-val">Ok</span>((
+                                to_range3d(range)<span class="question-mark">?</span>,
+                                traits::SplitAction::SendFingerprint(fingerprint),
+                            ))
+                        }
+                    }
+                }),
+        ))
+    }
+
+    <span class="kw">fn </span>get_authorised_entries_owned(
+        <span class="self">self</span>,
+        namespace: NamespaceId,
+        range: <span class="kw-2">&amp;</span>Range3d,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;AuthorisedEntry&gt;&gt;&gt; {
+        <span class="kw">let </span>clone = Rc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>);
+        <span class="kw">let </span>read = <span class="self">self</span>.<span class="number">0</span>.as_ref();
+        <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = read.namespace_nodes.get(namespace.as_bytes())<span class="question-mark">? </span><span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(either::Left(std::iter::empty()));
+        };
+        <span class="kw">let </span>ns_node = willow_store::Node::&lt;IrohWillowParams&gt;::from(node_id.value());
+        <span class="prelude-val">Ok</span>(either::Right(
+            ns_node
+                .query(<span class="kw-2">&amp;</span>to_query(range), <span class="kw-2">&amp;</span>read.node_store)
+                .map(<span class="kw">move </span>|result| {
+                    <span class="kw">let </span>(point, stored_entry) = result<span class="question-mark">?</span>;
+                    <span class="kw">let </span>id = stored_entry.authorisation_token_id;
+                    <span class="kw">let </span>auth_token = get_entry_auth_token(id, <span class="kw-2">&amp;</span>clone.auth_tokens)<span class="question-mark">?</span>;
+                    stored_entry.into_authorised_entry(namespace, <span class="kw-2">&amp;</span>point, auth_token)
+                })
+                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+                .into_iter(),
+        ))
+    }
+}
+
+<span class="kw">impl </span>willow_store::BlobStoreRead <span class="kw">for </span>WillowSnapshot {
+    <span class="kw">fn </span>peek&lt;T&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, id: willow_store::NodeId, f: <span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>[u8]) -&gt; T) -&gt; <span class="prelude-ty">Result</span>&lt;T&gt; {
+        <span class="self">self</span>.<span class="number">0</span>.node_store.peek(id, f)
+    }
+}
+
+<span class="kw">impl </span>traits::EntryReader <span class="kw">for </span>WillowSnapshot {
+    <span class="kw">fn </span>fingerprint(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>Range3d) -&gt; <span class="prelude-ty">Result</span>&lt;Fingerprint&gt; {
+        <span class="kw">let </span>read = <span class="self">self</span>.<span class="number">0</span>.as_ref();
+        <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = read.namespace_nodes.get(namespace.as_bytes())<span class="question-mark">? </span><span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(Fingerprint::default());
+        };
+        <span class="kw">let </span>ns_node = willow_store::Node::&lt;IrohWillowParams&gt;::from(node_id.value());
+        ns_node.range_summary(<span class="kw-2">&amp;</span>to_query(range), <span class="kw-2">&amp;</span>read.node_store)
+    }
+
+    <span class="kw">fn </span>count(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>Range3d) -&gt; <span class="prelude-ty">Result</span>&lt;u64&gt; {
+        <span class="kw">let </span>read = <span class="self">self</span>.<span class="number">0</span>.as_ref();
+        <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = read.namespace_nodes.get(namespace.as_bytes())<span class="question-mark">? </span><span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="number">0</span>);
+        };
+        <span class="kw">let </span>ns_node = willow_store::Node::&lt;IrohWillowParams&gt;::from(node_id.value());
+        ns_node.range_count(<span class="kw-2">&amp;</span>to_query(range), <span class="kw-2">&amp;</span>read.node_store)
+    }
+
+    <span class="kw">fn </span>split_range(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        namespace: NamespaceId,
+        range: <span class="kw-2">&amp;</span>Range3d,
+        config: <span class="kw-2">&amp;</span>traits::SplitOpts,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;traits::RangeSplit&gt;&gt;&gt; {
+        <span class="self">self</span>.clone().split_range_owned(namespace, range, config)
+    }
+
+    <span class="kw">fn </span>get_entry(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         namespace: NamespaceId,
         subspace: SubspaceId,
@@ -1041,24 +1129,7 @@
         namespace: NamespaceId,
         range: <span class="kw-2">&amp;</span>Range3d,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;AuthorisedEntry&gt;&gt; + <span class="lifetime">'a</span>&gt; {
-        <span class="kw">let </span>clone = Rc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>);
-        <span class="kw">let </span>read = <span class="self">self</span>.<span class="number">0</span>.as_ref();
-        <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = read.namespace_nodes.get(namespace.as_bytes())<span class="question-mark">? </span><span class="kw">else </span>{
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(either::Left(std::iter::empty()));
-        };
-        <span class="kw">let </span>ns_node = willow_store::Node::&lt;IrohWillowParams&gt;::from(node_id.value());
-        <span class="prelude-val">Ok</span>(either::Right(
-            ns_node
-                .query(<span class="kw-2">&amp;</span>to_query(range), <span class="kw-2">&amp;</span>read.node_store)
-                .map(<span class="kw">move </span>|result| {
-                    <span class="kw">let </span>(point, stored_entry) = result<span class="question-mark">?</span>;
-                    <span class="kw">let </span>id = stored_entry.authorisation_token_id;
-                    <span class="kw">let </span>auth_token = get_entry_auth_token(id, <span class="kw-2">&amp;</span>clone.auth_tokens)<span class="question-mark">?</span>;
-                    stored_entry.into_authorised_entry(namespace, <span class="kw-2">&amp;</span>point, auth_token)
-                })
-                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-                .into_iter(),
-        ))
+        <span class="self">self</span>.clone().get_authorised_entries_owned(namespace, range)
     }
 }
 
@@ -1200,44 +1271,30 @@
 }
 
 <span class="kw">impl </span>traits::EntryReader <span class="kw">for </span>Rc&lt;WillowStore&gt; {
-    <span class="comment">// TODO(matheus23): Impl faster version of default methods
+    <span class="kw">fn </span>fingerprint(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>Range3d) -&gt; <span class="prelude-ty">Result</span>&lt;Fingerprint&gt; {
+        <span class="self">self</span>.snapshot()<span class="question-mark">?</span>.fingerprint(namespace, range)
+    }
 
-    // TODO(matheus23): Deduplicate implementation.
+    <span class="kw">fn </span>count(<span class="kw-2">&amp;</span><span class="self">self</span>, namespace: NamespaceId, range: <span class="kw-2">&amp;</span>Range3d) -&gt; <span class="prelude-ty">Result</span>&lt;u64&gt; {
+        <span class="self">self</span>.snapshot()<span class="question-mark">?</span>.count(namespace, range)
+    }
 
-    </span><span class="kw">fn </span>get_entry(
+    <span class="kw">fn </span>split_range(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        namespace: NamespaceId,
+        range: <span class="kw-2">&amp;</span>Range3d,
+        config: <span class="kw-2">&amp;</span>traits::SplitOpts,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;traits::RangeSplit&gt;&gt;&gt; {
+        <span class="self">self</span>.snapshot()<span class="question-mark">?</span>.split_range_owned(namespace, range, config)
+    }
+
+    <span class="kw">fn </span>get_entry(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         namespace: NamespaceId,
         subspace: SubspaceId,
         path: <span class="kw-2">&amp;</span>Path,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;AuthorisedEntry&gt;&gt; {
-        <span class="kw">let </span>tables = <span class="self">self</span>.db.tables()<span class="question-mark">?</span>;
-        <span class="kw">let </span>read = tables.read();
-        <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = read.namespace_nodes.get(namespace.as_bytes())<span class="question-mark">? </span><span class="kw">else </span>{
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-        };
-        <span class="kw">let </span>ns_node = willow_store::Node::&lt;IrohWillowParams&gt;::from(node_id.value());
-        <span class="kw">let </span>blobseq = path_to_blobseq(path);
-        <span class="kw">let </span>end = blobseq.immediate_successor();
-        <span class="kw">let </span><span class="prelude-val">Some</span>(result) = ns_node
-            .query_ordered(
-                <span class="kw-2">&amp;</span>QueryRange3d {
-                    x: QueryRange::new(subspace, subspace.successor()),
-                    y: QueryRange::all(),
-                    z: QueryRange::new(blobseq, <span class="prelude-val">Some</span>(end)),
-                },
-                willow_store::SortOrder::YZX,
-                <span class="kw-2">&amp;</span>read.node_store,
-            )
-            .last()
-        <span class="kw">else </span>{
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-        };
-
-        <span class="kw">let </span>(point, stored_entry) = result<span class="question-mark">?</span>;
-        <span class="kw">let </span>id = stored_entry.authorisation_token_id;
-        <span class="kw">let </span>auth_token = get_entry_auth_token(id, <span class="kw-2">&amp;</span>read.auth_tokens)<span class="question-mark">?</span>;
-        <span class="kw">let </span>entry = stored_entry.into_authorised_entry(namespace, <span class="kw-2">&amp;</span>point, auth_token.clone())<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(entry))
+        <span class="self">self</span>.snapshot()<span class="question-mark">?</span>.get_entry(namespace, subspace, path)
     }
 
     <span class="kw">fn </span>get_authorised_entries&lt;<span class="lifetime">'a</span>&gt;(
@@ -1245,24 +1302,8 @@
         namespace: NamespaceId,
         range: <span class="kw-2">&amp;</span>Range3d,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;AuthorisedEntry&gt;&gt; + <span class="lifetime">'a</span>&gt; {
-        <span class="kw">let </span>snapshot = Rc::new(<span class="self">self</span>.db.snapshot_owned()<span class="question-mark">?</span>);
-        <span class="kw">let </span>read = Rc::clone(<span class="kw-2">&amp;</span>snapshot);
-        <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = read.namespace_nodes.get(namespace.as_bytes())<span class="question-mark">? </span><span class="kw">else </span>{
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(either::Left(std::iter::empty()));
-        };
-        <span class="kw">let </span>ns_node = willow_store::Node::&lt;IrohWillowParams&gt;::from(node_id.value());
-        <span class="prelude-val">Ok</span>(either::Right(
-            ns_node
-                .query(<span class="kw-2">&amp;</span>to_query(range), <span class="kw-2">&amp;</span>read.node_store)
-                .map(<span class="kw">move </span>|result| {
-                    <span class="kw">let </span>(point, stored_entry) = result<span class="question-mark">?</span>;
-                    <span class="kw">let </span>id = stored_entry.authorisation_token_id;
-                    <span class="kw">let </span>auth_token = get_entry_auth_token(id, <span class="kw-2">&amp;</span>snapshot.auth_tokens)<span class="question-mark">?</span>;
-                    stored_entry.into_authorised_entry(namespace, <span class="kw-2">&amp;</span>point, auth_token)
-                })
-                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-                .into_iter(),
-        ))
+        <span class="self">self</span>.snapshot()<span class="question-mark">?
+            </span>.get_authorised_entries_owned(namespace, range)
     }
 }
 
@@ -1284,22 +1325,16 @@
             .map_err(traits::SecretStoreError::from)
     }
 
-    <span class="kw">fn </span>get_user(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>UserId) -&gt; <span class="prelude-ty">Option</span>&lt;UserSecretKey&gt; {
-        <span class="kw">let </span>tables = <span class="self">self
-            </span>.db
-            .tables()
-            .expect(<span class="string">"TODO(matheus23): trait fn should return result"</span>);
-        <span class="kw">let </span>user = tables.read().user_secrets.get(id.as_bytes()).ok()<span class="question-mark">?</span>;
-        user.map(|usr| UserSecretKey::from_bytes(<span class="kw-2">&amp;</span>usr.value()))
+    <span class="kw">fn </span>get_user(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>UserId) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;UserSecretKey&gt;&gt; {
+        <span class="kw">let </span>tables = <span class="self">self</span>.db.tables()<span class="question-mark">?</span>;
+        <span class="kw">let </span>user = tables.read().user_secrets.get(id.as_bytes())<span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(user.map(|usr| UserSecretKey::from_bytes(<span class="kw-2">&amp;</span>usr.value())))
     }
 
-    <span class="kw">fn </span>get_namespace(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>NamespaceId) -&gt; <span class="prelude-ty">Option</span>&lt;NamespaceSecretKey&gt; {
-        <span class="kw">let </span>tables = <span class="self">self
-            </span>.db
-            .tables()
-            .expect(<span class="string">"TODO(matheus23): trait fn should return result"</span>);
-        <span class="kw">let </span>namespace = tables.read().namespace_secrets.get(id.as_bytes()).ok()<span class="question-mark">?</span>;
-        namespace.map(|ns| NamespaceSecretKey::from_bytes(<span class="kw-2">&amp;</span>ns.value()))
+    <span class="kw">fn </span>get_namespace(<span class="kw-2">&amp;</span><span class="self">self</span>, id: <span class="kw-2">&amp;</span>NamespaceId) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;NamespaceSecretKey&gt;&gt; {
+        <span class="kw">let </span>tables = <span class="self">self</span>.db.tables()<span class="question-mark">?</span>;
+        <span class="kw">let </span>namespace = tables.read().namespace_secrets.get(id.as_bytes())<span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(namespace.map(|ns| NamespaceSecretKey::from_bytes(<span class="kw-2">&amp;</span>ns.value())))
     }
 }
 
@@ -1465,83 +1500,6 @@
                 <span class="prelude-val">Some</span>(event)
             }
         })
-    }
-}
-
-<span class="doccomment">/// A simple in-memory event queue.
-///
-/// Events can be pushed, and get a unique monotonically-increasing *progress id*.
-/// Events can be polled, with a progress id to start at, and an optional filter function.
-///
-/// Current in-memory impl keeps all events, forever.
-</span><span class="comment">// TODO: Add max_len constructor, add a way to truncate old entries.
-// TODO: This would be quite a bit more efficient if we filtered the waker with a closure
-// that is set from the last poll, to not wake everyone for each new event.
-</span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>EventQueue&lt;T&gt; {
-    events: VecDeque&lt;T&gt;,
-    offset: u64,
-    wakers: VecDeque&lt;Waker&gt;,
-}
-
-<span class="kw">impl</span>&lt;T&gt; Drop <span class="kw">for </span>EventQueue&lt;T&gt; {
-    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="kw">for </span>waker <span class="kw">in </span><span class="self">self</span>.wakers.drain(..) {
-            waker.wake()
-        }
-    }
-}
-
-<span class="kw">impl</span>&lt;T&gt; Default <span class="kw">for </span>EventQueue&lt;T&gt; {
-    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            events: Default::default(),
-            offset: <span class="number">0</span>,
-            wakers: Default::default(),
-        }
-    }
-}
-
-<span class="kw">impl</span>&lt;T: Clone&gt; EventQueue&lt;T&gt; {
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>insert(<span class="kw-2">&amp;mut </span><span class="self">self</span>, f: <span class="kw">impl </span>FnOnce(u64) -&gt; T) {
-        <span class="kw">let </span>progress_id = <span class="self">self</span>.next_progress_id();
-        <span class="kw">let </span>event = f(progress_id);
-        <span class="self">self</span>.events.push_back(event);
-        <span class="kw">for </span>waker <span class="kw">in </span><span class="self">self</span>.wakers.drain(..) {
-            waker.wake()
-        }
-    }
-
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>next_progress_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
-        <span class="self">self</span>.offset + <span class="self">self</span>.events.len() <span class="kw">as </span>u64
-    }
-
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, progress_id: u64) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>T&gt; {
-        <span class="kw">let </span>index = progress_id.checked_sub(<span class="self">self</span>.offset)<span class="question-mark">?</span>;
-        <span class="self">self</span>.events.get(index <span class="kw">as </span>usize)
-    }
-
-    <span class="kw">fn </span>poll_next(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        progress_id: u64,
-        filter: <span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>T) -&gt; bool,
-        cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;,
-    ) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;(u64, T)&gt;&gt; {
-        <span class="kw">if </span>progress_id &lt; <span class="self">self</span>.offset {
-            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">None</span>);
-        }
-        <span class="kw">let </span><span class="kw-2">mut </span>i = progress_id;
-        <span class="kw">loop </span>{
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(event) = <span class="self">self</span>.get(i) {
-                i += <span class="number">1</span>;
-                <span class="kw">if </span>filter(event) {
-                    <span class="kw">break </span>Poll::Ready(<span class="prelude-val">Some</span>((i, event.clone())));
-                }
-            } <span class="kw">else </span>{
-                <span class="self">self</span>.wakers.push_back(cx.waker().clone());
-                <span class="kw">break </span>Poll::Pending;
-            }
-        }
     }
 }
 </code></pre></div></section></main></body></html>

@@ -232,8 +232,8 @@
         };
         <span class="kw">let </span>secret_key = <span class="self">self
             </span>.secrets()
-            .get_user(<span class="kw-2">&amp;</span>user_id)
-            .context(<span class="string">"Missing user keypair"</span>)<span class="question-mark">?</span>;
+            .get_user(<span class="kw-2">&amp;</span>user_id)<span class="question-mark">?
+            </span>.context(<span class="string">"Missing user keypair"</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// TODO(frando): This should use `authorisation_token_unchecked` if we uphold the invariant
         // that `user_id` is a pubkey for `secret_key`. However, that is `unsafe` at the moment

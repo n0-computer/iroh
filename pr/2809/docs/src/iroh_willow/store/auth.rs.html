@@ -361,7 +361,7 @@
             <span class="comment">// Only allow importing caps we can use.
             // TODO: Is this what we want?
             </span><span class="kw">let </span>user_id = cap.receiver();
-            <span class="kw">if </span>!<span class="self">self</span>.secrets.has_user(<span class="kw-2">&amp;</span>user_id) {
+            <span class="kw">if </span>!<span class="self">self</span>.secrets.has_user(<span class="kw-2">&amp;</span>user_id)<span class="question-mark">? </span>{
                 <span class="kw">return </span><span class="prelude-val">Err</span>(AuthError::MissingUserSecret(user_id));
             }
             <span class="self">self</span>.caps.insert(cap)<span class="question-mark">?</span>;
@@ -442,8 +442,8 @@
         } <span class="kw">else </span>{
             <span class="kw">let </span>namespace_secret = <span class="self">self
                 </span>.secrets
-                .get_namespace(<span class="kw-2">&amp;</span>namespace_key)
-                .ok_or(AuthError::MissingNamespaceSecret(namespace_key))<span class="question-mark">?</span>;
+                .get_namespace(<span class="kw-2">&amp;</span>namespace_key)<span class="question-mark">?
+                </span>.ok_or(AuthError::MissingNamespaceSecret(namespace_key))<span class="question-mark">?</span>;
             <span class="kw">let </span>read_cap = McCapability::new_owned(
                 namespace_key,
                 <span class="kw-2">&amp;</span>namespace_secret,
@@ -469,8 +469,8 @@
         </span>} <span class="kw">else </span>{
             <span class="kw">let </span>namespace_secret = <span class="self">self
                 </span>.secrets
-                .get_namespace(<span class="kw-2">&amp;</span>namespace_key)
-                .ok_or(AuthError::MissingNamespaceSecret(namespace_key))<span class="question-mark">?</span>;
+                .get_namespace(<span class="kw-2">&amp;</span>namespace_key)<span class="question-mark">?
+                </span>.ok_or(AuthError::MissingNamespaceSecret(namespace_key))<span class="question-mark">?</span>;
             McCapability::new_owned(
                 namespace_key,
                 <span class="kw-2">&amp;</span>namespace_secret,
@@ -519,8 +519,8 @@
         <span class="kw">let </span>user_id = read_cap.receiver();
         <span class="kw">let </span>user_secret = <span class="self">self
             </span>.secrets
-            .get_user(user_id)
-            .ok_or(AuthError::MissingUserSecret(<span class="kw-2">*</span>user_id))<span class="question-mark">?</span>;
+            .get_user(user_id)<span class="question-mark">?
+            </span>.ok_or(AuthError::MissingUserSecret(<span class="kw-2">*</span>user_id))<span class="question-mark">?</span>;
         <span class="kw">let </span>area = restrict_area.or_default(read_cap.granted_area());
         <span class="kw">let </span>new_read_cap = read_cap.delegate(<span class="kw-2">&amp;</span>user_secret, <span class="kw-2">&amp;</span>to, <span class="kw-2">&amp;</span>area)<span class="question-mark">?</span>;
 
@@ -550,8 +550,8 @@
         <span class="kw">let </span>cap = <span class="self">self</span>.get_write_cap(from)<span class="question-mark">?</span>.ok_or(AuthError::NoCapability)<span class="question-mark">?</span>;
         <span class="kw">let </span>user_secret = <span class="self">self
             </span>.secrets
-            .get_user(cap.receiver())
-            .ok_or(AuthError::MissingUserSecret(<span class="kw-2">*</span>cap.receiver()))<span class="question-mark">?</span>;
+            .get_user(cap.receiver())<span class="question-mark">?
+            </span>.ok_or(AuthError::MissingUserSecret(<span class="kw-2">*</span>cap.receiver()))<span class="question-mark">?</span>;
         <span class="kw">let </span>area = restrict_area.or_default(cap.granted_area());
         <span class="kw">let </span>new_cap = cap.delegate(<span class="kw-2">&amp;</span>user_secret, <span class="kw-2">&amp;</span>to, <span class="kw-2">&amp;</span>area)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(CapabilityPack::Write(new_cap))
