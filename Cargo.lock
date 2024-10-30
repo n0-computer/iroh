@@ -3131,6 +3131,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-relay"
+version = "0.1.0"
+
+[[package]]
 name = "iroh-router"
 version = "0.28.0"
 dependencies = [
