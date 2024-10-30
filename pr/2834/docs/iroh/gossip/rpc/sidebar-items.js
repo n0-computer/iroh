@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Request","Response","SubscribeResponse","SubscribeUpdate"],"struct":["RpcService","SubscribeRequest"]};
+window.SIDEBAR_ITEMS = {"enum":["SubscribeResponse","SubscribeUpdate"],"mod":["client","proto"]};

@@ -426,10 +426,7 @@
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::path::PathBuf;
 
 <span class="kw">use </span>bytes::Bytes;
-<span class="kw">use </span>iroh_base::{
-    node_addr::AddrInfoOptions,
-    rpc::{RpcError, RpcResult},
-};
+<span class="kw">use </span>iroh_base::node_addr::AddrInfoOptions;
 <span class="kw">use </span>iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
 <span class="kw">use </span>iroh_docs::{
     actor::OpenState,
@@ -444,7 +441,10 @@
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="kw">use </span><span class="kw">super</span>::RpcService;
-<span class="kw">use </span><span class="kw">crate</span>::client::docs::{ImportProgress, ShareMode};
+<span class="kw">use crate</span>::{
+    client::docs::{ImportProgress, ShareMode},
+    node::{RpcError, RpcResult},
+};
 
 <span class="attr">#[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]

@@ -141,6 +141,23 @@
 <a href="#141" id="141">141</a>
 <a href="#142" id="142">142</a>
 <a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>iroh_metrics::{
     core::{Counter, Metric},
     struct_iterable::Iterable,
@@ -149,6 +166,7 @@
 <span class="doccomment">/// Enum of metrics for the module
 </span><span class="attr">#[allow(missing_docs)]
 #[derive(Debug, Clone, Iterable)]
+#[non_exhaustive]
 </span><span class="kw">pub struct </span>Metrics {
     <span class="kw">pub </span>re_stun_calls: Counter,
     <span class="kw">pub </span>update_direct_addrs: Counter,
@@ -211,6 +229,16 @@
     <span class="kw">pub </span>actor_tick_direct_addr_update_receiver: Counter,
     <span class="kw">pub </span>actor_link_change: Counter,
     <span class="kw">pub </span>actor_tick_other: Counter,
+
+    <span class="doccomment">/// Number of nodes we have attempted to contact.
+    </span><span class="kw">pub </span>nodes_contacted: Counter,
+    <span class="doccomment">/// Number of nodes we have managed to contact directly.
+    </span><span class="kw">pub </span>nodes_contacted_directly: Counter,
+
+    <span class="doccomment">/// Number of connections with a successful handshake.
+    </span><span class="kw">pub </span>connection_handshake_success: Counter,
+    <span class="doccomment">/// Number of connections with a successful handshake that became direct.
+    </span><span class="kw">pub </span>connection_became_direct: Counter,
 }
 
 <span class="kw">impl </span>Default <span class="kw">for </span>Metrics {
@@ -275,6 +303,12 @@
             ),
             actor_link_change: Counter::new(<span class="string">"actor_link_change"</span>),
             actor_tick_other: Counter::new(<span class="string">"actor_tick_other"</span>),
+
+            nodes_contacted: Counter::new(<span class="string">"nodes_contacted"</span>),
+            nodes_contacted_directly: Counter::new(<span class="string">"nodes_contacted_directly"</span>),
+
+            connection_handshake_success: Counter::new(<span class="string">"connection_handshake_success"</span>),
+            connection_became_direct: Counter::new(<span class="string">"connection_became_direct"</span>),
         }
     }
 }

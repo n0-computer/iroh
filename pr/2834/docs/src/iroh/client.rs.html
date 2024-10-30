@@ -133,6 +133,7 @@
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
+<span class="kw">use </span>quic_rpc::client::BoxedServiceConnection;
 <span class="kw">use </span>ref_cast::RefCast;
 
 <span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::node::{CounterStats, ShutdownRequest, StatsRequest, StatusRequest};
@@ -147,18 +148,16 @@
 <span class="kw">pub mod </span>authors;
 <span class="kw">pub mod </span>blobs;
 <span class="kw">pub mod </span>docs;
-<span class="kw">pub mod </span>gossip;
 <span class="kw">pub mod </span>net;
 <span class="kw">pub mod </span>tags;
 
 <span class="doccomment">/// Iroh rpc connection - boxed so that we can have a concrete type.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>RpcConnection = quic_rpc::transport::boxed::Connection&lt;RpcService&gt;;
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>RpcConnection = BoxedServiceConnection&lt;RpcService&gt;;
 
 <span class="comment">// Keep this type exposed, otherwise every occurrence of `RpcClient` in the API
 // will show up as `RpcClient&lt;RpcService, Connection&lt;RpcService&gt;&gt;` in the docs.
 </span><span class="doccomment">/// Iroh rpc client - boxed so that we can have a concrete type.
-</span><span class="kw">pub type </span>RpcClient =
-    quic_rpc::RpcClient&lt;RpcService, quic_rpc::transport::boxed::Connection&lt;RpcService&gt;&gt;;
+</span><span class="kw">pub type </span>RpcClient = quic_rpc::RpcClient&lt;RpcService&gt;;
 
 <span class="doccomment">/// An iroh client.
 ///
@@ -208,8 +207,9 @@
     }
 
     <span class="doccomment">/// Returns the gossip client.
-    </span><span class="kw">pub fn </span>gossip(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>gossip::Client {
-        gossip::Client::ref_cast(<span class="kw-2">&amp;</span><span class="self">self</span>.rpc)
+    </span><span class="kw">pub fn </span>gossip(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; iroh_gossip::RpcClient&lt;RpcService&gt; {
+        <span class="kw">let </span>channel = <span class="self">self</span>.rpc.clone().map::&lt;iroh_gossip::RpcService&gt;();
+        iroh_gossip::RpcClient::new(channel)
     }
 
     <span class="doccomment">/// Returns the net client.

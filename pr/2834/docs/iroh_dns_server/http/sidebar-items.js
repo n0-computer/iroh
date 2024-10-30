@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["CertMode"],"struct":["HttpConfig","HttpServer","HttpsConfig"]};
+window.SIDEBAR_ITEMS = {"enum":["CertMode","RateLimitConfig"],"struct":["HttpConfig","HttpServer","HttpsConfig"]};

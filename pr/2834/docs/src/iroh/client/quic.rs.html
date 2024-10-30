@@ -69,9 +69,6 @@
 <a href="#69" id="69">69</a>
 <a href="#70" id="70">70</a>
 <a href="#71" id="71">71</a>
-<a href="#72" id="72">72</a>
-<a href="#73" id="73">73</a>
-<a href="#74" id="74">74</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Type declarations and utility functions for an RPC client to an iroh node running in a separate process.
 
 </span><span class="kw">use </span>std::{
@@ -85,10 +82,7 @@
 <span class="kw">use </span>quic_rpc::transport::{boxed::Connection <span class="kw">as </span>BoxedConnection, quinn::QuinnConnection};
 
 <span class="kw">use super</span>::{Iroh, RpcClient};
-<span class="kw">use crate</span>::{
-    node::RpcStatus,
-    rpc_protocol::{node::StatusRequest, RpcService},
-};
+<span class="kw">use crate</span>::{node::RpcStatus, rpc_protocol::node::StatusRequest};
 
 <span class="doccomment">/// ALPN used by irohs RPC mechanism.
 </span><span class="comment">// TODO: Change to "/iroh-rpc/1"
@@ -120,7 +114,7 @@
     <span class="kw">let </span>endpoint = create_quinn_client(bind_addr, <span class="macro">vec!</span>[RPC_ALPN.to_vec()], <span class="bool-val">false</span>)<span class="question-mark">?</span>;
 
     <span class="kw">let </span>server_name = <span class="string">"localhost"</span>.to_string();
-    <span class="kw">let </span>connection = QuinnConnection::&lt;RpcService&gt;::new(endpoint, addr, server_name);
+    <span class="kw">let </span>connection = QuinnConnection::new(endpoint, addr, server_name);
     <span class="kw">let </span>connection = BoxedConnection::new(connection);
     <span class="kw">let </span>client = RpcClient::new(connection);
     <span class="comment">// Do a status request to check if the server is running.

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["MagicsockMetrics"]};
+window.SIDEBAR_ITEMS = {"struct":["MagicsockMetrics","PortmapMetrics"]};

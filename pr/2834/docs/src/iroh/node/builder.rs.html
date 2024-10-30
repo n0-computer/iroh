@@ -970,6 +970,26 @@
 <a href="#970" id="970">970</a>
 <a href="#971" id="971">971</a>
 <a href="#972" id="972">972</a>
+<a href="#973" id="973">973</a>
+<a href="#974" id="974">974</a>
+<a href="#975" id="975">975</a>
+<a href="#976" id="976">976</a>
+<a href="#977" id="977">977</a>
+<a href="#978" id="978">978</a>
+<a href="#979" id="979">979</a>
+<a href="#980" id="980">980</a>
+<a href="#981" id="981">981</a>
+<a href="#982" id="982">982</a>
+<a href="#983" id="983">983</a>
+<a href="#984" id="984">984</a>
+<a href="#985" id="985">985</a>
+<a href="#986" id="986">986</a>
+<a href="#987" id="987">987</a>
+<a href="#988" id="988">988</a>
+<a href="#989" id="989">989</a>
+<a href="#990" id="990">990</a>
+<a href="#991" id="991">991</a>
+<a href="#992" id="992">992</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -983,11 +1003,15 @@
 <span class="kw">use </span>iroh_base::key::SecretKey;
 <span class="kw">use </span>iroh_blobs::{
     downloader::Downloader,
+    net_protocol::Blobs <span class="kw">as </span>BlobsProtocol,
     provider::EventSender,
     store::{Map, Store <span class="kw">as </span>BaoStore},
     util::local_pool::{<span class="self">self</span>, LocalPool, LocalPoolHandle, PanicMode},
 };
-<span class="kw">use </span>iroh_docs::{engine::DefaultAuthorStorage, net::DOCS_ALPN};
+<span class="kw">use </span>iroh_docs::{
+    engine::{DefaultAuthorStorage, Engine},
+    net::DOCS_ALPN,
+};
 <span class="kw">use </span>iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 <span class="attr">#[cfg(not(test))]
 </span><span class="kw">use </span>iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
@@ -998,22 +1022,17 @@
     relay::{force_staging_infra, RelayMode},
     Endpoint,
 };
+<span class="kw">use </span>iroh_router::{ProtocolHandler, RouterBuilder};
 <span class="kw">use </span>quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::task::JoinError;
 <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, error_span, trace, Instrument};
 
-<span class="kw">use super</span>::{
-    docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner,
-};
+<span class="kw">use super</span>::{rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner};
 <span class="kw">use crate</span>::{
     client::RPC_ALPN,
-    node::{
-        nodes_storage::load_node_addrs,
-        protocol::{BlobsProtocol, ProtocolMap},
-        ProtocolHandler,
-    },
+    node::nodes_storage::load_node_addrs,
     rpc_protocol::RpcService,
     util::{fs::load_secret_key, path::IrohPaths},
 };
@@ -1045,6 +1064,32 @@
     </span>Memory,
     <span class="doccomment">/// File-based persistent storage.
     </span>Persistent(PathBuf),
+}
+
+<span class="doccomment">/// Start the engine, and prepare the selected storage version.
+</span><span class="kw">async fn </span>spawn_docs&lt;S: iroh_blobs::store::Store&gt;(
+    storage: DocsStorage,
+    blobs_store: S,
+    default_author_storage: DefaultAuthorStorage,
+    endpoint: Endpoint,
+    gossip: Gossip,
+    downloader: Downloader,
+) -&gt; anyhow::Result&lt;<span class="prelude-ty">Option</span>&lt;Engine&gt;&gt; {
+    <span class="kw">let </span>docs_store = <span class="kw">match </span>storage {
+        DocsStorage::Disabled =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>),
+        DocsStorage::Memory =&gt; iroh_docs::store::fs::Store::memory(),
+        DocsStorage::Persistent(path) =&gt; iroh_docs::store::fs::Store::persistent(path)<span class="question-mark">?</span>,
+    };
+    <span class="kw">let </span>engine = Engine::spawn(
+        endpoint,
+        gossip,
+        docs_store,
+        blobs_store,
+        downloader,
+        default_author_storage,
+    )
+    .<span class="kw">await</span><span class="question-mark">?</span>;
+    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(engine))
 }
 
 <span class="doccomment">/// Builder for the [`Node`].
@@ -1626,8 +1671,8 @@
         </span><span class="kw">let </span>downloader = Downloader::new(<span class="self">self</span>.blobs_store.clone(), endpoint.clone(), lp.clone());
 
         <span class="comment">// Spawn the docs engine, if enabled.
-        // This returns None for DocsStorage::Disabled, otherwise Some(DocsEngine).
-        </span><span class="kw">let </span>docs = DocsEngine::spawn(
+        // This returns None for DocsStorage::Disabled, otherwise Some(DocsProtocol).
+        </span><span class="kw">let </span>docs = spawn_docs(
             <span class="self">self</span>.docs_storage,
             <span class="self">self</span>.blobs_store.clone(),
             <span class="self">self</span>.storage.default_author_storage(),
@@ -1638,7 +1683,8 @@
         .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// Initialize the internal RPC connection.
-        </span><span class="kw">let </span>(internal_rpc, controller) = quic_rpc::transport::flume::connection::&lt;RpcService&gt;(<span class="number">32</span>);
+        </span><span class="kw">let </span>(internal_rpc, controller) =
+            quic_rpc::transport::flume::service_connection::&lt;RpcService&gt;(<span class="number">32</span>);
         <span class="kw">let </span>internal_rpc = quic_rpc::transport::boxed::ServerEndpoint::new(internal_rpc);
         <span class="comment">// box the controller. Boxing has a special case for the flume channel that avoids allocations,
         // so this has zero overhead.
@@ -1648,7 +1694,7 @@
         <span class="kw">let </span>inner = Arc::new(NodeInner {
             rpc_addr: <span class="self">self</span>.rpc_addr,
             db: Default::default(),
-            endpoint,
+            endpoint: endpoint.clone(),
             client,
             cancel_token: CancellationToken::new(),
             local_pool_handle: lp.handle().clone(),
@@ -1656,7 +1702,7 @@
 
         <span class="kw">let </span>protocol_builder = ProtocolBuilder {
             inner,
-            protocols: Default::default(),
+            router: RouterBuilder::new(endpoint),
             internal_rpc,
             external_rpc: <span class="self">self</span>.rpc_endpoint,
             gc_policy: <span class="self">self</span>.gc_policy,
@@ -1690,7 +1736,7 @@
     inner: Arc&lt;NodeInner&lt;D&gt;&gt;,
     internal_rpc: IrohServerEndpoint,
     external_rpc: IrohServerEndpoint,
-    protocols: ProtocolMap,
+    router: RouterBuilder,
     <span class="attr">#[debug(<span class="string">"callback"</span>)]
     </span>gc_done_callback: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() + Send&gt;&gt;,
     gc_policy: GcPolicy,
@@ -1712,7 +1758,7 @@
     /// # use std::sync::Arc;
     /// # use anyhow::Result;
     /// # use futures_lite::future::Boxed as BoxedFuture;
-    /// # use iroh::{node::{Node, ProtocolHandler}, net::endpoint::Connecting, client::Iroh};
+    /// # use iroh::{node::{Node}, net::endpoint::Connecting, client::Iroh, router::ProtocolHandler};
     /// #
     /// # #[tokio::main]
     /// # async fn main() -&gt; Result&lt;()&gt; {
@@ -1748,7 +1794,7 @@
     ///
     ///
     </span><span class="kw">pub fn </span>accept(<span class="kw-2">mut </span><span class="self">self</span>, alpn: Vec&lt;u8&gt;, handler: Arc&lt;<span class="kw">dyn </span>ProtocolHandler&gt;) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.protocols.insert(alpn, handler);
+        <span class="self">self</span>.router = <span class="self">self</span>.router.accept(alpn, handler);
         <span class="self">self
     </span>}
 
@@ -1775,7 +1821,7 @@
     /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
     /// does not match the passed type.
     </span><span class="kw">pub fn </span>get_protocol&lt;P: ProtocolHandler&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, alpn: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;P&gt;&gt; {
-        <span class="self">self</span>.protocols.get_typed(alpn)
+        <span class="self">self</span>.router.get_protocol::&lt;P&gt;(alpn)
     }
 
     <span class="doccomment">/// Registers the core iroh protocols (blobs, gossip, docs).
@@ -1785,7 +1831,7 @@
         store: D,
         gossip: Gossip,
         downloader: Downloader,
-        docs: <span class="prelude-ty">Option</span>&lt;DocsEngine&gt;,
+        docs: <span class="prelude-ty">Option</span>&lt;Engine&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="comment">// Register blobs.
         </span><span class="kw">let </span>blobs_proto = BlobsProtocol::new_with_events(
@@ -1813,24 +1859,15 @@
             inner,
             internal_rpc,
             external_rpc,
-            protocols,
+            router,
             gc_done_callback,
             gc_policy,
             nodes_data_path,
             local_pool: rt,
         } = <span class="self">self</span>;
-        <span class="kw">let </span>protocols = Arc::new(protocols);
         <span class="kw">let </span>node_id = inner.endpoint.node_id();
 
-        <span class="comment">// Update the endpoint with our alpns.
-        </span><span class="kw">let </span>alpns = protocols
-            .alpns()
-            .map(|alpn| alpn.to_vec())
-            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = inner.endpoint.set_alpns(alpns) {
-            inner.shutdown(protocols).<span class="kw">await</span>;
-            <span class="kw">return </span><span class="prelude-val">Err</span>(err);
-        }
+        <span class="kw">let </span>router = router.spawn().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// Spawn the main task and store it in the node for structured termination in shutdown.
         </span><span class="kw">let </span>fut = inner
@@ -1838,7 +1875,7 @@
             .run(
                 external_rpc,
                 internal_rpc,
-                protocols.clone(),
+                router.clone(),
                 gc_policy,
                 gc_done_callback,
                 nodes_data_path,
@@ -1849,7 +1886,7 @@
 
         <span class="kw">let </span>node = Node {
             inner,
-            protocols,
+            router,
             task: AbortOnDropHandle::new(task)
                 .map_err(Box::new(|e: JoinError| e.to_string()) <span class="kw">as </span>JoinErrToStr)
                 .shared(),
@@ -1907,7 +1944,10 @@
 </span><span class="kw">fn </span>make_rpc_endpoint(
     secret_key: <span class="kw-2">&amp;</span>SecretKey,
     <span class="kw-2">mut </span>rpc_addr: SocketAddr,
-) -&gt; <span class="prelude-ty">Result</span>&lt;(QuinnServerEndpoint&lt;RpcService&gt;, u16)&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;(
+    QuinnServerEndpoint&lt;<span class="kw">crate</span>::rpc_protocol::Request, <span class="kw">crate</span>::rpc_protocol::Response&gt;,
+    u16,
+)&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();
     transport_config
         .max_concurrent_bidi_streams(MAX_RPC_STREAMS.into())
@@ -1938,7 +1978,7 @@
     };
 
     <span class="kw">let </span>actual_rpc_port = rpc_quinn_endpoint.local_addr()<span class="question-mark">?</span>.port();
-    <span class="kw">let </span>rpc_endpoint = QuinnServerEndpoint::&lt;RpcService&gt;::new(rpc_quinn_endpoint)<span class="question-mark">?</span>;
+    <span class="kw">let </span>rpc_endpoint = QuinnServerEndpoint::new(rpc_quinn_endpoint)<span class="question-mark">?</span>;
 
     <span class="prelude-val">Ok</span>((rpc_endpoint, actual_rpc_port))
 }

@@ -101,7 +101,7 @@
     Docs(docs::Request),
     Tags(tags::Request),
     Authors(authors::Request),
-    Gossip(iroh_gossip::rpc::Request),
+    Gossip(iroh_gossip::RpcRequest),
 }
 
 <span class="doccomment">/// The response enum, listing all possible responses.
@@ -115,7 +115,7 @@
     Tags(tags::Response),
     Docs(docs::Response),
     Authors(authors::Response),
-    Gossip(iroh_gossip::rpc::Response),
+    Gossip(iroh_gossip::RpcResponse),
 }
 
 <span class="kw">impl </span>quic_rpc::Service <span class="kw">for </span>RpcService {

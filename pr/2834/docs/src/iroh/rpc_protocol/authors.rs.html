@@ -121,13 +121,13 @@
 <a href="#121" id="121">121</a>
 <a href="#122" id="122">122</a>
 <a href="#123" id="123">123</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>iroh_base::rpc::RpcResult;
-<span class="kw">use </span>iroh_docs::{Author, AuthorId};
+</pre></div><pre class="rust"><code><span class="kw">use </span>iroh_docs::{Author, AuthorId};
 <span class="kw">use </span>nested_enum_utils::enum_conversions;
 <span class="kw">use </span>quic_rpc_derive::rpc_requests;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="kw">use </span><span class="kw">super</span>::RpcService;
+<span class="kw">use </span><span class="kw">crate</span>::node::RpcResult;
 
 <span class="attr">#[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]

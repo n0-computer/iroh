@@ -319,13 +319,13 @@
 </span><span class="kw">use </span>std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>netwatch::UdpSocket;
 <span class="kw">use </span>tokio::{sync::oneshot, time::Instant};
 <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{
     defaults::timeouts::HAIRPIN_CHECK_TIMEOUT,
-    net::UdpSocket,
     netcheck::{<span class="self">self</span>, reportgen, Inflight},
     stun,
 };

@@ -188,6 +188,11 @@
 <a href="#188" id="188">188</a>
 <a href="#189" id="189">189</a>
 <a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Configuration for the server
 
 </span><span class="kw">use </span>std::{
@@ -202,7 +207,7 @@
 
 <span class="kw">use crate</span>::{
     dns::DnsConfig,
-    http::{CertMode, HttpConfig, HttpsConfig},
+    http::{CertMode, HttpConfig, HttpsConfig, RateLimitConfig},
 };
 
 <span class="kw">const </span>DEFAULT_METRICS_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), <span class="number">9117</span>);
@@ -233,6 +238,10 @@
 
     <span class="doccomment">/// Config for the mainline lookup.
     </span><span class="kw">pub </span>mainline: <span class="prelude-ty">Option</span>&lt;MainlineConfig&gt;,
+
+    <span class="doccomment">/// Config for pkarr rate limit
+    </span><span class="attr">#[serde(default)]
+    </span><span class="kw">pub </span>pkarr_put_rate_limit: RateLimitConfig,
 }
 
 <span class="doccomment">/// The config for the metrics server.
@@ -375,6 +384,7 @@
             },
             metrics: <span class="prelude-val">None</span>,
             mainline: <span class="prelude-val">None</span>,
+            pkarr_put_rate_limit: RateLimitConfig::default(),
         }
     }
 }
