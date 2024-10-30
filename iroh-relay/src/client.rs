@@ -12,6 +12,7 @@ use bytes::Bytes;
 use conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMessage};
 use futures_lite::future::Boxed as BoxFuture;
 use futures_util::StreamExt;
+use hickory_resolver::TokioAsyncResolver as DnsResolver;
 use http_body_util::Empty;
 use hyper::{
     body::Incoming,
@@ -20,6 +21,7 @@ use hyper::{
     Request,
 };
 use hyper_util::rt::TokioIo;
+use iroh_base::key::{NodeId, PublicKey, SecretKey};
 use rand::Rng;
 use rustls::client::Resumption;
 use streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
@@ -38,16 +40,13 @@ use tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
 use url::Url;
 
 use crate::{
+    codec::DerpCodec,
     defaults::timeouts::relay::*,
-    dns::{DnsResolver, ResolverExt},
-    key::{NodeId, PublicKey, SecretKey},
-    relay::{
-        codec::DerpCodec,
-        http::{Protocol, RELAY_PATH},
-        RelayUrl,
-    },
-    util::chain,
+    http::{Protocol, RELAY_PATH},
+    RelayUrl,
 };
+
+use util::chain;
 
 pub(crate) mod conn;
 pub(crate) mod streams;

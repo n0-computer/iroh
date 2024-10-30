@@ -19,6 +19,7 @@ use futures_util::{
     stream::{SplitSink, SplitStream, StreamExt},
     SinkExt,
 };
+use iroh_base::key::{PublicKey, SecretKey};
 use tokio::sync::mpsc;
 use tokio_tungstenite_wasm::WebSocketStream;
 use tokio_util::{
@@ -28,15 +29,12 @@ use tokio_util::{
 use tracing::{debug, info_span, trace, Instrument};
 
 use crate::{
-    defaults::timeouts::relay::CLIENT_RECV_TIMEOUT,
-    key::{PublicKey, SecretKey},
-    relay::{
-        client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
-        codec::{
-            write_frame, ClientInfo, DerpCodec, Frame, MAX_PACKET_SIZE,
-            PER_CLIENT_READ_QUEUE_DEPTH, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
-        },
+    client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
+    codec::{
+        write_frame, ClientInfo, DerpCodec, Frame, MAX_PACKET_SIZE, PER_CLIENT_READ_QUEUE_DEPTH,
+        PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
     },
+    defaults::timeouts::relay::CLIENT_RECV_TIMEOUT,
 };
 
 impl PartialEq for Conn {
@@ -368,8 +366,7 @@ impl ConnBuilder {
             version: PROTOCOL_VERSION,
         };
         debug!("server_handshake: sending client_key: {:?}", &client_info);
-        crate::relay::codec::send_client_key(&mut self.writer, &self.secret_key, &client_info)
-            .await?;
+        crate::codec::send_client_key(&mut self.writer, &self.secret_key, &client_info).await?;
 
         // TODO: add some actual configuration
         let rate_limiter = RateLimiter::new(0, 0)?;
