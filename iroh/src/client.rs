@@ -66,10 +66,9 @@ impl Iroh {
     }
 
     /// Returns the docs client.
-    pub fn docs(&self) -> iroh_docs::rpc::client::Client {
+    pub fn docs(&self) -> iroh_docs::rpc::client::Client<RpcService> {
         let rpc = self.rpc.clone();
-        let channel: quic_rpc::RpcClient<iroh_docs::rpc::proto::RpcService> =
-            rpc.map::<iroh_docs::rpc::proto::RpcService>();
+        let channel = rpc.map::<iroh_docs::rpc::proto::RpcService>();
         iroh_docs::rpc::client::Client::new(channel)
     }
 
