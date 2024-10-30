@@ -10,7 +10,7 @@ members = [
   "iroh-cli",
   "iroh-router",
   "net-tools/netwatch",
-  "net-tools/portmapper",
+  "net-tools/portmapper", "iroh-relay",
 ]
 resolver = "2"
 
