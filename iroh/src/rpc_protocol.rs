@@ -18,11 +18,11 @@
 use serde::{Deserialize, Serialize};
 
 pub mod authors;
-pub mod blobs;
 pub mod docs;
 pub mod net;
 pub mod node;
-pub mod tags;
+pub use iroh_blobs::rpc::proto::blobs;
+pub use iroh_blobs::rpc::proto::tags;
 
 /// The RPC service for the iroh provider process.
 #[derive(Debug, Clone)]
@@ -35,11 +35,10 @@ pub struct RpcService;
 pub enum Request {
     Node(node::Request),
     Net(net::Request),
-    Blobs(blobs::Request),
     Docs(docs::Request),
-    Tags(tags::Request),
     Authors(authors::Request),
     Gossip(iroh_gossip::RpcRequest),
+    BlobsAndTags(iroh_blobs::rpc::proto::Request),
 }
 
 /// The response enum, listing all possible responses.
@@ -49,11 +48,10 @@ pub enum Request {
 pub enum Response {
     Node(node::Response),
     Net(net::Response),
-    Blobs(blobs::Response),
-    Tags(tags::Response),
     Docs(docs::Response),
     Authors(authors::Response),
     Gossip(iroh_gossip::RpcResponse),
+    BlobsAndTags(iroh_blobs::rpc::proto::Response),
 }
 
 impl quic_rpc::Service for RpcService {

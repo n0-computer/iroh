@@ -2547,7 +2547,6 @@ dependencies = [
 [[package]]
 name = "iroh-blobs"
 version = "0.27.0"
-source = "git+https://github.com/n0-computer/iroh-blobs?branch=main#378fc0fd8257c0beeb3a655a8378226a630b2d73"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2557,6 +2556,7 @@ dependencies = [
  "derive_more",
  "futures-buffered",
  "futures-lite 2.3.0",
+ "futures-util",
  "genawaiter",
  "hashlink",
  "hex",
@@ -2566,26 +2566,33 @@ dependencies = [
  "iroh-net",
  "iroh-quinn",
  "iroh-router",
+ "nested_enum_utils",
  "num_cpus",
  "oneshot",
  "parking_lot",
  "pin-project",
+ "portable-atomic",
  "postcard",
+ "quic-rpc 0.13.0",
+ "quic-rpc-derive",
  "rand",
  "range-collections",
  "redb 1.5.1",
  "redb 2.1.1",
+ "ref-cast",
  "reflink-copy",
  "self_cell",
  "serde",
  "serde-error",
  "smallvec",
+ "strum 0.26.3",
  "tempfile",
  "thiserror",
  "tokio",
  "tokio-util",
  "tracing",
  "tracing-futures",
+ "walkdir",
 ]
 
 [[package]]

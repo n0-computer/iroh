@@ -189,7 +189,7 @@ impl<D: BaoStore> Handler<D> {
     async fn handle_blobs_request(
         self,
         msg: blobs::Request,
-        chan: RpcChannel<RpcService, IrohServerEndpoint>,
+        chan: RpcChannel<iroh_blobs::rpc::proto::RpcService, IrohServerEndpoint, crate::rpc_protocol::RpcService>,
     ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
         use blobs::Request::*;
         debug!("handling blob request: {msg}");
@@ -231,7 +231,7 @@ impl<D: BaoStore> Handler<D> {
     async fn handle_tags_request(
         self,
         msg: tags::Request,
-        chan: RpcChannel<RpcService, IrohServerEndpoint>,
+        chan: RpcChannel<iroh_blobs::rpc::proto::RpcService, IrohServerEndpoint, crate::rpc_protocol::RpcService>,
     ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
         use tags::Request::*;
         match msg {
@@ -322,8 +322,8 @@ impl<D: BaoStore> Handler<D> {
         match msg {
             Net(msg) => self.handle_net_request(msg, chan).await,
             Node(msg) => self.handle_node_request(msg, chan).await,
-            Blobs(msg) => self.handle_blobs_request(msg, chan).await,
-            Tags(msg) => self.handle_tags_request(msg, chan).await,
+            BlobsAndTags(iroh_blobs::rpc::proto::Request::Blobs(msg)) => self.handle_blobs_request(msg, chan.map()).await,
+            BlobsAndTags(iroh_blobs::rpc::proto::Request::Tags(msg)) => self.handle_tags_request(msg, chan.map()).await,
             Authors(msg) => self.handle_authors_request(msg, chan).await,
             Docs(msg) => self.handle_docs_request(msg, chan).await,
             Gossip(msg) => self.handle_gossip_request(msg, chan).await,

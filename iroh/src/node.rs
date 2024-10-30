@@ -497,7 +497,7 @@ fn node_address_for_storage(info: RemoteInfo) -> Option<NodeAddr> {
 mod tests {
     use anyhow::{bail, Context};
     use bytes::Bytes;
-    use iroh_base::node_addr::AddrInfoOptions;
+    use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
     use iroh_blobs::{provider::AddProgress, util::SetTagOption, BlobFormat};
     use iroh_net::{key::SecretKey, relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
 
@@ -518,11 +518,9 @@ mod tests {
             .hash;
 
         let _drop_guard = node.cancel_token().drop_guard();
-        let ticket = node
-            .blobs()
-            .share(hash, BlobFormat::Raw, AddrInfoOptions::RelayAndAddresses)
-            .await
-            .unwrap();
+        let mut addr = node.net().node_addr().await.unwrap();
+        addr.apply_options(AddrInfoOptions::RelayAndAddresses);
+        let ticket = BlobTicket::new(addr, hash, BlobFormat::Raw).unwrap();
         println!("addrs: {:?}", ticket.node_addr().info);
         assert!(!ticket.node_addr().info.direct_addresses.is_empty());
     }

@@ -19,10 +19,10 @@ pub(crate) use self::quic::{connect_raw as quic_connect_raw, RPC_ALPN};
 pub use self::{docs::Doc, net::NodeStatus};
 
 pub mod authors;
-pub mod blobs;
 pub mod docs;
 pub mod net;
-pub mod tags;
+pub use iroh_blobs::rpc::client::blobs;
+pub use iroh_blobs::rpc::client::tags;
 
 /// Iroh rpc connection - boxed so that we can have a concrete type.
 pub(crate) type RpcConnection = BoxedServiceConnection<RpcService>;
@@ -60,8 +60,11 @@ impl Iroh {
     }
 
     /// Returns the blobs client.
-    pub fn blobs(&self) -> &blobs::Client {
-        blobs::Client::ref_cast(&self.rpc)
+    pub fn blobs(
+        &self,
+    ) -> iroh_blobs::rpc::client::blobs::Client<BoxedServiceConnection<RpcService>, RpcService>
+    {
+        iroh_blobs::rpc::client::blobs::Client::new(self.rpc.clone().map())
     }
 
     /// Returns the docs client.
@@ -75,8 +78,10 @@ impl Iroh {
     }
 
     /// Returns the tags client.
-    pub fn tags(&self) -> &tags::Client {
-        tags::Client::ref_cast(&self.rpc)
+    pub fn tags(
+        &self,
+    ) -> iroh_blobs::rpc::client::tags::Client<BoxedServiceConnection<RpcService>, RpcService> {
+        iroh_blobs::rpc::client::tags::Client::new(self.rpc.clone().map())
     }
 
     /// Returns the gossip client.

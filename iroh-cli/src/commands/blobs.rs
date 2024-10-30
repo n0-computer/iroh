@@ -370,7 +370,7 @@ impl BlobCommands {
                     BlobFormat::Raw
                 };
                 let status = iroh.blobs().status(hash).await?;
-                let ticket = iroh.blobs().share(hash, format, addr_options).await?;
+                let ticket: BlobTicket = todo!();
 
                 let (blob_status, size) = match (status, format) {
                     (BlobStatus::Complete { size }, BlobFormat::Raw) => ("blob", size),
