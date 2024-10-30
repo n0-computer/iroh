@@ -24,9 +24,6 @@ pub mod net;
 pub use iroh_blobs::rpc::client::blobs;
 pub use iroh_blobs::rpc::client::tags;
 
-/// Iroh rpc connection - boxed so that we can have a concrete type.
-pub(crate) type RpcConnection = BoxedServiceConnection<RpcService>;
-
 // Keep this type exposed, otherwise every occurrence of `RpcClient` in the API
 // will show up as `RpcClient<RpcService, Connection<RpcService>>` in the docs.
 /// Iroh rpc client - boxed so that we can have a concrete type.

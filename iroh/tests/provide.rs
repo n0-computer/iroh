@@ -19,7 +19,7 @@ use iroh_blobs::{
     },
     protocol::{GetRequest, RangeSpecSeq},
     store::{MapMut, Store},
-    BlobFormat, Hash,
+    Hash,
 };
 use iroh_net::{defaults::staging::default_relay_map, key::SecretKey, NodeAddr, NodeId};
 use rand::RngCore;
@@ -390,7 +390,7 @@ async fn test_run_ticket() {
     addr.apply_options(AddrInfoOptions::RelayAndAddresses);
     let ticket = BlobTicket::new(addr, hash, iroh_blobs::BlobFormat::HashSeq)
         .expect("ticket creation failed");
-    
+
     tokio::time::timeout(Duration::from_secs(10), async move {
         let request = GetRequest::all(hash);
         run_collection_get_request(SecretKey::generate(), ticket.node_addr().clone(), request).await

@@ -370,7 +370,9 @@ impl BlobCommands {
                     BlobFormat::Raw
                 };
                 let status = iroh.blobs().status(hash).await?;
-                let ticket: BlobTicket = todo!();
+                let mut addr: NodeAddr = iroh.net().node_addr().await?;
+                addr.apply_options(addr_options);
+                let ticket = BlobTicket::new(addr, hash, format)?;
 
                 let (blob_status, size) = match (status, format) {
                     (BlobStatus::Complete { size }, BlobFormat::Raw) => ("blob", size),

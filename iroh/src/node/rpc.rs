@@ -189,7 +189,11 @@ impl<D: BaoStore> Handler<D> {
     async fn handle_blobs_request(
         self,
         msg: blobs::Request,
-        chan: RpcChannel<iroh_blobs::rpc::proto::RpcService, IrohServerEndpoint, crate::rpc_protocol::RpcService>,
+        chan: RpcChannel<
+            iroh_blobs::rpc::proto::RpcService,
+            IrohServerEndpoint,
+            crate::rpc_protocol::RpcService,
+        >,
     ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
         use blobs::Request::*;
         debug!("handling blob request: {msg}");
@@ -231,7 +235,11 @@ impl<D: BaoStore> Handler<D> {
     async fn handle_tags_request(
         self,
         msg: tags::Request,
-        chan: RpcChannel<iroh_blobs::rpc::proto::RpcService, IrohServerEndpoint, crate::rpc_protocol::RpcService>,
+        chan: RpcChannel<
+            iroh_blobs::rpc::proto::RpcService,
+            IrohServerEndpoint,
+            crate::rpc_protocol::RpcService,
+        >,
     ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
         use tags::Request::*;
         match msg {
@@ -322,8 +330,12 @@ impl<D: BaoStore> Handler<D> {
         match msg {
             Net(msg) => self.handle_net_request(msg, chan).await,
             Node(msg) => self.handle_node_request(msg, chan).await,
-            BlobsAndTags(iroh_blobs::rpc::proto::Request::Blobs(msg)) => self.handle_blobs_request(msg, chan.map()).await,
-            BlobsAndTags(iroh_blobs::rpc::proto::Request::Tags(msg)) => self.handle_tags_request(msg, chan.map()).await,
+            BlobsAndTags(iroh_blobs::rpc::proto::Request::Blobs(msg)) => {
+                self.handle_blobs_request(msg, chan.map()).await
+            }
+            BlobsAndTags(iroh_blobs::rpc::proto::Request::Tags(msg)) => {
+                self.handle_tags_request(msg, chan.map()).await
+            }
             Authors(msg) => self.handle_authors_request(msg, chan).await,
             Docs(msg) => self.handle_docs_request(msg, chan).await,
             Gossip(msg) => self.handle_gossip_request(msg, chan).await,
@@ -640,6 +652,123 @@ impl<D: BaoStore> Handler<D> {
         Ok(())
     }
 
+    #[allow(clippy::unused_async)]
+    async fn node_stats(self, _req: StatsRequest) -> RpcResult<StatsResponse> {
+        #[cfg(feature = "metrics")]
+        let res = Ok(StatsResponse {
+            stats: crate::metrics::get_metrics().map_err(|e| RpcError::new(&*e))?,
+        });
+
+        #[cfg(not(feature = "metrics"))]
+        let res = Err(RpcError::new(&*anyhow::anyhow!("metrics are disabled")));
+
+        res
+    }
+
+    async fn node_status(self, _: StatusRequest) -> RpcResult<NodeStatus> {
+        Ok(NodeStatus {
+            addr: self
+                .inner
+                .endpoint
+                .node_addr()
+                .await
+                .map_err(|e| RpcError::new(&*e))?,
+            listen_addrs: self
+                .inner
+                .local_endpoint_addresses()
+                .await
+                .unwrap_or_default(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            rpc_addr: self.inner.rpc_addr,
+        })
+    }
+
+    #[allow(clippy::unused_async)]
+    async fn node_id(self, _: IdRequest) -> RpcResult<NodeId> {
+        Ok(self.inner.endpoint.secret_key().public())
+    }
+
+    async fn node_addr(self, _: AddrRequest) -> RpcResult<NodeAddr> {
+        let addr = self
+            .inner
+            .endpoint
+            .node_addr()
+            .await
+            .map_err(|e| RpcError::new(&*e))?;
+        Ok(addr)
+    }
+
+    #[allow(clippy::unused_async)]
+    async fn node_relay(self, _: RelayRequest) -> RpcResult<Option<RelayUrl>> {
+        Ok(self.inner.endpoint.home_relay())
+    }
+
+    #[allow(clippy::unused_async)]
+    async fn node_shutdown(self, request: ShutdownRequest) {
+        if request.force {
+            info!("hard shutdown requested");
+            std::process::exit(0);
+        } else {
+            // trigger a graceful shutdown
+            info!("graceful shutdown requested");
+            self.inner.cancel_token.cancel();
+        }
+    }
+
+    fn node_watch(self, _: NodeWatchRequest) -> impl Stream<Item = WatchResponse> {
+        futures_lite::stream::unfold((), |()| async move {
+            tokio::time::sleep(HEALTH_POLL_WAIT).await;
+            Some((
+                WatchResponse {
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                },
+                (),
+            ))
+        })
+    }
+
+    async fn tags_set(self, msg: tags::SetRequest) -> RpcResult<()> {
+        let blobs = self.blobs();
+        blobs
+            .store()
+            .set_tag(msg.name, msg.value)
+            .await
+            .map_err(|e| RpcError::new(&e))?;
+        if let SyncMode::Full = msg.sync {
+            blobs.store().sync().await.map_err(|e| RpcError::new(&e))?;
+        }
+        if let Some(batch) = msg.batch {
+            if let Some(content) = msg.value.as_ref() {
+                blobs
+                    .batches()
+                    .await
+                    .remove_one(batch, content)
+                    .map_err(|e| RpcError::new(&*e))?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn tags_create(self, msg: tags::CreateRequest) -> RpcResult<Tag> {
+        let blobs = self.blobs();
+        let tag = blobs
+            .store()
+            .create_tag(msg.value)
+            .await
+            .map_err(|e| RpcError::new(&e))?;
+        if let SyncMode::Full = msg.sync {
+            blobs.store().sync().await.map_err(|e| RpcError::new(&e))?;
+        }
+        if let Some(batch) = msg.batch {
+            blobs
+                .batches()
+                .await
+                .remove_one(batch, &msg.value)
+                .map_err(|e| RpcError::new(&*e))?;
+        }
+        Ok(tag)
+    }
+
     fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = DownloadResponse> {
         let (sender, receiver) = async_channel::bounded(1024);
         let endpoint = self.inner.endpoint.clone();
@@ -806,123 +935,6 @@ impl<D: BaoStore> Handler<D> {
             })
             .await?;
         Ok(())
-    }
-
-    #[allow(clippy::unused_async)]
-    async fn node_stats(self, _req: StatsRequest) -> RpcResult<StatsResponse> {
-        #[cfg(feature = "metrics")]
-        let res = Ok(StatsResponse {
-            stats: crate::metrics::get_metrics().map_err(|e| RpcError::new(&*e))?,
-        });
-
-        #[cfg(not(feature = "metrics"))]
-        let res = Err(RpcError::new(&*anyhow::anyhow!("metrics are disabled")));
-
-        res
-    }
-
-    async fn node_status(self, _: StatusRequest) -> RpcResult<NodeStatus> {
-        Ok(NodeStatus {
-            addr: self
-                .inner
-                .endpoint
-                .node_addr()
-                .await
-                .map_err(|e| RpcError::new(&*e))?,
-            listen_addrs: self
-                .inner
-                .local_endpoint_addresses()
-                .await
-                .unwrap_or_default(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-            rpc_addr: self.inner.rpc_addr,
-        })
-    }
-
-    #[allow(clippy::unused_async)]
-    async fn node_id(self, _: IdRequest) -> RpcResult<NodeId> {
-        Ok(self.inner.endpoint.secret_key().public())
-    }
-
-    async fn node_addr(self, _: AddrRequest) -> RpcResult<NodeAddr> {
-        let addr = self
-            .inner
-            .endpoint
-            .node_addr()
-            .await
-            .map_err(|e| RpcError::new(&*e))?;
-        Ok(addr)
-    }
-
-    #[allow(clippy::unused_async)]
-    async fn node_relay(self, _: RelayRequest) -> RpcResult<Option<RelayUrl>> {
-        Ok(self.inner.endpoint.home_relay())
-    }
-
-    #[allow(clippy::unused_async)]
-    async fn node_shutdown(self, request: ShutdownRequest) {
-        if request.force {
-            info!("hard shutdown requested");
-            std::process::exit(0);
-        } else {
-            // trigger a graceful shutdown
-            info!("graceful shutdown requested");
-            self.inner.cancel_token.cancel();
-        }
-    }
-
-    async fn tags_set(self, msg: tags::SetRequest) -> RpcResult<()> {
-        let blobs = self.blobs();
-        blobs
-            .store()
-            .set_tag(msg.name, msg.value)
-            .await
-            .map_err(|e| RpcError::new(&e))?;
-        if let SyncMode::Full = msg.sync {
-            blobs.store().sync().await.map_err(|e| RpcError::new(&e))?;
-        }
-        if let Some(batch) = msg.batch {
-            if let Some(content) = msg.value.as_ref() {
-                blobs
-                    .batches()
-                    .await
-                    .remove_one(batch, content)
-                    .map_err(|e| RpcError::new(&*e))?;
-            }
-        }
-        Ok(())
-    }
-
-    async fn tags_create(self, msg: tags::CreateRequest) -> RpcResult<Tag> {
-        let blobs = self.blobs();
-        let tag = blobs
-            .store()
-            .create_tag(msg.value)
-            .await
-            .map_err(|e| RpcError::new(&e))?;
-        if let SyncMode::Full = msg.sync {
-            blobs.store().sync().await.map_err(|e| RpcError::new(&e))?;
-        }
-        if let Some(batch) = msg.batch {
-            blobs
-                .batches()
-                .await
-                .remove_one(batch, &msg.value)
-                .map_err(|e| RpcError::new(&*e))?;
-        }
-        Ok(tag)
-    }
-
-    fn node_watch(self, _: NodeWatchRequest) -> impl Stream<Item = WatchResponse> {
-        futures_lite::stream::unfold((), |()| async move {
-            tokio::time::sleep(HEALTH_POLL_WAIT).await;
-            Some((
-                WatchResponse {
-                    version: env!("CARGO_PKG_VERSION").to_string(),
-                },
-                (),
-            ))
-        })
     }
 
     async fn batch_create_temp_tag(self, msg: BatchCreateTempTagRequest) -> RpcResult<()> {
