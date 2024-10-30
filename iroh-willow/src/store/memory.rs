@@ -451,7 +451,7 @@ impl<T: Clone> EventQueue<T> {
         self.events.get(index as usize)
     }
 
-    fn poll_next(
+    pub(super) fn poll_next(
         &mut self,
         progress_id: u64,
         filter: impl Fn(&T) -> bool,

@@ -76,12 +76,7 @@ impl StoredAuthorisedEntry {
         let subspace = key.x();
         let timestamp = key.y();
         let blobseq = key.z().to_owned();
-        let components = blobseq
-            .components()
-            .map(|c| Component::new(c).unwrap()) // TODO err
-            .collect::<Vec<_>>();
-        let total_length = components.iter().map(|c| c.len()).sum::<usize>();
-        let path = Path::new_from_iter(total_length, &mut components.into_iter())?;
+        let path = blobseq_to_path(&blobseq)?;
         Ok(Entry::new(
             namespace,
             *subspace,
@@ -167,6 +162,19 @@ pub(crate) fn path_to_blobseq(path: &Path) -> BlobSeq {
     BlobSeq::from(path_bytes)
 }
 
+pub(crate) fn blobseq_to_path(blobseq: &BlobSeq) -> Result<Path> {
+    let components = blobseq
+        .components()
+        .map(|c| {
+            Component::new(c)
+                .ok_or_else(|| anyhow::anyhow!("Path component exceeded length restriction"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let total_length = components.iter().map(|c| c.len()).sum::<usize>();
+    let path = Path::new_from_iter(total_length, &mut components.into_iter())?;
+    Ok(path)
+}
+
 pub(crate) fn to_query(range3d: &Range3d) -> QueryRange3d<IrohWillowParams> {
     let path_start = path_to_blobseq(&range3d.paths().start);
     let path_end = match &range3d.paths().end {
@@ -188,6 +196,34 @@ pub(crate) fn to_query_range<T: Ord + Clone>(range: &Range<T>) -> QueryRange<T> 
             RangeEnd::Open => None,
         },
     )
+}
+
+pub(crate) fn to_range3d(query_range3d: QueryRange3d<IrohWillowParams>) -> Result<Range3d> {
+    let path_max = match query_range3d.z.max {
+        Some(max) => RangeEnd::Closed(blobseq_to_path(&max)?),
+        None => RangeEnd::Open,
+    };
+    Ok(Range3d::new(
+        to_range(query_range3d.x),
+        Range {
+            start: blobseq_to_path(&query_range3d.z.min)?,
+            end: path_max,
+        },
+        Range {
+            start: query_range3d.y.min.timestamp(),
+            end: query_range3d
+                .y
+                .max
+                .map_or(RangeEnd::Open, |ts| RangeEnd::Closed(ts.timestamp())),
+        },
+    ))
+}
+
+fn to_range<T: Ord + Clone>(qr: QueryRange<T>) -> Range<T> {
+    Range {
+        start: qr.min,
+        end: qr.max.map_or(RangeEnd::Open, RangeEnd::Closed),
+    }
 }
 
 pub(crate) fn map_range<S: Ord, T: Ord>(range: &Range<S>, f: impl Fn(&S) -> T) -> Range<T> {

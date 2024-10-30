@@ -4,12 +4,12 @@ use futures_util::Stream;
 use redb::{Database, ReadableTable};
 use std::{
     cell::{Ref, RefCell, RefMut},
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     ops::DerefMut,
     path::PathBuf,
     pin::Pin,
     rc::{Rc, Weak},
-    task::{ready, Context, Poll, Waker},
+    task::{ready, Context, Poll},
     time::Duration,
 };
 use willow_data_model::SubspaceId as _;
@@ -25,13 +25,15 @@ use crate::{
         grouping::{Area, Range3d},
         keys::{NamespaceSecretKey, UserId, UserSecretKey, UserSignature},
         meadowcap,
+        wgps::Fingerprint,
     },
-    store::glue::{path_to_blobseq, StoredAuthorisedEntry, StoredTimestamp},
+    store::glue::{path_to_blobseq, to_range3d, StoredAuthorisedEntry, StoredTimestamp},
 };
 
 use super::{
     glue::{to_query, IrohWillowParams},
-    traits::{self, StoreEvent, SubscribeParams},
+    memory,
+    traits::{self, SplitAction, StoreEvent, SubscribeParams},
 };
 
 mod tables;
@@ -63,7 +65,7 @@ impl<PS: iroh_blobs::store::Store> Store<PS> {
 #[derive(Debug)]
 pub struct WillowStore {
     db: Db,
-    namespace_events: RefCell<HashMap<NamespaceId, EventQueue<StoreEvent>>>,
+    namespace_events: RefCell<HashMap<NamespaceId, memory::EventQueue<StoreEvent>>>,
 }
 
 #[derive(derive_more::Debug)]
@@ -108,6 +110,10 @@ impl WillowStore {
             },
             namespace_events: Default::default(),
         })
+    }
+
+    pub fn snapshot(&self) -> Result<WillowSnapshot> {
+        Ok(WillowSnapshot(Rc::new(self.db.snapshot_owned()?)))
     }
 }
 
@@ -155,7 +161,7 @@ impl Db {
     ///
     /// This has the side effect of committing any open write transaction,
     /// so it can be used as a way to ensure that the data is persisted.
-    pub fn snapshot_owned(&self) -> Result<tables::OpenRead> {
+    fn snapshot_owned(&self) -> Result<tables::OpenRead> {
         // make sure the current transaction is committed
         self.flush()?;
         let tx = self.redb.begin_read()?;
@@ -225,8 +231,111 @@ impl<PS: iroh_blobs::store::Store> traits::Storage for Store<PS> {
 #[derive(derive_more::Debug, Clone)]
 pub struct WillowSnapshot(#[debug(skip)] Rc<tables::OpenRead>);
 
+impl WillowSnapshot {
+    fn split_range_owned(
+        self,
+        namespace: NamespaceId,
+        range: &Range3d,
+        config: &traits::SplitOpts,
+    ) -> Result<impl Iterator<Item = Result<traits::RangeSplit>>> {
+        let max_set_size = config.max_set_size as u64;
+        let split_factor = config.split_factor as u64;
+
+        let count = traits::EntryReader::count(&self, namespace, range)?;
+        if count <= max_set_size {
+            return Ok(either::Left(
+                Some(Ok((range.clone(), SplitAction::SendEntries(count)))).into_iter(),
+            ));
+        }
+
+        let node_id = self
+            .0
+            .as_ref()
+            .namespace_nodes
+            .get(namespace.as_bytes())?
+            .expect("node must be set if count > 0 (checked above)");
+        let ns_node = willow_store::Node::<IrohWillowParams>::from(node_id.value());
+
+        Ok(either::Right(
+            ns_node
+                .split_range_owned(to_query(&range), split_factor, self.clone())
+                .map({
+                    let ns_node = ns_node.clone();
+                    move |result| {
+                        let (range, count) = result?;
+                        if count <= max_set_size {
+                            Ok((to_range3d(range)?, traits::SplitAction::SendEntries(count)))
+                        } else {
+                            let fingerprint = ns_node.range_summary(&range, &self)?;
+                            Ok((
+                                to_range3d(range)?,
+                                traits::SplitAction::SendFingerprint(fingerprint),
+                            ))
+                        }
+                    }
+                }),
+        ))
+    }
+
+    fn get_authorised_entries_owned(
+        self,
+        namespace: NamespaceId,
+        range: &Range3d,
+    ) -> Result<impl Iterator<Item = Result<AuthorisedEntry>>> {
+        let clone = Rc::clone(&self.0);
+        let read = self.0.as_ref();
+        let Some(node_id) = read.namespace_nodes.get(namespace.as_bytes())? else {
+            return Ok(either::Left(std::iter::empty()));
+        };
+        let ns_node = willow_store::Node::<IrohWillowParams>::from(node_id.value());
+        Ok(either::Right(
+            ns_node
+                .query(&to_query(range), &read.node_store)
+                .map(move |result| {
+                    let (point, stored_entry) = result?;
+                    let id = stored_entry.authorisation_token_id;
+                    let auth_token = get_entry_auth_token(id, &clone.auth_tokens)?;
+                    stored_entry.into_authorised_entry(namespace, &point, auth_token)
+                })
+                .collect::<Vec<_>>()
+                .into_iter(),
+        ))
+    }
+}
+
+impl willow_store::BlobStoreRead for WillowSnapshot {
+    fn peek<T>(&self, id: willow_store::NodeId, f: impl Fn(&[u8]) -> T) -> Result<T> {
+        self.0.node_store.peek(id, f)
+    }
+}
+
 impl traits::EntryReader for WillowSnapshot {
-    // TODO(matheus23): Impl faster version of default methods
+    fn fingerprint(&self, namespace: NamespaceId, range: &Range3d) -> Result<Fingerprint> {
+        let read = self.0.as_ref();
+        let Some(node_id) = read.namespace_nodes.get(namespace.as_bytes())? else {
+            return Ok(Fingerprint::default());
+        };
+        let ns_node = willow_store::Node::<IrohWillowParams>::from(node_id.value());
+        ns_node.range_summary(&to_query(range), &read.node_store)
+    }
+
+    fn count(&self, namespace: NamespaceId, range: &Range3d) -> Result<u64> {
+        let read = self.0.as_ref();
+        let Some(node_id) = read.namespace_nodes.get(namespace.as_bytes())? else {
+            return Ok(0);
+        };
+        let ns_node = willow_store::Node::<IrohWillowParams>::from(node_id.value());
+        ns_node.range_count(&to_query(range), &read.node_store)
+    }
+
+    fn split_range(
+        &self,
+        namespace: NamespaceId,
+        range: &Range3d,
+        config: &traits::SplitOpts,
+    ) -> Result<impl Iterator<Item = Result<traits::RangeSplit>>> {
+        self.clone().split_range_owned(namespace, range, config)
+    }
 
     fn get_entry(
         &self,
@@ -268,24 +377,7 @@ impl traits::EntryReader for WillowSnapshot {
         namespace: NamespaceId,
         range: &Range3d,
     ) -> Result<impl Iterator<Item = Result<AuthorisedEntry>> + 'a> {
-        let clone = Rc::clone(&self.0);
-        let read = self.0.as_ref();
-        let Some(node_id) = read.namespace_nodes.get(namespace.as_bytes())? else {
-            return Ok(either::Left(std::iter::empty()));
-        };
-        let ns_node = willow_store::Node::<IrohWillowParams>::from(node_id.value());
-        Ok(either::Right(
-            ns_node
-                .query(&to_query(range), &read.node_store)
-                .map(move |result| {
-                    let (point, stored_entry) = result?;
-                    let id = stored_entry.authorisation_token_id;
-                    let auth_token = get_entry_auth_token(id, &clone.auth_tokens)?;
-                    stored_entry.into_authorised_entry(namespace, &point, auth_token)
-                })
-                .collect::<Vec<_>>()
-                .into_iter(),
-        ))
+        self.clone().get_authorised_entries_owned(namespace, range)
     }
 }
 
@@ -427,9 +519,22 @@ impl traits::EntryStorage for Rc<WillowStore> {
 }
 
 impl traits::EntryReader for Rc<WillowStore> {
-    // TODO(matheus23): Impl faster version of default methods
+    fn fingerprint(&self, namespace: NamespaceId, range: &Range3d) -> Result<Fingerprint> {
+        self.snapshot()?.fingerprint(namespace, range)
+    }
 
-    // TODO(matheus23): Deduplicate implementation.
+    fn count(&self, namespace: NamespaceId, range: &Range3d) -> Result<u64> {
+        self.snapshot()?.count(namespace, range)
+    }
+
+    fn split_range(
+        &self,
+        namespace: NamespaceId,
+        range: &Range3d,
+        config: &traits::SplitOpts,
+    ) -> Result<impl Iterator<Item = Result<traits::RangeSplit>>> {
+        self.snapshot()?.split_range_owned(namespace, range, config)
+    }
 
     fn get_entry(
         &self,
@@ -437,34 +542,7 @@ impl traits::EntryReader for Rc<WillowStore> {
         subspace: SubspaceId,
         path: &Path,
     ) -> Result<Option<AuthorisedEntry>> {
-        let tables = self.db.tables()?;
-        let read = tables.read();
-        let Some(node_id) = read.namespace_nodes.get(namespace.as_bytes())? else {
-            return Ok(None);
-        };
-        let ns_node = willow_store::Node::<IrohWillowParams>::from(node_id.value());
-        let blobseq = path_to_blobseq(path);
-        let end = blobseq.immediate_successor();
-        let Some(result) = ns_node
-            .query_ordered(
-                &QueryRange3d {
-                    x: QueryRange::new(subspace, subspace.successor()),
-                    y: QueryRange::all(),
-                    z: QueryRange::new(blobseq, Some(end)),
-                },
-                willow_store::SortOrder::YZX,
-                &read.node_store,
-            )
-            .last()
-        else {
-            return Ok(None);
-        };
-
-        let (point, stored_entry) = result?;
-        let id = stored_entry.authorisation_token_id;
-        let auth_token = get_entry_auth_token(id, &read.auth_tokens)?;
-        let entry = stored_entry.into_authorised_entry(namespace, &point, auth_token.clone())?;
-        Ok(Some(entry))
+        self.snapshot()?.get_entry(namespace, subspace, path)
     }
 
     fn get_authorised_entries<'a>(
@@ -472,24 +550,8 @@ impl traits::EntryReader for Rc<WillowStore> {
         namespace: NamespaceId,
         range: &Range3d,
     ) -> Result<impl Iterator<Item = Result<AuthorisedEntry>> + 'a> {
-        let snapshot = Rc::new(self.db.snapshot_owned()?);
-        let read = Rc::clone(&snapshot);
-        let Some(node_id) = read.namespace_nodes.get(namespace.as_bytes())? else {
-            return Ok(either::Left(std::iter::empty()));
-        };
-        let ns_node = willow_store::Node::<IrohWillowParams>::from(node_id.value());
-        Ok(either::Right(
-            ns_node
-                .query(&to_query(range), &read.node_store)
-                .map(move |result| {
-                    let (point, stored_entry) = result?;
-                    let id = stored_entry.authorisation_token_id;
-                    let auth_token = get_entry_auth_token(id, &snapshot.auth_tokens)?;
-                    stored_entry.into_authorised_entry(namespace, &point, auth_token)
-                })
-                .collect::<Vec<_>>()
-                .into_iter(),
-        ))
+        self.snapshot()?
+            .get_authorised_entries_owned(namespace, range)
     }
 }
 
@@ -692,82 +754,5 @@ impl Stream for EventStream {
                 Some(event)
             }
         })
-    }
-}
-
-/// A simple in-memory event queue.
-///
-/// Events can be pushed, and get a unique monotonically-increasing *progress id*.
-/// Events can be polled, with a progress id to start at, and an optional filter function.
-///
-/// Current in-memory impl keeps all events, forever.
-// TODO: Add max_len constructor, add a way to truncate old entries.
-// TODO: This would be quite a bit more efficient if we filtered the waker with a closure
-// that is set from the last poll, to not wake everyone for each new event.
-#[derive(Debug)]
-pub(super) struct EventQueue<T> {
-    events: VecDeque<T>,
-    offset: u64,
-    wakers: VecDeque<Waker>,
-}
-
-impl<T> Drop for EventQueue<T> {
-    fn drop(&mut self) {
-        for waker in self.wakers.drain(..) {
-            waker.wake()
-        }
-    }
-}
-
-impl<T> Default for EventQueue<T> {
-    fn default() -> Self {
-        Self {
-            events: Default::default(),
-            offset: 0,
-            wakers: Default::default(),
-        }
-    }
-}
-
-impl<T: Clone> EventQueue<T> {
-    pub(super) fn insert(&mut self, f: impl FnOnce(u64) -> T) {
-        let progress_id = self.next_progress_id();
-        let event = f(progress_id);
-        self.events.push_back(event);
-        for waker in self.wakers.drain(..) {
-            waker.wake()
-        }
-    }
-
-    pub(super) fn next_progress_id(&self) -> u64 {
-        self.offset + self.events.len() as u64
-    }
-
-    pub(super) fn get(&self, progress_id: u64) -> Option<&T> {
-        let index = progress_id.checked_sub(self.offset)?;
-        self.events.get(index as usize)
-    }
-
-    fn poll_next(
-        &mut self,
-        progress_id: u64,
-        filter: impl Fn(&T) -> bool,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<(u64, T)>> {
-        if progress_id < self.offset {
-            return Poll::Ready(None);
-        }
-        let mut i = progress_id;
-        loop {
-            if let Some(event) = self.get(i) {
-                i += 1;
-                if filter(event) {
-                    break Poll::Ready(Some((i, event.clone())));
-                }
-            } else {
-                self.wakers.push_back(cx.waker().clone());
-                break Poll::Pending;
-            }
-        }
     }
 }

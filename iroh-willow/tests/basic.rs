@@ -280,6 +280,9 @@ async fn peer_manager_twoway_loop() -> Result<()> {
     Ok(())
 }
 
+/// Regression test. Used to fail due to redb's slices being unaligned,
+/// and previously timestamps being represented as u64, thus failing to
+/// zerocopy-deserialize.
 #[tokio::test(flavor = "multi_thread")]
 async fn read_back_write() -> Result<()> {
     iroh_test::logging::setup_multithreaded();
