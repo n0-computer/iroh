@@ -17,7 +17,7 @@ mod map;
 #[cfg(feature = "iroh-relay")]
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
 pub mod server;
-mod utils;
+mod util;
 
 pub use iroh_base::node_addr::RelayUrl;
 
