@@ -473,7 +473,7 @@
         <span class="self">self</span>.metrics_map.get::&lt;T&gt;()
     }
 
-    <span class="doccomment">/// Encodes the metrics into a string.
+    <span class="doccomment">/// Encodes the current metrics registry into a string.
     </span><span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
     </span><span class="kw">pub fn </span>encode(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;String, std::fmt::Error&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>buf = String::new();
