@@ -17,8 +17,7 @@ use iroh_blobs::{
     net_protocol::{BlobDownloadRequest, Blobs as BlobsProtocol},
     provider::{AddProgress, BatchAddPathProgress},
     store::{
-        ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry, Store as BaoStore,
-        ValidateProgress,
+        ConsistencyCheckProgress, ImportProgress, MapEntry, Store as BaoStore, ValidateProgress,
     },
     util::{
         local_pool::LocalPoolHandle,

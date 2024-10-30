@@ -2,8 +2,8 @@
 
 use anyhow::anyhow;
 use futures_lite::{Stream, StreamExt};
-use iroh_blobs::{store::Store as BaoStore, BlobFormat};
-use iroh_docs::{Author, DocTicket, NamespaceSecret};
+use iroh_blobs::store::Store as BaoStore;
+use iroh_docs::Author;
 
 use super::{Handler, RpcError, RpcResult};
 use crate::rpc_protocol::authors::{
