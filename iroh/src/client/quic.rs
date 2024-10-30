@@ -11,10 +11,7 @@ use anyhow::{bail, Context};
 use quic_rpc::transport::{boxed::Connection as BoxedConnection, quinn::QuinnConnection};
 
 use super::{Iroh, RpcClient};
-use crate::{
-    node::RpcStatus,
-    rpc_protocol::{node::StatusRequest, RpcService},
-};
+use crate::{node::RpcStatus, rpc_protocol::node::StatusRequest};
 
 /// ALPN used by irohs RPC mechanism.
 // TODO: Change to "/iroh-rpc/1"
@@ -46,7 +43,7 @@ pub(crate) async fn connect_raw(addr: SocketAddr) -> anyhow::Result<RpcClient> {
     let endpoint = create_quinn_client(bind_addr, vec![RPC_ALPN.to_vec()], false)?;
 
     let server_name = "localhost".to_string();
-    let connection = QuinnConnection::<RpcService>::new(endpoint, addr, server_name);
+    let connection = QuinnConnection::new(endpoint, addr, server_name);
     let connection = BoxedConnection::new(connection);
     let client = RpcClient::new(connection);
     // Do a status request to check if the server is running.

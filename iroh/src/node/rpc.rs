@@ -60,7 +60,6 @@ use crate::{
             ExportFileRequest, ExportFileResponse, ImportFileRequest, ImportFileResponse,
             Request as DocsRequest, SetHashRequest,
         },
-        gossip,
         net::{
             self, AddAddrRequest, AddrRequest, IdRequest, NodeWatchRequest, RelayRequest,
             RemoteInfoRequest, RemoteInfoResponse, RemoteInfosIterRequest, RemoteInfosIterResponse,
@@ -245,31 +244,15 @@ impl<D: BaoStore> Handler<D> {
 
     async fn handle_gossip_request(
         self,
-        msg: gossip::Request,
+        msg: iroh_gossip::RpcRequest,
         chan: RpcChannel<RpcService, IrohServerEndpoint>,
     ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
-        use gossip::Request::*;
-        match msg {
-            Subscribe(msg) => {
-                chan.bidi_streaming(msg, self, |handler, req, updates| {
-                    let stream = handler
-                        .router
-                        .get_protocol::<Gossip>(GOSSIP_ALPN)
-                        .expect("missing gossip")
-                        .join_with_stream(
-                            req.topic,
-                            iroh_gossip::net::JoinOptions {
-                                bootstrap: req.bootstrap,
-                                subscription_capacity: req.subscription_capacity,
-                            },
-                            Box::pin(updates),
-                        );
-                    futures_util::TryStreamExt::map_err(stream, |e| RpcError::new(&*e))
-                })
-                .await
-            }
-            Update(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
-        }
+        let gossip = self
+            .router
+            .get_protocol::<Gossip>(GOSSIP_ALPN)
+            .expect("missing gossip");
+        let chan = chan.map::<iroh_gossip::RpcService>();
+        gossip.handle_rpc_request(msg, chan).await
     }
 
     async fn handle_authors_request(
