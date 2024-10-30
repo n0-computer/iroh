@@ -2612,6 +2612,7 @@ dependencies = [
  "human-time",
  "indicatif",
  "iroh",
+ "iroh-docs",
  "iroh-gossip",
  "iroh-metrics",
  "nix 0.27.1",

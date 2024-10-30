@@ -18,16 +18,16 @@ use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressS
 use iroh::{
     base::{base32::fmt_short, node_addr::AddrInfoOptions},
     blobs::{provider::AddProgress, util::SetTagOption, Hash, Tag},
-    client::{
-        blobs::WrapOption,
-        docs::{Doc, Entry, LiveEvent, Origin, ShareMode},
-        Iroh,
-    },
+    client::{blobs::WrapOption, Doc, Iroh, RpcService},
     docs::{
         store::{DownloadPolicy, FilterKind, Query, SortDirection},
         AuthorId, DocTicket, NamespaceId,
     },
     util::fs::{path_content_info, path_to_key, PathContent},
+};
+use iroh_docs::{
+    engine::Origin,
+    rpc::client::{Entry, LiveEvent, ShareMode},
 };
 use tokio::io::AsyncReadExt;
 
@@ -678,15 +678,24 @@ impl DocCommands {
 }
 
 /// Gets the document given the client, the environment (and maybe the [`NamespaceID`]).
-async fn get_doc(iroh: &Iroh, env: &ConsoleEnv, id: Option<NamespaceId>) -> anyhow::Result<Doc> {
+async fn get_doc(
+    iroh: &Iroh,
+    env: &ConsoleEnv,
+    id: Option<NamespaceId>,
+) -> anyhow::Result<Doc<RpcService>> {
+    let doc_id = env.doc(id)?;
     iroh.docs()
-        .open(env.doc(id)?)
+        .open(doc_id)
         .await?
         .context("Document not found")
 }
 
 /// Formats the content. If an error occurs it's returned in a formatted, friendly way.
-async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Result<String, String> {
+async fn fmt_content(
+    doc: &Doc<RpcService>,
+    entry: &Entry,
+    mode: DisplayContentMode,
+) -> Result<String, String> {
     let read_failed = |err: anyhow::Error| format!("<failed to get content: {err}>");
     let encode_hex = |err: std::string::FromUtf8Error| format!("0x{}", hex::encode(err.as_bytes()));
     let as_utf8 = |buf: Vec<u8>| String::from_utf8(buf).map(|repr| format!("\"{repr}\""));
@@ -735,7 +744,7 @@ fn human_len(entry: &Entry) -> HumanBytes {
 
 /// Formats an entry for display as a `String`.
 #[must_use = "this won't be printed, you need to print it yourself"]
-async fn fmt_entry(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> String {
+async fn fmt_entry(doc: &Doc<RpcService>, entry: &Entry, mode: DisplayContentMode) -> String {
     let key = std::str::from_utf8(entry.key())
         .unwrap_or("<bad key>")
         .bold();
@@ -768,7 +777,7 @@ fn tag_from_file_name(path: &Path) -> anyhow::Result<Tag> {
 /// `ImportProgressBar`.
 #[tracing::instrument(skip_all)]
 async fn import_coordinator(
-    doc: Doc,
+    doc: Doc<RpcService>,
     author_id: AuthorId,
     root: PathBuf,
     prefix: String,
