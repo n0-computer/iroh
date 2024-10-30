@@ -106,3 +106,11 @@ pub struct PushMetricsConfig {
     /// The password for basic auth for the push metrics collector.
     pub password: String,
 }
+
+/// Encode metrics to a string.
+pub fn encode_metrics() -> Result<String, std::fmt::Error> {
+    if let Some(core) = core::Core::get() {
+        return core.encode();
+    }
+    Ok("NONE".to_string())
+}
