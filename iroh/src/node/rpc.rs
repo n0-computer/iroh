@@ -342,185 +342,6 @@ impl<D: BaoStore> Handler<D> {
         }
     }
 
-    fn local_pool_handle(&self) -> LocalPoolHandle {
-        self.inner.local_pool_handle.clone()
-    }
-
-    async fn blob_status(self, msg: BlobStatusRequest) -> RpcResult<BlobStatusResponse> {
-        let blobs = self.blobs();
-        let entry = blobs
-            .store()
-            .get(&msg.hash)
-            .await
-            .map_err(|e| RpcError::new(&e))?;
-        Ok(BlobStatusResponse(match entry {
-            Some(entry) => {
-                if entry.is_complete() {
-                    BlobStatus::Complete {
-                        size: entry.size().value(),
-                    }
-                } else {
-                    BlobStatus::Partial { size: entry.size() }
-                }
-            }
-            None => BlobStatus::NotFound,
-        }))
-    }
-
-    async fn blob_list_impl(self, co: &Co<RpcResult<BlobInfo>>) -> io::Result<()> {
-        use bao_tree::io::fsm::Outboard;
-
-        let blobs = self.blobs();
-        let db = blobs.store();
-        for blob in db.blobs().await? {
-            let blob = blob?;
-            let Some(entry) = db.get(&blob).await? else {
-                continue;
-            };
-            let hash = entry.hash();
-            let size = entry.outboard().await?.tree().size();
-            let path = "".to_owned();
-            co.yield_(Ok(BlobInfo { hash, size, path })).await;
-        }
-        Ok(())
-    }
-
-    async fn blob_list_incomplete_impl(
-        self,
-        co: &Co<RpcResult<IncompleteBlobInfo>>,
-    ) -> io::Result<()> {
-        let blobs = self.blobs();
-        let db = blobs.store();
-        for hash in db.partial_blobs().await? {
-            let hash = hash?;
-            let Ok(Some(entry)) = db.get_mut(&hash).await else {
-                continue;
-            };
-            if entry.is_complete() {
-                continue;
-            }
-            let size = 0;
-            let expected_size = entry.size().value();
-            co.yield_(Ok(IncompleteBlobInfo {
-                hash,
-                size,
-                expected_size,
-            }))
-            .await;
-        }
-        Ok(())
-    }
-
-    fn blob_list(
-        self,
-        _msg: ListRequest,
-    ) -> impl Stream<Item = RpcResult<BlobInfo>> + Send + 'static {
-        Gen::new(|co| async move {
-            if let Err(e) = self.blob_list_impl(&co).await {
-                co.yield_(Err(RpcError::new(&e))).await;
-            }
-        })
-    }
-
-    fn blob_list_incomplete(
-        self,
-        _msg: ListIncompleteRequest,
-    ) -> impl Stream<Item = RpcResult<IncompleteBlobInfo>> + Send + 'static {
-        Gen::new(move |co| async move {
-            if let Err(e) = self.blob_list_incomplete_impl(&co).await {
-                co.yield_(Err(RpcError::new(&e))).await;
-            }
-        })
-    }
-
-    async fn blob_delete_tag(self, msg: TagDeleteRequest) -> RpcResult<()> {
-        self.blobs_store()
-            .set_tag(msg.name, None)
-            .await
-            .map_err(|e| RpcError::new(&e))?;
-        Ok(())
-    }
-
-    async fn blob_delete_blob(self, msg: DeleteRequest) -> RpcResult<()> {
-        self.blobs_store()
-            .delete(vec![msg.hash])
-            .await
-            .map_err(|e| RpcError::new(&e))?;
-        Ok(())
-    }
-
-    fn blob_list_tags(self, msg: ListTagsRequest) -> impl Stream<Item = TagInfo> + Send + 'static {
-        tracing::info!("blob_list_tags");
-        let blobs = self.blobs();
-        Gen::new(|co| async move {
-            let tags = blobs.store().tags().await.unwrap();
-            #[allow(clippy::manual_flatten)]
-            for item in tags {
-                if let Ok((name, HashAndFormat { hash, format })) = item {
-                    if (format.is_raw() && msg.raw) || (format.is_hash_seq() && msg.hash_seq) {
-                        co.yield_(TagInfo { name, hash, format }).await;
-                    }
-                }
-            }
-        })
-    }
-
-    /// Invoke validate on the database and stream out the result
-    fn blob_validate(
-        self,
-        msg: ValidateRequest,
-    ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
-        let (tx, rx) = async_channel::bounded(1);
-        let tx2 = tx.clone();
-        let blobs = self.blobs();
-        tokio::task::spawn(async move {
-            if let Err(e) = blobs
-                .store()
-                .validate(msg.repair, AsyncChannelProgressSender::new(tx).boxed())
-                .await
-            {
-                tx2.send(ValidateProgress::Abort(RpcError::new(&e)))
-                    .await
-                    .ok();
-            }
-        });
-        rx
-    }
-
-    /// Invoke validate on the database and stream out the result
-    fn blob_consistency_check(
-        self,
-        msg: ConsistencyCheckRequest,
-    ) -> impl Stream<Item = ConsistencyCheckProgress> + Send + 'static {
-        let (tx, rx) = async_channel::bounded(1);
-        let tx2 = tx.clone();
-        let blobs = self.blobs();
-        tokio::task::spawn(async move {
-            if let Err(e) = blobs
-                .store()
-                .consistency_check(msg.repair, AsyncChannelProgressSender::new(tx).boxed())
-                .await
-            {
-                tx2.send(ConsistencyCheckProgress::Abort(RpcError::new(&e)))
-                    .await
-                    .ok();
-            }
-        });
-        rx
-    }
-
-    fn blob_add_from_path(self, msg: AddPathRequest) -> impl Stream<Item = AddPathResponse> {
-        // provide a little buffer so that we don't slow down the sender
-        let (tx, rx) = async_channel::bounded(32);
-        let tx2 = tx.clone();
-        self.local_pool_handle().spawn_detached(|| async move {
-            if let Err(e) = self.blob_add_from_path0(msg, tx).await {
-                tx2.send(AddProgress::Abort(RpcError::new(&*e))).await.ok();
-            }
-        });
-        rx.map(AddPathResponse)
-    }
-
     fn doc_import_file(self, msg: ImportFileRequest) -> impl Stream<Item = ImportFileResponse> {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = async_channel::bounded(32);
@@ -725,6 +546,185 @@ impl<D: BaoStore> Handler<D> {
                 (),
             ))
         })
+    }
+
+    fn local_pool_handle(&self) -> LocalPoolHandle {
+        self.inner.local_pool_handle.clone()
+    }
+
+    async fn blob_status(self, msg: BlobStatusRequest) -> RpcResult<BlobStatusResponse> {
+        let blobs = self.blobs();
+        let entry = blobs
+            .store()
+            .get(&msg.hash)
+            .await
+            .map_err(|e| RpcError::new(&e))?;
+        Ok(BlobStatusResponse(match entry {
+            Some(entry) => {
+                if entry.is_complete() {
+                    BlobStatus::Complete {
+                        size: entry.size().value(),
+                    }
+                } else {
+                    BlobStatus::Partial { size: entry.size() }
+                }
+            }
+            None => BlobStatus::NotFound,
+        }))
+    }
+
+    async fn blob_list_impl(self, co: &Co<RpcResult<BlobInfo>>) -> io::Result<()> {
+        use bao_tree::io::fsm::Outboard;
+
+        let blobs = self.blobs();
+        let db = blobs.store();
+        for blob in db.blobs().await? {
+            let blob = blob?;
+            let Some(entry) = db.get(&blob).await? else {
+                continue;
+            };
+            let hash = entry.hash();
+            let size = entry.outboard().await?.tree().size();
+            let path = "".to_owned();
+            co.yield_(Ok(BlobInfo { hash, size, path })).await;
+        }
+        Ok(())
+    }
+
+    async fn blob_list_incomplete_impl(
+        self,
+        co: &Co<RpcResult<IncompleteBlobInfo>>,
+    ) -> io::Result<()> {
+        let blobs = self.blobs();
+        let db = blobs.store();
+        for hash in db.partial_blobs().await? {
+            let hash = hash?;
+            let Ok(Some(entry)) = db.get_mut(&hash).await else {
+                continue;
+            };
+            if entry.is_complete() {
+                continue;
+            }
+            let size = 0;
+            let expected_size = entry.size().value();
+            co.yield_(Ok(IncompleteBlobInfo {
+                hash,
+                size,
+                expected_size,
+            }))
+            .await;
+        }
+        Ok(())
+    }
+
+    fn blob_list(
+        self,
+        _msg: ListRequest,
+    ) -> impl Stream<Item = RpcResult<BlobInfo>> + Send + 'static {
+        Gen::new(|co| async move {
+            if let Err(e) = self.blob_list_impl(&co).await {
+                co.yield_(Err(RpcError::new(&e))).await;
+            }
+        })
+    }
+
+    fn blob_list_incomplete(
+        self,
+        _msg: ListIncompleteRequest,
+    ) -> impl Stream<Item = RpcResult<IncompleteBlobInfo>> + Send + 'static {
+        Gen::new(move |co| async move {
+            if let Err(e) = self.blob_list_incomplete_impl(&co).await {
+                co.yield_(Err(RpcError::new(&e))).await;
+            }
+        })
+    }
+
+    async fn blob_delete_tag(self, msg: TagDeleteRequest) -> RpcResult<()> {
+        self.blobs_store()
+            .set_tag(msg.name, None)
+            .await
+            .map_err(|e| RpcError::new(&e))?;
+        Ok(())
+    }
+
+    async fn blob_delete_blob(self, msg: DeleteRequest) -> RpcResult<()> {
+        self.blobs_store()
+            .delete(vec![msg.hash])
+            .await
+            .map_err(|e| RpcError::new(&e))?;
+        Ok(())
+    }
+
+    fn blob_list_tags(self, msg: ListTagsRequest) -> impl Stream<Item = TagInfo> + Send + 'static {
+        tracing::info!("blob_list_tags");
+        let blobs = self.blobs();
+        Gen::new(|co| async move {
+            let tags = blobs.store().tags().await.unwrap();
+            #[allow(clippy::manual_flatten)]
+            for item in tags {
+                if let Ok((name, HashAndFormat { hash, format })) = item {
+                    if (format.is_raw() && msg.raw) || (format.is_hash_seq() && msg.hash_seq) {
+                        co.yield_(TagInfo { name, hash, format }).await;
+                    }
+                }
+            }
+        })
+    }
+
+    /// Invoke validate on the database and stream out the result
+    fn blob_validate(
+        self,
+        msg: ValidateRequest,
+    ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
+        let (tx, rx) = async_channel::bounded(1);
+        let tx2 = tx.clone();
+        let blobs = self.blobs();
+        tokio::task::spawn(async move {
+            if let Err(e) = blobs
+                .store()
+                .validate(msg.repair, AsyncChannelProgressSender::new(tx).boxed())
+                .await
+            {
+                tx2.send(ValidateProgress::Abort(RpcError::new(&e)))
+                    .await
+                    .ok();
+            }
+        });
+        rx
+    }
+
+    /// Invoke validate on the database and stream out the result
+    fn blob_consistency_check(
+        self,
+        msg: ConsistencyCheckRequest,
+    ) -> impl Stream<Item = ConsistencyCheckProgress> + Send + 'static {
+        let (tx, rx) = async_channel::bounded(1);
+        let tx2 = tx.clone();
+        let blobs = self.blobs();
+        tokio::task::spawn(async move {
+            if let Err(e) = blobs
+                .store()
+                .consistency_check(msg.repair, AsyncChannelProgressSender::new(tx).boxed())
+                .await
+            {
+                tx2.send(ConsistencyCheckProgress::Abort(RpcError::new(&e)))
+                    .await
+                    .ok();
+            }
+        });
+        rx
+    }
+
+    fn blob_add_from_path(self, msg: AddPathRequest) -> impl Stream<Item = AddPathResponse> {
+        // provide a little buffer so that we don't slow down the sender
+        let (tx, rx) = async_channel::bounded(32);
+        let tx2 = tx.clone();
+        self.local_pool_handle().spawn_detached(|| async move {
+            if let Err(e) = self.blob_add_from_path0(msg, tx).await {
+                tx2.send(AddProgress::Abort(RpcError::new(&*e))).await.ok();
+            }
+        });
+        rx.map(AddPathResponse)
     }
 
     async fn tags_set(self, msg: tags::SetRequest) -> RpcResult<()> {
