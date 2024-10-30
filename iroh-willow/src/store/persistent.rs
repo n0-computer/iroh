@@ -573,22 +573,16 @@ impl traits::SecretStorage for Rc<WillowStore> {
             .map_err(traits::SecretStoreError::from)
     }
 
-    fn get_user(&self, id: &UserId) -> Option<UserSecretKey> {
-        let tables = self
-            .db
-            .tables()
-            .expect("TODO(matheus23): trait fn should return result");
-        let user = tables.read().user_secrets.get(id.as_bytes()).ok()?;
-        user.map(|usr| UserSecretKey::from_bytes(&usr.value()))
+    fn get_user(&self, id: &UserId) -> Result<Option<UserSecretKey>> {
+        let tables = self.db.tables()?;
+        let user = tables.read().user_secrets.get(id.as_bytes())?;
+        Ok(user.map(|usr| UserSecretKey::from_bytes(&usr.value())))
     }
 
-    fn get_namespace(&self, id: &NamespaceId) -> Option<NamespaceSecretKey> {
-        let tables = self
-            .db
-            .tables()
-            .expect("TODO(matheus23): trait fn should return result");
-        let namespace = tables.read().namespace_secrets.get(id.as_bytes()).ok()?;
-        namespace.map(|ns| NamespaceSecretKey::from_bytes(&ns.value()))
+    fn get_namespace(&self, id: &NamespaceId) -> Result<Option<NamespaceSecretKey>> {
+        let tables = self.db.tables()?;
+        let namespace = tables.read().namespace_secrets.get(id.as_bytes())?;
+        Ok(namespace.map(|ns| NamespaceSecretKey::from_bytes(&ns.value())))
     }
 }
 

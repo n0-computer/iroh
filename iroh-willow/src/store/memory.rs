@@ -99,12 +99,12 @@ impl traits::SecretStorage for Rc<RefCell<SecretStore>> {
         Ok(())
     }
 
-    fn get_user(&self, id: &UserId) -> Option<UserSecretKey> {
-        self.borrow().user.get(id).cloned()
+    fn get_user(&self, id: &UserId) -> Result<Option<UserSecretKey>> {
+        Ok(self.borrow().user.get(id).cloned())
     }
 
-    fn get_namespace(&self, id: &NamespaceId) -> Option<NamespaceSecretKey> {
-        self.borrow().namespace.get(id).cloned()
+    fn get_namespace(&self, id: &NamespaceId) -> Result<Option<NamespaceSecretKey>> {
+        Ok(self.borrow().namespace.get(id).cloned())
     }
 }
 

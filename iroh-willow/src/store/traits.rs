@@ -38,15 +38,15 @@ pub trait Storage: Debug + Clone + 'static {
 /// Storage for user and namespace secrets.
 pub trait SecretStorage: Debug + Clone + 'static {
     fn insert(&self, secret: meadowcap::SecretKey) -> Result<(), SecretStoreError>;
-    fn get_user(&self, id: &UserId) -> Option<UserSecretKey>;
-    fn get_namespace(&self, id: &NamespaceId) -> Option<NamespaceSecretKey>;
+    fn get_user(&self, id: &UserId) -> Result<Option<UserSecretKey>>;
+    fn get_namespace(&self, id: &NamespaceId) -> Result<Option<NamespaceSecretKey>>;
 
-    fn has_user(&self, id: &UserId) -> bool {
-        self.get_user(id).is_some()
+    fn has_user(&self, id: &UserId) -> Result<bool> {
+        Ok(self.get_user(id)?.is_some())
     }
 
-    fn has_namespace(&self, id: &UserId) -> bool {
-        self.get_user(id).is_some()
+    fn has_namespace(&self, id: &UserId) -> Result<bool> {
+        Ok(self.get_user(id)?.is_some())
     }
 
     fn insert_user(&self, secret: UserSecretKey) -> Result<UserId, SecretStoreError> {
@@ -65,7 +65,7 @@ pub trait SecretStorage: Debug + Clone + 'static {
 
     fn sign_user(&self, id: &UserId, message: &[u8]) -> Result<UserSignature, SecretStoreError> {
         Ok(self
-            .get_user(id)
+            .get_user(id)?
             .ok_or(SecretStoreError::MissingKey)?
             .sign(message))
     }
@@ -75,7 +75,7 @@ pub trait SecretStorage: Debug + Clone + 'static {
         message: &[u8],
     ) -> Result<NamespaceSignature, SecretStoreError> {
         Ok(self
-            .get_namespace(id)
+            .get_namespace(id)?
             .ok_or(SecretStoreError::MissingKey)?
             .sign(message))
     }
