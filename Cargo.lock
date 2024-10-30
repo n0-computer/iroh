@@ -2698,7 +2698,7 @@ dependencies = [
 [[package]]
 name = "iroh-docs"
 version = "0.27.0"
-source = "git+https://github.com/n0-computer/iroh-docs?branch=main#16bc7fe4c7dee1b1b88f54390856c3fafa3d7656"
+source = "git+https://github.com/n0-computer/iroh-docs?branch=refactor-extract-rpc#a761c374de391da3181f27398f2c97da30c1469f"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2717,15 +2717,20 @@ dependencies = [
  "iroh-net",
  "iroh-router",
  "lru",
+ "nested_enum_utils",
  "num_enum",
+ "portable-atomic",
  "postcard",
+ "quic-rpc 0.13.0",
+ "quic-rpc-derive",
  "rand",
  "rand_core",
  "redb 1.5.1",
  "redb 2.1.1",
  "self_cell",
  "serde",
- "strum 0.25.0",
+ "serde-error",
+ "strum 0.26.3",
  "tempfile",
  "thiserror",
  "tokio",
@@ -4003,9 +4008,9 @@ dependencies = [
 
 [[package]]
 name = "portable-atomic"
-version = "1.7.0"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da544ee218f0d287a911e9c99a39a8c9bc8fcad3cb8db5959940044ecfc67265"
+checksum = "cc9c68a3f6da06753e9335d63e27f6b9754dd1920d941135b7ea8224f141adb2"
 
 [[package]]
 name = "portmapper"

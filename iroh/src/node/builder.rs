@@ -82,6 +82,7 @@ async fn spawn_docs<S: iroh_blobs::store::Store>(
     endpoint: Endpoint,
     gossip: Gossip,
     downloader: Downloader,
+    local_pool_handle: LocalPoolHandle,
 ) -> anyhow::Result<Option<Engine>> {
     let docs_store = match storage {
         DocsStorage::Disabled => return Ok(None),
@@ -95,6 +96,7 @@ async fn spawn_docs<S: iroh_blobs::store::Store>(
         blobs_store,
         downloader,
         default_author_storage,
+        local_pool_handle,
     )
     .await?;
     Ok(Some(engine))
@@ -687,6 +689,7 @@ where
             endpoint.clone(),
             gossip.clone(),
             downloader.clone(),
+            lp.handle().clone(),
         )
         .await?;
 
