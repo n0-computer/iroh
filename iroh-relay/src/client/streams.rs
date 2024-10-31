@@ -109,7 +109,7 @@ pub fn downcast_upgrade(
             let inner = io.into_inner();
             let (reader, writer) = tokio::io::split(inner);
             // Prepend data to the reader to avoid data loss
-            let reader = chain::chain(std::io::Cursor::new(read_buf), reader);
+            let reader = util::chain(std::io::Cursor::new(read_buf), reader);
             Ok((
                 MaybeTlsStreamReader::Raw(reader),
                 MaybeTlsStreamWriter::Raw(writer),
@@ -122,7 +122,7 @@ pub fn downcast_upgrade(
                 let inner = io.into_inner();
                 let (reader, writer) = tokio::io::split(inner);
                 // Prepend data to the reader to avoid data loss
-                let reader = chain::chain(std::io::Cursor::new(read_buf), reader);
+                let reader = util::chain(std::io::Cursor::new(read_buf), reader);
 
                 return Ok((
                     MaybeTlsStreamReader::Tls(reader),
@@ -139,7 +139,7 @@ pub fn downcast_upgrade(
 
 pub enum ProxyStream {
     Raw(TcpStream),
-    Proxied(chain::Chain<std::io::Cursor<Bytes>, MaybeTlsStream>),
+    Proxied(util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream>),
 }
 
 impl AsyncRead for ProxyStream {
