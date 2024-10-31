@@ -993,7 +993,11 @@ mod tests {
         let node = crate::commands::start::start_node(data_dir.path(), None, None).await?;
         let client = node.client();
         let doc = client.docs().create().await.context("doc create")?;
-        let author = client.authors().create().await.context("author create")?;
+        let author = client
+            .docs()
+            .author_create()
+            .await
+            .context("author create")?;
 
         // set up command, getting iroh node
         let cli = ConsoleEnv::for_console(data_dir.path().to_owned(), &node)

@@ -26,14 +26,13 @@ use iroh_blobs::{
     },
     BlobFormat, HashAndFormat, Tag,
 };
-use iroh_docs::{engine::Engine, net::DOCS_ALPN};
+use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
 use iroh_net::{relay::RelayUrl, NodeAddr, NodeId};
 use iroh_router::Router;
 use quic_rpc::server::{RpcChannel, RpcServerError};
 use tokio::task::JoinSet;
-use tokio_util::either::Either;
 use tracing::{debug, info, warn};
 
 use super::IrohServerEndpoint;
@@ -45,7 +44,6 @@ use crate::{
     },
     node::NodeInner,
     rpc_protocol::{
-        authors,
         blobs::{
             self, AddPathRequest, AddPathResponse, AddStreamRequest, AddStreamResponse,
             AddStreamUpdate, BatchAddPathRequest, BatchAddPathResponse, BatchAddStreamRequest,
@@ -65,8 +63,6 @@ use crate::{
         Request, RpcService,
     },
 };
-
-mod docs;
 
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 /// Chunk size for getting blobs over RPC
@@ -90,10 +86,6 @@ impl<D> Handler<D> {
 }
 
 impl<D: BaoStore> Handler<D> {
-    fn docs(&self) -> Option<Arc<Engine>> {
-        self.router.get_protocol::<Engine>(DOCS_ALPN)
-    }
-
     fn blobs(&self) -> Arc<BlobsProtocol<D>> {
         self.router
             .get_protocol::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
@@ -102,32 +94,6 @@ impl<D: BaoStore> Handler<D> {
 
     fn blobs_store(&self) -> D {
         self.blobs().store().clone()
-    }
-
-    async fn with_docs<T, F, Fut>(self, f: F) -> RpcResult<T>
-    where
-        T: Send + 'static,
-        F: FnOnce(Arc<Engine>) -> Fut,
-        Fut: std::future::Future<Output = RpcResult<T>>,
-    {
-        if let Some(docs) = self.docs() {
-            f(docs).await
-        } else {
-            Err(docs_disabled())
-        }
-    }
-
-    fn with_docs_stream<T, F, S>(self, f: F) -> impl Stream<Item = RpcResult<T>>
-    where
-        T: Send + 'static,
-        F: FnOnce(Arc<Engine>) -> S,
-        S: Stream<Item = RpcResult<T>>,
-    {
-        if let Some(docs) = self.docs() {
-            Either::Left(f(docs))
-        } else {
-            Either::Right(futures_lite::stream::once(Err(docs_disabled())))
-        }
     }
 
     pub(crate) fn spawn_rpc_request(
@@ -250,23 +216,6 @@ impl<D: BaoStore> Handler<D> {
         gossip.handle_rpc_request(msg, chan).await
     }
 
-    async fn handle_authors_request(
-        self,
-        msg: authors::Request,
-        chan: RpcChannel<RpcService, IrohServerEndpoint>,
-    ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
-        use authors::Request::*;
-        match msg {
-            List(msg) => chan.server_streaming(msg, self, Self::author_list).await,
-            Create(msg) => chan.rpc(msg, self, Self::author_create).await,
-            Import(msg) => chan.rpc(msg, self, Self::author_import).await,
-            Export(msg) => chan.rpc(msg, self, Self::author_export).await,
-            Delete(msg) => chan.rpc(msg, self, Self::author_delete).await,
-            GetDefault(msg) => chan.rpc(msg, self, Self::author_default).await,
-            SetDefault(msg) => chan.rpc(msg, self, Self::author_set_default).await,
-        }
-    }
-
     async fn handle_docs_request(
         self,
         msg: iroh_docs::rpc::proto::Request,
@@ -297,7 +246,6 @@ impl<D: BaoStore> Handler<D> {
             Node(msg) => self.handle_node_request(msg, chan).await,
             Blobs(msg) => self.handle_blobs_request(msg, chan).await,
             Tags(msg) => self.handle_tags_request(msg, chan).await,
-            Authors(msg) => self.handle_authors_request(msg, chan).await,
             Docs(msg) => self.handle_docs_request(msg, chan).await,
             Gossip(msg) => self.handle_gossip_request(msg, chan).await,
         }
@@ -1140,8 +1088,4 @@ impl<D: BaoStore> Handler<D> {
 
         Ok(CreateCollectionResponse { hash, tag })
     }
-}
-
-fn docs_disabled() -> RpcError {
-    RpcError::new(&*anyhow!("docs are disabled"))
 }

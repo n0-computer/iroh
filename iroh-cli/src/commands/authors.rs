@@ -49,7 +49,7 @@ impl AuthorCommands {
                 println!("Active author is now {}", fmt_short(author.as_bytes()));
             }
             Self::List => {
-                let mut stream = iroh.authors().list().await?;
+                let mut stream = iroh.docs().author_list().await?;
                 while let Some(author_id) = stream.try_next().await? {
                     println!("{}", author_id);
                 }
@@ -58,7 +58,7 @@ impl AuthorCommands {
                 if switch && !env.is_console() {
                     bail!("The --switch flag is only supported within the Iroh console.");
                 }
-                let author_id = iroh.authors().default().await?;
+                let author_id = iroh.docs().author_default().await?;
                 println!("{}", author_id);
                 if switch {
                     env.set_author(author_id)?;
@@ -70,7 +70,7 @@ impl AuthorCommands {
                     bail!("The --switch flag is only supported within the Iroh console.");
                 }
 
-                let author_id = iroh.authors().create().await?;
+                let author_id = iroh.docs().author_create().await?;
                 println!("{}", author_id);
 
                 if switch {
@@ -79,10 +79,10 @@ impl AuthorCommands {
                 }
             }
             Self::Delete { author } => {
-                iroh.authors().delete(author).await?;
+                iroh.docs().author_delete(author).await?;
                 println!("Deleted author {}", fmt_short(author.as_bytes()));
             }
-            Self::Export { author } => match iroh.authors().export(author).await? {
+            Self::Export { author } => match iroh.docs().author_export(author).await? {
                 Some(author) => {
                     println!("{}", author);
                 }
@@ -93,7 +93,7 @@ impl AuthorCommands {
             Self::Import { author } => match Author::from_str(&author) {
                 Ok(author) => {
                     let id = author.id();
-                    iroh.authors().import(author).await?;
+                    iroh.docs().author_import(author).await?;
                     println!("Imported {}", fmt_short(id));
                 }
                 Err(err) => {

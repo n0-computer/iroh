@@ -17,7 +17,6 @@
 //! macro.
 use serde::{Deserialize, Serialize};
 
-pub mod authors;
 pub mod blobs;
 pub mod net;
 pub mod node;
@@ -37,7 +36,6 @@ pub enum Request {
     Blobs(blobs::Request),
     Docs(iroh_docs::rpc::proto::Request),
     Tags(tags::Request),
-    Authors(authors::Request),
     Gossip(iroh_gossip::RpcRequest),
 }
 
@@ -51,7 +49,6 @@ pub enum Response {
     Blobs(blobs::Response),
     Tags(tags::Response),
     Docs(iroh_docs::rpc::proto::Response),
-    Authors(authors::Response),
     Gossip(iroh_gossip::RpcResponse),
 }
 

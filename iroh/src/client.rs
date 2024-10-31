@@ -28,7 +28,6 @@ pub use iroh_docs::rpc::client::Doc;
 pub use self::net::NodeStatus;
 pub(crate) use self::quic::{connect_raw as quic_connect_raw, RPC_ALPN};
 
-pub mod authors;
 pub mod blobs;
 pub mod net;
 pub mod tags;
@@ -78,11 +77,6 @@ impl Iroh {
         let rpc = self.rpc.clone();
         let channel = rpc.map::<iroh_docs::rpc::proto::RpcService>();
         iroh_docs::rpc::client::Client::new(channel)
-    }
-
-    /// Returns the authors client.
-    pub fn authors(&self) -> &authors::Client {
-        authors::Client::ref_cast(&self.rpc)
     }
 
     /// Returns the tags client.
