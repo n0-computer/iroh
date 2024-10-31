@@ -21,8 +21,6 @@ pub mod authors;
 pub mod docs;
 pub mod net;
 pub mod node;
-pub use iroh_blobs::rpc::proto::blobs;
-pub use iroh_blobs::rpc::proto::tags;
 
 /// The RPC service for the iroh provider process.
 #[derive(Debug, Clone)]

@@ -847,6 +847,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
             self.local_pool_handle().clone(),
             blob_events,
             downloader,
+            self.endpoint().clone(),
         );
         self = self.accept(iroh_blobs::protocol::ALPN.to_vec(), Arc::new(blobs_proto));
 
