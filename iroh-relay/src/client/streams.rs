@@ -13,12 +13,12 @@ use tokio::{
     net::TcpStream,
 };
 
-use crate::util::chain;
+use crate::util;
 
 pub enum MaybeTlsStreamReader {
-    Raw(chain::Chain<std::io::Cursor<Bytes>, tokio::io::ReadHalf<ProxyStream>>),
+    Raw(util::Chain<std::io::Cursor<Bytes>, tokio::io::ReadHalf<ProxyStream>>),
     Tls(
-        chain::Chain<
+        util::Chain<
             std::io::Cursor<Bytes>,
             tokio::io::ReadHalf<tokio_rustls::client::TlsStream<ProxyStream>>,
         >,

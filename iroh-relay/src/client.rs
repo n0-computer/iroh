@@ -47,7 +47,7 @@ use crate::{
     RelayUrl,
 };
 
-use crate::util::chain;
+use crate::util;
 
 pub(crate) mod conn;
 pub(crate) mod streams;
@@ -891,7 +891,7 @@ impl Actor {
     async fn dial_url_proxy(
         &self,
         proxy_url: Url,
-    ) -> Result<chain::Chain<std::io::Cursor<Bytes>, MaybeTlsStream>, ClientError> {
+    ) -> Result<util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream>, ClientError> {
         debug!(%self.url, %proxy_url, "dial url via proxy");
 
         // Resolve proxy DNS
@@ -982,7 +982,7 @@ impl Actor {
             return Err(ClientError::Proxy("invalid upgrade".to_string()));
         };
 
-        let res = chain::chain(std::io::Cursor::new(read_buf), io.into_inner());
+        let res = util::chain(std::io::Cursor::new(read_buf), io.into_inner());
 
         Ok(res)
     }
