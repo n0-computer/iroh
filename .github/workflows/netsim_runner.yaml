@@ -1,0 +1,269 @@
+name: netsim-runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        required: true
+        type: string
+      max_workers:
+        required: true
+        type: number
+        default: 4
+      netsim_branch:
+        required: true
+        type: string
+        default: "main"
+      debug_logs:
+        required: false
+        type: boolean
+        default: false
+      build_profile:
+        required: false
+        type: string
+        default: "release"
+      sim_paths:
+        required: false
+        type: string
+        default: "sims/iroh,sims/integration"
+      publish_metrics:
+        required: false
+        type: boolean
+        default: false
+      visualizations:
+        required: false
+        type: boolean
+        default: false
+      pr_number:
+        required: false
+        type: string
+        default: ""
+      report_table:
+        required: false
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      branch:
+        required: true
+        type: string
+      max_workers:
+        required: true
+        type: number
+        default: 4
+      netsim_branch:
+        required: true
+        type: string
+        default: "main"
+      debug_logs:
+        required: false
+        type: boolean
+        default: false
+      build_profile:
+        required: false
+        type: string
+        default: "release"
+      sim_paths:
+        required: false
+        type: string
+        default: "sims/iroh,sims/integration"
+      publish_metrics:
+        required: false
+        type: boolean
+        default: false
+      visualizations:
+        required: false
+        type: boolean
+        default: false
+      pr_number:
+        required: false
+        type: string
+        default: ""
+      report_table:
+        required: false
+        type: boolean
+        default: false
+
+env:
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -Dwarnings
+  MSRV: "1.66"
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+  IROH_FORCE_STAGING_RELAYS: "1"
+
+jobs:
+  netsim:
+    permissions: write-all
+    name: Netsim
+    timeout-minutes: 45
+    runs-on: [self-hosted, linux, X64]
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        ref: ${{ inputs.branch }}
+
+    - name: Install rust stable
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.6
+
+    - name: Build iroh
+      run: |
+        cargo build --profile ${{ inputs.build_profile }} --workspace --all-features --examples --bins
+
+    - name: Fetch and build chuck
+      run: |
+        cd ..
+        rm -rf chuck
+        git clone --single-branch --branch ${{ inputs.netsim_branch }} https://github.com/n0-computer/chuck.git
+        cd chuck
+        cargo build --release
+
+    - name: Install netsim deps
+      run: |
+        cd ../chuck/netsim
+        sudo apt update
+        ./setup.sh
+        ./cleanup.sh || true
+
+    - name: Copy binaries to right location
+      run: |
+        cp target/${{inputs.build_profile}}/examples/* ../chuck/netsim/bins/
+        cp target/${{inputs.build_profile}}/iroh ../chuck/netsim/bins/iroh
+        cp target/${{inputs.build_profile}}/iroh-relay ../chuck/netsim/bins/iroh-relay
+        cp ../chuck/target/release/chuck ../chuck/netsim/bins/chuck
+
+    - name: Get commit sha
+      shell: bash
+      run: |
+        echo "LAST_COMMIT_SHA=$(git rev-parse --short ${GITHUB_SHA})" >> ${GITHUB_ENV}
+  
+    - name: Run tests
+      id: run_tests
+      continue-on-error: true
+      run: |
+        cd ../chuck/netsim
+        # split sim_paths by comma
+        IFS=',' read -ra sim_paths <<< "${{ inputs.sim_paths }}"
+        for sim_path in "${sim_paths[@]}"; do
+          sudo python3 main.py ${{ inputs.debug_logs && '--debug' || ''}} ${{ inputs.visualizations && '--visualize' || ''}} --max-workers=${{ inputs.max_workers }} --integration $sim_path
+        done
+
+    - name: Generate report
+      id: generate_report
+      if: always()
+      run: |
+        cd ../chuck/netsim
+        python3 reports_csv.py --table > report_table.txt
+        python3 reports_csv.py --prom --commit ${{ env.LAST_COMMIT_SHA }} > report_prom.txt
+        python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
+        python3 reports_csv.py --metro --integration --commit ${{ env.LAST_COMMIT_SHA }} > report_metro_integration.txt
+    
+    - name: Upload report
+      if: always()
+      run: |
+        export AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}
+        export AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}
+        export AWS_DEFAULT_REGION=us-west-2
+        
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip -q awscliv2.zip
+        sudo ./aws/install --update
+
+        cd ../chuck/netsim
+
+        aws_fname=${{ env.LAST_COMMIT_SHA }}.tar.gz
+        tar -cvzf report.tar.gz report_prom.txt report_table.txt report_metro.txt report_metro_integration.txt logs/ report/ viz/
+        if [[ -n "${{ secrets.S3_BUCKET }}" ]]; then
+          aws s3 cp ./report.tar.gz s3://${{secrets.S3_REPORT_BUCKET}}/$aws_fname --no-progress
+        fi        
+
+    - name: Move report
+      if: always()
+      run: |
+        cp ../chuck/netsim/report.tar.gz ./report.tar.gz
+
+    - name: Upload report
+      if: always()
+      uses: actions/upload-artifact@v4
+      id: upload-report
+      with:
+        name: netsim-report-${{ env.LAST_COMMIT_SHA }}
+        path: report.tar.gz
+        retention-days: 3
+        overwrite: true
+    
+    - name: Fail Job if Tests Failed
+      if: ${{ failure() && steps.run_tests.outcome == 'failure' }}
+      run: exit 1
+
+    - name: Find Docs Comment
+      if: ${{ inputs.pr_number != '' }}
+      uses: peter-evans/find-comment@v3
+      id: fc
+      with:
+        issue-number: ${{ inputs.pr_number }}
+        comment-author: 'github-actions[bot]'
+        body-includes: Netsim report & logs for this PR have been generated
+
+    - name: Create or Update Docs Comment
+      if: ${{ inputs.pr_number != '' && !github.event.pull_request.head.repo.fork }}
+      uses: peter-evans/create-or-update-comment@v4
+      with:
+        issue-number: ${{ inputs.pr_number }}
+        comment-id: ${{ steps.fc.outputs.comment-id }}
+        body: |
+          Netsim report & logs for this PR have been generated and is available at: [LOGS](${{steps.upload-report.outputs.artifact-url}})
+          This report will remain available for 3 days.
+          
+          Last updated for commit: ${{ env.LAST_COMMIT_SHA }}
+        edit-mode: replace
+    
+    - name: Generate report table
+      if: ${{ inputs.pr_number != '' && inputs.report_table}}
+      id: generate_report_table
+      run: |
+        cd ../chuck/netsim
+        export NETSIM_REPORT=$(cat report_table.txt)
+        echo "NETSIM_REPORT<<EOFMARKER" >> ${GITHUB_OUTPUT}
+        echo "${NETSIM_REPORT}" >> ${GITHUB_OUTPUT}
+        echo "EOFMARKER" >> ${GITHUB_OUTPUT}
+
+    - name: Echo Report Table on PR
+      uses: peter-evans/create-or-update-comment@v4
+      if: ${{ inputs.pr_number != '' && inputs.report_table && !github.event.pull_request.head.repo.fork }}
+      with:
+        issue-number: ${{ inputs.pr_number }}
+        body: |
+          `${{ inputs.branch }}.${{ env.LAST_COMMIT_SHA }}`
+          Perf report:
+          ${{ steps.generate_report_table.outputs.NETSIM_REPORT }}
+
+    - name: Publish metrics
+      if: ${{ inputs.publish_metrics && !github.event.pull_request.head.repo.fork }}
+      run: |
+        cd ../chuck/netsim
+        d=$(cat report_metro.txt)
+        metro_data=$(printf "%s\n " "$d")
+        curl -X POST -H  "Content-Type: application/json" -H "Authorization: Bearer ${{secrets.METRO_TOKEN}}" --data "$metro_data" ${{secrets.METRO_ENDPOINT}}
+        d=$(cat report_metro_integration.txt)
+        metro_data=$(printf "%s\n " "$d")
+        curl -X POST -H  "Content-Type: application/json" -H "Authorization: Bearer ${{secrets.METRO_TOKEN}}" --data "$metro_data" ${{secrets.METRO_ENDPOINT}}
+
+    - name: Echo metrics (debug)
+      run: |
+        cd ../chuck/netsim
+        d=$(cat report_metro.txt)
+        metro_data=$(printf "%s\n " "$d")
+        echo "$metro_data"
+        d=$(cat report_metro_integration.txt)
+        metro_data=$(printf "%s\n " "$d")
+        echo "$metro_data"
+
+    - name: Cleanup
+      run: |
+        ./cleanup.sh || true
