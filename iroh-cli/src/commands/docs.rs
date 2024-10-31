@@ -18,8 +18,8 @@ use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressS
 use iroh::{
     base::{base32::fmt_short, node_addr::AddrInfoOptions},
     blobs::{provider::AddProgress, util::SetTagOption, Hash, Tag},
-    client::blobs::WrapOption,
     client::{
+        blobs::WrapOption,
         docs::{Doc, Entry, LiveEvent, Origin, ShareMode},
         Iroh,
     },

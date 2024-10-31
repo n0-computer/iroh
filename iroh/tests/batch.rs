@@ -3,8 +3,10 @@ use std::{io, time::Duration};
 use bao_tree::blake3;
 use bytes::Bytes;
 use futures_lite::StreamExt;
-use iroh::client::blobs::{AddDirOpts, WrapOption};
-use iroh::node::GcPolicy;
+use iroh::{
+    client::blobs::{AddDirOpts, WrapOption},
+    node::GcPolicy,
+};
 use iroh_blobs::store::mem::Store;
 
 async fn create_node() -> anyhow::Result<(iroh::node::Node<Store>, async_channel::Receiver<()>)> {

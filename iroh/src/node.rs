@@ -495,7 +495,6 @@ fn node_address_for_storage(info: RemoteInfo) -> Option<NodeAddr> {
 
 #[cfg(test)]
 mod tests {
-    use crate::client::blobs::{AddOutcome, WrapOption};
     use anyhow::{bail, Context};
     use bytes::Bytes;
     use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
@@ -503,6 +502,7 @@ mod tests {
     use iroh_net::{key::SecretKey, relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
 
     use super::*;
+    use crate::client::blobs::{AddOutcome, WrapOption};
 
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {
