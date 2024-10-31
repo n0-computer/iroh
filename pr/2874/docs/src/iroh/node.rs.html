@@ -1326,7 +1326,6 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span><span class="kw">crate</span>::client::blobs::{AddOutcome, WrapOption};
     <span class="kw">use </span>anyhow::{bail, Context};
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
@@ -1334,6 +1333,7 @@
     <span class="kw">use </span>iroh_net::{key::SecretKey, relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::client::blobs::{AddOutcome, WrapOption};
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_ticket_multiple_addrs() {
