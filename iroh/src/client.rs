@@ -6,7 +6,6 @@ use std::collections::BTreeMap;
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
-use quic_rpc::client::BoxedServiceConnection;
 use ref_cast::RefCast;
 
 use crate::rpc_protocol::node::{CounterStats, ShutdownRequest, StatsRequest, StatusRequest};
@@ -72,10 +71,8 @@ impl Iroh {
     }
 
     /// Returns the tags client.
-    pub fn tags(
-        &self,
-    ) -> iroh_blobs::rpc::client::tags::Client<BoxedServiceConnection<RpcService>, RpcService> {
-        iroh_blobs::rpc::client::tags::Client::new(self.rpc.clone().map())
+    pub fn tags(&self) -> tags::Client {
+        tags::Client::new(self.rpc.clone().map())
     }
 
     /// Returns the gossip client.
