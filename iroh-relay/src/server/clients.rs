@@ -12,7 +12,7 @@ use super::{
     metrics::Metrics,
     types::Packet,
 };
-use crate::key::PublicKey;
+use iroh_base::key::PublicKey;
 
 /// Number of times we try to send to a client connection before dropping the data;
 const RETRIES: usize = 3;
@@ -260,12 +260,11 @@ mod tests {
 
     use super::*;
     use crate::{
-        key::SecretKey,
-        relay::{
-            codec::{recv_frame, DerpCodec, Frame, FrameType},
-            server::streams::{MaybeTlsStream, RelayIo},
-        },
+        codec::{recv_frame, DerpCodec, Frame, FrameType},
+        server::streams::{MaybeTlsStream, RelayIo},
     };
+
+    use iroh_base::key::SecretKey;
 
     fn test_client_builder(
         key: PublicKey,

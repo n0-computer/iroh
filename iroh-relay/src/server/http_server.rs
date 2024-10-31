@@ -589,10 +589,9 @@ mod tests {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
-    use crate::{
-        key::{PublicKey, SecretKey},
-        relay::client::{conn::ReceivedMessage, Client, ClientBuilder},
-    };
+    use crate::client::{conn::ReceivedMessage, Client, ClientBuilder};
+
+    use iroh_base::key::{PublicKey, SecretKey};
 
     pub(crate) fn make_tls_config() -> TlsConfig {
         let subject_alt_names = vec!["localhost".to_string()];

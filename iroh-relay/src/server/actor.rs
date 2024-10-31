@@ -22,23 +22,21 @@ use tracing::{info_span, trace, Instrument};
 use tungstenite::protocol::Role;
 
 use crate::{
-    defaults::timeouts::relay::SERVER_WRITE_TIMEOUT as WRITE_TIMEOUT,
-    key::PublicKey,
-    relay::{
-        codec::{
-            recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
-            SERVER_CHANNEL_SIZE,
-        },
-        http::Protocol,
-        server::{
-            client_conn::ClientConnBuilder,
-            clients::Clients,
-            metrics::Metrics,
-            streams::{MaybeTlsStream, RelayIo},
-            types::ServerMessage,
-        },
+    codec::{
+        recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+        SERVER_CHANNEL_SIZE,
+    },
+    defaults::timeouts::SERVER_WRITE_TIMEOUT as WRITE_TIMEOUT,
+    http::Protocol,
+    server::{
+        client_conn::ClientConnBuilder,
+        clients::Clients,
+        metrics::Metrics,
+        streams::{MaybeTlsStream, RelayIo},
+        types::ServerMessage,
     },
 };
+use iroh_base::key::PublicKey;
 
 // TODO: skipping `verboseDropKeys` for now
 
@@ -426,8 +424,7 @@ mod tests {
 
         // write message from b to a
         let msg = b"hello world!";
-        crate::client::conn::send_packet(&mut b_io, &None, key_a, Bytes::from_static(msg))
-            .await?;
+        crate::client::conn::send_packet(&mut b_io, &None, key_a, Bytes::from_static(msg)).await?;
 
         // get message on a's reader
         let frame = recv_frame(FrameType::RecvPacket, &mut a_io).await?;
@@ -483,8 +480,7 @@ mod tests {
             let client_info = ClientInfo {
                 version: PROTOCOL_VERSION,
             };
-            crate::codec::send_client_key(&mut client_writer, &client_key, &client_info)
-                .await?;
+            crate::codec::send_client_key(&mut client_writer, &client_key, &client_info).await?;
 
             Ok(())
         }));

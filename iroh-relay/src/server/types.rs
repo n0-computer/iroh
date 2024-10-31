@@ -2,7 +2,8 @@
 
 use bytes::Bytes;
 
-use crate::{key::PublicKey, relay::server::client_conn::ClientConnBuilder};
+use crate::server::client_conn::ClientConnBuilder;
+use iroh_base::key::PublicKey;
 
 /// A request to write a dataframe to a Client
 #[derive(Debug, Clone)]

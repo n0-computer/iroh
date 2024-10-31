@@ -18,17 +18,15 @@ use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{trace, Instrument};
 
 use crate::{
+    codec::{write_frame, Frame, KEEP_ALIVE},
     disco::looks_like_disco_wrapper,
-    key::PublicKey,
-    relay::{
-        codec::{write_frame, Frame, KEEP_ALIVE},
-        server::{
-            metrics::Metrics,
-            streams::RelayIo,
-            types::{Packet, ServerMessage},
-        },
+    server::{
+        metrics::Metrics,
+        streams::RelayIo,
+        types::{Packet, ServerMessage},
     },
 };
+use iroh_base::key::PublicKey;
 
 /// The [`Server`] side representation of a [`Client`]'s connection.
 ///
@@ -466,13 +464,11 @@ mod tests {
 
     use super::*;
     use crate::{
-        key::SecretKey,
-        relay::{
-            client::conn,
-            codec::{recv_frame, DerpCodec, FrameType},
-            server::streams::MaybeTlsStream,
-        },
+        client::conn,
+        codec::{recv_frame, DerpCodec, FrameType},
+        server::streams::MaybeTlsStream,
     };
+    use iroh_base::key::SecretKey;
 
     #[tokio::test]
     async fn test_client_conn_io_basic() -> Result<()> {
