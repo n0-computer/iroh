@@ -235,6 +235,25 @@
 <a href="#235" id="235">235</a>
 <a href="#236" id="236">236</a>
 <a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Code required for willow-rs and willow-store to interface together.
 
 </span><span class="kw">use </span>std::fmt::Display;
@@ -365,13 +384,17 @@
     }
 }
 
-<span class="kw">impl </span>StoredTimestamp {
+<span class="comment">// The `StoredTimestamp` needs to be big-endian so the derived
+// `Ord` instance on the inner [u8; 8] matches the ord instance
+// of the equivalent u64.
+// See also the associated proptest in this module.
+</span><span class="kw">impl </span>StoredTimestamp {
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(ts: Timestamp) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>(ts.to_le_bytes())
+        <span class="self">Self</span>(ts.to_be_bytes())
     }
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>timestamp(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Timestamp {
-        u64::from_le_bytes(<span class="self">self</span>.<span class="number">0</span>)
+        u64::from_be_bytes(<span class="self">self</span>.<span class="number">0</span>)
     }
 }
 
@@ -470,6 +493,21 @@
             RangeEnd::Closed(end) =&gt; RangeEnd::Closed(f(end)),
             RangeEnd::Open =&gt; RangeEnd::Open,
         },
+    }
+}
+
+<span class="attr">#[cfg(test)]
+</span><span class="kw">mod </span>tests {
+    <span class="kw">use </span>proptest::prop_assert_eq;
+    <span class="kw">use </span>test_strategy::proptest;
+
+    <span class="kw">use </span><span class="kw">super</span>::StoredTimestamp;
+
+    <span class="attr">#[proptest]
+    </span><span class="kw">fn </span>prop_stored_timestamp_ord_matches_u64_ord(num: u64, other: u64) {
+        <span class="kw">let </span>expected = num.cmp(<span class="kw-2">&amp;</span>other);
+        <span class="kw">let </span>actual = StoredTimestamp::new(num).cmp(<span class="kw-2">&amp;</span>StoredTimestamp::new(other));
+        <span class="macro">prop_assert_eq!</span>(expected, actual);
     }
 }
 </code></pre></div></section></main></body></html>

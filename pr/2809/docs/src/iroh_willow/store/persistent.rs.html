@@ -750,6 +750,7 @@
 <a href="#750" id="750">750</a>
 <a href="#751" id="751">751</a>
 <a href="#752" id="752">752</a>
+<a href="#753" id="753">753</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>ed25519_dalek::ed25519;
 <span class="kw">use </span>futures_util::Stream;
@@ -1046,7 +1047,8 @@
                 .map(<span class="kw">move </span>|result| {
                     <span class="kw">let </span>(point, stored_entry) = result<span class="question-mark">?</span>;
                     <span class="kw">let </span>id = stored_entry.authorisation_token_id;
-                    <span class="kw">let </span>auth_token = get_entry_auth_token(id, <span class="kw-2">&amp;</span>clone.auth_tokens)<span class="question-mark">?</span>;
+                    <span class="kw">let </span>auth_token = get_entry_auth_token(id, <span class="kw-2">&amp;</span>clone.auth_tokens)
+                        .inspect_err(|e| <span class="macro">tracing::error!</span>(%e, <span class="string">"Database inconsistent, failed to fetch auth token"</span>))<span class="question-mark">?</span>;
                     stored_entry.into_authorised_entry(namespace, <span class="kw-2">&amp;</span>point, auth_token)
                 })
                 .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()

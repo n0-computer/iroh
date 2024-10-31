@@ -82,15 +82,39 @@
 <a href="#82" id="82">82</a>
 <a href="#83" id="83">83</a>
 <a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt;
 
-<span class="kw">use </span>iroh_blobs::Hash;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>willow_store::{FixedSize, LiftingCommutativeMonoid, PointRef};
 
 <span class="kw">use crate</span>::{
-    proto::data_model::{Entry, EntryExt},
-    store::glue::{IrohWillowParams, StoredAuthorisedEntry},
+    proto::data_model::Entry,
+    store::glue::{path_to_blobseq, IrohWillowParams, StoredAuthorisedEntry, StoredTimestamp},
 };
 
 <span class="attr">#[derive(
@@ -108,6 +132,33 @@
 #[repr(transparent)]
 </span><span class="kw">pub struct </span>Fingerprint(<span class="kw">pub </span>[u8; <span class="number">32</span>]);
 
+<span class="kw">impl </span>Fingerprint {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>lift_stored_entry(
+        key: <span class="kw-2">&amp;</span>PointRef&lt;IrohWillowParams&gt;,
+        payload_digest: <span class="kw-2">&amp;</span>[u8; <span class="number">32</span>],
+        payload_size: u64,
+    ) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span><span class="kw-2">mut </span>hasher = iroh_blake3::Hasher::default();
+        hasher.update(key.as_slice());
+        hasher.update(payload_digest);
+        hasher.update(<span class="kw-2">&amp;</span>payload_size.to_le_bytes());
+        <span class="self">Self</span>(<span class="kw-2">*</span>hasher.finalize().as_bytes())
+    }
+
+    <span class="kw">pub fn </span>lift_entry(entry: <span class="kw-2">&amp;</span>Entry) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>point = willow_store::Point::&lt;IrohWillowParams&gt;::new(
+            entry.subspace_id(),
+            <span class="kw-2">&amp;</span>StoredTimestamp::new(entry.timestamp()),
+            <span class="kw-2">&amp;</span>path_to_blobseq(entry.path()),
+        );
+        <span class="self">Self</span>::lift_stored_entry(
+            <span class="kw-2">&amp;</span>point,
+            entry.payload_digest().<span class="number">0</span>.as_bytes(),
+            entry.payload_length(),
+        )
+    }
+}
+
 <span class="kw">impl </span>FixedSize <span class="kw">for </span>Fingerprint {
     <span class="kw">const </span>SIZE: usize = std::mem::size_of::&lt;<span class="self">Self</span>&gt;();
 }
@@ -117,8 +168,8 @@
         <span class="self">Self</span>([<span class="number">0u8</span>; <span class="number">32</span>])
     }
 
-    <span class="kw">fn </span>lift(_key: <span class="kw-2">&amp;</span>PointRef&lt;IrohWillowParams&gt;, value: <span class="kw-2">&amp;</span>StoredAuthorisedEntry) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>(value.payload_digest)
+    <span class="kw">fn </span>lift(key: <span class="kw-2">&amp;</span>PointRef&lt;IrohWillowParams&gt;, value: <span class="kw-2">&amp;</span>StoredAuthorisedEntry) -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>::lift_stored_entry(key, <span class="kw-2">&amp;</span>value.payload_digest, value.payload_size)
     }
 
     <span class="kw">fn </span>combine(<span class="kw-2">&amp;</span><span class="self">self</span>, other: <span class="kw-2">&amp;</span><span class="self">Self</span>) -&gt; <span class="self">Self </span>{
@@ -137,8 +188,7 @@
 <span class="kw">impl </span>Fingerprint {
     <span class="kw">pub fn </span>add_entry(<span class="kw-2">&amp;mut </span><span class="self">self</span>, entry: <span class="kw-2">&amp;</span>Entry) {
         <span class="comment">// TODO: Don't allocate
-        </span><span class="kw">let </span>encoded = entry.encode_to_vec();
-        <span class="kw">let </span>next = Fingerprint(<span class="kw-2">*</span>Hash::new(<span class="kw-2">&amp;</span>encoded).as_bytes());
+        </span><span class="kw">let </span>next = <span class="self">Self</span>::lift_entry(entry);
         <span class="kw-2">*</span><span class="self">self </span>^= next;
     }
 
