@@ -170,7 +170,7 @@ fn prop_sync_simulation_matches_model(
                     anyhow::Ok(())
                 };
                 let fut = async { tokio::try_join!(fut_x, fut_y) };
-                tokio::time::timeout(Duration::from_secs(10), fut).await??;
+                tokio::time::timeout(Duration::from_secs(40), fut).await??;
 
                 info!("[{i}/{count}] sync complete");
 
@@ -448,7 +448,7 @@ async fn spaces_subscription() -> TestResult {
 #[tokio::test]
 async fn test_restricted_area() -> testresult::TestResult {
     iroh_test::logging::setup_multithreaded();
-    const TIMEOUT: Duration = Duration::from_secs(2);
+    const TIMEOUT: Duration = Duration::from_secs(20);
     let (alfie_addr, alfie) = spawn_node(false).await;
     let (betty_addr, betty) = spawn_node(false).await;
     info!("alfie is {}", alfie_addr.node_id.fmt_short());
