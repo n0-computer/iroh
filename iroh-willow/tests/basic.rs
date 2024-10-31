@@ -418,10 +418,7 @@ mod util {
                 .await?;
             let blobs = iroh_blobs::store::mem::Store::default();
             let payloads = blobs.clone();
-            let create_store = move || {
-                iroh_willow::store::persistent::Store::new_memory(payloads).expect("create store")
-                // iroh_willow::store::memory::Store::new(payloads)
-            };
+            let create_store = move || iroh_willow::store::memory::Store::new(payloads);
             let engine = Engine::spawn(endpoint.clone(), create_store, accept_opts);
             let accept_task = tokio::task::spawn({
                 let engine = engine.clone();

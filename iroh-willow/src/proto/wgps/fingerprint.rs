@@ -5,7 +5,9 @@ use willow_store::{FixedSize, LiftingCommutativeMonoid, PointRef};
 
 use crate::{
     proto::data_model::Entry,
-    store::glue::{path_to_blobseq, IrohWillowParams, StoredAuthorisedEntry, StoredTimestamp},
+    store::willow_store_glue::{
+        path_to_blobseq, IrohWillowParams, StoredAuthorisedEntry, StoredTimestamp,
+    },
 };
 
 #[derive(

@@ -27,13 +27,15 @@ use crate::{
         meadowcap,
         wgps::Fingerprint,
     },
-    store::glue::{path_to_blobseq, to_range3d, StoredAuthorisedEntry, StoredTimestamp},
+    store::willow_store_glue::{
+        path_to_blobseq, to_range3d, StoredAuthorisedEntry, StoredTimestamp,
+    },
 };
 
 use super::{
-    glue::{to_query, IrohWillowParams},
     memory,
     traits::{self, SplitAction, StoreEvent, SubscribeParams},
+    willow_store_glue::{to_query, IrohWillowParams},
 };
 
 mod tables;
