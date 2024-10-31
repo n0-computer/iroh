@@ -2619,16 +2619,16 @@ dependencies = [
  "hex",
  "indicatif",
  "iroh",
- "iroh-base",
+ "iroh-base 0.28.0",
  "iroh-blobs",
  "iroh-docs",
  "iroh-gossip",
  "iroh-io",
- "iroh-metrics",
+ "iroh-metrics 0.28.0",
  "iroh-net",
- "iroh-quinn",
+ "iroh-quinn 0.12.0",
  "iroh-router",
- "iroh-test",
+ "iroh-test 0.28.0",
  "nested_enum_utils",
  "num_cpus",
  "parking_lot",
@@ -2659,6 +2659,34 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28a777d7e0b3e2fdab4ad1b21b64be87a43ac3ceb2a2ccef905e480ad3317396"
+dependencies = [
+ "aead",
+ "anyhow",
+ "crypto_box",
+ "data-encoding",
+ "derive_more",
+ "ed25519-dalek",
+ "getrandom",
+ "hex",
+ "iroh-blake3",
+ "once_cell",
+ "postcard",
+ "rand",
+ "rand_core",
+ "serde",
+ "serde-error",
+ "ssh-key",
+ "thiserror",
+ "ttl_cache",
+ "url",
+ "zeroize",
+]
+
+[[package]]
+name = "iroh-base"
 version = "0.28.0"
 dependencies = [
  "aead",
@@ -2671,7 +2699,7 @@ dependencies = [
  "getrandom",
  "hex",
  "iroh-blake3",
- "iroh-test",
+ "iroh-test 0.28.0",
  "once_cell",
  "postcard",
  "proptest",
@@ -2718,11 +2746,11 @@ dependencies = [
  "genawaiter",
  "hashlink",
  "hex",
- "iroh-base",
+ "iroh-base 0.28.0",
  "iroh-io",
- "iroh-metrics",
+ "iroh-metrics 0.28.0",
  "iroh-net",
- "iroh-quinn",
+ "iroh-quinn 0.12.0",
  "iroh-router",
  "nested_enum_utils",
  "num_cpus",
@@ -2778,7 +2806,7 @@ dependencies = [
  "indicatif",
  "iroh",
  "iroh-gossip",
- "iroh-metrics",
+ "iroh-metrics 0.28.0",
  "nix 0.27.1",
  "parking_lot",
  "pkarr",
@@ -2830,9 +2858,9 @@ dependencies = [
  "hickory-resolver",
  "hickory-server",
  "http 1.1.0",
- "iroh-metrics",
+ "iroh-metrics 0.28.0",
  "iroh-net",
- "iroh-test",
+ "iroh-test 0.28.0",
  "lru",
  "mainline",
  "parking_lot",
@@ -2874,11 +2902,11 @@ dependencies = [
  "futures-lite 2.4.0",
  "futures-util",
  "hex",
- "iroh-base",
+ "iroh-base 0.28.0",
  "iroh-blake3",
  "iroh-blobs",
  "iroh-gossip",
- "iroh-metrics",
+ "iroh-metrics 0.28.0",
  "iroh-net",
  "iroh-router",
  "lru",
@@ -2913,9 +2941,9 @@ dependencies = [
  "futures-lite 2.4.0",
  "futures-util",
  "indexmap 2.6.0",
- "iroh-base",
+ "iroh-base 0.28.0",
  "iroh-blake3",
- "iroh-metrics",
+ "iroh-metrics 0.28.0",
  "iroh-net",
  "iroh-router",
  "nested_enum_utils",
@@ -2943,6 +2971,27 @@ dependencies = [
  "pin-project",
  "smallvec",
  "tokio",
+]
+
+[[package]]
+name = "iroh-metrics"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c78cf30022e1c7a10fc0ae0a6ba83f131b7c3b92d4876f6c97aba93fe534be6"
+dependencies = [
+ "anyhow",
+ "erased_set",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "once_cell",
+ "prometheus-client",
+ "reqwest",
+ "serde",
+ "struct_iterable",
+ "time",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2996,13 +3045,13 @@ dependencies = [
  "hyper",
  "hyper-util",
  "igd-next",
- "iroh-base",
- "iroh-metrics",
+ "iroh-base 0.28.0",
+ "iroh-metrics 0.28.0",
  "iroh-net",
- "iroh-quinn",
- "iroh-quinn-proto",
+ "iroh-quinn 0.12.0",
+ "iroh-quinn-proto 0.12.0",
  "iroh-quinn-udp",
- "iroh-test",
+ "iroh-test 0.28.0",
  "libc",
  "mainline",
  "netdev",
@@ -3070,9 +3119,9 @@ dependencies = [
  "clap",
  "futures-lite 2.4.0",
  "hdrhistogram",
- "iroh-metrics",
+ "iroh-metrics 0.28.0",
  "iroh-net",
- "iroh-quinn",
+ "iroh-quinn 0.12.0",
  "rcgen",
  "rustls",
  "socket2",
@@ -3083,12 +3132,12 @@ dependencies = [
 
 [[package]]
 name = "iroh-quinn"
-version = "0.12.0"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35ba75a5c57cff299d2d7ca1ddee053f66339d1756bd79ec637bcad5aa61100e"
+checksum = "4fd590a39a14cfc168efa4d894de5039d65641e62d8da4a80733018ababe3c33"
 dependencies = [
  "bytes",
- "iroh-quinn-proto",
+ "iroh-quinn-proto 0.11.6",
  "iroh-quinn-udp",
  "pin-project-lite",
  "rustc-hash",
@@ -3096,6 +3145,42 @@ dependencies = [
  "socket2",
  "thiserror",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "iroh-quinn"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35ba75a5c57cff299d2d7ca1ddee053f66339d1756bd79ec637bcad5aa61100e"
+dependencies = [
+ "bytes",
+ "iroh-quinn-proto 0.12.0",
+ "iroh-quinn-udp",
+ "pin-project-lite",
+ "rustc-hash",
+ "rustls",
+ "socket2",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "iroh-quinn-proto"
+version = "0.11.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd0538ff12efe3d61ea1deda2d7913f4270873a519d43e6995c6e87a1558538"
+dependencies = [
+ "bytes",
+ "rand",
+ "ring",
+ "rustc-hash",
+ "rustls",
+ "rustls-platform-verifier",
+ "slab",
+ "thiserror",
+ "tinyvec",
  "tracing",
 ]
 
@@ -3147,7 +3232,7 @@ dependencies = [
  "duct",
  "futures-buffered",
  "futures-concurrency",
- "futures-lite 2.3.0",
+ "futures-lite 2.4.0",
  "futures-sink",
  "futures-util",
  "genawaiter",
@@ -3161,12 +3246,12 @@ dependencies = [
  "hyper",
  "hyper-util",
  "igd-next",
- "iroh-base",
- "iroh-metrics",
- "iroh-quinn",
- "iroh-quinn-proto",
+ "iroh-base 0.27.0",
+ "iroh-metrics 0.27.0",
+ "iroh-quinn 0.11.3",
+ "iroh-quinn-proto 0.11.6",
  "iroh-quinn-udp",
- "iroh-test",
+ "iroh-test 0.27.0",
  "libc",
  "mainline",
  "netdev",
@@ -3237,6 +3322,18 @@ dependencies = [
  "iroh-net",
  "tokio",
  "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "iroh-test"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0656192e6e80d714b316a9b9ca1bdf160de46a85b708034c0355c3e6c25b91a1"
+dependencies = [
+ "anyhow",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]
@@ -4283,7 +4380,7 @@ dependencies = [
  "futures-lite 2.4.0",
  "futures-util",
  "igd-next",
- "iroh-metrics",
+ "iroh-metrics 0.28.0",
  "libc",
  "netwatch",
  "ntest",
@@ -4537,7 +4634,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "hex",
- "iroh-quinn",
+ "iroh-quinn 0.12.0",
  "pin-project",
  "serde",
  "slab",
