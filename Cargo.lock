@@ -2986,7 +2986,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-willow"
-version = "0.24.0"
+version = "0.27.0"
 dependencies = [
  "anyhow",
  "bytes",

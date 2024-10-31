@@ -1,6 +1,6 @@
 [package]
 name = "iroh-willow"
-version = "0.24.0"
+version = "0.27.0"
 edition = "2021"
 readme = "README.md"
 description = "willow protocol implementation for iroh"
@@ -18,7 +18,7 @@ workspace = true
 anyhow = "1"
 bytes = { version = "1.4", features = ["serde"] }
 curve25519-dalek = { version = "4.1.3", features = [ "digest", "rand_core", "serde", ] }
-derive_more = { version = "=1.0.0-beta.7", features = [ "debug", "deref", "display", "from", "try_into", "into", "as_ref", "try_from", ] }
+derive_more = { version = "1.0.0", features = [ "debug", "deref", "display", "from", "try_into", "into", "as_ref", "try_from", ] }
 ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"] }
 either = "1.13.0"
 futures-buffered = "0.2.6"
@@ -27,12 +27,12 @@ futures-lite = "2.3.0"
 futures-util = "0.3.30"
 genawaiter = "0.99.1"
 hex = "0.4.3"
-iroh-base = { version = "0.24.0", path = "../iroh-base" }
+iroh-base = { version = "0.27.0", path = "../iroh-base" }
 iroh-blake3 = "1.4.5"
-iroh-blobs = { version = "0.24.0", path = "../iroh-blobs" }
+iroh-blobs = { version = "0.27.0", path = "../iroh-blobs" }
 iroh-io = { version = "0.6.0", features = ["stats"] }
-iroh-metrics = { version = "0.24.0", path = "../iroh-metrics", optional = true }
-iroh-net = { version = "0.24.0", path = "../iroh-net" }
+iroh-metrics = { version = "0.27.0", path = "../iroh-metrics", optional = true }
+iroh-net = { version = "0.27.0", path = "../iroh-net" }
 meadowcap = "0.1.0"
 postcard = { version = "1", default-features = false, features = [ "alloc", "use-std", "experimental-derive", ] }
 rand = "0.8.5"

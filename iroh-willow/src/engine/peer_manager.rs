@@ -304,7 +304,7 @@ impl PeerManager {
             let fut = async move {
                 debug!("connecting");
                 let conn = tokio::select! {
-                    res = endpoint.connect_by_node_id(peer, ALPN) => res,
+                    res = endpoint.connect(peer, ALPN) => res,
                     _ = cancel_dial.cancelled() => {
                         debug!("dial cancelled during dial");
                         return Err(ConnectionError::LocallyClosed.into());
