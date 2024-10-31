@@ -121,9 +121,6 @@
 <a href="#121" id="121">121</a>
 <a href="#122" id="122">122</a>
 <a href="#123" id="123">123</a>
-<a href="#124" id="124">124</a>
-<a href="#125" id="125">125</a>
-<a href="#126" id="126">126</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Client to an Iroh node.
 //!
 //! See the documentation for [`Iroh`] for more information.
@@ -132,7 +129,6 @@
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
-<span class="kw">use </span>quic_rpc::client::BoxedServiceConnection;
 <span class="kw">use </span>ref_cast::RefCast;
 
 <span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::node::{CounterStats, ShutdownRequest, StatsRequest, StatusRequest};
@@ -198,10 +194,8 @@
     }
 
     <span class="doccomment">/// Returns the tags client.
-    </span><span class="kw">pub fn </span>tags(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-    ) -&gt; iroh_blobs::rpc::client::tags::Client&lt;BoxedServiceConnection&lt;RpcService&gt;, RpcService&gt; {
-        iroh_blobs::rpc::client::tags::Client::new(<span class="self">self</span>.rpc.clone().map())
+    </span><span class="kw">pub fn </span>tags(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; tags::Client {
+        tags::Client::new(<span class="self">self</span>.rpc.clone().map())
     }
 
     <span class="doccomment">/// Returns the gossip client.
