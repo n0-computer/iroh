@@ -15,11 +15,11 @@ pub enum RateLimitConfig {
     /// Disable rate limit for http server.
     Disabled,
     /// Enable rate limit for http server based on the connection peer IP address.
-    /// https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.PeerIpKeyExtractor.html
+    /// <https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.PeerIpKeyExtractor.html>
     #[default]
     Simple,
     /// Enable rate limit for http server based on a smart logic for extracting the connection original IP address, useful for reverse proxies.
-    /// https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.SmartIpKeyExtractor.html
+    /// <https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.SmartIpKeyExtractor.html>
     Smart,
 }
 

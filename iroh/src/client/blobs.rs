@@ -9,5 +9,5 @@ pub type Client =
 
 pub use iroh_blobs::rpc::client::blobs::{
     AddDirOpts, AddFileOpts, AddOutcome, AddProgress, AddReaderOpts, BlobInfo, DownloadMode,
-    DownloadOptions, DownloadOutcome, DownloadProgress, IncompleteBlobInfo, WrapOption,
+    DownloadOptions, DownloadOutcome, DownloadProgress, IncompleteBlobInfo, Reader, WrapOption,
 };
