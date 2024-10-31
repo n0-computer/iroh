@@ -32,8 +32,8 @@ use crate::{
 
 /// The [`Server`] side representation of a [`Client`]'s connection.
 ///
-/// [`Server`]: crate::relay::server::Server
-/// [`Client`]: crate::relay::client::Client
+/// [`Server`]: crate::server::Server
+/// [`Client`]: crate::client::Client
 #[derive(Debug)]
 pub(crate) struct ClientConnManager {
     /// Static after construction, process-wide unique counter, incremented each time we accept

@@ -12,7 +12,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::WebSocketStream;
 use tokio_util::codec::Framed;
 
-use crate::relay::codec::{DerpCodec, Frame};
+use crate::codec::{DerpCodec, Frame};
 
 #[derive(Debug)]
 pub(crate) enum RelayIo {

@@ -611,7 +611,7 @@ async fn run_captive_portal_service(http_listener: TcpListener) -> Result<()> {
                 let handler = CaptivePortalService;
 
                 tasks.spawn(async move {
-                    let stream = crate::relay::server::streams::MaybeTlsStream::Plain(stream);
+                    let stream = crate::server::streams::MaybeTlsStream::Plain(stream);
                     let stream = hyper_util::rt::TokioIo::new(stream);
                     if let Err(err) = hyper::server::conn::http1::Builder::new()
                         .serve_connection(stream, handler)
@@ -715,7 +715,7 @@ mod tests {
     use iroh_base::{key::SecretKey, node_addr::RelayUrl};
 
     use super::*;
-    use crate::relay::{
+    use crate::{
         client::{conn::ReceivedMessage, ClientBuilder},
         http::{Protocol, HTTP_UPGRADE_PROTOCOL},
     };

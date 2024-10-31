@@ -206,7 +206,7 @@ fn process_incoming_frame(frame: Frame) -> Result<ReceivedMessage> {
     }
 }
 
-/// The kinds of messages we can send to the [`Server`](crate::relay::server::Server)
+/// The kinds of messages we can send to the [`Server`](crate::server::Server)
 #[derive(Debug)]
 enum ConnWriterMessage {
     /// Send a packet (addressed to the [`PublicKey`]) to the server

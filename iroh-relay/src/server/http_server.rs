@@ -18,7 +18,7 @@ use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, warn, Instrument};
 use tungstenite::handshake::derive_accept_key;
 
-use crate::relay::{
+use crate::{
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
     server::{
         actor::{ClientConnHandler, ServerActorTask},

@@ -52,7 +52,7 @@ fn new_conn_num() -> usize {
 /// Will forcefully abort the server actor loop when dropped.
 /// For stopping gracefully, use [`ServerActorTask::close`].
 ///
-/// Responsible for managing connections to relay [`Conn`](crate::relay::RelayConn)s, sending packets from one client to another.
+/// Responsible for managing connections to relay [`Conn`](crate::RelayConn)s, sending packets from one client to another.
 #[derive(Debug)]
 pub struct ServerActorTask {
     /// Optionally specifies how long to wait before failing when writing
@@ -366,7 +366,7 @@ mod tests {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
-    use crate::relay::{
+    use crate::{
         client::{
             conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage},
             streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
@@ -426,7 +426,7 @@ mod tests {
 
         // write message from b to a
         let msg = b"hello world!";
-        crate::relay::client::conn::send_packet(&mut b_io, &None, key_a, Bytes::from_static(msg))
+        crate::client::conn::send_packet(&mut b_io, &None, key_a, Bytes::from_static(msg))
             .await?;
 
         // get message on a's reader
@@ -483,7 +483,7 @@ mod tests {
             let client_info = ClientInfo {
                 version: PROTOCOL_VERSION,
             };
-            crate::relay::codec::send_client_key(&mut client_writer, &client_key, &client_info)
+            crate::codec::send_client_key(&mut client_writer, &client_key, &client_info)
                 .await?;
 
             Ok(())
