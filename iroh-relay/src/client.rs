@@ -1088,7 +1088,7 @@ impl DnsExt for DnsResolver {
         match host {
             url::Host::Domain(domain) => {
                 // Need to do a DNS lookup
-                let lookup = tokio::join!(self.lookup_ipv4(domain), self.lookup_ipv4(domain));
+                let lookup = tokio::join!(self.lookup_ipv4(domain), self.lookup_ipv6(domain));
                 let (v4, v6) = match lookup {
                     (Err(ipv4_err), Err(ipv6_err)) => {
                         let err = anyhow::anyhow!("Ipv4: {:?}, Ipv6: {:?}", ipv4_err, ipv6_err);
