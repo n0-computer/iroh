@@ -32,7 +32,6 @@ license-files = [
 ]
 
 [[licenses.exceptions]]
-allow = [""]
 name = "willow_store"
 version = "*"
 
