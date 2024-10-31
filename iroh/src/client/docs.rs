@@ -31,7 +31,7 @@ use quic_rpc::message::RpcMsg;
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
-use super::{blobs, flatten, RpcClient};
+use super::{flatten, RpcClient};
 use crate::rpc_protocol::{
     docs::{
         CloseRequest, CreateRequest, DelRequest, DelResponse, DocListRequest, DocSubscribeRequest,
@@ -474,10 +474,13 @@ impl Entry {
     /// Reads the content of an [`Entry`] as a streaming [`blobs::Reader`].
     ///
     /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
-    pub async fn content_reader(&self, client: impl Into<&RpcClient>) -> Result<blobs::Reader> {
+    pub async fn content_reader(
+        &self,
+        client: impl Into<&RpcClient>,
+    ) -> Result<iroh_blobs::rpc::client::blobs::Reader> {
         let client: RpcClient = client.into().clone();
         let client: quic_rpc::RpcClient<iroh_blobs::rpc::proto::RpcService, _, _> = client.map();
-        blobs::Reader::from_rpc_read(&client, self.content_hash()).await
+        iroh_blobs::rpc::client::blobs::Reader::from_rpc_read(&client, self.content_hash()).await
     }
 
     /// Reads all content of an [`Entry`] into a buffer.
@@ -487,7 +490,7 @@ impl Entry {
         let client: RpcClient = client.into().clone();
         let client: quic_rpc::RpcClient<iroh_blobs::rpc::proto::RpcService, _, _> = client.map();
 
-        blobs::Reader::from_rpc_read(&client, self.content_hash())
+        iroh_blobs::rpc::client::blobs::Reader::from_rpc_read(&client, self.content_hash())
             .await?
             .read_to_bytes()
             .await

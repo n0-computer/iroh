@@ -498,11 +498,15 @@ mod tests {
     use anyhow::{bail, Context};
     use bytes::Bytes;
     use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
-    use iroh_blobs::{provider::AddProgress, util::SetTagOption, BlobFormat};
+    use iroh_blobs::{
+        provider::AddProgress,
+        rpc::client::blobs::{AddOutcome, WrapOption},
+        util::SetTagOption,
+        BlobFormat,
+    };
     use iroh_net::{key::SecretKey, relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
 
     use super::*;
-    use crate::client::blobs::{AddOutcome, WrapOption};
 
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {

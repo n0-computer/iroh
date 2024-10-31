@@ -3,11 +3,11 @@ use std::{io, time::Duration};
 use bao_tree::blake3;
 use bytes::Bytes;
 use futures_lite::StreamExt;
-use iroh::{
-    client::blobs::{AddDirOpts, WrapOption},
-    node::GcPolicy,
+use iroh::node::GcPolicy;
+use iroh_blobs::{
+    rpc::client::blobs::{AddDirOpts, WrapOption},
+    store::mem::Store,
 };
-use iroh_blobs::store::mem::Store;
 
 async fn create_node() -> anyhow::Result<(iroh::node::Node<Store>, async_channel::Receiver<()>)> {
     let (gc_send, gc_recv) = async_channel::unbounded();

@@ -19,9 +19,10 @@ pub(crate) use self::quic::{connect_raw as quic_connect_raw, RPC_ALPN};
 pub use self::{docs::Doc, net::NodeStatus};
 
 pub mod authors;
+pub mod blobs;
 pub mod docs;
 pub mod net;
-pub use iroh_blobs::rpc::client::{blobs, tags};
+// pub use iroh_blobs::rpc::client::{blobs, tags};
 
 // Keep this type exposed, otherwise every occurrence of `RpcClient` in the API
 // will show up as `RpcClient<RpcService, Connection<RpcService>>` in the docs.

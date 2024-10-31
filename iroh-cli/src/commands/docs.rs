@@ -17,9 +17,8 @@ use futures_lite::{Stream, StreamExt};
 use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressStyle};
 use iroh::{
     base::{base32::fmt_short, node_addr::AddrInfoOptions},
-    blobs::{provider::AddProgress, util::SetTagOption, Hash, Tag},
+    blobs::{provider::AddProgress, rpc::client::blobs::WrapOption, util::SetTagOption, Hash, Tag},
     client::{
-        blobs::WrapOption,
         docs::{Doc, Entry, LiveEvent, Origin, ShareMode},
         Iroh,
     },
