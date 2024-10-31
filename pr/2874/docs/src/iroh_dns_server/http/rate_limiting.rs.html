@@ -98,11 +98,11 @@
     <span class="doccomment">/// Disable rate limit for http server.
     </span>Disabled,
     <span class="doccomment">/// Enable rate limit for http server based on the connection peer IP address.
-    /// https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.PeerIpKeyExtractor.html
+    /// &lt;https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.PeerIpKeyExtractor.html&gt;
     </span><span class="attr">#[default]
     </span>Simple,
     <span class="doccomment">/// Enable rate limit for http server based on a smart logic for extracting the connection original IP address, useful for reverse proxies.
-    /// https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.SmartIpKeyExtractor.html
+    /// &lt;https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.SmartIpKeyExtractor.html&gt;
     </span>Smart,
 }
 

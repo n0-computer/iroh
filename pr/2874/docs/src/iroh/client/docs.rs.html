@@ -1363,7 +1363,7 @@
         <span class="kw">let </span>client: RpcClient = client.into().clone();
         <span class="kw">let </span>client: quic_rpc::RpcClient&lt;iroh_blobs::rpc::proto::RpcService, <span class="kw">_</span>, <span class="kw">_</span>&gt; = client.map();
 
-        blobs::Reader::from_rpc_read(<span class="kw-2">&amp;</span>client, <span class="self">self</span>.content_hash())
+        iroh_blobs::rpc::client::blobs::Reader::from_rpc_read(<span class="kw-2">&amp;</span>client, <span class="self">self</span>.content_hash())
             .<span class="kw">await</span><span class="question-mark">?
             </span>.read_to_bytes()
             .<span class="kw">await

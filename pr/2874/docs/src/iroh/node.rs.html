@@ -829,6 +829,10 @@
 <a href="#829" id="829">829</a>
 <a href="#830" id="830">830</a>
 <a href="#831" id="831">831</a>
+<a href="#832" id="832">832</a>
+<a href="#833" id="833">833</a>
+<a href="#834" id="834">834</a>
+<a href="#835" id="835">835</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node API
 //!
 //! An iroh node is a server that is identified by an Ed25519 keypair and is
@@ -1329,11 +1333,15 @@
     <span class="kw">use </span>anyhow::{bail, Context};
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
-    <span class="kw">use </span>iroh_blobs::{provider::AddProgress, util::SetTagOption, BlobFormat};
+    <span class="kw">use </span>iroh_blobs::{
+        provider::AddProgress,
+        rpc::client::blobs::{AddOutcome, WrapOption},
+        util::SetTagOption,
+        BlobFormat,
+    };
     <span class="kw">use </span>iroh_net::{key::SecretKey, relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::client::blobs::{AddOutcome, WrapOption};
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_ticket_multiple_addrs() {
