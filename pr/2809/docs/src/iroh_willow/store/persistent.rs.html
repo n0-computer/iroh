@@ -751,6 +751,8 @@
 <a href="#751" id="751">751</a>
 <a href="#752" id="752">752</a>
 <a href="#753" id="753">753</a>
+<a href="#754" id="754">754</a>
+<a href="#755" id="755">755</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>ed25519_dalek::ed25519;
 <span class="kw">use </span>futures_util::Stream;
@@ -780,13 +782,15 @@
         meadowcap,
         wgps::Fingerprint,
     },
-    store::glue::{path_to_blobseq, to_range3d, StoredAuthorisedEntry, StoredTimestamp},
+    store::willow_store_glue::{
+        path_to_blobseq, to_range3d, StoredAuthorisedEntry, StoredTimestamp,
+    },
 };
 
 <span class="kw">use super</span>::{
-    glue::{to_query, IrohWillowParams},
     memory,
     traits::{<span class="self">self</span>, SplitAction, StoreEvent, SubscribeParams},
+    willow_store_glue::{to_query, IrohWillowParams},
 };
 
 <span class="kw">mod </span>tables;

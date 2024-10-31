@@ -274,7 +274,6 @@
 <a href="#274" id="274">274</a>
 <a href="#275" id="275">275</a>
 <a href="#276" id="276">276</a>
-<a href="#277" id="277">277</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The capability system of Willow.
 //!
 //! Contains an instantiation of [`meadowcap`] for use in iroh-willow.
@@ -457,7 +456,6 @@
         Serialize,
         Deserialize,
     )]
-    #[repr(transparent)]
     </span><span class="kw">pub struct </span>SerdeReadAuthorisation(<span class="attr">#[serde(with = <span class="string">"read_authorisation"</span>)] </span><span class="kw">pub </span>ReadAuthorisation);
 
     <span class="kw">pub mod </span>mc_capability {
