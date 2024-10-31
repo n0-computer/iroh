@@ -34,7 +34,8 @@ use tokio::{
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
-use crate::{relay::http::RELAY_PROBE_PATH, stun};
+use crate::http::RELAY_PROBE_PATH;
+use crate::stun;
 
 pub(crate) mod actor;
 pub(crate) mod client_conn;
