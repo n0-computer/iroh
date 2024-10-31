@@ -717,7 +717,6 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 entry.get_mut().intents.insert(intent_id, intent_handlers);
             }
             hash_map::Entry::Vacant(entry) => {
-                tracing::warn!("is new, queue");
                 let progress_sender = self.progress_tracker.track(
                     kind,
                     intent_handlers
@@ -728,7 +727,9 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 );
 
                 let get_state = match self.getter.get(kind, progress_sender.clone()).await {
-                    Err(_err) => {
+                    Err(err) => {
+                        // This prints a "FailureAction" which is somewhat weird, but that's all we get here.
+                        tracing::error!(?err, "failed queuing new download");
                         self.finalize_download(
                             kind,
                             [(intent_id, intent_handlers)].into(),

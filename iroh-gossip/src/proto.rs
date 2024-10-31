@@ -118,8 +118,9 @@ impl<PI> From<(PI, Option<PeerData>)> for PeerInfo<PI> {
 #[cfg(test)]
 mod test {
 
-    use rand::SeedableRng;
     use std::{collections::HashSet, env, time::Instant};
+
+    use rand::SeedableRng;
 
     use super::{Command, Config, Event, State};
     use crate::proto::{

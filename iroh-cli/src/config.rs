@@ -10,11 +10,11 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use iroh::net::relay::{RelayMap, RelayNode};
-use iroh::node::GcPolicy;
 use iroh::{
     client::Iroh,
     docs::{AuthorId, NamespaceId},
+    net::relay::{RelayMap, RelayNode},
+    node::GcPolicy,
 };
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -441,9 +441,8 @@ mod tests {
 
     use url::Url;
 
-    use crate::logging::{EnvFilter, Rotation};
-
     use super::*;
+    use crate::logging::{EnvFilter, Rotation};
 
     #[test]
     fn test_toml_invalid_field() {

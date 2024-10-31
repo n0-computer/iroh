@@ -65,12 +65,12 @@ impl std::str::FromStr for DocTicket {
 mod tests {
     use std::str::FromStr;
 
-    use crate::NamespaceId;
-
-    use super::*;
     use iroh_base::base32;
     use iroh_net::key::PublicKey;
     use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
+
+    use super::*;
+    use crate::NamespaceId;
 
     #[test]
     fn test_ticket_base32() {
@@ -87,7 +87,7 @@ mod tests {
 
         let ticket = DocTicket {
             capability: Capability::Read(namespace_id),
-            nodes: vec![NodeAddr::from_parts(node_id, None, vec![])],
+            nodes: vec![NodeAddr::from_parts(node_id, None, [])],
         };
         let base32 = base32::parse_vec(ticket.to_string().strip_prefix("doc").unwrap()).unwrap();
         let expected = parse_hexdump("

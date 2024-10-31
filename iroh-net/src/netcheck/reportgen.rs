@@ -16,31 +16,37 @@
 //!   - Stop if there are no outstanding tasks/futures, or on timeout.
 //! - Sends the completed report to the netcheck actor.
 
-use std::future::Future;
-use std::net::{IpAddr, SocketAddr};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    future::Future,
+    net::{IpAddr, SocketAddr},
+    pin::Pin,
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use iroh_metrics::inc;
 use rand::seq::IteratorRandom;
-use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinSet;
-use tokio::time::{self, Instant};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinSet,
+    time::{self, Instant},
+};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
 
 use super::NetcheckMetrics;
-use crate::defaults::DEFAULT_STUN_PORT;
-use crate::dns::{DnsResolver, ResolverExt};
-use crate::net::interfaces;
-use crate::net::UdpSocket;
-use crate::netcheck::{self, Report};
-use crate::ping::{PingError, Pinger};
-use crate::relay::{RelayMap, RelayNode, RelayUrl};
-use crate::util::MaybeFuture;
-use crate::{portmapper, stun};
+use crate::{
+    defaults::DEFAULT_STUN_PORT,
+    dns::{DnsResolver, ResolverExt},
+    net::{interfaces, UdpSocket},
+    netcheck::{self, Report},
+    ping::{PingError, Pinger},
+    portmapper,
+    relay::{RelayMap, RelayNode, RelayUrl},
+    stun,
+    util::MaybeFuture,
+};
 
 mod hairpin;
 mod probes;
@@ -170,7 +176,7 @@ struct Actor {
     // Internal state.
     /// The report being built.
     report: Report,
-    /// The hairping actor.
+    /// The hairpin actor.
     hairpin_actor: hairpin::Client,
     /// Which tasks the [`Actor`] is still waiting on.
     ///
@@ -432,7 +438,7 @@ impl Actor {
                 match port_mapper.probe().await {
                     Ok(Ok(res)) => Some(res),
                     Ok(Err(err)) => {
-                        warn!("skipping port mapping: {err:?}");
+                        debug!("skipping port mapping: {err:?}");
                         None
                     }
                     Err(recv_err) => {
@@ -561,31 +567,34 @@ impl Actor {
 
             // Add the probe set to all futures of probe sets.  Handle aborting a probe set
             // if needed, only normal errors means the set continues.
-            probes.spawn(async move {
-                // Hack because ProbeSet is not it's own type yet.
-                let mut probe_proto = None;
-                while let Some(res) = set.join_next().await {
-                    match res {
-                        Ok(Ok(report)) => return Ok(report),
-                        Ok(Err(ProbeError::Error(err, probe))) => {
-                            probe_proto = Some(probe.proto());
-                            warn!(?probe, "probe failed: {:#}", err);
-                            continue;
-                        }
-                        Ok(Err(ProbeError::AbortSet(err, probe))) => {
-                            debug!(?probe, "probe set aborted: {:#}", err);
-                            set.abort_all();
-                            return Err(err);
-                        }
-                        Err(err) => {
-                            warn!("fatal probe set error, aborting: {:#}", err);
-                            continue;
+            probes.spawn(
+                async move {
+                    // Hack because ProbeSet is not it's own type yet.
+                    let mut probe_proto = None;
+                    while let Some(res) = set.join_next().await {
+                        match res {
+                            Ok(Ok(report)) => return Ok(report),
+                            Ok(Err(ProbeError::Error(err, probe))) => {
+                                probe_proto = Some(probe.proto());
+                                warn!(?probe, "probe failed: {:#}", err);
+                                continue;
+                            }
+                            Ok(Err(ProbeError::AbortSet(err, probe))) => {
+                                debug!(?probe, "probe set aborted: {:#}", err);
+                                set.abort_all();
+                                return Err(err);
+                            }
+                            Err(err) => {
+                                warn!("fatal probe set error, aborting: {:#}", err);
+                                continue;
+                            }
                         }
                     }
+                    warn!(?probe_proto, "no successful probes in ProbeSet");
+                    Err(anyhow!("All probes in ProbeSet failed"))
                 }
-                warn!(?probe_proto, "no successful probes in ProbeSet");
-                Err(anyhow!("All probes in ProbeSet failed"))
-            });
+                .instrument(info_span!("probe")),
+            );
         }
         self.outstanding_tasks.probes = true;
 
@@ -1111,7 +1120,6 @@ mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use super::*;
-
     use crate::defaults::staging::{default_eu_relay_node, default_na_relay_node};
 
     #[test]

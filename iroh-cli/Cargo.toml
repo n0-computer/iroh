@@ -1,6 +1,6 @@
 [package]
 name = "iroh-cli"
-version = "0.24.0"
+version = "0.27.0"
 edition = "2021"
 readme = "README.md"
 description = "Bytes. Distributed."
@@ -31,7 +31,7 @@ colored = "2.0.4"
 comfy-table = "7.0.1"
 console = "0.15.5"
 crossterm = "0.27.0"
-derive_more = { version = "=1.0.0-beta.7", features = ["display"] }
+derive_more = { version = "1.0.0", features = ["display"] }
 dialoguer = { version = "0.11.0", default-features = false }
 dirs-next = "2.0.0"
 futures-buffered = "0.2.4"
@@ -40,9 +40,9 @@ futures-util = { version = "0.3.30", features = ["futures-sink"] }
 hex = "0.4.3"
 human-time = "0.1.6"
 indicatif = { version = "0.17", features = ["tokio"] }
-iroh = { version = "0.24.0", path = "../iroh", features = ["metrics"] }
-iroh-gossip = { version = "0.24.0", path = "../iroh-gossip" }
-iroh-metrics = { version = "0.24.0", path = "../iroh-metrics" }
+iroh = { version = "0.27.0", path = "../iroh", features = ["metrics"] }
+iroh-gossip = { version = "0.27.0", path = "../iroh-gossip" }
+iroh-metrics = { version = "0.27.0", path = "../iroh-metrics" }
 parking_lot = "0.12.1"
 pkarr = { version = "2.2.0", default-features = false }
 portable-atomic = "1"

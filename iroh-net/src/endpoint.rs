@@ -11,13 +11,15 @@
 //!
 //! [module docs]: crate
 
-use std::any::Any;
-use std::future::{Future, IntoFuture};
-use std::net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::Poll;
-use std::time::Duration;
+use std::{
+    any::Any,
+    future::{Future, IntoFuture},
+    net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    pin::Pin,
+    sync::Arc,
+    task::Poll,
+    time::Duration,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use derive_more::Debug;
@@ -27,28 +29,30 @@ use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
-use crate::discovery::{Discovery, DiscoveryTask};
-use crate::dns::{default_resolver, DnsResolver};
-use crate::key::{PublicKey, SecretKey};
-use crate::magicsock::{self, Handle, QuicMappedAddr};
-use crate::relay::{RelayMode, RelayUrl};
-use crate::{tls, NodeId};
+use crate::{
+    discovery::{
+        dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
+    },
+    dns::{default_resolver, DnsResolver},
+    key::{PublicKey, SecretKey},
+    magicsock::{self, Handle, QuicMappedAddr},
+    relay::{force_staging_infra, RelayMode, RelayUrl},
+    tls, NodeId,
+};
 
 mod rtt_actor;
 
-use self::rtt_actor::RttMessage;
-
+pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 pub use quinn::{
     ApplicationClose, Connection, ConnectionClose, ConnectionError, ReadError, ReadExactError,
     RecvStream, RetryError, SendStream, ServerConfig, TransportConfig, VarInt, WriteError,
 };
 
+use self::rtt_actor::RttMessage;
 pub use super::magicsock::{
     ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
-    DirectAddrsStream, RemoteInfo,
+    DirectAddrsStream, RemoteInfo, Source,
 };
-
-pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 
 /// The delay to fall back to discovery when direct addresses fail.
 ///
@@ -57,9 +61,7 @@ pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 /// is still no connection the configured [`Discovery`] will be used however.
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
-/// Environment variable to force the use of staging relays.
-#[cfg(not(any(test, feature = "test-utils")))]
-const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
+type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync>;
 
 /// Builder for [`Endpoint`].
 ///
@@ -74,12 +76,14 @@ pub struct Builder {
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Option<quinn::TransportConfig>,
     keylog: bool,
-    discovery: Option<Box<dyn Discovery>>,
+    #[debug(skip)]
+    discovery: Vec<DiscoveryBuilder>,
     proxy_url: Option<Url>,
     /// List of known nodes. See [`Builder::known_nodes`].
     node_map: Option<Vec<NodeAddr>>,
     dns_resolver: Option<DnsResolver>,
     #[cfg(any(test, feature = "test-utils"))]
+    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     insecure_skip_relay_cert_verify: bool,
     addr_v4: Option<SocketAddrV4>,
     addr_v6: Option<SocketAddrV6>,
@@ -123,14 +127,23 @@ impl Builder {
         let dns_resolver = self
             .dns_resolver
             .unwrap_or_else(|| default_resolver().clone());
-
+        let discovery = self
+            .discovery
+            .into_iter()
+            .filter_map(|f| f(&secret_key))
+            .collect::<Vec<_>>();
+        let discovery: Option<Box<dyn Discovery>> = match discovery.len() {
+            0 => None,
+            1 => Some(discovery.into_iter().next().unwrap()),
+            _ => Some(Box::new(ConcurrentDiscovery::from_services(discovery))),
+        };
         let msock_opts = magicsock::Options {
             addr_v4: self.addr_v4,
             addr_v6: self.addr_v6,
             secret_key,
             relay_map,
             node_map: self.node_map,
-            discovery: self.discovery,
+            discovery,
             proxy_url: self.proxy_url,
             dns_resolver,
             #[cfg(any(test, feature = "test-utils"))]
@@ -193,7 +206,7 @@ impl Builder {
     /// They also perform various functions related to hole punching, see the [crate docs]
     /// for more details.
     ///
-    /// By default the Number0 relay servers are used.
+    /// By default the [number 0] relay servers are used, see [`RelayMode::Default`].
     ///
     /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
     /// configured relay node.  If an invalid RelayMap is provided [`bind`]
@@ -201,14 +214,22 @@ impl Builder {
     ///
     /// [`bind`]: Builder::bind
     /// [crate docs]: crate
+    /// [number 0]: https://n0.computer
     pub fn relay_mode(mut self, relay_mode: RelayMode) -> Self {
         self.relay_mode = relay_mode;
         self
     }
 
+    /// Removes all discovery services from the builder.
+    pub fn clear_discovery(mut self) -> Self {
+        self.discovery.clear();
+        self
+    }
+
     /// Optionally sets a discovery mechanism for this endpoint.
     ///
-    /// If you want to combine multiple discovery services, you can pass a
+    /// If you want to combine multiple discovery services, you can use
+    /// [`Builder::add_discovery`] instead. This will internally create a
     /// [`crate::discovery::ConcurrentDiscovery`].
     ///
     /// If no discovery service is set, connecting to a node without providing its
@@ -216,7 +237,96 @@ impl Builder {
     ///
     /// See the documentation of the [`Discovery`] trait for details.
     pub fn discovery(mut self, discovery: Box<dyn Discovery>) -> Self {
-        self.discovery = Some(discovery);
+        self.discovery.clear();
+        self.discovery.push(Box::new(move |_| Some(discovery)));
+        self
+    }
+
+    /// Adds a discovery mechanism for this endpoint.
+    ///
+    /// The function `discovery`
+    /// will be called on endpoint creation with the configured secret key of
+    /// the endpoint. Discovery services that need to publish information need
+    /// to use this secret key to sign the information.
+    ///
+    /// If you add multiple discovery services, they will be combined using a
+    /// [`crate::discovery::ConcurrentDiscovery`].
+    ///
+    /// If no discovery service is set, connecting to a node without providing its
+    /// direct addresses or relay URLs will fail.
+    ///
+    /// To clear all discovery services, use [`Builder::clear_discovery`].
+    ///
+    /// See the documentation of the [`Discovery`] trait for details.
+    pub fn add_discovery<F, D>(mut self, discovery: F) -> Self
+    where
+        F: FnOnce(&SecretKey) -> Option<D> + Send + Sync + 'static,
+        D: Discovery + 'static,
+    {
+        let discovery: DiscoveryBuilder =
+            Box::new(move |secret_key| discovery(secret_key).map(|x| Box::new(x) as _));
+        self.discovery.push(discovery);
+        self
+    }
+
+    /// Configures the endpoint to use the default n0 DNS discovery service.
+    ///
+    /// The default discovery service publishes to and resolves from the
+    /// n0.computer dns server `iroh.link`.
+    ///
+    /// This is equivalent to adding both a [`crate::discovery::pkarr::PkarrPublisher`]
+    /// and a [`crate::discovery::dns::DnsDiscovery`], both configured to use the
+    /// n0.computer dns server.
+    ///
+    /// This will by default use [`N0_DNS_PKARR_RELAY_PROD`].
+    /// When in tests, or when the `test-utils` feature is enabled, this will use the
+    /// [`N0_DNS_PKARR_RELAY_STAGING`].
+    ///
+    /// [`N0_DNS_PKARR_RELAY_PROD`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_PROD
+    /// [`N0_DNS_PKARR_RELAY_STAGING`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_STAGING
+    pub fn discovery_n0(mut self) -> Self {
+        self.discovery.push(Box::new(|secret_key| {
+            Some(Box::new(PkarrPublisher::n0_dns(secret_key.clone())))
+        }));
+        self.discovery
+            .push(Box::new(|_| Some(Box::new(DnsDiscovery::n0_dns()))));
+        self
+    }
+
+    #[cfg(feature = "discovery-pkarr-dht")]
+    /// Configures the endpoint to also use the mainline DHT with default settings.
+    ///
+    /// This is equivalent to adding a [`crate::discovery::pkarr::dht::DhtDiscovery`]
+    /// with default settings. Note that DhtDiscovery has various more advanced
+    /// configuration options. If you need any of those, you should manually
+    /// create a DhtDiscovery and add it with [`Builder::add_discovery`].
+    pub fn discovery_dht(mut self) -> Self {
+        use crate::discovery::pkarr::dht::DhtDiscovery;
+        self.discovery.push(Box::new(|secret_key| {
+            Some(Box::new(
+                DhtDiscovery::builder()
+                    .secret_key(secret_key.clone())
+                    .build()
+                    .unwrap(),
+            ))
+        }));
+        self
+    }
+
+    #[cfg(feature = "discovery-local-network")]
+    /// Configures the endpoint to also use local network discovery.
+    ///
+    /// This is equivalent to adding a [`crate::discovery::local_swarm_discovery::LocalSwarmDiscovery`]
+    /// with default settings. Note that LocalSwarmDiscovery has various more advanced
+    /// configuration options. If you need any of those, you should manually
+    /// create a LocalSwarmDiscovery and add it with [`Builder::add_discovery`].
+    pub fn discovery_local_network(mut self) -> Self {
+        use crate::discovery::local_swarm_discovery::LocalSwarmDiscovery;
+        self.discovery.push(Box::new(|secret_key| {
+            LocalSwarmDiscovery::new(secret_key.public())
+                .map(|x| Box::new(x) as _)
+                .ok()
+        }));
         self
     }
 
@@ -287,6 +397,7 @@ impl Builder {
     ///
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
+    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
         self.insecure_skip_relay_cert_verify = skip_verify;
         self
@@ -404,7 +515,7 @@ impl Endpoint {
             Arc::new(quinn::TokioRuntime),
         )?;
         trace!("created quinn endpoint");
-
+        debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
         Ok(Self {
             msock,
             endpoint,
@@ -428,10 +539,12 @@ impl Endpoint {
 
     /// Connects to a remote [`Endpoint`].
     ///
-    /// A [`NodeAddr`] is required. It must contain the [`NodeId`] to dial and may also
-    /// contain a [`RelayUrl`] and direct addresses. If direct addresses are provided, they
-    /// will be used to try and establish a direct connection without involving a relay
-    /// server.
+    /// A value that can be converted into a [`NodeAddr`] is required. This can be either a
+    /// [`NodeAddr`], a [`NodeId`] or a [`iroh_base::ticket::NodeTicket`].
+    ///
+    /// The [`NodeAddr`] must contain the [`NodeId`] to dial and may also contain a [`RelayUrl`]
+    /// and direct addresses. If direct addresses are provided, they will be used to try and
+    /// establish a direct connection without involving a relay server.
     ///
     /// If neither a [`RelayUrl`] or direct addresses are configured in the [`NodeAddr`] it
     /// may still be possible a connection can be established.  This depends on other calls
@@ -446,8 +559,14 @@ impl Endpoint {
     /// The `alpn`, or application-level protocol identifier, is also required. The remote
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
-    #[instrument(skip_all, fields(me = %self.node_id().fmt_short(), remote = %node_addr.node_id.fmt_short(), alpn = ?String::from_utf8_lossy(alpn)))]
-    pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
+    #[instrument(skip_all, fields(me = %self.node_id().fmt_short(), alpn = ?String::from_utf8_lossy(alpn)))]
+    pub async fn connect(
+        &self,
+        node_addr: impl Into<NodeAddr>,
+        alpn: &[u8],
+    ) -> Result<quinn::Connection> {
+        let node_addr = node_addr.into();
+        tracing::Span::current().record("remote", node_addr.node_id.fmt_short());
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
             bail!(
@@ -498,6 +617,10 @@ impl Endpoint {
     /// information being provided by either the discovery service or using
     /// [`Endpoint::add_node_addr`].  See [`Endpoint::connect`] for the details of how it
     /// uses the discovery service to establish a connection to a remote node.
+    #[deprecated(
+        since = "0.27.0",
+        note = "Please use `connect` directly with a NodeId. This fn will be removed in 0.28.0."
+    )]
     pub async fn connect_by_node_id(
         &self,
         node_id: NodeId,
@@ -507,12 +630,17 @@ impl Endpoint {
         self.connect(addr, alpn).await
     }
 
+    #[instrument(
+        skip_all,
+        fields(remote_node = node_id.fmt_short(), alpn = %String::from_utf8_lossy(alpn))
+    )]
     async fn connect_quinn(
         &self,
         node_id: NodeId,
         alpn: &[u8],
         addr: QuicMappedAddr,
     ) -> Result<quinn::Connection> {
+        debug!("Attempting connection...");
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
             let quic_client_config = tls::make_client_config(
@@ -546,7 +674,7 @@ impl Endpoint {
             // If this actor is dead, that's not great but we can still function.
             warn!("rtt-actor not reachable: {err:#}");
         }
-
+        debug!("Connection established");
         Ok(connection)
     }
 
@@ -602,7 +730,12 @@ impl Endpoint {
         node_addr: NodeAddr,
         source: &'static str,
     ) -> Result<()> {
-        self.add_node_addr_inner(node_addr, magicsock::Source::NamedApp { name: source })
+        self.add_node_addr_inner(
+            node_addr,
+            magicsock::Source::NamedApp {
+                name: source.into(),
+            },
+        )
     }
 
     fn add_node_addr_inner(&self, node_addr: NodeAddr, source: magicsock::Source) -> Result<()> {
@@ -643,8 +776,11 @@ impl Endpoint {
             .await
             .ok_or(anyhow!("No IP endpoints found"))?;
         let relay = self.home_relay();
-        let addrs = addrs.into_iter().map(|x| x.addr).collect();
-        Ok(NodeAddr::from_parts(self.node_id(), relay, addrs))
+        Ok(NodeAddr::from_parts(
+            self.node_id(),
+            relay,
+            addrs.into_iter().map(|x| x.addr),
+        ))
     }
 
     /// Returns the [`RelayUrl`] of the Relay server used as home relay.
@@ -1217,19 +1353,11 @@ fn proxy_url_from_env() -> Option<Url> {
 
 /// Returns the default relay mode.
 ///
-/// If the `IROH_FORCE_STAGING_RELAYS` environment variable is set to `1`, it will return `RelayMode::Staging`.
+/// If the `IROH_FORCE_STAGING_RELAYS` environment variable is non empty, it will return `RelayMode::Staging`.
 /// Otherwise, it will return `RelayMode::Default`.
 pub fn default_relay_mode() -> RelayMode {
     // Use staging in testing
-    #[cfg(not(any(test, feature = "test-utils")))]
-    let force_staging_relays = match std::env::var(ENV_FORCE_STAGING_RELAYS) {
-        Ok(value) => value == "1",
-        Err(_) => false,
-    };
-    #[cfg(any(test, feature = "test-utils"))]
-    let force_staging_relays = true;
-
-    match force_staging_relays {
+    match force_staging_infra() {
         true => RelayMode::Staging,
         false => RelayMode::Default,
     }
@@ -1254,9 +1382,8 @@ mod tests {
     use rand::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
 
-    use crate::test_utils::run_relay_server;
-
     use super::*;
+    use crate::test_utils::run_relay_server;
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 

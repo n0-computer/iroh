@@ -1,6 +1,7 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
 use std::{collections::BTreeSet, future::Future, io, path::PathBuf, time::Duration};
 
+pub use bao_tree;
 use bao_tree::{
     io::{
         fsm::{
@@ -15,6 +16,7 @@ use futures_lite::{Stream, StreamExt};
 use genawaiter::rc::{Co, Gen};
 use iroh_base::rpc::RpcError;
 use iroh_io::{AsyncSliceReader, AsyncStreamReader, AsyncStreamWriter};
+pub use range_collections;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncRead;
 
@@ -28,9 +30,6 @@ use crate::{
     },
     BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
-
-pub use bao_tree;
-pub use range_collections;
 
 /// A fallible but owned iterator over the entries in a store.
 pub type DbIter<T> = Box<dyn Iterator<Item = io::Result<T>> + Send + Sync + 'static>;

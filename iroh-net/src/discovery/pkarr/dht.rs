@@ -1,15 +1,23 @@
-//! # Pkarr based node discovery for iroh-net
+//! Pkarr based node discovery for iroh-net, supporting both relay servers and the DHT.
 //!
-//! Node discovery is being able to find connecting information about an iroh node based on just its node id.
+//! This module contains pkarr-based node discovery for iroh-net which can use both pkarr
+//! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
+//! overview of pkarr.
 //!
-//! This crate implements a discovery mechanism for iroh-net based on <https://pkarr.org/>.
-//!
-//! TLDR: Each node publishes its address to the mainline DHT as a DNS packet, signed with its private key.
-//! The DNS packet contains the node's direct addresses and optionally a DERP URL.
+//! [pkarr module]: super
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+
+use futures_lite::{stream::Boxed, StreamExt};
+use genawaiter::sync::{Co, Gen};
+use pkarr::{
+    PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
+    RelaySettings, SignedPacket,
+};
+use tokio_util::task::AbortOnDropHandle;
+use url::Url;
 
 use crate::{
     discovery::{
@@ -20,28 +28,27 @@ use crate::{
     key::SecretKey,
     AddrInfo, Endpoint, NodeId,
 };
-use futures_lite::StreamExt;
-use genawaiter::sync::{Co, Gen};
-use pkarr::{
-    PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
-    RelaySettings, SignedPacket,
-};
-use tokio_util::task::AbortOnDropHandle;
-use url::Url;
 
-/// Republish delay for the DHT. This is only for when the info does not change.
-/// If the info changes, it will be published immediately.
+/// Republish delay for the DHT.
+///
+/// This is only for when the info does not change.  If the info changes, it will be
+/// published immediately.
 const REPUBLISH_DELAY: Duration = Duration::from_secs(60 * 60);
-/// Initial publish delay. This is to avoid spamming the DHT when there are
-/// frequent network changes at startup.
+/// Initial publish delay.
+///
+/// This is to avoid spamming the DHT when there are frequent network changes at startup.
 const INITIAL_PUBLISH_DELAY: Duration = Duration::from_millis(500);
 
-/// A discovery mechanism for iroh-net based on <https://pkarr.org/>.
+/// Pkarr Mainline DHT and relay server node discovery.
 ///
-/// TLDR: it stores node addresses in DNS records, signed by the node's private key,
-/// and publishes them to the bittorrent mainline DHT.
+/// It stores node addresses in DNS records, signed by the node's private key, and publishes
+/// them to the BitTorrent Mainline DHT.  See the [pkarr module] for more details.
 ///
-/// Calling publish will start a background task that periodically publishes the node address.
+/// This implements the [`Discovery`] trait to be used as a node discovery service which can
+/// be used as both a publisher and resolver.  Calling [`DhtDiscovery::publish`] will start
+/// a background task that periodically publishes the node address.
+///
+/// [pkarr module]: super
 #[derive(Debug, Clone)]
 pub struct DhtDiscovery(Arc<Inner>);
 
@@ -80,7 +87,7 @@ struct Inner {
     republish_delay: Duration,
 }
 
-/// Builder for PkarrNodeDiscovery.
+/// Builder for [`DhtDiscovery`].
 ///
 /// By default, publishing to the DHT is enabled, and relay publishing is disabled.
 #[derive(Debug)]
@@ -111,13 +118,13 @@ impl Default for Builder {
 }
 
 impl Builder {
-    /// Explicitly set the pkarr client to use.
+    /// Explicitly sets the pkarr client to use.
     pub fn client(mut self, client: PkarrClient) -> Self {
         self.client = Some(client);
         self
     }
 
-    /// Set the secret key to use for signing the DNS packets.
+    /// Sets the secret key to use for signing the DNS packets.
     ///
     /// Without a secret key, the node will not publish its address to the DHT.
     pub fn secret_key(mut self, secret_key: SecretKey) -> Self {
@@ -125,49 +132,51 @@ impl Builder {
         self
     }
 
-    /// Set the time-to-live value for the DNS packets.
+    /// Sets the time-to-live value for the DNS packets.
     pub fn ttl(mut self, ttl: u32) -> Self {
         self.ttl = Some(ttl);
         self
     }
 
-    /// Set the pkarr relay URL to use.
+    /// Sets the pkarr relay URL to use.
     pub fn pkarr_relay(mut self, pkarr_relay: Url) -> Self {
         self.pkarr_relay = Some(pkarr_relay);
         self
     }
 
-    /// Use the default pkarr relay URL.
+    /// Uses the default [number 0] pkarr relay URL.
+    ///
+    /// [number 0]: https://n0.computer
     pub fn n0_dns_pkarr_relay(mut self) -> Self {
         self.pkarr_relay = Some(N0_DNS_PKARR_RELAY_PROD.parse().expect("valid URL"));
         self
     }
 
-    /// Set whether to publish to the mainline DHT.
+    /// Sets whether to publish to the Mainline DHT.
     pub fn dht(mut self, dht: bool) -> Self {
         self.dht = dht;
         self
     }
 
-    /// Set whether to include the direct addresses in the DNS packet.
+    /// Sets whether to include the direct addresses in the DNS packet.
     pub fn include_direct_addresses(mut self, include_direct_addresses: bool) -> Self {
         self.include_direct_addresses = include_direct_addresses;
         self
     }
 
-    /// Set the initial delay before the first publish.
+    /// Sets the initial delay before the first publish.
     pub fn initial_publish_delay(mut self, initial_publish_delay: Duration) -> Self {
         self.initial_publish_delay = initial_publish_delay;
         self
     }
 
-    /// Set the republish delay for the DHT.
+    /// Sets the republish delay for the DHT.
     pub fn republish_delay(mut self, republish_delay: Duration) -> Self {
         self.republish_delay = republish_delay;
         self
     }
 
-    /// Build the discovery mechanism.
+    /// Builds the discovery mechanism.
     pub fn build(self) -> anyhow::Result<DhtDiscovery> {
         let pkarr = self
             .client
@@ -209,12 +218,12 @@ impl Builder {
 }
 
 impl DhtDiscovery {
-    /// Create a new builder for PkarrNodeDiscovery.
+    /// Creates a new builder for [`DhtDiscovery`].
     pub fn builder() -> Builder {
         Builder::default()
     }
 
-    /// Periodically publish the node address to the DHT and relay.
+    /// Periodically publishes the node address to the DHT and/or relay.
     async fn publish_loop(self, keypair: SecretKey, signed_packet: SignedPacket) {
         let this = self;
         let z32 = pkarr::PublicKey::try_from(keypair.public().as_bytes())
@@ -281,9 +290,11 @@ impl DhtDiscovery {
         match response {
             Ok(Some(signed_packet)) => {
                 if let Ok(node_info) = NodeInfo::from_pkarr_signed_packet(&signed_packet) {
+                    let node_id = node_info.node_id;
                     let addr_info = node_info.into();
                     tracing::info!("discovered node info from relay {:?}", addr_info);
                     co.yield_(Ok(DiscoveryItem {
+                        node_id,
                         provenance: "relay",
                         last_updated: None,
                         addr_info,
@@ -303,7 +314,7 @@ impl DhtDiscovery {
         }
     }
 
-    /// Resolve a node id from the DHT.
+    /// Resolves a node id from the DHT.
     async fn resolve_dht(
         &self,
         pkarr_public_key: PublicKey,
@@ -325,9 +336,11 @@ impl DhtDiscovery {
             return;
         };
         if let Ok(node_info) = NodeInfo::from_pkarr_signed_packet(&signed_packet) {
+            let node_id = node_info.node_id;
             let addr_info = node_info.into();
             tracing::info!("discovered node info from DHT {:?}", addr_info);
             co.yield_(Ok(DiscoveryItem {
+                node_id,
                 provenance: "mainline",
                 last_updated: None,
                 addr_info,
@@ -378,7 +391,7 @@ impl Discovery for DhtDiscovery {
         &self,
         _endpoint: Endpoint,
         node_id: NodeId,
-    ) -> Option<futures_lite::stream::Boxed<anyhow::Result<DiscoveryItem>>> {
+    ) -> Option<Boxed<anyhow::Result<DiscoveryItem>>> {
         let this = self.clone();
         let pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect("valid public key");
@@ -391,10 +404,11 @@ impl Discovery for DhtDiscovery {
 mod tests {
     use std::collections::BTreeSet;
 
-    use super::*;
     use iroh_base::node_addr::RelayUrl;
     use mainline::dht::DhtSettings;
     use testresult::TestResult;
+
+    use super::*;
 
     #[tokio::test]
     #[ignore = "flaky"]
@@ -417,10 +431,12 @@ mod tests {
             .client(client)
             .build()?;
         let relay_url: RelayUrl = Url::parse("https://example.com")?.into();
+
         discovery.publish(&AddrInfo {
             relay_url: Some(relay_url.clone()),
             direct_addresses: Default::default(),
         });
+
         // publish is fire and forget, so we have no way to wait until it is done.
         tokio::time::sleep(Duration::from_secs(1)).await;
         let items = discovery

@@ -1,31 +1,33 @@
-use std::collections::HashMap;
-use std::future::Future;
-use std::net::SocketAddr;
-use std::pin::Pin;
-use std::sync::Arc;
+use std::{collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 
 use anyhow::{bail, ensure, Context as _, Result};
 use bytes::Bytes;
 use derive_more::Debug;
 use futures_lite::FutureExt;
-use http::header::CONNECTION;
-use http::response::Builder as ResponseBuilder;
-use hyper::body::Incoming;
-use hyper::header::{HeaderValue, UPGRADE};
-use hyper::service::Service;
-use hyper::upgrade::Upgraded;
-use hyper::{HeaderMap, Method, Request, Response, StatusCode};
+use http::{header::CONNECTION, response::Builder as ResponseBuilder};
+use hyper::{
+    body::Incoming,
+    header::{HeaderValue, UPGRADE},
+    service::Service,
+    upgrade::Upgraded,
+    HeaderMap, Method, Request, Response, StatusCode,
+};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::AbortOnDropHandle;
+use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, warn, Instrument};
 use tungstenite::handshake::derive_accept_key;
 
-use crate::key::SecretKey;
-use crate::relay::http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION};
-use crate::relay::server::actor::{ClientConnHandler, ServerActorTask};
-use crate::relay::server::streams::MaybeTlsStream;
+use crate::{
+    key::SecretKey,
+    relay::{
+        http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
+        server::{
+            actor::{ClientConnHandler, ServerActorTask},
+            streams::MaybeTlsStream,
+        },
+    },
+};
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
@@ -683,16 +685,15 @@ mod tests {
     use anyhow::Result;
     use bytes::Bytes;
     use reqwest::Url;
-    use tokio::sync::mpsc;
-    use tokio::task::JoinHandle;
+    use tokio::{sync::mpsc, task::JoinHandle};
     use tracing::{info, info_span, Instrument};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::key::{PublicKey, SecretKey};
-    use crate::relay::client::conn::ReceivedMessage;
-    use crate::relay::client::{Client, ClientBuilder};
-
     use super::*;
+    use crate::{
+        key::{PublicKey, SecretKey},
+        relay::client::{conn::ReceivedMessage, Client, ClientBuilder},
+    };
 
     pub(crate) fn make_tls_config() -> TlsConfig {
         let subject_alt_names = vec!["localhost".to_string()];
@@ -821,7 +822,7 @@ mod tests {
                             info!("client {:?} `recv` error {e}", key.public());
                             return;
                         }
-                        Some(Ok((msg, _))) => {
+                        Some(Ok(msg)) => {
                             info!("got message on {:?}: {msg:?}", key.public());
                             if let ReceivedMessage::ReceivedPacket { source, data } = msg {
                                 received_msg_s

@@ -2,10 +2,11 @@
 //!
 //! Run this example with
 //!   $ cargo run --features=examples --example rpc
-//! Then in another terminal, run any of the normal iroh CLI commands, which you can run from
-//! cargo as well:
-//!   $ cargo run net stats
-//! The `net stats` command will reach out over RPC to the node constructed in the example
+//! This will print the rpc address of the node. Copy it to use it to connect from the CLI.
+//! Then in another terminal, run any of the normal iroh CLI commands supplying the rpc address,
+//! which you can run from cargo as well,
+//!   $ cargo run -- --rpc-addr <RPC_ADDR> net node-addr
+//! The `net node-addr` command will reach out over RPC to the node constructed in the example.
 
 use clap::Parser;
 use iroh_blobs::store::Store;
@@ -38,8 +39,11 @@ where
     for addr in addrs {
         println!("    {}", addr);
     }
+    let rpc_addr = node.my_rpc_addr().expect("rpc enabled");
+    println!("Started node with RPC enabled ({rpc_addr}). Exit with Ctrl+C");
     // wait for the node to finish, this will block indefinitely
     // stop with SIGINT (ctrl+c)
+    tokio::signal::ctrl_c().await?;
     node.shutdown().await?;
 
     Ok(())

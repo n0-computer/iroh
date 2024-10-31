@@ -1,6 +1,12 @@
 //! Define commands to manage the start of the iroh node.
 
-use crate::config::NodeConfig;
+use std::{
+    future::Future,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    time::Duration,
+};
+
 use anyhow::Result;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -8,13 +14,9 @@ use iroh::{
     net::relay::{RelayMap, RelayMode},
     node::{Node, RpcStatus, DEFAULT_RPC_ADDR},
 };
-use std::{
-    future::Future,
-    net::SocketAddr,
-    path::{Path, PathBuf},
-    time::Duration,
-};
 use tracing::{info_span, trace, Instrument};
+
+use crate::config::NodeConfig;
 
 /// Whether to stop the node after running a command or run forever until stopped.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -156,6 +158,7 @@ pub(crate) async fn start_node(
     Node::persistent(iroh_data_root)
         .await?
         .relay_mode(relay_mode)
+        .enable_docs()
         .enable_rpc_with_addr(rpc_addr)
         .await?
         .spawn()
@@ -226,9 +229,10 @@ pub fn start_metrics_dumper(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use anyhow::bail;
     use iroh::util::path::IrohPaths;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_run_rpc_lock_file() -> Result<()> {

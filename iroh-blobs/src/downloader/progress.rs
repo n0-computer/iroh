@@ -9,12 +9,11 @@ use std::{
 use anyhow::anyhow;
 use parking_lot::Mutex;
 
+use super::DownloadKind;
 use crate::{
     get::{db::DownloadProgress, progress::TransferState},
     util::progress::{AsyncChannelProgressSender, IdGenerator, ProgressSendError, ProgressSender},
 };
-
-use super::DownloadKind;
 
 /// The channel that can be used to subscribe to progress updates.
 pub type ProgressSubscriber = AsyncChannelProgressSender<DownloadProgress>;
@@ -103,7 +102,6 @@ struct Inner {
 
 impl Inner {
     fn subscribe(&mut self, subscriber: ProgressSubscriber) -> DownloadProgress {
-        tracing::warn!(state=?self.state, "subscribe! emit initial");
         let msg = DownloadProgress::InitialState(self.state.clone());
         self.subscribers.push(subscriber);
         msg
@@ -137,9 +135,7 @@ impl ProgressSender for BroadcastProgressSender {
         // making sure that the lock is not held across an await point.
         let futs = {
             let mut inner = self.shared.lock();
-            tracing::trace!(?msg, state_pre = ?inner.state, "send to {}", inner.subscribers.len());
             inner.on_progress(msg.clone());
-            tracing::trace!(state_post = ?inner.state, "send");
             let futs = inner
                 .subscribers
                 .iter_mut()

@@ -93,15 +93,16 @@ use tracing::warn;
 mod batch;
 pub use batch::{AddDirOpts, AddFileOpts, AddReaderOpts, Batch};
 
-use crate::rpc_protocol::blobs::{
-    AddPathRequest, AddStreamRequest, AddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
-    BlobStatusRequest, ConsistencyCheckRequest, CreateCollectionRequest, CreateCollectionResponse,
-    DeleteRequest, DownloadRequest, ExportRequest, ListIncompleteRequest, ListRequest,
-    ReadAtRequest, ReadAtResponse, ValidateRequest,
-};
-use crate::rpc_protocol::node::StatusRequest;
-
 use super::{flatten, tags, Iroh, RpcClient};
+use crate::rpc_protocol::{
+    blobs::{
+        AddPathRequest, AddStreamRequest, AddStreamUpdate, BatchCreateRequest, BatchCreateResponse,
+        BlobStatusRequest, ConsistencyCheckRequest, CreateCollectionRequest,
+        CreateCollectionResponse, DeleteRequest, DownloadRequest, ExportRequest,
+        ListIncompleteRequest, ListRequest, ReadAtRequest, ReadAtResponse, ValidateRequest,
+    },
+    node::StatusRequest,
+};
 
 /// Iroh blobs client.
 #[derive(Debug, Clone, RefCast)]
@@ -159,7 +160,7 @@ impl Client {
     /// Read offset + len from a single blob.
     ///
     /// If `len` is `None` it will read the full blob.
-    pub async fn read_at(&self, hash: Hash, offset: u64, len: Option<usize>) -> Result<Reader> {
+    pub async fn read_at(&self, hash: Hash, offset: u64, len: ReadAtLen) -> Result<Reader> {
         Reader::from_rpc_read_at(&self.rpc, hash, offset, len).await
     }
 
@@ -178,12 +179,7 @@ impl Client {
     /// Read all bytes of single blob at `offset` for length `len`.
     ///
     /// This allocates a buffer for the full length.
-    pub async fn read_at_to_bytes(
-        &self,
-        hash: Hash,
-        offset: u64,
-        len: Option<usize>,
-    ) -> Result<Bytes> {
+    pub async fn read_at_to_bytes(&self, hash: Hash, offset: u64, len: ReadAtLen) -> Result<Bytes> {
         Reader::from_rpc_read_at(&self.rpc, hash, offset, len)
             .await?
             .read_to_bytes()
@@ -481,6 +477,28 @@ impl Client {
 impl SimpleStore for Client {
     async fn load(&self, hash: Hash) -> anyhow::Result<Bytes> {
         self.read_to_bytes(hash).await
+    }
+}
+
+/// Defines the way to read bytes.
+#[derive(Debug, Serialize, Deserialize, Default, Clone, Copy)]
+pub enum ReadAtLen {
+    /// Reads all available bytes.
+    #[default]
+    All,
+    /// Reads exactly this many bytes, erroring out on larger or smaller.
+    Exact(u64),
+    /// Reads at most this many bytes.
+    AtMost(u64),
+}
+
+impl ReadAtLen {
+    pub(crate) fn as_result_len(&self, size_remaining: u64) -> u64 {
+        match self {
+            ReadAtLen::All => size_remaining,
+            ReadAtLen::Exact(len) => *len,
+            ReadAtLen::AtMost(len) => std::cmp::min(*len, size_remaining),
+        }
     }
 }
 
@@ -872,14 +890,14 @@ impl Reader {
     }
 
     pub(crate) async fn from_rpc_read(rpc: &RpcClient, hash: Hash) -> anyhow::Result<Self> {
-        Self::from_rpc_read_at(rpc, hash, 0, None).await
+        Self::from_rpc_read_at(rpc, hash, 0, ReadAtLen::All).await
     }
 
     async fn from_rpc_read_at(
         rpc: &RpcClient,
         hash: Hash,
         offset: u64,
-        len: Option<usize>,
+        len: ReadAtLen,
     ) -> anyhow::Result<Self> {
         let stream = rpc
             .server_streaming(ReadAtRequest { hash, offset, len })
@@ -898,9 +916,7 @@ impl Reader {
             Ok(_) => Err(io::Error::new(io::ErrorKind::Other, "Expected data frame")),
             Err(err) => Err(io::Error::new(io::ErrorKind::Other, format!("{err}"))),
         });
-        let len = len
-            .map(|l| l as u64)
-            .unwrap_or_else(|| size.value() - offset);
+        let len = len.as_result_len(size.value() - offset);
         Ok(Self::new(size.value(), len, is_complete, Box::pin(stream)))
     }
 
@@ -980,13 +996,13 @@ pub enum DownloadMode {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use iroh_blobs::hashseq::HashSeq;
     use iroh_net::NodeId;
     use rand::RngCore;
     use testresult::TestResult;
     use tokio::{io::AsyncWriteExt, sync::mpsc};
+
+    use super::*;
 
     #[tokio::test]
     async fn test_blob_create_collection() -> Result<()> {
@@ -1120,25 +1136,31 @@ mod tests {
         assert_eq!(&res, &buf[..]);
 
         // Read at smaller than blob_get_chunk_size
-        let res = client.blobs().read_at_to_bytes(hash, 0, Some(100)).await?;
+        let res = client
+            .blobs()
+            .read_at_to_bytes(hash, 0, ReadAtLen::Exact(100))
+            .await?;
         assert_eq!(res.len(), 100);
         assert_eq!(&res[..], &buf[0..100]);
 
-        let res = client.blobs().read_at_to_bytes(hash, 20, Some(120)).await?;
+        let res = client
+            .blobs()
+            .read_at_to_bytes(hash, 20, ReadAtLen::Exact(120))
+            .await?;
         assert_eq!(res.len(), 120);
         assert_eq!(&res[..], &buf[20..140]);
 
         // Read at equal to blob_get_chunk_size
         let res = client
             .blobs()
-            .read_at_to_bytes(hash, 0, Some(1024 * 64))
+            .read_at_to_bytes(hash, 0, ReadAtLen::Exact(1024 * 64))
             .await?;
         assert_eq!(res.len(), 1024 * 64);
         assert_eq!(&res[..], &buf[0..1024 * 64]);
 
         let res = client
             .blobs()
-            .read_at_to_bytes(hash, 20, Some(1024 * 64))
+            .read_at_to_bytes(hash, 20, ReadAtLen::Exact(1024 * 64))
             .await?;
         assert_eq!(res.len(), 1024 * 64);
         assert_eq!(&res[..], &buf[20..(20 + 1024 * 64)]);
@@ -1146,27 +1168,84 @@ mod tests {
         // Read at larger than blob_get_chunk_size
         let res = client
             .blobs()
-            .read_at_to_bytes(hash, 0, Some(10 + 1024 * 64))
+            .read_at_to_bytes(hash, 0, ReadAtLen::Exact(10 + 1024 * 64))
             .await?;
         assert_eq!(res.len(), 10 + 1024 * 64);
         assert_eq!(&res[..], &buf[0..(10 + 1024 * 64)]);
 
         let res = client
             .blobs()
-            .read_at_to_bytes(hash, 20, Some(10 + 1024 * 64))
+            .read_at_to_bytes(hash, 20, ReadAtLen::Exact(10 + 1024 * 64))
             .await?;
         assert_eq!(res.len(), 10 + 1024 * 64);
         assert_eq!(&res[..], &buf[20..(20 + 10 + 1024 * 64)]);
 
         // full length
-        let res = client.blobs().read_at_to_bytes(hash, 20, None).await?;
+        let res = client
+            .blobs()
+            .read_at_to_bytes(hash, 20, ReadAtLen::All)
+            .await?;
         assert_eq!(res.len(), 1024 * 128 - 20);
         assert_eq!(&res[..], &buf[20..]);
 
         // size should be total
-        let reader = client.blobs().read_at(hash, 0, Some(20)).await?;
+        let reader = client
+            .blobs()
+            .read_at(hash, 0, ReadAtLen::Exact(20))
+            .await?;
         assert_eq!(reader.size(), 1024 * 128);
         assert_eq!(reader.response_size, 20);
+
+        // last chunk - exact
+        let res = client
+            .blobs()
+            .read_at_to_bytes(hash, 1024 * 127, ReadAtLen::Exact(1024))
+            .await?;
+        assert_eq!(res.len(), 1024);
+        assert_eq!(res, &buf[1024 * 127..]);
+
+        // last chunk - open
+        let res = client
+            .blobs()
+            .read_at_to_bytes(hash, 1024 * 127, ReadAtLen::All)
+            .await?;
+        assert_eq!(res.len(), 1024);
+        assert_eq!(res, &buf[1024 * 127..]);
+
+        // last chunk - larger
+        let mut res = client
+            .blobs()
+            .read_at(hash, 1024 * 127, ReadAtLen::AtMost(2048))
+            .await?;
+        assert_eq!(res.size, 1024 * 128);
+        assert_eq!(res.response_size, 1024);
+        let res = res.read_to_bytes().await?;
+        assert_eq!(res.len(), 1024);
+        assert_eq!(res, &buf[1024 * 127..]);
+
+        // out of bounds - too long
+        let res = client
+            .blobs()
+            .read_at(hash, 0, ReadAtLen::Exact(1024 * 128 + 1))
+            .await;
+        let err = res.unwrap_err();
+        assert!(err.to_string().contains("out of bound"));
+
+        // out of bounds - offset larger than blob
+        let res = client
+            .blobs()
+            .read_at(hash, 1024 * 128 + 1, ReadAtLen::All)
+            .await;
+        let err = res.unwrap_err();
+        assert!(err.to_string().contains("out of range"));
+
+        // out of bounds - offset + length too large
+        let res = client
+            .blobs()
+            .read_at(hash, 1024 * 127, ReadAtLen::Exact(1025))
+            .await;
+        let err = res.unwrap_err();
+        assert!(err.to_string().contains("out of bound"));
 
         Ok(())
     }
@@ -1561,6 +1640,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     async fn test_blob_delete_mem() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 

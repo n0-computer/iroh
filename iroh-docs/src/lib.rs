@@ -32,14 +32,18 @@
 //!
 //! [paper]: https://arxiv.org/abs/2212.13567
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+#![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 
 pub mod metrics;
 #[cfg(feature = "net")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "net")))]
 pub mod net;
 #[cfg(feature = "net")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "net")))]
 mod ticket;
 
 #[cfg(feature = "engine")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "engine")))]
 pub mod engine;
 
 pub mod actor;
@@ -50,8 +54,7 @@ mod heads;
 mod keys;
 mod ranger;
 
-pub use self::heads::*;
-pub use self::keys::*;
-pub use self::sync::*;
 #[cfg(feature = "net")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "net")))]
 pub use self::ticket::DocTicket;
+pub use self::{heads::*, keys::*, sync::*};

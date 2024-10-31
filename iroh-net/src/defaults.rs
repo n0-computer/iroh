@@ -196,6 +196,7 @@ pub(crate) mod timeouts {
 
         /// Maximum time the server will attempt to get a successful write to the connection.
         #[cfg(feature = "iroh-relay")]
+        #[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
         pub(crate) const SERVER_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
     }
 }

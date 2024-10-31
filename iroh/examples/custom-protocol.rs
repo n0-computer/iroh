@@ -95,7 +95,7 @@ async fn main() -> Result<()> {
     let proto = BlobSearch::new(builder.client().blobs().clone(), builder.endpoint().clone());
 
     // Add our protocol, identified by our ALPN, to the node, and spawn the node.
-    let node = builder.accept(ALPN, proto.clone()).spawn().await?;
+    let node = builder.accept(ALPN.to_vec(), proto.clone()).spawn().await?;
 
     match args.command {
         Command::Listen { text } => {
@@ -194,7 +194,7 @@ impl BlobSearch {
         // Establish a connection to our node.
         // We use the default node discovery in iroh, so we can connect by node id without
         // providing further information.
-        let conn = self.endpoint.connect_by_node_id(node_id, ALPN).await?;
+        let conn = self.endpoint.connect(node_id, ALPN).await?;
 
         // Open a bi-directional in our connection.
         let (mut send, mut recv) = conn.open_bi().await?;

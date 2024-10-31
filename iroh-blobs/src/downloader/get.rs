@@ -2,14 +2,14 @@
 //!
 //! [`Connection`]: iroh_net::endpoint::Connection
 
-use crate::{
-    get::{db::get_to_db_in_steps, error::GetError},
-    store::Store,
-};
 use futures_lite::FutureExt;
 use iroh_net::endpoint;
 
 use super::{progress::BroadcastProgressSender, DownloadKind, FailureAction, GetStartFut, Getter};
+use crate::{
+    get::{db::get_to_db_in_steps, error::GetError},
+    store::Store,
+};
 
 impl From<GetError> for FailureAction {
     fn from(e: GetError) -> Self {
@@ -74,8 +74,9 @@ impl super::NeedsConn<endpoint::Connection> for crate::get::db::GetStateNeedsCon
 
 #[cfg(feature = "metrics")]
 fn track_metrics(res: &Result<crate::get::Stats, GetError>) {
-    use crate::metrics::Metrics;
     use iroh_metrics::{inc, inc_by};
+
+    use crate::metrics::Metrics;
     match res {
         Ok(stats) => {
             let crate::get::Stats {

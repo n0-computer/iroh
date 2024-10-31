@@ -25,8 +25,10 @@
 //! [iroh]: https://docs.rs/iroh
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![recursion_limit = "256"]
+#![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 
 #[cfg(feature = "downloader")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "downloader")))]
 pub mod downloader;
 pub mod export;
 pub mod format;
@@ -38,10 +40,10 @@ pub mod provider;
 pub mod store;
 pub mod util;
 
-pub use crate::util::{Tag, TempTag};
+use bao_tree::BlockSize;
 pub use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 
-use bao_tree::BlockSize;
+pub use crate::util::{Tag, TempTag};
 
 /// Block size used by iroh, 2^4*1024 = 16KiB
 pub const IROH_BLOCK_SIZE: BlockSize = BlockSize::from_chunk_log(4);

@@ -1,18 +1,19 @@
 //! Node address discovery.
 //!
-//! To connect to an iroh-net node a [`NodeAddr`] is needed, which needs to contain either a
-//! [`RelayUrl`] or one or more *direct addresses*.  However it is often more desirable to
-//! be able to connect with only the [`NodeId`], as [`Endpoint::connect_by_node_id`] does.
+//! To connect to an iroh-net node a [`NodeAddr`] is needed, which may contain a
+//! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
 //!
-//! For connecting by [`NodeId`] to work however, the endpoint has to get the addressing
-//! information by other means.  This can be done by manually calling
-//! [`Endpoint::add_node_addr`], but that still requires knowing the other addressing
-//! information.
+//! Since there is a conversion from [`NodeId`] to [`NodeAddr`], you can also use
+//! connect directly with a [`NodeId`].
+//!
+//! For this to work however, the endpoint has to get the addressing  information by
+//! other means.  This can be done by manually calling [`Endpoint::add_node_addr`],
+//! but that still requires knowing the other addressing information.
 //!
 //! Node discovery is an automated system for an [`Endpoint`] to retrieve this addressing
 //! information.  Each iroh-net node will automatically publish their own addressing
 //! information.  Usually this means publishing which [`RelayUrl`] to use for their
-//! [`NodeId`], but they could also publish direct addresses.
+//! [`NodeId`], but they could also publish their direct addresses.
 //!
 //! The [`Discovery`] trait is used to define node discovery.  This allows multiple
 //! implementations to co-exist because there are many possible ways to implement this.
@@ -22,21 +23,79 @@
 //!
 //! Some generally useful discovery implementations are provided:
 //!
-//! - The [`DnsDiscovery`] which supports publishing to a special DNS server and performs
-//!   lookups via the standard DNS systems.  [Number 0] runs a public instance of this which
-//!   is globally available and a reliable default choice.
+//! - The [`DnsDiscovery`] which performs lookups via the standard DNS systems.  To publish
+//!   to this DNS server a [`PkarrPublisher`] is needed.  [Number 0] runs a public instance
+//!   of a [`PkarrPublisher`] with attached DNS server which is globally available and a
+//!   reliable default choice.
 //!
 //! - The [`PkarrResolver`] which can perform lookups from designated [pkarr relay servers]
 //!   using HTTP.
 //!
+//! - The [`LocalSwarmDiscovery`] discovers iroh-net nodes present on the local network,
+//!   very similar to mdNS.
+//!
+//! - The [`DhtDiscovery`] also uses the [`pkarr`] system but can also publish and lookup
+//!   records to/from the Mainline DHT.
+//!
 //! To use multiple discovery systems simultaneously use [`ConcurrentDiscovery`] which will
 //! perform lookups to all discovery systems at the same time.
+//!
+//! # Examples
+//!
+//! A very common setup is to enable DNS discovery, which needs to be done in two parts as a
+//! [`PkarrPublisher`] and [`DnsDiscovery`]:
+//!
+//! ```no_run
+//! use iroh_net::discovery::dns::DnsDiscovery;
+//! use iroh_net::discovery::pkarr::PkarrPublisher;
+//! use iroh_net::discovery::ConcurrentDiscovery;
+//! use iroh_net::key::SecretKey;
+//! use iroh_net::Endpoint;
+//!
+//! # async fn wrapper() -> anyhow::Result<()> {
+//! let secret_key = SecretKey::generate();
+//! let discovery = ConcurrentDiscovery::from_services(vec![
+//!     Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
+//!     Box::new(DnsDiscovery::n0_dns()),
+//! ]);
+//! let ep = Endpoint::builder()
+//!     .secret_key(secret_key)
+//!     .discovery(Box::new(discovery))
+//!     .bind()
+//!     .await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! To also enable [`LocalSwarmDiscovery`], it can be added as another service in the
+//! [`ConcurrentDiscovery`]:
+//!
+//! ```no_run
+//! # use iroh_net::discovery::dns::DnsDiscovery;
+//! # use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
+//! # use iroh_net::discovery::pkarr::PkarrPublisher;
+//! # use iroh_net::discovery::ConcurrentDiscovery;
+//! # use iroh_net::key::SecretKey;
+//! #
+//! # async fn wrapper() -> anyhow::Result<()> {
+//! # let secret_key = SecretKey::generate();
+//! let discovery = ConcurrentDiscovery::from_services(vec![
+//!     Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
+//!     Box::new(DnsDiscovery::n0_dns()),
+//!     Box::new(LocalSwarmDiscovery::new(secret_key.public())?),
+//! ]);
+//! # Ok(())
+//! # }
+//! ```
 //!
 //! [`RelayUrl`]: crate::relay::RelayUrl
 //! [`Builder::discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: dns::DnsDiscovery
 //! [Number 0]: https://n0.computer
 //! [`PkarrResolver`]: pkarr::PkarrResolver
+//! [`PkarrPublisher`]: pkarr::PkarrPublisher
+//! [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
+//! [`DhtDiscovery`]: pkarr::dht::DhtDiscovery
 //! [pkarr relay servers]: https://pkarr.org/#servers
 
 use std::time::Duration;
@@ -52,11 +111,9 @@ use crate::{AddrInfo, Endpoint, NodeId};
 pub mod dns;
 
 #[cfg(feature = "discovery-local-network")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "discovery-local-network")))]
 pub mod local_swarm_discovery;
 pub mod pkarr;
-
-/// Name used for logging when new node addresses are added from discovery.
-const SOURCE_NAME: &str = "discovery";
 
 /// Node discovery for [`super::Endpoint`].
 ///
@@ -95,11 +152,39 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     ) -> Option<BoxStream<Result<DiscoveryItem>>> {
         None
     }
+
+    /// Subscribe to all addresses that get *passively* discovered.
+    ///
+    /// An implementation may choose to defer emitting passively discovered nodes
+    /// until the stream is actually polled. To avoid missing discovered nodes,
+    /// poll the stream as soon as possible.
+    ///
+    /// If you do not regularly poll the stream, you may miss discovered nodes.
+    ///
+    /// Any discovery systems that only discover when explicitly resolving a
+    /// specific [`NodeId`] do not need to implement this method. Any nodes or
+    /// addresses that are discovered by calling `resolve` should NOT be added
+    /// to the `subscribe` stream.
+    ///
+    /// Discovery systems that are capable of receiving information about [`NodeId`]s
+    /// and their [`AddrInfo`]s without explicitly calling `resolve`, i.e.,
+    /// systems that do "passive" discovery, should implement this method. If
+    /// `subscribe` is called multiple times, the passively discovered addresses
+    /// should be sent on all streams.
+    ///
+    /// The [`crate::endpoint::Endpoint`] will `subscribe` to the discovery system
+    /// and add the discovered addresses to the internal address book as they arrive
+    /// on this stream.
+    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+        None
+    }
 }
 
 /// The results returned from [`Discovery::resolve`].
 #[derive(Debug, Clone)]
 pub struct DiscoveryItem {
+    /// The [`NodeId`] whose address we have discovered
+    pub node_id: NodeId,
     /// A static string to identify the discovery source.
     ///
     /// Should be uniform per discovery service.
@@ -165,7 +250,19 @@ impl Discovery for ConcurrentDiscovery {
             .iter()
             .filter_map(|service| service.resolve(endpoint.clone(), node_id));
 
-        let streams = futures_buffered::Merge::from_iter(streams);
+        let streams = futures_buffered::MergeBounded::from_iter(streams);
+        Some(Box::pin(streams))
+    }
+
+    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+        let mut streams = vec![];
+        for service in self.services.iter() {
+            if let Some(stream) = service.subscribe() {
+                streams.push(stream)
+            }
+        }
+
+        let streams = futures_buffered::MergeBounded::from_iter(streams);
         Some(Box::pin(streams))
     }
 }
@@ -307,7 +404,7 @@ impl DiscoveryTask {
                         info: r.addr_info,
                         node_id,
                     };
-                    ep.add_node_addr_with_source(addr, SOURCE_NAME).ok();
+                    ep.add_node_addr_with_source(addr, r.provenance).ok();
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
                     }
@@ -345,9 +442,8 @@ mod tests {
     use rand::Rng;
     use tokio_util::task::AbortOnDropHandle;
 
-    use crate::{key::SecretKey, relay::RelayMode};
-
     use super::*;
+    use crate::{key::SecretKey, relay::RelayMode};
 
     #[derive(Debug, Clone, Default)]
     struct TestDiscoveryShared {
@@ -417,6 +513,7 @@ mod tests {
             let stream = match addr_info {
                 Some((addr_info, ts)) => {
                     let item = DiscoveryItem {
+                        node_id,
                         provenance: "test-disco",
                         last_updated: Some(ts),
                         addr_info,
@@ -725,7 +822,7 @@ mod test_dns_pkarr {
             .await?;
 
         // we connect only by node id!
-        let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;
+        let res = ep2.connect(ep1.node_id(), TEST_ALPN).await;
         assert!(res.is_ok(), "connection established");
         Ok(())
     }
@@ -746,7 +843,7 @@ mod test_dns_pkarr {
             .await?;
 
         // we connect only by node id!
-        let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;
+        let res = ep2.connect(ep1.node_id(), TEST_ALPN).await;
         assert!(res.is_ok(), "connection established");
         Ok(())
     }

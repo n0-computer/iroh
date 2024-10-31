@@ -18,22 +18,22 @@ use iroh::{
     net::key::{PublicKey, SecretKey},
     node::{Builder, Node},
 };
-use rand::{CryptoRng, Rng, SeedableRng};
-use tracing::{debug, error_span, info, Instrument};
-use tracing_subscriber::{prelude::*, EnvFilter};
-
 use iroh_blobs::Hash;
 use iroh_docs::{
     store::{DownloadPolicy, FilterKind, Query},
     AuthorId, ContentStatus,
 };
 use iroh_net::relay::RelayMode;
+use rand::{CryptoRng, Rng, SeedableRng};
+use tracing::{debug, error_span, info, Instrument};
+use tracing_subscriber::{prelude::*, EnvFilter};
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 
 fn test_node(secret_key: SecretKey) -> Builder<iroh_blobs::store::mem::Store> {
     Node::memory()
         .secret_key(secret_key)
+        .enable_docs()
         .relay_mode(RelayMode::Disabled)
 }
 
@@ -493,6 +493,7 @@ async fn test_sync_via_relay() -> Result<()> {
     let node1 = Node::memory()
         .relay_mode(RelayMode::Custom(relay_map.clone()))
         .insecure_skip_relay_cert_verify(true)
+        .enable_docs()
         .spawn()
         .await?;
     let node1_id = node1.node_id();
@@ -500,6 +501,7 @@ async fn test_sync_via_relay() -> Result<()> {
         .bind_random_port()
         .relay_mode(RelayMode::Custom(relay_map.clone()))
         .insecure_skip_relay_cert_verify(true)
+        .enable_docs()
         .spawn()
         .await?;
 
@@ -593,6 +595,7 @@ async fn sync_restart_node() -> Result<()> {
         .relay_mode(RelayMode::Custom(relay_map.clone()))
         .dns_resolver(discovery_server.dns_resolver())
         .node_discovery(discovery_server.discovery(secret_key_1.clone()).into())
+        .enable_docs()
         .spawn()
         .await?;
     let id1 = node1.node_id();
@@ -612,6 +615,7 @@ async fn sync_restart_node() -> Result<()> {
         .insecure_skip_relay_cert_verify(true)
         .dns_resolver(discovery_server.dns_resolver())
         .node_discovery(discovery_server.discovery(secret_key_2.clone()).into())
+        .enable_docs()
         .spawn()
         .await?;
     let id2 = node2.node_id();
@@ -658,6 +662,7 @@ async fn sync_restart_node() -> Result<()> {
         .relay_mode(RelayMode::Custom(relay_map.clone()))
         .dns_resolver(discovery_server.dns_resolver())
         .node_discovery(discovery_server.discovery(secret_key_1.clone()).into())
+        .enable_docs()
         .spawn()
         .await?;
     assert_eq!(id1, node1.node_id());
@@ -979,6 +984,7 @@ async fn test_list_docs_stream() -> Result<()> {
     let node = Node::memory()
         .node_discovery(iroh::node::DiscoveryConfig::None)
         .relay_mode(iroh::net::relay::RelayMode::Disabled)
+        .enable_docs()
         .spawn()
         .await?;
     let count = 200;
@@ -1148,6 +1154,7 @@ impl PartialEq<ExpectedEntry> for (Entry, Bytes) {
 async fn doc_delete() -> Result<()> {
     let node = Node::memory()
         .gc_policy(iroh::node::GcPolicy::Interval(Duration::from_millis(100)))
+        .enable_docs()
         .spawn()
         .await?;
     let client = node.client();

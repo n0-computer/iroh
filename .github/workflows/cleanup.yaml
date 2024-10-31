@@ -1,0 +1,45 @@
+# Run tests using the beta Rust compiler
+
+name: Cleanup
+
+on:
+  schedule:
+    # 06:50 UTC every Monday
+    - cron: '50 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: beta-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IROH_FORCE_STAGING_RELAYS: "1"
+
+jobs:
+  clean_docs_branch:
+    permissions:
+      issues: write
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: generated-docs-preview
+      - name: Clean docs branch
+        run: |
+          cd pr/
+          # keep the last 25 prs
+          dirs=$(ls -1d [0-9]* | sort -n)
+          total_dirs=$(echo "$dirs" | wc -l)
+          dirs_to_remove=$(echo "$dirs" | head -n $(($total_dirs - 25)))
+          if [ -n "$dirs_to_remove" ]; then
+            echo "$dirs_to_remove" | xargs rm -rf
+          fi
+          git add .
+          git commit -m "Cleanup old docs"
+          git push
+
+
+
+

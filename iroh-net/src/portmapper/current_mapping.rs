@@ -6,10 +6,10 @@ use std::{
     num::NonZeroU16,
     pin::Pin,
     task::Poll,
+    time::Duration,
 };
 
 use iroh_metrics::inc;
-use std::time::Duration;
 use tokio::{sync::watch, time};
 use tracing::{debug, trace};
 

@@ -15,24 +15,26 @@ use iroh_blobs::{
     store::{Map, Store as BaoStore},
     util::local_pool::{self, LocalPool, LocalPoolHandle, PanicMode},
 };
-use iroh_docs::engine::DefaultAuthorStorage;
-use iroh_docs::net::DOCS_ALPN;
+use iroh_docs::{engine::DefaultAuthorStorage, net::DOCS_ALPN};
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 #[cfg(not(test))]
 use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
-    relay::RelayMode,
+    endpoint::TransportConfig,
+    relay::{force_staging_infra, RelayMode},
     Endpoint,
 };
-
 use quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinError;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error_span, trace, Instrument};
 
+use super::{
+    docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner,
+};
 use crate::{
     client::RPC_ALPN,
     node::{
@@ -42,10 +44,6 @@ use crate::{
     },
     rpc_protocol::RpcService,
     util::{fs::load_secret_key, path::IrohPaths},
-};
-
-use super::{
-    docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner,
 };
 
 /// Default bind address for the node.
@@ -140,6 +138,7 @@ where
     #[debug("callback")]
     gc_done_callback: Option<Box<dyn Fn() + Send>>,
     blob_events: EventSender,
+    transport_config: Option<TransportConfig>,
 }
 
 /// Configuration for storage.
@@ -244,10 +243,10 @@ fn mk_external_rpc() -> IrohServerEndpoint {
 impl Default for Builder<iroh_blobs::store::mem::Store> {
     fn default() -> Self {
         // Use staging in testing
-        #[cfg(not(any(test, feature = "test-utils")))]
-        let relay_mode = RelayMode::Default;
-        #[cfg(any(test, feature = "test-utils"))]
-        let relay_mode = RelayMode::Staging;
+        let relay_mode = match force_staging_infra() {
+            true => RelayMode::Staging,
+            false => RelayMode::Default,
+        };
 
         Self {
             storage: StorageConfig::Mem,
@@ -261,13 +260,14 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             rpc_endpoint: mk_external_rpc(),
             rpc_addr: None,
             gc_policy: GcPolicy::Disabled,
-            docs_storage: DocsStorage::Memory,
+            docs_storage: DocsStorage::Disabled,
             spaces_storage: SpacesStorage::Memory,
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: None,
             blob_events: Default::default(),
+            transport_config: None,
         }
     }
 }
@@ -280,10 +280,10 @@ impl<D: Map> Builder<D> {
         storage: StorageConfig,
     ) -> Self {
         // Use staging in testing
-        #[cfg(not(any(test, feature = "test-utils")))]
-        let relay_mode = RelayMode::Default;
-        #[cfg(any(test, feature = "test-utils"))]
-        let relay_mode = RelayMode::Staging;
+        let relay_mode = match force_staging_infra() {
+            true => RelayMode::Staging,
+            false => RelayMode::Default,
+        };
 
         Self {
             storage,
@@ -305,6 +305,7 @@ impl<D: Map> Builder<D> {
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: None,
             blob_events: Default::default(),
+            transport_config: None,
         }
     }
 }
@@ -336,7 +337,12 @@ where
             .with_context(|| {
                 format!("Failed to load blobs database from {}", blob_dir.display())
             })?;
-        let docs_storage = DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root));
+        let docs_storage = match self.docs_storage {
+            DocsStorage::Persistent(_) | DocsStorage::Memory => {
+                DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root))
+            }
+            DocsStorage::Disabled => DocsStorage::Disabled,
+        };
         let spaces_storage = SpacesStorage::Persistent(IrohPaths::SpacesDatabase.with_root(root));
 
         let secret_key_path = IrohPaths::SecretKey.with_root(root);
@@ -361,6 +367,7 @@ where
             insecure_skip_relay_cert_verify: false,
             gc_done_callback: self.gc_done_callback,
             blob_events: self.blob_events,
+            transport_config: self.transport_config,
         })
     }
 
@@ -417,9 +424,14 @@ where
         self
     }
 
-    /// Disables documents support on this node completely.
-    pub fn disable_docs(mut self) -> Self {
-        self.docs_storage = DocsStorage::Disabled;
+    /// Enables documents support on this node.
+    pub fn enable_docs(mut self) -> Self {
+        self.docs_storage = match self.storage {
+            StorageConfig::Mem => DocsStorage::Memory,
+            StorageConfig::Persistent(ref root) => {
+                DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root))
+            }
+        };
         self
     }
 
@@ -520,10 +532,20 @@ where
         self
     }
 
+    /// Sets a custom [`TransportConfig`] to be used by the [`Endpoint`].
+    ///
+    /// If not set, the [`Endpoint`] will use its default [`TransportConfig`]. See
+    /// [`crate::net::endpoint::Builder::transport_config`] for details.
+    pub fn transport_config(mut self, config: TransportConfig) -> Self {
+        self.transport_config = Some(config);
+        self
+    }
+
     /// Skip verification of SSL certificates from relay servers
     ///
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
+    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
         self.insecure_skip_relay_cert_verify = skip_verify;
         self
@@ -531,6 +553,7 @@ where
 
     /// Register a callback for when GC is done.
     #[cfg(any(test, feature = "test-utils"))]
+    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     pub fn register_gc_done_cb(mut self, cb: Box<dyn Fn() + Send>) -> Self {
         self.gc_done_callback.replace(cb);
         self
@@ -618,6 +641,11 @@ where
                 .proxy_from_env()
                 .keylog(self.keylog)
                 .relay_mode(self.relay_mode);
+
+            let endpoint = match self.transport_config {
+                Some(config) => endpoint.transport_config(config),
+                None => endpoint,
+            };
             let endpoint = match discovery {
                 Some(discovery) => endpoint.discovery(discovery),
                 None => endpoint,
@@ -731,16 +759,11 @@ where
 
         let inner = Arc::new(NodeInner {
             rpc_addr: self.rpc_addr,
-            db: self.blobs_store,
-            docs,
+            db: Default::default(),
             endpoint,
-            secret_key: self.secret_key,
             client,
             cancel_token: CancellationToken::new(),
-            downloader,
-            gossip,
             local_pool_handle: lp.handle().clone(),
-            blob_batches: Default::default(),
             willow,
         });
 
@@ -755,7 +778,13 @@ where
             local_pool: lp,
         };
 
-        let protocol_builder = protocol_builder.register_iroh_protocols(self.blob_events);
+        let protocol_builder = protocol_builder.register_iroh_protocols(
+            self.blob_events,
+            self.blobs_store,
+            gossip,
+            downloader,
+            docs,
+        );
 
         Ok(protocol_builder)
     }
@@ -822,7 +851,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     /// let handler = MyProtocol { client };
     ///
     /// let node = unspawned_node
-    ///     .accept(MY_ALPN, Arc::new(handler))
+    ///     .accept(MY_ALPN.to_vec(), Arc::new(handler))
     ///     .spawn()
     ///     .await?;
     /// # node.shutdown().await?;
@@ -831,7 +860,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     /// ```
     ///
     ///
-    pub fn accept(mut self, alpn: &'static [u8], handler: Arc<dyn ProtocolHandler>) -> Self {
+    pub fn accept(mut self, alpn: Vec<u8>, handler: Arc<dyn ProtocolHandler>) -> Self {
         self.protocols.insert(alpn, handler);
         self
     }
@@ -849,24 +878,9 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         &self.inner.endpoint
     }
 
-    /// Returns the [`crate::blobs::store::Store`] used by the node.
-    pub fn blobs_db(&self) -> &D {
-        &self.inner.db
-    }
-
     /// Returns a reference to the used [`LocalPoolHandle`].
     pub fn local_pool_handle(&self) -> &LocalPoolHandle {
         self.local_pool.handle()
-    }
-
-    /// Returns a reference to the [`Downloader`] used by the node.
-    pub fn downloader(&self) -> &Downloader {
-        &self.inner.downloader
-    }
-
-    /// Returns a reference to the [`Gossip`] handle used by the node.
-    pub fn gossip(&self) -> &Gossip {
-        &self.inner.gossip
     }
 
     /// Returns a protocol handler for an ALPN.
@@ -878,22 +892,29 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     }
 
     /// Registers the core iroh protocols (blobs, gossip, docs).
-    fn register_iroh_protocols(mut self, blob_events: EventSender) -> Self {
+    fn register_iroh_protocols(
+        mut self,
+        blob_events: EventSender,
+        store: D,
+        gossip: Gossip,
+        downloader: Downloader,
+        docs: Option<DocsEngine>,
+    ) -> Self {
         // Register blobs.
         let blobs_proto = BlobsProtocol::new_with_events(
-            self.blobs_db().clone(),
+            store,
             self.local_pool_handle().clone(),
             blob_events,
+            downloader,
         );
-        self = self.accept(iroh_blobs::protocol::ALPN, Arc::new(blobs_proto));
+        self = self.accept(iroh_blobs::protocol::ALPN.to_vec(), Arc::new(blobs_proto));
 
         // Register gossip.
-        let gossip = self.gossip().clone();
-        self = self.accept(GOSSIP_ALPN, Arc::new(gossip));
+        self = self.accept(GOSSIP_ALPN.to_vec(), Arc::new(gossip));
 
         // Register docs, if enabled.
-        if let Some(docs) = self.inner.docs.clone() {
-            self = self.accept(DOCS_ALPN, Arc::new(docs));
+        if let Some(docs) = docs {
+            self = self.accept(DOCS_ALPN.to_vec(), Arc::new(docs));
         }
 
         if let Some(engine) = self.inner.willow.clone() {

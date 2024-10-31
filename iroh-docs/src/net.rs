@@ -5,20 +5,19 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "metrics")]
+use iroh_metrics::inc;
 use iroh_net::{endpoint::get_remote_node_id, key::PublicKey, Endpoint, NodeAddr};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error_span, trace, Instrument};
 
+#[cfg(feature = "metrics")]
+use crate::metrics::Metrics;
 use crate::{
     actor::SyncHandle,
     net::codec::{run_alice, BobState},
     NamespaceId, SyncOutcome,
 };
-
-#[cfg(feature = "metrics")]
-use crate::metrics::Metrics;
-#[cfg(feature = "metrics")]
-use iroh_metrics::inc;
 
 /// The ALPN identifier for the iroh-docs protocol
 pub const DOCS_ALPN: &[u8] = b"/iroh-sync/1";

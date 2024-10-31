@@ -2,32 +2,42 @@
 //!
 //! based on tailscale/derp/derp_client.go
 
-use std::net::SocketAddr;
-use std::num::NonZeroU32;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
-use std::time::Duration;
+use std::{
+    net::SocketAddr,
+    num::NonZeroU32,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
+};
 
 use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use bytes::Bytes;
 use futures_lite::Stream;
 use futures_sink::Sink;
-use futures_util::stream::{SplitSink, SplitStream, StreamExt};
-use futures_util::SinkExt;
+use futures_util::{
+    stream::{SplitSink, SplitStream, StreamExt},
+    SinkExt,
+};
 use tokio::sync::mpsc;
 use tokio_tungstenite_wasm::WebSocketStream;
-use tokio_util::codec::{FramedRead, FramedWrite};
-use tokio_util::task::AbortOnDropHandle;
+use tokio_util::{
+    codec::{FramedRead, FramedWrite},
+    task::AbortOnDropHandle,
+};
 use tracing::{debug, info_span, trace, Instrument};
 
-use crate::defaults::timeouts::relay::CLIENT_RECV_TIMEOUT;
-use crate::key::{PublicKey, SecretKey};
-use crate::relay::client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter};
-use crate::relay::codec::{
-    write_frame, DerpCodec, Frame, MAX_PACKET_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+use crate::{
+    defaults::timeouts::relay::CLIENT_RECV_TIMEOUT,
+    key::{PublicKey, SecretKey},
+    relay::{
+        client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
+        codec::{
+            write_frame, ClientInfo, DerpCodec, Frame, MAX_PACKET_SIZE,
+            PER_CLIENT_READ_QUEUE_DEPTH, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+        },
+    },
 };
-use crate::relay::codec::{ClientInfo, PER_CLIENT_READ_QUEUE_DEPTH};
 
 impl PartialEq for Conn {
     fn eq(&self, other: &Self) -> bool {
@@ -46,6 +56,11 @@ pub struct Conn {
     inner: Arc<ConnTasks>,
 }
 
+/// The channel on which a relay connection sends received messages.
+///
+/// The [`Conn`] to a relay is easily clonable but can only send DISCO messages to a relay
+/// server.  This is the counterpart which receives DISCO messages from the relay server for
+/// a connection.  It is not clonable.
 #[derive(Debug)]
 pub struct ConnReceiver {
     /// The reader channel, receiving incoming messages.
@@ -376,7 +391,7 @@ impl ConnBuilder {
                 recv_msgs: writer_recv,
             }
             .run()
-            .instrument(info_span!("client.writer")),
+            .instrument(info_span!("conn.writer")),
         );
 
         let (reader_sender, reader_recv) = mpsc::channel(PER_CLIENT_READ_QUEUE_DEPTH);
@@ -412,6 +427,7 @@ impl ConnBuilder {
                     }
                 }
             }
+            .instrument(info_span!("conn.reader"))
         });
 
         let conn = Conn {

@@ -1,7 +1,8 @@
 //! Common code used to created quinn connections in the examples
+use std::{path::PathBuf, sync::Arc};
+
 use anyhow::{bail, Context, Result};
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
-use std::{path::PathBuf, sync::Arc};
 use tokio::fs;
 
 pub const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/bytes/0";

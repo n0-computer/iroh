@@ -6,8 +6,10 @@
 //!
 //! [iroh]: https://docs.rs/iroh
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+#![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 
 pub mod metrics;
 #[cfg(feature = "net")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "net")))]
 pub mod net;
 pub mod proto;

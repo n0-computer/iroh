@@ -5,19 +5,22 @@
 //! the inside and instead only notifies this struct of state changes to each path.
 //!
 //! [`NodeState`]: super::node_state::NodeState
-use std::collections::BTreeMap;
-use std::net::SocketAddr;
-use std::time::{Duration, Instant};
+use std::{
+    collections::BTreeMap,
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 
 use rand::seq::IteratorRandom;
 use tracing::warn;
 
+use super::{
+    best_addr::{self, BestAddr},
+    node_state::PongReply,
+    path_state::PathState,
+    IpPort,
+};
 use crate::disco::SendAddr;
-
-use super::best_addr::{self, BestAddr};
-use super::node_state::PongReply;
-use super::path_state::PathState;
-use super::IpPort;
 
 /// The address on which to send datagrams over UDP.
 ///
@@ -151,10 +154,10 @@ impl NodeUdpPaths {
             let best_latency = best_pong
                 .map(|p: &PongReply| p.latency)
                 .unwrap_or(MAX_LATENCY);
-            match state.recent_pong() {
+            match state.recent_pong {
                 // This pong is better if it has a lower latency, or if it has the same
                 // latency but on an IPv6 path.
-                Some(pong)
+                Some(ref pong)
                     if pong.latency < best_latency
                         || (pong.latency == best_latency && ipp.ip().is_ipv6()) =>
                 {

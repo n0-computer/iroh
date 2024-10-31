@@ -3,9 +3,8 @@ use std::{ops::Deref, sync::Arc};
 use anyhow::Result;
 use futures_lite::future::Boxed as BoxedFuture;
 use iroh_blobs::downloader::Downloader;
-use iroh_gossip::net::Gossip;
-
 use iroh_docs::engine::{DefaultAuthorStorage, Engine};
+use iroh_gossip::net::Gossip;
 use iroh_net::{endpoint::Connecting, Endpoint};
 
 use crate::node::{DocsStorage, ProtocolHandler};
@@ -51,5 +50,14 @@ impl Deref for DocsEngine {
 impl ProtocolHandler for DocsEngine {
     fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move { self.handle_connection(conn).await })
+    }
+
+    fn shutdown(self: Arc<Self>) -> BoxedFuture<()> {
+        Box::pin(async move {
+            let this: &Self = &self;
+            if let Err(err) = this.shutdown().await {
+                tracing::warn!("shutdown error: {:?}", err);
+            }
+        })
     }
 }
