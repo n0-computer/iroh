@@ -4,7 +4,8 @@
 //! interface to [QUIC] connections and streams to the user, while implementing direct
 //! connectivity using [hole punching] complemented by relay servers under the hood.
 //!
-//! Connecting to a remote node looks roughly like this:
+//! An iroh-net node is created and controlled by the [`Endpoint`], e.g. connecting to
+//! another node:
 //!
 //! ```no_run
 //! # use iroh_net::{Endpoint, NodeAddr};
@@ -18,7 +19,7 @@
 //! # }
 //! ```
 //!
-//! The other side can accept incoming connections like this:
+//! The other node can accept incoming connections using the [`Endpoint`] as well:
 //!
 //! ```no_run
 //! # use iroh_net::{Endpoint, NodeAddr};
