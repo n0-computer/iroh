@@ -414,7 +414,7 @@ impl DocCommands {
 
                 let mut stream = doc.get_many(query).await?;
                 while let Some(entry) = stream.try_next().await? {
-                    println!("{}", fmt_entry(&doc, &entry, mode).await);
+                    println!("{}", fmt_entry(iroh.blobs(), &entry, mode).await);
                 }
             }
             Self::Keys {
@@ -440,7 +440,7 @@ impl DocCommands {
                 query = query.sort_by(sort.into(), direction);
                 let mut stream = doc.get_many(query).await?;
                 while let Some(entry) = stream.try_next().await? {
-                    println!("{}", fmt_entry(&doc, &entry, mode).await);
+                    println!("{}", fmt_entry(iroh.blobs(), &entry, mode).await);
                 }
             }
             Self::Leave { doc } => {
@@ -516,7 +516,7 @@ impl DocCommands {
                     }
                     Some(e) => e,
                 };
-                match entry.content_reader(&doc).await {
+                match iroh.blobs().read(entry.content_hash()).await {
                     Ok(mut content) => {
                         if let Some(dir) = path.parent() {
                             if let Err(err) = std::fs::create_dir_all(dir) {
@@ -547,13 +547,14 @@ impl DocCommands {
             Self::Watch { doc } => {
                 let doc = get_doc(iroh, env, doc).await?;
                 let mut stream = doc.subscribe().await?;
+                let blobs = iroh.blobs();
                 while let Some(event) = stream.next().await {
                     let event = event?;
                     match event {
                         LiveEvent::InsertLocal { entry } => {
                             println!(
                                 "local change:  {}",
-                                fmt_entry(&doc, &entry, DisplayContentMode::Auto).await
+                                fmt_entry(blobs, &entry, DisplayContentMode::Auto).await
                             )
                         }
                         LiveEvent::InsertRemote {
@@ -563,17 +564,17 @@ impl DocCommands {
                         } => {
                             let content = match content_status {
                                 iroh::docs::ContentStatus::Complete => {
-                                    fmt_entry(&doc, &entry, DisplayContentMode::Auto).await
+                                    fmt_entry(blobs, &entry, DisplayContentMode::Auto).await
                                 }
                                 iroh::docs::ContentStatus::Incomplete => {
                                     let (Ok(content) | Err(content)) =
-                                        fmt_content(&doc, &entry, DisplayContentMode::ShortHash)
+                                        fmt_content(blobs, &entry, DisplayContentMode::ShortHash)
                                             .await;
                                     format!("<incomplete: {} ({})>", content, human_len(&entry))
                                 }
                                 iroh::docs::ContentStatus::Missing => {
                                     let (Ok(content) | Err(content)) =
-                                        fmt_content(&doc, &entry, DisplayContentMode::ShortHash)
+                                        fmt_content(blobs, &entry, DisplayContentMode::ShortHash)
                                             .await;
                                     format!("<missing: {} ({})>", content, human_len(&entry))
                                 }
@@ -692,7 +693,7 @@ async fn get_doc(
 
 /// Formats the content. If an error occurs it's returned in a formatted, friendly way.
 async fn fmt_content(
-    doc: &Doc<RpcService>,
+    blobs: &iroh::client::blobs::Client,
     entry: &Entry,
     mode: DisplayContentMode,
 ) -> Result<String, String> {
@@ -704,11 +705,17 @@ async fn fmt_content(
         DisplayContentMode::Auto => {
             if entry.content_len() < MAX_DISPLAY_CONTENT_LEN {
                 // small content: read fully as UTF-8
-                let bytes = entry.content_bytes(doc).await.map_err(read_failed)?;
+                let bytes = blobs
+                    .read_to_bytes(entry.content_hash())
+                    .await
+                    .map_err(read_failed)?;
                 Ok(as_utf8(bytes.into()).unwrap_or_else(encode_hex))
             } else {
                 // large content: read just the first part as UTF-8
-                let mut blob_reader = entry.content_reader(doc).await.map_err(read_failed)?;
+                let mut blob_reader = blobs
+                    .read(entry.content_hash())
+                    .await
+                    .map_err(read_failed)?;
                 let mut buf = Vec::with_capacity(MAX_DISPLAY_CONTENT_LEN as usize + 5);
 
                 blob_reader
@@ -723,7 +730,10 @@ async fn fmt_content(
         }
         DisplayContentMode::Content => {
             // read fully as UTF-8
-            let bytes = entry.content_bytes(doc).await.map_err(read_failed)?;
+            let bytes = blobs
+                .read_to_bytes(entry.content_hash())
+                .await
+                .map_err(read_failed)?;
             Ok(as_utf8(bytes.into()).unwrap_or_else(encode_hex))
         }
         DisplayContentMode::ShortHash => {
@@ -744,12 +754,16 @@ fn human_len(entry: &Entry) -> HumanBytes {
 
 /// Formats an entry for display as a `String`.
 #[must_use = "this won't be printed, you need to print it yourself"]
-async fn fmt_entry(doc: &Doc<RpcService>, entry: &Entry, mode: DisplayContentMode) -> String {
+async fn fmt_entry(
+    blobs: &iroh::client::blobs::Client,
+    entry: &Entry,
+    mode: DisplayContentMode,
+) -> String {
     let key = std::str::from_utf8(entry.key())
         .unwrap_or("<bad key>")
         .bold();
     let author = fmt_short(entry.author());
-    let (Ok(content) | Err(content)) = fmt_content(doc, entry, mode).await;
+    let (Ok(content) | Err(content)) = fmt_content(blobs, entry, mode).await;
     let len = human_len(entry);
     format!("@{author}: {key} = {content} ({len})")
 }

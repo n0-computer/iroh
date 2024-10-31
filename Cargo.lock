@@ -2699,7 +2699,7 @@ dependencies = [
 [[package]]
 name = "iroh-docs"
 version = "0.27.0"
-source = "git+https://github.com/n0-computer/iroh-docs?branch=refactor-extract-rpc#a761c374de391da3181f27398f2c97da30c1469f"
+source = "git+https://github.com/n0-computer/iroh-docs?branch=refactor-extract-rpc#70c565f03cb85f5a581e3f53e6366ce3b67b14ee"
 dependencies = [
  "anyhow",
  "async-channel",

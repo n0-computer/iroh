@@ -904,16 +904,10 @@ async fn sync_big() -> Result<()> {
     let mut docs = vec![];
     docs.push(doc0);
     docs.extend_from_slice(
-        &collect_futures(
-            docs_clients
-                .into_iter()
-                .map(|c| {
-                    let ticket = ticket.clone();
-                    async move {
-                        c.import(ticket).await
-                    }
-                }),
-        )
+        &collect_futures(docs_clients.into_iter().map(|c| {
+            let ticket = ticket.clone();
+            async move { c.import(ticket).await }
+        }))
         .await?,
     );
 
