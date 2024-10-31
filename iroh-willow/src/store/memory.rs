@@ -6,22 +6,17 @@
 //! hopefully easily kept correct.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::pin::Pin;
 use std::rc::{Rc, Weak};
-use std::task::{Context, Poll, Waker};
+use std::task::{ready, Context, Poll, Waker};
 
 use anyhow::Result;
-use ed25519_dalek::ed25519;
-use futures_lite::ready;
 use futures_util::Stream;
 use tracing::debug;
-use willow_data_model::SubspaceId as _;
-use willow_store::{QueryRange, QueryRange3d};
 
-use crate::proto::data_model::{AuthorisationToken, PathExt};
+use crate::proto::data_model::PathExt;
 use crate::proto::grouping::Area;
-use crate::store::glue::StoredTimestamp;
 use crate::{
     interest::{CapSelector, CapabilityPack},
     proto::{
@@ -33,7 +28,6 @@ use crate::{
     store::traits,
 };
 
-use super::glue::{path_to_blobseq, to_query, IrohWillowParams, StoredAuthorisedEntry};
 use super::traits::{StoreEvent, SubscribeParams};
 use super::EntryOrigin;
 
@@ -108,46 +102,15 @@ impl traits::SecretStorage for Rc<RefCell<SecretStore>> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default)]
 pub struct EntryStore {
-    pub stores: HashMap<NamespaceId, NamespaceStore>,
-    pub authorisation_tokens: BTreeMap<ed25519::SignatureBytes, AuthorisationToken>,
-    pub store: willow_store::MemStore,
+    stores: HashMap<NamespaceId, NamespaceStore>,
 }
 
-impl Default for EntryStore {
-    fn default() -> Self {
-        Self {
-            stores: Default::default(),
-            authorisation_tokens: Default::default(),
-            store: willow_store::MemStore::new(),
-        }
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct NamespaceStore {
-    entries: willow_store::Node<IrohWillowParams>,
+    entries: Vec<AuthorisedEntry>,
     events: EventQueue<StoreEvent>,
-}
-
-impl Clone for NamespaceStore {
-    fn clone(&self) -> Self {
-        Self {
-            entries: self.entries.clone(),
-            // TODO(matheus23): This is hacky!
-            events: Default::default(),
-        }
-    }
-}
-
-impl Default for NamespaceStore {
-    fn default() -> Self {
-        Self {
-            entries: willow_store::Node::EMPTY,
-            events: Default::default(),
-        }
-    }
 }
 
 // impl<T: std::ops::Deref<Target = MemoryEntryStore> + 'static> ReadonlyStore for T {
@@ -158,28 +121,16 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
         range: &Range3d,
     ) -> Result<impl Iterator<Item = Result<AuthorisedEntry>> + 'a> {
         let slf = self.borrow();
-        let Some(ns_store) = slf.stores.get(&namespace) else {
-            return Ok(either::Left(std::iter::empty()));
-        };
-        // TODO(matheus23): Maybe figure out a way to share this more efficiently?
-        let atmap = slf.authorisation_tokens.clone();
-        Ok(either::Right(
-            ns_store
-                .entries
-                .query(&to_query(range), &slf.store)
-                .map(move |result| {
-                    let (point, stored_entry) = result?;
-                    let id = stored_entry.authorisation_token_id;
-                    let auth_token = atmap.get(&id).ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "couldn't find authorisation token id (database inconsistent)"
-                        )
-                    })?;
-                    stored_entry.into_authorised_entry(namespace, &point, auth_token.clone())
-                })
-                .collect::<Vec<_>>()
-                .into_iter(),
-        ))
+        Ok(slf
+            .stores
+            .get(&namespace)
+            .map(|s| &s.entries)
+            .into_iter()
+            .flatten()
+            .filter(|entry| range.includes_entry(entry.entry()))
+            .map(|e| anyhow::Result::Ok(e.clone()))
+            .collect::<Vec<_>>()
+            .into_iter())
     }
 
     fn get_entry(
@@ -189,114 +140,67 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
         path: &Path,
     ) -> Result<Option<AuthorisedEntry>> {
         let inner = self.borrow();
-        let Some(ns_store) = inner.stores.get(&namespace) else {
+        let Some(entries) = inner.stores.get(&namespace) else {
             return Ok(None);
         };
-        let blobseq = path_to_blobseq(path);
-        let end = blobseq.immediate_successor();
-        let Some(result) = ns_store
+        Ok(entries
             .entries
-            .query_ordered(
-                &QueryRange3d {
-                    x: QueryRange::new(subspace, subspace.successor()),
-                    y: QueryRange::all(),
-                    z: QueryRange::new(blobseq, Some(end)),
-                },
-                willow_store::SortOrder::YZX,
-                &inner.store,
-            )
-            .last()
-        else {
-            return Ok(None);
-        };
-
-        let (point, stored_entry) = result?;
-        let id = stored_entry.authorisation_token_id;
-        let auth_token = inner.authorisation_tokens.get(&id).ok_or_else(|| {
-            anyhow::anyhow!("couldn't find authorisation token id (database inconsistent)")
-        })?;
-        let entry = stored_entry.into_authorised_entry(namespace, &point, auth_token.clone())?;
-        Ok(Some(entry))
+            .iter()
+            .find(|e| {
+                let e = e.entry();
+                *e.namespace_id() == namespace && *e.subspace_id() == subspace && e.path() == path
+            })
+            .cloned())
     }
 }
 
 impl EntryStore {
     fn ingest_entry(&mut self, entry: &AuthorisedEntry, origin: EntryOrigin) -> Result<bool> {
-        let namespace = *entry.entry().namespace_id();
-        let ns_store = self.stores.entry(namespace).or_default();
-
-        // Insert auth token & entry:
-
-        self.authorisation_tokens
-            .entry(entry.token().signature.to_bytes())
-            .or_insert_with(|| entry.token().clone());
-
-        let (insert_point, insert_entry) = StoredAuthorisedEntry::from_authorised_entry(entry);
-
-        let _replaced = ns_store
-            .entries
-            .insert(&insert_point, &insert_entry, &mut self.store)?;
-
-        // TODO(matheus23): need to get a progress_id here somehow.
-        // There's ideas to use the willow-store NodeId for that.
-
-        // Enforce prefix deletion:
-
-        let blobseq_start = path_to_blobseq(entry.entry().path());
-        let blobseq_end = blobseq_start.subseq_successor();
-
-        let overwritten_range = QueryRange3d {
-            x: QueryRange::new(
-                *entry.entry().subspace_id(),
-                entry.entry().subspace_id().successor(),
-            ),
-            y: QueryRange::new(
-                StoredTimestamp::new(0),
-                Some(StoredTimestamp::new(entry.entry().timestamp())),
-            ),
-            z: QueryRange::new(blobseq_start, blobseq_end),
-        };
-
-        let prune_candidates = ns_store
-            .entries
-            .query(&overwritten_range, &self.store)
-            .collect::<Result<Vec<_>, _>>()?;
-
-        for (prune_pos, prune_candidate) in prune_candidates {
-            let auth_token = self
-                .authorisation_tokens
-                .get(&prune_candidate.authorisation_token_id)
-                .ok_or_else(|| {
-                    anyhow::anyhow!("couldn't find authorisation token id (database inconsistent)")
-                })?;
-            let pruned =
-                prune_candidate.into_authorised_entry(namespace, &prune_pos, auth_token.clone())?; // fairly inefficient
-            if entry.entry().is_newer_than(pruned.entry()) {
-                // TODO(matheus23): Don't *actually* delete here? (depending on a potential traceless bit)
-                // There was some idea along the lines of "mark as deleted" by storing the identifier for the deletion.
-                ns_store.entries.delete(&prune_pos, &mut self.store)?;
-                ns_store.events.insert(move |id| {
-                    StoreEvent::Pruned(
-                        id,
-                        traits::PruneEvent {
-                            pruned,
-                            by: entry.clone(),
-                        },
-                    )
-                });
+        let store = self
+            .stores
+            .entry(*entry.entry().namespace_id())
+            .or_default();
+        let entries = &mut store.entries;
+        let new = entry.entry();
+        let mut to_prune = vec![];
+        for (i, existing) in entries.iter().enumerate() {
+            let existing = existing.entry();
+            if existing == new {
+                return Ok(false);
+            }
+            if existing.subspace_id() == new.subspace_id()
+                && existing.path().is_prefix_of(new.path())
+                && existing.is_newer_than(new)
+            {
+                // we cannot insert the entry, a newer entry exists
+                debug!(subspace=%entry.entry().subspace_id().fmt_short(), path=%entry.entry().path().fmt_utf8(), "skip ingest, already pruned");
+                return Ok(false);
+            }
+            if new.subspace_id() == existing.subspace_id()
+                && new.path().is_prefix_of(existing.path())
+                && new.is_newer_than(existing)
+            {
+                to_prune.push(i);
             }
         }
-
-        debug!(
-            subspace = %entry.entry().subspace_id().fmt_short(),
-            path = %entry.entry().path().fmt_utf8(),
-            "ingest entry"
-        );
-
-        ns_store
+        let pruned_count = to_prune.len();
+        for i in to_prune {
+            let pruned = entries.remove(i);
+            store.events.insert(move |id| {
+                StoreEvent::Pruned(
+                    id,
+                    traits::PruneEvent {
+                        pruned,
+                        by: entry.clone(),
+                    },
+                )
+            });
+        }
+        entries.push(entry.clone());
+        debug!(subspace=%entry.entry().subspace_id().fmt_short(), path=%entry.entry().path().fmt_utf8(), pruned=pruned_count, total=entries.len(), "ingest entry");
+        store
             .events
             .insert(|id| StoreEvent::Ingested(id, entry.clone(), origin));
-
         Ok(true)
     }
 }
@@ -312,7 +216,21 @@ impl traits::EntryStorage for Rc<RefCell<EntryStore>> {
     fn snapshot(&self) -> Result<Self::Snapshot> {
         // This is quite ugly. But this is a quick memory impl only.
         // But we should really maybe strive to not expose snapshots.
-        Ok(Rc::new(RefCell::new(self.borrow().clone())))
+        let stores = self
+            .borrow()
+            .stores
+            .iter()
+            .map(|(key, value)| {
+                (
+                    *key,
+                    NamespaceStore {
+                        entries: value.entries.clone(),
+                        events: Default::default(),
+                    },
+                )
+            })
+            .collect();
+        Ok(Rc::new(RefCell::new(EntryStore { stores })))
     }
 
     fn ingest_entry(&self, entry: &AuthorisedEntry, origin: EntryOrigin) -> Result<bool> {
@@ -408,7 +326,7 @@ impl Stream for EventStream {
 // TODO: This would be quite a bit more efficient if we filtered the waker with a closure
 // that is set from the last poll, to not wake everyone for each new event.
 #[derive(Debug)]
-pub(super) struct EventQueue<T> {
+pub(crate) struct EventQueue<T> {
     events: VecDeque<T>,
     offset: u64,
     wakers: VecDeque<Waker>,
@@ -433,7 +351,7 @@ impl<T> Default for EventQueue<T> {
 }
 
 impl<T: Clone> EventQueue<T> {
-    pub(super) fn insert(&mut self, f: impl FnOnce(u64) -> T) {
+    pub(crate) fn insert(&mut self, f: impl FnOnce(u64) -> T) {
         let progress_id = self.next_progress_id();
         let event = f(progress_id);
         self.events.push_back(event);
@@ -442,16 +360,16 @@ impl<T: Clone> EventQueue<T> {
         }
     }
 
-    pub(super) fn next_progress_id(&self) -> u64 {
+    pub(crate) fn next_progress_id(&self) -> u64 {
         self.offset + self.events.len() as u64
     }
 
-    pub(super) fn get(&self, progress_id: u64) -> Option<&T> {
+    pub(crate) fn get(&self, progress_id: u64) -> Option<&T> {
         let index = progress_id.checked_sub(self.offset)?;
         self.events.get(index as usize)
     }
 
-    pub(super) fn poll_next(
+    pub(crate) fn poll_next(
         &mut self,
         progress_id: u64,
         filter: impl Fn(&T) -> bool,
