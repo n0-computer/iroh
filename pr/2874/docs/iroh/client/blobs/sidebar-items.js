@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["DownloadMode","WrapOption"],"struct":["AddDirOpts","AddFileOpts","AddOutcome","AddProgress","AddReaderOpts","BlobInfo","DownloadOptions","DownloadOutcome","DownloadProgress","IncompleteBlobInfo","Reader"],"type":["Client"]};
+window.SIDEBAR_ITEMS = {"enum":["BlobStatus","DownloadMode","WrapOption"],"struct":["AddDirOpts","AddFileOpts","AddOutcome","AddProgress","AddReaderOpts","BlobInfo","CollectionInfo","DownloadOptions","DownloadOutcome","DownloadProgress","IncompleteBlobInfo","Reader"],"type":["Client"]};

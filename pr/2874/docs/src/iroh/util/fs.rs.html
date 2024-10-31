@@ -432,6 +432,7 @@
 <a href="#432" id="432">432</a>
 <a href="#433" id="433">433</a>
 <a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Utilities for filesystem operations.
 </span><span class="kw">use </span>std::{
     borrow::Cow,
@@ -441,10 +442,11 @@
 
 <span class="kw">use </span>anyhow::{bail, Context};
 <span class="kw">use </span>bytes::Bytes;
-<span class="kw">use </span>iroh_blobs::rpc::client::blobs::WrapOption;
 <span class="kw">use </span>iroh_net::key::SecretKey;
 <span class="kw">use </span>tokio::io::AsyncWriteExt;
 <span class="kw">use </span>walkdir::WalkDir;
+
+<span class="kw">use </span><span class="kw">crate</span>::client::blobs::WrapOption;
 
 <span class="doccomment">/// A data source
 </span><span class="attr">#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
