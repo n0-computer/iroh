@@ -918,7 +918,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         }
 
         if let Some(engine) = self.inner.willow.clone() {
-            self = self.accept(iroh_willow::ALPN, Arc::new(engine));
+            self = self.accept(iroh_willow::ALPN.to_vec(), Arc::new(engine));
         }
 
         self

@@ -348,4 +348,12 @@ impl ProtocolHandler for iroh_willow::Engine {
     fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>> {
         Box::pin(async move { self.handle_connection(conn.await?).await })
     }
+
+    fn shutdown(self: Arc<Self>) -> BoxedFuture<()> {
+        Box::pin(async move {
+            if let Err(e) = (&**self).shutdown().await {
+                tracing::error!(?e, "Error while shutting down willow engine");
+            }
+        })
+    }
 }

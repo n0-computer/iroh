@@ -464,30 +464,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
     async fn shutdown(&self, protocols: Arc<ProtocolMap>) {
         let error_code = Closed::ProviderTerminating;
 
-        // Shutdown future for the docs engine, if enabled.
-        let docs_shutdown = {
-            let docs = self.docs.clone();
-            async move {
-                if let Some(docs) = docs {
-                    docs.shutdown().await
-                } else {
-                    Ok(())
-                }
-            }
-        };
-
-        // Shutdown willow gracefully.
-        let spaces_shutdown = {
-            let engine = self.willow.clone();
-            async move {
-                if let Some(engine) = engine {
-                    if let Err(error) = engine.shutdown().await {
-                        warn!(?error, "Error while shutting down willow");
-                    }
-                }
-            }
-        };
-
         // We ignore all errors during shutdown.
         let _ = tokio::join!(
             // Close the endpoint.
@@ -497,12 +473,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
             self.endpoint
                 .clone()
                 .close(error_code.into(), error_code.reason()),
-            // Shutdown docs engine.
-            docs_shutdown,
-            // Shutdown spaces engine.
-            spaces_shutdown,
-            // Shutdown blobs store engine.
-            self.db.shutdown(),
             // Shutdown protocol handlers.
             protocols.shutdown(),
         );

@@ -123,14 +123,14 @@ impl Engine {
     ///
     /// This will try to close all connections gracefully for up to 10 seconds,
     /// and abort them otherwise.
-    pub async fn shutdown(mut self) -> Result<()> {
+    pub async fn shutdown(&self) -> Result<()> {
         debug!("shutdown engine");
         let (reply, reply_rx) = oneshot::channel();
         self.peer_manager_inbox
             .send(peer_manager::Input::Shutdown { reply })
             .await?;
         reply_rx.await?;
-        let res = (&mut self.peer_manager_task).await;
+        let res = self.peer_manager_task.clone().await;
         match res {
             Err(err) => error!(?err, "peer manager task panicked"),
             Ok(Err(err)) => error!(?err, "peer manager task failed"),
