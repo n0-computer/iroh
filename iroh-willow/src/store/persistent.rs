@@ -294,7 +294,8 @@ impl WillowSnapshot {
                 .map(move |result| {
                     let (point, stored_entry) = result?;
                     let id = stored_entry.authorisation_token_id;
-                    let auth_token = get_entry_auth_token(id, &clone.auth_tokens)?;
+                    let auth_token = get_entry_auth_token(id, &clone.auth_tokens)
+                        .inspect_err(|e| tracing::error!(%e, "Database inconsistent, failed to fetch auth token"))?;
                     stored_entry.into_authorised_entry(namespace, &point, auth_token)
                 })
                 .collect::<Vec<_>>()

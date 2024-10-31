@@ -128,13 +128,17 @@ impl Display for StoredTimestamp {
     }
 }
 
+// The `StoredTimestamp` needs to be big-endian so the derived
+// `Ord` instance on the inner [u8; 8] matches the ord instance
+// of the equivalent u64.
+// See also the associated proptest in this module.
 impl StoredTimestamp {
     pub(crate) fn new(ts: Timestamp) -> Self {
-        Self(ts.to_le_bytes())
+        Self(ts.to_be_bytes())
     }
 
     pub(crate) fn timestamp(&self) -> Timestamp {
-        u64::from_le_bytes(self.0)
+        u64::from_be_bytes(self.0)
     }
 }
 
@@ -233,5 +237,20 @@ pub(crate) fn map_range<S: Ord, T: Ord>(range: &Range<S>, f: impl Fn(&S) -> T) -
             RangeEnd::Closed(end) => RangeEnd::Closed(f(end)),
             RangeEnd::Open => RangeEnd::Open,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proptest::prop_assert_eq;
+    use test_strategy::proptest;
+
+    use super::StoredTimestamp;
+
+    #[proptest]
+    fn prop_stored_timestamp_ord_matches_u64_ord(num: u64, other: u64) {
+        let expected = num.cmp(&other);
+        let actual = StoredTimestamp::new(num).cmp(&StoredTimestamp::new(other));
+        prop_assert_eq!(expected, actual);
     }
 }

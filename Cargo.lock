@@ -3050,6 +3050,7 @@ dependencies = [
  "genawaiter",
  "hex",
  "iroh-base",
+ "iroh-blake3",
  "iroh-blobs",
  "iroh-io",
  "iroh-metrics",

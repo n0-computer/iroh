@@ -1,12 +1,11 @@
 use std::fmt;
 
-use iroh_blobs::Hash;
 use serde::{Deserialize, Serialize};
 use willow_store::{FixedSize, LiftingCommutativeMonoid, PointRef};
 
 use crate::{
-    proto::data_model::{Entry, EntryExt},
-    store::glue::{IrohWillowParams, StoredAuthorisedEntry},
+    proto::data_model::Entry,
+    store::glue::{path_to_blobseq, IrohWillowParams, StoredAuthorisedEntry, StoredTimestamp},
 };
 
 #[derive(
@@ -24,6 +23,33 @@ use crate::{
 #[repr(transparent)]
 pub struct Fingerprint(pub [u8; 32]);
 
+impl Fingerprint {
+    pub(crate) fn lift_stored_entry(
+        key: &PointRef<IrohWillowParams>,
+        payload_digest: &[u8; 32],
+        payload_size: u64,
+    ) -> Self {
+        let mut hasher = iroh_blake3::Hasher::default();
+        hasher.update(key.as_slice());
+        hasher.update(payload_digest);
+        hasher.update(&payload_size.to_le_bytes());
+        Self(*hasher.finalize().as_bytes())
+    }
+
+    pub fn lift_entry(entry: &Entry) -> Self {
+        let point = willow_store::Point::<IrohWillowParams>::new(
+            entry.subspace_id(),
+            &StoredTimestamp::new(entry.timestamp()),
+            &path_to_blobseq(entry.path()),
+        );
+        Self::lift_stored_entry(
+            &point,
+            entry.payload_digest().0.as_bytes(),
+            entry.payload_length(),
+        )
+    }
+}
+
 impl FixedSize for Fingerprint {
     const SIZE: usize = std::mem::size_of::<Self>();
 }
@@ -33,8 +59,8 @@ impl LiftingCommutativeMonoid<PointRef<IrohWillowParams>, StoredAuthorisedEntry>
         Self([0u8; 32])
     }
 
-    fn lift(_key: &PointRef<IrohWillowParams>, value: &StoredAuthorisedEntry) -> Self {
-        Self(value.payload_digest)
+    fn lift(key: &PointRef<IrohWillowParams>, value: &StoredAuthorisedEntry) -> Self {
+        Self::lift_stored_entry(key, &value.payload_digest, value.payload_size)
     }
 
     fn combine(&self, other: &Self) -> Self {
@@ -53,8 +79,7 @@ impl fmt::Debug for Fingerprint {
 impl Fingerprint {
     pub fn add_entry(&mut self, entry: &Entry) {
         // TODO: Don't allocate
-        let encoded = entry.encode_to_vec();
-        let next = Fingerprint(*Hash::new(&encoded).as_bytes());
+        let next = Self::lift_entry(entry);
         *self ^= next;
     }
 
