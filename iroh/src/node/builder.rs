@@ -86,6 +86,9 @@ pub enum SpacesStorage {
     Memory,
     /// File-based persistent storage.
     Persistent(PathBuf),
+    /// (test only) persistent storage with in-memory redb backend.
+    #[cfg(feature = "test-utils")]
+    PersistentTest,
 }
 
 /// Builder for the [`Node`].
@@ -359,6 +362,19 @@ where
             gc_done_callback: self.gc_done_callback,
             blob_events: self.blob_events,
         })
+    }
+
+    /// Enables the persistent store, but with an in-memory backend.
+    ///
+    /// There's significant differences between the naive spaces in-memory store
+    /// and the persistent store, even if it's using the in-memory backend,
+    /// making it useful to test these two implementations against each other.
+    #[cfg(feature = "test-utils")]
+    pub fn enable_spaces_persist_test_mode(mut self, test_mode: bool) -> Self {
+        if test_mode == true {
+            self.spaces_storage = SpacesStorage::PersistentTest;
+        }
+        self
     }
 
     /// Configure rpc endpoint.
@@ -660,11 +676,15 @@ where
         )
         .await?;
 
+        let blobs_store = self.blobs_store.clone();
         let willow = match self.spaces_storage {
             SpacesStorage::Disabled => None,
             SpacesStorage::Memory => {
-                let blobs_store = self.blobs_store.clone();
-                let create_store = move || iroh_willow::store::memory::Store::new(blobs_store);
+                let create_store = move || {
+                    // iroh_willow::store::memory::Store::new(blobs_store)
+                    iroh_willow::store::persistent::Store::new_memory(blobs_store)
+                        .expect("couldn't initialize store")
+                };
                 let engine = iroh_willow::Engine::spawn(
                     endpoint.clone(),
                     create_store,
@@ -673,10 +693,22 @@ where
                 Some(engine)
             }
             SpacesStorage::Persistent(path) => {
-                let blobs_store = self.blobs_store.clone();
                 let create_store = move || {
                     iroh_willow::store::persistent::Store::new(path, blobs_store)
-                        .expect("failed to spawn persistent store") // TODO(matheus23)
+                        .expect("failed to spawn persistent store") // TODO(matheus23): introduce fallibility?
+                };
+                let engine = iroh_willow::Engine::spawn(
+                    endpoint.clone(),
+                    create_store,
+                    iroh_willow::engine::AcceptOpts::default(),
+                );
+                Some(engine)
+            }
+            #[cfg(feature = "test-utils")]
+            SpacesStorage::PersistentTest => {
+                let create_store = move || {
+                    iroh_willow::store::persistent::Store::new_memory(blobs_store)
+                        .expect("couldn't initialize store")
                 };
                 let engine = iroh_willow::Engine::spawn(
                     endpoint.clone(),
