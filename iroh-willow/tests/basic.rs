@@ -7,6 +7,7 @@ use futures_lite::StreamExt;
 
 use iroh_blobs::store::{Map, MapEntry};
 use iroh_io::AsyncSliceReaderExt;
+use iroh_net::key::SecretKey;
 use iroh_willow::{
     form::EntryForm,
     interest::{CapSelector, DelegateTo, Interests, IntoAreaOfInterest, RestrictArea},
@@ -276,6 +277,40 @@ async fn peer_manager_twoway_loop() -> Result<()> {
         task_betty.await.unwrap();
     }
     [alfie, betty].map(Peer::shutdown).try_join().await?;
+    Ok(())
+}
+
+/// Regression test. Used to fail due to redb's slices being unaligned,
+/// and previously timestamps being represented as u64, thus failing to
+/// zerocopy-deserialize.
+#[tokio::test(flavor = "multi_thread")]
+async fn read_back_write() -> Result<()> {
+    iroh_test::logging::setup_multithreaded();
+    let mut rng = create_rng("read_back_write");
+
+    let alfie = Peer::spawn(SecretKey::generate_with_rng(&mut rng), Default::default()).await?;
+
+    let user_alfie = alfie.create_user().await?;
+    let namespace_id = alfie
+        .create_namespace(NamespaceKind::Owned, user_alfie)
+        .await?;
+
+    for i in 0u64..2 {
+        let path = Path::from_bytes(&[b"foo", &i.to_le_bytes()])?;
+        let entry = EntryForm::new_bytes(namespace_id, path, "foo");
+        alfie.insert_entry(entry, user_alfie).await?;
+    }
+
+    let entries: Vec<_> = alfie
+        .get_entries(namespace_id, Range3d::new_full())
+        .await?
+        .try_collect()
+        .await?;
+
+    println!("{entries:#?}");
+
+    assert_eq!(entries.len(), 2);
+
     Ok(())
 }
 

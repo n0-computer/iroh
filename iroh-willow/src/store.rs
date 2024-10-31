@@ -27,7 +27,9 @@ pub(crate) use self::traits::EntryOrigin;
 
 pub(crate) mod auth;
 pub mod memory;
+pub mod persistent;
 pub mod traits;
+pub(crate) mod willow_store_glue;
 
 /// Storage for the Willow engine.
 ///
@@ -84,7 +86,7 @@ impl<S: Storage> Store<S> {
         };
         let secret_key = self
             .secrets()
-            .get_user(&user_id)
+            .get_user(&user_id)?
             .context("Missing user keypair")?;
 
         // TODO(frando): This should use `authorisation_token_unchecked` if we uphold the invariant

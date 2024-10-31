@@ -20,13 +20,12 @@ use crate::proto::grouping::Area;
 use crate::{
     interest::{CapSelector, CapabilityPack},
     proto::{
-        data_model::{AuthorisedEntry, Entry, EntryExt, Path, SubspaceId, WriteCapability},
-        grouping::{Range, Range3d, RangeEnd},
+        data_model::{AuthorisedEntry, Path, SubspaceId, WriteCapability},
+        grouping::Range3d,
         keys::{NamespaceId, NamespaceSecretKey, UserId, UserSecretKey},
         meadowcap::{self, is_wider_than, ReadAuthorisation},
-        wgps::Fingerprint,
     },
-    store::traits::{self, RangeSplit, SplitAction, SplitOpts},
+    store::traits,
 };
 
 use super::traits::{StoreEvent, SubscribeParams};
@@ -94,12 +93,12 @@ impl traits::SecretStorage for Rc<RefCell<SecretStore>> {
         Ok(())
     }
 
-    fn get_user(&self, id: &UserId) -> Option<UserSecretKey> {
-        self.borrow().user.get(id).cloned()
+    fn get_user(&self, id: &UserId) -> Result<Option<UserSecretKey>> {
+        Ok(self.borrow().user.get(id).cloned())
     }
 
-    fn get_namespace(&self, id: &NamespaceId) -> Option<NamespaceSecretKey> {
-        self.borrow().namespace.get(id).cloned()
+    fn get_namespace(&self, id: &NamespaceId) -> Result<Option<NamespaceSecretKey>> {
+        Ok(self.borrow().namespace.get(id).cloned())
     }
 }
 
@@ -116,97 +115,14 @@ pub struct NamespaceStore {
 
 // impl<T: std::ops::Deref<Target = MemoryEntryStore> + 'static> ReadonlyStore for T {
 impl traits::EntryReader for Rc<RefCell<EntryStore>> {
-    fn fingerprint(&self, namespace: NamespaceId, range: &Range3d) -> Result<Fingerprint> {
-        let mut fingerprint = Fingerprint::default();
-        for entry in self.get_entries(namespace, range) {
-            let entry = entry?;
-            fingerprint.add_entry(&entry);
-        }
-        Ok(fingerprint)
-    }
-
-    fn split_range(
-        &self,
-        namespace: NamespaceId,
-        range: &Range3d,
-        config: &SplitOpts,
-    ) -> Result<impl Iterator<Item = Result<RangeSplit>>> {
-        let count = self.get_entries(namespace, range).count();
-        if count <= config.max_set_size {
-            return Ok(
-                vec![Ok((range.clone(), SplitAction::SendEntries(count as u64)))].into_iter(),
-            );
-        }
-        let mut entries: Vec<Entry> = self
-            .get_entries(namespace, range)
-            .filter_map(|e| e.ok())
-            .collect();
-
-        entries.sort_by(|e1, e2| e1.as_sortable_tuple().cmp(&e2.as_sortable_tuple()));
-
-        let split_index = count / 2;
-        let mid = entries.get(split_index).expect("not empty");
-        let mut ranges = vec![];
-        // split in two halves by subspace
-        if *mid.subspace_id() != range.subspaces().start {
-            ranges.push(Range3d::new(
-                Range::new_closed(range.subspaces().start, *mid.subspace_id()).unwrap(),
-                range.paths().clone(),
-                *range.times(),
-            ));
-            ranges.push(Range3d::new(
-                Range::new(*mid.subspace_id(), range.subspaces().end),
-                range.paths().clone(),
-                *range.times(),
-            ));
-        }
-        // split by path
-        else if *mid.path() != range.paths().start {
-            ranges.push(Range3d::new(
-                *range.subspaces(),
-                Range::new(
-                    range.paths().start.clone(),
-                    RangeEnd::Closed(mid.path().clone()),
-                ),
-                *range.times(),
-            ));
-            ranges.push(Range3d::new(
-                *range.subspaces(),
-                Range::new(mid.path().clone(), range.paths().end.clone()),
-                *range.times(),
-            ));
-        // split by time
-        } else {
-            ranges.push(Range3d::new(
-                *range.subspaces(),
-                range.paths().clone(),
-                Range::new(range.times().start, RangeEnd::Closed(mid.timestamp())),
-            ));
-            ranges.push(Range3d::new(
-                *range.subspaces(),
-                range.paths().clone(),
-                Range::new(mid.timestamp(), range.times().end),
-            ));
-        }
-        let mut out = vec![];
-        for range in ranges {
-            let fingerprint = self.fingerprint(namespace, &range)?;
-            out.push(Ok((range, SplitAction::SendFingerprint(fingerprint))));
-        }
-        Ok(out.into_iter())
-    }
-
-    fn count(&self, namespace: NamespaceId, range: &Range3d) -> Result<u64> {
-        Ok(self.get_entries(namespace, range).count() as u64)
-    }
-
     fn get_authorised_entries<'a>(
         &'a self,
         namespace: NamespaceId,
         range: &Range3d,
-    ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a {
+    ) -> Result<impl Iterator<Item = Result<AuthorisedEntry>> + 'a> {
         let slf = self.borrow();
-        slf.stores
+        Ok(slf
+            .stores
             .get(&namespace)
             .map(|s| &s.entries)
             .into_iter()
@@ -214,7 +130,7 @@ impl traits::EntryReader for Rc<RefCell<EntryStore>> {
             .filter(|entry| range.includes_entry(entry.entry()))
             .map(|e| anyhow::Result::Ok(e.clone()))
             .collect::<Vec<_>>()
-            .into_iter()
+            .into_iter())
     }
 
     fn get_entry(
@@ -410,7 +326,7 @@ impl Stream for EventStream {
 // TODO: This would be quite a bit more efficient if we filtered the waker with a closure
 // that is set from the last poll, to not wake everyone for each new event.
 #[derive(Debug)]
-struct EventQueue<T> {
+pub(crate) struct EventQueue<T> {
     events: VecDeque<T>,
     offset: u64,
     wakers: VecDeque<Waker>,
@@ -435,7 +351,7 @@ impl<T> Default for EventQueue<T> {
 }
 
 impl<T: Clone> EventQueue<T> {
-    fn insert(&mut self, f: impl FnOnce(u64) -> T) {
+    pub(crate) fn insert(&mut self, f: impl FnOnce(u64) -> T) {
         let progress_id = self.next_progress_id();
         let event = f(progress_id);
         self.events.push_back(event);
@@ -444,16 +360,16 @@ impl<T: Clone> EventQueue<T> {
         }
     }
 
-    fn next_progress_id(&self) -> u64 {
+    pub(crate) fn next_progress_id(&self) -> u64 {
         self.offset + self.events.len() as u64
     }
 
-    fn get(&self, progress_id: u64) -> Option<&T> {
+    pub(crate) fn get(&self, progress_id: u64) -> Option<&T> {
         let index = progress_id.checked_sub(self.offset)?;
         self.events.get(index as usize)
     }
 
-    fn poll_next(
+    pub(crate) fn poll_next(
         &mut self,
         progress_id: u64,
         filter: impl Fn(&T) -> bool,
