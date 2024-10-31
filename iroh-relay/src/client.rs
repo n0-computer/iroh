@@ -12,7 +12,7 @@ use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use bytes::Bytes;
 use conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMessage};
 use futures_lite::future::Boxed as BoxFuture;
-use futures_util::{FutureExt, StreamExt};
+use futures_util::StreamExt;
 use hickory_resolver::TokioAsyncResolver as DnsResolver;
 use http_body_util::Empty;
 use hyper::{
@@ -42,7 +42,7 @@ use url::Url;
 
 use crate::{
     codec::DerpCodec,
-    defaults::timeouts::relay::*,
+    defaults::timeouts::*,
     http::{Protocol, RELAY_PATH},
     RelayUrl,
 };

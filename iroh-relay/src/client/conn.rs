@@ -34,7 +34,7 @@ use crate::{
         write_frame, ClientInfo, DerpCodec, Frame, MAX_PACKET_SIZE, PER_CLIENT_READ_QUEUE_DEPTH,
         PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
     },
-    defaults::timeouts::relay::CLIENT_RECV_TIMEOUT,
+    defaults::timeouts::CLIENT_RECV_TIMEOUT,
 };
 
 impl PartialEq for Conn {
