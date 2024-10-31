@@ -21,16 +21,18 @@ use iroh::{
         get::{db::DownloadProgress, progress::BlobProgress, Stats},
         net_protocol::DownloadMode,
         provider::AddProgress,
-        rpc::client::blobs::{
-            BlobInfo, BlobStatus, CollectionInfo, DownloadOptions, IncompleteBlobInfo, WrapOption,
-        },
         store::{
             ConsistencyCheckProgress, ExportFormat, ExportMode, ReportLevel, ValidateProgress,
         },
         util::SetTagOption,
         BlobFormat, Hash, HashAndFormat, Tag,
     },
-    client::Iroh,
+    client::{
+        blobs::{
+            BlobInfo, BlobStatus, CollectionInfo, DownloadOptions, IncompleteBlobInfo, WrapOption,
+        },
+        Iroh,
+    },
     net::{key::PublicKey, relay::RelayUrl, NodeAddr},
 };
 use tokio::io::AsyncWriteExt;

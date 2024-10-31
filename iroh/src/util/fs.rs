@@ -7,10 +7,11 @@ use std::{
 
 use anyhow::{bail, Context};
 use bytes::Bytes;
-use iroh_blobs::rpc::client::blobs::WrapOption;
 use iroh_net::key::SecretKey;
 use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
+
+use crate::client::blobs::WrapOption;
 
 /// A data source
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]

@@ -487,7 +487,7 @@ impl Entry {
         let client: RpcClient = client.into().clone();
         let client: quic_rpc::RpcClient<iroh_blobs::rpc::proto::RpcService, _, _> = client.map();
 
-        iroh_blobs::rpc::client::blobs::Reader::from_rpc_read(&client, self.content_hash())
+        blobs::Reader::from_rpc_read(&client, self.content_hash())
             .await?
             .read_to_bytes()
             .await

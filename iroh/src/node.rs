@@ -495,15 +495,11 @@ fn node_address_for_storage(info: RemoteInfo) -> Option<NodeAddr> {
 
 #[cfg(test)]
 mod tests {
+    use crate::client::blobs::{AddOutcome, WrapOption};
     use anyhow::{bail, Context};
     use bytes::Bytes;
     use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
-    use iroh_blobs::{
-        provider::AddProgress,
-        rpc::client::blobs::{AddOutcome, WrapOption},
-        util::SetTagOption,
-        BlobFormat,
-    };
+    use iroh_blobs::{provider::AddProgress, util::SetTagOption, BlobFormat};
     use iroh_net::{key::SecretKey, relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
 
     use super::*;
