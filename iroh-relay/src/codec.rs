@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use anyhow::{bail, ensure};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-#[cfg(feature = "iroh-relay")]
+// TODO(@divma): check what changed
+// #[cfg(feature = "iroh-relay")]
 use futures_lite::{Stream, StreamExt};
 use futures_sink::Sink;
 use futures_util::SinkExt;
@@ -166,8 +167,9 @@ pub(crate) async fn send_client_key<S: Sink<Frame, Error = std::io::Error> + Unp
 
 /// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
-#[cfg(feature = "iroh-relay")]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
+// TODO(@divma): weird I had to change this
+// #[cfg(feature = "iroh-relay")]
+// #[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
 pub(super) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
     stream: S,
 ) -> anyhow::Result<(PublicKey, ClientInfo)> {
@@ -537,8 +539,9 @@ impl Encoder<Frame> for DerpCodec {
 
 /// Receives the next frame and matches the frame type. If the correct type is found returns the content,
 /// otherwise an error.
-#[cfg(feature = "iroh-relay")]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
+// TODO(@divma): what's going on
+// #[cfg(feature = "iroh-relay")]
+// #[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
 pub(super) async fn recv_frame<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
     frame_type: FrameType,
     mut stream: S,
