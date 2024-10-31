@@ -15,6 +15,9 @@ pub enum IrohPaths {
     /// Path to the [iroh-docs document database](iroh_docs::store::fs::Store)
     #[strum(serialize = "docs.redb")]
     DocsDatabase,
+    /// Path to the iroh-willow database
+    #[strum(serialize = "spaces.redb")]
+    SpacesDatabase,
     /// Path to the console state
     #[strum(serialize = "console")]
     Console,

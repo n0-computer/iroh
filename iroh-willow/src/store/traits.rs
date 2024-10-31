@@ -5,12 +5,14 @@ use std::fmt::Debug;
 use anyhow::Result;
 use futures_lite::Stream;
 use serde::{Deserialize, Serialize};
+use willow_data_model::grouping::{Range, RangeEnd};
 
 use crate::{
     interest::{CapSelector, CapabilityPack},
     proto::{
         data_model::{
-            self, AuthorisedEntry, Entry, NamespaceId, Path, SubspaceId, WriteCapability,
+            self, AuthorisedEntry, Entry, EntryExt as _, NamespaceId, Path, SubspaceId,
+            WriteCapability,
         },
         grouping::{Area, Range3d},
         keys::{NamespaceSecretKey, NamespaceSignature, UserId, UserSecretKey, UserSignature},
@@ -36,15 +38,15 @@ pub trait Storage: Debug + Clone + 'static {
 /// Storage for user and namespace secrets.
 pub trait SecretStorage: Debug + Clone + 'static {
     fn insert(&self, secret: meadowcap::SecretKey) -> Result<(), SecretStoreError>;
-    fn get_user(&self, id: &UserId) -> Option<UserSecretKey>;
-    fn get_namespace(&self, id: &NamespaceId) -> Option<NamespaceSecretKey>;
+    fn get_user(&self, id: &UserId) -> Result<Option<UserSecretKey>>;
+    fn get_namespace(&self, id: &NamespaceId) -> Result<Option<NamespaceSecretKey>>;
 
-    fn has_user(&self, id: &UserId) -> bool {
-        self.get_user(id).is_some()
+    fn has_user(&self, id: &UserId) -> Result<bool> {
+        Ok(self.get_user(id)?.is_some())
     }
 
-    fn has_namespace(&self, id: &UserId) -> bool {
-        self.get_user(id).is_some()
+    fn has_namespace(&self, id: &UserId) -> Result<bool> {
+        Ok(self.get_user(id)?.is_some())
     }
 
     fn insert_user(&self, secret: UserSecretKey) -> Result<UserId, SecretStoreError> {
@@ -63,7 +65,7 @@ pub trait SecretStorage: Debug + Clone + 'static {
 
     fn sign_user(&self, id: &UserId, message: &[u8]) -> Result<UserSignature, SecretStoreError> {
         Ok(self
-            .get_user(id)
+            .get_user(id)?
             .ok_or(SecretStoreError::MissingKey)?
             .sign(message))
     }
@@ -73,7 +75,7 @@ pub trait SecretStorage: Debug + Clone + 'static {
         message: &[u8],
     ) -> Result<NamespaceSignature, SecretStoreError> {
         Ok(self
-            .get_namespace(id)
+            .get_namespace(id)?
             .ok_or(SecretStoreError::MissingKey)?
             .sign(message))
     }
@@ -117,16 +119,89 @@ pub trait EntryStorage: EntryReader + Clone + Debug + 'static {
 
 /// Read-only interface to [`EntryStorage`].
 pub trait EntryReader: Debug + 'static {
-    fn fingerprint(&self, namespace: NamespaceId, range: &Range3d) -> Result<Fingerprint>;
+    fn fingerprint(&self, namespace: NamespaceId, range: &Range3d) -> Result<Fingerprint> {
+        let mut fingerprint = Fingerprint::default();
+        for entry in self.get_entries(namespace, range)? {
+            let entry = entry?;
+            fingerprint.add_entry(&entry);
+        }
+        Ok(fingerprint)
+    }
 
     fn split_range(
         &self,
         namespace: NamespaceId,
         range: &Range3d,
         config: &SplitOpts,
-    ) -> Result<impl Iterator<Item = Result<RangeSplit>>>;
+    ) -> Result<impl Iterator<Item = Result<RangeSplit>>> {
+        let count = self.count(namespace, range)? as usize;
+        if count <= config.max_set_size {
+            return Ok(
+                vec![Ok((range.clone(), SplitAction::SendEntries(count as u64)))].into_iter(),
+            );
+        }
+        let mut entries: Vec<Entry> = self
+            .get_entries(namespace, range)?
+            .filter_map(|e| e.ok())
+            .collect();
 
-    fn count(&self, namespace: NamespaceId, range: &Range3d) -> Result<u64>;
+        entries.sort_by(|e1, e2| e1.as_sortable_tuple().cmp(&e2.as_sortable_tuple()));
+
+        let split_index = count / 2;
+        let mid = entries.get(split_index).expect("not empty");
+        let mut ranges = vec![];
+        // split in two halves by subspace
+        if *mid.subspace_id() != range.subspaces().start {
+            ranges.push(Range3d::new(
+                Range::new_closed(range.subspaces().start, *mid.subspace_id()).unwrap(),
+                range.paths().clone(),
+                *range.times(),
+            ));
+            ranges.push(Range3d::new(
+                Range::new(*mid.subspace_id(), range.subspaces().end),
+                range.paths().clone(),
+                *range.times(),
+            ));
+        }
+        // split by path
+        else if *mid.path() != range.paths().start {
+            ranges.push(Range3d::new(
+                *range.subspaces(),
+                Range::new(
+                    range.paths().start.clone(),
+                    RangeEnd::Closed(mid.path().clone()),
+                ),
+                *range.times(),
+            ));
+            ranges.push(Range3d::new(
+                *range.subspaces(),
+                Range::new(mid.path().clone(), range.paths().end.clone()),
+                *range.times(),
+            ));
+        // split by time
+        } else {
+            ranges.push(Range3d::new(
+                *range.subspaces(),
+                range.paths().clone(),
+                Range::new(range.times().start, RangeEnd::Closed(mid.timestamp())),
+            ));
+            ranges.push(Range3d::new(
+                *range.subspaces(),
+                range.paths().clone(),
+                Range::new(mid.timestamp(), range.times().end),
+            ));
+        }
+        let mut out = vec![];
+        for range in ranges {
+            let fingerprint = self.fingerprint(namespace, &range)?;
+            out.push(Ok((range, SplitAction::SendFingerprint(fingerprint))));
+        }
+        Ok(out.into_iter())
+    }
+
+    fn count(&self, namespace: NamespaceId, range: &Range3d) -> Result<u64> {
+        Ok(self.get_entries(namespace, range)?.count() as u64)
+    }
 
     fn get_entry(
         &self,
@@ -139,15 +214,16 @@ pub trait EntryReader: Debug + 'static {
         &'a self,
         namespace: NamespaceId,
         range: &Range3d,
-    ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a;
+    ) -> Result<impl Iterator<Item = Result<AuthorisedEntry>> + 'a>;
 
     fn get_entries(
         &self,
         namespace: NamespaceId,
         range: &Range3d,
-    ) -> impl Iterator<Item = Result<Entry>> {
-        self.get_authorised_entries(namespace, range)
-            .map(|e| e.map(|e| e.into_parts().0))
+    ) -> Result<impl Iterator<Item = Result<Entry>>> {
+        Ok(self
+            .get_authorised_entries(namespace, range)?
+            .map(|e| e.map(|e| e.into_parts().0)))
     }
 }
 

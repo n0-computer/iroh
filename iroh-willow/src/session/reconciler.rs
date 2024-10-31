@@ -546,7 +546,7 @@ impl Target {
                 shared
                     .store
                     .entries()
-                    .get_authorised_entries(self.namespace(), range)
+                    .get_authorised_entries(self.namespace(), range)?
                     .peekable(),
             )
         };

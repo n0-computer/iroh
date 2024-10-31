@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc fce9116f574b43cdad834dcc3e61661a64a69c6b465cc1e453d7bd9875397b24 # shrinks to input = _PropStoredTimestampOrdMatchesU64OrdArgs { num: 11844874737747751936, other: 1 }

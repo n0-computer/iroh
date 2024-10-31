@@ -66,7 +66,7 @@ impl<S: Storage> Auth<S> {
             // Only allow importing caps we can use.
             // TODO: Is this what we want?
             let user_id = cap.receiver();
-            if !self.secrets.has_user(&user_id) {
+            if !self.secrets.has_user(&user_id)? {
                 return Err(AuthError::MissingUserSecret(user_id));
             }
             self.caps.insert(cap)?;
@@ -147,7 +147,7 @@ impl<S: Storage> Auth<S> {
         } else {
             let namespace_secret = self
                 .secrets
-                .get_namespace(&namespace_key)
+                .get_namespace(&namespace_key)?
                 .ok_or(AuthError::MissingNamespaceSecret(namespace_key))?;
             let read_cap = McCapability::new_owned(
                 namespace_key,
@@ -174,7 +174,7 @@ impl<S: Storage> Auth<S> {
         } else {
             let namespace_secret = self
                 .secrets
-                .get_namespace(&namespace_key)
+                .get_namespace(&namespace_key)?
                 .ok_or(AuthError::MissingNamespaceSecret(namespace_key))?;
             McCapability::new_owned(
                 namespace_key,
@@ -224,7 +224,7 @@ impl<S: Storage> Auth<S> {
         let user_id = read_cap.receiver();
         let user_secret = self
             .secrets
-            .get_user(user_id)
+            .get_user(user_id)?
             .ok_or(AuthError::MissingUserSecret(*user_id))?;
         let area = restrict_area.or_default(read_cap.granted_area());
         let new_read_cap = read_cap.delegate(&user_secret, &to, &area)?;
@@ -255,7 +255,7 @@ impl<S: Storage> Auth<S> {
         let cap = self.get_write_cap(from)?.ok_or(AuthError::NoCapability)?;
         let user_secret = self
             .secrets
-            .get_user(cap.receiver())
+            .get_user(cap.receiver())?
             .ok_or(AuthError::MissingUserSecret(*cap.receiver()))?;
         let area = restrict_area.or_default(cap.granted_area());
         let new_cap = cap.delegate(&user_secret, &to, &area)?;

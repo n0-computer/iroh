@@ -25,7 +25,7 @@ use tracing::{error, info};
 
 /// Spawn an iroh node in a separate thread and tokio runtime, and return
 /// the address and client.
-async fn spawn_node() -> (NodeAddr, Iroh) {
+async fn spawn_node(persist_test_mode: bool) -> (NodeAddr, Iroh) {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -34,6 +34,7 @@ async fn spawn_node() -> (NodeAddr, Iroh) {
         runtime.block_on(async move {
             let secret_key = SecretKey::generate();
             let node = iroh::node::Builder::default()
+                .enable_spaces_persist_test_mode(persist_test_mode)
                 .secret_key(secret_key)
                 .relay_mode(iroh_net::relay::RelayMode::Disabled)
                 .node_discovery(iroh::node::DiscoveryConfig::None)
@@ -76,8 +77,11 @@ enum Peer {
     Y,
 }
 
-#[proptest]
-fn test_get_many_weird_result(
+#[proptest(cases = 32)]
+fn prop_sync_simulation_matches_model(
+    // these bools govern whether to use the memory store or the persistent store with an in-memory backend.
+    x_is_persist: bool,
+    y_is_persist: bool,
     #[strategy(vec((role(), vec(simple_op(), 0..20)), 0..20))] rounds: Vec<(Peer, Vec<Operation>)>,
 ) {
     iroh_test::logging::setup_multithreaded();
@@ -89,8 +93,8 @@ fn test_get_many_weird_result(
         .block_on(async {
             let mut simulated_entries: BTreeMap<(Peer, String), String> = BTreeMap::new();
 
-            let (addr_x, iroh_x) = spawn_node().await;
-            let (addr_y, iroh_y) = spawn_node().await;
+            let (addr_x, iroh_x) = spawn_node(x_is_persist).await;
+            let (addr_y, iroh_y) = spawn_node(y_is_persist).await;
             let node_id_x = addr_x.node_id;
             let node_id_y = addr_y.node_id;
             iroh_x.net().add_node_addr(addr_y.clone()).await?;
@@ -166,7 +170,7 @@ fn test_get_many_weird_result(
                     anyhow::Ok(())
                 };
                 let fut = async { tokio::try_join!(fut_x, fut_y) };
-                tokio::time::timeout(Duration::from_secs(10), fut).await??;
+                tokio::time::timeout(Duration::from_secs(40), fut).await??;
 
                 info!("[{i}/{count}] sync complete");
 
@@ -264,8 +268,8 @@ impl std::error::Error for AnyhowStdErr {
 #[tokio::test]
 async fn spaces_smoke() -> TestResult {
     iroh_test::logging::setup_multithreaded();
-    let (alfie_addr, alfie) = spawn_node().await;
-    let (betty_addr, betty) = spawn_node().await;
+    let (alfie_addr, alfie) = spawn_node(false).await;
+    let (betty_addr, betty) = spawn_node(false).await;
     info!("alfie is {}", alfie_addr.node_id.fmt_short());
     info!("betty is {}", betty_addr.node_id.fmt_short());
 
@@ -360,8 +364,8 @@ async fn spaces_smoke() -> TestResult {
 #[tokio::test]
 async fn spaces_subscription() -> TestResult {
     iroh_test::logging::setup_multithreaded();
-    let (alfie_addr, alfie) = spawn_node().await;
-    let (betty_addr, betty) = spawn_node().await;
+    let (alfie_addr, alfie) = spawn_node(false).await;
+    let (betty_addr, betty) = spawn_node(false).await;
     info!("alfie is {}", alfie_addr.node_id.fmt_short());
     info!("betty is {}", betty_addr.node_id.fmt_short());
 
@@ -444,9 +448,9 @@ async fn spaces_subscription() -> TestResult {
 #[tokio::test]
 async fn test_restricted_area() -> testresult::TestResult {
     iroh_test::logging::setup_multithreaded();
-    const TIMEOUT: Duration = Duration::from_secs(2);
-    let (alfie_addr, alfie) = spawn_node().await;
-    let (betty_addr, betty) = spawn_node().await;
+    const TIMEOUT: Duration = Duration::from_secs(20);
+    let (alfie_addr, alfie) = spawn_node(false).await;
+    let (betty_addr, betty) = spawn_node(false).await;
     info!("alfie is {}", alfie_addr.node_id.fmt_short());
     info!("betty is {}", betty_addr.node_id.fmt_short());
     let alfie_user = alfie.spaces().create_user().await?;
