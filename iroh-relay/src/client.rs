@@ -46,7 +46,7 @@ use crate::{
     RelayUrl,
 };
 
-use util::chain;
+use crate::util::chain;
 
 pub(crate) mod conn;
 pub(crate) mod streams;
