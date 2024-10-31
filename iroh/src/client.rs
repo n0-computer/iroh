@@ -22,7 +22,6 @@ pub mod authors;
 pub mod blobs;
 pub mod docs;
 pub mod net;
-// pub use iroh_blobs::rpc::client::{blobs, tags};
 
 // Keep this type exposed, otherwise every occurrence of `RpcClient` in the API
 // will show up as `RpcClient<RpcService, Connection<RpcService>>` in the docs.
@@ -57,11 +56,8 @@ impl Iroh {
     }
 
     /// Returns the blobs client.
-    pub fn blobs(
-        &self,
-    ) -> iroh_blobs::rpc::client::blobs::Client<BoxedServiceConnection<RpcService>, RpcService>
-    {
-        iroh_blobs::rpc::client::blobs::Client::new(self.rpc.clone().map())
+    pub fn blobs(&self) -> blobs::Client {
+        blobs::Client::new(self.rpc.clone().map())
     }
 
     /// Returns the docs client.
