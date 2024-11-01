@@ -252,12 +252,9 @@ impl Probe {
             inner: (enable_upnp && !upnp).then(|| {
                 Box::pin(async {
                     tracing::info!("upnp probe, sleeping");
-                    tokio::time::timeout(Duration::from_secs(3), async move {
-                        upnp::probe_available()
-                            .await
-                            .map(|addr| (addr, Instant::now()))
-                    })
-                    .await
+                    upnp::probe_available()
+                        .await
+                        .map(|addr| (addr, Instant::now()))
                 })
             }),
         };
@@ -297,15 +294,7 @@ impl Probe {
             tokio::select! {
                 last_upnp_gateway_addr = &mut upnp_probing_task, if !upnp_done => {
                     trace!("tick: upnp probe ready");
-                    match last_upnp_gateway_addr {
-                        Ok(addr) => {
-                            probe.last_upnp_gateway_addr = addr;
-                        }
-                        Err(_err) => {
-                            probe.last_upnp_gateway_addr = None;
-                            tracing::debug!("upnp probe timed out");
-                        }
-                    }
+                    probe.last_upnp_gateway_addr = last_upnp_gateway_addr;
                     upnp_done = true;
                 },
                 last_nat_pmp = &mut nat_pmp_probing_task, if !nat_pmp_done => {
