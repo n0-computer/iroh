@@ -424,13 +424,9 @@ async fn build_relay_config(cfg: Config) -> Result<iroh_relay::ServerConfig<std:
     };
     Ok(iroh_relay::ServerConfig {
         relay: Some(relay_config),
-        stun: Some(stun_config),
+        stun: Some(stun_config).filter(|_| cfg.enable_stun),
         #[cfg(feature = "metrics")]
-        metrics_addr: if cfg.enable_metrics {
-            Some(cfg.metrics_bind_addr())
-        } else {
-            None
-        },
+        metrics_addr: Some(cfg.metrics_bind_addr()).filter(|_| cfg.enable_metrics),
     })
 }
 
