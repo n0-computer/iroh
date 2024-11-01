@@ -712,7 +712,6 @@
 <a href="#712" id="712">712</a>
 <a href="#713" id="713">713</a>
 <a href="#714" id="714">714</a>
-<a href="#715" id="715">715</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Port mapping client and service.
 
 </span><span class="kw">use </span>std::{
@@ -966,7 +965,6 @@
         <span class="kw">let </span><span class="kw-2">mut </span>upnp_probing_task = util::MaybeFuture {
             inner: (enable_upnp &amp;&amp; !upnp).then(|| {
                 Box::pin(<span class="kw">async </span>{
-                    <span class="macro">tracing::info!</span>(<span class="string">"upnp probe, sleeping"</span>);
                     upnp::probe_available()
                         .<span class="kw">await
                         </span>.map(|addr| (addr, Instant::now()))
