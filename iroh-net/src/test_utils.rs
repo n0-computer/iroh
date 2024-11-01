@@ -6,9 +6,12 @@ pub use dns_and_pkarr_servers::DnsPkarrServer;
 pub use dns_server::create_dns_resolver;
 use tokio::sync::oneshot;
 
-use crate::relay::{
-    server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
-    RelayMap, RelayNode, RelayUrl,
+use crate::{
+    defaults::DEFAULT_STUN_PORT,
+    relay::{
+        server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
+        RelayMap, RelayNode, RelayUrl,
+    },
 };
 
 /// A drop guard to clean up test infrastructure.
@@ -26,6 +29,21 @@ pub struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 /// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
 /// When dropped, the returned [`Server`] does will stop running.
 pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server)> {
+    run_relay_server_with(Some(StunConfig {
+        bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+    }))
+    .await
+}
+
+/// Runs a relay server.
+///
+/// `stun` can be set to `None` to disable stun, or set to `Some` `StunConfig`,
+/// to enable stun on a specific socket.
+///
+/// The return value is similar to [`run_relay_server`].
+pub async fn run_relay_server_with(
+    stun: Option<StunConfig>,
+) -> Result<(RelayMap, RelayUrl, Server)> {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
     let rustls_cert = rustls::pki_types::CertificateDer::from(cert.serialize_der().unwrap());
     let private_key =
@@ -44,9 +62,7 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server)> {
             }),
             limits: Default::default(),
         }),
-        stun: Some(StunConfig {
-            bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-        }),
+        stun,
         #[cfg(feature = "metrics")]
         metrics_addr: None,
     };
@@ -57,7 +73,7 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server)> {
     let m = RelayMap::from_nodes([RelayNode {
         url: url.clone(),
         stun_only: false,
-        stun_port: server.stun_addr().unwrap().port(),
+        stun_port: server.stun_addr().map_or(DEFAULT_STUN_PORT, |s| s.port()),
     }])
     .unwrap();
     Ok((m, url, server))

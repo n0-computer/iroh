@@ -1388,7 +1388,7 @@ mod tests {
     use tracing::{error_span, info, info_span, Instrument};
 
     use super::*;
-    use crate::test_utils::run_relay_server;
+    use crate::test_utils::{run_relay_server, run_relay_server_with};
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
@@ -1853,5 +1853,24 @@ mod tests {
         let (r1, r2) = tokio::try_join!(res_ep1, res_ep2).unwrap();
         r1.expect("ep1 timeout").unwrap();
         r2.expect("ep2 timeout").unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_direct_addresses_no_stun_relay() {
+        let _guard = iroh_test::logging::setup();
+        let (relay_map, _, _guard) = run_relay_server_with(None).await.unwrap();
+
+        let ep = Endpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Custom(relay_map))
+            .insecure_skip_relay_cert_verify(true)
+            .bind()
+            .await
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(10), ep.direct_addresses().next())
+            .await
+            .unwrap()
+            .unwrap();
     }
 }
