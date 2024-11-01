@@ -26,6 +26,34 @@ jobs:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     uses: './.github/workflows/tests.yaml'
 
+  test_upnp:
+    name: UPnP Test
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    runs-on: [self-hosted, linux, X64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Setup config
+        run: |
+          cat <<EOF > trouble.toml
+          [[relay_nodes]]
+          url = "https://iroh.testrun.org.:4443"
+          stun_only = false
+          stun_port = 3478
+          EOF
+
+      - name: Run
+        env:
+          RUST_LOG: 'TRACE'
+        run: cargo run -- --config trouble.toml doctor accept
+
   cross_build:
     name: Cross Build Only
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
