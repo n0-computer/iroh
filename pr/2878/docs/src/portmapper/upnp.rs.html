@@ -140,6 +140,21 @@
 <a href="#140" id="140">140</a>
 <a href="#141" id="141">141</a>
 <a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, SocketAddrV4},
     num::NonZeroU16,
@@ -191,11 +206,15 @@
         </span><span class="kw">let </span>gateway = <span class="kw">if let </span><span class="prelude-val">Some</span>(known_gateway) = gateway {
             known_gateway
         } <span class="kw">else </span>{
-            aigd::tokio::search_gateway(igd_next::SearchOptions {
-                timeout: <span class="prelude-val">Some</span>(SEARCH_TIMEOUT),
-                ..Default::default()
-            })
-            .<span class="kw">await</span><span class="question-mark">?
+            <span class="comment">// Wrap in manual timeout, because igd_next doesn't respect the set timeout
+            </span>tokio::time::timeout(
+                SEARCH_TIMEOUT,
+                aigd::tokio::search_gateway(igd_next::SearchOptions {
+                    timeout: <span class="prelude-val">Some</span>(SEARCH_TIMEOUT),
+                    ..Default::default()
+                }),
+            )
+            .<span class="kw">await</span><span class="question-mark">??
         </span>};
 
         <span class="kw">let </span>std::net::IpAddr::V4(external_ip) = gateway.get_external_ip().<span class="kw">await</span><span class="question-mark">? </span><span class="kw">else </span>{
@@ -268,18 +287,28 @@
 <span class="doccomment">/// Searches for UPnP gateways.
 </span><span class="kw">pub async fn </span>probe_available() -&gt; <span class="prelude-ty">Option</span>&lt;Gateway&gt; {
     <span class="macro">inc!</span>(Metrics, upnp_probes);
-    <span class="kw">match </span>aigd::tokio::search_gateway(igd_next::SearchOptions {
-        timeout: <span class="prelude-val">Some</span>(SEARCH_TIMEOUT),
-        ..Default::default()
-    })
-    .<span class="kw">await
-    </span>{
-        <span class="prelude-val">Ok</span>(gateway) =&gt; <span class="prelude-val">Some</span>(gateway),
+
+    <span class="comment">// Wrap in manual timeout, because igd_next doesn't respect the set timeout
+    </span><span class="kw">let </span>res = tokio::time::timeout(
+        SEARCH_TIMEOUT,
+        aigd::tokio::search_gateway(igd_next::SearchOptions {
+            timeout: <span class="prelude-val">Some</span>(SEARCH_TIMEOUT),
+            ..Default::default()
+        }),
+    )
+    .<span class="kw">await</span>;
+
+    <span class="kw">match </span>res {
+        <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(gateway)) =&gt; <span class="prelude-val">Some</span>(gateway),
         <span class="prelude-val">Err</span>(e) =&gt; {
+            <span class="macro">inc!</span>(Metrics, upnp_probes_failed);
+            <span class="macro">debug!</span>(<span class="string">"upnp probe timed out: {e}"</span>);
+            <span class="prelude-val">None
+        </span>}
+        <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(e)) =&gt; {
             <span class="macro">inc!</span>(Metrics, upnp_probes_failed);
             <span class="macro">debug!</span>(<span class="string">"upnp probe failed: {e}"</span>);
             <span class="prelude-val">None
         </span>}
     }
-}
-</code></pre></div></section></main></body></html>
+}</code></pre></div></section></main></body></html>
