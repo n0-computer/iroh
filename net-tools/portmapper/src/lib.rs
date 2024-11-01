@@ -251,6 +251,9 @@ impl Probe {
         let mut upnp_probing_task = util::MaybeFuture {
             inner: (enable_upnp && !upnp).then(|| {
                 Box::pin(async {
+                    tracing::info!("upnp probe, sleeping");
+                    tokio::time::sleep(Duration::from_secs(15)).await;
+                    tracing::info!("upnp probe, done sleeping");
                     upnp::probe_available()
                         .await
                         .map(|addr| (addr, Instant::now()))
