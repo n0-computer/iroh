@@ -49,11 +49,15 @@ impl Mapping {
         let gateway = if let Some(known_gateway) = gateway {
             known_gateway
         } else {
-            aigd::tokio::search_gateway(igd_next::SearchOptions {
-                timeout: Some(SEARCH_TIMEOUT),
-                ..Default::default()
-            })
-            .await?
+            // Wrap in manual timeout, because igd_next doesn't respect the set timeout
+            tokio::time::timeout(
+                SEARCH_TIMEOUT,
+                aigd::tokio::search_gateway(igd_next::SearchOptions {
+                    timeout: Some(SEARCH_TIMEOUT),
+                    ..Default::default()
+                }),
+            )
+            .await??
         };
 
         let std::net::IpAddr::V4(external_ip) = gateway.get_external_ip().await? else {
@@ -126,14 +130,25 @@ impl Mapping {
 /// Searches for UPnP gateways.
 pub async fn probe_available() -> Option<Gateway> {
     inc!(Metrics, upnp_probes);
-    match aigd::tokio::search_gateway(igd_next::SearchOptions {
-        timeout: Some(SEARCH_TIMEOUT),
-        ..Default::default()
-    })
-    .await
-    {
-        Ok(gateway) => Some(gateway),
+
+    // Wrap in manual timeout, because igd_next doesn't respect the set timeout
+    let res = tokio::time::timeout(
+        SEARCH_TIMEOUT,
+        aigd::tokio::search_gateway(igd_next::SearchOptions {
+            timeout: Some(SEARCH_TIMEOUT),
+            ..Default::default()
+        }),
+    )
+    .await;
+
+    match res {
+        Ok(Ok(gateway)) => Some(gateway),
         Err(e) => {
+            inc!(Metrics, upnp_probes_failed);
+            debug!("upnp probe timed out: {e}");
+            None
+        }
+        Ok(Err(e)) => {
             inc!(Metrics, upnp_probes_failed);
             debug!("upnp probe failed: {e}");
             None
