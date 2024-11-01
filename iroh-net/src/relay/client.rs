@@ -13,7 +13,12 @@ use conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMess
 use futures_lite::future::Boxed as BoxFuture;
 use futures_util::StreamExt;
 use http_body_util::Empty;
-use hyper::{body::Incoming, header::UPGRADE, upgrade::Parts, Request};
+use hyper::{
+    body::Incoming,
+    header::{HOST, UPGRADE},
+    upgrade::Parts,
+    Request,
+};
 use hyper_util::rt::TokioIo;
 use rand::Rng;
 use rustls::client::Resumption;
@@ -643,6 +648,7 @@ impl Actor {
     }
 
     async fn connect_derp(&self) -> Result<(ConnReader, ConnWriter, SocketAddr), ClientError> {
+        let url = self.url.clone();
         let tcp_stream = self.dial_url().await?;
 
         let local_addr = tcp_stream
@@ -659,10 +665,10 @@ impl Actor {
             let hostname = hostname.to_owned();
             let tls_stream = self.tls_connector.connect(hostname, tcp_stream).await?;
             debug!("tls_connector connect success");
-            Self::start_upgrade(tls_stream).await?
+            Self::start_upgrade(tls_stream, url).await?
         } else {
             debug!("Starting handshake");
-            Self::start_upgrade(tcp_stream).await?
+            Self::start_upgrade(tcp_stream, url).await?
         };
 
         if response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
@@ -696,10 +702,23 @@ impl Actor {
     }
 
     /// Sends the HTTP upgrade request to the relay server.
-    async fn start_upgrade<T>(io: T) -> Result<hyper::Response<Incoming>, ClientError>
+    async fn start_upgrade<T>(
+        io: T,
+        relay_url: RelayUrl,
+    ) -> Result<hyper::Response<Incoming>, ClientError>
     where
         T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     {
+        let relay_url_host = relay_url
+            .host_str()
+            .ok_or_else(|| ClientError::InvalidUrl(relay_url.to_string()))?;
+        let mut host_header_value = String::with_capacity(relay_url_host.len() + 6); // 6 chars for a ":" and max port
+        host_header_value += relay_url_host;
+        if let Some(port) = relay_url.port() {
+            host_header_value += ":";
+            host_header_value += &port.to_string();
+        }
+
         let io = hyper_util::rt::TokioIo::new(io);
         let (mut request_sender, connection) = hyper::client::conn::http1::Builder::new()
             .handshake(io)
@@ -719,6 +738,10 @@ impl Actor {
         let req = Request::builder()
             .uri(RELAY_PATH)
             .header(UPGRADE, Protocol::Relay.upgrade_header())
+            // https://datatracker.ietf.org/doc/html/rfc2616#section-14.23
+            // > A client MUST include a Host header field in all HTTP/1.1 request messages.
+            // This header value helps reverse proxies identify how to forward requests.
+            .header(HOST, host_header_value)
             .body(http_body_util::Empty::<hyper::body::Bytes>::new())?;
         request_sender.send_request(req).await.map_err(From::from)
     }
