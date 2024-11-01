@@ -1,4 +1,0 @@
-[[relay_nodes]]
-url = "https://iroh.testrun.org.:4443"
-stun_only = false
-stun_port = 3478
