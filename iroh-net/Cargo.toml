@@ -48,9 +48,9 @@ pin-project = "1"
 pkarr = { version = "2", default-features = false, features = ["async", "relay"] }
 portmapper = { path = "../net-tools/portmapper" }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-quinn = { package = "iroh-quinn", version = "0.11" }
-quinn-proto = { package = "iroh-quinn-proto", version = "0.11" }
-quinn-udp = { package = "iroh-quinn-udp", version = "0.5" }
+quinn = { package = "iroh-quinn", version = "0.11.5" }
+quinn-proto = { package = "iroh-quinn-proto", version = "0.11.8" }
+quinn-udp = { package = "iroh-quinn-udp", version = "0.5.5" }
 rand = "0.8"
 rcgen = "0.12"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
