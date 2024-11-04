@@ -2,6 +2,30 @@
 
 All notable changes to iroh will be documented in this file.
 
+## [0.28.1](https://github.com/n0-computer/iroh/compare/v0.28.1..0.28.1) - 2024-11-04
+
+### 🐛 Bug Fixes
+
+- Update to patched iroh-gossip 0.28.1 - ([bd44719](https://github.com/n0-computer/iroh/commit/bd4471912ab696e8d9119a5b9d3c2bcdb80c43f7))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update Cargo.lock - ([f3398b4](https://github.com/n0-computer/iroh/commit/f3398b4eff04539a930f00a82b72d15025d92411))
+
+## [0.28.1](https://github.com/n0-computer/iroh/compare/v0.28.0..v0.28.1) - 2024-11-04
+
+### 🐛 Bug Fixes
+
+- Switch to correctly patched quic-rpc and iroh-quinn - ([d925da4](https://github.com/n0-computer/iroh/commit/d925da442993fb79d55b905d4c17a324e9549bd2))
+
+### 📚 Documentation
+
+- Fixup changelog - ([5066102](https://github.com/n0-computer/iroh/commit/50661022258e607775af6e6b83c4c25fc57ed088))
+
+### ⚙️ Miscellaneous Tasks
+
+- Release - ([134a93b](https://github.com/n0-computer/iroh/commit/134a93b5a60103b3ce8fa4aacb52cdbcb291d00b))
+
 ## [0.28.0](https://github.com/n0-computer/iroh/compare/v0.27.0..v0.28.0) - 2024-11-04
 
 ### ⛰️  Features
