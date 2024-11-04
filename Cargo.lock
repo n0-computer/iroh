@@ -2467,7 +2467,7 @@ dependencies = [
  "iroh-docs",
  "iroh-gossip",
  "iroh-io",
- "iroh-metrics",
+ "iroh-metrics 0.27.0",
  "iroh-net",
  "iroh-quinn",
  "iroh-router",
@@ -2591,7 +2591,7 @@ dependencies = [
  "hex",
  "iroh-base 0.27.0",
  "iroh-io",
- "iroh-metrics",
+ "iroh-metrics 0.27.0",
  "iroh-net",
  "iroh-quinn",
  "iroh-router",
@@ -2642,7 +2642,7 @@ dependencies = [
  "indicatif",
  "iroh",
  "iroh-gossip",
- "iroh-metrics",
+ "iroh-metrics 0.27.0",
  "nix 0.27.1",
  "parking_lot",
  "pkarr",
@@ -2694,7 +2694,7 @@ dependencies = [
  "hickory-resolver",
  "hickory-server",
  "http 1.1.0",
- "iroh-metrics",
+ "iroh-metrics 0.27.0",
  "iroh-net",
  "iroh-test",
  "lru",
@@ -2742,7 +2742,7 @@ dependencies = [
  "iroh-blake3",
  "iroh-blobs",
  "iroh-gossip",
- "iroh-metrics",
+ "iroh-metrics 0.27.0",
  "iroh-net",
  "iroh-router",
  "lru",
@@ -2779,7 +2779,7 @@ dependencies = [
  "indexmap 2.2.6",
  "iroh-base 0.27.0",
  "iroh-blake3",
- "iroh-metrics",
+ "iroh-metrics 0.27.0",
  "iroh-net",
  "iroh-router",
  "nested_enum_utils",
@@ -2812,6 +2812,27 @@ dependencies = [
 [[package]]
 name = "iroh-metrics"
 version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c78cf30022e1c7a10fc0ae0a6ba83f131b7c3b92d4876f6c97aba93fe534be6"
+dependencies = [
+ "anyhow",
+ "erased_set",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "once_cell",
+ "prometheus-client",
+ "reqwest",
+ "serde",
+ "struct_iterable",
+ "time",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "iroh-metrics"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "erased_set",
@@ -2860,7 +2881,7 @@ dependencies = [
  "hyper-util",
  "igd-next",
  "iroh-base 0.27.0",
- "iroh-metrics",
+ "iroh-metrics 0.27.0",
  "iroh-net",
  "iroh-quinn",
  "iroh-quinn-proto",
@@ -2933,7 +2954,7 @@ dependencies = [
  "clap",
  "futures-lite 2.3.0",
  "hdrhistogram",
- "iroh-metrics",
+ "iroh-metrics 0.28.0",
  "iroh-net",
  "iroh-quinn",
  "rcgen",
@@ -4047,7 +4068,7 @@ dependencies = [
  "futures-lite 2.3.0",
  "futures-util",
  "igd-next",
- "iroh-metrics",
+ "iroh-metrics 0.27.0",
  "libc",
  "netwatch",
  "ntest",
