@@ -20,7 +20,7 @@ derive_more = { version = "1.0.0", features = ["debug", "display", "from", "try_
 futures-lite = "2.3"
 futures-util = "0.3.25"
 igd-next = { version = "0.15.1", features = ["aio_tokio"] }
-iroh-metrics = { version = "0.27.0", default-features = false }
+iroh-metrics = { version = "0.28.0", default-features = false }
 libc = "0.2.139"
 netwatch = { version = "0.1.0", path = "../netwatch" }
 num_enum = "0.7"

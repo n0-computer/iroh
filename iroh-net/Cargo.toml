@@ -37,7 +37,7 @@ http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
 igd-next = { version = "0.15.1", features = ["aio_tokio"] }
-iroh-base = { version = "0.27.0", features = ["key"] }
+iroh-base = { version = "0.28.0", features = ["key"] }
 libc = "0.2.139"
 netdev = "0.30.0"
 netwatch = { version = "0.1.0", path = "../net-tools/netwatch" }
@@ -88,7 +88,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 tokio-rustls-acme = { version = "0.4", optional = true }
 
 # metrics
-iroh-metrics = { version = "0.27.0", default-features = false }
+iroh-metrics = { version = "0.28.0", default-features = false }
 strum = { version = "0.26.2", features = ["derive"] }
 
 # local-swarm-discovery
@@ -118,7 +118,7 @@ proptest = "1.2.0"
 rand_chacha = "0.3.1"
 tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macros", "time", "test-util"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-iroh-test = "0.27.0"
+iroh-test = "0.28.0"
 iroh-net = { path = ".", features = ["iroh-relay"] }
 serde_json = "1.0.107"
 testresult = "0.4.0"
