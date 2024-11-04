@@ -465,7 +465,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
             // connections: Operations will immediately fail with ConnectionError::LocallyClosed.
             // All streams are interrupted, this is not graceful.
             self.endpoint
-                .clone()
                 .close(error_code.into(), error_code.reason()),
             // Shutdown protocol handlers.
             protocols.shutdown(),
