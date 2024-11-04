@@ -2,24 +2,6 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.28.0](https://github.com/n0-computer/iroh/compare/v0.28.0..0.28.0) - 2024-11-04
-
-### 🧪 Testing
-
-- *(netwatch)* Simplify dev-deps - ([029830f](https://github.com/n0-computer/iroh/commit/029830fd75be4690a840185973ed3210692a167c))
-
-### ⚙️ Miscellaneous Tasks
-
-- *(iroh-net)* Fixup portmapper version - ([37f620d](https://github.com/n0-computer/iroh/commit/37f620dffa929a427374e1508737f68ee1e8f543))
-- Release - ([8bae5c3](https://github.com/n0-computer/iroh/commit/8bae5c3ec4465e7d6369440d1c55f7de7ca0e770))
-- Release - ([d6c39c9](https://github.com/n0-computer/iroh/commit/d6c39c974f1383603e06b742c9394969b644c0f7))
-- Release - ([2073bf4](https://github.com/n0-computer/iroh/commit/2073bf40176789c36a607d10a6bbaef38b16846b))
-- Upgrade 0.28 iroh-net - ([13da047](https://github.com/n0-computer/iroh/commit/13da0478b89202904a8a67c9e0a1ff4ad15882b7))
-- Release - ([5751521](https://github.com/n0-computer/iroh/commit/5751521cf50434c588e387ce483daf407919571b))
-- Release - ([5437dbb](https://github.com/n0-computer/iroh/commit/5437dbb4e409200f66c3d97d9b277be14a2b6b33))
-- Upgrade 0.28 iroh-router - ([297b874](https://github.com/n0-computer/iroh/commit/297b8743296d6103d8b0457b431597f4d6168c7d))
-- Update 0.28 iroh-docs, iroh-gossip, iroh-blobs - ([7e80a92](https://github.com/n0-computer/iroh/commit/7e80a9221eb61d04a02830ed1c1794503f8113ff))
-
 ## [0.28.0](https://github.com/n0-computer/iroh/compare/v0.27.0..v0.28.0) - 2024-11-04
 
 ### ⛰️  Features
@@ -60,12 +42,24 @@ All notable changes to iroh will be documented in this file.
 
 - *(iroh-net)* Give this a longer timeout ([#2857](https://github.com/n0-computer/iroh/issues/2857)) - ([ed13453](https://github.com/n0-computer/iroh/commit/ed13453697fbe600fdb50afb374543b69125bbc9))
 - *(iroh-net)* Make dht_discovery_smoke test less flaky ([#2884](https://github.com/n0-computer/iroh/issues/2884)) - ([ce8d94d](https://github.com/n0-computer/iroh/commit/ce8d94de083d7aa997cd79936cf1606131420e6e))
+- *(netwatch)* Simplify dev-deps - ([029830f](https://github.com/n0-computer/iroh/commit/029830fd75be4690a840185973ed3210692a167c))
 
 ### ⚙️ Miscellaneous Tasks
 
 - *(ci)* Identify which repository the flakes are reported for ([#2824](https://github.com/n0-computer/iroh/issues/2824)) - ([b2e587d](https://github.com/n0-computer/iroh/commit/b2e587d7c96e84b2c2df75e33fea80ef3bd97450))
+- *(iroh-net)* Fixup portmapper version - ([37f620d](https://github.com/n0-computer/iroh/commit/37f620dffa929a427374e1508737f68ee1e8f543))
 - Add iroh-router to crates list ([#2850](https://github.com/n0-computer/iroh/issues/2850)) - ([2d17636](https://github.com/n0-computer/iroh/commit/2d17636d32840f09bb6f86ab91a49d9ecea07bd9))
 - Release - ([860b90f](https://github.com/n0-computer/iroh/commit/860b90f1bad660a470d30f1e81ee0d6984de6106))
+- Release - ([8bae5c3](https://github.com/n0-computer/iroh/commit/8bae5c3ec4465e7d6369440d1c55f7de7ca0e770))
+- Release - ([d6c39c9](https://github.com/n0-computer/iroh/commit/d6c39c974f1383603e06b742c9394969b644c0f7))
+- Release - ([2073bf4](https://github.com/n0-computer/iroh/commit/2073bf40176789c36a607d10a6bbaef38b16846b))
+- Upgrade 0.28 iroh-net - ([13da047](https://github.com/n0-computer/iroh/commit/13da0478b89202904a8a67c9e0a1ff4ad15882b7))
+- Release - ([5751521](https://github.com/n0-computer/iroh/commit/5751521cf50434c588e387ce483daf407919571b))
+- Release - ([5437dbb](https://github.com/n0-computer/iroh/commit/5437dbb4e409200f66c3d97d9b277be14a2b6b33))
+- Upgrade 0.28 iroh-router - ([297b874](https://github.com/n0-computer/iroh/commit/297b8743296d6103d8b0457b431597f4d6168c7d))
+- Update 0.28 iroh-docs, iroh-gossip, iroh-blobs - ([7e80a92](https://github.com/n0-computer/iroh/commit/7e80a9221eb61d04a02830ed1c1794503f8113ff))
+- Release - ([fa926be](https://github.com/n0-computer/iroh/commit/fa926beef29260b143f941f07dc00f1f77b4ffc5))
+- Release - ([4c58bd8](https://github.com/n0-computer/iroh/commit/4c58bd8db5c90567ec3ffae9f19474887d037445))
 
 ## [0.27.0](https://github.com/n0-computer/iroh/compare/v0.26.0..v0.27.0) - 2024-10-21
 
