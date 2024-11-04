@@ -15,7 +15,7 @@ anyhow = "1.0.91"
 futures-buffered = "0.2.9"
 futures-lite = "2.3.0"
 futures-util = "0.3.31"
-iroh-net = { version = "0.27.0", path = "../iroh-net" }
+iroh-net = { version = "0.28.0", path = "../iroh-net" }
 tokio = "1.41.0"
 tokio-util = "0.7.12"
 tracing = "0.1.40"
