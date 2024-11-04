@@ -709,15 +709,7 @@ impl Actor {
     where
         T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     {
-        let relay_url_host = relay_url
-            .host_str()
-            .ok_or_else(|| ClientError::InvalidUrl(relay_url.to_string()))?;
-        let mut host_header_value = String::with_capacity(relay_url_host.len() + 6); // 6 chars for a ":" and max port
-        host_header_value += relay_url_host;
-        if let Some(port) = relay_url.port() {
-            host_header_value += ":";
-            host_header_value += &port.to_string();
-        }
+        let host_header_value = host_header_value(relay_url)?;
 
         let io = hyper_util::rt::TokioIo::new(io);
         let (mut request_sender, connection) = hyper::client::conn::http1::Builder::new()
@@ -1031,6 +1023,23 @@ impl Actor {
     }
 }
 
+fn host_header_value(relay_url: RelayUrl) -> Result<String, ClientError> {
+    // grab the host, turns e.g. https://example.com:8080/xyz -> example.com.
+    let relay_url_host = relay_url
+        .host_str()
+        .ok_or_else(|| ClientError::InvalidUrl(relay_url.to_string()))?;
+    // strip the trailing dot, if present: example.com. -> example.com
+    let relay_url_host = relay_url_host.strip_suffix(".").unwrap_or(relay_url_host);
+    // build the host header value (reserve up to 6 chars for the ":" and port digits):
+    let mut host_header_value = String::with_capacity(relay_url_host.len() + 6);
+    host_header_value += relay_url_host;
+    if let Some(port) = relay_url.port() {
+        host_header_value += ":";
+        host_header_value += &port.to_string();
+    }
+    Ok(host_header_value)
+}
+
 async fn resolve_host(
     resolver: &DnsResolver,
     url: &Url,
@@ -1119,6 +1128,8 @@ fn url_port(url: &Url) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use anyhow::{bail, Result};
 
     use super::*;
@@ -1140,6 +1151,27 @@ mod tests {
         if client_receiver.recv().await.and_then(|s| s.ok()).is_some() {
             bail!("expected client with bad relay node detail to return with an error");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_host_header_value() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let cases = [
+            (
+                "https://euw1-1.relay.iroh.network.",
+                "euw1-1.relay.iroh.network",
+            ),
+            ("http://localhost:8080", "localhost:8080"),
+        ];
+
+        for (url, expected_host) in cases {
+            let relay_url = RelayUrl::from_str(url)?;
+            let host = host_header_value(relay_url)?;
+            assert_eq!(host, expected_host);
+        }
+
         Ok(())
     }
 }
