@@ -40,7 +40,7 @@ futures-util = { version = "0.3.30", features = ["futures-sink"] }
 hex = "0.4.3"
 human-time = "0.1.6"
 indicatif = { version = "0.17", features = ["tokio"] }
-iroh = { version = "0.27.0", path = "../iroh", features = ["metrics"] }
+iroh = { version = "0.28.0", path = "../iroh", features = ["metrics"] }
 iroh-gossip = "0.28.0"
 iroh-metrics = { version = "0.28.0" }
 parking_lot = "0.12.1"
