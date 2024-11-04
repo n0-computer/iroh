@@ -183,8 +183,10 @@ impl Core {
         self.metrics_map.get::<T>()
     }
 
+    /// Encodes the current metrics registry to a string in
+    /// the prometheus text exposition format.
     #[cfg(feature = "metrics")]
-    pub(crate) fn encode(&self) -> Result<String, std::fmt::Error> {
+    pub fn encode(&self) -> Result<String, std::fmt::Error> {
         let mut buf = String::new();
         encode(&mut buf, &self.registry)?;
         Ok(buf)
