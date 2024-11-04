@@ -1,6 +1,6 @@
 [package]
 name = "iroh-router"
-version = "0.27.0"
+version = "0.28.0"
 edition = "2021"
 readme = "README.md"
 description = "protocol router support for iroh"
