@@ -2,7 +2,72 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.27.0](https://github.com/n0-computer/iroh/compare/v0.26.0..0.27.0) - 2024-10-21
+## [0.28.0](https://github.com/n0-computer/iroh/compare/v0.28.0..0.28.0) - 2024-11-04
+
+### 🧪 Testing
+
+- *(netwatch)* Simplify dev-deps - ([029830f](https://github.com/n0-computer/iroh/commit/029830fd75be4690a840185973ed3210692a167c))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(iroh-net)* Fixup portmapper version - ([37f620d](https://github.com/n0-computer/iroh/commit/37f620dffa929a427374e1508737f68ee1e8f543))
+- Release - ([8bae5c3](https://github.com/n0-computer/iroh/commit/8bae5c3ec4465e7d6369440d1c55f7de7ca0e770))
+- Release - ([d6c39c9](https://github.com/n0-computer/iroh/commit/d6c39c974f1383603e06b742c9394969b644c0f7))
+- Release - ([2073bf4](https://github.com/n0-computer/iroh/commit/2073bf40176789c36a607d10a6bbaef38b16846b))
+- Upgrade 0.28 iroh-net - ([13da047](https://github.com/n0-computer/iroh/commit/13da0478b89202904a8a67c9e0a1ff4ad15882b7))
+- Release - ([5751521](https://github.com/n0-computer/iroh/commit/5751521cf50434c588e387ce483daf407919571b))
+- Release - ([5437dbb](https://github.com/n0-computer/iroh/commit/5437dbb4e409200f66c3d97d9b277be14a2b6b33))
+- Upgrade 0.28 iroh-router - ([297b874](https://github.com/n0-computer/iroh/commit/297b8743296d6103d8b0457b431597f4d6168c7d))
+- Update 0.28 iroh-docs, iroh-gossip, iroh-blobs - ([7e80a92](https://github.com/n0-computer/iroh/commit/7e80a9221eb61d04a02830ed1c1794503f8113ff))
+
+## [0.28.0](https://github.com/n0-computer/iroh/compare/v0.27.0..v0.28.0) - 2024-11-04
+
+### ⛰️  Features
+
+- *(iroh-dns-server)* [**breaking**] Make http rate limit configurable ([#2772](https://github.com/n0-computer/iroh/issues/2772)) - ([fe684c2](https://github.com/n0-computer/iroh/commit/fe684c23e60fc8c35d3ec02bf088f36e1e248c50))
+- *(iroh-net)* Add StaticDiscovery to provide static info to endpoints ([#2825](https://github.com/n0-computer/iroh/issues/2825)) - ([c9d1ba7](https://github.com/n0-computer/iroh/commit/c9d1ba7c09948fd24fee6f1aff4d772049d5a86a))
+- *(iroh-net)* More Quinn re-exports ([#2838](https://github.com/n0-computer/iroh/issues/2838)) - ([9495c21](https://github.com/n0-computer/iroh/commit/9495c21a4f5ee93e1f5f7312b37c0752327100bd))
+- *(iroh-net)* Send HTTP/1.1 `HOST` header on requests to relay ([#2881](https://github.com/n0-computer/iroh/issues/2881)) - ([4bfa58e](https://github.com/n0-computer/iroh/commit/4bfa58eaed49595602c64ac07155bf36c1469ffd))
+- [**breaking**] Introduce iroh-router crate ([#2832](https://github.com/n0-computer/iroh/issues/2832)) - ([8f75005](https://github.com/n0-computer/iroh/commit/8f7500545ac71a151b0a8ac4389e558b64e58a4c))
+- Collect metrics for direct connections & add opt-in push metrics ([#2805](https://github.com/n0-computer/iroh/issues/2805)) - ([86b494a](https://github.com/n0-computer/iroh/commit/86b494a9088e1558150d70481051227845c827e1))
+
+### 🐛 Bug Fixes
+
+- *(ci)* Better error reporting on netsim fails ([#2886](https://github.com/n0-computer/iroh/issues/2886)) - ([e1aab51](https://github.com/n0-computer/iroh/commit/e1aab5188c55c571fd2024b98e34b144143bd2be))
+- *(iroh-net)* When switching to a direct path reset the mtu ([#2835](https://github.com/n0-computer/iroh/issues/2835)) - ([93f7900](https://github.com/n0-computer/iroh/commit/93f79009bdc1b9cb8e8db41e143a1df14fdb7f25))
+- *(iroh-relay)* Respect `enable_stun` setting in `iroh-relay::Config` ([#2879](https://github.com/n0-computer/iroh/issues/2879)) - ([2507e62](https://github.com/n0-computer/iroh/commit/2507e625c0fd05924a72af1e21696ba4ff7e4dc7))
+- *(metrics)* Allow external crates to encode their metrics ([#2885](https://github.com/n0-computer/iroh/issues/2885)) - ([362076e](https://github.com/n0-computer/iroh/commit/362076ee742c810ea8ccb28f415fd90e0b8171c3))
+- *(portmapper)* Enforce timeouts for upnp ([#2877](https://github.com/n0-computer/iroh/issues/2877)) - ([00a3f88](https://github.com/n0-computer/iroh/commit/00a3f88cbb2a93dc15144da91674af9cb95bb06f))
+
+### 🚜 Refactor
+
+- *(iroh)* Move protocol relevant impls into node/protocols ([#2831](https://github.com/n0-computer/iroh/issues/2831)) - ([67df1c1](https://github.com/n0-computer/iroh/commit/67df1c148f9eee8008e0288dbc2c8829be05c891))
+- *(iroh)* Move ProtocolHandler impl to iroh-gossip ([#2849](https://github.com/n0-computer/iroh/issues/2849)) - ([6c6827d](https://github.com/n0-computer/iroh/commit/6c6827d63ec12d9c9583b73b5530a7641060535c))
+- *(iroh)* Move blobs protocol to iroh-blobs ([#2853](https://github.com/n0-computer/iroh/issues/2853)) - ([30f3e03](https://github.com/n0-computer/iroh/commit/30f3e03cde8a58af3b84a5f11134fb970ec3efa1))
+- *(iroh)* [**breaking**] Remove gossip rpc types ([#2834](https://github.com/n0-computer/iroh/issues/2834)) - ([a55529b](https://github.com/n0-computer/iroh/commit/a55529b52e198527590493e67e7706290c9656f0))
+- *(iroh-net)* Portmapper and network monitor are crates ([#2855](https://github.com/n0-computer/iroh/issues/2855)) - ([fad3e24](https://github.com/n0-computer/iroh/commit/fad3e24b3f2698ce6c1fa3fdad54201bec668298))
+- Move iroh-gossip to external repo ([#2826](https://github.com/n0-computer/iroh/issues/2826)) - ([e659405](https://github.com/n0-computer/iroh/commit/e659405241692feb94030a8145e0b66a1a248641))
+- Move iroh-docs to external repo ([#2830](https://github.com/n0-computer/iroh/issues/2830)) - ([3e17210](https://github.com/n0-computer/iroh/commit/3e17210c1e2ff7b8788feb3534e57e8c3af3cd4b))
+- Remove iroh-blobs and use crates.io dependency ([#2829](https://github.com/n0-computer/iroh/issues/2829)) - ([d29537d](https://github.com/n0-computer/iroh/commit/d29537da6fc07ff82b8d56ff5fae9fdef9445858))
+- [**breaking**] Remove iroh_base::rpc ([#2840](https://github.com/n0-computer/iroh/issues/2840)) - ([bfba7a4](https://github.com/n0-computer/iroh/commit/bfba7a42284a5b1b9065186c558bc614dba351f2))
+- Move ProtocolHandler docs to iroh-docs ([#2859](https://github.com/n0-computer/iroh/issues/2859)) - ([61acd96](https://github.com/n0-computer/iroh/commit/61acd9688af60e55c62e357eb69272ea24097ffc))
+
+### 📚 Documentation
+
+- *(iroh-net)* Link to Endpoint in the first few paragraphs ([#2875](https://github.com/n0-computer/iroh/issues/2875)) - ([f0590be](https://github.com/n0-computer/iroh/commit/f0590be408c8dbe412897525a97a170e694dd650))
+
+### 🧪 Testing
+
+- *(iroh-net)* Give this a longer timeout ([#2857](https://github.com/n0-computer/iroh/issues/2857)) - ([ed13453](https://github.com/n0-computer/iroh/commit/ed13453697fbe600fdb50afb374543b69125bbc9))
+- *(iroh-net)* Make dht_discovery_smoke test less flaky ([#2884](https://github.com/n0-computer/iroh/issues/2884)) - ([ce8d94d](https://github.com/n0-computer/iroh/commit/ce8d94de083d7aa997cd79936cf1606131420e6e))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(ci)* Identify which repository the flakes are reported for ([#2824](https://github.com/n0-computer/iroh/issues/2824)) - ([b2e587d](https://github.com/n0-computer/iroh/commit/b2e587d7c96e84b2c2df75e33fea80ef3bd97450))
+- Add iroh-router to crates list ([#2850](https://github.com/n0-computer/iroh/issues/2850)) - ([2d17636](https://github.com/n0-computer/iroh/commit/2d17636d32840f09bb6f86ab91a49d9ecea07bd9))
+- Release - ([860b90f](https://github.com/n0-computer/iroh/commit/860b90f1bad660a470d30f1e81ee0d6984de6106))
+
+## [0.27.0](https://github.com/n0-computer/iroh/compare/v0.26.0..v0.27.0) - 2024-10-21
 
 ### ⛰️  Features
 
@@ -57,6 +122,7 @@ All notable changes to iroh will be documented in this file.
 - *(iroh-net)* Upgrade igd-next, remove hyper 0.14 ([#2804](https://github.com/n0-computer/iroh/issues/2804)) - ([5e40fe1](https://github.com/n0-computer/iroh/commit/5e40fe138f9581a195d47c251992e3de8b1ec8c1))
 - Format imports using rustfmt ([#2812](https://github.com/n0-computer/iroh/issues/2812)) - ([8808a36](https://github.com/n0-computer/iroh/commit/8808a360c9f8299984a7e5a739fa9377eeffe73a))
 - Increase version numbers and update ([#2821](https://github.com/n0-computer/iroh/issues/2821)) - ([71b5903](https://github.com/n0-computer/iroh/commit/71b5903e2840daafcfb972df3e481b152bbbe990))
+- Release - ([3f5b778](https://github.com/n0-computer/iroh/commit/3f5b778b379529f9f11deeafaf1f612b533b5c94))
 
 ### Deps
 
