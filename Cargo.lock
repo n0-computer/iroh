@@ -2471,7 +2471,7 @@ dependencies = [
  "iroh-net",
  "iroh-quinn",
  "iroh-router",
- "iroh-test",
+ "iroh-test 0.27.0",
  "nested_enum_utils",
  "num_cpus",
  "parking_lot",
@@ -2543,7 +2543,7 @@ dependencies = [
  "getrandom",
  "hex",
  "iroh-blake3",
- "iroh-test",
+ "iroh-test 0.27.0",
  "once_cell",
  "postcard",
  "proptest",
@@ -2696,7 +2696,7 @@ dependencies = [
  "http 1.1.0",
  "iroh-metrics 0.27.0",
  "iroh-net",
- "iroh-test",
+ "iroh-test 0.27.0",
  "lru",
  "mainline",
  "parking_lot",
@@ -2886,7 +2886,7 @@ dependencies = [
  "iroh-quinn",
  "iroh-quinn-proto",
  "iroh-quinn-udp",
- "iroh-test",
+ "iroh-test 0.27.0",
  "libc",
  "mainline",
  "netdev",
@@ -3033,6 +3033,18 @@ dependencies = [
 [[package]]
 name = "iroh-test"
 version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0656192e6e80d714b316a9b9ca1bdf160de46a85b708034c0355c3e6c25b91a1"
+dependencies = [
+ "anyhow",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "iroh-test"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "tokio",
@@ -3432,7 +3444,7 @@ dependencies = [
  "futures-lite 2.3.0",
  "futures-sink",
  "futures-util",
- "iroh-test",
+ "iroh-test 0.27.0",
  "libc",
  "netdev",
  "netlink-packet-core",
