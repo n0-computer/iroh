@@ -287,6 +287,8 @@
 <a href="#287" id="287">287</a>
 <a href="#288" id="288">288</a>
 <a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>anyhow::Error;
 <span class="kw">use </span>erased_set::ErasedSyncSet;
 <span class="kw">use </span>once_cell::sync::OnceCell;
@@ -472,8 +474,10 @@
         <span class="self">self</span>.metrics_map.get::&lt;T&gt;()
     }
 
-    <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>encode(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;String, std::fmt::Error&gt; {
+    <span class="doccomment">/// Encodes the current metrics registry to a string in
+    /// the prometheus text exposition format.
+    </span><span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+    </span><span class="kw">pub fn </span>encode(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;String, std::fmt::Error&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>buf = String::new();
         encode(<span class="kw-2">&amp;mut </span>buf, <span class="kw-2">&amp;</span><span class="self">self</span>.registry)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(buf)

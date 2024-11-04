@@ -477,10 +477,6 @@
 <a href="#477" id="477">477</a>
 <a href="#478" id="478">478</a>
 <a href="#479" id="479">479</a>
-<a href="#480" id="480">480</a>
-<a href="#481" id="481">481</a>
-<a href="#482" id="482">482</a>
-<a href="#483" id="483">483</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A simple relay server for iroh-net.
 //!
 //! This handles only the CLI and config file loading, the server implementation lives in
@@ -907,13 +903,9 @@
     };
     <span class="prelude-val">Ok</span>(iroh_relay::ServerConfig {
         relay: <span class="prelude-val">Some</span>(relay_config),
-        stun: <span class="prelude-val">Some</span>(stun_config),
+        stun: <span class="prelude-val">Some</span>(stun_config).filter(|<span class="kw">_</span>| cfg.enable_stun),
         <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-        </span>metrics_addr: <span class="kw">if </span>cfg.enable_metrics {
-            <span class="prelude-val">Some</span>(cfg.metrics_bind_addr())
-        } <span class="kw">else </span>{
-            <span class="prelude-val">None
-        </span>},
+        </span>metrics_addr: <span class="prelude-val">Some</span>(cfg.metrics_bind_addr()).filter(|<span class="kw">_</span>| cfg.enable_metrics),
     })
 }
 

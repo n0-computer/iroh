@@ -445,6 +445,22 @@
 <a href="#445" id="445">445</a>
 <a href="#446" id="446">446</a>
 <a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
+<a href="#453" id="453">453</a>
+<a href="#454" id="454">454</a>
+<a href="#455" id="455">455</a>
+<a href="#456" id="456">456</a>
+<a href="#457" id="457">457</a>
+<a href="#458" id="458">458</a>
+<a href="#459" id="459">459</a>
+<a href="#460" id="460">460</a>
+<a href="#461" id="461">461</a>
+<a href="#462" id="462">462</a>
+<a href="#463" id="463">463</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
@@ -453,9 +469,12 @@
 <span class="kw">pub use </span>dns_server::create_dns_resolver;
 <span class="kw">use </span>tokio::sync::oneshot;
 
-<span class="kw">use </span><span class="kw">crate</span>::relay::{
-    server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
-    RelayMap, RelayNode, RelayUrl,
+<span class="kw">use crate</span>::{
+    defaults::DEFAULT_STUN_PORT,
+    relay::{
+        server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
+        RelayMap, RelayNode, RelayUrl,
+    },
 };
 
 <span class="doccomment">/// A drop guard to clean up test infrastructure.
@@ -473,6 +492,21 @@
 /// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
 /// When dropped, the returned [`Server`] does will stop running.
 </span><span class="kw">pub async fn </span>run_relay_server() -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server)&gt; {
+    run_relay_server_with(<span class="prelude-val">Some</span>(StunConfig {
+        bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
+    }))
+    .<span class="kw">await
+</span>}
+
+<span class="doccomment">/// Runs a relay server.
+///
+/// `stun` can be set to `None` to disable stun, or set to `Some` `StunConfig`,
+/// to enable stun on a specific socket.
+///
+/// The return value is similar to [`run_relay_server`].
+</span><span class="kw">pub async fn </span>run_relay_server_with(
+    stun: <span class="prelude-ty">Option</span>&lt;StunConfig&gt;,
+) -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server)&gt; {
     <span class="kw">let </span>cert = rcgen::generate_simple_self_signed(<span class="macro">vec!</span>[<span class="string">"localhost"</span>.to_string()]).unwrap();
     <span class="kw">let </span>rustls_cert = rustls::pki_types::CertificateDer::from(cert.serialize_der().unwrap());
     <span class="kw">let </span>private_key =
@@ -491,9 +525,7 @@
             }),
             limits: Default::default(),
         }),
-        stun: <span class="prelude-val">Some</span>(StunConfig {
-            bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
-        }),
+        stun,
         <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
         </span>metrics_addr: <span class="prelude-val">None</span>,
     };
@@ -504,7 +536,7 @@
     <span class="kw">let </span>m = RelayMap::from_nodes([RelayNode {
         url: url.clone(),
         stun_only: <span class="bool-val">false</span>,
-        stun_port: server.stun_addr().unwrap().port(),
+        stun_port: server.stun_addr().map_or(DEFAULT_STUN_PORT, |s| s.port()),
     }])
     .unwrap();
     <span class="prelude-val">Ok</span>((m, url, server))
