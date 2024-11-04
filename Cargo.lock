@@ -2746,7 +2746,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-cli"
-version = "0.27.0"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "async-channel",
