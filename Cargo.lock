@@ -2462,7 +2462,7 @@ dependencies = [
  "hex",
  "indicatif",
  "iroh",
- "iroh-base",
+ "iroh-base 0.27.0",
  "iroh-blobs",
  "iroh-docs",
  "iroh-gossip",
@@ -2504,6 +2504,35 @@ dependencies = [
 [[package]]
 name = "iroh-base"
 version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28a777d7e0b3e2fdab4ad1b21b64be87a43ac3ceb2a2ccef905e480ad3317396"
+dependencies = [
+ "aead",
+ "anyhow",
+ "crypto_box",
+ "data-encoding",
+ "derive_more",
+ "ed25519-dalek",
+ "getrandom",
+ "hex",
+ "iroh-blake3",
+ "once_cell",
+ "postcard",
+ "rand",
+ "rand_core",
+ "redb 2.1.1",
+ "serde",
+ "serde-error",
+ "ssh-key",
+ "thiserror",
+ "ttl_cache",
+ "url",
+ "zeroize",
+]
+
+[[package]]
+name = "iroh-base"
+version = "0.28.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2560,7 +2589,7 @@ dependencies = [
  "genawaiter",
  "hashlink",
  "hex",
- "iroh-base",
+ "iroh-base 0.27.0",
  "iroh-io",
  "iroh-metrics",
  "iroh-net",
@@ -2709,7 +2738,7 @@ dependencies = [
  "futures-lite 2.3.0",
  "futures-util",
  "hex",
- "iroh-base",
+ "iroh-base 0.27.0",
  "iroh-blake3",
  "iroh-blobs",
  "iroh-gossip",
@@ -2748,7 +2777,7 @@ dependencies = [
  "futures-lite 2.3.0",
  "futures-util",
  "indexmap 2.2.6",
- "iroh-base",
+ "iroh-base 0.27.0",
  "iroh-blake3",
  "iroh-metrics",
  "iroh-net",
@@ -2830,7 +2859,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "igd-next",
- "iroh-base",
+ "iroh-base 0.27.0",
  "iroh-metrics",
  "iroh-net",
  "iroh-quinn",
