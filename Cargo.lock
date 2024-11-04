@@ -2547,7 +2547,7 @@ dependencies = [
 [[package]]
 name = "iroh-blobs"
 version = "0.27.0"
-source = "git+https://github.com/n0-computer/iroh-blobs?branch=main#74b2b33c94d8431cbdb2977bd8416e46e8d5eefb"
+source = "git+https://github.com/n0-computer/iroh-blobs?branch=main#f2c948b9281b480a3e7d713c31169f8632635760"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2698,7 +2698,7 @@ dependencies = [
 [[package]]
 name = "iroh-docs"
 version = "0.27.0"
-source = "git+https://github.com/n0-computer/iroh-docs?branch=main#7e48c6a20e411c8e5928b5f09fe0ba46d5880ce5"
+source = "git+https://github.com/n0-computer/iroh-docs?branch=main#933af7af0e38281853042764aaa99ad95327d320"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2737,7 +2737,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.27.0"
-source = "git+https://github.com/n0-computer/iroh-gossip?branch=main#d452bb95d69d70a532ddaad08c21ff2d9e6ee76d"
+source = "git+https://github.com/n0-computer/iroh-gossip?branch=main#f525b8e5efb5741c6e3dce7ddea389b6b9ab84b5"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2966,7 +2966,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-router"
-version = "0.27.0"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "clap",
