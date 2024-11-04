@@ -1,6 +1,6 @@
 [package]
 name = "iroh"
-version = "0.28.0"
+version = "0.28.1"
 edition = "2021"
 readme = "README.md"
 description = "A toolkit for building distributed applications"
