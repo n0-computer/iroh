@@ -280,6 +280,13 @@ jobs:
             upload_url: ${{ github.event.inputs.upload_url || needs.create-release.outputs.upload_url }}
             asset_path: ${{ env.ASSET }}
 
+        - name: attach artifacts
+          uses: actions/upload-artifact@v4
+          with:
+            name: iroh-${{env.RELEASE_OS }}-${{env.RELEASE_ARCH}}-bundle
+            path: ${{ env.ASSET }}
+            compression-level: 0
+
     docker:
       needs: build_release
       uses: './.github/workflows/docker.yaml'
