@@ -18,14 +18,11 @@ use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, warn, Instrument};
 use tungstenite::handshake::derive_accept_key;
 
-use crate::{
-    key::SecretKey,
-    relay::{
-        http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
-        server::{
-            actor::{ClientConnHandler, ServerActorTask},
-            streams::MaybeTlsStream,
-        },
+use crate::relay::{
+    http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
+    server::{
+        actor::{ClientConnHandler, ServerActorTask},
+        streams::MaybeTlsStream,
     },
 };
 
@@ -148,18 +145,8 @@ pub struct TlsConfig {
 ///
 /// Defaults to handling relay requests on the "/relay" (and "/derp" for backwards compatibility) endpoint.
 /// Other HTTP endpoints can be added using [`ServerBuilder::request_handler`].
-///
-/// If no [`SecretKey`] is provided, it is assumed that you will provide a
-/// [`ServerBuilder::relay_override`] function that handles requests to the relay
-/// endpoint. Not providing a [`ServerBuilder::relay_override`] in this case will result in
-/// an error on `spawn`.
 #[derive(derive_more::Debug)]
 pub struct ServerBuilder {
-    /// The secret key for this Server.
-    ///
-    /// When `None`, you must also provide a `relay_override` function that
-    /// will be run when someone hits the relay endpoint.
-    secret_key: Option<SecretKey>,
     /// The ip + port combination for this server.
     addr: SocketAddr,
     /// Optional tls configuration/TlsAcceptor combination.
@@ -171,11 +158,6 @@ pub struct ServerBuilder {
     /// Used when certain routes in your server should be made available at the same port as
     /// the relay server, and so must be handled along side requests to the relay endpoint.
     handlers: Handlers,
-    /// Use a custom relay response handler.
-    ///
-    /// Typically used when you want to disable any relay connections.
-    #[debug("{}", relay_override.as_ref().map_or("None", |_| "Some(Box<Fn(Request<Incoming>, ResponseBuilder) -> Result<Response<BytesBody> + Send + Sync + 'static>)"))]
-    relay_override: Option<HyperHandler>,
     /// Headers to use for HTTP responses.
     headers: HeaderMap,
     /// 404 not found response.
@@ -189,22 +171,12 @@ impl ServerBuilder {
     /// Creates a new [ServerBuilder].
     pub fn new(addr: SocketAddr) -> Self {
         Self {
-            secret_key: None,
             addr,
             tls_config: None,
             handlers: Default::default(),
-            relay_override: None,
             headers: HeaderMap::new(),
             not_found_fn: None,
         }
-    }
-
-    /// The [`SecretKey`] identity for this relay server.
-    ///
-    /// When set to `None`, the builder assumes you do not want to run a relay service.
-    pub fn secret_key(mut self, secret_key: Option<SecretKey>) -> Self {
-        self.secret_key = secret_key;
-        self
     }
 
     /// Serves all requests content using TLS.
@@ -231,14 +203,6 @@ impl ServerBuilder {
         self
     }
 
-    /// Handles the relay endpoint in a custom way.
-    ///
-    /// This is required if no [`SecretKey`] was provided to the builder.
-    pub fn relay_override(mut self, handler: HyperHandler) -> Self {
-        self.relay_override = Some(handler);
-        self
-    }
-
     /// Adds HTTP headers to responses.
     pub fn headers(mut self, headers: HeaderMap) -> Self {
         for (k, v) in headers.iter() {
@@ -249,26 +213,9 @@ impl ServerBuilder {
 
     /// Builds and spawns an HTTP(S) Relay Server.
     pub async fn spawn(self) -> Result<Server> {
-        ensure!(
-            self.secret_key.is_some() || self.relay_override.is_some(),
-            "Must provide a `SecretKey` for the relay server OR pass in an override function for the 'relay' endpoint"
-        );
-        let (relay_handler, relay_server) = if let Some(secret_key) = self.secret_key {
-            // spawns a server actor/task
-            let server = ServerActorTask::new(secret_key.clone());
-            (
-                RelayHandler::ConnHandler(server.client_conn_handler(self.headers.clone())),
-                Some(server),
-            )
-        } else {
-            (
-                RelayHandler::Override(
-                    self.relay_override
-                        .context("no relay handler override but also no secret key")?,
-                ),
-                None,
-            )
-        };
+        let relay_server = ServerActorTask::new();
+        let relay_handler = relay_server.client_conn_handler(self.headers.clone());
+
         let h = self.headers.clone();
         let not_found_fn = match self.not_found_fn {
             Some(f) => f,
@@ -300,7 +247,7 @@ impl ServerBuilder {
 struct ServerState {
     addr: SocketAddr,
     tls_config: Option<TlsConfig>,
-    server: Option<ServerActorTask>,
+    server: ServerActorTask,
     service: RelayService,
 }
 
@@ -360,11 +307,9 @@ impl ServerState {
                     }
                 }
             }
-            if let Some(server) = server {
-                // TODO: if the task this is running in is aborted this server is not shut
-                // down.
-                server.close().await;
-            }
+            // TODO: if the task this is running in is aborted this server is not shut
+            // down.
+            server.close().await;
             set.shutdown().await;
             debug!("[{http_str}] relay: server has been shutdown.");
         }.instrument(info_span!("relay-http-serve")));
@@ -501,19 +446,11 @@ impl Service<Request<Incoming>> for RelayService {
             (req.method(), req.uri().path()),
             (&hyper::Method::GET, LEGACY_RELAY_PATH | RELAY_PATH)
         ) {
-            match &self.0.relay_handler {
-                RelayHandler::Override(f) => {
-                    // see if we have some override response
-                    let res = f(req, self.0.default_response());
-                    return Box::pin(async move { res });
-                }
-                RelayHandler::ConnHandler(handler) => {
-                    let h = handler.clone();
-                    // otherwise handle the relay connection as normal
-                    return Box::pin(async move { h.call(req).await.map_err(Into::into) });
-                }
-            }
+            let h = self.0.relay_handler.clone();
+            // otherwise handle the relay connection as normal
+            return Box::pin(async move { h.call(req).await.map_err(Into::into) });
         }
+
         // check all other possible endpoints
         let uri = req.uri().clone();
         if let Some(res) = self.0.handlers.get(&(req.method().clone(), uri.path())) {
@@ -532,28 +469,11 @@ struct RelayService(Arc<Inner>);
 
 #[derive(derive_more::Debug)]
 struct Inner {
-    pub relay_handler: RelayHandler,
+    pub relay_handler: ClientConnHandler,
     #[debug("Box<Fn(ResponseBuilder) -> Result<Response<BytesBody>> + Send + Sync + 'static>")]
     pub not_found_fn: HyperHandler,
     pub handlers: Handlers,
     pub headers: HeaderMap,
-}
-
-/// Action to take when a connection is made at the relay endpoint.`
-#[derive(derive_more::Debug)]
-enum RelayHandler {
-    /// Pass the connection to a [`ClientConnHandler`] to get added to the relay server. The default.
-    ConnHandler(ClientConnHandler),
-    /// Return some static response. Used when the http(s) should be running, but the relay portion
-    /// of the server is disabled.
-    // TODO: Can we remove this debug override?
-    Override(
-        #[debug(
-            "{}",
-            "Box<Fn(Request<Incoming>, ResponseBuilder) -> Result<Response<BytesBody> + Send + Sync + 'static>"
-        )]
-        HyperHandler,
-    ),
 }
 
 impl Inner {
@@ -579,7 +499,7 @@ pub enum TlsAcceptor {
 impl RelayService {
     fn new(
         handlers: Handlers,
-        relay_handler: RelayHandler,
+        relay_handler: ClientConnHandler,
         not_found_fn: HyperHandler,
         headers: HeaderMap,
     ) -> Self {
@@ -726,13 +646,11 @@ mod tests {
     async fn test_http_clients_and_server() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let server_key = SecretKey::generate();
         let a_key = SecretKey::generate();
         let b_key = SecretKey::generate();
 
         // start server
         let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
-            .secret_key(Some(server_key))
             .spawn()
             .await?;
 
@@ -853,7 +771,6 @@ mod tests {
             .try_init()
             .ok();
 
-        let server_key = SecretKey::generate();
         let a_key = SecretKey::generate();
         let b_key = SecretKey::generate();
 
@@ -862,7 +779,6 @@ mod tests {
 
         // start server
         let mut server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
-            .secret_key(Some(server_key))
             .tls_config(Some(tls_config))
             .spawn()
             .await?;

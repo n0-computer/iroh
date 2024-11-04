@@ -162,17 +162,8 @@ pub(crate) mod timeouts {
     /// The amount of time we wait for a hairpinned packet to come back.
     pub(crate) const HAIRPIN_CHECK_TIMEOUT: Duration = Duration::from_millis(100);
 
-    /// Maximum duration a UPnP search can take before timing out.
-    pub(crate) const UPNP_SEARCH_TIMEOUT: Duration = Duration::from_secs(1);
-
-    /// Timeout to receive a response from a PCP server.
-    pub(crate) const PCP_RECV_TIMEOUT: Duration = Duration::from_millis(500);
-
     /// Default Pinger timeout
     pub(crate) const DEFAULT_PINGER_TIMEOUT: Duration = Duration::from_secs(5);
-
-    /// Timeout to receive a response from a NAT-PMP server.
-    pub(crate) const NAT_PMP_RECV_TIMEOUT: Duration = Duration::from_millis(500);
 
     /// Timeouts specifically used in the iroh-relay
     pub(crate) mod relay {

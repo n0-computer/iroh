@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
+use quic_rpc::client::BoxedServiceConnection;
 use ref_cast::RefCast;
 
 use crate::rpc_protocol::node::{CounterStats, ShutdownRequest, StatsRequest, StatusRequest};
@@ -20,18 +21,16 @@ pub use self::{docs::Doc, net::NodeStatus};
 pub mod authors;
 pub mod blobs;
 pub mod docs;
-pub mod gossip;
 pub mod net;
 pub mod tags;
 
 /// Iroh rpc connection - boxed so that we can have a concrete type.
-pub(crate) type RpcConnection = quic_rpc::transport::boxed::Connection<RpcService>;
+pub(crate) type RpcConnection = BoxedServiceConnection<RpcService>;
 
 // Keep this type exposed, otherwise every occurrence of `RpcClient` in the API
 // will show up as `RpcClient<RpcService, Connection<RpcService>>` in the docs.
 /// Iroh rpc client - boxed so that we can have a concrete type.
-pub type RpcClient =
-    quic_rpc::RpcClient<RpcService, quic_rpc::transport::boxed::Connection<RpcService>>;
+pub type RpcClient = quic_rpc::RpcClient<RpcService>;
 
 /// An iroh client.
 ///
@@ -81,8 +80,9 @@ impl Iroh {
     }
 
     /// Returns the gossip client.
-    pub fn gossip(&self) -> &gossip::Client {
-        gossip::Client::ref_cast(&self.rpc)
+    pub fn gossip(&self) -> iroh_gossip::RpcClient<RpcService> {
+        let channel = self.rpc.clone().map::<iroh_gossip::RpcService>();
+        iroh_gossip::RpcClient::new(channel)
     }
 
     /// Returns the net client.

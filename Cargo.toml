@@ -1,7 +1,6 @@
 [workspace]
 members = [
   "iroh",
-  "iroh-blobs",
   "iroh-base",
   "iroh-dns-server",
   "iroh-metrics",
@@ -9,6 +8,9 @@ members = [
   "iroh-test",
   "iroh-net/bench",
   "iroh-cli",
+  "iroh-router",
+  "net-tools/netwatch",
+  "net-tools/portmapper",
 ]
 resolver = "2"
 
@@ -27,7 +29,6 @@ debug-assertions = false
 opt-level = 3
 panic = 'abort'
 incremental = false
-
 
 [workspace.lints.rust]
 missing_debug_implementations = "warn"
@@ -49,9 +50,10 @@ unused-async = "warn"
 [patch.crates-io]
 iroh-base = { path = "./iroh-base" }
 iroh-net = { path = "./iroh-net" }
-iroh-blobs = { path = "./iroh-blobs" }
 iroh-metrics = { path = "./iroh-metrics" }
 iroh-test = { path = "./iroh-test" }
-iroh-quinn = { path = "../quinn/quinn" }
-iroh-quinn-udp = { path = "../quinn/quinn-udp" }
-iroh-quinn-proto = { path = "../quinn/quinn-proto" }
+iroh-router = { path = "./iroh-router" }
+
+iroh-blobs = { git = "https://github.com/n0-computer/iroh-blobs", branch = "main" }
+iroh-gossip = { git = "https://github.com/n0-computer/iroh-gossip", branch = "main" }
+iroh-docs = { git = "https://github.com/n0-computer/iroh-docs", branch = "main" }

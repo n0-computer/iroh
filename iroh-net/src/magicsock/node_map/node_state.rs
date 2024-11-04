@@ -6,6 +6,7 @@ use std::{
 };
 
 use iroh_metrics::inc;
+use netwatch::ip::is_unicast_link_local;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, event, info, instrument, trace, warn, Level};
@@ -22,7 +23,6 @@ use crate::{
     endpoint::AddrInfo,
     key::PublicKey,
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
-    net::ip::is_unicast_link_local,
     relay::RelayUrl,
     stun,
     util::relay_only_mode,
@@ -134,6 +134,10 @@ pub(super) struct NodeState {
     last_call_me_maybe: Option<Instant>,
     /// The type of connection we have to the node, either direct, relay, mixed, or none.
     conn_type: Watchable<ConnectionType>,
+    /// Whether the conn_type was ever observed to be `Direct` at some point.
+    ///
+    /// Used for metric reporting.
+    has_been_direct: bool,
 }
 
 /// Options for creating a new [`NodeState`].
@@ -173,6 +177,7 @@ impl NodeState {
             last_used: options.active.then(Instant::now),
             last_call_me_maybe: None,
             conn_type: Watchable::new(ConnectionType::None),
+            has_been_direct: false,
         }
     }
 
@@ -304,6 +309,10 @@ impl NodeState {
             (None, Some(relay_url)) => ConnectionType::Relay(relay_url),
             (None, None) => ConnectionType::None,
         };
+        if !self.has_been_direct && matches!(&typ, ConnectionType::Direct(_)) {
+            self.has_been_direct = true;
+            inc!(MagicsockMetrics, nodes_contacted_directly);
+        }
         if let Ok(prev_typ) = self.conn_type.update(typ.clone()) {
             // The connection type has changed.
             event!(
@@ -1132,7 +1141,11 @@ impl NodeState {
         have_ipv6: bool,
     ) -> (Option<SocketAddr>, Option<RelayUrl>, Vec<PingAction>) {
         let now = Instant::now();
-        self.last_used.replace(now);
+        let prev = self.last_used.replace(now);
+        if prev.is_none() {
+            // this is the first time we are trying to connect to this node
+            inc!(MagicsockMetrics, nodes_contacted);
+        }
         let (udp_addr, relay_url) = self.addr_for_send(&now, have_ipv6);
         let mut ping_msgs = Vec::new();
 
@@ -1485,6 +1498,7 @@ mod tests {
                     last_used: Some(now),
                     last_call_me_maybe: None,
                     conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
+                    has_been_direct: true,
                 },
                 ip_port.into(),
             )
@@ -1504,6 +1518,7 @@ mod tests {
                 last_used: Some(now),
                 last_call_me_maybe: None,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
+                has_been_direct: false,
             }
         };
 
@@ -1530,6 +1545,7 @@ mod tests {
                 last_used: Some(now),
                 last_call_me_maybe: None,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
+                has_been_direct: false,
             }
         };
 
@@ -1569,6 +1585,7 @@ mod tests {
                         socket_addr,
                         send_addr.clone(),
                     )),
+                    has_been_direct: false,
                 },
                 socket_addr,
             )

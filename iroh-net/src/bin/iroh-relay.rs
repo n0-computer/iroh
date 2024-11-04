@@ -12,13 +12,11 @@ use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
 use iroh_net::{
     defaults::{DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_STUN_PORT},
-    key::SecretKey,
     relay::server as iroh_relay,
 };
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, DisplayFromStr};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
-use tracing::{debug, info};
+use tracing::debug;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 /// The default `http_bind_port` when using `--dev`.
@@ -94,16 +92,8 @@ fn load_secret_key(
 /// Configuration for the relay-server.
 ///
 /// This is (de)serialised to/from a TOML config file.
-#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Config {
-    /// The iroh [`SecretKey`] for this relay server.
-    ///
-    /// If not specified a new key will be generated and the config file will be re-written
-    /// using it.
-    #[serde_as(as = "DisplayFromStr")]
-    #[serde(default = "SecretKey::generate")]
-    secret_key: SecretKey,
     /// Whether to enable the Relay server.
     ///
     /// Defaults to `true`.
@@ -178,7 +168,6 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            secret_key: SecretKey::generate(),
             enable_relay: true,
             http_bind_addr: None,
             tls: None,
@@ -321,10 +310,6 @@ impl Config {
             .await
             .context("unable to read config")?;
         let config: Self = toml::from_str(&config_ser).context("config file must be valid toml")?;
-        if !config_ser.contains("secret_key") {
-            info!("generating new secret key and updating config file");
-            config.write_to_file(path).await?;
-        }
 
         Ok(config)
     }
@@ -430,7 +415,6 @@ async fn build_relay_config(cfg: Config) -> Result<iroh_relay::ServerConfig<std:
             .unwrap_or_default(),
     };
     let relay_config = iroh_relay::RelayConfig {
-        secret_key: cfg.secret_key.clone(),
         http_bind_addr: cfg.http_bind_addr(),
         tls,
         limits,
@@ -440,13 +424,9 @@ async fn build_relay_config(cfg: Config) -> Result<iroh_relay::ServerConfig<std:
     };
     Ok(iroh_relay::ServerConfig {
         relay: Some(relay_config),
-        stun: Some(stun_config),
+        stun: Some(stun_config).filter(|_| cfg.enable_stun),
         #[cfg(feature = "metrics")]
-        metrics_addr: if cfg.enable_metrics {
-            Some(cfg.metrics_bind_addr())
-        } else {
-            None
-        },
+        metrics_addr: Some(cfg.metrics_bind_addr()).filter(|_| cfg.enable_metrics),
     })
 }
 

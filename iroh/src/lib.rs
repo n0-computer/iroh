@@ -49,7 +49,7 @@
 //!   manage and share content-addressed blobs of data
 //! - [tags](crate::client::tags):
 //!   tags to tell iroh what data is important
-//! - [gossip](crate::client::gossip):
+//! - [gossip](iroh_gossip::RpcClient):
 //!   exchange data with other nodes via a gossip protocol
 //!
 //! - [authors](crate::client::authors):
@@ -102,6 +102,8 @@ pub use iroh_docs as docs;
 pub use iroh_gossip as gossip;
 #[doc(inline)]
 pub use iroh_net as net;
+#[doc(inline)]
+pub use iroh_router as router;
 
 pub mod client;
 pub mod node;

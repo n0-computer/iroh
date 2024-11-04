@@ -35,6 +35,7 @@ use futures_lite::{FutureExt, Stream, StreamExt};
 use futures_util::stream::BoxStream;
 use iroh_base::key::NodeId;
 use iroh_metrics::{inc, inc_by};
+use netwatch::{interfaces, ip::LocalAddresses, netmon};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use smallvec::{smallvec, SmallVec};
@@ -64,8 +65,7 @@ use crate::{
     dns::DnsResolver,
     endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
-    net::{interfaces, ip::LocalAddresses, netmon},
-    netcheck, portmapper,
+    netcheck,
     relay::{RelayMap, RelayUrl},
     stun, AddrInfo,
 };

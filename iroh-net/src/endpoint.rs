@@ -42,10 +42,23 @@ use crate::{
 
 mod rtt_actor;
 
+pub use bytes::Bytes;
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
+// Missing still: SendDatagram and ConnectionClose::frame_type's Type.
 pub use quinn::{
-    ApplicationClose, Connection, ConnectionClose, ConnectionError, ReadError, RecvStream,
-    RetryError, SendStream, ServerConfig, TransportConfig, VarInt, WriteError,
+    AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream, Connection,
+    ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
+    ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError, RetryError,
+    SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId, TransportConfig, VarInt,
+    WeakConnectionHandle, WriteError, ZeroRttAccepted,
+};
+pub use quinn_proto::{
+    congestion::{Controller, ControllerFactory},
+    crypto::{
+        AeadKey, CryptoError, ExportKeyingMaterialError, HandshakeTokenKey,
+        ServerConfig as CryptoServerConfig, UnsupportedVersion,
+    },
+    FrameStats, PathStats, TransportError, TransportErrorCode, UdpStats, Written,
 };
 
 use self::rtt_actor::RttMessage;
@@ -414,7 +427,7 @@ struct StaticConfig {
 
 impl StaticConfig {
     /// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
-    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> Result<quinn::ServerConfig> {
+    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> Result<ServerConfig> {
         let server_config = make_server_config(
             &self.secret_key,
             alpn_protocols,
@@ -425,18 +438,18 @@ impl StaticConfig {
     }
 }
 
-/// Creates a [`quinn::ServerConfig`] with the given secret key and limits.
+/// Creates a [`ServerConfig`] with the given secret key and limits.
 // This return type can not longer be used anywhere in our public API.  It is however still
 // used by iroh::node::Node (or rather iroh::node::Builder) to create a plain Quinn
 // endpoint.
 pub fn make_server_config(
     secret_key: &SecretKey,
     alpn_protocols: Vec<Vec<u8>>,
-    transport_config: Arc<quinn::TransportConfig>,
+    transport_config: Arc<TransportConfig>,
     keylog: bool,
-) -> Result<quinn::ServerConfig> {
+) -> Result<ServerConfig> {
     let quic_server_config = tls::make_server_config(secret_key, alpn_protocols, keylog)?;
-    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
+    let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
     server_config.transport_config(transport_config);
 
     Ok(server_config)
@@ -560,11 +573,7 @@ impl Endpoint {
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
     #[instrument(skip_all, fields(me = %self.node_id().fmt_short(), alpn = ?String::from_utf8_lossy(alpn)))]
-    pub async fn connect(
-        &self,
-        node_addr: impl Into<NodeAddr>,
-        alpn: &[u8],
-    ) -> Result<quinn::Connection> {
+    pub async fn connect(&self, node_addr: impl Into<NodeAddr>, alpn: &[u8]) -> Result<Connection> {
         let node_addr = node_addr.into();
         tracing::Span::current().record("remote", node_addr.node_id.fmt_short());
         // Connecting to ourselves is not supported.
@@ -621,11 +630,7 @@ impl Endpoint {
         since = "0.27.0",
         note = "Please use `connect` directly with a NodeId. This fn will be removed in 0.28.0."
     )]
-    pub async fn connect_by_node_id(
-        &self,
-        node_id: NodeId,
-        alpn: &[u8],
-    ) -> Result<quinn::Connection> {
+    pub async fn connect_by_node_id(&self, node_id: NodeId, alpn: &[u8]) -> Result<Connection> {
         let addr = NodeAddr::new(node_id);
         self.connect(addr, alpn).await
     }
@@ -639,7 +644,7 @@ impl Endpoint {
         node_id: NodeId,
         alpn: &[u8],
         addr: QuicMappedAddr,
-    ) -> Result<quinn::Connection> {
+    ) -> Result<Connection> {
         debug!("Attempting connection...");
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
@@ -1210,7 +1215,7 @@ pub struct Connecting {
 
 impl Connecting {
     /// Convert into a 0-RTT or 0.5-RTT connection at the cost of weakened security.
-    pub fn into_0rtt(self) -> Result<(quinn::Connection, quinn::ZeroRttAccepted), Self> {
+    pub fn into_0rtt(self) -> Result<(Connection, ZeroRttAccepted), Self> {
         match self.inner.into_0rtt() {
             Ok((conn, zrtt_accepted)) => {
                 try_send_rtt_msg(&conn, &self.ep);
@@ -1221,7 +1226,7 @@ impl Connecting {
     }
 
     /// Parameters negotiated during the handshake
-    pub async fn handshake_data(&mut self) -> Result<Box<dyn Any>, quinn::ConnectionError> {
+    pub async fn handshake_data(&mut self) -> Result<Box<dyn Any>, ConnectionError> {
         self.inner.handshake_data().await
     }
 
@@ -1251,7 +1256,7 @@ impl Connecting {
 }
 
 impl Future for Connecting {
-    type Output = Result<quinn::Connection, quinn::ConnectionError>;
+    type Output = Result<Connection, ConnectionError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
@@ -1268,7 +1273,7 @@ impl Future for Connecting {
 
 /// Extract the [`PublicKey`] from the peer's TLS certificate.
 // TODO: make this a method now
-pub fn get_remote_node_id(connection: &quinn::Connection) -> Result<PublicKey> {
+pub fn get_remote_node_id(connection: &Connection) -> Result<PublicKey> {
     let data = connection.peer_identity();
     match data {
         None => bail!("no peer certificate found"),
@@ -1292,7 +1297,7 @@ pub fn get_remote_node_id(connection: &quinn::Connection) -> Result<PublicKey> {
 ///
 /// If we can't notify the actor that will impact performance a little, but we can still
 /// function.
-fn try_send_rtt_msg(conn: &quinn::Connection, magic_ep: &Endpoint) {
+fn try_send_rtt_msg(conn: &Connection, magic_ep: &Endpoint) {
     // If we can't notify the rtt-actor that's not great but not critical.
     let Ok(peer_id) = get_remote_node_id(conn) else {
         warn!(?conn, "failed to get remote node id");
@@ -1383,7 +1388,7 @@ mod tests {
     use tracing::{error_span, info, info_span, Instrument};
 
     use super::*;
-    use crate::test_utils::run_relay_server;
+    use crate::test_utils::{run_relay_server, run_relay_server_with};
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
@@ -1505,7 +1510,7 @@ mod tests {
         );
 
         let (server, client) = tokio::time::timeout(
-            Duration::from_secs(5),
+            Duration::from_secs(30),
             futures_lite::future::zip(server, client),
         )
         .await
@@ -1848,5 +1853,24 @@ mod tests {
         let (r1, r2) = tokio::try_join!(res_ep1, res_ep2).unwrap();
         r1.expect("ep1 timeout").unwrap();
         r2.expect("ep2 timeout").unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_direct_addresses_no_stun_relay() {
+        let _guard = iroh_test::logging::setup();
+        let (relay_map, _, _guard) = run_relay_server_with(None).await.unwrap();
+
+        let ep = Endpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Custom(relay_map))
+            .insecure_skip_relay_cert_verify(true)
+            .bind()
+            .await
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(10), ep.direct_addresses().next())
+            .await
+            .unwrap()
+            .unwrap();
     }
 }

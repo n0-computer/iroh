@@ -46,6 +46,7 @@ iroh-metrics = { version = "0.27.0" }
 parking_lot = "0.12.1"
 pkarr = { version = "2.2.0", default-features = false }
 portable-atomic = "1"
+portmapper = { version = "0.1.0", path = "../net-tools/portmapper" }
 postcard = "1.0.8"
 quic-rpc = { version = "0.12", features = ["flume-transport", "quinn-transport"] }
 rand = "0.8.5"

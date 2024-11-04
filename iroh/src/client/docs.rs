@@ -15,7 +15,7 @@ use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use derive_more::{Display, FromStr};
 use futures_lite::{Stream, StreamExt};
-use iroh_base::{key::PublicKey, node_addr::AddrInfoOptions, rpc::RpcError};
+use iroh_base::{key::PublicKey, node_addr::AddrInfoOptions};
 use iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
 #[doc(inline)]
 pub use iroh_docs::engine::{Origin, SyncEvent, SyncReason};
@@ -527,7 +527,7 @@ pub enum ImportProgress {
     /// We got an error and need to abort.
     ///
     /// This will be the last message in the stream.
-    Abort(RpcError),
+    Abort(serde_error::Error),
 }
 
 /// Intended capability for document share tickets

@@ -26,6 +26,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use iroh_metrics::inc;
+use netwatch::{interfaces, UdpSocket};
 use rand::seq::IteratorRandom;
 use tokio::{
     sync::{mpsc, oneshot},
@@ -39,10 +40,8 @@ use super::NetcheckMetrics;
 use crate::{
     defaults::DEFAULT_STUN_PORT,
     dns::{DnsResolver, ResolverExt},
-    net::{interfaces, UdpSocket},
     netcheck::{self, Report},
     ping::{PingError, Pinger},
-    portmapper,
     relay::{RelayMap, RelayNode, RelayUrl},
     stun,
     util::MaybeFuture,

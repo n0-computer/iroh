@@ -198,8 +198,10 @@ jobs:
         overwrite: true
     
     - name: Fail Job if Tests Failed
-      if: ${{ failure() && steps.run_tests.outcome == 'failure' }}
-      run: exit 1
+      if: ${{ steps.run_tests.outcome == 'failure' }}
+      run: |
+        echo "Tests failed logs are available at: ${{steps.upload-report.outputs.artifact-url}}"
+        exit 1
 
     - name: Find Docs Comment
       if: ${{ inputs.pr_number != '' }}
