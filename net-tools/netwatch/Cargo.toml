@@ -41,8 +41,6 @@ derive_more = { version = "1.0.0", features = ["debug"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macros", "time", "test-util"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-iroh-test = "0.27.0"
 
 [package.metadata.docs.rs]
 all-features = true

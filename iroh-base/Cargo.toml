@@ -1,6 +1,6 @@
 [package]
 name = "iroh-base"
-version = "0.27.0"
+version = "0.28.0"
 edition = "2021"
 readme = "README.md"
 description = "base type and utilities for Iroh"
@@ -40,7 +40,7 @@ url = { version = "2.5.0", features = ["serde"], optional = true }
 getrandom = { version = "0.2", default-features = false, optional = true }
 
 [dev-dependencies]
-iroh-test = "0.27.0"
+iroh-test = "0.28.0"
 proptest = "1.0.0"
 serde_json = "1.0.107"
 serde_test = "1.0.176"

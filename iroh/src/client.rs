@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
+use quic_rpc::client::BoxedConnector;
 use ref_cast::RefCast;
 
 use crate::rpc_protocol::node::{CounterStats, ShutdownRequest, StatsRequest, StatusRequest};
@@ -57,7 +58,7 @@ impl Iroh {
 
     /// Returns the blobs client.
     pub fn blobs(&self) -> blobs::Client {
-        blobs::Client::new(self.rpc.clone().map())
+        blobs::Client::new(self.rpc.clone().map().boxed())
     }
 
     /// Returns the docs client.
@@ -72,13 +73,13 @@ impl Iroh {
 
     /// Returns the tags client.
     pub fn tags(&self) -> tags::Client {
-        tags::Client::new(self.rpc.clone().map())
+        tags::Client::new(self.rpc.clone().map().boxed())
     }
 
     /// Returns the gossip client.
-    pub fn gossip(&self) -> iroh_gossip::RpcClient<RpcService> {
-        let channel = self.rpc.clone().map::<iroh_gossip::RpcService>();
-        iroh_gossip::RpcClient::new(channel)
+    pub fn gossip(&self) -> iroh_gossip::RpcClient {
+        let channel = self.rpc.clone().map().boxed();
+        iroh_gossip::RpcClient::<BoxedConnector<iroh_gossip::rpc::proto::RpcService>>::new(channel)
     }
 
     /// Returns the net client.

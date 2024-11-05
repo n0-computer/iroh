@@ -60,7 +60,7 @@ use iroh_net::{
     AddrInfo, Endpoint, NodeAddr,
 };
 use iroh_router::{ProtocolHandler, Router};
-use quic_rpc::{transport::ServerEndpoint as _, RpcServer};
+use quic_rpc::{transport::Listener as _, RpcServer};
 use tokio::task::{JoinError, JoinSet};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
@@ -87,7 +87,7 @@ const SAVE_NODES_INTERVAL: Duration = Duration::from_secs(30);
 /// The quic-rpc server endpoint for the iroh node.
 ///
 /// We use a boxed endpoint here to allow having a concrete type for the server endpoint.
-pub type IrohServerEndpoint = quic_rpc::transport::boxed::ServerEndpoint<
+pub type IrohServerEndpoint = quic_rpc::transport::boxed::BoxedListener<
     crate::rpc_protocol::Request,
     crate::rpc_protocol::Response,
 >;

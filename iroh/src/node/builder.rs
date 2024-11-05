@@ -31,7 +31,7 @@ use iroh_net::{
     Endpoint,
 };
 use iroh_router::{ProtocolHandler, RouterBuilder};
-use quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
+use quic_rpc::transport::{boxed::BoxableListener, quinn::QuinnListener};
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinError;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -41,7 +41,6 @@ use super::{rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeI
 use crate::{
     client::RPC_ALPN,
     node::nodes_storage::load_node_addrs,
-    rpc_protocol::RpcService,
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
@@ -222,13 +221,12 @@ impl From<Box<ConcurrentDiscovery>> for DiscoveryConfig {
 #[derive(Debug, Default)]
 struct DummyServerEndpoint;
 
-impl BoxableServerEndpoint<crate::rpc_protocol::Request, crate::rpc_protocol::Response>
+impl BoxableListener<crate::rpc_protocol::Request, crate::rpc_protocol::Response>
     for DummyServerEndpoint
 {
     fn clone_box(
         &self,
-    ) -> Box<dyn BoxableServerEndpoint<crate::rpc_protocol::Request, crate::rpc_protocol::Response>>
-    {
+    ) -> Box<dyn BoxableListener<crate::rpc_protocol::Request, crate::rpc_protocol::Response>> {
         Box::new(DummyServerEndpoint)
     }
 
@@ -247,7 +245,7 @@ impl BoxableServerEndpoint<crate::rpc_protocol::Request, crate::rpc_protocol::Re
 }
 
 fn mk_external_rpc() -> IrohServerEndpoint {
-    quic_rpc::transport::boxed::ServerEndpoint::new(DummyServerEndpoint)
+    quic_rpc::transport::boxed::BoxedListener::new(DummyServerEndpoint)
 }
 
 impl Default for Builder<iroh_blobs::store::mem::Store> {
@@ -395,7 +393,7 @@ where
         let (ep, actual_rpc_port) = make_rpc_endpoint(&self.secret_key, rpc_addr)?;
         rpc_addr.set_port(actual_rpc_port);
 
-        let ep = quic_rpc::transport::boxed::ServerEndpoint::new(ep);
+        let ep = quic_rpc::transport::boxed::BoxedListener::new(ep);
         if let StorageConfig::Persistent(ref root) = self.storage {
             // store rpc endpoint
             RpcStatus::store(root, actual_rpc_port).await?;
@@ -691,8 +689,7 @@ where
         .await?;
 
         // Initialize the internal RPC connection.
-        let (internal_rpc, controller) =
-            quic_rpc::transport::flume::channel(32);
+        let (internal_rpc, controller) = quic_rpc::transport::flume::channel(32);
         let internal_rpc = quic_rpc::transport::boxed::BoxedListener::new(internal_rpc);
         // box the controller. Boxing has a special case for the flume channel that avoids allocations,
         // so this has zero overhead.
@@ -799,8 +796,6 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     /// # Ok(())
     /// # }
     /// ```
-    ///
-    ///
     pub fn accept(mut self, alpn: Vec<u8>, handler: Arc<dyn ProtocolHandler>) -> Self {
         self.router = self.router.accept(alpn, handler);
         self
@@ -954,7 +949,7 @@ fn make_rpc_endpoint(
     secret_key: &SecretKey,
     mut rpc_addr: SocketAddr,
 ) -> Result<(
-    QuinnServerEndpoint<crate::rpc_protocol::Request, crate::rpc_protocol::Response>,
+    QuinnListener<crate::rpc_protocol::Request, crate::rpc_protocol::Response>,
     u16,
 )> {
     let mut transport_config = quinn::TransportConfig::default();
@@ -987,7 +982,7 @@ fn make_rpc_endpoint(
     };
 
     let actual_rpc_port = rpc_quinn_endpoint.local_addr()?.port();
-    let rpc_endpoint = QuinnServerEndpoint::new(rpc_quinn_endpoint)?;
+    let rpc_endpoint = QuinnListener::new(rpc_quinn_endpoint)?;
 
     Ok((rpc_endpoint, actual_rpc_port))
 }

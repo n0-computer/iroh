@@ -91,8 +91,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_smoke_monitor() {
-        let _guard = iroh_test::logging::setup();
-
         let mon = Monitor::new().await.unwrap();
         let _token = mon
             .subscribe(|is_major| {

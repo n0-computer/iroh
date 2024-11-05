@@ -158,12 +158,12 @@ impl<D: BaoStore> Handler<D> {
     async fn handle_blobs_and_tags_request(
         self,
         msg: iroh_blobs::rpc::proto::Request,
-        chan: RpcChannel<
-            iroh_blobs::rpc::proto::RpcService,
-            IrohServerEndpoint,
-        >,
+        chan: RpcChannel<iroh_blobs::rpc::proto::RpcService>,
     ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
-        self.blobs().handle_rpc_request(msg, chan).await
+        self.blobs()
+            .handle_rpc_request(msg, chan)
+            .await
+            .map_err(|e| e.errors_into())
     }
 
     // async fn handle_blobs_request(
@@ -240,7 +240,10 @@ impl<D: BaoStore> Handler<D> {
             .get_protocol::<Gossip>(GOSSIP_ALPN)
             .expect("missing gossip");
         let chan = chan.map::<iroh_gossip::RpcService>();
-        gossip.handle_rpc_request(msg, chan).await
+        gossip
+            .handle_rpc_request(msg, chan)
+            .await
+            .map_err(|e| e.errors_into())
     }
 
     async fn handle_authors_request(
@@ -310,7 +313,10 @@ impl<D: BaoStore> Handler<D> {
         match msg {
             Net(msg) => self.handle_net_request(msg, chan).await,
             Node(msg) => self.handle_node_request(msg, chan).await,
-            BlobsAndTags(msg) => self.handle_blobs_and_tags_request(msg, chan.map()).await,
+            BlobsAndTags(msg) => {
+                self.handle_blobs_and_tags_request(msg, chan.map().boxed())
+                    .await
+            }
             Authors(msg) => self.handle_authors_request(msg, chan).await,
             Docs(msg) => self.handle_docs_request(msg, chan).await,
             Gossip(msg) => self.handle_gossip_request(msg, chan).await,
