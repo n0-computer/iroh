@@ -18,7 +18,6 @@ use crate::key::PublicKey;
 const RETRIES: usize = 3;
 
 /// Represents a connection to a client.
-///
 // TODO: expand to allow for _multiple connections_ associated with a single PublicKey. This
 // introduces some questions around which connection should be prioritized when forwarding packets
 //

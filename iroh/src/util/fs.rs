@@ -167,7 +167,6 @@ pub struct PathContent {
 }
 
 /// Walks the directory to get the total size and number of files in directory or file
-///
 // TODO: possible combine with `scan_dir`
 pub fn path_content_info(path: impl AsRef<Path>) -> anyhow::Result<PathContent> {
     path_content_info0(path)

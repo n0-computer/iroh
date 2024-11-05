@@ -39,7 +39,11 @@ use crate::rpc_protocol::net::{
 /// # Examples
 /// ```
 /// use std::str::FromStr;
-/// use iroh_base::{key::NodeId, node_addr::{RelayUrl, NodeAddr}};
+///
+/// use iroh_base::{
+///     key::NodeId,
+///     node_addr::{NodeAddr, RelayUrl},
+/// };
 /// use url::Url;
 ///
 /// # async fn run() -> anyhow::Result<()> {
@@ -50,12 +54,13 @@ use crate::rpc_protocol::net::{
 /// // Provide your node an address for another node
 /// let relay_url = RelayUrl::from(Url::parse("https://example.com").unwrap());
 /// let addr = NodeAddr::from_parts(
-///   // the node_id
-///   NodeId::from_str("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6").unwrap(),
-///   // the home relay
-///   Some(relay_url),
-///   // the direct addresses
-///   ["120.0.0.1:0".parse().unwrap()],
+///     // the node_id
+///     NodeId::from_str("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
+///         .unwrap(),
+///     // the home relay
+///     Some(relay_url),
+///     // the direct addresses
+///     ["120.0.0.1:0".parse().unwrap()],
 /// );
 /// net_client.add_node_addr(addr).await?;
 /// // Shut down the node. Passing `true` will force the shutdown, passing in

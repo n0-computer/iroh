@@ -184,8 +184,7 @@
 //! ```no_run
 //! use anyhow::{Context, Result};
 //! use futures_lite::StreamExt;
-//! use iroh_net::ticket::NodeTicket;
-//! use iroh_net::{Endpoint, NodeAddr};
+//! use iroh_net::{ticket::NodeTicket, Endpoint, NodeAddr};
 //!
 //! async fn accept() -> Result<()> {
 //!     // To accept connections at least one ALPN must be configured.
