@@ -161,7 +161,6 @@ impl<D: BaoStore> Handler<D> {
         chan: RpcChannel<
             iroh_blobs::rpc::proto::RpcService,
             IrohServerEndpoint,
-            crate::rpc_protocol::RpcService,
         >,
     ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
         self.blobs().handle_rpc_request(msg, chan).await

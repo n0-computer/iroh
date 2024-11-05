@@ -26,7 +26,7 @@ futures-lite = "2.3"
 futures-util = "0.3"
 genawaiter = { version = "0.99", default-features = false, features = ["futures03"] }
 hex = { version = "0.4.3" }
-iroh-blobs = { version = "0.27.0", features = ["downloader"] }
+iroh-blobs = { version = "0.28.1", features = ["downloader"] }
 iroh-base = { version = "0.27.0", features = ["key"] }
 iroh-io = { version = "0.6.0", features = ["stats"] }
 iroh-metrics = { version = "0.27.0", optional = true }
@@ -39,8 +39,8 @@ iroh-docs = { version = "0.27.0" }
 iroh-gossip = "0.27.0"
 parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-quic-rpc = { version = "0.13", default-features = false, features = ["flume-transport", "quinn-transport"] }
-quic-rpc-derive = { version = "0.13" }
+quic-rpc = { version = "0.15", default-features = false, features = ["flume-transport", "quinn-transport"] }
+quic-rpc-derive = { version = "0.15" }
 quinn = { package = "iroh-quinn", version = "0.11" }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }

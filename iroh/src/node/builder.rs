@@ -692,11 +692,11 @@ where
 
         // Initialize the internal RPC connection.
         let (internal_rpc, controller) =
-            quic_rpc::transport::flume::service_connection::<RpcService>(32);
-        let internal_rpc = quic_rpc::transport::boxed::ServerEndpoint::new(internal_rpc);
+            quic_rpc::transport::flume::channel(32);
+        let internal_rpc = quic_rpc::transport::boxed::BoxedListener::new(internal_rpc);
         // box the controller. Boxing has a special case for the flume channel that avoids allocations,
         // so this has zero overhead.
-        let controller = quic_rpc::transport::boxed::Connection::new(controller);
+        let controller = quic_rpc::transport::boxed::BoxedConnector::new(controller);
         let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
         let inner = Arc::new(NodeInner {
