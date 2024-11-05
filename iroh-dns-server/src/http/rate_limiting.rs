@@ -8,18 +8,22 @@ use tower_governor::{
     GovernorLayer,
 };
 
-/// Config for http rate limit.
+/// Config for http server rate limit.
 #[derive(Debug, Deserialize, Default, Serialize, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum RateLimitConfig {
-    /// Disable rate limit for http server.
+    /// Disable rate limit.
     Disabled,
-    /// Enable rate limit for http server based on the connection peer IP address.
-    /// https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.PeerIpKeyExtractor.html
+    /// Enable rate limit based on the connection's peer IP address.
+    ///
+    /// <https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.PeerIpKeyExtractor.html>
     #[default]
     Simple,
-    /// Enable rate limit for http server based on a smart logic for extracting the connection original IP address, useful for reverse proxies.
-    /// https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.SmartIpKeyExtractor.html
+    /// Enable rate limit based on headers commonly used by reverse proxies.
+    ///
+    /// Uses headers commonly used by reverse proxies to extract the original IP address,
+    /// falling back to the connection's peer IP address.
+    /// <https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.SmartIpKeyExtractor.html>
     Smart,
 }
 
