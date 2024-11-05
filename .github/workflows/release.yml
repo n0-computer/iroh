@@ -283,10 +283,21 @@ jobs:
 
         - name: attach artifacts
           uses: actions/upload-artifact@v4
+          if : matrix.os != 'windows-latest'
           with:
             name: iroh-${{env.RELEASE_OS }}-${{env.RELEASE_ARCH}}-bundle
-            path: iroh-*{.tar.gz,.zip}
+            path: iroh-*.tar.gz
             compression-level: 0
+            retention-days: 1
+        
+        - name: attach artifacts
+          uses: actions/upload-artifact@v4
+          if : matrix.os == 'windows-latest'
+          with:
+            name: iroh-${{env.RELEASE_OS }}-${{env.RELEASE_ARCH}}-bundle
+            path: iroh-*.zip
+            compression-level: 0
+            retention-days: 1
 
     # docker:
     #   needs: build_release
