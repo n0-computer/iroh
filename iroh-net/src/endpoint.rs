@@ -1426,7 +1426,6 @@ mod tests {
         assert!(res.is_err());
         let err = res.err().unwrap();
         assert!(err.to_string().starts_with("Adding our own address"));
-        tokio::time::sleep(Duration::from_secs(180)).await;
     }
 
     #[tokio::test]
