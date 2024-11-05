@@ -2,16 +2,6 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.28.1](https://github.com/n0-computer/iroh/compare/v0.28.1..0.28.1) - 2024-11-04
-
-### 🐛 Bug Fixes
-
-- Update to patched iroh-gossip 0.28.1 - ([bd44719](https://github.com/n0-computer/iroh/commit/bd4471912ab696e8d9119a5b9d3c2bcdb80c43f7))
-
-### ⚙️ Miscellaneous Tasks
-
-- Update Cargo.lock - ([f3398b4](https://github.com/n0-computer/iroh/commit/f3398b4eff04539a930f00a82b72d15025d92411))
-
 ## [0.28.1](https://github.com/n0-computer/iroh/compare/v0.28.0..v0.28.1) - 2024-11-04
 
 ### 🐛 Bug Fixes
@@ -25,6 +15,7 @@ All notable changes to iroh will be documented in this file.
 ### ⚙️ Miscellaneous Tasks
 
 - Release - ([134a93b](https://github.com/n0-computer/iroh/commit/134a93b5a60103b3ce8fa4aacb52cdbcb291d00b))
+
 
 ## [0.28.0](https://github.com/n0-computer/iroh/compare/v0.27.0..v0.28.0) - 2024-11-04
 
@@ -1870,5 +1861,3 @@ All notable changes to iroh will be documented in this file.
 - On_collection doesn't need to be FnMut ([#136](https://github.com/n0-computer/iroh/issues/136)) - ([eac7b65](https://github.com/n0-computer/iroh/commit/eac7b65a6760c0cf55d455ca5a7e9e523698c7a1))
 - Allow older rust version ([#142](https://github.com/n0-computer/iroh/issues/142)) - ([f3086a9](https://github.com/n0-computer/iroh/commit/f3086a9576fdc0cdfbd6b0646745bec9e91f7d60))
 - Use our own bao crate - ([659d2d2](https://github.com/n0-computer/iroh/commit/659d2d22254ea1d3f185ec0d4c8be4e7bf4374df))
-
-
