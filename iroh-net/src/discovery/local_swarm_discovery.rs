@@ -7,29 +7,28 @@
 //!
 //! ```
 //! use std::time::Duration;
-//! use iroh_net::endpoint::{Source, Endpoint};
+//!
+//! use iroh_net::endpoint::{Endpoint, Source};
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!   let recent = Duration::from_secs(600); // 10 minutes in seconds
+//!     let recent = Duration::from_secs(600); // 10 minutes in seconds
 //!
-//!   let endpoint = Endpoint::builder().bind().await.unwrap();
-//!   let remotes = endpoint.remote_info_iter();
-//!   let locally_discovered: Vec<_> = remotes
-//!      .filter(|remote| {
-//!          remote
-//!              .sources()
-//!              .iter()
-//!              .any(|(source, duration)| {
-//!                  if let Source::Discovery { name } = source {
-//!                      name == iroh_net::discovery::local_swarm_discovery::NAME && *duration <= recent
-//!                  } else {
-//!                      false
-//!                  }
-//!              })
-//!    })
-//!       .collect();
-//!   println!("locally discovered nodes: {locally_discovered:?}");
+//!     let endpoint = Endpoint::builder().bind().await.unwrap();
+//!     let remotes = endpoint.remote_info_iter();
+//!     let locally_discovered: Vec<_> = remotes
+//!         .filter(|remote| {
+//!             remote.sources().iter().any(|(source, duration)| {
+//!                 if let Source::Discovery { name } = source {
+//!                     name == iroh_net::discovery::local_swarm_discovery::NAME
+//!                         && *duration <= recent
+//!                 } else {
+//!                     false
+//!                 }
+//!             })
+//!         })
+//!         .collect();
+//!     println!("locally discovered nodes: {locally_discovered:?}");
 //! }
 //! ```
 use std::{

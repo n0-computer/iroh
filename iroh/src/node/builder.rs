@@ -800,7 +800,6 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     /// # }
     /// ```
     ///
-    ///
     pub fn accept(mut self, alpn: Vec<u8>, handler: Arc<dyn ProtocolHandler>) -> Self {
         self.router = self.router.accept(alpn, handler);
         self

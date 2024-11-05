@@ -10,7 +10,6 @@ use super::{
 /// A PCP Request.
 ///
 /// See [RFC 6887 Request Header](https://datatracker.ietf.org/doc/html/rfc6887#section-7.1)
-///
 // NOTE: PCP Options are optional, and currently not used in this code, thus not implemented
 #[derive(Debug, PartialEq, Eq)]
 pub struct Request {
