@@ -59,3 +59,4 @@ iroh-gossip = { git = "https://github.com/n0-computer/iroh-gossip", branch = "tr
 iroh-docs = { git = "https://github.com/n0-computer/iroh-docs", branch = "main" }
 quic-rpc = { git = "https://github.com/n0-computer/quic-rpc.git", branch = "map-transports-not-services" }
 # quic-rpc = { path = "../quic-rpc" }
+# iroh-gossip = { path = "../iroh-gossip" }

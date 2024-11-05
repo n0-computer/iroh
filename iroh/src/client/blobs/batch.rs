@@ -24,7 +24,7 @@ use tracing::{debug, warn};
 
 use super::WrapOption;
 use crate::{
-    client::{RpcClient, RpcConnection, RpcService},
+    client::{RpcClient, RpcConnection},
     rpc_protocol::{
         blobs::{
             BatchAddPathRequest, BatchAddStreamRequest, BatchAddStreamResponse,

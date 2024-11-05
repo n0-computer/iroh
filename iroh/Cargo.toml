@@ -39,7 +39,7 @@ iroh-docs = { version = "0.28.0" }
 iroh-gossip = "0.28.1"
 parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-quic-rpc = { version = "0.14", default-features = false, features = ["flume-transport", "quinn-transport"] }
+quic-rpc = { version = "0.15", default-features = false, features = ["flume-transport", "quinn-transport"] }
 quic-rpc-derive = { version = "0.14" }
 quinn = { package = "iroh-quinn", version = "0.12" }
 rand = "0.8"

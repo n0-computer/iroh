@@ -48,7 +48,7 @@ pkarr = { version = "2.2.0", default-features = false }
 portable-atomic = "1"
 portmapper = { version = "0.1.0", path = "../net-tools/portmapper" }
 postcard = "1.0.8"
-quic-rpc = { version = "0.14", features = ["flume-transport", "quinn-transport"] }
+quic-rpc = { version = "0.15", features = ["flume-transport", "quinn-transport"] }
 rand = "0.8.5"
 ratatui = "0.26.2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

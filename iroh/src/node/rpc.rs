@@ -251,8 +251,11 @@ impl<D: BaoStore> Handler<D> {
             .router
             .get_protocol::<Gossip>(GOSSIP_ALPN)
             .expect("missing gossip");
-        let chan = chan.map::<iroh_gossip::RpcService>();
-        gossip.handle_rpc_request(msg, chan).await
+        let chan = chan.map();
+        gossip
+            .handle_rpc_request(msg, chan)
+            .await
+            .map_err(|e| e.map_back())
     }
 
     async fn handle_authors_request(
@@ -316,18 +319,18 @@ impl<D: BaoStore> Handler<D> {
         self,
         msg: Request,
         chan: RpcChannel<RpcService, IrohServerEndpoint>,
-    ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
+    ) -> anyhow::Result<()> {
         use Request::*;
         debug!("handling rpc request: {msg}");
-        match msg {
-            Net(msg) => self.handle_net_request(msg, chan).await,
-            Node(msg) => self.handle_node_request(msg, chan).await,
-            Blobs(msg) => self.handle_blobs_request(msg, chan).await,
-            Tags(msg) => self.handle_tags_request(msg, chan).await,
-            Authors(msg) => self.handle_authors_request(msg, chan).await,
-            Docs(msg) => self.handle_docs_request(msg, chan).await,
-            Gossip(msg) => self.handle_gossip_request(msg, chan).await,
-        }
+        Ok(match msg {
+            Net(msg) => self.handle_net_request(msg, chan).await?,
+            Node(msg) => self.handle_node_request(msg, chan).await?,
+            Blobs(msg) => self.handle_blobs_request(msg, chan).await?,
+            Tags(msg) => self.handle_tags_request(msg, chan).await?,
+            Authors(msg) => self.handle_authors_request(msg, chan).await?,
+            Docs(msg) => self.handle_docs_request(msg, chan).await?,
+            Gossip(msg) => self.handle_gossip_request(msg, chan).await?,
+        })
     }
 
     fn local_pool_handle(&self) -> LocalPoolHandle {
