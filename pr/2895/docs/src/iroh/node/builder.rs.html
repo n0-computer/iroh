@@ -988,7 +988,6 @@
 <a href="#988" id="988">988</a>
 <a href="#989" id="989">989</a>
 <a href="#990" id="990">990</a>
-<a href="#991" id="991">991</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -1790,7 +1789,6 @@
     /// # Ok(())
     /// # }
     /// ```
-    ///
     </span><span class="kw">pub fn </span>accept(<span class="kw-2">mut </span><span class="self">self</span>, alpn: Vec&lt;u8&gt;, handler: Arc&lt;<span class="kw">dyn </span>ProtocolHandler&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.router = <span class="self">self</span>.router.accept(alpn, handler);
         <span class="self">self
