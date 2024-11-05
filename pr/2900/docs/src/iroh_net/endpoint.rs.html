@@ -1876,7 +1876,6 @@
 <a href="#1876" id="1876">1876</a>
 <a href="#1877" id="1877">1877</a>
 <a href="#1878" id="1878">1878</a>
-<a href="#1879" id="1879">1879</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -3305,7 +3304,6 @@
         <span class="macro">assert!</span>(res.is_err());
         <span class="kw">let </span>err = res.err().unwrap();
         <span class="macro">assert!</span>(err.to_string().starts_with(<span class="string">"Adding our own address"</span>));
-        tokio::time::sleep(Duration::from_secs(<span class="number">180</span>)).<span class="kw">await</span>;
     }
 
     <span class="attr">#[tokio::test]
