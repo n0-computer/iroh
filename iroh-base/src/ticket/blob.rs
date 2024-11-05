@@ -168,14 +168,19 @@ mod tests {
             hash,
         };
         let base32 = base32::parse_vec(ticket.to_string().strip_prefix("blob").unwrap()).unwrap();
-        let expected = parse_hexdump("
+        let expected = parse_hexdump(
+            "
             00 # discriminator for variant 0
-            ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6 # node id, 32 bytes, see above
+            ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6 # node id, 32 bytes, \
+             see above
             00 # relay url
             00 # number of addresses (0)
             00 # format (raw)
-            0b84d358e4c8be6c38626b2182ff575818ba6bd3f4b90464994be14cb354a072 # hash, 32 bytes, see above
-        ").unwrap();
+            0b84d358e4c8be6c38626b2182ff575818ba6bd3f4b90464994be14cb354a072 # hash, 32 bytes, see \
+             above
+        ",
+        )
+        .unwrap();
         assert_eq_hex!(base32, expected);
     }
 }

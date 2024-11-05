@@ -248,7 +248,10 @@ impl BlobCommands {
                 };
 
                 if format != BlobFormat::Raw && out == Some(OutputTarget::Stdout) {
-                    return Err(anyhow::anyhow!("The input arguments refer to a collection of blobs and output is set to STDOUT. Only single blobs may be passed in this case."));
+                    return Err(anyhow::anyhow!(
+                        "The input arguments refer to a collection of blobs and output is set to \
+                         STDOUT. Only single blobs may be passed in this case."
+                    ));
                 }
 
                 let tag = match tag {
@@ -717,9 +720,15 @@ impl ValidateProgressState {
     /// Adds a message to the progress bar in the given `id`.
     fn add_entry(&mut self, id: u64, hash: Hash, path: Option<String>, size: u64) {
         let pb = self.mp.insert_before(&self.overall, ProgressBar::new(size));
-        pb.set_style(ProgressStyle::default_bar()
-            .template("{spinner:.green} [{bar:40.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
-            .progress_chars("=>-"));
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} [{bar:40.cyan/blue}] {msg} {bytes}/{total_bytes} \
+                     ({bytes_per_sec}, eta {eta})",
+                )
+                .unwrap()
+                .progress_chars("=>-"),
+        );
         let msg = if let Some(path) = path {
             format!("{} {}", hash.to_hex(), path)
         } else {
@@ -1003,9 +1012,15 @@ impl ProvideProgressState {
     /// Inserts a new progress bar with the given id, name, and size.
     fn found(&mut self, name: String, id: u64, size: u64) {
         let pb = self.mp.add(ProgressBar::new(size));
-        pb.set_style(ProgressStyle::default_bar()
-            .template("{spinner:.green} [{bar:40.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
-            .progress_chars("=>-"));
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} [{bar:40.cyan/blue}] {msg} {bytes}/{total_bytes} \
+                     ({bytes_per_sec}, eta {eta})",
+                )
+                .unwrap()
+                .progress_chars("=>-"),
+        );
         pb.set_message(name);
         pb.set_length(size);
         pb.set_position(0);
@@ -1174,15 +1189,18 @@ fn make_individual_progress() -> ProgressBar {
     let pb = ProgressBar::hidden();
     pb.enable_steady_tick(std::time::Duration::from_millis(100));
     pb.set_style(
-        ProgressStyle::with_template("{msg}{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-            .unwrap()
-            .with_key(
-                "eta",
-                |state: &ProgressState, w: &mut dyn std::fmt::Write| {
-                    write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
-                },
-            )
-            .progress_chars("#>-"),
+        ProgressStyle::with_template(
+            "{msg}{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] \
+             {bytes}/{total_bytes} ({eta})",
+        )
+        .unwrap()
+        .with_key(
+            "eta",
+            |state: &ProgressState, w: &mut dyn std::fmt::Write| {
+                write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
+            },
+        )
+        .progress_chars("#>-"),
     );
     pb
 }

@@ -68,9 +68,11 @@ async fn main() -> anyhow::Result<()> {
         println!("\t{}", local_endpoint.addr)
     }
 
-    let relay_url = endpoint
-        .home_relay()
-        .expect("should be connected to a relay server, try calling `endpoint.local_endpoints()` or `endpoint.connect()` first, to ensure the endpoint has actually attempted a connection before checking for the connected relay server");
+    let relay_url = endpoint.home_relay().expect(
+        "should be connected to a relay server, try calling `endpoint.local_endpoints()` or \
+         `endpoint.connect()` first, to ensure the endpoint has actually attempted a connection \
+         before checking for the connected relay server",
+    );
     println!("node relay server url: {relay_url}\n");
     // Build a `NodeAddr` from the node_id, relay url, and UDP addresses.
     let addr = NodeAddr::from_parts(args.node_id, Some(args.relay_url), args.addrs);

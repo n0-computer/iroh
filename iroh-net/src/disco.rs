@@ -418,18 +418,26 @@ mod tests {
                 name: "ping_with_nodekey_src",
                 m: Message::Ping(Ping {
                     tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
-                    node_key: PublicKey::try_from(&[
-                        190, 243, 65, 104, 37, 102, 175, 75, 243, 22, 69, 200, 167, 107, 24, 63, 216, 140, 120, 43, 4, 112, 16, 62, 117, 155, 45, 215, 72, 175, 40, 189][..]).unwrap(),
+                    node_key: PublicKey::try_from(
+                        &[
+                            190, 243, 65, 104, 37, 102, 175, 75, 243, 22, 69, 200, 167, 107, 24,
+                            63, 216, 140, 120, 43, 4, 112, 16, 62, 117, 155, 45, 215, 72, 175, 40,
+                            189,
+                        ][..],
+                    )
+                    .unwrap(),
                 }),
-                want: "01 00 01 02 03 04 05 06 07 08 09 0a 0b 0c be f3 41 68 25 66 af 4b f3 16 45 c8 a7 6b 18 3f d8 8c 78 2b 04 70 10 3e 75 9b 2d d7 48 af 28 bd",
+                want: "01 00 01 02 03 04 05 06 07 08 09 0a 0b 0c be f3 41 68 25 66 af 4b f3 16 45 \
+                       c8 a7 6b 18 3f d8 8c 78 2b 04 70 10 3e 75 9b 2d d7 48 af 28 bd",
             },
             Test {
                 name: "pong",
-                m: Message::Pong(Pong{
+                m: Message::Pong(Pong {
                     tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
-                    ping_observed_addr:  SendAddr::Udp("2.3.4.5:1234".parse().unwrap()),
+                    ping_observed_addr: SendAddr::Udp("2.3.4.5:1234".parse().unwrap()),
                 }),
-                want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 00 00 00 00 00 00 00 00 00 00 ff ff 02 03 04 05 d2 04",
+                want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 00 00 00 00 00 00 00 00 00 00 \
+                       ff ff 02 03 04 05 d2 04",
             },
             Test {
                 name: "pongv6",
@@ -437,11 +445,14 @@ mod tests {
                     tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
                     ping_observed_addr: SendAddr::Udp("[fed0::12]:6666".parse().unwrap()),
                 }),
-                want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 fe d0 00 00 00 00 00 00 00 00 00 00 00 00 00 12 0a 1a",
+                want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 fe d0 00 00 00 00 00 00 00 00 \
+                       00 00 00 00 00 12 0a 1a",
             },
             Test {
                 name: "call_me_maybe",
-                m: Message::CallMeMaybe(CallMeMaybe { my_numbers: Vec::new() }),
+                m: Message::CallMeMaybe(CallMeMaybe {
+                    my_numbers: Vec::new(),
+                }),
                 want: "03 00",
             },
             Test {
@@ -452,7 +463,8 @@ mod tests {
                         "[2001::3456]:789".parse().unwrap(),
                     ],
                 }),
-                want: "03 00 00 00 00 00 00 00 00 00 00 00 ff ff 01 02 03 04 37 02 20 01 00 00 00 00 00 00 00 00 00 00 00 00 34 56 15 03",
+                want: "03 00 00 00 00 00 00 00 00 00 00 00 ff ff 01 02 03 04 37 02 20 01 00 00 00 \
+                       00 00 00 00 00 00 00 00 00 34 56 15 03",
             },
         ];
         for test in tests {

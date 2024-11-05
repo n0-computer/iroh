@@ -51,14 +51,17 @@ async fn main() -> anyhow::Result<()> {
         .collect::<Vec<_>>()
         .join(" ");
 
-    let relay_url = endpoint
-        .home_relay()
-        .expect("should be connected to a relay server, try calling `endpoint.local_endpoints()` or `endpoint.connect()` first, to ensure the endpoint has actually attempted a connection before checking for the connected relay server");
+    let relay_url = endpoint.home_relay().expect(
+        "should be connected to a relay server, try calling `endpoint.local_endpoints()` or \
+         `endpoint.connect()` first, to ensure the endpoint has actually attempted a connection \
+         before checking for the connected relay server",
+    );
     println!("node relay server url: {relay_url}");
     println!("\nin a separate terminal run:");
 
     println!(
-        "\tcargo run --example connect-unreliable -- --node-id {me} --addrs \"{local_addrs}\" --relay-url {relay_url}\n"
+        "\tcargo run --example connect-unreliable -- --node-id {me} --addrs \"{local_addrs}\" \
+         --relay-url {relay_url}\n"
     );
     // accept incoming connections, returns a normal QUIC connection
 

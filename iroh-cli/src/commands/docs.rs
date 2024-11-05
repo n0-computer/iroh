@@ -527,9 +527,15 @@ impl DocCommands {
                             }
                         };
                         let pb = ProgressBar::new(content.size());
-                        pb.set_style(ProgressStyle::default_bar()
-                                .template("{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
-                                .progress_chars("=>-"));
+                        pb.set_style(
+                            ProgressStyle::default_bar()
+                                .template(
+                                    "{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} \
+                                     ({bytes_per_sec}, eta {eta})",
+                                )
+                                .unwrap()
+                                .progress_chars("=>-"),
+                        );
                         let file = tokio::fs::File::create(path.clone()).await?;
                         if let Err(err) =
                             tokio::io::copy(&mut content, &mut pb.wrap_async_write(file)).await
@@ -622,8 +628,9 @@ impl DocCommands {
             Self::Drop { doc } => {
                 let doc = get_doc(iroh, env, doc).await?;
                 println!(
-                    "Deleting a document will permanently remove the document secret key, all document entries, \n\
-                    and all content blobs which are not referenced from other docs or tags."
+                    "Deleting a document will permanently remove the document secret key, all \
+                     document entries, \nand all content blobs which are not referenced from \
+                     other docs or tags."
                 );
                 let prompt = format!("Delete document {}?", fmt_short(doc.id()));
                 if Confirm::new()
@@ -900,9 +907,15 @@ impl ImportProgressBar {
     fn new(source: &str, doc_id: NamespaceId, expected_size: u64, expected_entries: u64) -> Self {
         let mp = MultiProgress::new();
         let add = mp.add(ProgressBar::new(0));
-        add.set_style(ProgressStyle::default_bar()
-            .template("{msg}\n{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
-            .progress_chars("=>-"));
+        add.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{msg}\n{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} \
+                     ({bytes_per_sec}, eta {eta})",
+                )
+                .unwrap()
+                .progress_chars("=>-"),
+        );
         add.set_message(format!("Importing from {source}..."));
         add.set_length(expected_size);
         add.set_position(0);
@@ -910,9 +923,15 @@ impl ImportProgressBar {
 
         let doc_id = fmt_short(doc_id.to_bytes());
         let import = mp.add(ProgressBar::new(0));
-        import.set_style(ProgressStyle::default_bar()
-            .template("{msg}\n{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} ({per_sec}, eta {eta})").unwrap()
-            .progress_chars("=>-"));
+        import.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{msg}\n{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} ({per_sec}, eta \
+                     {eta})",
+                )
+                .unwrap()
+                .progress_chars("=>-"),
+        );
         import.set_message(format!("Adding to doc {doc_id}..."));
         import.set_length(expected_entries);
         import.set_position(0);

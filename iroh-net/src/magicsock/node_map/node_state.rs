@@ -278,7 +278,10 @@ impl NodeState {
         have_ipv6: bool,
     ) -> (Option<SocketAddr>, Option<RelayUrl>) {
         if relay_only_mode() {
-            debug!("in `DEV_relay_ONLY` mode, giving the relay address as the only viable address for this endpoint");
+            debug!(
+                "in `DEV_relay_ONLY` mode, giving the relay address as the only viable address \
+                 for this endpoint"
+            );
             return (None, self.relay_url());
         }
         let (best_addr, relay_url) = match self.udp_paths.send_addr(*now, have_ipv6) {

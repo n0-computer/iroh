@@ -107,7 +107,10 @@ impl Mapping {
 
                 let sent_port: u16 = local_port.into();
                 if received_local_port != sent_port {
-                    anyhow::bail!("received mapping is for a local port that does not match the requested one");
+                    anyhow::bail!(
+                        "received mapping is for a local port that does not match the requested \
+                         one"
+                    );
                 }
                 let external_port = external_port
                     .try_into()

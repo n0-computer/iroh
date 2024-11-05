@@ -243,7 +243,10 @@ impl Clients {
                 tracing::warn!("client {key:?} too busy to receive packet, dropping packet");
             }
             Err(SendError::SenderClosed) => {
-                tracing::warn!("Can no longer write to client {key:?}, dropping message and pruning connection");
+                tracing::warn!(
+                    "Can no longer write to client {key:?}, dropping message and pruning \
+                     connection"
+                );
                 self.unregister(key);
             }
         }

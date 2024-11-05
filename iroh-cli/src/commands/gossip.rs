@@ -71,9 +71,14 @@ impl GossipCommands {
             } => {
                 let bootstrap = bootstrap
                     .into_iter()
-                    .map(|node_id| NodeId::from_str(&node_id).map_err(|e| {
-                        anyhow::anyhow!("Failed to parse bootstrap node id \"{node_id}\": {e}\nMust be a valid base32-encoded iroh node id.")
-                    }))
+                    .map(|node_id| {
+                        NodeId::from_str(&node_id).map_err(|e| {
+                            anyhow::anyhow!(
+                                "Failed to parse bootstrap node id \"{node_id}\": {e}\nMust be a \
+                                 valid base32-encoded iroh node id."
+                            )
+                        })
+                    })
                     .collect::<Result<_, _>>()?;
 
                 let topic = match (topic, raw_topic) {

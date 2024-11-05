@@ -131,7 +131,8 @@ pub fn downcast_upgrade(
             }
 
             bail!(
-                "could not downcast the upgraded connection to a TcpStream or client::TlsStream<TcpStream>"
+                "could not downcast the upgraded connection to a TcpStream or \
+                 client::TlsStream<TcpStream>"
             )
         }
     }

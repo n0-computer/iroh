@@ -26,12 +26,17 @@ async fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
 
     if args.len() != 2 {
-        bail!("expected one argument [BLOB_TICKET]\n\nGet a ticket by running the follow command in a separate terminal:\n\n`cargo run --example hello-world-provide`");
+        bail!(
+            "expected one argument [BLOB_TICKET]\n\nGet a ticket by running the follow command in \
+             a separate terminal:\n\n`cargo run --example hello-world-provide`"
+        );
     }
 
     // deserialize ticket string into a ticket
-    let ticket =
-        BlobTicket::from_str(&args[1]).context("failed parsing blob ticket\n\nGet a ticket by running the follow command in a separate terminal:\n\n`cargo run --example hello-world-provide`")?;
+    let ticket = BlobTicket::from_str(&args[1]).context(
+        "failed parsing blob ticket\n\nGet a ticket by running the follow command in a separate \
+         terminal:\n\n`cargo run --example hello-world-provide`",
+    )?;
 
     // create a new node
     let node = iroh::node::Node::memory().spawn().await?;
@@ -53,7 +58,8 @@ async fn main() -> Result<()> {
     // If the `BlobFormat` is `Raw`, we have the hash for a single blob, and simply need to read the blob using the `blobs` API on the client to get the content.
     ensure!(
         ticket.format() == BlobFormat::Raw,
-        "'Hello World' example expects to fetch a single blob, but the ticket indicates a collection.",
+        "'Hello World' example expects to fetch a single blob, but the ticket indicates a \
+         collection.",
     );
 
     // `download` returns a stream of `DownloadProgress` events. You can iterate through these updates to get progress

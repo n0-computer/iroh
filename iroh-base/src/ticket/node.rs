@@ -162,15 +162,19 @@ mod tests {
             ),
         };
         let base32 = base32::parse_vec(ticket.to_string().strip_prefix("node").unwrap()).unwrap();
-        let expected = parse_hexdump("
+        let expected = parse_hexdump(
+            "
             00 # variant
-            ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6 # node id, 32 bytes, see above
+            ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6 # node id, 32 bytes, \
+             see above
             01 # relay url present
             10 687474703a2f2f646572702e6d652e2f # relay url, 16 bytes, see above
             01 # one direct address
             00 # ipv4
             7f000001 8008 # address, see above
-        ").unwrap();
+        ",
+        )
+        .unwrap();
         assert_eq_hex!(base32, expected);
     }
 }

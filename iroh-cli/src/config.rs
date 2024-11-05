@@ -241,7 +241,10 @@ impl ConsoleEnv {
         let author_path = ConsolePaths::CurrentAuthor.with_iroh_data_dir(self.iroh_data_dir());
         let mut inner = self.0.write();
         if !inner.is_console {
-            bail!("Switching the author is only supported within the Iroh console, not on the command line");
+            bail!(
+                "Switching the author is only supported within the Iroh console, not on the \
+                 command line"
+            );
         }
         inner.author = author;
         std::fs::write(author_path, author.to_string().as_bytes())?;
@@ -255,7 +258,10 @@ impl ConsoleEnv {
     pub(crate) fn set_doc(&self, doc: NamespaceId) -> anyhow::Result<()> {
         let mut inner = self.0.write();
         if !inner.is_console {
-            bail!("Switching the document is only supported within the Iroh console, not on the command line");
+            bail!(
+                "Switching the document is only supported within the Iroh console, not on the \
+                 command line"
+            );
         }
         inner.doc = Some(doc);
         Ok(())
@@ -266,8 +272,9 @@ impl ConsoleEnv {
         let inner = self.0.read();
         let doc_id = arg.or(inner.doc).ok_or_else(|| {
             anyhow!(
-                "Missing document id. Set the active document with the `IROH_DOC` environment variable or the `-d` option.\n\
-                In the console, you can also set the active document with `doc switch`."
+                "Missing document id. Set the active document with the `IROH_DOC` environment \
+                 variable or the `-d` option.\nIn the console, you can also set the active \
+                 document with `doc switch`."
             )
         })?;
         Ok(doc_id)

@@ -57,8 +57,15 @@ const INDEX: &[u8] = br#"<html><body>
 </p>
 "#;
 const TLS_HEADERS: [(&str, &str); 2] = [
-    ("Strict-Transport-Security", "max-age=63072000; includeSubDomains"),
-    ("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'self'; block-all-mixed-content; plugin-types 'none'")
+    (
+        "Strict-Transport-Security",
+        "max-age=63072000; includeSubDomains",
+    ),
+    (
+        "Content-Security-Policy",
+        "default-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'self'; \
+         block-all-mixed-content; plugin-types 'none'",
+    ),
 ];
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;

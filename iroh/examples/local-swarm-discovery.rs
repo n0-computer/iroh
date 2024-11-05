@@ -94,7 +94,12 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await?;
             let outcome = stream.finish().await?;
-            println!("To fetch the blob:\n\tcargo run --example local_swarm_discovery --features=\"local-swarm-discovery\" -- connect {} {} -o [FILE_PATH]", node.node_id(), outcome.hash);
+            println!(
+                "To fetch the blob:\n\tcargo run --example local_swarm_discovery \
+                 --features=\"local-swarm-discovery\" -- connect {} {} -o [FILE_PATH]",
+                node.node_id(),
+                outcome.hash
+            );
             tokio::signal::ctrl_c().await?;
             node.shutdown().await?;
             std::process::exit(0);
@@ -253,7 +258,10 @@ mod progress {
         let pb = ProgressBar::hidden();
         pb.enable_steady_tick(std::time::Duration::from_millis(100));
         pb.set_style(
-        ProgressStyle::with_template("{msg}{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+            ProgressStyle::with_template(
+                "{msg}{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] \
+                 {bytes}/{total_bytes} ({eta})",
+            )
             .unwrap()
             .with_key(
                 "eta",
@@ -262,7 +270,7 @@ mod progress {
                 },
             )
             .progress_chars("#>-"),
-    );
+        );
         pb
     }
 }

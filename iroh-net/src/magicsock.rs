@@ -2356,7 +2356,12 @@ impl Actor {
             Some((source, sealed_box)) => {
                 if relay_node_src != source {
                     // TODO: return here?
-                    warn!("Received relay disco message from connection for {}, but with message from {}", relay_node_src.fmt_short(), source.fmt_short());
+                    warn!(
+                        "Received relay disco message from connection for {}, but with message \
+                         from {}",
+                        relay_node_src.fmt_short(),
+                        source.fmt_short()
+                    );
                 }
                 self.msock.handle_disco_message(
                     source,

@@ -26,12 +26,17 @@ async fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
 
     if args.len() != 2 {
-        bail!("expected one argument [BLOB_TICKET]\n\nGet a ticket by running the follow command in a separate terminal:\n\n`cargo run --example collection-provide`");
+        bail!(
+            "expected one argument [BLOB_TICKET]\n\nGet a ticket by running the follow command in \
+             a separate terminal:\n\n`cargo run --example collection-provide`"
+        );
     }
 
     // deserialize ticket string into a ticket
-    let ticket =
-        BlobTicket::from_str(&args[1]).context("failed parsing blob ticket\n\nGet a ticket by running the follow command in a separate terminal:\n\n`cargo run --example collection-provide`")?;
+    let ticket = BlobTicket::from_str(&args[1]).context(
+        "failed parsing blob ticket\n\nGet a ticket by running the follow command in a separate \
+         terminal:\n\n`cargo run --example collection-provide`",
+    )?;
 
     // create a new node
     let node = iroh::node::Node::memory().spawn().await?;
@@ -53,7 +58,8 @@ async fn main() -> Result<()> {
     // Get the content we have just fetched from the iroh database.
     ensure!(
         ticket.format() == BlobFormat::HashSeq,
-        "'collection' example expects to fetch a collection, but the ticket indicates a single blob."
+        "'collection' example expects to fetch a collection, but the ticket indicates a single \
+         blob."
     );
 
     // `download` returns a stream of `DownloadProgress` events. You can iterate through these updates to get progress

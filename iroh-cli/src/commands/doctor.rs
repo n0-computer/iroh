@@ -400,9 +400,15 @@ impl Gui {
         counters.set_style(style);
         let pb = mp.add(indicatif::ProgressBar::hidden());
         pb.enable_steady_tick(Duration::from_millis(100));
-        pb.set_style(indicatif::ProgressStyle::default_bar()
-            .template("{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec})").unwrap()
-            .progress_chars("█▉▊▋▌▍▎▏ "));
+        pb.set_style(
+            indicatif::ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} \
+                     ({bytes_per_sec})",
+                )
+                .unwrap()
+                .progress_chars("█▉▊▋▌▍▎▏ "),
+        );
         let counters2 = counters.clone();
         let counter_task = tokio::spawn(async move {
             loop {
