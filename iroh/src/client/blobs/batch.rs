@@ -43,7 +43,7 @@ struct BatchInner {
     rpc: RpcClient,
     /// The stream to send drop
     #[debug(skip)]
-    updates: Mutex<Buffer<UpdateSink<RpcService, RpcConnection, BatchUpdate>, BatchUpdate>>,
+    updates: Mutex<Buffer<UpdateSink<RpcConnection, BatchUpdate>, BatchUpdate>>,
 }
 
 /// A batch for write operations.
@@ -126,7 +126,7 @@ impl Batch {
     pub(super) fn new(
         batch: BatchId,
         rpc: RpcClient,
-        updates: UpdateSink<RpcService, RpcConnection, BatchUpdate>,
+        updates: UpdateSink<RpcConnection, BatchUpdate>,
         buffer_size: usize,
     ) -> Self {
         let updates = updates.buffer(buffer_size);

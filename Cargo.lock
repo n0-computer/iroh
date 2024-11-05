@@ -2893,7 +2893,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.28.1"
-source = "git+https://github.com/n0-computer/iroh-gossip?branch=main#efce3e1dc991c15a7f1fc6f579f04876a22a7b1e"
+source = "git+https://github.com/n0-computer/iroh-gossip?branch=try-out-new-quicrpc#792e746bcdc1ab4f57989a4b40ec665befa0bac4"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -4420,8 +4420,7 @@ dependencies = [
 [[package]]
 name = "quic-rpc"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d8431b2e7c22929347b61a354d4936d71fe7ab1e6b0475dc50e98276970dfec"
+source = "git+https://github.com/n0-computer/quic-rpc.git?branch=map-transports-not-services#2455dcfd6f2431ee2f86bf5f1d0d74c4e7ac1776"
 dependencies = [
  "anyhow",
  "bincode",
@@ -4917,9 +4916,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "0.38.38"
+version = "0.38.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa260229e6538e52293eeb577aabd09945a09d6d9cc0fc550ed7529056c2e32a"
+checksum = "375116bee2be9ed569afe2154ea6a99dfdffd257f533f187498c2a8f5feaf4ee"
 dependencies = [
  "bitflags 2.6.0",
  "errno",

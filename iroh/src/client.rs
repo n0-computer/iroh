@@ -80,8 +80,8 @@ impl Iroh {
     }
 
     /// Returns the gossip client.
-    pub fn gossip(&self) -> iroh_gossip::RpcClient<RpcService> {
-        let channel = self.rpc.clone().map::<iroh_gossip::RpcService>();
+    pub fn gossip(&self) -> iroh_gossip::RpcClient {
+        let channel = self.rpc.clone().map().boxed();
         iroh_gossip::RpcClient::new(channel)
     }
 
