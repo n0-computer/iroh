@@ -28,7 +28,7 @@ on:
     tags:
     - "v*"
     branches:
-      - arqu/ci/release-uploads
+      - arqu/ci-release-uploads
 
 concurrency:
   group: release-testing-${{ github.workflow }}-${{ github.ref }}
