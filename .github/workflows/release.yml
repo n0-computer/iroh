@@ -6,15 +6,15 @@ on:
       release_version:
         description: "Release version"
         required: true
-        default: ""
+        default: "v0.28.1"
       create_release:
         description: "Create release"
         required: true
-        default: "true"
+        default: "false"
       upload_artifacts:
         description: "Upload artifacts"
         required: true
-        default: "true"
+        default: "false"
       upload_url:
         description: "Upload URL"
         required: false
@@ -23,13 +23,15 @@ on:
           description: "Commit hash from which to build"
           required: false
           type: string
-          default: ""
+          default: "30e3cb34aa7f8dee4c8b1077fbc969c880a39a13"
   push:
     tags:
     - "v*"
+    branches:
+      - arqu/ci/release-uploads
 
 concurrency:
-  group: release-${{ github.workflow }}-${{ github.ref }}
+  group: release-testing-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -39,50 +41,50 @@ env:
   MSRV: "1.76"
   SCCACHE_CACHE_SIZE: "50G"
   BIN_NAMES: "iroh,iroh-relay,iroh-dns-server"
-  RELEASE_VERSION: ${{ github.event.inputs.release_version }}
+  RELEASE_VERSION: "v0.28.1"
 
 jobs:
-    create-release:
-      name: create-release
-      runs-on: ubuntu-latest
-      outputs:
-        upload_url: ${{ steps.release.outputs.upload_url }}
-        release_version: ${{ env.RELEASE_VERSION }}
-      steps:
-      - name: Get the release version from the tag or input
-        shell: bash
-        if: env.RELEASE_VERSION == ''
-        run: |
-          if "${{ github.event.inputs.release_version }}" != ""; then
-            echo "RELEASE_VERSION=${{ github.event.inputs.release_version }}" >> $GITHUB_ENV
-            echo "version is: ${{ env.RELEASE_VERSION }}"
-          else
-            # See: https://github.community/t5/GitHub-Actions/How-to-get-just-the-tag-name/m-p/32167/highlight/true#M1027
-            echo "RELEASE_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-            echo "version is: ${{ env.RELEASE_VERSION }}"
-          fi
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - name: Create GitHub release
-        id: release
-        if: github.event.inputs.create_release == 'true' || github.event_name == 'push'
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          draft: true
-          tag_name: ${{ env.RELEASE_VERSION ||  github.event.inputs.release_version}}
-          release_name: ${{ env.RELEASE_VERSION ||  github.event.inputs.release_version }}
+    # create-release:
+    #   name: create-release
+    #   runs-on: ubuntu-latest
+    #   outputs:
+    #     upload_url: ${{ steps.release.outputs.upload_url }}
+    #     release_version: ${{ env.RELEASE_VERSION }}
+    #   steps:
+    #   - name: Get the release version from the tag or input
+    #     shell: bash
+    #     if: env.RELEASE_VERSION == ''
+    #     run: |
+    #       if "${{ github.event.inputs.release_version }}" != ""; then
+    #         echo "RELEASE_VERSION=${{ github.event.inputs.release_version }}" >> $GITHUB_ENV
+    #         echo "version is: ${{ env.RELEASE_VERSION }}"
+    #       else
+    #         # See: https://github.community/t5/GitHub-Actions/How-to-get-just-the-tag-name/m-p/32167/highlight/true#M1027
+    #         echo "RELEASE_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+    #         echo "version is: ${{ env.RELEASE_VERSION }}"
+    #       fi
+    #   - name: Checkout repository
+    #     uses: actions/checkout@v4
+    #     with:
+    #       fetch-depth: 1
+    #   - name: Create GitHub release
+    #     id: release
+    #     if: github.event.inputs.create_release == 'true' || github.event_name == 'push'
+    #     uses: actions/create-release@v1
+    #     env:
+    #       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    #     with:
+    #       draft: true
+    #       tag_name: ${{ env.RELEASE_VERSION ||  github.event.inputs.release_version}}
+    #       release_name: ${{ env.RELEASE_VERSION ||  github.event.inputs.release_version }}
 
     build_release:
         timeout-minutes: 60
         name: Build release binaries
-        needs: create-release
+        # needs: create-release
         runs-on: ${{ matrix.runner }}
         outputs:
-          release_version: ${{ needs.create-release.outputs.release_version }}
+          # release_version: ${{ needs.create-release.outputs.release_version }}
           base_hash: ${{ steps.define_hash.outputs.base_hash }}
         continue-on-error: false
         strategy:
@@ -129,17 +131,16 @@ jobs:
           RUST_BACKTRACE: full
           RUSTV: ${{ matrix.rust }}
         steps:
-        - name: Checkout
-          if: inputs.base_hash == ''
-          uses: actions/checkout@v4
-          with:
-            submodules: recursive
+        # - name: Checkout
+        #   if: inputs.base_hash == ''
+        #   uses: actions/checkout@v4
+        #   with:
+        #     submodules: recursive
         
         - name: Checkout specified commit
-          if: inputs.base_hash != ''
           uses: actions/checkout@v4
           with:
-            ref: ${{ inputs.base_hash }}
+            ref: "30e3cb34aa7f8dee4c8b1077fbc969c880a39a13"
             submodules: recursive
     
         - name: Set build arch
@@ -248,7 +249,7 @@ jobs:
             IFS=',' read -ra BIN_NAMES <<< "${{ env.BIN_NAMES }}"
             ASSETS=""
             for BIN_NAME in "${BIN_NAMES[@]}"; do
-              staging="$BIN_NAME-${{ needs.create-release.outputs.release_version }}-${{ matrix.cargo_targets }}"
+              staging="$BIN_NAME-v0.28.1-${{ matrix.cargo_targets }}"
               mkdir -p "$staging"
               cp "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME" "$staging/"
               tar czf "$staging.tar.gz" -C "$staging" .
@@ -263,7 +264,7 @@ jobs:
             $BIN_NAMES = "${{ env.BIN_NAMES }}".Split(',')
             $ASSETS = @()
             foreach ($BIN_NAME in $BIN_NAMES) {
-              $staging = "$BIN_NAME-${{ needs.create-release.outputs.release_version }}-${{ matrix.cargo_targets }}"
+              $staging = "$BIN_NAME-v0.28.1-${{ matrix.cargo_targets }}"
               New-Item -ItemType Directory -Force -Path "$staging"
               Copy-Item -Path "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME.exe" -Destination "$staging/"
               Set-Location -Path "$staging"
@@ -274,11 +275,11 @@ jobs:
             $ASSETS = $ASSETS -join ','
             Add-Content -Path $env:GITHUB_ENV -Value "ASSET=$ASSETS"
 
-        - uses: n0-computer/actions-upload-release-asset@main
-          if: (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push')
-          with:
-            upload_url: ${{ github.event.inputs.upload_url || needs.create-release.outputs.upload_url }}
-            asset_path: ${{ env.ASSET }}
+        # - uses: n0-computer/actions-upload-release-asset@main
+        #   if: (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push')
+        #   with:
+        #     upload_url: ${{ github.event.inputs.upload_url || needs.create-release.outputs.upload_url }}
+        #     asset_path: ${{ env.ASSET }}
 
         - name: attach artifacts
           uses: actions/upload-artifact@v4
@@ -287,11 +288,11 @@ jobs:
             path: iroh-*{.tar.gz,.zip}
             compression-level: 0
 
-    docker:
-      needs: build_release
-      uses: './.github/workflows/docker.yaml'
-      secrets: inherit
-      with:
-        release_version: ${{ needs.build_release.outputs.release_version }}
-        base_hash: ${{ needs.build_release.outputs.base_hash }}
-        publish: true
+    # docker:
+    #   needs: build_release
+    #   uses: './.github/workflows/docker.yaml'
+    #   secrets: inherit
+    #   with:
+    #     release_version: ${{ needs.build_release.outputs.release_version }}
+    #     base_hash: ${{ needs.build_release.outputs.base_hash }}
+    #     publish: true
