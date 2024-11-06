@@ -743,7 +743,7 @@ async fn run_probe(
         }
         Probe::Https { ref node, .. } => {
             debug!("sending probe HTTPS");
-            match measure_https_latency(node).await {
+            match measure_https_latency(node, None).await {
                 Ok((latency, ip)) => {
                     result.latency = Some(latency);
                     // We set these IPv4 and IPv6 but they're not really used
@@ -1023,33 +1023,61 @@ async fn run_icmp_probe(
     Ok(report)
 }
 
+/// Executes an HTTPS probe.
+///
+/// If `certs` is provided they will be added to the trusted root certificates, allowing the
+/// use of self-signed certificates for servers.  Currently this is used for testing.
 #[allow(clippy::unused_async)]
-async fn measure_https_latency(_node: &RelayNode) -> Result<(Duration, IpAddr)> {
-    bail!("not implemented");
-    // TODO:
-    // - needs relayhttp::Client
-    // - measurement hooks to measure server processing time
+async fn measure_https_latency(
+    node: &RelayNode,
+    certs: Option<Vec<rustls::pki_types::CertificateDer<'static>>>,
+) -> Result<(Duration, IpAddr)> {
+    // TODO: I would prefer a different URL, `/ping` probably.
+    let url = node.url.join("/relay/probe")?;
 
-    // metricHTTPSend.Add(1)
-    // let ctx, cancel := context.WithTimeout(httpstat.WithHTTPStat(ctx, &result), overallProbeTimeout);
-    // let dc := relayhttp.NewNetcheckClient(c.logf);
-    // let tlsConn, tcpConn, node := dc.DialRegionTLS(ctx, reg)?;
-    // if ta, ok := tlsConn.RemoteAddr().(*net.TCPAddr);
-    // req, err := http.NewRequestWithContext(ctx, "GET", "https://"+node.HostName+"/relay/latency-check", nil);
-    // resp, err := hc.Do(req);
+    // TODO: uses threadpool with getaddrinfo for DNS resolution.  other options are:
+    // - enable reqwest's built-in trust-dns support
+    // - hook up our own crate::dns::DNS_RESOLVER
+    // The captive portal check is in the same boat.
+    //
+    // This should also use same connection establishment as relay client itself, which
+    // needs to be more configurable so users can do more crazy things:
+    // https://github.com/n0-computer/iroh/issues/2901
+    let mut builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
+    if let Some(certs) = certs {
+        for cert in certs {
+            let cert = reqwest::Certificate::from_der(&cert)?;
+            builder = builder.add_root_certificate(cert);
+        }
+    }
+    let client = builder.build()?;
 
-    // // relays should give us a nominal status code, so anything else is probably
-    // // an access denied by a MITM proxy (or at the very least a signal not to
-    // // trust this latency check).
-    // if resp.StatusCode > 299 {
-    //     return 0, ip, fmt.Errorf("unexpected status code: %d (%s)", resp.StatusCode, resp.Status)
-    // }
-    // _, err = io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<10));
-    // result.End(c.timeNow())
+    let start = Instant::now();
+    let mut response = client.request(reqwest::Method::GET, url).send().await?;
+    let latency = start.elapsed();
+    if response.status().is_success() {
+        // Drain the response body to be nice to the server, up to a limit.
+        const MAX_BODY_SIZE: usize = 8 << 10; // 8 KiB
+        let mut body_size = 0;
+        while let Some(chunk) = response.chunk().await? {
+            body_size += chunk.len();
+            if body_size >= MAX_BODY_SIZE {
+                break;
+            }
+        }
 
-    // // TODO: decide best timing heuristic here.
-    // // Maybe the server should return the tcpinfo_rtt?
-    // return result.ServerProcessing, ip, nil
+        // Only `None` if a different hyper HttpConnector in the request.
+        let remote_ip = response
+            .remote_addr()
+            .context("missing HttpInfo from HttpConnector")?
+            .ip();
+        Ok((latency, remote_ip))
+    } else {
+        Err(anyhow!(
+            "Error response from server: '{}'",
+            response.status().canonical_reason().unwrap_or_default()
+        ))
+    }
 }
 
 /// Updates a netcheck [`Report`] with a new [`ProbeReport`].
@@ -1118,8 +1146,11 @@ fn update_report(report: &mut Report, probe_report: ProbeReport) {
 mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
+    use testresult::TestResult;
+
     use super::*;
     use crate::defaults::staging::{default_eu_relay_node, default_na_relay_node};
+    use crate::test_utils;
 
     #[test]
     fn test_update_report_stun_working() {
@@ -1367,5 +1398,27 @@ mod tests {
         if let Some(err) = last_err {
             panic!("Ping error: {err:#}");
         }
+    }
+
+    #[tokio::test]
+    async fn test_measure_https_latency() -> TestResult {
+        let _logging_guard = iroh_test::logging::setup();
+        let (_relay_map, relay_url, server) = test_utils::run_relay_server().await?;
+        warn!(?relay_url, "RELAY_URL");
+        let node = RelayNode {
+            stun_only: false,
+            stun_port: 0,
+            url: relay_url.clone(),
+        };
+        let (latency, ip) = measure_https_latency(&node, server.certificates()).await?;
+
+        assert!(latency > Duration::ZERO);
+
+        let relay_url_ip = relay_url
+            .host_str()
+            .context("host")?
+            .parse::<std::net::IpAddr>()?;
+        assert_eq!(ip, relay_url_ip);
+        Ok(())
     }
 }

@@ -182,6 +182,11 @@ pub struct Server {
     relay_handle: Option<http_server::ServerHandle>,
     /// The main task running the server.
     supervisor: AbortOnDropHandle<Result<()>>,
+    /// The certificate for the server.
+    ///
+    /// If the server has manual certificates configured the certificate chain will be
+    /// available here, this can be used by a client to authenticate the server.
+    certificates: Option<Vec<rustls::pki_types::CertificateDer<'static>>>,
 }
 
 impl Server {
@@ -227,7 +232,13 @@ impl Server {
             None => None,
         };
 
-        // Start the Relay server.
+        // Start the Relay server, but first clone the certs out.
+        let certificates = config.relay.as_ref().and_then(|relay| {
+            relay.tls.as_ref().and_then(|tls| match tls.cert {
+                CertConfig::LetsEncrypt { .. } => None,
+                CertConfig::Manual { ref certs, .. } => Some(certs.clone()),
+            })
+        });
         let (relay_server, http_addr) = match config.relay {
             Some(relay_config) => {
                 debug!("Starting Relay server");
@@ -284,7 +295,7 @@ impl Server {
                             }
                             CertConfig::Manual { private_key, certs } => {
                                 let server_config =
-                                    server_config.with_single_cert(certs.clone(), private_key)?;
+                                    server_config.with_single_cert(certs, private_key)?;
                                 let server_config = Arc::new(server_config);
                                 let acceptor =
                                     tokio_rustls::TlsAcceptor::from(server_config.clone());
@@ -336,6 +347,7 @@ impl Server {
             https_addr: http_addr.and(relay_addr),
             relay_handle,
             supervisor: AbortOnDropHandle::new(task),
+            certificates,
         })
     }
 
@@ -372,6 +384,11 @@ impl Server {
     /// The socket address the STUN server is listening on.
     pub fn stun_addr(&self) -> Option<SocketAddr> {
         self.stun_addr
+    }
+
+    /// The certificates chain if configured with manual TLS certificates.
+    pub fn certificates(&self) -> Option<Vec<rustls::pki_types::CertificateDer<'static>>> {
+        self.certificates.clone()
     }
 }
 
