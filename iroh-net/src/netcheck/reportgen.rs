@@ -1055,11 +1055,6 @@ async fn measure_https_latency(
 ) -> Result<(Duration, IpAddr)> {
     let url = node.url.join(RELAY_PROBE_PATH)?;
 
-    // TODO: uses threadpool with getaddrinfo for DNS resolution.  other options are:
-    // - enable reqwest's built-in trust-dns support
-    // - hook up our own crate::dns::DNS_RESOLVER
-    // The captive portal check is in the same boat.
-    //
     // This should also use same connection establishment as relay client itself, which
     // needs to be more configurable so users can do more crazy things:
     // https://github.com/n0-computer/iroh/issues/2901
