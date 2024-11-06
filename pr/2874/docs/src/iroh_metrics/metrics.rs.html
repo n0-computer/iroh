@@ -76,6 +76,10 @@
 <a href="#76" id="76">76</a>
 <a href="#77" id="77">77</a>
 <a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Metrics collection
 //!
 //! Enables and manages a global registry of metrics.
@@ -91,8 +95,10 @@
 //!
 //! # Example:
 //! ```rust
-//! use iroh_metrics::{inc, inc_by};
-//! use iroh_metrics::core::{Core, Metric, Counter};
+//! use iroh_metrics::{
+//!     core::{Core, Counter, Metric},
+//!     inc, inc_by,
+//! };
 //! use struct_iterable::Iterable;
 //!
 //! #[derive(Debug, Clone, Iterable)]
@@ -103,15 +109,17 @@
 //! impl Default for Metrics {
 //!     fn default() -&gt; Self {
 //!         Self {
-//!             things_added: Counter::new("things_added tracks the number of things we have added"),
+//!             things_added: Counter::new(
+//!                 "things_added tracks the number of things we have added",
+//!             ),
 //!         }
 //!     }
 //! }
 //!
 //! impl Metric for Metrics {
-//!    fn name() -&gt; &amp;'static str {
+//!     fn name() -&gt; &amp;'static str {
 //!         "my_metrics"
-//!    }
+//!     }
 //! }
 //!
 //! Core::init(|reg, metrics| {

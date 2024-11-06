@@ -1352,7 +1352,7 @@
     /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
     </span><span class="kw">pub async fn </span>content_reader(<span class="kw-2">&amp;</span><span class="self">self</span>, client: <span class="kw">impl </span>Into&lt;<span class="kw-2">&amp;</span>RpcClient&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;blobs::Reader&gt; {
         <span class="kw">let </span>client: RpcClient = client.into().clone();
-        <span class="kw">let </span>client: quic_rpc::RpcClient&lt;iroh_blobs::rpc::proto::RpcService, <span class="kw">_</span>, <span class="kw">_</span>&gt; = client.map();
+        <span class="kw">let </span>client: quic_rpc::RpcClient&lt;iroh_blobs::rpc::proto::RpcService, <span class="kw">_</span>&gt; = client.map();
         blobs::Reader::from_rpc_read(<span class="kw-2">&amp;</span>client, <span class="self">self</span>.content_hash()).<span class="kw">await
     </span>}
 
@@ -1361,7 +1361,7 @@
     /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
     </span><span class="kw">pub async fn </span>content_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, client: <span class="kw">impl </span>Into&lt;<span class="kw-2">&amp;</span>RpcClient&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;Bytes&gt; {
         <span class="kw">let </span>client: RpcClient = client.into().clone();
-        <span class="kw">let </span>client: quic_rpc::RpcClient&lt;iroh_blobs::rpc::proto::RpcService, <span class="kw">_</span>, <span class="kw">_</span>&gt; = client.map();
+        <span class="kw">let </span>client: quic_rpc::RpcClient&lt;iroh_blobs::rpc::proto::RpcService, <span class="kw">_</span>&gt; = client.map();
 
         blobs::Reader::from_rpc_read(<span class="kw-2">&amp;</span>client, <span class="self">self</span>.content_hash())
             .<span class="kw">await</span><span class="question-mark">?

@@ -891,7 +891,7 @@
     AddrInfo, Endpoint, NodeAddr,
 };
 <span class="kw">use </span>iroh_router::{ProtocolHandler, Router};
-<span class="kw">use </span>quic_rpc::{transport::ServerEndpoint <span class="kw">as _</span>, RpcServer};
+<span class="kw">use </span>quic_rpc::{transport::Listener <span class="kw">as _</span>, RpcServer};
 <span class="kw">use </span>tokio::task::{JoinError, JoinSet};
 <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, error, info, info_span, trace, warn, Instrument};
@@ -918,7 +918,7 @@
 <span class="doccomment">/// The quic-rpc server endpoint for the iroh node.
 ///
 /// We use a boxed endpoint here to allow having a concrete type for the server endpoint.
-</span><span class="kw">pub type </span>IrohServerEndpoint = quic_rpc::transport::boxed::ServerEndpoint&lt;
+</span><span class="kw">pub type </span>IrohServerEndpoint = quic_rpc::transport::boxed::BoxedListener&lt;
     <span class="kw">crate</span>::rpc_protocol::Request,
     <span class="kw">crate</span>::rpc_protocol::Response,
 &gt;;

@@ -81,6 +81,10 @@
 <a href="#81" id="81">81</a>
 <a href="#82" id="82">82</a>
 <a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::time::Duration;
 
 <span class="kw">use </span>governor::{clock::QuantaInstant, middleware::NoOpMiddleware};
@@ -91,17 +95,21 @@
     GovernorLayer,
 };
 
-<span class="doccomment">/// Config for http rate limit.
+<span class="doccomment">/// Config for http server rate limit.
 </span><span class="attr">#[derive(Debug, Deserialize, Default, Serialize, Clone)]
 #[serde(rename_all = <span class="string">"lowercase"</span>)]
 </span><span class="kw">pub enum </span>RateLimitConfig {
-    <span class="doccomment">/// Disable rate limit for http server.
+    <span class="doccomment">/// Disable rate limit.
     </span>Disabled,
-    <span class="doccomment">/// Enable rate limit for http server based on the connection peer IP address.
+    <span class="doccomment">/// Enable rate limit based on the connection's peer IP address.
+    ///
     /// &lt;https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.PeerIpKeyExtractor.html&gt;
     </span><span class="attr">#[default]
     </span>Simple,
-    <span class="doccomment">/// Enable rate limit for http server based on a smart logic for extracting the connection original IP address, useful for reverse proxies.
+    <span class="doccomment">/// Enable rate limit based on headers commonly used by reverse proxies.
+    ///
+    /// Uses headers commonly used by reverse proxies to extract the original IP address,
+    /// falling back to the connection's peer IP address.
     /// &lt;https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.SmartIpKeyExtractor.html&gt;
     </span>Smart,
 }

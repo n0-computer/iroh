@@ -121,6 +121,7 @@
 <a href="#121" id="121">121</a>
 <a href="#122" id="122">122</a>
 <a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Client to an Iroh node.
 //!
 //! See the documentation for [`Iroh`] for more information.
@@ -129,6 +130,7 @@
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
+<span class="kw">use </span>quic_rpc::client::BoxedConnector;
 <span class="kw">use </span>ref_cast::RefCast;
 
 <span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::node::{CounterStats, ShutdownRequest, StatsRequest, StatusRequest};
@@ -180,7 +182,7 @@
 
     <span class="doccomment">/// Returns the blobs client.
     </span><span class="kw">pub fn </span>blobs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; blobs::Client {
-        blobs::Client::new(<span class="self">self</span>.rpc.clone().map())
+        blobs::Client::new(<span class="self">self</span>.rpc.clone().map().boxed())
     }
 
     <span class="doccomment">/// Returns the docs client.
@@ -195,13 +197,13 @@
 
     <span class="doccomment">/// Returns the tags client.
     </span><span class="kw">pub fn </span>tags(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; tags::Client {
-        tags::Client::new(<span class="self">self</span>.rpc.clone().map())
+        tags::Client::new(<span class="self">self</span>.rpc.clone().map().boxed())
     }
 
     <span class="doccomment">/// Returns the gossip client.
-    </span><span class="kw">pub fn </span>gossip(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; iroh_gossip::RpcClient&lt;RpcService&gt; {
-        <span class="kw">let </span>channel = <span class="self">self</span>.rpc.clone().map::&lt;iroh_gossip::RpcService&gt;();
-        iroh_gossip::RpcClient::new(channel)
+    </span><span class="kw">pub fn </span>gossip(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; iroh_gossip::RpcClient {
+        <span class="kw">let </span>channel = <span class="self">self</span>.rpc.clone().map().boxed();
+        iroh_gossip::RpcClient::&lt;BoxedConnector&lt;iroh_gossip::rpc::proto::RpcService&gt;&gt;::new(channel)
     }
 
     <span class="doccomment">/// Returns the net client.

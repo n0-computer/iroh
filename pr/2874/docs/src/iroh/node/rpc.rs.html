@@ -567,6 +567,11 @@
 <a href="#567" id="567">567</a>
 <a href="#568" id="568">568</a>
 <a href="#569" id="569">569</a>
+<a href="#570" id="570">570</a>
+<a href="#571" id="571">571</a>
+<a href="#572" id="572">572</a>
+<a href="#573" id="573">573</a>
+<a href="#574" id="574">574</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     fmt::Debug,
     sync::{Arc, Mutex},
@@ -727,14 +732,13 @@
     <span class="kw">async fn </span>handle_blobs_and_tags_request(
         <span class="self">self</span>,
         msg: iroh_blobs::rpc::proto::Request,
-        chan: RpcChannel&lt;
-            iroh_blobs::rpc::proto::RpcService,
-            IrohServerEndpoint,
-            <span class="kw">crate</span>::rpc_protocol::RpcService,
-        &gt;,
+        chan: RpcChannel&lt;iroh_blobs::rpc::proto::RpcService&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), RpcServerError&lt;IrohServerEndpoint&gt;&gt; {
-        <span class="self">self</span>.blobs().handle_rpc_request(msg, chan).<span class="kw">await
-    </span>}
+        <span class="self">self</span>.blobs()
+            .handle_rpc_request(msg, chan)
+            .<span class="kw">await
+            </span>.map_err(|e| e.errors_into())
+    }
 
     <span class="comment">// async fn handle_blobs_request(
     //     self,
@@ -810,8 +814,11 @@
             .get_protocol::&lt;Gossip&gt;(GOSSIP_ALPN)
             .expect(<span class="string">"missing gossip"</span>);
         <span class="kw">let </span>chan = chan.map::&lt;iroh_gossip::RpcService&gt;();
-        gossip.handle_rpc_request(msg, chan).<span class="kw">await
-    </span>}
+        gossip
+            .handle_rpc_request(msg, chan)
+            .<span class="kw">await
+            </span>.map_err(|e| e.errors_into())
+    }
 
     <span class="kw">async fn </span>handle_authors_request(
         <span class="self">self</span>,
@@ -880,7 +887,10 @@
         <span class="kw">match </span>msg {
             Net(msg) =&gt; <span class="self">self</span>.handle_net_request(msg, chan).<span class="kw">await</span>,
             Node(msg) =&gt; <span class="self">self</span>.handle_node_request(msg, chan).<span class="kw">await</span>,
-            BlobsAndTags(msg) =&gt; <span class="self">self</span>.handle_blobs_and_tags_request(msg, chan.map()).<span class="kw">await</span>,
+            BlobsAndTags(msg) =&gt; {
+                <span class="self">self</span>.handle_blobs_and_tags_request(msg, chan.map().boxed())
+                    .<span class="kw">await
+            </span>}
             Authors(msg) =&gt; <span class="self">self</span>.handle_authors_request(msg, chan).<span class="kw">await</span>,
             Docs(msg) =&gt; <span class="self">self</span>.handle_docs_request(msg, chan).<span class="kw">await</span>,
             Gossip(msg) =&gt; <span class="self">self</span>.handle_gossip_request(msg, chan).<span class="kw">await</span>,

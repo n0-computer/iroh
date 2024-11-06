@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["TagInfo"],"type":["Client"]};
+window.SIDEBAR_ITEMS = {"struct":["Client","TagInfo"]};

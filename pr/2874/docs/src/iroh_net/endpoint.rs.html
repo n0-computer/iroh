@@ -1874,6 +1874,8 @@
 <a href="#1874" id="1874">1874</a>
 <a href="#1875" id="1875">1875</a>
 <a href="#1876" id="1876">1876</a>
+<a href="#1877" id="1877">1877</a>
+<a href="#1878" id="1878">1878</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -2721,7 +2723,7 @@
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
-    /// let mep =  Endpoint::builder().bind().await.unwrap();
+    /// let mep = Endpoint::builder().bind().await.unwrap();
     /// let _addrs = mep.direct_addresses().next().await;
     /// # });
     /// ```
@@ -2833,8 +2835,10 @@
     /// This will close all open QUIC connections with the provided error_code and
     /// reason. See [`quinn::Connection`] for details on how these are interpreted.
     ///
-    /// It will then wait for all connections to actually be shutdown, and afterwards
-    /// close the magic socket.
+    /// It will then wait for all connections to actually be shutdown, and afterwards close
+    /// the magic socket.  Be aware however that the underlying UDP sockets are only closed
+    /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
+    /// are dropped.
     ///
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.

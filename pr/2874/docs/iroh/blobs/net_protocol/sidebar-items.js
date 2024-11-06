@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["DownloadMode"],"struct":["BatchId","BlobBatches","BlobDownloadRequest","Blobs"]};
+window.SIDEBAR_ITEMS = {"enum":["DownloadMode"],"struct":["BatchId","BlobDownloadRequest","Blobs"]};
