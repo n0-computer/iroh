@@ -1042,14 +1042,6 @@
 <a href="#1042" id="1042">1042</a>
 <a href="#1043" id="1043">1043</a>
 <a href="#1044" id="1044">1044</a>
-<a href="#1045" id="1045">1045</a>
-<a href="#1046" id="1046">1046</a>
-<a href="#1047" id="1047">1047</a>
-<a href="#1048" id="1048">1048</a>
-<a href="#1049" id="1049">1049</a>
-<a href="#1050" id="1050">1050</a>
-<a href="#1051" id="1051">1051</a>
-<a href="#1052" id="1052">1052</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
@@ -1079,10 +1071,7 @@
 <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
-<span class="kw">use crate</span>::{
-    relay::http::{LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH},
-    stun,
-};
+<span class="kw">use crate</span>::{relay::http::RELAY_PROBE_PATH, stun};
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>actor;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>client_conn;
@@ -1306,12 +1295,7 @@
                     .headers(headers)
                     .request_handler(Method::GET, <span class="string">"/"</span>, Box::new(root_handler))
                     .request_handler(Method::GET, <span class="string">"/index.html"</span>, Box::new(root_handler))
-                    .request_handler(
-                        Method::GET,
-                        LEGACY_RELAY_PROBE_PATH,
-                        Box::new(probe_handler),
-                    ) <span class="comment">// backwards compat
-                    </span>.request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
+                    .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
                     .request_handler(Method::GET, <span class="string">"/robots.txt"</span>, Box::new(robots_handler));
                 <span class="kw">let </span>http_addr = <span class="kw">match </span>relay_config.tls {
                     <span class="prelude-val">Some</span>(tls_config) =&gt; {

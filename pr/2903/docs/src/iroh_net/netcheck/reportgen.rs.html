@@ -1462,7 +1462,6 @@
 <a href="#1462" id="1462">1462</a>
 <a href="#1463" id="1463">1463</a>
 <a href="#1464" id="1464">1464</a>
-<a href="#1465" id="1465">1465</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single netcheck report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
@@ -1508,7 +1507,7 @@
     dns::{DnsResolver, ResolverExt},
     netcheck::{<span class="self">self</span>, Report},
     ping::{PingError, Pinger},
-    relay::{RelayMap, RelayNode, RelayUrl},
+    relay::{http::RELAY_PROBE_PATH, RelayMap, RelayNode, RelayUrl},
     stun,
     util::MaybeFuture,
 };
@@ -2518,8 +2517,7 @@
     node: <span class="kw-2">&amp;</span>RelayNode,
     certs: <span class="prelude-ty">Option</span>&lt;Vec&lt;rustls::pki_types::CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(Duration, IpAddr)&gt; {
-    <span class="comment">// TODO: I would prefer a different URL, `/ping` probably.
-    </span><span class="kw">let </span>url = node.url.join(<span class="string">"/relay/probe"</span>)<span class="question-mark">?</span>;
+    <span class="kw">let </span>url = node.url.join(RELAY_PROBE_PATH)<span class="question-mark">?</span>;
 
     <span class="comment">// TODO: uses threadpool with getaddrinfo for DNS resolution.  other options are:
     // - enable reqwest's built-in trust-dns support
