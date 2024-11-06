@@ -1422,6 +1422,26 @@
 <a href="#1422" id="1422">1422</a>
 <a href="#1423" id="1423">1423</a>
 <a href="#1424" id="1424">1424</a>
+<a href="#1425" id="1425">1425</a>
+<a href="#1426" id="1426">1426</a>
+<a href="#1427" id="1427">1427</a>
+<a href="#1428" id="1428">1428</a>
+<a href="#1429" id="1429">1429</a>
+<a href="#1430" id="1430">1430</a>
+<a href="#1431" id="1431">1431</a>
+<a href="#1432" id="1432">1432</a>
+<a href="#1433" id="1433">1433</a>
+<a href="#1434" id="1434">1434</a>
+<a href="#1435" id="1435">1435</a>
+<a href="#1436" id="1436">1436</a>
+<a href="#1437" id="1437">1437</a>
+<a href="#1438" id="1438">1438</a>
+<a href="#1439" id="1439">1439</a>
+<a href="#1440" id="1440">1440</a>
+<a href="#1441" id="1441">1441</a>
+<a href="#1442" id="1442">1442</a>
+<a href="#1443" id="1443">1443</a>
+<a href="#1444" id="1444">1444</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single netcheck report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
@@ -1459,6 +1479,7 @@
 };
 <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
+<span class="kw">use </span>url::Host;
 
 <span class="kw">use </span><span class="kw">super</span>::NetcheckMetrics;
 <span class="kw">use crate</span>::{
@@ -2167,7 +2188,7 @@
         </span>}
         Probe::Https { <span class="kw-2">ref </span>node, .. } =&gt; {
             <span class="macro">debug!</span>(<span class="string">"sending probe HTTPS"</span>);
-            <span class="kw">match </span>measure_https_latency(node, <span class="prelude-val">None</span>).<span class="kw">await </span>{
+            <span class="kw">match </span>measure_https_latency(<span class="kw-2">&amp;</span>dns_resolver, node, <span class="prelude-val">None</span>).<span class="kw">await </span>{
                 <span class="prelude-val">Ok</span>((latency, ip)) =&gt; {
                     result.latency = <span class="prelude-val">Some</span>(latency);
                     <span class="comment">// We set these IPv4 and IPv6 but they're not really used
@@ -2453,6 +2474,7 @@
 /// use of self-signed certificates for servers.  Currently this is used for testing.
 </span><span class="attr">#[allow(clippy::unused_async)]
 </span><span class="kw">async fn </span>measure_https_latency(
+    dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     node: <span class="kw-2">&amp;</span>RelayNode,
     certs: <span class="prelude-ty">Option</span>&lt;Vec&lt;rustls::pki_types::CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(Duration, IpAddr)&gt; {
@@ -2468,6 +2490,20 @@
     // needs to be more configurable so users can do more crazy things:
     // https://github.com/n0-computer/iroh/issues/2901
     </span><span class="kw">let </span><span class="kw-2">mut </span>builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
+    <span class="kw">if let </span><span class="prelude-val">Some</span>(Host::Domain(domain)) = url.host() {
+        <span class="comment">// For some reason reqwest wants SocketAddr rather than IpAddr but then proceeds to
+        // ignore the port, extracting it from the URL instead.  We supply a dummy port.
+        //
+        // The relay Client uses `.lookup_ipv4_ipv6` to connect, so use the same function
+        // but staggered for reliability.  Ideally this tries to resolve **both** IPv4 and
+        // IPv6 though.  But our resolver does not have a function for that yet.
+        </span><span class="kw">let </span>addrs: Vec&lt;<span class="kw">_</span>&gt; = dns_resolver
+            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
+            .<span class="kw">await</span><span class="question-mark">?
+            </span>.map(|ipaddr| SocketAddr::new(ipaddr, <span class="number">80</span>))
+            .collect();
+        builder = builder.resolve_to_addrs(domain, <span class="kw-2">&amp;</span>addrs);
+    }
     <span class="kw">if let </span><span class="prelude-val">Some</span>(certs) = certs {
         <span class="kw">for </span>cert <span class="kw">in </span>certs {
             <span class="kw">let </span>cert = reqwest::Certificate::from_der(<span class="kw-2">&amp;</span>cert)<span class="question-mark">?</span>;
@@ -2573,8 +2609,10 @@
     <span class="kw">use </span>testresult::TestResult;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::defaults::staging::{default_eu_relay_node, default_na_relay_node};
-    <span class="kw">use </span><span class="kw">crate</span>::test_utils;
+    <span class="kw">use crate</span>::{
+        defaults::staging::{default_eu_relay_node, default_na_relay_node},
+        test_utils,
+    };
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_update_report_stun_working() {
@@ -2828,13 +2866,15 @@
     </span><span class="kw">async fn </span>test_measure_https_latency() -&gt; TestResult {
         <span class="kw">let </span>_logging_guard = iroh_test::logging::setup();
         <span class="kw">let </span>(_relay_map, relay_url, server) = test_utils::run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>dns_resolver = <span class="kw">crate</span>::dns::resolver();
         <span class="macro">warn!</span>(<span class="question-mark">?</span>relay_url, <span class="string">"RELAY_URL"</span>);
         <span class="kw">let </span>node = RelayNode {
             stun_only: <span class="bool-val">false</span>,
             stun_port: <span class="number">0</span>,
             url: relay_url.clone(),
         };
-        <span class="kw">let </span>(latency, ip) = measure_https_latency(<span class="kw-2">&amp;</span>node, server.certificates()).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(latency, ip) =
+            measure_https_latency(dns_resolver, <span class="kw-2">&amp;</span>node, server.certificates()).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">assert!</span>(latency &gt; Duration::ZERO);
 
