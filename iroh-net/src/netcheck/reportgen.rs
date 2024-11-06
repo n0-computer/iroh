@@ -35,6 +35,7 @@ use tokio::{
 };
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
+use url::Host;
 
 use super::NetcheckMetrics;
 use crate::{
@@ -743,7 +744,7 @@ async fn run_probe(
         }
         Probe::Https { ref node, .. } => {
             debug!("sending probe HTTPS");
-            match measure_https_latency(node, None).await {
+            match measure_https_latency(&dns_resolver, node, None).await {
                 Ok((latency, ip)) => {
                     result.latency = Some(latency);
                     // We set these IPv4 and IPv6 but they're not really used
@@ -1029,6 +1030,7 @@ async fn run_icmp_probe(
 /// use of self-signed certificates for servers.  Currently this is used for testing.
 #[allow(clippy::unused_async)]
 async fn measure_https_latency(
+    dns_resolver: &DnsResolver,
     node: &RelayNode,
     certs: Option<Vec<rustls::pki_types::CertificateDer<'static>>>,
 ) -> Result<(Duration, IpAddr)> {
@@ -1044,6 +1046,20 @@ async fn measure_https_latency(
     // needs to be more configurable so users can do more crazy things:
     // https://github.com/n0-computer/iroh/issues/2901
     let mut builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
+    if let Some(Host::Domain(domain)) = url.host() {
+        // For some reason reqwest wants SocketAddr rather than IpAddr but then proceeds to
+        // ignore the port, extracting it from the URL instead.  We supply a dummy port.
+        //
+        // The relay Client uses `.lookup_ipv4_ipv6` to connect, so use the same function
+        // but staggered for reliability.  Ideally this tries to resolve **both** IPv4 and
+        // IPv6 though.  But our resolver does not have a function for that yet.
+        let addrs: Vec<_> = dns_resolver
+            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
+            .await?
+            .map(|ipaddr| SocketAddr::new(ipaddr, 80))
+            .collect();
+        builder = builder.resolve_to_addrs(domain, &addrs);
+    }
     if let Some(certs) = certs {
         for cert in certs {
             let cert = reqwest::Certificate::from_der(&cert)?;
@@ -1149,8 +1165,10 @@ mod tests {
     use testresult::TestResult;
 
     use super::*;
-    use crate::defaults::staging::{default_eu_relay_node, default_na_relay_node};
-    use crate::test_utils;
+    use crate::{
+        defaults::staging::{default_eu_relay_node, default_na_relay_node},
+        test_utils,
+    };
 
     #[test]
     fn test_update_report_stun_working() {
@@ -1404,13 +1422,15 @@ mod tests {
     async fn test_measure_https_latency() -> TestResult {
         let _logging_guard = iroh_test::logging::setup();
         let (_relay_map, relay_url, server) = test_utils::run_relay_server().await?;
+        let dns_resolver = crate::dns::resolver();
         warn!(?relay_url, "RELAY_URL");
         let node = RelayNode {
             stun_only: false,
             stun_port: 0,
             url: relay_url.clone(),
         };
-        let (latency, ip) = measure_https_latency(&node, server.certificates()).await?;
+        let (latency, ip) =
+            measure_https_latency(dns_resolver, &node, server.certificates()).await?;
 
         assert!(latency > Duration::ZERO);
 
