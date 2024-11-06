@@ -8,6 +8,13 @@
 //! always attached to a handle and when the handle is dropped the tasks abort.  So tasks
 //! can not outlive their handle.  It is also always possible to await for completion of a
 //! task.  Some tasks additionally have a method to do graceful shutdown.
+//!
+//! The relay server hosts the following services:
+//!
+//! - HTTPS `/relay`: The main URL endpoint to which clients connect and sends traffic over.
+//! - HTTPS `/ping`: Used for netcheck probes.
+//! - HTTPS `/generate_204`: Used for netcheck probes.
+//! - STUN: UDP port for STUN requests/responses.
 
 use std::{fmt, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 
