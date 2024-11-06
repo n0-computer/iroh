@@ -120,7 +120,6 @@
 <a href="#120" id="120">120</a>
 <a href="#121" id="121">121</a>
 <a href="#122" id="122">122</a>
-<a href="#123" id="123">123</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Client to an Iroh node.
 //!
 //! See the documentation for [`Iroh`] for more information.
@@ -141,11 +140,10 @@
 <span class="kw">pub use </span><span class="self">self</span>::{docs::Doc, net::NodeStatus};
 
 <span class="kw">pub mod </span>authors;
-<span class="kw">pub use </span>iroh_blobs::rpc::client::blobs;
+<span class="kw">pub use </span>iroh_blobs::rpc::client::{blobs, tags};
 <span class="kw">pub use </span>iroh_gossip::rpc::client <span class="kw">as </span>gossip;
 <span class="kw">pub mod </span>docs;
 <span class="kw">pub mod </span>net;
-<span class="kw">pub mod </span>tags;
 
 <span class="comment">// Keep this type exposed, otherwise every occurrence of `RpcClient` in the API
 // will show up as `RpcClient&lt;RpcService, Connection&lt;RpcService&gt;&gt;` in the docs.
