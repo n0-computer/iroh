@@ -1442,6 +1442,27 @@
 <a href="#1442" id="1442">1442</a>
 <a href="#1443" id="1443">1443</a>
 <a href="#1444" id="1444">1444</a>
+<a href="#1445" id="1445">1445</a>
+<a href="#1446" id="1446">1446</a>
+<a href="#1447" id="1447">1447</a>
+<a href="#1448" id="1448">1448</a>
+<a href="#1449" id="1449">1449</a>
+<a href="#1450" id="1450">1450</a>
+<a href="#1451" id="1451">1451</a>
+<a href="#1452" id="1452">1452</a>
+<a href="#1453" id="1453">1453</a>
+<a href="#1454" id="1454">1454</a>
+<a href="#1455" id="1455">1455</a>
+<a href="#1456" id="1456">1456</a>
+<a href="#1457" id="1457">1457</a>
+<a href="#1458" id="1458">1458</a>
+<a href="#1459" id="1459">1459</a>
+<a href="#1460" id="1460">1460</a>
+<a href="#1461" id="1461">1461</a>
+<a href="#1462" id="1462">1462</a>
+<a href="#1463" id="1463">1463</a>
+<a href="#1464" id="1464">1464</a>
+<a href="#1465" id="1465">1465</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single netcheck report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
@@ -1911,6 +1932,7 @@
                 .as_ref()
                 .and_then(|l| l.preferred_relay.clone());
 
+            <span class="kw">let </span>dns_resolver = <span class="self">self</span>.dns_resolver.clone();
             <span class="kw">let </span>dm = <span class="self">self</span>.relay_map.clone();
             <span class="self">self</span>.outstanding_tasks.captive_task = <span class="bool-val">true</span>;
             MaybeFuture {
@@ -1919,7 +1941,7 @@
                     <span class="macro">debug!</span>(<span class="string">"Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}"</span>);
                     <span class="kw">let </span>captive_portal_check = tokio::time::timeout(
                         CAPTIVE_PORTAL_TIMEOUT,
-                        check_captive_portal(<span class="kw-2">&amp;</span>dm, preferred_relay)
+                        check_captive_portal(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>dm, preferred_relay)
                             .instrument(<span class="macro">debug_span!</span>(<span class="string">"captive-portal"</span>)),
                     );
                     <span class="kw">match </span>captive_portal_check.<span class="kw">await </span>{
@@ -2298,7 +2320,11 @@
 /// return a "204 No Content" response and checking if that's what we get.
 ///
 /// The boolean return is whether we think we have a captive portal.
-</span><span class="kw">async fn </span>check_captive_portal(dm: <span class="kw-2">&amp;</span>RelayMap, preferred_relay: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
+</span><span class="kw">async fn </span>check_captive_portal(
+    dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
+    dm: <span class="kw-2">&amp;</span>RelayMap,
+    preferred_relay: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
+) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
     <span class="comment">// If we have a preferred relay node and we can use it for non-STUN requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
     </span><span class="kw">let </span>preferred_relay = preferred_relay.and_then(|url| <span class="kw">match </span>dm.get_node(<span class="kw-2">&amp;</span>url) {
@@ -2326,9 +2352,23 @@
         }
     };
 
-    <span class="kw">let </span>client = reqwest::ClientBuilder::new()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()<span class="question-mark">?</span>;
+    <span class="kw">let </span><span class="kw-2">mut </span>builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
+    <span class="kw">if let </span><span class="prelude-val">Some</span>(Host::Domain(domain)) = url.host() {
+        <span class="comment">// Use our own resolver rather than getaddrinfo
+        //
+        // For some reason reqwest wants SocketAddr rather than IpAddr but then proceeds to
+        // ignore the port, extracting it from the URL instead.  We supply a dummy port.
+        //
+        // Ideally we would try to resolve **both** IPv4 and IPv6 rather than purely race
+        // them.  But our resolver doesn't support that yet.
+        </span><span class="kw">let </span>addrs: Vec&lt;<span class="kw">_</span>&gt; = dns_resolver
+            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
+            .<span class="kw">await</span><span class="question-mark">?
+            </span>.map(|ipaddr| SocketAddr::new(ipaddr, <span class="number">80</span>))
+            .collect();
+        builder = builder.resolve_to_addrs(domain, <span class="kw-2">&amp;</span>addrs);
+    }
+    <span class="kw">let </span>client = builder.build()<span class="question-mark">?</span>;
 
     <span class="comment">// Note: the set of valid characters in a challenge and the total
     // length is limited; see is_challenge_char in bin/iroh-relay for more
@@ -2491,7 +2531,9 @@
     // https://github.com/n0-computer/iroh/issues/2901
     </span><span class="kw">let </span><span class="kw-2">mut </span>builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
     <span class="kw">if let </span><span class="prelude-val">Some</span>(Host::Domain(domain)) = url.host() {
-        <span class="comment">// For some reason reqwest wants SocketAddr rather than IpAddr but then proceeds to
+        <span class="comment">// Use our own resolver rather than getaddrinfo
+        //
+        // For some reason reqwest wants SocketAddr rather than IpAddr but then proceeds to
         // ignore the port, extracting it from the URL instead.  We supply a dummy port.
         //
         // The relay Client uses `.lookup_ipv4_ipv6` to connect, so use the same function
