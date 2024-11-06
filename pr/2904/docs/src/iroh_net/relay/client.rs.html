@@ -2206,7 +2206,7 @@
         .host_str()
         .ok_or_else(|| ClientError::InvalidUrl(relay_url.to_string()))<span class="question-mark">?</span>;
     <span class="comment">// strip the trailing dot, if present: example.com. -&gt; example.com
-    </span><span class="kw">let </span>relay_url_host = relay_url_host.strip_suffix(<span class="string">"."</span>).unwrap_or(relay_url_host);
+    </span><span class="kw">let </span>relay_url_host = relay_url_host.strip_suffix(<span class="string">'.'</span>).unwrap_or(relay_url_host);
     <span class="comment">// build the host header value (reserve up to 6 chars for the ":" and port digits):
     </span><span class="kw">let </span><span class="kw-2">mut </span>host_header_value = String::with_capacity(relay_url_host.len() + <span class="number">6</span>);
     host_header_value += relay_url_host;
