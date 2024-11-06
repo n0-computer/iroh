@@ -51,7 +51,6 @@ tokio = { version = "1", features = ["io-util", "rt"] }
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["codec", "io-util", "io", "time"] }
 tracing = "0.1"
-walkdir = "2"
 
 # Examples
 clap = { version = "4", features = ["derive"], optional = true }
