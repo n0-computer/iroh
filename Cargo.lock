@@ -2634,8 +2634,8 @@ dependencies = [
  "portable-atomic",
  "postcard",
  "proptest",
- "quic-rpc 0.15.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "quic-rpc-derive 0.15.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "quic-rpc",
+ "quic-rpc-derive",
  "rand",
  "rand_chacha",
  "ref-cast",
@@ -2703,7 +2703,7 @@ dependencies = [
 [[package]]
 name = "iroh-blobs"
 version = "0.28.1"
-source = "git+https://github.com/n0-computer/iroh-blobs?branch=try-out-new-rpc#ec7967b3c92ab4596a9abb3e91090cc575ab9e37"
+source = "git+https://github.com/n0-computer/iroh-blobs?branch=main#2337e46d89d6f2f2fda512439890ab74bab24fb4"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2730,8 +2730,8 @@ dependencies = [
  "pin-project",
  "portable-atomic",
  "postcard",
- "quic-rpc 0.15.0 (git+https://github.com/n0-computer/quic-rpc.git?branch=map-transports-not-services)",
- "quic-rpc-derive 0.15.0 (git+https://github.com/n0-computer/quic-rpc.git?branch=map-transports-not-services)",
+ "quic-rpc",
+ "quic-rpc-derive",
  "rand",
  "range-collections",
  "redb 1.5.1",
@@ -2784,7 +2784,7 @@ dependencies = [
  "portable-atomic",
  "portmapper",
  "postcard",
- "quic-rpc 0.15.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "quic-rpc",
  "rand",
  "rand_xorshift",
  "ratatui",
@@ -2901,7 +2901,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.28.1"
-source = "git+https://github.com/n0-computer/iroh-gossip?branch=try-out-new-quicrpc#6a16febc071b0673a8831a00842f0fc8d76ace03"
+source = "git+https://github.com/n0-computer/iroh-gossip?branch=main#3d6659daf326f57cbafec189be996b89c7f441bd"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2919,8 +2919,8 @@ dependencies = [
  "iroh-router",
  "nested_enum_utils",
  "postcard",
- "quic-rpc 0.15.0 (git+https://github.com/n0-computer/quic-rpc.git?branch=map-transports-not-services)",
- "quic-rpc-derive 0.15.0 (git+https://github.com/n0-computer/quic-rpc.git?branch=map-transports-not-services)",
+ "quic-rpc",
+ "quic-rpc-derive",
  "rand",
  "rand_core",
  "serde",
@@ -4451,44 +4451,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "quic-rpc"
-version = "0.15.0"
-source = "git+https://github.com/n0-computer/quic-rpc.git?branch=map-transports-not-services#16b7c4942365b96fc750627459261e52e1190f6c"
-dependencies = [
- "anyhow",
- "derive_more",
- "educe",
- "flume",
- "futures-lite 2.4.0",
- "futures-sink",
- "futures-util",
- "hex",
- "pin-project",
- "serde",
- "slab",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "quic-rpc-derive"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cbef4c942978f74ef296ae40d43d4375c9d730b65a582688a358108cfd5c0cf7"
 dependencies = [
  "proc-macro2",
- "quic-rpc 0.15.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "quic-rpc-derive"
-version = "0.15.0"
-source = "git+https://github.com/n0-computer/quic-rpc.git?branch=map-transports-not-services#16b7c4942365b96fc750627459261e52e1190f6c"
-dependencies = [
- "proc-macro2",
- "quic-rpc 0.15.0 (git+https://github.com/n0-computer/quic-rpc.git?branch=map-transports-not-services)",
+ "quic-rpc",
  "quote",
  "syn 1.0.109",
 ]
