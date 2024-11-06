@@ -37,6 +37,7 @@ pub enum Response {
     RemoteInfosIter(RpcResult<RemoteInfosIterResponse>),
     RemoteInfo(RpcResult<RemoteInfoResponse>),
     Watch(WatchResponse),
+    Unit(RpcResult<()>),
 }
 
 /// List network path information about all the remote nodes known by this node.

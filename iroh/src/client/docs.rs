@@ -475,14 +475,19 @@ impl Entry {
     ///
     /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
     pub async fn content_reader(&self, client: impl Into<&RpcClient>) -> Result<blobs::Reader> {
-        blobs::Reader::from_rpc_read(client.into(), self.content_hash()).await
+        let client: RpcClient = client.into().clone();
+        let client: quic_rpc::RpcClient<iroh_blobs::rpc::proto::RpcService, _> = client.map();
+        blobs::Reader::from_rpc_read(&client, self.content_hash()).await
     }
 
     /// Reads all content of an [`Entry`] into a buffer.
     ///
     /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
     pub async fn content_bytes(&self, client: impl Into<&RpcClient>) -> Result<Bytes> {
-        blobs::Reader::from_rpc_read(client.into(), self.content_hash())
+        let client: RpcClient = client.into().clone();
+        let client: quic_rpc::RpcClient<iroh_blobs::rpc::proto::RpcService, _> = client.map();
+
+        blobs::Reader::from_rpc_read(&client, self.content_hash())
             .await?
             .read_to_bytes()
             .await

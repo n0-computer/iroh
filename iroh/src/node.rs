@@ -60,7 +60,7 @@ use iroh_net::{
     AddrInfo, Endpoint, NodeAddr,
 };
 use iroh_router::{ProtocolHandler, Router};
-use quic_rpc::{transport::ServerEndpoint as _, RpcServer};
+use quic_rpc::{transport::Listener as _, RpcServer};
 use tokio::task::{JoinError, JoinSet};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
@@ -87,7 +87,7 @@ const SAVE_NODES_INTERVAL: Duration = Duration::from_secs(30);
 /// The quic-rpc server endpoint for the iroh node.
 ///
 /// We use a boxed endpoint here to allow having a concrete type for the server endpoint.
-pub type IrohServerEndpoint = quic_rpc::transport::boxed::ServerEndpoint<
+pub type IrohServerEndpoint = quic_rpc::transport::boxed::BoxedListener<
     crate::rpc_protocol::Request,
     crate::rpc_protocol::Response,
 >;
@@ -497,7 +497,7 @@ fn node_address_for_storage(info: RemoteInfo) -> Option<NodeAddr> {
 mod tests {
     use anyhow::{bail, Context};
     use bytes::Bytes;
-    use iroh_base::node_addr::AddrInfoOptions;
+    use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
     use iroh_blobs::{provider::AddProgress, util::SetTagOption, BlobFormat};
     use iroh_net::{key::SecretKey, relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
 
@@ -518,11 +518,9 @@ mod tests {
             .hash;
 
         let _drop_guard = node.cancel_token().drop_guard();
-        let ticket = node
-            .blobs()
-            .share(hash, BlobFormat::Raw, AddrInfoOptions::RelayAndAddresses)
-            .await
-            .unwrap();
+        let mut addr = node.net().node_addr().await.unwrap();
+        addr.apply_options(AddrInfoOptions::RelayAndAddresses);
+        let ticket = BlobTicket::new(addr, hash, BlobFormat::Raw).unwrap();
         println!("addrs: {:?}", ticket.node_addr().info);
         assert!(!ticket.node_addr().info.direct_addresses.is_empty());
     }

@@ -39,8 +39,8 @@ iroh-docs = { version = "0.28.0" }
 iroh-gossip = "0.28.1"
 parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-quic-rpc = { version = "0.14", default-features = false, features = ["flume-transport", "quinn-transport"] }
-quic-rpc-derive = { version = "0.14" }
+quic-rpc = { version = "0.15", default-features = false, features = ["flume-transport", "quinn-transport"] }
+quic-rpc-derive = { version = "0.15" }
 quinn = { package = "iroh-quinn", version = "0.12" }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
@@ -51,7 +51,6 @@ tokio = { version = "1", features = ["io-util", "rt"] }
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["codec", "io-util", "io", "time"] }
 tracing = "0.1"
-walkdir = "2"
 
 # Examples
 clap = { version = "4", features = ["derive"], optional = true }

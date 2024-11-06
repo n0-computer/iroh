@@ -118,7 +118,7 @@ async fn main() -> Result<()> {
 
             // Print out our query results.
             for hash in hashes {
-                read_and_print(node.blobs(), hash).await?;
+                read_and_print(&node.blobs(), hash).await?;
             }
         }
     }
