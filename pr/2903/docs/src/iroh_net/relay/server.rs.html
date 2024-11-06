@@ -1042,6 +1042,13 @@
 <a href="#1042" id="1042">1042</a>
 <a href="#1043" id="1043">1043</a>
 <a href="#1044" id="1044">1044</a>
+<a href="#1045" id="1045">1045</a>
+<a href="#1046" id="1046">1046</a>
+<a href="#1047" id="1047">1047</a>
+<a href="#1048" id="1048">1048</a>
+<a href="#1049" id="1049">1049</a>
+<a href="#1050" id="1050">1050</a>
+<a href="#1051" id="1051">1051</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
@@ -1052,6 +1059,13 @@
 //! always attached to a handle and when the handle is dropped the tasks abort.  So tasks
 //! can not outlive their handle.  It is also always possible to await for completion of a
 //! task.  Some tasks additionally have a method to do graceful shutdown.
+//!
+//! The relay server hosts the following services:
+//!
+//! - HTTPS `/relay`: The main URL endpoint to which clients connect and sends traffic over.
+//! - HTTPS `/ping`: Used for netcheck probes.
+//! - HTTPS `/generate_204`: Used for netcheck probes.
+//! - STUN: UDP port for STUN requests/responses.
 
 </span><span class="kw">use </span>std::{fmt, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 
