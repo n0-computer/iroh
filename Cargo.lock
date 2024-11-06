@@ -2893,7 +2893,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.28.1"
-source = "git+https://github.com/n0-computer/iroh-gossip?branch=try-out-new-quicrpc#6a16febc071b0673a8831a00842f0fc8d76ace03"
+source = "git+https://github.com/n0-computer/iroh-gossip?branch=main#3d6659daf326f57cbafec189be996b89c7f441bd"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -4441,7 +4441,8 @@ dependencies = [
 [[package]]
 name = "quic-rpc"
 version = "0.15.0"
-source = "git+https://github.com/n0-computer/quic-rpc.git?branch=map-transports-not-services#16b7c4942365b96fc750627459261e52e1190f6c"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61e131f594054d27d077162815db3b5e9ddd76a28fbb9091b68095971e75c286"
 dependencies = [
  "anyhow",
  "bincode",
@@ -4477,7 +4478,8 @@ dependencies = [
 [[package]]
 name = "quic-rpc-derive"
 version = "0.15.0"
-source = "git+https://github.com/n0-computer/quic-rpc.git?branch=map-transports-not-services#16b7c4942365b96fc750627459261e52e1190f6c"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cbef4c942978f74ef296ae40d43d4375c9d730b65a582688a358108cfd5c0cf7"
 dependencies = [
  "proc-macro2",
  "quic-rpc 0.15.0",
