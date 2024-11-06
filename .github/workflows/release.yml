@@ -255,7 +255,6 @@ jobs:
               ASSETS+="$staging.tar.gz,"
             done
             echo "ASSET=$(echo $ASSETS | sed 's/,$//')" >> $GITHUB_ENV
-            echo "ASSET_MULTI_LINE=$(echo $ASSETS | sed 's/,/\\n/g')" >> $GITHUB_ENV
 
         - name: Build archives (windows)
           if: matrix.os == 'windows-latest'
@@ -273,9 +272,7 @@ jobs:
               Set-Location -Path ..
             }
             $ASSETS = $ASSETS -join ','
-            $ASSETS_MULTI_LINE = $ASSETS -replace ',', "`n"
             Add-Content -Path $env:GITHUB_ENV -Value "ASSET=$ASSETS"
-            Add-Content -Path $env:GITHUB_ENV -Value "ASSET_MULTI_LINE=$ASSETS_MULTI_LINE"
 
         - uses: n0-computer/actions-upload-release-asset@main
           if: (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push')
@@ -285,11 +282,21 @@ jobs:
 
         - name: attach artifacts
           uses: actions/upload-artifact@v4
+          if : matrix.os != 'windows-latest'
           with:
-            name: iroh-${{env.RELEASE_OS }}-${{env.RELEASE_ARCH}}-bundle
-            path: |
-              ${{ env.ASSET_MULTI_LINE }}
+            name: iroh-${{ matrix.release-os }}-${{ matrix.release-arch }}-bundle
+            path: iroh-*.tar.gz
             compression-level: 0
+            retention-days: 1
+          
+        - name: attach artifacts
+          uses: actions/upload-artifact@v4
+          if : matrix.os == 'windows-latest'
+          with:
+            name: iroh-${{ matrix.release-os }}-${{ matrix.release-arch }}-bundle
+            path: iroh-*.zip
+            compression-level: 0
+            retention-days: 1
 
     docker:
       needs: build_release

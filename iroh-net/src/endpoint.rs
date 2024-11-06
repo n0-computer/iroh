@@ -845,7 +845,7 @@ impl Endpoint {
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
-    /// let mep =  Endpoint::builder().bind().await.unwrap();
+    /// let mep = Endpoint::builder().bind().await.unwrap();
     /// let _addrs = mep.direct_addresses().next().await;
     /// # });
     /// ```
@@ -957,8 +957,10 @@ impl Endpoint {
     /// This will close all open QUIC connections with the provided error_code and
     /// reason. See [`quinn::Connection`] for details on how these are interpreted.
     ///
-    /// It will then wait for all connections to actually be shutdown, and afterwards
-    /// close the magic socket.
+    /// It will then wait for all connections to actually be shutdown, and afterwards close
+    /// the magic socket.  Be aware however that the underlying UDP sockets are only closed
+    /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
+    /// are dropped.
     ///
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.

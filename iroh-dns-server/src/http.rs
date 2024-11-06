@@ -237,7 +237,6 @@ pub(crate) fn create_app(state: AppState, rate_limit_config: &RateLimitConfig) -
 }
 
 /// Record request metrics.
-///
 // TODO:
 // * Request duration would be much better tracked as a histogram.
 // * It would be great to attach labels to the metrics, so that the recorded metrics

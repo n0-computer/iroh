@@ -60,7 +60,6 @@ pub(super) const PROTOCOL_VERSION: usize = 3;
 ///  * client responds to any FrameType::Ping with a FrameType::Pong
 ///  * clients sends FrameType::SendPacket
 ///  * server then sends FrameType::RecvPacket to recipient
-///
 
 const PREFERRED: u8 = 1u8;
 /// indicates this is NOT the client's home node
