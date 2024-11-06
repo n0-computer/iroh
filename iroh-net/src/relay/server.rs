@@ -27,10 +27,7 @@ use tokio::{
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
-use crate::{
-    relay::http::{LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH},
-    stun,
-};
+use crate::{relay::http::RELAY_PROBE_PATH, stun};
 
 pub(crate) mod actor;
 pub(crate) mod client_conn;
@@ -254,11 +251,6 @@ impl Server {
                     .headers(headers)
                     .request_handler(Method::GET, "/", Box::new(root_handler))
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
-                    .request_handler(
-                        Method::GET,
-                        LEGACY_RELAY_PROBE_PATH,
-                        Box::new(probe_handler),
-                    ) // backwards compat
                     .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
                     .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler));
                 let http_addr = match relay_config.tls {

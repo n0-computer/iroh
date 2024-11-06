@@ -10,17 +10,12 @@ pub(crate) const SUPPORTED_WEBSOCKET_VERSION: &str = "13";
 /// (over websockets and a custom upgrade protocol).
 pub const RELAY_PATH: &str = "/relay";
 /// The HTTP path under which the relay allows doing latency queries for testing.
-pub const RELAY_PROBE_PATH: &str = "/relay/probe";
+pub const RELAY_PROBE_PATH: &str = "/ping";
 /// The legacy HTTP path under which the relay used to accept relaying connections.
 /// We keep this for backwards compatibility.
 #[cfg(feature = "iroh-relay")] // legacy paths only used on server-side for backwards compat
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
 pub(crate) const LEGACY_RELAY_PATH: &str = "/derp";
-/// The legacy HTTP path under which the relay used to allow latency queries.
-/// We keep this for backwards compatibility.
-#[cfg(feature = "iroh-relay")] // legacy paths only used on server-side for backwards compat
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
-pub(crate) const LEGACY_RELAY_PROBE_PATH: &str = "/derp/probe";
 
 /// The HTTP upgrade protocol used for relaying.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]

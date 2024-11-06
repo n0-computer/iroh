@@ -43,7 +43,7 @@ use crate::{
     dns::{DnsResolver, ResolverExt},
     netcheck::{self, Report},
     ping::{PingError, Pinger},
-    relay::{RelayMap, RelayNode, RelayUrl},
+    relay::{http::RELAY_PROBE_PATH, RelayMap, RelayNode, RelayUrl},
     stun,
     util::MaybeFuture,
 };
@@ -1053,8 +1053,7 @@ async fn measure_https_latency(
     node: &RelayNode,
     certs: Option<Vec<rustls::pki_types::CertificateDer<'static>>>,
 ) -> Result<(Duration, IpAddr)> {
-    // TODO: I would prefer a different URL, `/ping` probably.
-    let url = node.url.join("/relay/probe")?;
+    let url = node.url.join(RELAY_PROBE_PATH)?;
 
     // TODO: uses threadpool with getaddrinfo for DNS resolution.  other options are:
     // - enable reqwest's built-in trust-dns support
