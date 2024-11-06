@@ -7,8 +7,10 @@ use bao_tree::blake3;
 use clap::{ArgGroup, Subcommand};
 use futures_lite::StreamExt;
 use futures_util::SinkExt;
-use iroh::client::gossip::SubscribeOpts;
-use iroh::{client::Iroh, net::NodeId};
+use iroh::{
+    client::{gossip::SubscribeOpts, Iroh},
+    net::NodeId,
+};
 use tokio::io::AsyncBufReadExt;
 
 /// Commands to manage gossiping.
