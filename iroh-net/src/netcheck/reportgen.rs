@@ -467,6 +467,7 @@ impl Actor {
                 .as_ref()
                 .and_then(|l| l.preferred_relay.clone());
 
+            let dns_resolver = self.dns_resolver.clone();
             let dm = self.relay_map.clone();
             self.outstanding_tasks.captive_task = true;
             MaybeFuture {
@@ -475,7 +476,7 @@ impl Actor {
                     debug!("Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}");
                     let captive_portal_check = tokio::time::timeout(
                         CAPTIVE_PORTAL_TIMEOUT,
-                        check_captive_portal(&dm, preferred_relay)
+                        check_captive_portal(&dns_resolver, &dm, preferred_relay)
                             .instrument(debug_span!("captive-portal")),
                     );
                     match captive_portal_check.await {
@@ -854,7 +855,11 @@ async fn run_stun_probe(
 /// return a "204 No Content" response and checking if that's what we get.
 ///
 /// The boolean return is whether we think we have a captive portal.
-async fn check_captive_portal(dm: &RelayMap, preferred_relay: Option<RelayUrl>) -> Result<bool> {
+async fn check_captive_portal(
+    dns_resolver: &DnsResolver,
+    dm: &RelayMap,
+    preferred_relay: Option<RelayUrl>,
+) -> Result<bool> {
     // If we have a preferred relay node and we can use it for non-STUN requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
     let preferred_relay = preferred_relay.and_then(|url| match dm.get_node(&url) {
@@ -882,9 +887,23 @@ async fn check_captive_portal(dm: &RelayMap, preferred_relay: Option<RelayUrl>) 
         }
     };
 
-    let client = reqwest::ClientBuilder::new()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()?;
+    let mut builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
+    if let Some(Host::Domain(domain)) = url.host() {
+        // Use our own resolver rather than getaddrinfo
+        //
+        // For some reason reqwest wants SocketAddr rather than IpAddr but then proceeds to
+        // ignore the port, extracting it from the URL instead.  We supply a dummy port.
+        //
+        // Ideally we would try to resolve **both** IPv4 and IPv6 rather than purely race
+        // them.  But our resolver doesn't support that yet.
+        let addrs: Vec<_> = dns_resolver
+            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
+            .await?
+            .map(|ipaddr| SocketAddr::new(ipaddr, 80))
+            .collect();
+        builder = builder.resolve_to_addrs(domain, &addrs);
+    }
+    let client = builder.build()?;
 
     // Note: the set of valid characters in a challenge and the total
     // length is limited; see is_challenge_char in bin/iroh-relay for more
@@ -1047,6 +1066,8 @@ async fn measure_https_latency(
     // https://github.com/n0-computer/iroh/issues/2901
     let mut builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
     if let Some(Host::Domain(domain)) = url.host() {
+        // Use our own resolver rather than getaddrinfo
+        //
         // For some reason reqwest wants SocketAddr rather than IpAddr but then proceeds to
         // ignore the port, extracting it from the URL instead.  We supply a dummy port.
         //
