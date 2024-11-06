@@ -322,7 +322,7 @@ impl<D: BaoStore> Handler<D> {
     ) -> anyhow::Result<()> {
         use Request::*;
         debug!("handling rpc request: {msg}");
-        Ok(match msg {
+        match msg {
             Net(msg) => self.handle_net_request(msg, chan).await?,
             Node(msg) => self.handle_node_request(msg, chan).await?,
             Blobs(msg) => self.handle_blobs_request(msg, chan).await?,
@@ -330,7 +330,8 @@ impl<D: BaoStore> Handler<D> {
             Authors(msg) => self.handle_authors_request(msg, chan).await?,
             Docs(msg) => self.handle_docs_request(msg, chan).await?,
             Gossip(msg) => self.handle_gossip_request(msg, chan).await?,
-        })
+        };
+        Ok(())
     }
 
     fn local_pool_handle(&self) -> LocalPoolHandle {

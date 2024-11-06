@@ -1029,7 +1029,7 @@ fn host_header_value(relay_url: RelayUrl) -> Result<String, ClientError> {
         .host_str()
         .ok_or_else(|| ClientError::InvalidUrl(relay_url.to_string()))?;
     // strip the trailing dot, if present: example.com. -> example.com
-    let relay_url_host = relay_url_host.strip_suffix(".").unwrap_or(relay_url_host);
+    let relay_url_host = relay_url_host.strip_suffix('.').unwrap_or(relay_url_host);
     // build the host header value (reserve up to 6 chars for the ":" and port digits):
     let mut host_header_value = String::with_capacity(relay_url_host.len() + 6);
     host_header_value += relay_url_host;
