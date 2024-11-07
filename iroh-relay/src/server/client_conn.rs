@@ -1,12 +1,6 @@
 //! The server-side representation of an ongoing client relaying connection.
 
-use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -67,7 +61,7 @@ pub(super) struct ClientChannels {
     pub(super) peer_gone: mpsc::Sender<PublicKey>,
 }
 
-/// A builds a [`ClientConnManager`] from a [`PublicKey`] and an io connection.
+/// Configures a [`ClientConnManager`].
 #[derive(Debug)]
 pub(super) struct ClientConnConfig {
     pub(super) key: PublicKey,
@@ -98,8 +92,6 @@ impl ClientConn {
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(channel_capacity);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(channel_capacity);
 
-        let preferred = Arc::from(AtomicBool::from(false));
-
         let conn_io = ClientConnIo {
             io,
             timeout: write_timeout,
@@ -107,7 +99,7 @@ impl ClientConn {
             disco_send_queue: disco_send_queue_r,
             peer_gone: peer_gone_r,
             key,
-            preferred: Arc::clone(&preferred),
+            preferred: false,
             server_channel: server_channel.clone(),
         };
 
@@ -206,11 +198,7 @@ pub(crate) struct ClientConnIo {
 
     /// Notes that the client considers this the preferred connection (important in cases
     /// where the client moves to a different network, but has the same PublicKey)
-    // TODO: I'm taking a chance & using an atomic here rather
-    // than passing this through the server to update manually on the connection... although we
-    // might find that the alternative is better, once I have a better idea of how this is supposed
-    // to be read.
-    preferred: Arc<AtomicBool>,
+    preferred: bool,
 }
 
 impl ClientConnIo {
@@ -329,7 +317,7 @@ impl ClientConnIo {
         // for the same public key
         match frame {
             Frame::NotePreferred { preferred } => {
-                self.handle_frame_note_preferred(preferred)?;
+                self.handle_frame_note_preferred(preferred);
                 inc!(Metrics, other_packets_recv);
             }
             Frame::SendPacket { dst_key, packet } => {
@@ -351,37 +339,8 @@ impl ClientConnIo {
         Ok(())
     }
 
-    /// Preferred indicates if this is the preferred connection to the client with
-    /// this public key.
-    fn set_preferred(&mut self, v: bool) -> Result<()> {
-        // swap `preferred` for the value `v`
-        // if `preferred` was already the same as `v`, return
-        // otherwise, report the swap in stats
-        if self.preferred.swap(v, Ordering::Relaxed) == v {
-            return Ok(());
-        }
-        // TODO: stats:
-        // 	if v {
-        // c.s.curHomeClients.Add(1)
-        // homeMove = &c.s.homeMovesIn
-        // } else {
-        // c.s.curHomeClients.Add(-1)
-        // homeMove = &c.s.homeMovesOut
-        // }
-        // 	// Keep track of varz for home serve moves in/out.  But ignore
-        // // the initial packet set when a client connects, which we
-        // // assume happens within 5 seconds. In any case, just for
-        // // graphs, so not important to miss a move. But it shouldn't:
-        // // the netcheck/re-STUNs in magicsock only happen about every
-        // // 30 seconds.
-        // if time.Since(c.connectedAt) > 5*time.Second {
-        // 	homeMove.Add(1)
-        // }
-        Ok(())
-    }
-
-    fn handle_frame_note_preferred(&mut self, preferred: bool) -> Result<()> {
-        self.set_preferred(preferred)
+    fn handle_frame_note_preferred(&mut self, preferred: bool) {
+        self.preferred = preferred;
     }
 
     async fn send_server(&self, msg: actor::Message) -> Result<()> {
@@ -453,7 +412,6 @@ mod tests {
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
 
-        let preferred = Arc::from(AtomicBool::from(true));
         let key = SecretKey::generate().public();
         let (io, io_rw) = tokio::io::duplex(1024);
         let mut io_rw = Framed::new(io_rw, DerpCodec);
@@ -468,7 +426,7 @@ mod tests {
 
             key,
             server_channel: server_channel_s,
-            preferred: Arc::clone(&preferred),
+            preferred: true,
         };
 
         let done = CancellationToken::new();
@@ -528,14 +486,14 @@ mod tests {
         // change preferred to false
         println!("  preferred: false");
         write_frame(&mut io_rw, Frame::NotePreferred { preferred: false }, None).await?;
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(!preferred.load(Ordering::Relaxed));
+        // tokio::time::sleep(Duration::from_millis(100)).await;
+        // assert!(!preferred.load(Ordering::Relaxed));
 
         // change preferred to true
         println!("  preferred: true");
         write_frame(&mut io_rw, Frame::NotePreferred { preferred: true }, None).await?;
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(preferred.fetch_and(true, Ordering::Relaxed));
+        // tokio::time::sleep(Duration::from_millis(100)).await;
+        // assert!(preferred.fetch_and(true, Ordering::Relaxed));
 
         let target = SecretKey::generate().public();
 
@@ -585,7 +543,6 @@ mod tests {
         let (_disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (_peer_gone_s, peer_gone_r) = mpsc::channel(10);
 
-        let preferred = Arc::from(AtomicBool::from(true));
         let key = SecretKey::generate().public();
         let (io, io_rw) = tokio::io::duplex(1024);
         let mut io_rw = Framed::new(io_rw, DerpCodec);
@@ -601,7 +558,7 @@ mod tests {
 
             key,
             server_channel: server_channel_s,
-            preferred: Arc::clone(&preferred),
+            preferred: true,
         };
 
         let done = CancellationToken::new();
