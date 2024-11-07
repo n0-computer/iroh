@@ -16,6 +16,7 @@ async fn main() -> anyhow::Result<()> {
     // Could also use `node` directly, as it derefs to the client.
     let client = node.client();
 
+    let blobs = client.blobs();
     let doc = client.docs().create().await?;
     let author = client.docs().author_default().await?;
 
@@ -24,8 +25,7 @@ async fn main() -> anyhow::Result<()> {
     let mut stream = doc.get_many(Query::all()).await?;
     while let Some(entry) = stream.try_next().await? {
         println!("entry {}", fmt_entry(&entry));
-        // You can pass either `&doc` or the `client`.
-        let content = entry.content_bytes(&doc).await?;
+        let content = blobs.read_to_bytes(entry.content_hash()).await?;
         println!("  content {}", std::str::from_utf8(&content)?)
     }
 
