@@ -151,10 +151,6 @@ test-utils = ["iroh-relay"]
 discovery-local-network = ["dep:swarm-discovery"]
 discovery-pkarr-dht = ["pkarr/dht", "dep:genawaiter"]
 
-# [[bin]]
-# name = "iroh-relay"
-# required-features = ["iroh-relay"]
-
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "iroh_docsrs"]
