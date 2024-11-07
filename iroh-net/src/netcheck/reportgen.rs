@@ -891,15 +891,14 @@ async fn check_captive_portal(
     if let Some(Host::Domain(domain)) = url.host() {
         // Use our own resolver rather than getaddrinfo
         //
-        // For some reason reqwest wants SocketAddr rather than IpAddr but then proceeds to
-        // ignore the port, extracting it from the URL instead.  We supply a dummy port.
+        // Be careful, a non-zero port will override the port in the URI.
         //
         // Ideally we would try to resolve **both** IPv4 and IPv6 rather than purely race
         // them.  But our resolver doesn't support that yet.
         let addrs: Vec<_> = dns_resolver
             .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
             .await?
-            .map(|ipaddr| SocketAddr::new(ipaddr, 80))
+            .map(|ipaddr| SocketAddr::new(ipaddr, 0))
             .collect();
         builder = builder.resolve_to_addrs(domain, &addrs);
     }
@@ -1062,8 +1061,7 @@ async fn measure_https_latency(
     if let Some(Host::Domain(domain)) = url.host() {
         // Use our own resolver rather than getaddrinfo
         //
-        // For some reason reqwest wants SocketAddr rather than IpAddr but then proceeds to
-        // ignore the port, extracting it from the URL instead.  We supply a dummy port.
+        // Be careful, a non-zero port will override the port in the URI.
         //
         // The relay Client uses `.lookup_ipv4_ipv6` to connect, so use the same function
         // but staggered for reliability.  Ideally this tries to resolve **both** IPv4 and
@@ -1071,7 +1069,7 @@ async fn measure_https_latency(
         let addrs: Vec<_> = dns_resolver
             .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
             .await?
-            .map(|ipaddr| SocketAddr::new(ipaddr, 80))
+            .map(|ipaddr| SocketAddr::new(ipaddr, 0))
             .collect();
         builder = builder.resolve_to_addrs(domain, &addrs);
     }
