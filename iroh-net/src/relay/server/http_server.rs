@@ -160,11 +160,6 @@ pub struct ServerBuilder {
     handlers: Handlers,
     /// Headers to use for HTTP responses.
     headers: HeaderMap,
-    /// 404 not found response.
-    ///
-    /// When `None`, a default is provided.
-    #[debug("{}", not_found_fn.as_ref().map_or("None", |_| "Some(Box<Fn(ResponseBuilder) -> Result<Response<Body>> + Send + Sync + 'static>)"))]
-    not_found_fn: Option<HyperHandler>,
 }
 
 impl ServerBuilder {
@@ -175,7 +170,6 @@ impl ServerBuilder {
             tls_config: None,
             handlers: Default::default(),
             headers: HeaderMap::new(),
-            not_found_fn: None,
         }
     }
 
@@ -196,13 +190,6 @@ impl ServerBuilder {
         self
     }
 
-    /// Sets a custom "404" handler.
-    #[allow(unused)]
-    pub fn not_found_handler(mut self, handler: HyperHandler) -> Self {
-        self.not_found_fn = Some(handler);
-        self
-    }
-
     /// Adds HTTP headers to responses.
     pub fn headers(mut self, headers: HeaderMap) -> Self {
         for (k, v) in headers.iter() {
@@ -216,20 +203,7 @@ impl ServerBuilder {
         let relay_server = ServerActorTask::new();
         let relay_handler = relay_server.client_conn_handler(self.headers.clone());
 
-        let h = self.headers.clone();
-        let not_found_fn = match self.not_found_fn {
-            Some(f) => f,
-            None => Box::new(move |_req: Request<Incoming>, mut res: ResponseBuilder| {
-                for (k, v) in h.iter() {
-                    res = res.header(k.clone(), v.clone());
-                }
-                let body = body_full("Not Found");
-                let r = res.status(StatusCode::NOT_FOUND).body(body)?;
-                HyperResult::Ok(r)
-            }),
-        };
-
-        let service = RelayService::new(self.handlers, relay_handler, not_found_fn, self.headers);
+        let service = RelayService::new(self.handlers, relay_handler, self.headers);
 
         let server_state = ServerState {
             addr: self.addr,
@@ -458,7 +432,7 @@ impl Service<Request<Incoming>> for RelayService {
             return Box::pin(async move { f });
         }
         // otherwise return 404
-        let res = (self.0.not_found_fn)(req, self.0.default_response());
+        let res = self.0.not_found_fn(req, self.0.default_response());
         Box::pin(async move { res })
     }
 }
@@ -467,13 +441,11 @@ impl Service<Request<Incoming>> for RelayService {
 #[derive(Clone, Debug)]
 struct RelayService(Arc<Inner>);
 
-#[derive(derive_more::Debug)]
+#[derive(Debug)]
 struct Inner {
-    pub relay_handler: ClientConnHandler,
-    #[debug("Box<Fn(ResponseBuilder) -> Result<Response<BytesBody>> + Send + Sync + 'static>")]
-    pub not_found_fn: HyperHandler,
-    pub handlers: Handlers,
-    pub headers: HeaderMap,
+    relay_handler: ClientConnHandler,
+    handlers: Handlers,
+    headers: HeaderMap,
 }
 
 impl Inner {
@@ -483,6 +455,19 @@ impl Inner {
             response = response.header(key.clone(), value.clone());
         }
         response
+    }
+
+    fn not_found_fn(
+        &self,
+        _req: Request<Incoming>,
+        mut res: ResponseBuilder,
+    ) -> HyperResult<Response<BytesBody>> {
+        for (k, v) in self.headers.iter() {
+            res = res.header(k.clone(), v.clone());
+        }
+        let body = body_full("Not Found");
+        let r = res.status(StatusCode::NOT_FOUND).body(body)?;
+        HyperResult::Ok(r)
     }
 }
 
@@ -497,16 +482,10 @@ pub enum TlsAcceptor {
 }
 
 impl RelayService {
-    fn new(
-        handlers: Handlers,
-        relay_handler: ClientConnHandler,
-        not_found_fn: HyperHandler,
-        headers: HeaderMap,
-    ) -> Self {
+    fn new(handlers: Handlers, relay_handler: ClientConnHandler, headers: HeaderMap) -> Self {
         Self(Arc::new(Inner {
             relay_handler,
             handlers,
-            not_found_fn,
             headers,
         }))
     }
