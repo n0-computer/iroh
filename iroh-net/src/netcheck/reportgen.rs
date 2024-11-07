@@ -43,10 +43,11 @@ use crate::{
     dns::{DnsResolver, ResolverExt},
     netcheck::{self, Report},
     ping::{PingError, Pinger},
-    relay::{http::RELAY_PROBE_PATH, RelayMap, RelayNode, RelayUrl},
-    stun,
     util::MaybeFuture,
 };
+
+use iroh_relay::protos::stun;
+use iroh_relay::{http::RELAY_PROBE_PATH, RelayMap, RelayNode, RelayUrl};
 
 mod hairpin;
 mod probes;

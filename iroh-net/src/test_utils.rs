@@ -6,12 +6,11 @@ pub use dns_and_pkarr_servers::DnsPkarrServer;
 pub use dns_server::create_dns_resolver;
 use tokio::sync::oneshot;
 
-use crate::{
-    defaults::DEFAULT_STUN_PORT,
-    relay::{
-        server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
-        RelayMap, RelayNode, RelayUrl,
-    },
+use crate::defaults::DEFAULT_STUN_PORT;
+
+use iroh_relay::{
+    server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
+    RelayMap, RelayNode, RelayUrl,
 };
 
 /// A drop guard to clean up test infrastructure.

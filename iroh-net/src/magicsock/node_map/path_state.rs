@@ -13,7 +13,8 @@ use super::{
     node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT},
     IpPort, PingRole, Source,
 };
-use crate::{disco::SendAddr, magicsock::HEARTBEAT_INTERVAL, stun};
+use crate::{disco::SendAddr, magicsock::HEARTBEAT_INTERVAL};
+use iroh_relay::protos::stun;
 
 /// The minimum time between pings to an endpoint.
 ///

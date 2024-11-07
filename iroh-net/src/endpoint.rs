@@ -36,9 +36,9 @@ use crate::{
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
     magicsock::{self, Handle, QuicMappedAddr},
-    relay::{force_staging_infra, RelayMode, RelayUrl},
     tls, NodeId,
 };
+use iroh_relay::{force_staging_infra, RelayMode, RelayUrl};
 
 mod rtt_actor;
 

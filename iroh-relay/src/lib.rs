@@ -9,7 +9,7 @@
 
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
-pub(crate) mod client;
+pub mod client;
 mod defaults;
 mod dns;
 pub mod http;

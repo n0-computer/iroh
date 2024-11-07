@@ -65,10 +65,9 @@ use crate::{
     dns::DnsResolver,
     endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
-    netcheck,
-    relay::{RelayMap, RelayUrl},
-    stun, AddrInfo,
+    netcheck, AddrInfo,
 };
+use iroh_relay::{protos::stun, RelayMap, RelayUrl};
 
 mod metrics;
 mod node_map;
@@ -1699,7 +1698,7 @@ impl quinn::UdpPoller for IoPoller {
 enum ActorMessage {
     Shutdown,
     ReceiveRelay(RelayReadResult),
-    EndpointPingExpired(usize, stun::TransactionId),
+    EndpointPingExpired(usize, stun_rs::TransactionId),
     NetcheckReport(Result<Option<Arc<netcheck::Report>>>, &'static str),
     NetworkChange,
     #[cfg(test)]

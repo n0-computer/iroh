@@ -19,14 +19,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, info_span, trace, warn, Instrument};
 
 use super::{ActorMessage, MagicSock, Metrics as MagicsockMetrics, RelayContents};
-use crate::{
-    key::{NodeId, PUBLIC_KEY_LENGTH},
-    relay::{
-        self,
-        client::{conn::ReceivedMessage, ClientError},
-        RelayUrl, MAX_PACKET_SIZE,
-    },
-};
+use crate::key::{NodeId, PUBLIC_KEY_LENGTH};
+use iroh_relay::{self as relay, client::ClientError, ReceivedMessage, RelayUrl, MAX_PACKET_SIZE};
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
 const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
@@ -215,7 +209,7 @@ impl ActiveRelay {
                 }
 
                 match msg {
-                    relay::client::conn::ReceivedMessage::ReceivedPacket { source, data } => {
+                    ReceivedMessage::ReceivedPacket { source, data } => {
                         trace!(len=%data.len(), "received msg");
                         // If this is a new sender we hadn't seen before, remember it and
                         // register a route for this peer.
@@ -242,7 +236,7 @@ impl ActiveRelay {
 
                         ReadResult::Continue
                     }
-                    relay::client::conn::ReceivedMessage::Ping(data) => {
+                    ReceivedMessage::Ping(data) => {
                         // Best effort reply to the ping.
                         let dc = self.relay_client.clone();
                         tokio::task::spawn(async move {
@@ -252,8 +246,8 @@ impl ActiveRelay {
                         });
                         ReadResult::Continue
                     }
-                    relay::client::conn::ReceivedMessage::Health { .. } => ReadResult::Continue,
-                    relay::client::conn::ReceivedMessage::PeerGone(key) => {
+                    ReceivedMessage::Health { .. } => ReadResult::Continue,
+                    ReceivedMessage::PeerGone(key) => {
                         self.node_present.remove(&key);
                         ReadResult::Continue
                     }

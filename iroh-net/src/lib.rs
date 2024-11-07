@@ -243,8 +243,6 @@ mod magicsock;
 pub mod metrics;
 pub mod netcheck;
 pub mod ping;
-pub mod relay;
-pub mod stun;
 pub mod ticket;
 pub mod tls;
 pub(crate) mod util;

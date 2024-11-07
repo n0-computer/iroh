@@ -23,11 +23,12 @@ use crate::{
     endpoint::AddrInfo,
     key::PublicKey,
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
-    relay::RelayUrl,
-    stun,
     util::relay_only_mode,
     NodeAddr, NodeId,
 };
+
+use iroh_relay::protos::stun;
+use iroh_relay::RelayUrl;
 
 /// Number of addresses that are not active that we keep around per node.
 ///

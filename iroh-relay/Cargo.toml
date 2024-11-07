@@ -28,7 +28,7 @@ http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
 igd-next = { version = "0.15.1", features = ["aio_tokio"] }
-iroh-base = { version = "0.27.0", features = ["key"] }
+iroh-base = { version = "0.28.0", features = ["key"] }
 libc = "0.2.139"
 netdev = "0.30.0"
 netwatch = { version = "0.1.0", path = "../net-tools/netwatch" }

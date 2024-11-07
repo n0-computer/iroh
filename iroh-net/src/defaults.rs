@@ -2,7 +2,7 @@
 
 use url::Url;
 
-use crate::relay::{RelayMap, RelayNode};
+use iroh_relay::{RelayMap, RelayNode};
 
 /// The default STUN port used by the Relay server.
 ///

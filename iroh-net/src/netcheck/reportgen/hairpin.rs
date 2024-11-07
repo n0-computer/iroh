@@ -23,8 +23,9 @@ use tracing::{debug, error, info_span, trace, warn, Instrument};
 use crate::{
     defaults::timeouts::HAIRPIN_CHECK_TIMEOUT,
     netcheck::{self, reportgen, Inflight},
-    stun,
 };
+
+use iroh_relay::protos::stun;
 
 /// Handle to the hairpin actor.
 ///
