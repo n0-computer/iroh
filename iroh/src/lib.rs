@@ -49,13 +49,10 @@
 //!   manage and share content-addressed blobs of data
 //! - [tags](crate::client::tags):
 //!   tags to tell iroh what data is important
-//! - [gossip](iroh_gossip::RpcClient):
+//! - [gossip](crate::client::gossip):
 //!   exchange data with other nodes via a gossip protocol
-//!
-//! - [authors](crate::client::authors):
-//!   interact with document authors
 //! - [docs](crate::client::docs):
-//!   interact with documents
+//!   interact with documents and document authors
 //!
 //! The subsystem clients can be obtained cheaply from the main iroh client.
 //! They are also cheaply cloneable and can be shared across threads.
