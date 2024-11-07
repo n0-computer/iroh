@@ -9,141 +9,21 @@ use tokio::{sync::mpsc, task::JoinSet};
 use tracing::{Instrument, Span};
 
 use super::{
-    client_conn::{ClientConnBuilder, ClientConnManager},
+    client_conn::{ClientConn, ClientConnConfig},
     metrics::Metrics,
-    types::Packet,
+    actor::Packet,
 };
 
 /// Number of times we try to send to a client connection before dropping the data;
 const RETRIES: usize = 3;
 
-/// Represents a connection to a client.
-// TODO: expand to allow for _multiple connections_ associated with a single PublicKey. This
-// introduces some questions around which connection should be prioritized when forwarding packets
-//
-// From goimpl:
-//
-// "Represents one or more connections to a client
-//
-// In the common cast, the client should only have one connection to the relay server for a given
-// key. When they're connected multiple times, we record their set of connection, and keep their
-// connections open to make them happy (to keep them from spinning, etc) and keep track of which
-// is the latest connection. If only the last is sending traffic, that last one is the active
-// connection and it gets traffic. Otherwise, in the case of a cloned node key, the whole set of
-// connections doesn't receive data frames."
-#[derive(Debug)]
-struct Client {
-    /// The client connection associated with the [`PublicKey`]
-    conn: ClientConnManager,
-    /// list of peers we have sent messages to
-    sent_to: HashSet<PublicKey>,
-}
-
-impl Client {
-    pub fn new(conn: ClientConnManager) -> Self {
-        Self {
-            conn,
-            sent_to: HashSet::default(),
-        }
-    }
-
-    /// Record that this client sent a packet to the `dst` client
-    pub fn record_send(&mut self, dst: PublicKey) {
-        self.sent_to.insert(dst);
-    }
-
-    pub fn shutdown(self) {
-        tokio::spawn(
-            async move {
-                self.conn.shutdown().await;
-                // notify peers of disconnect?
-            }
-            .instrument(Span::current()),
-        );
-    }
-
-    pub async fn shutdown_await(self) {
-        self.conn.shutdown().await;
-    }
-
-    pub fn send_packet(&self, packet: Packet) -> Result<(), SendError> {
-        let res = try_send(&self.conn.client_channels.send_queue, packet);
-        if res.is_ok() {
-            // there is a chance that we have a packet forwarder for
-            // this peer, so we must check that route before
-            // marking the packet as "dropped"
-            inc!(Metrics, send_packets_sent);
-        }
-        res
-    }
-
-    pub fn send_disco_packet(&self, packet: Packet) -> Result<(), SendError> {
-        let res = try_send(&self.conn.client_channels.disco_send_queue, packet);
-        if res.is_ok() {
-            // there is a chance that we have a packet forwarder for
-            // this peer, so we must check that route before
-            // marking the packet as "dropped"
-            inc!(Metrics, disco_packets_sent);
-        }
-        res
-    }
-
-    pub fn send_peer_gone(&self, key: PublicKey) -> Result<(), SendError> {
-        let res = try_send(&self.conn.client_channels.peer_gone, key);
-        match res {
-            Ok(_) => {
-                inc!(Metrics, other_packets_sent);
-            }
-            Err(_) => {
-                inc!(Metrics, other_packets_dropped);
-            }
-        }
-        res
-    }
-}
-
-// TODO: in the goimpl, it also tries 3 times to send a packet. But, in go we can clone receiver
-// channels, so each client is able to drain any full channels of "older" packets
-// & attempt to try to send the message again. We can't drain any channels here,
-// so I'm not sure if we should come up with some mechanism to request the channel
-// be drained, or just leave it
-fn try_send<T>(sender: &mpsc::Sender<T>, msg: T) -> Result<(), SendError> {
-    let mut msg = msg;
-    for _ in 0..RETRIES {
-        match sender.try_send(msg) {
-            Ok(_) => return Ok(()),
-            // if the queue is full, try again (max 3 times)
-            Err(mpsc::error::TrySendError::Full(m)) => msg = m,
-            // only other option is `TrySendError::Closed`, report the
-            // closed error
-            Err(_) => return Err(SendError::SenderClosed),
-        }
-    }
-    Err(SendError::PacketDropped)
-}
-
-#[derive(Debug)]
-enum SendError {
-    PacketDropped,
-    SenderClosed,
-}
-
-#[derive(Debug)]
-pub(crate) struct Clients {
+/// Manages the connections to all currently connected clients.
+#[derive(Debug, Default)]
+pub(super) struct Clients {
     inner: HashMap<PublicKey, Client>,
 }
 
-impl Drop for Clients {
-    fn drop(&mut self) {}
-}
-
 impl Clients {
-    pub fn new() -> Self {
-        Self {
-            inner: HashMap::default(),
-        }
-    }
-
     pub async fn shutdown(&mut self) {
         tracing::trace!("shutting down conn");
         let mut handles = JoinSet::default();
@@ -175,11 +55,11 @@ impl Clients {
         false
     }
 
-    pub fn register(&mut self, client_builder: ClientConnBuilder) {
+    pub fn register(&mut self, client_config: ClientConnConfig) {
         // this builds the client handler & starts the read & write loops to that client connection
-        let key = client_builder.key;
+        let key = client_config.key;
         tracing::trace!("registering client: {:?}", key);
-        let client = client_builder.build();
+        let client = ClientConn::new(client_config);
         // TODO: in future, do not remove clients that share a publicKey, instead,
         // expand the `Client` struct to handle multiple connections & a policy for
         // how to handle who we write to when multiple connections exist.
@@ -251,6 +131,117 @@ impl Clients {
     }
 }
 
+/// Represents a connection to a client.
+// TODO: expand to allow for _multiple connections_ associated with a single PublicKey. This
+// introduces some questions around which connection should be prioritized when forwarding packets
+//
+// From goimpl:
+//
+// "Represents one or more connections to a client
+//
+// In the common cast, the client should only have one connection to the relay server for a given
+// key. When they're connected multiple times, we record their set of connection, and keep their
+// connections open to make them happy (to keep them from spinning, etc) and keep track of which
+// is the latest connection. If only the last is sending traffic, that last one is the active
+// connection and it gets traffic. Otherwise, in the case of a cloned node key, the whole set of
+// connections doesn't receive data frames."
+#[derive(Debug)]
+struct Client {
+    /// The client connection associated with the [`PublicKey`]
+    conn: ClientConn,
+    /// list of peers we have sent messages to
+    sent_to: HashSet<PublicKey>,
+}
+
+impl Client {
+    fn new(conn: ClientConn) -> Self {
+        Self {
+            conn,
+            sent_to: HashSet::default(),
+        }
+    }
+
+    /// Record that this client sent a packet to the `dst` client
+    fn record_send(&mut self, dst: PublicKey) {
+        self.sent_to.insert(dst);
+    }
+
+    fn shutdown(self) {
+        tokio::spawn(
+            async move {
+                self.conn.shutdown().await;
+                // notify peers of disconnect?
+            }
+            .instrument(Span::current()),
+        );
+    }
+
+    async fn shutdown_await(self) {
+        self.conn.shutdown().await;
+    }
+
+    fn send_packet(&self, packet: Packet) -> Result<(), SendError> {
+        let res = try_send(&self.conn.client_channels.send_queue, packet);
+        if res.is_ok() {
+            // there is a chance that we have a packet forwarder for
+            // this peer, so we must check that route before
+            // marking the packet as "dropped"
+            inc!(Metrics, send_packets_sent);
+        }
+        res
+    }
+
+    fn send_disco_packet(&self, packet: Packet) -> Result<(), SendError> {
+        let res = try_send(&self.conn.client_channels.disco_send_queue, packet);
+        if res.is_ok() {
+            // there is a chance that we have a packet forwarder for
+            // this peer, so we must check that route before
+            // marking the packet as "dropped"
+            inc!(Metrics, disco_packets_sent);
+        }
+        res
+    }
+
+    fn send_peer_gone(&self, key: PublicKey) -> Result<(), SendError> {
+        let res = try_send(&self.conn.client_channels.peer_gone, key);
+        match res {
+            Ok(_) => {
+                inc!(Metrics, other_packets_sent);
+            }
+            Err(_) => {
+                inc!(Metrics, other_packets_dropped);
+            }
+        }
+        res
+    }
+}
+
+// TODO: in the goimpl, it also tries 3 times to send a packet. But, in go we can clone receiver
+// channels, so each client is able to drain any full channels of "older" packets
+// & attempt to try to send the message again. We can't drain any channels here,
+// so I'm not sure if we should come up with some mechanism to request the channel
+// be drained, or just leave it
+fn try_send<T>(sender: &mpsc::Sender<T>, msg: T) -> Result<(), SendError> {
+    let mut msg = msg;
+    for _ in 0..RETRIES {
+        match sender.try_send(msg) {
+            Ok(_) => return Ok(()),
+            // if the queue is full, try again (max 3 times)
+            Err(mpsc::error::TrySendError::Full(m)) => msg = m,
+            // only other option is `TrySendError::Closed`, report the
+            // closed error
+            Err(_) => return Err(SendError::SenderClosed),
+        }
+    }
+    Err(SendError::PacketDropped)
+}
+
+#[derive(Debug)]
+enum SendError {
+    PacketDropped,
+    SenderClosed,
+}
+
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
@@ -267,14 +258,12 @@ mod tests {
 
     fn test_client_builder(
         key: PublicKey,
-        conn_num: usize,
-    ) -> (ClientConnBuilder, FramedRead<DuplexStream, DerpCodec>) {
+    ) -> (ClientConnConfig, FramedRead<DuplexStream, DerpCodec>) {
         let (test_io, io) = tokio::io::duplex(1024);
         let (server_channel, _) = mpsc::channel(10);
         (
-            ClientConnBuilder {
+            ClientConnConfig {
                 key,
-                conn_num,
                 io: RelayIo::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
                 write_timeout: None,
                 channel_capacity: 10,
@@ -289,9 +278,9 @@ mod tests {
         let a_key = SecretKey::generate().public();
         let b_key = SecretKey::generate().public();
 
-        let (builder_a, mut a_rw) = test_client_builder(a_key, 0);
+        let (builder_a, mut a_rw) = test_client_builder(a_key);
 
-        let mut clients = Clients::new();
+        let mut clients = Clients::default();
         clients.register(builder_a);
 
         // send packet

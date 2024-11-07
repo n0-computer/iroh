@@ -24,9 +24,9 @@ use crate::{
         relay::{write_frame, Frame, KEEP_ALIVE},
     },
     server::{
+        actor::{self, new_conn_num, Packet},
         metrics::Metrics,
         streams::RelayIo,
-        types::{Packet, ServerMessage},
     },
 };
 
@@ -35,31 +35,21 @@ use crate::{
 /// [`Server`]: crate::server::Server
 /// [`Client`]: crate::client::Client
 #[derive(Debug)]
-pub(crate) struct ClientConnManager {
+pub(super) struct ClientConn {
     /// Static after construction, process-wide unique counter, incremented each time we accept
-    pub(crate) conn_num: usize,
+    pub(super) conn_num: usize,
 
-    // TODO: in the go impl, we have a ptr to the server & use that ptr to update stats
-    // in rust, we should probably have a stats struct separate from the server that we
-    // can update in different threads, this may become a series of channels on which to
-    // send updates
-    // stats: Stats,
-    pub(crate) key: PublicKey,
+    pub(super) key: PublicKey,
     /// Sent when connection closes
     // TODO: maybe should be a receiver
     done: CancellationToken,
 
-    /// Controls how quickly two connections with the same client key can kick
-    /// each other off the server by taking ownership of a key
-    // TODO: replace with rate limiter, also, this should probably be on the ClientSets, not on
-    // the client itself
-    // replace_limiter: RateLimiter,
     io_handle: AbortOnDropHandle<Result<()>>,
 
     /// Channels that allow the [`ClientConnManager`] (and the Server) to send
     /// the client messages. These `Senders` correspond to `Receivers` on the
     /// [`ClientConnIo`].
-    pub(crate) client_channels: ClientChannels,
+    pub(super) client_channels: ClientChannels,
 }
 
 /// Channels that the [`ClientConnManager`] uses to communicate with the
@@ -68,54 +58,39 @@ pub(crate) struct ClientConnManager {
 ///    client was previously communciating with)
 ///  - packets sent to this client from another client in the network
 #[derive(Debug)]
-pub(crate) struct ClientChannels {
+pub(super) struct ClientChannels {
     /// Queue of packets intended for the client
-    pub(crate) send_queue: mpsc::Sender<Packet>,
+    pub(super) send_queue: mpsc::Sender<Packet>,
     /// Queue of important packets intended for the client
-    pub(crate) disco_send_queue: mpsc::Sender<Packet>,
+    pub(super) disco_send_queue: mpsc::Sender<Packet>,
     /// Notify the client that a previous sender has disconnected
-    pub(crate) peer_gone: mpsc::Sender<PublicKey>,
+    pub(super) peer_gone: mpsc::Sender<PublicKey>,
 }
 
 /// A builds a [`ClientConnManager`] from a [`PublicKey`] and an io connection.
 #[derive(Debug)]
-pub struct ClientConnBuilder {
-    pub(crate) key: PublicKey,
-    pub(crate) conn_num: usize,
-    pub(crate) io: RelayIo,
-    pub(crate) write_timeout: Option<Duration>,
-    pub(crate) channel_capacity: usize,
-    pub(crate) server_channel: mpsc::Sender<ServerMessage>,
+pub(super) struct ClientConnConfig {
+    pub(super) key: PublicKey,
+    pub(super) io: RelayIo,
+    pub(super) write_timeout: Option<Duration>,
+    pub(super) channel_capacity: usize,
+    pub(super) server_channel: mpsc::Sender<actor::Message>,
 }
 
-impl ClientConnBuilder {
-    /// Creates a client from a connection, which starts a read and write loop to handle
-    /// io to the client
-    pub(crate) fn build(self) -> ClientConnManager {
-        ClientConnManager::new(
-            self.key,
-            self.conn_num,
-            self.io,
-            self.write_timeout,
-            self.channel_capacity,
-            self.server_channel,
-        )
-    }
-}
-
-impl ClientConnManager {
+impl ClientConn {
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
     /// Call [`ClientConnManager::shutdown`] to close the read and write loops before dropping the [`ClientConnManager`]
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        key: PublicKey,
-        conn_num: usize,
-        io: RelayIo,
-        write_timeout: Option<Duration>,
-        channel_capacity: usize,
-        server_channel: mpsc::Sender<ServerMessage>,
-    ) -> ClientConnManager {
+    pub fn new(config: ClientConnConfig) -> ClientConn {
+        let ClientConnConfig {
+            key,
+            io,
+            write_timeout,
+            channel_capacity,
+            server_channel,
+        } = config;
+        let conn_num = new_conn_num();
+
         let done = CancellationToken::new();
         let client_id = (key, conn_num);
         let (send_queue_s, send_queue_r) = mpsc::channel(channel_capacity);
@@ -145,7 +120,7 @@ impl ClientConnManager {
                 let conn_num = io_client_id.1;
                 let res = conn_io.run(io_done).await;
                 let _ = server_channel
-                    .send(ServerMessage::RemoveClient((key, conn_num)))
+                    .send(actor::Message::RemoveClient((key, conn_num)))
                     .await;
                 match res {
                     Err(e) => {
@@ -163,7 +138,7 @@ impl ClientConnManager {
             .instrument(tracing::debug_span!("conn_io")),
         );
 
-        ClientConnManager {
+        ClientConn {
             conn_num,
             key,
             io_handle: AbortOnDropHandle::new(io_handle),
@@ -227,7 +202,7 @@ pub(crate) struct ClientConnIo {
 
     /// Channels used to communicate with the server about actions
     /// it needs to take on behalf of the client
-    server_channel: mpsc::Sender<ServerMessage>,
+    server_channel: mpsc::Sender<actor::Message>,
 
     /// Notes that the client considers this the preferred connection (important in cases
     /// where the client moves to a different network, but has the same PublicKey)
@@ -409,7 +384,7 @@ impl ClientConnIo {
         self.set_preferred(preferred)
     }
 
-    async fn send_server(&self, msg: ServerMessage) -> Result<()> {
+    async fn send_server(&self, msg: actor::Message) -> Result<()> {
         self.server_channel
             .send(msg)
             .await
@@ -448,11 +423,11 @@ impl ClientConnIo {
     async fn transfer_packet(&self, dstkey: PublicKey, packet: Packet) -> Result<()> {
         if disco::looks_like_disco_wrapper(&packet.bytes) {
             inc!(Metrics, disco_packets_recv);
-            self.send_server(ServerMessage::SendDiscoPacket((dstkey, packet)))
+            self.send_server(actor::Message::SendDiscoPacket((dstkey, packet)))
                 .await?;
         } else {
             inc!(Metrics, send_packets_recv);
-            self.send_server(ServerMessage::SendPacket((dstkey, packet)))
+            self.send_server(actor::Message::SendPacket((dstkey, packet)))
                 .await?;
         }
         Ok(())
@@ -570,7 +545,7 @@ mod tests {
         conn::send_packet(&mut io_rw, &None, target, Bytes::from_static(data)).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
-            ServerMessage::SendPacket((got_target, packet)) => {
+            actor::Message::SendPacket((got_target, packet)) => {
                 assert_eq!(target, got_target);
                 assert_eq!(key, packet.src);
                 assert_eq!(&data[..], &packet.bytes);
@@ -589,7 +564,7 @@ mod tests {
         conn::send_packet(&mut io_rw, &None, target, disco_data.clone().into()).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
-            ServerMessage::SendDiscoPacket((got_target, packet)) => {
+            actor::Message::SendDiscoPacket((got_target, packet)) => {
                 assert_eq!(target, got_target);
                 assert_eq!(key, packet.src);
                 assert_eq!(&disco_data[..], &packet.bytes);
@@ -643,7 +618,7 @@ mod tests {
         conn::send_packet(&mut io_rw, &None, target, Bytes::from_static(data)).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
-            ServerMessage::SendPacket((got_target, packet)) => {
+            actor::Message::SendPacket((got_target, packet)) => {
                 assert_eq!(target, got_target);
                 assert_eq!(key, packet.src);
                 assert_eq!(&data[..], &packet.bytes);

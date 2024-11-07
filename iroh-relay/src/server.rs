@@ -42,10 +42,8 @@ mod clients;
 mod http_server;
 mod metrics;
 pub(crate) mod streams;
-pub(crate) mod types;
 
 pub use self::{
-    actor::{ClientConnHandler, ServerActorTask},
     metrics::Metrics,
     streams::MaybeTlsStream as MaybeTlsStreamServer,
 };
