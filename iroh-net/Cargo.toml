@@ -147,7 +147,7 @@ iroh-relay = [
     "dep:tracing-subscriber"
 ]
 metrics = ["iroh-metrics/metrics"]
-test-utils = ["iroh-relay"]
+test-utils = ["iroh-relay/test-utils"]
 discovery-local-network = ["dep:swarm-discovery"]
 discovery-pkarr-dht = ["pkarr/dht", "dep:genawaiter"]
 

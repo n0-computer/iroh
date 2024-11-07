@@ -15,8 +15,8 @@ mod dns;
 pub mod http;
 mod map;
 pub mod protos;
-#[cfg(feature = "iroh-relay")]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
+#[cfg(feature = "server")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]
 pub mod server;
 mod util;
 

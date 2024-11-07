@@ -20,6 +20,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
 socket2 = "0.5"
 futures-lite = "2.3.0"
+iroh-relay = { path = "../../iroh-relay", features = ["metrics"] }
 
 [features]
 default = ["local-relay"]

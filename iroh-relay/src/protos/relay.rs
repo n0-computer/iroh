@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{bail, ensure};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 // TODO(@divma): check what changed
-// #[cfg(feature = "iroh-relay")]
+// #[cfg(feature = "server")]
 use futures_lite::{Stream, StreamExt};
 use futures_sink::Sink;
 use futures_util::SinkExt;
@@ -26,12 +26,12 @@ const MAX_FRAME_SIZE: usize = 1024 * 1024;
 /// The Relay magic number, sent in the FrameType::ClientInfo frame upon initial connection.
 const MAGIC: &str = "RELAY🔑";
 
-#[cfg(feature = "iroh-relay")]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
+#[cfg(feature = "server")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]
 pub(crate) const KEEP_ALIVE: Duration = Duration::from_secs(60);
 // TODO: what should this be?
-#[cfg(feature = "iroh-relay")]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
+#[cfg(feature = "server")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]
 pub(crate) const SERVER_CHANNEL_SIZE: usize = 1024 * 100;
 /// The number of packets buffered for sending per client
 pub(crate) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512; //32;
@@ -170,8 +170,8 @@ pub(crate) async fn send_client_key<S: Sink<Frame, Error = std::io::Error> + Unp
 /// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
 // TODO(@divma): weird I had to change this
-// #[cfg(feature = "iroh-relay")]
-// #[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
+// #[cfg(feature = "server")]
+// #[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]
 pub(crate) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
     stream: S,
 ) -> anyhow::Result<(PublicKey, ClientInfo)> {
@@ -542,8 +542,8 @@ impl Encoder<Frame> for DerpCodec {
 /// Receives the next frame and matches the frame type. If the correct type is found returns the content,
 /// otherwise an error.
 // TODO(@divma): what's going on
-// #[cfg(feature = "iroh-relay")]
-// #[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
+// #[cfg(feature = "server")]
+// #[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]
 pub(crate) async fn recv_frame<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
     frame_type: FrameType,
     mut stream: S,
