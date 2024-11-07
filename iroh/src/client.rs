@@ -6,7 +6,6 @@ use std::collections::BTreeMap;
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
-use quic_rpc::client::BoxedServiceConnection;
 use ref_cast::RefCast;
 
 use crate::rpc_protocol::node::{CounterStats, ShutdownRequest, StatsRequest, StatusRequest};
@@ -28,12 +27,9 @@ pub use iroh_docs::rpc::client::Doc;
 pub use self::net::NodeStatus;
 pub(crate) use self::quic::{connect_raw as quic_connect_raw, RPC_ALPN};
 
-pub mod blobs;
+pub use iroh_blobs::rpc::client::{blobs, tags};
+pub use iroh_gossip::rpc::client as gossip;
 pub mod net;
-pub mod tags;
-
-/// Iroh rpc connection - boxed so that we can have a concrete type.
-pub(crate) type RpcConnection = BoxedServiceConnection<RpcService>;
 
 // Keep this type exposed, otherwise every occurrence of `RpcClient` in the API
 // will show up as `RpcClient<RpcService, Connection<RpcService>>` in the docs.
@@ -68,8 +64,8 @@ impl Iroh {
     }
 
     /// Returns the blobs client.
-    pub fn blobs(&self) -> &blobs::Client {
-        blobs::Client::ref_cast(&self.rpc)
+    pub fn blobs(&self) -> blobs::Client {
+        blobs::Client::new(self.rpc.clone().map().boxed())
     }
 
     /// Returns the docs client.
@@ -80,14 +76,13 @@ impl Iroh {
     }
 
     /// Returns the tags client.
-    pub fn tags(&self) -> &tags::Client {
-        tags::Client::ref_cast(&self.rpc)
+    pub fn tags(&self) -> tags::Client {
+        tags::Client::new(self.rpc.clone().map().boxed())
     }
 
     /// Returns the gossip client.
-    pub fn gossip(&self) -> iroh_gossip::RpcClient<RpcService> {
-        let channel = self.rpc.clone().map::<iroh_gossip::RpcService>();
-        iroh_gossip::RpcClient::new(channel)
+    pub fn gossip(&self) -> gossip::Client {
+        gossip::Client::new(self.rpc.clone().map().boxed())
     }
 
     /// Returns the net client.

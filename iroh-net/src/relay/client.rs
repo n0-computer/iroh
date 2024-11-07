@@ -13,7 +13,12 @@ use conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMess
 use futures_lite::future::Boxed as BoxFuture;
 use futures_util::StreamExt;
 use http_body_util::Empty;
-use hyper::{body::Incoming, header::UPGRADE, upgrade::Parts, Request};
+use hyper::{
+    body::Incoming,
+    header::{HOST, UPGRADE},
+    upgrade::Parts,
+    Request,
+};
 use hyper_util::rt::TokioIo;
 use rand::Rng;
 use rustls::client::Resumption;
@@ -643,6 +648,7 @@ impl Actor {
     }
 
     async fn connect_derp(&self) -> Result<(ConnReader, ConnWriter, SocketAddr), ClientError> {
+        let url = self.url.clone();
         let tcp_stream = self.dial_url().await?;
 
         let local_addr = tcp_stream
@@ -659,10 +665,10 @@ impl Actor {
             let hostname = hostname.to_owned();
             let tls_stream = self.tls_connector.connect(hostname, tcp_stream).await?;
             debug!("tls_connector connect success");
-            Self::start_upgrade(tls_stream).await?
+            Self::start_upgrade(tls_stream, url).await?
         } else {
             debug!("Starting handshake");
-            Self::start_upgrade(tcp_stream).await?
+            Self::start_upgrade(tcp_stream, url).await?
         };
 
         if response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
@@ -696,10 +702,15 @@ impl Actor {
     }
 
     /// Sends the HTTP upgrade request to the relay server.
-    async fn start_upgrade<T>(io: T) -> Result<hyper::Response<Incoming>, ClientError>
+    async fn start_upgrade<T>(
+        io: T,
+        relay_url: RelayUrl,
+    ) -> Result<hyper::Response<Incoming>, ClientError>
     where
         T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     {
+        let host_header_value = host_header_value(relay_url)?;
+
         let io = hyper_util::rt::TokioIo::new(io);
         let (mut request_sender, connection) = hyper::client::conn::http1::Builder::new()
             .handshake(io)
@@ -719,6 +730,10 @@ impl Actor {
         let req = Request::builder()
             .uri(RELAY_PATH)
             .header(UPGRADE, Protocol::Relay.upgrade_header())
+            // https://datatracker.ietf.org/doc/html/rfc2616#section-14.23
+            // > A client MUST include a Host header field in all HTTP/1.1 request messages.
+            // This header value helps reverse proxies identify how to forward requests.
+            .header(HOST, host_header_value)
             .body(http_body_util::Empty::<hyper::body::Bytes>::new())?;
         request_sender.send_request(req).await.map_err(From::from)
     }
@@ -1008,6 +1023,23 @@ impl Actor {
     }
 }
 
+fn host_header_value(relay_url: RelayUrl) -> Result<String, ClientError> {
+    // grab the host, turns e.g. https://example.com:8080/xyz -> example.com.
+    let relay_url_host = relay_url
+        .host_str()
+        .ok_or_else(|| ClientError::InvalidUrl(relay_url.to_string()))?;
+    // strip the trailing dot, if present: example.com. -> example.com
+    let relay_url_host = relay_url_host.strip_suffix('.').unwrap_or(relay_url_host);
+    // build the host header value (reserve up to 6 chars for the ":" and port digits):
+    let mut host_header_value = String::with_capacity(relay_url_host.len() + 6);
+    host_header_value += relay_url_host;
+    if let Some(port) = relay_url.port() {
+        host_header_value += ":";
+        host_header_value += &port.to_string();
+    }
+    Ok(host_header_value)
+}
+
 async fn resolve_host(
     resolver: &DnsResolver,
     url: &Url,
@@ -1096,6 +1128,8 @@ fn url_port(url: &Url) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use anyhow::{bail, Result};
 
     use super::*;
@@ -1117,6 +1151,27 @@ mod tests {
         if client_receiver.recv().await.and_then(|s| s.ok()).is_some() {
             bail!("expected client with bad relay node detail to return with an error");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_host_header_value() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let cases = [
+            (
+                "https://euw1-1.relay.iroh.network.",
+                "euw1-1.relay.iroh.network",
+            ),
+            ("http://localhost:8080", "localhost:8080"),
+        ];
+
+        for (url, expected_host) in cases {
+            let relay_url = RelayUrl::from_str(url)?;
+            let host = host_header_value(relay_url)?;
+            assert_eq!(host, expected_host);
+        }
+
         Ok(())
     }
 }

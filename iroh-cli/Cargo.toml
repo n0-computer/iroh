@@ -1,6 +1,6 @@
 [package]
 name = "iroh-cli"
-version = "0.27.0"
+version = "0.28.1"
 edition = "2021"
 readme = "README.md"
 description = "Bytes. Distributed."
@@ -40,16 +40,16 @@ futures-util = { version = "0.3.30", features = ["futures-sink"] }
 hex = "0.4.3"
 human-time = "0.1.6"
 indicatif = { version = "0.17", features = ["tokio"] }
-iroh = { version = "0.27.0", path = "../iroh", features = ["metrics"] }
-iroh-gossip = "0.27.0"
-iroh-docs = { version = "0.27.0", features = ["rpc"]}
-iroh-metrics = { version = "0.27.0" }
+iroh = { version = "0.28.1", path = "../iroh", features = ["metrics"] }
+iroh-gossip = "0.28.1"
+iroh-docs = { version = "0.28.0", features = ["rpc"]}
+iroh-metrics = { version = "0.28.0" }
 parking_lot = "0.12.1"
 pkarr = { version = "2.2.0", default-features = false }
 portable-atomic = "1"
 portmapper = { version = "0.1.0", path = "../net-tools/portmapper" }
 postcard = "1.0.8"
-quic-rpc = { version = "0.12", features = ["flume-transport", "quinn-transport"] }
+quic-rpc = { version = "0.15", features = ["flume-transport", "quinn-transport"] }
 rand = "0.8.5"
 ratatui = "0.26.2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

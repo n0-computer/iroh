@@ -105,7 +105,6 @@ impl From<ResultCode> for u8 {
 /// A PCP successful Response/Notification.
 ///
 /// See [RFC 6887 Response Header](https://datatracker.ietf.org/doc/html/rfc6887#section-7.2)
-///
 // NOTE: first two fields are *currently* not used, but are useful for debug purposes
 #[allow(unused)]
 #[derive(Debug, PartialEq, Eq)]

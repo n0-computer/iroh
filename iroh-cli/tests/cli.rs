@@ -865,7 +865,8 @@ fn match_provide_output<T: Read>(
 ///         (r"hello world!", 1),
 ///         (r"\S*$", 1),
 ///         (r"\d{2}/\d{2}/\d{4}", 3),
-///     ]);
+///     ],
+/// );
 /// ```
 fn assert_matches_line<R: BufRead, I>(reader: R, expressions: I) -> Vec<(usize, Vec<String>)>
 where

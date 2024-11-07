@@ -845,7 +845,7 @@ impl Endpoint {
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
-    /// let mep =  Endpoint::builder().bind().await.unwrap();
+    /// let mep = Endpoint::builder().bind().await.unwrap();
     /// let _addrs = mep.direct_addresses().next().await;
     /// # });
     /// ```
@@ -957,8 +957,10 @@ impl Endpoint {
     /// This will close all open QUIC connections with the provided error_code and
     /// reason. See [`quinn::Connection`] for details on how these are interpreted.
     ///
-    /// It will then wait for all connections to actually be shutdown, and afterwards
-    /// close the magic socket.
+    /// It will then wait for all connections to actually be shutdown, and afterwards close
+    /// the magic socket.  Be aware however that the underlying UDP sockets are only closed
+    /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
+    /// are dropped.
     ///
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
@@ -1388,7 +1390,7 @@ mod tests {
     use tracing::{error_span, info, info_span, Instrument};
 
     use super::*;
-    use crate::test_utils::run_relay_server;
+    use crate::test_utils::{run_relay_server, run_relay_server_with};
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
@@ -1853,5 +1855,24 @@ mod tests {
         let (r1, r2) = tokio::try_join!(res_ep1, res_ep2).unwrap();
         r1.expect("ep1 timeout").unwrap();
         r2.expect("ep2 timeout").unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_direct_addresses_no_stun_relay() {
+        let _guard = iroh_test::logging::setup();
+        let (relay_map, _, _guard) = run_relay_server_with(None).await.unwrap();
+
+        let ep = Endpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Custom(relay_map))
+            .insecure_skip_relay_cert_verify(true)
+            .bind()
+            .await
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(10), ep.direct_addresses().next())
+            .await
+            .unwrap()
+            .unwrap();
     }
 }
