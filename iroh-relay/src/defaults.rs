@@ -1,8 +1,20 @@
+//! Crate defaults.
+// TODO(@divma): decent docs, re-eval pub
+
 /// The efault STUN port used by the Relay server.
 ///
 /// The STUN port as defined by [RFC
 /// 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
 pub const DEFAULT_STUN_PORT: u16 = 3478;
+
+/// The default HTTP port used by the Relay server.
+pub const DEFAULT_HTTP_PORT: u16 = 80;
+
+/// The default HTTPS port used by the Relay server.
+pub const DEFAULT_HTTPS_PORT: u16 = 443;
+
+/// The default metrics port used by the Relay server.
+pub const DEFAULT_METRICS_PORT: u16 = 9090;
 
 /// Production configuration.
 pub mod prod {

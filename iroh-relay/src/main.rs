@@ -10,10 +10,10 @@ use std::{
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
-use iroh_net::{
-    defaults::{DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_STUN_PORT},
-    relay::server as iroh_relay,
+use iroh_relay::defaults::{
+    DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_STUN_PORT,
 };
+use iroh_relay::server as relay;
 use serde::{Deserialize, Serialize};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
 use tracing::debug;
@@ -351,7 +351,7 @@ async fn main() -> Result<()> {
     let relay_config = build_relay_config(cfg).await?;
     debug!("{relay_config:#?}");
 
-    let mut relay = iroh_relay::Server::spawn(relay_config).await?;
+    let mut relay = relay::Server::spawn(relay_config).await?;
 
     tokio::select! {
         biased;
@@ -362,8 +362,8 @@ async fn main() -> Result<()> {
     relay.shutdown().await
 }
 
-/// Convert the TOML-loaded config to the [`iroh_relay::RelayConfig`] format.
-async fn build_relay_config(cfg: Config) -> Result<iroh_relay::ServerConfig<std::io::Error>> {
+/// Convert the TOML-loaded config to the [`relay::RelayConfig`] format.
+async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::Error>> {
     let tls = match cfg.tls {
         Some(ref tls) => {
             let cert_config = match tls.cert_mode {
@@ -377,7 +377,7 @@ async fn build_relay_config(cfg: Config) -> Result<iroh_relay::ServerConfig<std:
                         anyhow::Ok((key, certs))
                     })
                     .await??;
-                    iroh_relay::CertConfig::Manual { private_key, certs }
+                    relay::CertConfig::Manual { private_key, certs }
                 }
                 CertMode::LetsEncrypt => {
                     let hostname = tls
@@ -392,17 +392,17 @@ async fn build_relay_config(cfg: Config) -> Result<iroh_relay::ServerConfig<std:
                         .contact([format!("mailto:{}", contact)])
                         .cache_option(Some(DirCache::new(tls.cert_dir())))
                         .directory_lets_encrypt(tls.prod_tls);
-                    iroh_relay::CertConfig::LetsEncrypt { config }
+                    relay::CertConfig::LetsEncrypt { config }
                 }
             };
-            Some(iroh_relay::TlsConfig {
+            Some(relay::TlsConfig {
                 https_bind_addr: tls.https_bind_addr(&cfg),
                 cert: cert_config,
             })
         }
         None => None,
     };
-    let limits = iroh_relay::Limits {
+    let limits = relay::Limits {
         accept_conn_limit: cfg
             .limits
             .as_ref()
@@ -414,15 +414,15 @@ async fn build_relay_config(cfg: Config) -> Result<iroh_relay::ServerConfig<std:
             .map(|l| l.accept_conn_burst)
             .unwrap_or_default(),
     };
-    let relay_config = iroh_relay::RelayConfig {
+    let relay_config = relay::RelayConfig {
         http_bind_addr: cfg.http_bind_addr(),
         tls,
         limits,
     };
-    let stun_config = iroh_relay::StunConfig {
+    let stun_config = relay::StunConfig {
         bind_addr: cfg.stun_bind_addr(),
     };
-    Ok(iroh_relay::ServerConfig {
+    Ok(relay::ServerConfig {
         relay: Some(relay_config),
         stun: Some(stun_config).filter(|_| cfg.enable_stun),
         #[cfg(feature = "metrics")]
