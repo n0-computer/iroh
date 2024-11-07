@@ -41,9 +41,9 @@ use tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
 use url::Url;
 
 use crate::{
-    codec::DerpCodec,
     defaults::timeouts::*,
     http::{Protocol, RELAY_PATH},
+    protos::relay::DerpCodec,
     RelayUrl,
 };
 

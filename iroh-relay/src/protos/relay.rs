@@ -1,3 +1,5 @@
+//! This module implements the relaying protocol used the [`crate::server`] and [`crate::client`].
+
 use std::time::Duration;
 
 use anyhow::{bail, ensure};
@@ -26,14 +28,14 @@ const MAGIC: &str = "RELAY🔑";
 
 #[cfg(feature = "iroh-relay")]
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
-pub(super) const KEEP_ALIVE: Duration = Duration::from_secs(60);
+pub(crate) const KEEP_ALIVE: Duration = Duration::from_secs(60);
 // TODO: what should this be?
 #[cfg(feature = "iroh-relay")]
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
-pub(super) const SERVER_CHANNEL_SIZE: usize = 1024 * 100;
+pub(crate) const SERVER_CHANNEL_SIZE: usize = 1024 * 100;
 /// The number of packets buffered for sending per client
-pub(super) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512; //32;
-pub(super) const PER_CLIENT_READ_QUEUE_DEPTH: usize = 512;
+pub(crate) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512; //32;
+pub(crate) const PER_CLIENT_READ_QUEUE_DEPTH: usize = 512;
 
 /// ProtocolVersion is bumped whenever there's a wire-incompatible change.
 ///  - version 1 (zero on wire): consistent box headers, in use by employee dev nodes a bit
@@ -47,7 +49,7 @@ pub(super) const PER_CLIENT_READ_QUEUE_DEPTH: usize = 512;
 /// The server will error on that connection if a client sends one of these frames.
 /// This materially affects the handshake protocol, and so relay nodes on version 3 will be unable to communicate
 /// with nodes running earlier protocol versions.
-pub(super) const PROTOCOL_VERSION: usize = 3;
+pub(crate) const PROTOCOL_VERSION: usize = 3;
 
 ///
 /// Protocol flow:
@@ -128,7 +130,7 @@ pub(crate) struct ClientInfo {
 /// Ignores the timeout if `None`
 ///
 /// Does not flush.
-pub(super) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
+pub(crate) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
     mut writer: S,
     frame: Frame,
     timeout: Option<Duration>,
@@ -170,7 +172,7 @@ pub(crate) async fn send_client_key<S: Sink<Frame, Error = std::io::Error> + Unp
 // TODO(@divma): weird I had to change this
 // #[cfg(feature = "iroh-relay")]
 // #[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
-pub(super) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
+pub(crate) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
     stream: S,
 ) -> anyhow::Result<(PublicKey, ClientInfo)> {
     use anyhow::Context;
@@ -243,7 +245,7 @@ pub(crate) enum Frame {
 }
 
 impl Frame {
-    pub(super) fn typ(&self) -> FrameType {
+    pub(crate) fn typ(&self) -> FrameType {
         match self {
             Frame::ClientInfo { .. } => FrameType::ClientInfo,
             Frame::SendPacket { .. } => FrameType::SendPacket,
@@ -259,7 +261,7 @@ impl Frame {
     }
 
     /// Serialized length (without the frame header)
-    pub(super) fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             Frame::ClientInfo {
                 client_public_key: _,
@@ -542,7 +544,7 @@ impl Encoder<Frame> for DerpCodec {
 // TODO(@divma): what's going on
 // #[cfg(feature = "iroh-relay")]
 // #[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
-pub(super) async fn recv_frame<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
+pub(crate) async fn recv_frame<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
     frame_type: FrameType,
     mut stream: S,
 ) -> anyhow::Result<Frame> {

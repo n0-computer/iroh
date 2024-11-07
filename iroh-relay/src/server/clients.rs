@@ -260,7 +260,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        codec::{recv_frame, DerpCodec, Frame, FrameType},
+        protos::relay::{recv_frame, DerpCodec, Frame, FrameType},
         server::streams::{MaybeTlsStream, RelayIo},
     };
 

@@ -30,11 +30,11 @@ use tracing::{debug, info_span, trace, Instrument};
 
 use crate::{
     client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
-    codec::{
+    defaults::timeouts::CLIENT_RECV_TIMEOUT,
+    protos::relay::{
         write_frame, ClientInfo, DerpCodec, Frame, MAX_PACKET_SIZE, PER_CLIENT_READ_QUEUE_DEPTH,
         PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
     },
-    defaults::timeouts::CLIENT_RECV_TIMEOUT,
 };
 
 impl PartialEq for Conn {
@@ -366,7 +366,8 @@ impl ConnBuilder {
             version: PROTOCOL_VERSION,
         };
         debug!("server_handshake: sending client_key: {:?}", &client_info);
-        crate::codec::send_client_key(&mut self.writer, &self.secret_key, &client_info).await?;
+        crate::protos::relay::send_client_key(&mut self.writer, &self.secret_key, &client_info)
+            .await?;
 
         // TODO: add some actual configuration
         let rate_limiter = RateLimiter::new(0, 0)?;

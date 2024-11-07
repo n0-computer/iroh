@@ -10,10 +10,11 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
 pub(crate) mod client;
-pub(crate) mod codec;
 mod defaults;
+mod dns;
 pub mod http;
 mod map;
+pub mod protos;
 #[cfg(feature = "iroh-relay")]
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
 pub mod server;
@@ -36,6 +37,6 @@ pub use self::{
         Client as HttpClient, ClientBuilder as HttpClientBuilder, ClientError as HttpClientError,
         ClientReceiver as HttpClientReceiver,
     },
-    codec::MAX_PACKET_SIZE,
     map::{RelayMap, RelayMode, RelayNode},
+    protos::relay::MAX_PACKET_SIZE,
 };

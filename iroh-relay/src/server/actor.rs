@@ -22,12 +22,12 @@ use tracing::{info_span, trace, Instrument};
 use tungstenite::protocol::Role;
 
 use crate::{
-    codec::{
+    defaults::timeouts::SERVER_WRITE_TIMEOUT as WRITE_TIMEOUT,
+    http::Protocol,
+    protos::relay::{
         recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
         SERVER_CHANNEL_SIZE,
     },
-    defaults::timeouts::SERVER_WRITE_TIMEOUT as WRITE_TIMEOUT,
-    http::Protocol,
     server::{
         client_conn::ClientConnBuilder,
         clients::Clients,
@@ -369,7 +369,7 @@ mod tests {
             conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage},
             streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
         },
-        codec::{recv_frame, ClientInfo, Frame, FrameType},
+        protos::relay::{recv_frame, ClientInfo, Frame, FrameType},
     };
 
     fn test_client_builder(
@@ -480,7 +480,8 @@ mod tests {
             let client_info = ClientInfo {
                 version: PROTOCOL_VERSION,
             };
-            crate::codec::send_client_key(&mut client_writer, &client_key, &client_info).await?;
+            crate::protos::relay::send_client_key(&mut client_writer, &client_key, &client_info)
+                .await?;
 
             Ok(())
         }));

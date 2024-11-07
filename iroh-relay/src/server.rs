@@ -35,7 +35,7 @@ use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
 use crate::http::RELAY_PROBE_PATH;
-use crate::stun;
+use crate::protos::stun;
 
 pub(crate) mod actor;
 pub(crate) mod client_conn;
@@ -209,7 +209,7 @@ impl Server {
             use iroh_metrics::core::Metric;
 
             iroh_metrics::core::Core::init(|reg, metrics| {
-                metrics.insert(crate::metrics::RelayMetrics::new(reg));
+                metrics.insert(metrics::Metrics::new(reg));
                 metrics.insert(StunMetrics::new(reg));
             });
             tasks.spawn(

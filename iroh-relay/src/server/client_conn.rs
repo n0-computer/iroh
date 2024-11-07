@@ -18,8 +18,8 @@ use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{trace, Instrument};
 
 use crate::{
-    codec::{write_frame, Frame, KEEP_ALIVE},
-    disco::looks_like_disco_wrapper,
+    protos::disco,
+    protos::relay::{write_frame, Frame, KEEP_ALIVE},
     server::{
         metrics::Metrics,
         streams::RelayIo,
@@ -444,7 +444,7 @@ impl ClientConnIo {
     /// destination is not connected, or if the destination client can
     /// not fit any more messages in its queue.
     async fn transfer_packet(&self, dstkey: PublicKey, packet: Packet) -> Result<()> {
-        if looks_like_disco_wrapper(&packet.bytes) {
+        if disco::looks_like_disco_wrapper(&packet.bytes) {
             inc!(Metrics, disco_packets_recv);
             self.send_server(ServerMessage::SendDiscoPacket((dstkey, packet)))
                 .await?;
@@ -465,7 +465,7 @@ mod tests {
     use super::*;
     use crate::{
         client::conn,
-        codec::{recv_frame, DerpCodec, FrameType},
+        protos::relay::{recv_frame, DerpCodec, FrameType},
         server::streams::MaybeTlsStream,
     };
     use iroh_base::key::SecretKey;
@@ -581,7 +581,7 @@ mod tests {
         // send disco packet
         println!("  send disco packet");
         // starts with `MAGIC` & key, then data
-        let mut disco_data = crate::disco::MAGIC.as_bytes().to_vec();
+        let mut disco_data = disco::MAGIC.as_bytes().to_vec();
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
         conn::send_packet(&mut io_rw, &None, target, disco_data.clone().into()).await?;
