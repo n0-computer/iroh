@@ -853,7 +853,7 @@ impl Endpoint {
             endpoint,
             cancel_token,
             ..
-        } = &self;
+        } = self;
         cancel_token.cancel();
         tracing::debug!("Closing connections");
         endpoint.close(error_code, reason);
