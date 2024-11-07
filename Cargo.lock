@@ -141,9 +141,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.92"
+version = "1.0.93"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74f37166d7d48a0284b99dd824694c26119c700b53bf0d1540cdb147dbdaaf13"
+checksum = "4c95c10ba0b00a02636238b814946408b1322d5ac4760326e6fb8ec956d85775"
 
 [[package]]
 name = "arc-swap"
@@ -567,9 +567,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.1.35"
+version = "1.1.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f57c4b4da2a9d619dd035f27316d7a426305b75be93d09e92f2b9229c34feaf"
+checksum = "c2e7962b54006dcfcc61cb72735f4d89bb97061dd6a7ed882ec6b8ee53714c6f"
 dependencies = [
  "shlex",
 ]
@@ -2608,6 +2608,7 @@ dependencies = [
  "async-channel",
  "bao-tree",
  "bytes",
+ "cc",
  "clap",
  "console",
  "derive_more",
@@ -2662,6 +2663,7 @@ version = "0.28.0"
 dependencies = [
  "aead",
  "anyhow",
+ "cc",
  "crypto_box",
  "data-encoding",
  "derive_more",
@@ -2971,6 +2973,7 @@ dependencies = [
  "backoff",
  "base64 0.22.1",
  "bytes",
+ "cc",
  "clap",
  "criterion",
  "crypto_box",
@@ -5911,9 +5914,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.41.0"
+version = "1.41.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "145f3413504347a2be84393cc8a7d2fb4d863b375909ea59f2158261aa258bbb"
+checksum = "22cfb5bee7a6a52939ca9224d6ac897bb669134078daa8735560897f69de4d33"
 dependencies = [
  "backtrace",
  "bytes",
@@ -6955,9 +6958,9 @@ dependencies = [
 
 [[package]]
 name = "xml-rs"
-version = "0.8.22"
+version = "0.8.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af4e2e2f7cba5a093896c1e150fbfe177d1883e7448200efb81d40b9d339ef26"
+checksum = "af310deaae937e48a26602b730250b4949e125f468f11e6990be3e5304ddd96f"
 
 [[package]]
 name = "xmltree"
