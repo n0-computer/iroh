@@ -1,7 +1,12 @@
+use std::{collections::HashSet, sync::Arc, time::Duration};
+
+use iroh_base::key::PublicKey;
 use iroh_metrics::{
     core::{Counter, Metric},
     struct_iterable::Iterable,
 };
+use redis::AsyncCommands;
+use tokio::sync::Mutex;
 
 /// Metrics tracked for the relay server
 #[allow(missing_docs)]
@@ -52,7 +57,11 @@ pub struct Metrics {
     pub disconnects: Counter,
 
     /// Number of unique client keys per day
-    pub unique_client_keys: Counter,
+    pub unique_client_keys_1d: Counter,
+    /// Number of unique client keys per 7 days
+    pub unique_client_keys_7d: Counter,
+    /// Number of unique client keys per 30 days
+    pub unique_client_keys_30d: Counter,
 
     /// Number of accepted websocket connections
     pub websocket_accepts: Counter,
@@ -99,7 +108,9 @@ impl Default for Metrics {
             accepts: Counter::new("Number of times this server has accepted a connection."),
             disconnects: Counter::new("Number of clients that have then disconnected."),
 
-            unique_client_keys: Counter::new("Number of unique client keys per day."),
+            unique_client_keys_1d: Counter::new("Number of unique client keys per day."),
+            unique_client_keys_7d: Counter::new("Number of unique client keys per 7 days."),
+            unique_client_keys_30d: Counter::new("Number of unique client keys per 30 days."),
 
             websocket_accepts: Counter::new("Number of accepted websocket connections"),
             derp_accepts: Counter::new("Number of accepted 'iroh derp http' connection upgrades"),
@@ -115,5 +126,174 @@ impl Default for Metrics {
 impl Metric for Metrics {
     fn name() -> &'static str {
         "relayserver"
+    }
+}
+
+pub(crate) struct ClientCounter {
+    client_tx: Option<tokio::sync::mpsc::Sender<PublicKey>>,
+}
+
+impl Default for ClientCounter {
+    fn default() -> Self {
+        Self { client_tx: None }
+    }
+}
+
+impl ClientCounter {
+    /// Updates the client counter.
+    pub async fn update(&mut self, client: PublicKey) {
+        if let Some(tx) = &self.client_tx {
+            if let Err(_) = tx.send(client).await {
+                tracing::error!("client counter channel closed, not updating client count!");
+            }
+        }
+    }
+
+    /// Creates a new `ClientCounter` instance.
+    pub fn new() -> Self {
+        let redis_uri = std::env::var("IROH_RELAY_REDIS_URI").unwrap_or_else(|_| "".to_string());
+        let redis_suffix =
+            std::env::var("IROH_RELAY_REDIS_SUFFIX").unwrap_or_else(|_| "".to_string());
+        if redis_uri.is_empty() || redis_suffix.is_empty() {
+            tracing::info!(
+                "Empty Redis configuration provided, client counter will not be persisted"
+            );
+            return Self { client_tx: None };
+        }
+        let rclient = redis::Client::open(redis_uri).unwrap_or_else(|e| {
+            tracing::error!("Failed to create Redis client: {}", e);
+            std::process::exit(1);
+        });
+        let clients = Arc::new(Mutex::new(HashSet::new()));
+
+        // This might implicitly limit the number of clients we can accept to 65536 at the timeout interval of the
+        // writer task
+        let (tx, mut rx) = tokio::sync::mpsc::channel(65536);
+        let writer_clients = Arc::clone(&clients);
+        tokio::spawn(async move {
+            loop {
+                let r = rx.recv().await;
+                if let Some(client) = r {
+                    let mut clients = writer_clients.lock().await;
+                    clients.insert(client);
+                }
+            }
+        });
+
+        let batch = Arc::clone(&clients);
+        let rclient_clone = rclient.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            let relay_key = format!("unique_nodes_{}", redis_suffix.clone());
+            let global_key = "unique_nodes".to_string();
+
+            async fn batch_update_redis(
+                client: &redis::Client,
+                batch: &HashSet<PublicKey>,
+                relay_key: &str,
+                global_key: &str,
+            ) -> redis::RedisResult<()> {
+                let mut conn = client.get_multiplexed_async_connection().await?;
+                let mut pipeline = redis::pipe();
+                for node_id in batch.iter() {
+                    let node_id_str = hex::encode(node_id.as_bytes());
+                    pipeline
+                        .sadd(format!("{}_1d", relay_key), node_id_str.clone())
+                        .ignore();
+                    pipeline
+                        .sadd(format!("{}_7d", relay_key), node_id_str.clone())
+                        .ignore();
+                    pipeline
+                        .sadd(format!("{}_30d", relay_key), node_id_str.clone())
+                        .ignore();
+                    pipeline
+                        .sadd(format!("{}_1d", global_key), node_id_str.clone())
+                        .ignore();
+                    pipeline
+                        .sadd(format!("{}_7d", global_key), node_id_str.clone())
+                        .ignore();
+                    pipeline
+                        .sadd(format!("{}_30d", global_key), node_id_str.clone())
+                        .ignore();
+                }
+                pipeline.expire(format!("{}_1d", relay_key), 86400).ignore(); // 1 day
+                pipeline
+                    .expire(format!("{}_7d", relay_key), 604800)
+                    .ignore(); // 7 days
+                pipeline
+                    .expire(format!("{}_30d", relay_key), 2592000)
+                    .ignore(); // 30 days
+                pipeline
+                    .expire(format!("{}_1d", global_key), 86400)
+                    .ignore(); // 1 day
+                pipeline
+                    .expire(format!("{}_7d", global_key), 604800)
+                    .ignore(); // 7 days
+                pipeline
+                    .expire(format!("{}_30d", global_key), 2592000)
+                    .ignore(); // 30 days
+                pipeline.query_async(&mut conn).await
+            }
+
+            async fn get_unique_nodes(
+                client: &redis::Client,
+                key: &str,
+            ) -> redis::RedisResult<u64> {
+                let mut conn = client.get_multiplexed_async_connection().await?;
+                let count = conn.scard(key).await?;
+                Ok(count)
+            }
+
+            loop {
+                interval.tick().await;
+                let batch = Arc::clone(&batch);
+                let rclient_clone = rclient_clone.clone();
+                let relay_key = relay_key.clone();
+                let global_key = global_key.clone();
+                tokio::time::timeout(Duration::from_secs(60), async move {
+                    {
+                        let mut batch = batch.lock().await;
+                        // Batch update Redis and clear the batch data
+                        if let Err(err) =
+                            batch_update_redis(&rclient_clone, &batch, &relay_key, &global_key)
+                                .await
+                        {
+                            tracing::error!("Failed to update Redis: {}", err);
+                        }
+                        batch.clear();
+                    }
+                    tracing::debug!("Batch update Redis done");
+
+                    let unique_nodes_1d =
+                        get_unique_nodes(&rclient_clone, format!("{}_1d", relay_key).as_str())
+                            .await
+                            .unwrap_or(0);
+                    let unique_nodes_7d =
+                        get_unique_nodes(&rclient_clone, format!("{}_7d", relay_key).as_str())
+                            .await
+                            .unwrap_or(0);
+                    let unique_nodes_30d =
+                        get_unique_nodes(&rclient_clone, format!("{}_30d", relay_key).as_str())
+                            .await
+                            .unwrap_or(0);
+                    tracing::debug!(
+                        "Unique nodes 1 7 30 days: {} {} {}",
+                        unique_nodes_1d,
+                        unique_nodes_7d,
+                        unique_nodes_30d
+                    );
+                    iroh_metrics::set!(Metrics, unique_client_keys_1d, unique_nodes_1d);
+                    iroh_metrics::set!(Metrics, unique_client_keys_7d, unique_nodes_7d);
+                    iroh_metrics::set!(Metrics, unique_client_keys_30d, unique_nodes_30d);
+                })
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::error!("Failed to update Redis: {}", e);
+                });
+            }
+        });
+        Self {
+            client_tx: Some(tx),
+        }
     }
 }

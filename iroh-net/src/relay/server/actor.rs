@@ -3,7 +3,6 @@
 //! based on tailscale/derp/derp_server.go
 
 use std::{
-    collections::HashMap,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -13,8 +12,7 @@ use std::{
 
 use anyhow::{bail, Context as _, Result};
 use hyper::HeaderMap;
-use iroh_metrics::{core::UsageStatsReport, inc, inc_by, report_usage_stats};
-use time::{Date, OffsetDateTime};
+use iroh_metrics::{core::UsageStatsReport, inc, report_usage_stats};
 use tokio::sync::mpsc;
 use tokio_tungstenite::WebSocketStream;
 use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
@@ -23,7 +21,6 @@ use tungstenite::protocol::Role;
 
 use crate::{
     defaults::timeouts::relay::SERVER_WRITE_TIMEOUT as WRITE_TIMEOUT,
-    key::PublicKey,
     relay::{
         codec::{
             recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
@@ -39,6 +36,8 @@ use crate::{
         },
     },
 };
+
+use super::metrics::ClientCounter;
 
 // TODO: skipping `verboseDropKeys` for now
 
@@ -227,7 +226,7 @@ impl ServerActor {
         Self {
             receiver,
             clients: Clients::new(),
-            client_counter: ClientCounter::default(),
+            client_counter: ClientCounter::new(),
         }
     }
 
@@ -293,8 +292,7 @@ impl ServerActor {
                                 None, // TODO(arqu): attribute to user id; possibly with the re-introduction of request tokens or other auth
                                 Some(key.to_string()),
                             )).await;
-                            let nc = self.client_counter.update(key);
-                            inc_by!(Metrics, unique_client_keys, nc);
+                            self.client_counter.update(key).await;
 
                             // build and register client, starting up read & write loops for the
                             // client connection
@@ -324,43 +322,10 @@ impl ServerActor {
     }
 }
 
-struct ClientCounter {
-    clients: HashMap<PublicKey, usize>,
-    last_clear_date: Date,
-}
-
-impl Default for ClientCounter {
-    fn default() -> Self {
-        Self {
-            clients: HashMap::new(),
-            last_clear_date: OffsetDateTime::now_utc().date(),
-        }
-    }
-}
-
-impl ClientCounter {
-    fn check_and_clear(&mut self) {
-        let today = OffsetDateTime::now_utc().date();
-        if today != self.last_clear_date {
-            self.clients.clear();
-            self.last_clear_date = today;
-        }
-    }
-
-    /// Updates the client counter.
-    pub fn update(&mut self, client: PublicKey) -> u64 {
-        self.check_and_clear();
-        let new_conn = !self.clients.contains_key(&client);
-        let counter = self.clients.entry(client).or_insert(0);
-        *counter += 1;
-        new_conn as u64
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use iroh_base::key::SecretKey;
+    use iroh_base::key::{PublicKey, SecretKey};
     use tokio::io::DuplexStream;
     use tokio_util::codec::{FramedRead, FramedWrite};
     use tracing_subscriber::{prelude::*, EnvFilter};
