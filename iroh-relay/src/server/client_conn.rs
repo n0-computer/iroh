@@ -10,8 +10,9 @@ use iroh_base::key::PublicKey;
 use iroh_metrics::{inc, inc_by};
 use tokio::sync::mpsc;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::{trace, Instrument};
+use tracing::{trace, warn, Instrument};
 
+use super::streams::RelayedStream;
 use crate::{
     protos::{
         disco,
@@ -23,7 +24,15 @@ use crate::{
     },
 };
 
-use super::streams::RelayedStream;
+/// Configuration for a [`ClientConn`].
+#[derive(Debug)]
+pub(super) struct ClientConnConfig {
+    pub(super) key: PublicKey,
+    pub(super) stream: RelayedStream,
+    pub(super) write_timeout: Option<Duration>,
+    pub(super) channel_capacity: usize,
+    pub(super) server_channel: mpsc::Sender<actor::Message>,
+}
 
 /// The [`Server`] side representation of a [`Client`]'s connection.
 ///
@@ -34,26 +43,15 @@ pub(super) struct ClientConn {
     /// Static after construction, process-wide unique counter, incremented each time we accept
     pub(super) conn_num: usize,
 
+    /// Identity of the connected peer.
     pub(super) key: PublicKey,
-    /// Sent when connection closes
-    // TODO: maybe should be a receiver
+
+    /// Used to close the connection.
     done: CancellationToken,
 
-    io_handle: AbortOnDropHandle<Result<()>>,
+    /// Actor handle.
+    handle: AbortOnDropHandle<Result<()>>,
 
-    /// Channels that allow the [`ClientConnManager`] (and the Server) to send
-    /// the client messages. These `Senders` correspond to `Receivers` on the
-    /// [`ConnActor`].
-    pub(super) client_channels: ClientChannels,
-}
-
-/// Channels that the [`ClientConnManager`] uses to communicate with the
-/// [`ConnActor`] to forward the client:
-///  - information about a peer leaving the network (This should only happen for peers that this
-///    client was previously communciating with)
-///  - packets sent to this client from another client in the network
-#[derive(Debug)]
-pub(super) struct ClientChannels {
     /// Queue of packets intended for the client
     pub(super) send_queue: mpsc::Sender<Packet>,
     /// Queue of important packets intended for the client
@@ -62,24 +60,14 @@ pub(super) struct ClientChannels {
     pub(super) peer_gone: mpsc::Sender<PublicKey>,
 }
 
-/// Configures a [`ClientConnManager`].
-#[derive(Debug)]
-pub(super) struct ClientConnConfig {
-    pub(super) key: PublicKey,
-    pub(super) io: RelayedStream,
-    pub(super) write_timeout: Option<Duration>,
-    pub(super) channel_capacity: usize,
-    pub(super) server_channel: mpsc::Sender<actor::Message>,
-}
-
 impl ClientConn {
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
-    /// Call [`ClientConnManager::shutdown`] to close the read and write loops before dropping the [`ClientConnManager`]
+    /// Call [`ClientConn::shutdown`] to close the read and write loops before dropping the [`ClientConn`]
     pub fn new(config: ClientConnConfig) -> ClientConn {
         let ClientConnConfig {
             key,
-            io,
+            stream: io,
             write_timeout,
             channel_capacity,
             server_channel,
@@ -93,7 +81,7 @@ impl ClientConn {
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(channel_capacity);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(channel_capacity);
 
-        let conn_io = ConnActor {
+        let actor = ConnActor {
             stream: io,
             timeout: write_timeout,
             send_queue: send_queue_r,
@@ -107,53 +95,50 @@ impl ClientConn {
         // start io loop
         let io_done = done.clone();
         let io_client_id = client_id;
-        let io_handle = tokio::task::spawn(
+        let handle = tokio::task::spawn(
             async move {
-                let key = io_client_id.0;
-                let conn_num = io_client_id.1;
-                let res = conn_io.run(io_done).await;
+                let (key, conn_num) = io_client_id;
+                let res = actor.run(io_done).await;
+
                 let _ = server_channel
                     .send(actor::Message::RemoveClient((key, conn_num)))
                     .await;
                 match res {
                     Err(e) => {
-                        tracing::warn!(
+                        warn!(
                             "connection manager for {key:?} {conn_num}: writer closed in error {e}"
                         );
                         Err(e)
                     }
                     Ok(_) => {
-                        tracing::warn!("connection manager for {key:?} {conn_num}: writer closed");
+                        warn!("connection manager for {key:?} {conn_num}: writer closed");
                         Ok(())
                     }
                 }
             }
-            .instrument(tracing::debug_span!("conn_io")),
+            .instrument(tracing::debug_span!("actor")),
         );
 
         ClientConn {
             conn_num,
             key,
-            io_handle: AbortOnDropHandle::new(io_handle),
+            handle: AbortOnDropHandle::new(handle),
             done,
-            client_channels: ClientChannels {
-                send_queue: send_queue_s,
-                disco_send_queue: disco_send_queue_s,
-                peer_gone: peer_gone_s,
-            },
+            send_queue: send_queue_s,
+            disco_send_queue: disco_send_queue_s,
+            peer_gone: peer_gone_s,
         }
     }
 
-    /// Shutdown the [`ClientConnManager`] reader and writer loops and closes the "actual" connection.
+    /// Shutdown the reader and writer loops and closes the connection.
     ///
     /// Logs any shutdown errors as warnings.
     pub async fn shutdown(self) {
         self.done.cancel();
-        if let Err(e) = self.io_handle.await {
-            tracing::warn!(
-                "error closing IO loop for client connection {:?} {}: {e:?}",
-                self.key,
-                self.conn_num
+        if let Err(e) = self.handle.await {
+            warn!(
+                "error closing actor loop for client connection {:?} {}: {e:?}",
+                self.key, self.conn_num
             );
         }
     }
@@ -394,7 +379,7 @@ mod tests {
     };
 
     #[tokio::test]
-    async fn test_client_conn_io_basic() -> Result<()> {
+    async fn test_client_actor_basic() -> Result<()> {
         let (send_queue_s, send_queue_r) = mpsc::channel(10);
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
@@ -404,7 +389,7 @@ mod tests {
         let mut io_rw = Framed::new(io_rw, DerpCodec);
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
-        let conn_io = ConnActor {
+        let actor = ConnActor {
             stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
             timeout: None,
             send_queue: send_queue_r,
@@ -418,7 +403,7 @@ mod tests {
 
         let done = CancellationToken::new();
         let io_done = done.clone();
-        let io_handle = tokio::task::spawn(async move { conn_io.run(io_done).await });
+        let handle = tokio::task::spawn(async move { actor.run(io_done).await });
 
         // Write tests
         println!("-- write");
@@ -528,7 +513,7 @@ mod tests {
         }
 
         done.cancel();
-        io_handle.await??;
+        handle.await??;
         Ok(())
     }
 
@@ -544,7 +529,7 @@ mod tests {
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
         println!("-- create client conn");
-        let conn_io = ConnActor {
+        let actor = ConnActor {
             stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
             timeout: None,
             send_queue: send_queue_r,
@@ -560,7 +545,7 @@ mod tests {
         let io_done = done.clone();
 
         println!("-- run client conn");
-        let io_handle = tokio::task::spawn(async move { conn_io.run(io_done).await });
+        let handle = tokio::task::spawn(async move { actor.run(io_done).await });
 
         // send packet
         println!("   send packet");
@@ -589,7 +574,7 @@ mod tests {
         drop(io_rw);
 
         // expect task to complete after encountering an error
-        if let Err(err) = tokio::time::timeout(Duration::from_secs(1), io_handle).await?? {
+        if let Err(err) = tokio::time::timeout(Duration::from_secs(1), handle).await?? {
             if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
                 if io_err.kind() == std::io::ErrorKind::UnexpectedEof {
                     println!("   task closed successfully with `UnexpectedEof` error");

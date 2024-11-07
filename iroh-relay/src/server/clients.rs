@@ -181,7 +181,7 @@ impl Client {
     }
 
     fn send_packet(&self, packet: Packet) -> Result<(), SendError> {
-        let res = try_send(&self.conn.client_channels.send_queue, packet);
+        let res = try_send(&self.conn.send_queue, packet);
         if res.is_ok() {
             // there is a chance that we have a packet forwarder for
             // this peer, so we must check that route before
@@ -192,7 +192,7 @@ impl Client {
     }
 
     fn send_disco_packet(&self, packet: Packet) -> Result<(), SendError> {
-        let res = try_send(&self.conn.client_channels.disco_send_queue, packet);
+        let res = try_send(&self.conn.disco_send_queue, packet);
         if res.is_ok() {
             // there is a chance that we have a packet forwarder for
             // this peer, so we must check that route before
@@ -203,7 +203,7 @@ impl Client {
     }
 
     fn send_peer_gone(&self, key: PublicKey) -> Result<(), SendError> {
-        let res = try_send(&self.conn.client_channels.peer_gone, key);
+        let res = try_send(&self.conn.peer_gone, key);
         match res {
             Ok(_) => {
                 inc!(Metrics, other_packets_sent);
@@ -264,7 +264,7 @@ mod tests {
         (
             ClientConnConfig {
                 key,
-                io: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
+                stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
                 write_timeout: None,
                 channel_capacity: 10,
                 server_channel,

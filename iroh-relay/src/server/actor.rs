@@ -285,7 +285,7 @@ mod tests {
         (
             ClientConnConfig {
                 key,
-                io: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
+                stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
                 write_timeout: None,
                 channel_capacity: 10,
                 server_channel,
