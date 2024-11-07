@@ -5,7 +5,7 @@
     &amp;self,
     protocol: <a class="enum" href="../http/enum.Protocol.html" title="enum iroh::net::relay::http::Protocol">Protocol</a>,
     io: <a class="enum" href="enum.MaybeTlsStreamServer.html" title="enum iroh::net::relay::server::MaybeTlsStreamServer">MaybeTlsStream</a>
-) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>, <a class="struct" href="https://docs.rs/anyhow/1.0.92/anyhow/struct.Error.html" title="struct anyhow::Error">Error</a>&gt;</h4></section></summary><div class="docblock"><p>Adds a new connection to the server and serves it.</p>
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>, <a class="struct" href="https://docs.rs/anyhow/1.0.93/anyhow/struct.Error.html" title="struct anyhow::Error">Error</a>&gt;</h4></section></summary><div class="docblock"><p>Adds a new connection to the server and serves it.</p>
 <p>Will error if it takes too long (10 sec) to write or read to the connection, if there is
 some read or write error to the connection,  if the server is meant to verify clients,
 and is unable to verify this one, or if there is some issue communicating with the server.</p>
