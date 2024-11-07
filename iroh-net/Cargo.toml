@@ -16,6 +16,8 @@ rust-version = "1.76"
 workspace = true
 
 [dependencies]
+cc = "=1.1.31" # enforce cc version, because of https://github.com/rust-lang/cc-rs/issues/1278
+
 anyhow = { version = "1" }
 backoff = "0.4.0"
 base64 = "0.22.1"
