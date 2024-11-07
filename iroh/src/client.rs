@@ -22,13 +22,12 @@ pub mod docs {
     pub use iroh_docs::rpc::client::*;
 }
 
+pub use iroh_blobs::rpc::client::{blobs, tags};
 pub use iroh_docs::rpc::client::Doc;
+pub use iroh_gossip::rpc::client as gossip;
 
 pub use self::net::NodeStatus;
 pub(crate) use self::quic::{connect_raw as quic_connect_raw, RPC_ALPN};
-
-pub use iroh_blobs::rpc::client::{blobs, tags};
-pub use iroh_gossip::rpc::client as gossip;
 pub mod net;
 
 // Keep this type exposed, otherwise every occurrence of `RpcClient` in the API
@@ -69,10 +68,8 @@ impl Iroh {
     }
 
     /// Returns the docs client.
-    pub fn docs(&self) -> iroh_docs::rpc::client::Client<RpcService> {
-        let rpc = self.rpc.clone();
-        let channel = rpc.map::<iroh_docs::rpc::proto::RpcService>();
-        iroh_docs::rpc::client::Client::new(channel)
+    pub fn docs(&self) -> iroh_docs::rpc::client::Client {
+        iroh_docs::rpc::client::Client::new(self.rpc.clone().map().boxed())
     }
 
     /// Returns the tags client.

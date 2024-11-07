@@ -18,7 +18,7 @@ use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressS
 use iroh::{
     base::{base32::fmt_short, node_addr::AddrInfoOptions},
     blobs::{provider::AddProgress, util::SetTagOption, Hash, Tag},
-    client::{blobs::WrapOption, Doc, Iroh, RpcService},
+    client::{blobs::WrapOption, Doc, Iroh},
     docs::{
         store::{DownloadPolicy, FilterKind, Query, SortDirection},
         AuthorId, DocTicket, NamespaceId,
@@ -414,7 +414,7 @@ impl DocCommands {
 
                 let mut stream = doc.get_many(query).await?;
                 while let Some(entry) = stream.try_next().await? {
-                    println!("{}", fmt_entry(iroh.blobs(), &entry, mode).await);
+                    println!("{}", fmt_entry(&iroh.blobs(), &entry, mode).await);
                 }
             }
             Self::Keys {
@@ -440,7 +440,7 @@ impl DocCommands {
                 query = query.sort_by(sort.into(), direction);
                 let mut stream = doc.get_many(query).await?;
                 while let Some(entry) = stream.try_next().await? {
-                    println!("{}", fmt_entry(iroh.blobs(), &entry, mode).await);
+                    println!("{}", fmt_entry(&iroh.blobs(), &entry, mode).await);
                 }
             }
             Self::Leave { doc } => {
@@ -554,7 +554,7 @@ impl DocCommands {
                         LiveEvent::InsertLocal { entry } => {
                             println!(
                                 "local change:  {}",
-                                fmt_entry(blobs, &entry, DisplayContentMode::Auto).await
+                                fmt_entry(&blobs, &entry, DisplayContentMode::Auto).await
                             )
                         }
                         LiveEvent::InsertRemote {
@@ -564,17 +564,17 @@ impl DocCommands {
                         } => {
                             let content = match content_status {
                                 iroh::docs::ContentStatus::Complete => {
-                                    fmt_entry(blobs, &entry, DisplayContentMode::Auto).await
+                                    fmt_entry(&blobs, &entry, DisplayContentMode::Auto).await
                                 }
                                 iroh::docs::ContentStatus::Incomplete => {
                                     let (Ok(content) | Err(content)) =
-                                        fmt_content(blobs, &entry, DisplayContentMode::ShortHash)
+                                        fmt_content(&blobs, &entry, DisplayContentMode::ShortHash)
                                             .await;
                                     format!("<incomplete: {} ({})>", content, human_len(&entry))
                                 }
                                 iroh::docs::ContentStatus::Missing => {
                                     let (Ok(content) | Err(content)) =
-                                        fmt_content(blobs, &entry, DisplayContentMode::ShortHash)
+                                        fmt_content(&blobs, &entry, DisplayContentMode::ShortHash)
                                             .await;
                                     format!("<missing: {} ({})>", content, human_len(&entry))
                                 }
@@ -679,11 +679,7 @@ impl DocCommands {
 }
 
 /// Gets the document given the client, the environment (and maybe the [`NamespaceID`]).
-async fn get_doc(
-    iroh: &Iroh,
-    env: &ConsoleEnv,
-    id: Option<NamespaceId>,
-) -> anyhow::Result<Doc<RpcService>> {
+async fn get_doc(iroh: &Iroh, env: &ConsoleEnv, id: Option<NamespaceId>) -> anyhow::Result<Doc> {
     let doc_id = env.doc(id)?;
     iroh.docs()
         .open(doc_id)
@@ -791,7 +787,7 @@ fn tag_from_file_name(path: &Path) -> anyhow::Result<Tag> {
 /// `ImportProgressBar`.
 #[tracing::instrument(skip_all)]
 async fn import_coordinator(
-    doc: Doc<RpcService>,
+    doc: Doc,
     author_id: AuthorId,
     root: PathBuf,
     prefix: String,

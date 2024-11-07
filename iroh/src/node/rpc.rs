@@ -1,20 +1,10 @@
-use std::{
-    fmt::Debug,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{fmt::Debug, sync::Arc, time::Duration};
 
-use anyhow::{anyhow, Result};
-use futures_lite::{Stream, StreamExt};
+use anyhow::Result;
+use futures_lite::Stream;
 use iroh_blobs::{
-    export::ExportProgress,
-    net_protocol::Blobs as BlobsProtocol,
-    store::{ExportFormat, ImportProgress, Store as BaoStore},
-    util::{
-        local_pool::LocalPoolHandle,
-        progress::{AsyncChannelProgressSender, ProgressSender},
-    },
-    BlobFormat, HashAndFormat,
+    net_protocol::Blobs as BlobsProtocol, store::Store as BaoStore,
+    util::local_pool::LocalPoolHandle,
 };
 use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
@@ -29,11 +19,6 @@ use crate::{
     client::NodeStatus,
     node::NodeInner,
     rpc_protocol::{
-        authors,
-        docs::{
-            ExportFileRequest, ExportFileResponse, ImportFileRequest, ImportFileResponse,
-            Request as DocsRequest, SetHashRequest,
-        },
         net::{
             self, AddAddrRequest, AddrRequest, IdRequest, NodeWatchRequest, RelayRequest,
             RemoteInfoRequest, RemoteInfoResponse, RemoteInfosIterRequest, RemoteInfosIterResponse,
@@ -65,10 +50,6 @@ impl<D: BaoStore> Handler<D> {
         self.router
             .get_protocol::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
             .expect("missing blobs")
-    }
-
-    fn blobs_store(&self) -> D {
-        self.blobs().store().clone()
     }
 
     pub(crate) fn spawn_rpc_request(
@@ -159,7 +140,9 @@ impl<D: BaoStore> Handler<D> {
             .get_protocol::<iroh_docs::engine::Engine>(DOCS_ALPN)
         {
             let chan = chan.map::<iroh_docs::rpc::proto::RpcService>();
-            docs.handle_rpc_request(msg, chan).await
+            docs.handle_rpc_request(msg, chan)
+                .await
+                .map_err(|e| e.errors_into())
         } else {
             Err(RpcServerError::SendError(anyhow::anyhow!(
                 "Docs is not enabled"
@@ -181,141 +164,9 @@ impl<D: BaoStore> Handler<D> {
                 self.handle_blobs_and_tags_request(msg, chan.map().boxed())
                     .await
             }
-            Authors(msg) => self.handle_authors_request(msg, chan).await,
             Docs(msg) => self.handle_docs_request(msg, chan).await,
             Gossip(msg) => self.handle_gossip_request(msg, chan).await,
         }
-    }
-
-    fn doc_import_file(self, msg: ImportFileRequest) -> impl Stream<Item = ImportFileResponse> {
-        // provide a little buffer so that we don't slow down the sender
-        let (tx, rx) = async_channel::bounded(32);
-        let tx2 = tx.clone();
-        self.local_pool_handle().spawn_detached(|| async move {
-            if let Err(e) = self.doc_import_file0(msg, tx).await {
-                tx2.send(crate::client::docs::ImportProgress::Abort(RpcError::new(
-                    &*e,
-                )))
-                .await
-                .ok();
-            }
-        });
-        rx.map(ImportFileResponse)
-    }
-
-    async fn doc_import_file0(
-        self,
-        msg: ImportFileRequest,
-        progress: async_channel::Sender<crate::client::docs::ImportProgress>,
-    ) -> anyhow::Result<()> {
-        use std::collections::BTreeMap;
-
-        use iroh_blobs::store::ImportMode;
-
-        use crate::client::docs::ImportProgress as DocImportProgress;
-
-        let progress = AsyncChannelProgressSender::new(progress);
-        let names = Arc::new(Mutex::new(BTreeMap::new()));
-        // convert import progress to provide progress
-        let import_progress = progress.clone().with_filter_map(move |x| match x {
-            ImportProgress::Found { id, name } => {
-                names.lock().unwrap().insert(id, name);
-                None
-            }
-            ImportProgress::Size { id, size } => {
-                let name = names.lock().unwrap().remove(&id)?;
-                Some(DocImportProgress::Found { id, name, size })
-            }
-            ImportProgress::OutboardProgress { id, offset } => {
-                Some(DocImportProgress::Progress { id, offset })
-            }
-            ImportProgress::OutboardDone { hash, id } => {
-                Some(DocImportProgress::IngestDone { hash, id })
-            }
-            _ => None,
-        });
-        let ImportFileRequest {
-            doc_id,
-            author_id,
-            key,
-            path: root,
-            in_place,
-        } = msg;
-        // Check that the path is absolute and exists.
-        anyhow::ensure!(root.is_absolute(), "path must be absolute");
-        anyhow::ensure!(
-            root.exists(),
-            "trying to add missing path: {}",
-            root.display()
-        );
-
-        let import_mode = match in_place {
-            true => ImportMode::TryReference,
-            false => ImportMode::Copy,
-        };
-
-        let blobs = self.blobs();
-        let (temp_tag, size) = blobs
-            .store()
-            .import_file(root, import_mode, BlobFormat::Raw, import_progress)
-            .await?;
-
-        let hash_and_format = temp_tag.inner();
-        let HashAndFormat { hash, .. } = *hash_and_format;
-        self.doc_set_hash(SetHashRequest {
-            doc_id,
-            author_id,
-            key: key.clone(),
-            hash,
-            size,
-        })
-        .await?;
-        drop(temp_tag);
-        progress.send(DocImportProgress::AllDone { key }).await?;
-        Ok(())
-    }
-
-    fn doc_export_file(self, msg: ExportFileRequest) -> impl Stream<Item = ExportFileResponse> {
-        let (tx, rx) = async_channel::bounded(1024);
-        let tx2 = tx.clone();
-        self.local_pool_handle().spawn_detached(|| async move {
-            if let Err(e) = self.doc_export_file0(msg, tx).await {
-                tx2.send(ExportProgress::Abort(RpcError::new(&*e)))
-                    .await
-                    .ok();
-            }
-        });
-        rx.map(ExportFileResponse)
-    }
-
-    async fn doc_export_file0(
-        self,
-        msg: ExportFileRequest,
-        progress: async_channel::Sender<ExportProgress>,
-    ) -> anyhow::Result<()> {
-        let _docs = self.docs().ok_or_else(|| anyhow!("docs are disabled"))?;
-        let progress = AsyncChannelProgressSender::new(progress);
-        let ExportFileRequest { entry, path, mode } = msg;
-        let key = bytes::Bytes::from(entry.key().to_vec());
-        let export_progress = progress.clone().with_map(move |mut x| {
-            // assign the doc key to the `meta` field of the initial progress event
-            if let ExportProgress::Found { meta, .. } = &mut x {
-                *meta = Some(key.clone())
-            }
-            x
-        });
-        let blobs = self.blobs();
-        iroh_blobs::export::export(
-            blobs.store(),
-            entry.content_hash(),
-            path,
-            ExportFormat::Blob,
-            mode,
-            export_progress,
-        )
-        .await?;
-        progress.send(ExportProgress::AllDone).await?;
-        Ok(())
     }
 
     #[allow(clippy::unused_async)]
