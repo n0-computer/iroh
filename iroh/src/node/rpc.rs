@@ -4,8 +4,11 @@ use std::{
     time::Duration,
 };
 
+use crate::base::node_addr::RelayUrl;
 use anyhow::{anyhow, Result};
 use futures_lite::{Stream, StreamExt};
+use iroh_base::key::NodeId;
+use iroh_base::node_addr::NodeAddr;
 use iroh_blobs::{
     export::ExportProgress,
     net_protocol::Blobs as BlobsProtocol,
@@ -18,7 +21,6 @@ use iroh_blobs::{
 };
 use iroh_docs::{engine::Engine, net::DOCS_ALPN};
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
-use iroh_net::{relay::RelayUrl, NodeAddr, NodeId};
 use iroh_router::Router;
 use quic_rpc::server::{RpcChannel, RpcServerError};
 use tokio::task::JoinSet;

@@ -2627,6 +2627,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-net",
  "iroh-quinn 0.12.0",
+ "iroh-relay",
  "iroh-router",
  "iroh-test 0.28.0",
  "nested_enum_utils",
