@@ -8,6 +8,13 @@
 //! always attached to a handle and when the handle is dropped the tasks abort.  So tasks
 //! can not outlive their handle.  It is also always possible to await for completion of a
 //! task.  Some tasks additionally have a method to do graceful shutdown.
+//!
+//! The relay server hosts the following services:
+//!
+//! - HTTPS `/relay`: The main URL endpoint to which clients connect and sends traffic over.
+//! - HTTPS `/ping`: Used for netcheck probes.
+//! - HTTPS `/generate_204`: Used for netcheck probes.
+//! - STUN: UDP port for STUN requests/responses.
 
 use std::{fmt, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 
@@ -27,10 +34,7 @@ use tokio::{
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
-use crate::{
-    relay::http::{LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH},
-    stun,
-};
+use crate::{relay::http::RELAY_PROBE_PATH, stun};
 
 pub(crate) mod actor;
 pub(crate) mod client_conn;
@@ -182,6 +186,11 @@ pub struct Server {
     relay_handle: Option<http_server::ServerHandle>,
     /// The main task running the server.
     supervisor: AbortOnDropHandle<Result<()>>,
+    /// The certificate for the server.
+    ///
+    /// If the server has manual certificates configured the certificate chain will be
+    /// available here, this can be used by a client to authenticate the server.
+    certificates: Option<Vec<rustls::pki_types::CertificateDer<'static>>>,
 }
 
 impl Server {
@@ -227,7 +236,13 @@ impl Server {
             None => None,
         };
 
-        // Start the Relay server.
+        // Start the Relay server, but first clone the certs out.
+        let certificates = config.relay.as_ref().and_then(|relay| {
+            relay.tls.as_ref().and_then(|tls| match tls.cert {
+                CertConfig::LetsEncrypt { .. } => None,
+                CertConfig::Manual { ref certs, .. } => Some(certs.clone()),
+            })
+        });
         let (relay_server, http_addr) = match config.relay {
             Some(relay_config) => {
                 debug!("Starting Relay server");
@@ -243,11 +258,6 @@ impl Server {
                     .headers(headers)
                     .request_handler(Method::GET, "/", Box::new(root_handler))
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
-                    .request_handler(
-                        Method::GET,
-                        LEGACY_RELAY_PROBE_PATH,
-                        Box::new(probe_handler),
-                    ) // backwards compat
                     .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
                     .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler));
                 let http_addr = match relay_config.tls {
@@ -284,7 +294,7 @@ impl Server {
                             }
                             CertConfig::Manual { private_key, certs } => {
                                 let server_config =
-                                    server_config.with_single_cert(certs.clone(), private_key)?;
+                                    server_config.with_single_cert(certs, private_key)?;
                                 let server_config = Arc::new(server_config);
                                 let acceptor =
                                     tokio_rustls::TlsAcceptor::from(server_config.clone());
@@ -336,6 +346,7 @@ impl Server {
             https_addr: http_addr.and(relay_addr),
             relay_handle,
             supervisor: AbortOnDropHandle::new(task),
+            certificates,
         })
     }
 
@@ -372,6 +383,11 @@ impl Server {
     /// The socket address the STUN server is listening on.
     pub fn stun_addr(&self) -> Option<SocketAddr> {
         self.stun_addr
+    }
+
+    /// The certificates chain if configured with manual TLS certificates.
+    pub fn certificates(&self) -> Option<Vec<rustls::pki_types::CertificateDer<'static>>> {
+        self.certificates.clone()
     }
 }
 

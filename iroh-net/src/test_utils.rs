@@ -44,7 +44,9 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server)> {
 pub async fn run_relay_server_with(
     stun: Option<StunConfig>,
 ) -> Result<(RelayMap, RelayUrl, Server)> {
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+    let cert =
+        rcgen::generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])
+            .expect("valid");
     let rustls_cert = rustls::pki_types::CertificateDer::from(cert.serialize_der().unwrap());
     let private_key =
         rustls::pki_types::PrivatePkcs8KeyDer::from(cert.get_key_pair().serialize_der());
@@ -67,7 +69,7 @@ pub async fn run_relay_server_with(
         metrics_addr: None,
     };
     let server = Server::spawn(config).await.unwrap();
-    let url: RelayUrl = format!("https://localhost:{}", server.https_addr().unwrap().port())
+    let url: RelayUrl = format!("https://{}", server.https_addr().expect("configured"))
         .parse()
         .unwrap();
     let m = RelayMap::from_nodes([RelayNode {
