@@ -15,7 +15,7 @@ use tokio_util::codec::Framed;
 use crate::protos::relay::{DerpCodec, Frame};
 
 #[derive(Debug)]
-pub(crate) enum RelayIo {
+pub(crate) enum RelayedStream {
     Derp(Framed<MaybeTlsStream, DerpCodec>),
     Ws(WebSocketStream<MaybeTlsStream>),
 }
@@ -27,7 +27,7 @@ fn tung_to_io_err(e: tungstenite::Error) -> std::io::Error {
     }
 }
 
-impl Sink<Frame> for RelayIo {
+impl Sink<Frame> for RelayedStream {
     type Error = std::io::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -61,7 +61,7 @@ impl Sink<Frame> for RelayIo {
     }
 }
 
-impl Stream for RelayIo {
+impl Stream for RelayedStream {
     type Item = anyhow::Result<Frame>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

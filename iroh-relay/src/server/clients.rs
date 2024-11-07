@@ -9,9 +9,9 @@ use tokio::{sync::mpsc, task::JoinSet};
 use tracing::{Instrument, Span};
 
 use super::{
+    actor::Packet,
     client_conn::{ClientConn, ClientConnConfig},
     metrics::Metrics,
-    actor::Packet,
 };
 
 /// Number of times we try to send to a client connection before dropping the data;
@@ -253,7 +253,7 @@ mod tests {
     use super::*;
     use crate::{
         protos::relay::{recv_frame, DerpCodec, Frame, FrameType},
-        server::streams::{MaybeTlsStream, RelayIo},
+        server::streams::{MaybeTlsStream, RelayedStream},
     };
 
     fn test_client_builder(
@@ -264,7 +264,7 @@ mod tests {
         (
             ClientConnConfig {
                 key,
-                io: RelayIo::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
+                io: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
                 write_timeout: None,
                 channel_capacity: 10,
                 server_channel,
@@ -287,7 +287,7 @@ mod tests {
         let data = b"hello world!";
         let expect_packet = Packet {
             src: b_key,
-            bytes: Bytes::from(&data[..]),
+            data: Bytes::from(&data[..]),
         };
         clients.send_packet(&a_key.clone(), expect_packet.clone())?;
         let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;

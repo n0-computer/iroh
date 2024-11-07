@@ -32,8 +32,16 @@ pub(crate) fn new_conn_num() -> usize {
 
 #[derive(derive_more::Debug)]
 pub(super) enum Message {
-    SendPacket((PublicKey, Packet)),
-    SendDiscoPacket((PublicKey, Packet)),
+    SendPacket {
+        dst: PublicKey,
+        data: Bytes,
+        src: PublicKey,
+    },
+    SendDiscoPacket {
+        dst: PublicKey,
+        data: Bytes,
+        src: PublicKey,
+    },
     #[debug("CreateClient")]
     CreateClient(ClientConnConfig),
     RemoveClient((PublicKey, usize)),
@@ -45,7 +53,7 @@ pub(super) struct Packet {
     /// The sender of the packet
     pub(super) src: PublicKey,
     /// The data packet bytes.
-    pub(super) bytes: Bytes,
+    pub(super) data: Bytes,
 }
 
 /// The task for a running server actor.
@@ -141,39 +149,41 @@ impl Actor {
 
     fn handle_message(&mut self, msg: Message) {
         match msg {
-            Message::SendPacket((key, packet)) => {
+            Message::SendPacket { dst, data, src } => {
                 trace!(
                     "send packet from: {:?} to: {:?} ({}b)",
-                    packet.src,
-                    key,
-                    packet.bytes.len()
+                    src,
+                    dst,
+                    data.len()
                 );
-                let src = packet.src;
-                if self.clients.contains_key(&key) {
+                if self.clients.contains_key(&dst) {
                     // if this client is in our local network, just try to send the packet
-                    if self.clients.send_packet(&key, packet).is_ok() {
-                        self.clients.record_send(&src, key);
+                    if self.clients.send_packet(&dst, Packet { data, src }).is_ok() {
+                        self.clients.record_send(&src, dst);
                     }
                 } else {
-                    warn!("send packet: no way to reach client {key:?}, dropped packet");
+                    warn!("send packet: no way to reach client {dst:?}, dropped packet");
                     inc!(Metrics, send_packets_dropped);
                 }
             }
-            Message::SendDiscoPacket((key, packet)) => {
+            Message::SendDiscoPacket { dst, data, src } => {
                 trace!(
                     "send disco packet from: {:?} to: {:?} ({}b)",
-                    packet.src,
-                    key,
-                    packet.bytes.len()
+                    src,
+                    dst,
+                    data.len()
                 );
-                let src = packet.src;
-                if self.clients.contains_key(&key) {
+                if self.clients.contains_key(&dst) {
                     // if this client is in our local network, just try to send the packet
-                    if self.clients.send_disco_packet(&key, packet).is_ok() {
-                        self.clients.record_send(&src, key);
+                    if self
+                        .clients
+                        .send_disco_packet(&dst, Packet { data, src })
+                        .is_ok()
+                    {
+                        self.clients.record_send(&src, dst);
                     }
                 } else {
-                    warn!("send disco packet: no way to reach client {key:?}, dropped packet");
+                    warn!("send disco packet: no way to reach client {dst:?}, dropped packet");
                     inc!(Metrics, disco_packets_dropped);
                 }
             }
@@ -262,7 +272,7 @@ mod tests {
         protos::relay::{recv_frame, ClientInfo, DerpCodec, Frame, FrameType},
         server::{
             client_conn::ClientConnConfig,
-            streams::{MaybeTlsStream, RelayIo},
+            streams::{MaybeTlsStream, RelayedStream},
             MaybeTlsStreamServer,
         },
     };
@@ -275,7 +285,7 @@ mod tests {
         (
             ClientConnConfig {
                 key,
-                io: RelayIo::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
+                io: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
                 write_timeout: None,
                 channel_capacity: 10,
                 server_channel,

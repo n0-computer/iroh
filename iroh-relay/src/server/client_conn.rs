@@ -20,9 +20,10 @@ use crate::{
     server::{
         actor::{self, new_conn_num, Packet},
         metrics::Metrics,
-        streams::RelayIo,
     },
 };
+
+use super::streams::RelayedStream;
 
 /// The [`Server`] side representation of a [`Client`]'s connection.
 ///
@@ -42,12 +43,12 @@ pub(super) struct ClientConn {
 
     /// Channels that allow the [`ClientConnManager`] (and the Server) to send
     /// the client messages. These `Senders` correspond to `Receivers` on the
-    /// [`ClientConnIo`].
+    /// [`ConnActor`].
     pub(super) client_channels: ClientChannels,
 }
 
 /// Channels that the [`ClientConnManager`] uses to communicate with the
-/// [`ClientConnIo`] to forward the client:
+/// [`ConnActor`] to forward the client:
 ///  - information about a peer leaving the network (This should only happen for peers that this
 ///    client was previously communciating with)
 ///  - packets sent to this client from another client in the network
@@ -65,7 +66,7 @@ pub(super) struct ClientChannels {
 #[derive(Debug)]
 pub(super) struct ClientConnConfig {
     pub(super) key: PublicKey,
-    pub(super) io: RelayIo,
+    pub(super) io: RelayedStream,
     pub(super) write_timeout: Option<Duration>,
     pub(super) channel_capacity: usize,
     pub(super) server_channel: mpsc::Sender<actor::Message>,
@@ -92,8 +93,8 @@ impl ClientConn {
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(channel_capacity);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(channel_capacity);
 
-        let conn_io = ClientConnIo {
-            io,
+        let conn_io = ConnActor {
+            stream: io,
             timeout: write_timeout,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -166,7 +167,7 @@ impl ClientConn {
 /// it errors on return.
 /// If writes do not complete in the given `timeout`, it will also error.
 ///
-/// On the "write" side, the [`ClientConnIo`] can send the client:
+/// On the "write" side, the [`ConnActor`] can send the client:
 ///  - a KEEP_ALIVE frame
 ///  - a PEER_GONE frame to inform the client that a peer they have previously sent messages to
 ///    is gone from the network
@@ -177,9 +178,9 @@ impl ClientConn {
 ///     - note whether the client is `preferred`, aka this client is the preferred way
 ///     to speak to the node ID associated with that client.
 #[derive(Debug)]
-pub(crate) struct ClientConnIo {
+struct ConnActor {
     /// Io to talk to the client
-    io: RelayIo,
+    stream: RelayedStream,
     /// Max time we wait to complete a write to the client
     timeout: Option<Duration>,
     /// Packets queued to send to the client
@@ -201,7 +202,7 @@ pub(crate) struct ClientConnIo {
     preferred: bool,
 }
 
-impl ClientConnIo {
+impl ConnActor {
     async fn run(mut self, done: CancellationToken) -> Result<()> {
         let jitter = Duration::from_secs(5);
         let mut keep_alive = tokio::time::interval(KEEP_ALIVE + jitter);
@@ -216,14 +217,14 @@ impl ClientConnIo {
                 _ = done.cancelled() => {
                     trace!("cancelled");
                     // final flush
-                    self.io.flush().await.context("flush")?;
+                    self.stream.flush().await.context("flush")?;
                     return Ok(());
                 }
-                read_res = self.io.next() => {
-                    trace!("handle read");
+                read_res = self.stream.next() => {
+                    trace!("handle frame");
                     match read_res {
                         Some(Ok(frame)) => {
-                            self.handle_read(frame).await.context("handle_read")?;
+                            self.handle_frame(frame).await.context("handle_read")?;
                         }
                         Some(Err(err)) => {
                             return Err(err);
@@ -258,18 +259,23 @@ impl ClientConnIo {
                     self.send_keep_alive().await.context("send keep alive")?;
                 }
             }
-            // TODO: golang batches as many writes as are in all the channels
-            // & then flushes when there is no more work to be done at the moment.
-            // refactor to get something similar
-            self.io.flush().await.context("final flush")?;
+
+            self.stream.flush().await.context("tick flush")?;
         }
+    }
+
+    /// Writes the given frame to the conneciton.
+    ///
+    /// Errors if the send does not happen within the `timeout` duration
+    async fn write_frame(&mut self, frame: Frame) -> Result<()> {
+        write_frame(&mut self.stream, frame, self.timeout).await
     }
 
     /// Sends a `keep alive` frame, does not flush
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn send_keep_alive(&mut self) -> Result<()> {
-        write_frame(&mut self.io, Frame::KeepAlive, self.timeout).await
+        self.write_frame(Frame::KeepAlive).await
     }
 
     /// Send a `pong` frame, does not flush
@@ -278,7 +284,7 @@ impl ClientConnIo {
     async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
         // TODO: stats
         // record `send_pong`
-        write_frame(&mut self.io, Frame::Pong { data }, self.timeout).await
+        self.write_frame(Frame::Pong { data }).await
     }
 
     /// Sends a peer gone frame, does not flush
@@ -287,30 +293,26 @@ impl ClientConnIo {
     async fn send_peer_gone(&mut self, peer: PublicKey) -> Result<()> {
         // TODO: stats
         // c.s.peerGoneFrames.Add(1)
-        write_frame(&mut self.io, Frame::PeerGone { peer }, self.timeout).await
+        self.write_frame(Frame::PeerGone { peer }).await
     }
 
-    /// Writes contents to the client in a `RECV_PACKET` frame. If `srcKey.is_zero`, it uses the
-    /// old DERPv1 framing format, otherwise uses the DERPv2 framing format. The bytes of contents
-    /// are only valid until this function returns, do not retain the slices.
+    /// Writes contents to the client in a `RECV_PACKET` frame.
+    ///
+    /// Errors if the send does not happen within the `timeout` duration
     /// Does not flush.
     async fn send_packet(&mut self, packet: Packet) -> Result<()> {
         let src_key = packet.src;
-        let content = packet.bytes;
+        let content = packet.data;
 
         if let Ok(len) = content.len().try_into() {
             inc_by!(Metrics, bytes_sent, len);
         }
-        write_frame(
-            &mut self.io,
-            Frame::RecvPacket { src_key, content },
-            self.timeout,
-        )
-        .await
+        self.write_frame(Frame::RecvPacket { src_key, content })
+            .await
     }
 
-    /// Handles read results.
-    async fn handle_read(&mut self, frame: Frame) -> Result<()> {
+    /// Handles frame read results.
+    async fn handle_frame(&mut self, frame: Frame) -> Result<()> {
         // TODO: "note client activity", meaning we update the server that the client with this
         // public key was the last one to receive data
         // it will be relevant when we add the ability to hold onto multiple clients
@@ -343,15 +345,6 @@ impl ClientConnIo {
         self.preferred = preferred;
     }
 
-    async fn send_server(&self, msg: actor::Message) -> Result<()> {
-        self.server_channel
-            .send(msg)
-            .await
-            .map_err(|_| anyhow::anyhow!("server gone"))?;
-        Ok(())
-    }
-
-    // assumes ping is 8 bytes
     async fn handle_frame_ping(&mut self, data: [u8; 8]) -> Result<()> {
         // TODO:stats
         // c.s.gotPing.Add(1)
@@ -362,33 +355,27 @@ impl ClientConnIo {
         Ok(())
     }
 
-    /// Parse the SEND_PACKET frame, getting the destination and packet content
-    /// Then sends the packet to the server, who directs it to the destination.
-    ///
-    /// Errors if the key cannot be parsed correctly, or if the packet is
-    /// larger than MAX_PACKET_SIZE
     async fn handle_frame_send_packet(&self, dst_key: PublicKey, data: Bytes) -> Result<()> {
-        let packet = Packet {
-            src: self.key,
-            bytes: data,
-        };
-        self.transfer_packet(dst_key, packet).await
-    }
-
-    /// Send the given packet to the server. The server will attempt to
-    /// send the packet to the destination, dropping the packet if the
-    /// destination is not connected, or if the destination client can
-    /// not fit any more messages in its queue.
-    async fn transfer_packet(&self, dstkey: PublicKey, packet: Packet) -> Result<()> {
-        if disco::looks_like_disco_wrapper(&packet.bytes) {
+        let message = if disco::looks_like_disco_wrapper(&data) {
             inc!(Metrics, disco_packets_recv);
-            self.send_server(actor::Message::SendDiscoPacket((dstkey, packet)))
-                .await?;
+            actor::Message::SendDiscoPacket {
+                dst: dst_key,
+                src: self.key,
+                data,
+            }
         } else {
             inc!(Metrics, send_packets_recv);
-            self.send_server(actor::Message::SendPacket((dstkey, packet)))
-                .await?;
-        }
+            actor::Message::SendPacket {
+                dst: dst_key,
+                src: self.key,
+                data,
+            }
+        };
+
+        self.server_channel
+            .send(message)
+            .await
+            .map_err(|_| anyhow::anyhow!("server gone"))?;
         Ok(())
     }
 }
@@ -417,8 +404,8 @@ mod tests {
         let mut io_rw = Framed::new(io_rw, DerpCodec);
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
-        let conn_io = ClientConnIo {
-            io: RelayIo::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
+        let conn_io = ConnActor {
+            stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
             timeout: None,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -441,7 +428,7 @@ mod tests {
         println!("  send packet");
         let packet = Packet {
             src: key,
-            bytes: Bytes::from(&data[..]),
+            data: Bytes::from(&data[..]),
         };
         send_queue_s.send(packet.clone()).await?;
         let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
@@ -503,10 +490,14 @@ mod tests {
         conn::send_packet(&mut io_rw, &None, target, Bytes::from_static(data)).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
-            actor::Message::SendPacket((got_target, packet)) => {
+            actor::Message::SendPacket {
+                dst: got_target,
+                data: got_data,
+                src: got_src,
+            } => {
                 assert_eq!(target, got_target);
-                assert_eq!(key, packet.src);
-                assert_eq!(&data[..], &packet.bytes);
+                assert_eq!(key, got_src);
+                assert_eq!(&data[..], &got_data);
             }
             m => {
                 bail!("expected ServerMessage::SendPacket, got {m:?}");
@@ -522,10 +513,14 @@ mod tests {
         conn::send_packet(&mut io_rw, &None, target, disco_data.clone().into()).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
-            actor::Message::SendDiscoPacket((got_target, packet)) => {
+            actor::Message::SendDiscoPacket {
+                dst: got_target,
+                src: got_src,
+                data: got_data,
+            } => {
                 assert_eq!(target, got_target);
-                assert_eq!(key, packet.src);
-                assert_eq!(&disco_data[..], &packet.bytes);
+                assert_eq!(key, got_src);
+                assert_eq!(&disco_data[..], &got_data);
             }
             m => {
                 bail!("expected ServerMessage::SendDiscoPacket, got {m:?}");
@@ -549,8 +544,8 @@ mod tests {
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
         println!("-- create client conn");
-        let conn_io = ClientConnIo {
-            io: RelayIo::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
+        let conn_io = ConnActor {
+            stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
             timeout: None,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -575,10 +570,14 @@ mod tests {
         conn::send_packet(&mut io_rw, &None, target, Bytes::from_static(data)).await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
-            actor::Message::SendPacket((got_target, packet)) => {
+            actor::Message::SendPacket {
+                dst: got_target,
+                src: got_src,
+                data: got_data,
+            } => {
                 assert_eq!(target, got_target);
-                assert_eq!(key, packet.src);
-                assert_eq!(&data[..], &packet.bytes);
+                assert_eq!(key, got_src);
+                assert_eq!(&data[..], &got_data);
                 println!("    send packet success");
             }
             m => {

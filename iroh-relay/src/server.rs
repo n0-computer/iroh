@@ -43,10 +43,7 @@ mod http_server;
 mod metrics;
 pub(crate) mod streams;
 
-pub use self::{
-    metrics::Metrics,
-    streams::MaybeTlsStream as MaybeTlsStreamServer,
-};
+pub use self::{metrics::Metrics, streams::MaybeTlsStream as MaybeTlsStreamServer};
 
 const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Tailscale-Challenge";
 const NO_CONTENT_RESPONSE_HEADER: &str = "X-Tailscale-Response";

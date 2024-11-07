@@ -21,8 +21,7 @@ use tokio::{
 };
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_tungstenite::WebSocketStream;
-use tokio_util::codec::Framed;
-use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 use tungstenite::{handshake::derive_accept_key, protocol::Role};
 
@@ -33,7 +32,7 @@ use crate::{
         actor::{Message, ServerActorTask},
         client_conn::ClientConnConfig,
         metrics::Metrics,
-        streams::{MaybeTlsStream, RelayIo},
+        streams::{MaybeTlsStream, RelayedStream},
     },
 };
 
@@ -469,11 +468,11 @@ impl Inner {
         let mut io = match protocol {
             Protocol::Relay => {
                 inc!(Metrics, derp_accepts);
-                RelayIo::Derp(Framed::new(io, DerpCodec))
+                RelayedStream::Derp(Framed::new(io, DerpCodec))
             }
             Protocol::Websocket => {
                 inc!(Metrics, websocket_accepts);
-                RelayIo::Ws(WebSocketStream::from_raw_socket(io, Role::Server, None).await)
+                RelayedStream::Ws(WebSocketStream::from_raw_socket(io, Role::Server, None).await)
             }
         };
         trace!("accept: recv client key");
