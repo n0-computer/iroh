@@ -422,7 +422,7 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), RpcServerError&lt;IrohServerEndpoint&gt;&gt; {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(docs) = <span class="self">self
             </span>.router
-            .get_protocol::&lt;iroh_docs::engine::Engine&gt;(DOCS_ALPN)
+            .get_protocol::&lt;iroh_docs::engine::Engine&lt;D&gt;&gt;(DOCS_ALPN)
         {
             <span class="kw">let </span>chan = chan.map::&lt;iroh_docs::rpc::proto::RpcService&gt;();
             docs.handle_rpc_request(msg, chan)

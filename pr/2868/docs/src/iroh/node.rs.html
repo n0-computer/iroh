@@ -986,7 +986,7 @@
         </span><span class="kw">if let </span>GcPolicy::Interval(gc_period) = gc_policy {
             <span class="kw">let </span>router = router.clone();
             <span class="kw">let </span>handle = local_pool.spawn(<span class="kw">move </span>|| <span class="kw">async move </span>{
-                <span class="kw">let </span>docs_engine = router.get_protocol::&lt;Engine&gt;(DOCS_ALPN);
+                <span class="kw">let </span>docs_engine = router.get_protocol::&lt;Engine&lt;D&gt;&gt;(DOCS_ALPN);
                 <span class="kw">let </span>blobs = router
                     .get_protocol::&lt;BlobsProtocol&lt;D&gt;&gt;(iroh_blobs::protocol::ALPN)
                     .expect(<span class="string">"missing blobs"</span>);
