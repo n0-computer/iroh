@@ -444,7 +444,8 @@ mod tests {
     use tokio_util::task::AbortOnDropHandle;
 
     use super::*;
-    use crate::{key::SecretKey, relay::RelayMode};
+    use crate::key::SecretKey;
+    use iroh_relay::RelayMode;
 
     #[derive(Debug, Clone, Default)]
     struct TestDiscoveryShared {
@@ -736,7 +737,6 @@ mod test_dns_pkarr {
     use crate::{
         discovery::pkarr::PkarrPublisher,
         dns::{node_info::NodeInfo, ResolverExt},
-        relay::{RelayMap, RelayMode},
         test_utils::{
             dns_server::{create_dns_resolver, run_dns_server},
             pkarr_dns_state::State,
@@ -744,6 +744,7 @@ mod test_dns_pkarr {
         },
         AddrInfo, Endpoint, NodeAddr,
     };
+    use iroh_relay::{RelayMap, RelayMode};
 
     const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
 

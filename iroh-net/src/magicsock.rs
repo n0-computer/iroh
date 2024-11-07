@@ -2783,7 +2783,8 @@ mod tests {
     use tokio_util::task::AbortOnDropHandle;
 
     use super::*;
-    use crate::{defaults::staging::EU_RELAY_HOSTNAME, relay::RelayMode, tls, Endpoint};
+    use crate::{defaults::staging::EU_RELAY_HOSTNAME, tls, Endpoint};
+    use iroh_relay::RelayMode;
 
     const ALPN: &[u8] = b"n0/test/1";
 

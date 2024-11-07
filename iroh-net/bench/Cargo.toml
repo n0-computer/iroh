@@ -22,5 +22,5 @@ socket2 = "0.5"
 futures-lite = "2.3.0"
 
 [features]
-default = []
+default = ["local-relay"]
 local-relay = ["iroh-net/test-utils"]

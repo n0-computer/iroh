@@ -780,8 +780,8 @@ mod tests {
     use crate::{
         defaults::{staging::EU_RELAY_HOSTNAME, DEFAULT_STUN_PORT},
         ping::Pinger,
-        relay::RelayNode,
     };
+    use iroh_relay::RelayNode;
 
     #[tokio::test]
     async fn test_basic() -> Result<()> {
