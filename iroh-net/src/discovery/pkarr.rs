@@ -61,9 +61,10 @@ use crate::{
     discovery::{Discovery, DiscoveryItem},
     dns::node_info::NodeInfo,
     key::SecretKey,
-    relay::force_staging_infra,
     AddrInfo, Endpoint, NodeId,
 };
+
+use iroh_relay::force_staging_infra;
 
 #[cfg(feature = "discovery-pkarr-dht")]
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "discovery-pkarr-dht")))]
