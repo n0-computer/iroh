@@ -82,7 +82,7 @@ async fn spawn_docs<S: iroh_blobs::store::Store>(
     gossip: Gossip,
     downloader: Downloader,
     local_pool_handle: LocalPoolHandle,
-) -> anyhow::Result<Option<Engine>> {
+) -> anyhow::Result<Option<Engine<S>>> {
     let docs_store = match storage {
         DocsStorage::Disabled => return Ok(None),
         DocsStorage::Memory => iroh_docs::store::fs::Store::memory(),
@@ -837,7 +837,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         store: D,
         gossip: Gossip,
         downloader: Downloader,
-        docs: Option<Engine>,
+        docs: Option<Engine<D>>,
     ) -> Self {
         // Register blobs.
         let blobs_proto = BlobsProtocol::new_with_events(

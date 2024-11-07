@@ -293,7 +293,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         if let GcPolicy::Interval(gc_period) = gc_policy {
             let router = router.clone();
             let handle = local_pool.spawn(move || async move {
-                let docs_engine = router.get_protocol::<Engine>(DOCS_ALPN);
+                let docs_engine = router.get_protocol::<Engine<D>>(DOCS_ALPN);
                 let blobs = router
                     .get_protocol::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
                     .expect("missing blobs");

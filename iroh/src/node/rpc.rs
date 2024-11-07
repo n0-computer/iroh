@@ -137,7 +137,7 @@ impl<D: BaoStore> Handler<D> {
     ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
         if let Some(docs) = self
             .router
-            .get_protocol::<iroh_docs::engine::Engine>(DOCS_ALPN)
+            .get_protocol::<iroh_docs::engine::Engine<D>>(DOCS_ALPN)
         {
             let chan = chan.map::<iroh_docs::rpc::proto::RpcService>();
             docs.handle_rpc_request(msg, chan)
