@@ -3,10 +3,11 @@
 //! The "Server" side of the client. Uses the `ClientConnManager`.
 use std::collections::{HashMap, HashSet};
 
+use anyhow::{bail, Result};
 use iroh_base::key::PublicKey;
 use iroh_metrics::inc;
 use tokio::{sync::mpsc, task::JoinSet};
-use tracing::{Instrument, Span};
+use tracing::{trace, warn, Instrument, Span};
 
 use super::{
     actor::Packet,
@@ -25,14 +26,14 @@ pub(super) struct Clients {
 
 impl Clients {
     pub async fn shutdown(&mut self) {
-        tracing::trace!("shutting down conn");
+        trace!("shutting down conn");
         let mut handles = JoinSet::default();
         for (_, client) in self.inner.drain() {
-            handles.spawn(async move { client.shutdown_await().await }.instrument(Span::current()));
+            handles.spawn(async move { client.shutdown().await }.instrument(Span::current()));
         }
         while let Some(t) = handles.join_next().await {
             if let Err(err) = t {
-                tracing::trace!("shutdown error: {:?}", err);
+                trace!("shutdown error: {:?}", err);
             }
         }
     }
@@ -55,52 +56,52 @@ impl Clients {
         false
     }
 
-    pub fn register(&mut self, client_config: ClientConnConfig) {
+    pub async fn register(&mut self, client_config: ClientConnConfig) {
         // this builds the client handler & starts the read & write loops to that client connection
         let key = client_config.key;
-        tracing::trace!("registering client: {:?}", key);
+        trace!("registering client: {:?}", key);
         let client = ClientConn::new(client_config);
         // TODO: in future, do not remove clients that share a publicKey, instead,
         // expand the `Client` struct to handle multiple connections & a policy for
         // how to handle who we write to when multiple connections exist.
         let client = Client::new(client);
         if let Some(old_client) = self.inner.insert(key, client) {
-            tracing::warn!("multiple connections found for {key:?}, pruning old connection",);
-            old_client.shutdown();
+            warn!("multiple connections found for {key:?}, pruning old connection",);
+            old_client.shutdown().await;
         }
     }
 
     /// Removes the client from the map of clients, & sends a notification
     /// to each client that peers has sent data to, to let them know that
     /// peer is gone from the network.
-    pub fn unregister(&mut self, peer: &PublicKey) {
-        tracing::trace!("unregistering client: {:?}", peer);
+    pub async fn unregister(&mut self, peer: &PublicKey) {
+        trace!("unregistering client: {:?}", peer);
         if let Some(client) = self.inner.remove(peer) {
             for key in client.sent_to.iter() {
                 self.send_peer_gone(key, *peer);
             }
-            tracing::warn!("pruning connection {peer:?}");
-            client.shutdown();
+            warn!("pruning connection {peer:?}");
+            client.shutdown().await;
         }
     }
 
     /// Attempt to send a packet to client with [`PublicKey`] `key`
-    pub fn send_packet(&mut self, key: &PublicKey, packet: Packet) -> anyhow::Result<()> {
+    pub async fn send_packet(&mut self, key: &PublicKey, packet: Packet) -> Result<()> {
         if let Some(client) = self.inner.get(key) {
             let res = client.send_packet(packet);
-            return self.process_result(key, res);
+            return self.process_result(key, res).await;
         };
-        tracing::warn!("Could not find client for {key:?}, dropping packet");
-        anyhow::bail!("Could not find client for {key:?}, dropped packet");
+        warn!("Could not find client for {key:?}, dropping packet");
+        bail!("Could not find client for {key:?}, dropped packet");
     }
 
-    pub fn send_disco_packet(&mut self, key: &PublicKey, packet: Packet) -> anyhow::Result<()> {
+    pub async fn send_disco_packet(&mut self, key: &PublicKey, packet: Packet) -> Result<()> {
         if let Some(client) = self.inner.get(key) {
             let res = client.send_disco_packet(packet);
-            return self.process_result(key, res);
+            return self.process_result(key, res).await;
         };
-        tracing::warn!("Could not find client for {key:?}, dropping disco packet");
-        anyhow::bail!("Could not find client for {key:?}, dropped packet");
+        warn!("Could not find client for {key:?}, dropping disco packet");
+        bail!("Could not find client for {key:?}, dropped packet");
     }
 
     pub fn send_peer_gone(&mut self, key: &PublicKey, peer: PublicKey) {
@@ -109,25 +110,21 @@ impl Clients {
             let _ = self.process_result(key, res);
             return;
         };
-        tracing::warn!("Could not find client for {key:?}, dropping peer gone packet");
+        warn!("Could not find client for {key:?}, dropping peer gone packet");
     }
 
-    fn process_result(
-        &mut self,
-        key: &PublicKey,
-        res: Result<(), SendError>,
-    ) -> anyhow::Result<()> {
+    async fn process_result(&mut self, key: &PublicKey, res: Result<(), SendError>) -> Result<()> {
         match res {
             Ok(_) => return Ok(()),
             Err(SendError::PacketDropped) => {
-                tracing::warn!("client {key:?} too busy to receive packet, dropping packet");
+                warn!("client {key:?} too busy to receive packet, dropping packet");
             }
             Err(SendError::SenderClosed) => {
-                tracing::warn!("Can no longer write to client {key:?}, dropping message and pruning connection");
-                self.unregister(key);
+                warn!("Can no longer write to client {key:?}, dropping message and pruning connection");
+                self.unregister(key).await;
             }
         }
-        anyhow::bail!("unable to send msg");
+        bail!("unable to send msg");
     }
 }
 
@@ -146,7 +143,7 @@ impl Clients {
 // connection and it gets traffic. Otherwise, in the case of a cloned node key, the whole set of
 // connections doesn't receive data frames."
 #[derive(Debug)]
-struct Client {
+pub(super) struct Client {
     /// The client connection associated with the [`PublicKey`]
     conn: ClientConn,
     /// list of peers we have sent messages to
@@ -166,40 +163,16 @@ impl Client {
         self.sent_to.insert(dst);
     }
 
-    fn shutdown(self) {
-        tokio::spawn(
-            async move {
-                self.conn.shutdown().await;
-                // notify peers of disconnect?
-            }
-            .instrument(Span::current()),
-        );
-    }
-
-    async fn shutdown_await(self) {
+    async fn shutdown(self) {
         self.conn.shutdown().await;
     }
 
     fn send_packet(&self, packet: Packet) -> Result<(), SendError> {
-        let res = try_send(&self.conn.send_queue, packet);
-        if res.is_ok() {
-            // there is a chance that we have a packet forwarder for
-            // this peer, so we must check that route before
-            // marking the packet as "dropped"
-            inc!(Metrics, send_packets_sent);
-        }
-        res
+        try_send(&self.conn.send_queue, packet)
     }
 
     fn send_disco_packet(&self, packet: Packet) -> Result<(), SendError> {
-        let res = try_send(&self.conn.disco_send_queue, packet);
-        if res.is_ok() {
-            // there is a chance that we have a packet forwarder for
-            // this peer, so we must check that route before
-            // marking the packet as "dropped"
-            inc!(Metrics, disco_packets_sent);
-        }
-        res
+        try_send(&self.conn.disco_send_queue, packet)
     }
 
     fn send_peer_gone(&self, key: PublicKey) -> Result<(), SendError> {
@@ -244,7 +217,6 @@ enum SendError {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Result;
     use bytes::Bytes;
     use iroh_base::key::SecretKey;
     use tokio::io::DuplexStream;
@@ -281,7 +253,7 @@ mod tests {
         let (builder_a, mut a_rw) = test_client_builder(a_key);
 
         let mut clients = Clients::default();
-        clients.register(builder_a);
+        clients.register(builder_a).await;
 
         // send packet
         let data = b"hello world!";
@@ -289,7 +261,9 @@ mod tests {
             src: b_key,
             data: Bytes::from(&data[..]),
         };
-        clients.send_packet(&a_key.clone(), expect_packet.clone())?;
+        clients
+            .send_packet(&a_key.clone(), expect_packet.clone())
+            .await?;
         let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
         assert_eq!(
             frame,
@@ -300,7 +274,9 @@ mod tests {
         );
 
         // send disco packet
-        clients.send_disco_packet(&a_key.clone(), expect_packet)?;
+        clients
+            .send_disco_packet(&a_key.clone(), expect_packet)
+            .await?;
         let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
         assert_eq!(
             frame,
@@ -315,7 +291,7 @@ mod tests {
         let frame = recv_frame(FrameType::PeerGone, &mut a_rw).await?;
         assert_eq!(frame, Frame::PeerGone { peer: b_key });
 
-        clients.unregister(&a_key.clone());
+        clients.unregister(&a_key.clone()).await;
 
         assert!(!clients.inner.contains_key(&a_key));
 

@@ -136,7 +136,7 @@ impl Actor {
                     return Ok(());
                 }
                 Some(msg) = self.receiver.recv() => {
-                    self.handle_message(msg);
+                    self.handle_message(msg).await;
                 }
                 else => {
                     warn!("unexpected server error, shutting down server loop");
@@ -147,7 +147,7 @@ impl Actor {
         }
     }
 
-    fn handle_message(&mut self, msg: Message) {
+    async fn handle_message(&mut self, msg: Message) {
         match msg {
             Message::SendPacket { dst, data, src } => {
                 trace!(
@@ -158,8 +158,16 @@ impl Actor {
                 );
                 if self.clients.contains_key(&dst) {
                     // if this client is in our local network, just try to send the packet
-                    if self.clients.send_packet(&dst, Packet { data, src }).is_ok() {
+                    if self
+                        .clients
+                        .send_packet(&dst, Packet { data, src })
+                        .await
+                        .is_ok()
+                    {
                         self.clients.record_send(&src, dst);
+                        inc!(Metrics, send_packets_sent);
+                    } else {
+                        inc!(Metrics, send_packets_dropped);
                     }
                 } else {
                     warn!("send packet: no way to reach client {dst:?}, dropped packet");
@@ -178,9 +186,13 @@ impl Actor {
                     if self
                         .clients
                         .send_disco_packet(&dst, Packet { data, src })
+                        .await
                         .is_ok()
                     {
                         self.clients.record_send(&src, dst);
+                        inc!(Metrics, disco_packets_sent);
+                    } else {
+                        inc!(Metrics, disco_packets_dropped);
                     }
                 } else {
                     warn!("send disco packet: no way to reach client {dst:?}, dropped packet");
@@ -194,7 +206,7 @@ impl Actor {
                 let key = client_builder.key;
 
                 // build and register client, starting up read & write loops for the client connection
-                self.clients.register(client_builder);
+                self.clients.register(client_builder).await;
                 tokio::task::spawn(async move {
                     report_usage_stats(&UsageStatsReport::new(
                         "relay_accepts".to_string(),
@@ -215,7 +227,7 @@ impl Actor {
                 if self.clients.has_client(&key, conn_num) {
                     // remove the client from the map of clients, & notify any peers that it
                     // has sent messages that it has left the network
-                    self.clients.unregister(&key);
+                    self.clients.unregister(&key).await;
                 }
             }
         }
