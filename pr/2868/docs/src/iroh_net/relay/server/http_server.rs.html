@@ -811,27 +811,6 @@
 <a href="#811" id="811">811</a>
 <a href="#812" id="812">812</a>
 <a href="#813" id="813">813</a>
-<a href="#814" id="814">814</a>
-<a href="#815" id="815">815</a>
-<a href="#816" id="816">816</a>
-<a href="#817" id="817">817</a>
-<a href="#818" id="818">818</a>
-<a href="#819" id="819">819</a>
-<a href="#820" id="820">820</a>
-<a href="#821" id="821">821</a>
-<a href="#822" id="822">822</a>
-<a href="#823" id="823">823</a>
-<a href="#824" id="824">824</a>
-<a href="#825" id="825">825</a>
-<a href="#826" id="826">826</a>
-<a href="#827" id="827">827</a>
-<a href="#828" id="828">828</a>
-<a href="#829" id="829">829</a>
-<a href="#830" id="830">830</a>
-<a href="#831" id="831">831</a>
-<a href="#832" id="832">832</a>
-<a href="#833" id="833">833</a>
-<a href="#834" id="834">834</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 
 <span class="kw">use </span>anyhow::{bail, ensure, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
@@ -994,11 +973,6 @@
     </span>handlers: Handlers,
     <span class="doccomment">/// Headers to use for HTTP responses.
     </span>headers: HeaderMap,
-    <span class="doccomment">/// 404 not found response.
-    ///
-    /// When `None`, a default is provided.
-    </span><span class="attr">#[debug(<span class="string">"{}"</span>, not_found_fn.as_ref().map_or(<span class="string">"None"</span>, |<span class="kw">_</span>| <span class="string">"Some(Box&lt;Fn(ResponseBuilder) -&gt; Result&lt;Response&lt;Body&gt;&gt; + Send + Sync + 'static&gt;)"</span>))]
-    </span>not_found_fn: <span class="prelude-ty">Option</span>&lt;HyperHandler&gt;,
 }
 
 <span class="kw">impl </span>ServerBuilder {
@@ -1009,7 +983,6 @@
             tls_config: <span class="prelude-val">None</span>,
             handlers: Default::default(),
             headers: HeaderMap::new(),
-            not_found_fn: <span class="prelude-val">None</span>,
         }
     }
 
@@ -1030,13 +1003,6 @@
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Sets a custom "404" handler.
-    </span><span class="attr">#[allow(unused)]
-    </span><span class="kw">pub fn </span>not_found_handler(<span class="kw-2">mut </span><span class="self">self</span>, handler: HyperHandler) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.not_found_fn = <span class="prelude-val">Some</span>(handler);
-        <span class="self">self
-    </span>}
-
     <span class="doccomment">/// Adds HTTP headers to responses.
     </span><span class="kw">pub fn </span>headers(<span class="kw-2">mut </span><span class="self">self</span>, headers: HeaderMap) -&gt; <span class="self">Self </span>{
         <span class="kw">for </span>(k, v) <span class="kw">in </span>headers.iter() {
@@ -1050,20 +1016,7 @@
         <span class="kw">let </span>relay_server = ServerActorTask::new();
         <span class="kw">let </span>relay_handler = relay_server.client_conn_handler(<span class="self">self</span>.headers.clone());
 
-        <span class="kw">let </span>h = <span class="self">self</span>.headers.clone();
-        <span class="kw">let </span>not_found_fn = <span class="kw">match </span><span class="self">self</span>.not_found_fn {
-            <span class="prelude-val">Some</span>(f) =&gt; f,
-            <span class="prelude-val">None </span>=&gt; Box::new(<span class="kw">move </span>|_req: Request&lt;Incoming&gt;, <span class="kw-2">mut </span>res: ResponseBuilder| {
-                <span class="kw">for </span>(k, v) <span class="kw">in </span>h.iter() {
-                    res = res.header(k.clone(), v.clone());
-                }
-                <span class="kw">let </span>body = body_full(<span class="string">"Not Found"</span>);
-                <span class="kw">let </span>r = res.status(StatusCode::NOT_FOUND).body(body)<span class="question-mark">?</span>;
-                HyperResult::Ok(r)
-            }),
-        };
-
-        <span class="kw">let </span>service = RelayService::new(<span class="self">self</span>.handlers, relay_handler, not_found_fn, <span class="self">self</span>.headers);
+        <span class="kw">let </span>service = RelayService::new(<span class="self">self</span>.handlers, relay_handler, <span class="self">self</span>.headers);
 
         <span class="kw">let </span>server_state = ServerState {
             addr: <span class="self">self</span>.addr,
@@ -1292,7 +1245,7 @@
             <span class="kw">return </span>Box::pin(<span class="kw">async move </span>{ f });
         }
         <span class="comment">// otherwise return 404
-        </span><span class="kw">let </span>res = (<span class="self">self</span>.<span class="number">0</span>.not_found_fn)(req, <span class="self">self</span>.<span class="number">0</span>.default_response());
+        </span><span class="kw">let </span>res = <span class="self">self</span>.<span class="number">0</span>.not_found_fn(req, <span class="self">self</span>.<span class="number">0</span>.default_response());
         Box::pin(<span class="kw">async move </span>{ res })
     }
 }
@@ -1301,13 +1254,11 @@
 </span><span class="attr">#[derive(Clone, Debug)]
 </span><span class="kw">struct </span>RelayService(Arc&lt;Inner&gt;);
 
-<span class="attr">#[derive(derive_more::Debug)]
+<span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>Inner {
-    <span class="kw">pub </span>relay_handler: ClientConnHandler,
-    <span class="attr">#[debug(<span class="string">"Box&lt;Fn(ResponseBuilder) -&gt; Result&lt;Response&lt;BytesBody&gt;&gt; + Send + Sync + 'static&gt;"</span>)]
-    </span><span class="kw">pub </span>not_found_fn: HyperHandler,
-    <span class="kw">pub </span>handlers: Handlers,
-    <span class="kw">pub </span>headers: HeaderMap,
+    relay_handler: ClientConnHandler,
+    handlers: Handlers,
+    headers: HeaderMap,
 }
 
 <span class="kw">impl </span>Inner {
@@ -1317,6 +1268,19 @@
             response = response.header(key.clone(), value.clone());
         }
         response
+    }
+
+    <span class="kw">fn </span>not_found_fn(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        _req: Request&lt;Incoming&gt;,
+        <span class="kw-2">mut </span>res: ResponseBuilder,
+    ) -&gt; HyperResult&lt;Response&lt;BytesBody&gt;&gt; {
+        <span class="kw">for </span>(k, v) <span class="kw">in </span><span class="self">self</span>.headers.iter() {
+            res = res.header(k.clone(), v.clone());
+        }
+        <span class="kw">let </span>body = body_full(<span class="string">"Not Found"</span>);
+        <span class="kw">let </span>r = res.status(StatusCode::NOT_FOUND).body(body)<span class="question-mark">?</span>;
+        HyperResult::Ok(r)
     }
 }
 
@@ -1331,16 +1295,10 @@
 }
 
 <span class="kw">impl </span>RelayService {
-    <span class="kw">fn </span>new(
-        handlers: Handlers,
-        relay_handler: ClientConnHandler,
-        not_found_fn: HyperHandler,
-        headers: HeaderMap,
-    ) -&gt; <span class="self">Self </span>{
+    <span class="kw">fn </span>new(handlers: Handlers, relay_handler: ClientConnHandler, headers: HeaderMap) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>(Arc::new(Inner {
             relay_handler,
             handlers,
-            not_found_fn,
             headers,
         }))
     }
