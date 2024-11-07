@@ -52,13 +52,6 @@
 <a href="#52" id="52">52</a>
 <a href="#53" id="53">53</a>
 <a href="#54" id="54">54</a>
-<a href="#55" id="55">55</a>
-<a href="#56" id="56">56</a>
-<a href="#57" id="57">57</a>
-<a href="#58" id="58">58</a>
-<a href="#59" id="59">59</a>
-<a href="#60" id="60">60</a>
-<a href="#61" id="61">61</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! This defines the RPC protocol used for communication between a CLI and an iroh node.
 //!
 //! RPC is done using the [`quic-rpc`](https://docs.rs/quic-rpc) crate.
@@ -78,11 +71,8 @@
 //! macro.
 </span><span class="kw">use </span>serde::{Deserialize, Serialize};
 
-<span class="kw">pub mod </span>authors;
-<span class="kw">pub mod </span>blobs;
 <span class="kw">pub mod </span>net;
 <span class="kw">pub mod </span>node;
-<span class="kw">pub mod </span>tags;
 
 <span class="doccomment">/// The RPC service for the iroh provider process.
 </span><span class="attr">#[derive(Debug, Clone)]
@@ -95,11 +85,9 @@
 </span><span class="kw">pub enum </span>Request {
     Node(node::Request),
     Net(net::Request),
-    Blobs(blobs::Request),
-    Docs(iroh_docs::rpc::proto::Request),
-    Tags(tags::Request),
-    Authors(authors::Request),
     Gossip(iroh_gossip::RpcRequest),
+    Docs(iroh_docs::rpc::proto::Request),
+    BlobsAndTags(iroh_blobs::rpc::proto::Request),
 }
 
 <span class="doccomment">/// The response enum, listing all possible responses.
@@ -109,11 +97,9 @@
 </span><span class="kw">pub enum </span>Response {
     Node(node::Response),
     Net(net::Response),
-    Blobs(blobs::Response),
-    Tags(tags::Response),
-    Docs(iroh_docs::rpc::proto::Response),
-    Authors(authors::Response),
     Gossip(iroh_gossip::RpcResponse),
+    Docs(iroh_docs::rpc::proto::Response),
+    BlobsAndTags(iroh_blobs::rpc::proto::Response),
 }
 
 <span class="kw">impl </span>quic_rpc::Service <span class="kw">for </span>RpcService {

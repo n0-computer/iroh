@@ -1033,6 +1033,22 @@
 <a href="#1033" id="1033">1033</a>
 <a href="#1034" id="1034">1034</a>
 <a href="#1035" id="1035">1035</a>
+<a href="#1036" id="1036">1036</a>
+<a href="#1037" id="1037">1037</a>
+<a href="#1038" id="1038">1038</a>
+<a href="#1039" id="1039">1039</a>
+<a href="#1040" id="1040">1040</a>
+<a href="#1041" id="1041">1041</a>
+<a href="#1042" id="1042">1042</a>
+<a href="#1043" id="1043">1043</a>
+<a href="#1044" id="1044">1044</a>
+<a href="#1045" id="1045">1045</a>
+<a href="#1046" id="1046">1046</a>
+<a href="#1047" id="1047">1047</a>
+<a href="#1048" id="1048">1048</a>
+<a href="#1049" id="1049">1049</a>
+<a href="#1050" id="1050">1050</a>
+<a href="#1051" id="1051">1051</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
@@ -1043,6 +1059,13 @@
 //! always attached to a handle and when the handle is dropped the tasks abort.  So tasks
 //! can not outlive their handle.  It is also always possible to await for completion of a
 //! task.  Some tasks additionally have a method to do graceful shutdown.
+//!
+//! The relay server hosts the following services:
+//!
+//! - HTTPS `/relay`: The main URL endpoint to which clients connect and sends traffic over.
+//! - HTTPS `/ping`: Used for netcheck probes.
+//! - HTTPS `/generate_204`: Used for netcheck probes.
+//! - STUN: UDP port for STUN requests/responses.
 
 </span><span class="kw">use </span>std::{fmt, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 
@@ -1062,10 +1085,7 @@
 <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
-<span class="kw">use crate</span>::{
-    relay::http::{LEGACY_RELAY_PROBE_PATH, RELAY_PROBE_PATH},
-    stun,
-};
+<span class="kw">use crate</span>::{relay::http::RELAY_PROBE_PATH, stun};
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>actor;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>client_conn;
@@ -1217,6 +1237,11 @@
     </span>relay_handle: <span class="prelude-ty">Option</span>&lt;http_server::ServerHandle&gt;,
     <span class="doccomment">/// The main task running the server.
     </span>supervisor: AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
+    <span class="doccomment">/// The certificate for the server.
+    ///
+    /// If the server has manual certificates configured the certificate chain will be
+    /// available here, this can be used by a client to authenticate the server.
+    </span>certificates: <span class="prelude-ty">Option</span>&lt;Vec&lt;rustls::pki_types::CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;&gt;,
 }
 
 <span class="kw">impl </span>Server {
@@ -1262,8 +1287,14 @@
             <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
         };
 
-        <span class="comment">// Start the Relay server.
-        </span><span class="kw">let </span>(relay_server, http_addr) = <span class="kw">match </span>config.relay {
+        <span class="comment">// Start the Relay server, but first clone the certs out.
+        </span><span class="kw">let </span>certificates = config.relay.as_ref().and_then(|relay| {
+            relay.tls.as_ref().and_then(|tls| <span class="kw">match </span>tls.cert {
+                CertConfig::LetsEncrypt { .. } =&gt; <span class="prelude-val">None</span>,
+                CertConfig::Manual { <span class="kw-2">ref </span>certs, .. } =&gt; <span class="prelude-val">Some</span>(certs.clone()),
+            })
+        });
+        <span class="kw">let </span>(relay_server, http_addr) = <span class="kw">match </span>config.relay {
             <span class="prelude-val">Some</span>(relay_config) =&gt; {
                 <span class="macro">debug!</span>(<span class="string">"Starting Relay server"</span>);
                 <span class="kw">let </span><span class="kw-2">mut </span>headers = HeaderMap::new();
@@ -1278,12 +1309,7 @@
                     .headers(headers)
                     .request_handler(Method::GET, <span class="string">"/"</span>, Box::new(root_handler))
                     .request_handler(Method::GET, <span class="string">"/index.html"</span>, Box::new(root_handler))
-                    .request_handler(
-                        Method::GET,
-                        LEGACY_RELAY_PROBE_PATH,
-                        Box::new(probe_handler),
-                    ) <span class="comment">// backwards compat
-                    </span>.request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
+                    .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
                     .request_handler(Method::GET, <span class="string">"/robots.txt"</span>, Box::new(robots_handler));
                 <span class="kw">let </span>http_addr = <span class="kw">match </span>relay_config.tls {
                     <span class="prelude-val">Some</span>(tls_config) =&gt; {
@@ -1319,7 +1345,7 @@
                             }
                             CertConfig::Manual { private_key, certs } =&gt; {
                                 <span class="kw">let </span>server_config =
-                                    server_config.with_single_cert(certs.clone(), private_key)<span class="question-mark">?</span>;
+                                    server_config.with_single_cert(certs, private_key)<span class="question-mark">?</span>;
                                 <span class="kw">let </span>server_config = Arc::new(server_config);
                                 <span class="kw">let </span>acceptor =
                                     tokio_rustls::TlsAcceptor::from(server_config.clone());
@@ -1371,6 +1397,7 @@
             https_addr: http_addr.and(relay_addr),
             relay_handle,
             supervisor: AbortOnDropHandle::new(task),
+            certificates,
         })
     }
 
@@ -1407,6 +1434,11 @@
     <span class="doccomment">/// The socket address the STUN server is listening on.
     </span><span class="kw">pub fn </span>stun_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
         <span class="self">self</span>.stun_addr
+    }
+
+    <span class="doccomment">/// The certificates chain if configured with manual TLS certificates.
+    </span><span class="kw">pub fn </span>certificates(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Vec&lt;rustls::pki_types::CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;&gt; {
+        <span class="self">self</span>.certificates.clone()
     }
 }
 

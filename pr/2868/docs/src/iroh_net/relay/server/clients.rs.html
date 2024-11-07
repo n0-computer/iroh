@@ -336,7 +336,6 @@
 <a href="#336" id="336">336</a>
 <a href="#337" id="337">337</a>
 <a href="#338" id="338">338</a>
-<a href="#339" id="339">339</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! based on tailscale/derp/derp_server.go
 //!
 //! The "Server" side of the client. Uses the `ClientConnManager`.
@@ -357,7 +356,6 @@
 </span><span class="kw">const </span>RETRIES: usize = <span class="number">3</span>;
 
 <span class="doccomment">/// Represents a connection to a client.
-///
 </span><span class="comment">// TODO: expand to allow for _multiple connections_ associated with a single PublicKey. This
 // introduces some questions around which connection should be prioritized when forwarding packets
 //

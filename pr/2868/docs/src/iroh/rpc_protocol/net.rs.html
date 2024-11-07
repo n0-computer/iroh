@@ -93,6 +93,7 @@
 <a href="#93" id="93">93</a>
 <a href="#94" id="94">94</a>
 <a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>iroh_net::{endpoint::RemoteInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
 <span class="kw">use </span>nested_enum_utils::enum_conversions;
 <span class="kw">use </span>quic_rpc_derive::rpc_requests;
@@ -132,6 +133,7 @@
     RemoteInfosIter(RpcResult&lt;RemoteInfosIterResponse&gt;),
     RemoteInfo(RpcResult&lt;RemoteInfoResponse&gt;),
     Watch(WatchResponse),
+    Unit(RpcResult&lt;()&gt;),
 }
 
 <span class="doccomment">/// List network path information about all the remote nodes known by this node.

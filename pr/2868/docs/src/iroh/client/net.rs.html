@@ -135,6 +135,11 @@
 <a href="#135" id="135">135</a>
 <a href="#136" id="136">136</a>
 <a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API to manage the iroh networking stack.
 //!
 //! The main entry point is the [`Client`].
@@ -176,7 +181,11 @@
 /// # Examples
 /// ```
 /// use std::str::FromStr;
-/// use iroh_base::{key::NodeId, node_addr::{RelayUrl, NodeAddr}};
+///
+/// use iroh_base::{
+///     key::NodeId,
+///     node_addr::{NodeAddr, RelayUrl},
+/// };
 /// use url::Url;
 ///
 /// # async fn run() -&gt; anyhow::Result&lt;()&gt; {
@@ -187,12 +196,13 @@
 /// // Provide your node an address for another node
 /// let relay_url = RelayUrl::from(Url::parse("https://example.com").unwrap());
 /// let addr = NodeAddr::from_parts(
-///   // the node_id
-///   NodeId::from_str("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6").unwrap(),
-///   // the home relay
-///   Some(relay_url),
-///   // the direct addresses
-///   ["120.0.0.1:0".parse().unwrap()],
+///     // the node_id
+///     NodeId::from_str("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
+///         .unwrap(),
+///     // the home relay
+///     Some(relay_url),
+///     // the direct addresses
+///     ["120.0.0.1:0".parse().unwrap()],
 /// );
 /// net_client.add_node_addr(addr).await?;
 /// // Shut down the node. Passing `true` will force the shutdown, passing in

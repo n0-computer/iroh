@@ -261,7 +261,8 @@
 //! interface to [QUIC] connections and streams to the user, while implementing direct
 //! connectivity using [hole punching] complemented by relay servers under the hood.
 //!
-//! Connecting to a remote node looks roughly like this:
+//! An iroh-net node is created and controlled by the [`Endpoint`], e.g. connecting to
+//! another node:
 //!
 //! ```no_run
 //! # use iroh_net::{Endpoint, NodeAddr};
@@ -275,7 +276,7 @@
 //! # }
 //! ```
 //!
-//! The other side can accept incoming connections like this:
+//! The other node can accept incoming connections using the [`Endpoint`] as well:
 //!
 //! ```no_run
 //! # use iroh_net::{Endpoint, NodeAddr};
@@ -440,8 +441,7 @@
 //! ```no_run
 //! use anyhow::{Context, Result};
 //! use futures_lite::StreamExt;
-//! use iroh_net::ticket::NodeTicket;
-//! use iroh_net::{Endpoint, NodeAddr};
+//! use iroh_net::{ticket::NodeTicket, Endpoint, NodeAddr};
 //!
 //! async fn accept() -&gt; Result&lt;()&gt; {
 //!     // To accept connections at least one ALPN must be configured.

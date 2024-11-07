@@ -487,7 +487,6 @@
 <a href="#487" id="487">487</a>
 <a href="#488" id="488">488</a>
 <a href="#489" id="489">489</a>
-<a href="#490" id="490">490</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
@@ -497,29 +496,28 @@
 //!
 //! ```
 //! use std::time::Duration;
-//! use iroh_net::endpoint::{Source, Endpoint};
+//!
+//! use iroh_net::endpoint::{Endpoint, Source};
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!   let recent = Duration::from_secs(600); // 10 minutes in seconds
+//!     let recent = Duration::from_secs(600); // 10 minutes in seconds
 //!
-//!   let endpoint = Endpoint::builder().bind().await.unwrap();
-//!   let remotes = endpoint.remote_info_iter();
-//!   let locally_discovered: Vec&lt;_&gt; = remotes
-//!      .filter(|remote| {
-//!          remote
-//!              .sources()
-//!              .iter()
-//!              .any(|(source, duration)| {
-//!                  if let Source::Discovery { name } = source {
-//!                      name == iroh_net::discovery::local_swarm_discovery::NAME &amp;&amp; *duration &lt;= recent
-//!                  } else {
-//!                      false
-//!                  }
-//!              })
-//!    })
-//!       .collect();
-//!   println!("locally discovered nodes: {locally_discovered:?}");
+//!     let endpoint = Endpoint::builder().bind().await.unwrap();
+//!     let remotes = endpoint.remote_info_iter();
+//!     let locally_discovered: Vec&lt;_&gt; = remotes
+//!         .filter(|remote| {
+//!             remote.sources().iter().any(|(source, duration)| {
+//!                 if let Source::Discovery { name } = source {
+//!                     name == iroh_net::discovery::local_swarm_discovery::NAME
+//!                         &amp;&amp; *duration &lt;= recent
+//!                 } else {
+//!                     false
+//!                 }
+//!             })
+//!         })
+//!         .collect();
+//!     println!("locally discovered nodes: {locally_discovered:?}");
 //! }
 //! ```
 </span><span class="kw">use </span>std::{

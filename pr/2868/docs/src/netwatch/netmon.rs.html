@@ -105,8 +105,6 @@
 <a href="#105" id="105">105</a>
 <a href="#106" id="106">106</a>
 <a href="#107" id="107">107</a>
-<a href="#108" id="108">108</a>
-<a href="#109" id="109">109</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Monitoring of networking interfaces and route changes.
 
 </span><span class="kw">use </span>anyhow::Result;
@@ -200,8 +198,6 @@
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_smoke_monitor() {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
-
         <span class="kw">let </span>mon = Monitor::new().<span class="kw">await</span>.unwrap();
         <span class="kw">let </span>_token = mon
             .subscribe(|is_major| {

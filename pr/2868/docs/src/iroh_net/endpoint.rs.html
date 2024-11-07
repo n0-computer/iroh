@@ -1855,6 +1855,27 @@
 <a href="#1855" id="1855">1855</a>
 <a href="#1856" id="1856">1856</a>
 <a href="#1857" id="1857">1857</a>
+<a href="#1858" id="1858">1858</a>
+<a href="#1859" id="1859">1859</a>
+<a href="#1860" id="1860">1860</a>
+<a href="#1861" id="1861">1861</a>
+<a href="#1862" id="1862">1862</a>
+<a href="#1863" id="1863">1863</a>
+<a href="#1864" id="1864">1864</a>
+<a href="#1865" id="1865">1865</a>
+<a href="#1866" id="1866">1866</a>
+<a href="#1867" id="1867">1867</a>
+<a href="#1868" id="1868">1868</a>
+<a href="#1869" id="1869">1869</a>
+<a href="#1870" id="1870">1870</a>
+<a href="#1871" id="1871">1871</a>
+<a href="#1872" id="1872">1872</a>
+<a href="#1873" id="1873">1873</a>
+<a href="#1874" id="1874">1874</a>
+<a href="#1875" id="1875">1875</a>
+<a href="#1876" id="1876">1876</a>
+<a href="#1877" id="1877">1877</a>
+<a href="#1878" id="1878">1878</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -2702,7 +2723,7 @@
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
-    /// let mep =  Endpoint::builder().bind().await.unwrap();
+    /// let mep = Endpoint::builder().bind().await.unwrap();
     /// let _addrs = mep.direct_addresses().next().await;
     /// # });
     /// ```
@@ -2814,8 +2835,10 @@
     /// This will close all open QUIC connections with the provided error_code and
     /// reason. See [`quinn::Connection`] for details on how these are interpreted.
     ///
-    /// It will then wait for all connections to actually be shutdown, and afterwards
-    /// close the magic socket.
+    /// It will then wait for all connections to actually be shutdown, and afterwards close
+    /// the magic socket.  Be aware however that the underlying UDP sockets are only closed
+    /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
+    /// are dropped.
     ///
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
@@ -3245,7 +3268,7 @@
     <span class="kw">use </span>tracing::{error_span, info, info_span, Instrument};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::test_utils::run_relay_server;
+    <span class="kw">use </span><span class="kw">crate</span>::test_utils::{run_relay_server, run_relay_server_with};
 
     <span class="kw">const </span>TEST_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/iroh/test"</span>;
 
@@ -3710,6 +3733,25 @@
         <span class="kw">let </span>(r1, r2) = <span class="macro">tokio::try_join!</span>(res_ep1, res_ep2).unwrap();
         r1.expect(<span class="string">"ep1 timeout"</span>).unwrap();
         r2.expect(<span class="string">"ep2 timeout"</span>).unwrap();
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_direct_addresses_no_stun_relay() {
+        <span class="kw">let </span>_guard = iroh_test::logging::setup();
+        <span class="kw">let </span>(relay_map, <span class="kw">_</span>, _guard) = run_relay_server_with(<span class="prelude-val">None</span>).<span class="kw">await</span>.unwrap();
+
+        <span class="kw">let </span>ep = Endpoint::builder()
+            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Custom(relay_map))
+            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
+            .bind()
+            .<span class="kw">await
+            </span>.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), ep.direct_addresses().next())
+            .<span class="kw">await
+            </span>.unwrap()
+            .unwrap();
     }
 }
 </code></pre></div></section></main></body></html>

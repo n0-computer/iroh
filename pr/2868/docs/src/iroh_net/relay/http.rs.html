@@ -49,11 +49,6 @@
 <a href="#49" id="49">49</a>
 <a href="#50" id="50">50</a>
 <a href="#51" id="51">51</a>
-<a href="#52" id="52">52</a>
-<a href="#53" id="53">53</a>
-<a href="#54" id="54">54</a>
-<a href="#55" id="55">55</a>
-<a href="#56" id="56">56</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! HTTP-specific constants for the relay server and client.
 
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>HTTP_UPGRADE_PROTOCOL: <span class="kw-2">&amp;</span>str = <span class="string">"iroh derp http"</span>;
@@ -66,17 +61,12 @@
 /// (over websockets and a custom upgrade protocol).
 </span><span class="kw">pub const </span>RELAY_PATH: <span class="kw-2">&amp;</span>str = <span class="string">"/relay"</span>;
 <span class="doccomment">/// The HTTP path under which the relay allows doing latency queries for testing.
-</span><span class="kw">pub const </span>RELAY_PROBE_PATH: <span class="kw-2">&amp;</span>str = <span class="string">"/relay/probe"</span>;
+</span><span class="kw">pub const </span>RELAY_PROBE_PATH: <span class="kw-2">&amp;</span>str = <span class="string">"/ping"</span>;
 <span class="doccomment">/// The legacy HTTP path under which the relay used to accept relaying connections.
 /// We keep this for backwards compatibility.
 </span><span class="attr">#[cfg(feature = <span class="string">"iroh-relay"</span>)] </span><span class="comment">// legacy paths only used on server-side for backwards compat
 </span><span class="attr">#[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"iroh-relay"</span>)))]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>LEGACY_RELAY_PATH: <span class="kw-2">&amp;</span>str = <span class="string">"/derp"</span>;
-<span class="doccomment">/// The legacy HTTP path under which the relay used to allow latency queries.
-/// We keep this for backwards compatibility.
-</span><span class="attr">#[cfg(feature = <span class="string">"iroh-relay"</span>)] </span><span class="comment">// legacy paths only used on server-side for backwards compat
-</span><span class="attr">#[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"iroh-relay"</span>)))]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>LEGACY_RELAY_PROBE_PATH: <span class="kw-2">&amp;</span>str = <span class="string">"/derp/probe"</span>;
 
 <span class="doccomment">/// The HTTP upgrade protocol used for relaying.
 </span><span class="attr">#[derive(Debug, Copy, Clone, PartialEq, Eq)]
