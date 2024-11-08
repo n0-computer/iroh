@@ -11,7 +11,6 @@
 
 pub mod client;
 pub mod defaults;
-mod dns;
 pub mod http;
 mod map;
 pub mod protos;
@@ -19,6 +18,9 @@ pub mod protos;
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]
 pub mod server;
 mod util;
+
+#[cfg(test)]
+mod dns;
 
 pub use iroh_base::node_addr::RelayUrl;
 
