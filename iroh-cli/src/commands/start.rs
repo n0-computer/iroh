@@ -11,7 +11,7 @@ use anyhow::Result;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use iroh::{
-    net::relay::{RelayMap, RelayMode},
+    net::{RelayMap, RelayMode},
     node::{Node, RpcStatus, DEFAULT_RPC_ADDR},
 };
 use tracing::{info_span, trace, Instrument};

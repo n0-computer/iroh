@@ -33,7 +33,7 @@ use iroh::{
         },
         Iroh,
     },
-    net::{key::PublicKey, relay::RelayUrl, NodeAddr},
+    net::{key::PublicKey, NodeAddr, RelayUrl},
 };
 use tokio::io::AsyncWriteExt;
 
