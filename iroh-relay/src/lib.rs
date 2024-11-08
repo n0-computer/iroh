@@ -9,10 +9,10 @@
 
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
+#[cfg(feature = "client")]
 pub mod client;
 pub mod defaults;
 pub mod http;
-// mod map;
 pub mod protos;
 #[cfg(feature = "server")]
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]

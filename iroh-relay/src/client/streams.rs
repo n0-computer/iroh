@@ -23,7 +23,7 @@ pub enum MaybeTlsStreamReader {
             tokio::io::ReadHalf<tokio_rustls::client::TlsStream<ProxyStream>>,
         >,
     ),
-    #[cfg(test)]
+    #[cfg(all(test, feature = "server"))]
     Mem(tokio::io::ReadHalf<tokio::io::DuplexStream>),
 }
 
@@ -45,7 +45,7 @@ impl AsyncRead for MaybeTlsStreamReader {
 pub enum MaybeTlsStreamWriter {
     Raw(tokio::io::WriteHalf<ProxyStream>),
     Tls(tokio::io::WriteHalf<tokio_rustls::client::TlsStream<ProxyStream>>),
-    #[cfg(test)]
+    #[cfg(all(test, feature = "server"))]
     Mem(tokio::io::WriteHalf<tokio::io::DuplexStream>),
 }
 
@@ -58,7 +58,7 @@ impl AsyncWrite for MaybeTlsStreamWriter {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_write(cx, buf),
             Self::Tls(stream) => Pin::new(stream).poll_write(cx, buf),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "server"))]
             Self::Mem(stream) => Pin::new(stream).poll_write(cx, buf),
         }
     }
@@ -70,7 +70,7 @@ impl AsyncWrite for MaybeTlsStreamWriter {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_flush(cx),
             Self::Tls(stream) => Pin::new(stream).poll_flush(cx),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "server"))]
             Self::Mem(stream) => Pin::new(stream).poll_flush(cx),
         }
     }
@@ -82,7 +82,7 @@ impl AsyncWrite for MaybeTlsStreamWriter {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_shutdown(cx),
             Self::Tls(stream) => Pin::new(stream).poll_shutdown(cx),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "server"))]
             Self::Mem(stream) => Pin::new(stream).poll_shutdown(cx),
         }
     }
@@ -95,7 +95,7 @@ impl AsyncWrite for MaybeTlsStreamWriter {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
             Self::Tls(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "server"))]
             Self::Mem(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
         }
     }

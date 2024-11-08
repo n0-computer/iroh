@@ -118,7 +118,7 @@ mainline = "2.0.1"
 duct = "0.13.6"
 
 [features]
-default = ["metrics", "discovery-pkarr-dht", "server"]
+default = ["metrics", "discovery-pkarr-dht", "server", "client"]
 server = [
     "dep:tokio-rustls-acme",
     "dep:axum",
@@ -132,6 +132,7 @@ metrics = ["iroh-metrics/metrics", "server"]
 test-utils = []
 discovery-local-network = ["dep:swarm-discovery"]
 discovery-pkarr-dht = ["pkarr/dht", "dep:genawaiter"]
+client = []
 
 [[bin]]
 name = "iroh-relay"
