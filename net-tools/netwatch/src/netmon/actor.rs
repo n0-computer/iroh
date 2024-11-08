@@ -33,6 +33,7 @@ use crate::{
 #[derive(Debug, Copy, Clone)]
 pub(super) enum NetworkMessage {
     /// A change was detected.
+    #[allow(dead_code)]
     Change,
 }
 
