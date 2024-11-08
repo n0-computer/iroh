@@ -257,6 +257,7 @@
 <a href="#257" id="257">257</a>
 <a href="#258" id="258">258</a>
 <a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap,
     sync::Arc,
@@ -292,6 +293,7 @@
 </span><span class="attr">#[derive(Debug, Copy, Clone)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>NetworkMessage {
     <span class="doccomment">/// A change was detected.
+    </span><span class="attr">#[allow(dead_code)]
     </span>Change,
 }
 
