@@ -23,7 +23,7 @@ use iroh_docs::{
     store::{DownloadPolicy, FilterKind, Query},
     AuthorId, ContentStatus,
 };
-use iroh_net::relay::RelayMode;
+use iroh_net::RelayMode;
 use rand::{CryptoRng, Rng, SeedableRng};
 use tracing::{debug, error_span, info, Instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -983,7 +983,7 @@ async fn sync_big() -> Result<()> {
 async fn test_list_docs_stream() -> Result<()> {
     let node = Node::memory()
         .node_discovery(iroh::node::DiscoveryConfig::None)
-        .relay_mode(iroh::net::relay::RelayMode::Disabled)
+        .relay_mode(iroh::net::RelayMode::Disabled)
         .enable_docs()
         .spawn()
         .await?;

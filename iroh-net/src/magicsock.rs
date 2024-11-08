@@ -35,7 +35,7 @@ use futures_lite::{FutureExt, Stream, StreamExt};
 use futures_util::stream::BoxStream;
 use iroh_base::key::NodeId;
 use iroh_metrics::{inc, inc_by};
-use iroh_relay::{protos::stun, RelayMap, RelayUrl};
+use iroh_relay::protos::stun;
 use netwatch::{interfaces, ip::LocalAddresses, netmon};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -66,7 +66,7 @@ use crate::{
     dns::DnsResolver,
     endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
-    netcheck, AddrInfo,
+    netcheck, AddrInfo, RelayMap, RelayUrl,
 };
 
 mod metrics;
@@ -2778,13 +2778,12 @@ impl NetInfo {
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
-    use iroh_relay::RelayMode;
     use iroh_test::CallOnDrop;
     use rand::RngCore;
     use tokio_util::task::AbortOnDropHandle;
 
     use super::*;
-    use crate::{defaults::staging::EU_RELAY_HOSTNAME, tls, Endpoint};
+    use crate::{defaults::staging::EU_RELAY_HOSTNAME, tls, Endpoint, RelayMode};
 
     const ALPN: &[u8] = b"n0/test/1";
 

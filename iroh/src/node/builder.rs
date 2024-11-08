@@ -27,9 +27,9 @@ use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
     endpoint::TransportConfig,
-    Endpoint,
+    Endpoint, RelayMode,
 };
-use iroh_relay::{force_staging_infra, RelayMode};
+use iroh_relay::force_staging_infra;
 use iroh_router::{ProtocolHandler, RouterBuilder};
 use quic_rpc::transport::{boxed::BoxableListener, quinn::QuinnListener};
 use serde::{Deserialize, Serialize};

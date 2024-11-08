@@ -26,7 +26,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use iroh_metrics::inc;
-use iroh_relay::{http::RELAY_PROBE_PATH, protos::stun, RelayMap, RelayNode, RelayUrl};
+use iroh_relay::{http::RELAY_PROBE_PATH, protos::stun};
 use netwatch::{interfaces, UdpSocket};
 use rand::seq::IteratorRandom;
 use tokio::{
@@ -45,6 +45,7 @@ use crate::{
     netcheck::{self, Report},
     ping::{PingError, Pinger},
     util::MaybeFuture,
+    RelayMap, RelayNode, RelayUrl,
 };
 
 mod hairpin;

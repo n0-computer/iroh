@@ -24,7 +24,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use derive_more::Debug;
 use futures_lite::{Stream, StreamExt};
-use iroh_relay::{force_staging_infra, RelayMode, RelayUrl};
+use iroh_relay::force_staging_infra;
 use pin_project::pin_project;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, instrument, trace, warn};
@@ -37,7 +37,7 @@ use crate::{
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
     magicsock::{self, Handle, QuicMappedAddr},
-    tls, NodeId,
+    tls, NodeId, RelayMode, RelayUrl,
 };
 
 mod rtt_actor;

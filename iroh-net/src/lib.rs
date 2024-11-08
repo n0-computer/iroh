@@ -243,14 +243,16 @@ mod magicsock;
 pub mod metrics;
 pub mod netcheck;
 pub mod ping;
+mod relay_map;
 pub mod ticket;
 pub mod tls;
+
 pub(crate) mod util;
 
 pub use endpoint::{AddrInfo, Endpoint, NodeAddr};
 pub use iroh_base::{key, key::NodeId};
 pub use iroh_relay as relay;
-pub use iroh_relay::{RelayMap, RelayMode, RelayNode, RelayUrl};
+pub use relay_map::{RelayMap, RelayMode, RelayNode, RelayUrl};
 
 #[cfg(any(test, feature = "test-utils"))]
 #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
