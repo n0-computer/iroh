@@ -432,7 +432,7 @@ where
     /// assisting in holepunching to establish a direct connection between peers.
     ///
     /// When using [`RelayMode::Custom`], the provided `relay_map` must contain at least one
-    /// configured relay node.  If an invalid [`iroh_net::relay::RelayMode`] is provided
+    /// configured relay node.  If an invalid [`iroh_net::RelayMode`] is provided
     /// [`Self::spawn`] will result in an error.
     ///
     /// # Usage during tests

@@ -224,7 +224,7 @@
 //! [`discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
 //! [number 0]: https://n0.computer
-//! [`RelayMode::Default`]: crate::relay::RelayMode::Default
+//! [`RelayMode::Default`]: crate::RelayMode::Default
 //! [the discovery module]: crate::discovery
 //! [`Connection::open_bi`]: crate::endpoint::Connection::open_bi
 //! [`Connection::accept_bi`]: crate::endpoint::Connection::accept_bi
