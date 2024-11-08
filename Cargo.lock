@@ -2626,7 +2626,7 @@ dependencies = [
  "iroh-io",
  "iroh-metrics",
  "iroh-net",
- "iroh-quinn 0.12.0",
+ "iroh-quinn",
  "iroh-relay",
  "iroh-router",
  "iroh-test 0.28.0",
@@ -2723,7 +2723,7 @@ dependencies = [
  "iroh-io",
  "iroh-metrics",
  "iroh-net",
- "iroh-quinn 0.12.0",
+ "iroh-quinn",
  "iroh-router",
  "nested_enum_utils",
  "num_cpus",
@@ -3000,8 +3000,8 @@ dependencies = [
  "iroh-base",
  "iroh-metrics",
  "iroh-net",
- "iroh-quinn 0.12.0",
- "iroh-quinn-proto 0.12.0",
+ "iroh-quinn",
+ "iroh-quinn-proto",
  "iroh-quinn-udp",
  "iroh-relay",
  "iroh-test 0.28.0",
@@ -3074,7 +3074,7 @@ dependencies = [
  "hdrhistogram",
  "iroh-metrics",
  "iroh-net",
- "iroh-quinn 0.12.0",
+ "iroh-quinn",
  "iroh-relay",
  "rcgen",
  "rustls",
@@ -3086,30 +3086,12 @@ dependencies = [
 
 [[package]]
 name = "iroh-quinn"
-version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fd590a39a14cfc168efa4d894de5039d65641e62d8da4a80733018ababe3c33"
-dependencies = [
- "bytes",
- "iroh-quinn-proto 0.11.6",
- "iroh-quinn-udp",
- "pin-project-lite",
- "rustc-hash",
- "rustls",
- "socket2",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "iroh-quinn"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35ba75a5c57cff299d2d7ca1ddee053f66339d1756bd79ec637bcad5aa61100e"
 dependencies = [
  "bytes",
- "iroh-quinn-proto 0.12.0",
+ "iroh-quinn-proto",
  "iroh-quinn-udp",
  "pin-project-lite",
  "rustc-hash",
@@ -3117,24 +3099,6 @@ dependencies = [
  "socket2",
  "thiserror",
  "tokio",
- "tracing",
-]
-
-[[package]]
-name = "iroh-quinn-proto"
-version = "0.11.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fd0538ff12efe3d61ea1deda2d7913f4270873a519d43e6995c6e87a1558538"
-dependencies = [
- "bytes",
- "rand",
- "ring",
- "rustc-hash",
- "rustls",
- "rustls-platform-verifier",
- "slab",
- "thiserror",
- "tinyvec",
  "tracing",
 ]
 
@@ -3174,22 +3138,15 @@ name = "iroh-relay"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "axum",
- "backoff",
  "base64 0.22.1",
  "bytes",
  "clap",
- "criterion",
  "crypto_box",
- "der",
  "derive_more",
  "duct",
- "futures-buffered",
- "futures-concurrency",
  "futures-lite 2.4.0",
  "futures-sink",
  "futures-util",
- "genawaiter",
  "governor",
  "hex",
  "hickory-proto 0.25.0-alpha.2",
@@ -3199,29 +3156,15 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "igd-next",
  "iroh-base",
  "iroh-metrics",
- "iroh-quinn 0.11.3",
- "iroh-quinn-proto 0.11.6",
- "iroh-quinn-udp",
  "iroh-test 0.27.0",
  "libc",
- "mainline",
- "netdev",
- "netlink-packet-core",
- "netlink-packet-route",
- "netlink-sys",
- "netwatch",
- "ntest",
  "num_enum",
  "once_cell",
  "parking_lot",
  "pin-project",
- "pkarr",
- "portmapper",
  "postcard",
- "pretty_assertions",
  "proptest",
  "rand",
  "rand_chacha",
@@ -3229,7 +3172,6 @@ dependencies = [
  "regex",
  "reqwest",
  "ring",
- "rtnetlink",
  "rustls",
  "rustls-pemfile",
  "rustls-webpki",
@@ -3237,17 +3179,12 @@ dependencies = [
  "serde_json",
  "smallvec",
  "socket2",
- "strum 0.26.3",
  "stun-rs",
- "surge-ping",
- "swarm-discovery",
- "testresult",
  "thiserror",
  "time",
  "tokio",
  "tokio-rustls",
  "tokio-rustls-acme",
- "tokio-stream",
  "tokio-tungstenite",
  "tokio-tungstenite-wasm",
  "tokio-util",
@@ -3256,12 +3193,8 @@ dependencies = [
  "tracing-subscriber",
  "tungstenite",
  "url",
- "watchable",
  "webpki-roots",
- "windows 0.51.1",
- "wmi",
  "x509-parser",
- "z32",
 ]
 
 [[package]]
@@ -4588,7 +4521,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "hex",
- "iroh-quinn 0.12.0",
+ "iroh-quinn",
  "pin-project",
  "serde",
  "slab",
