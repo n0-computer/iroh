@@ -40,7 +40,7 @@ hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
 igd-next = { version = "0.15.1", features = ["aio_tokio"] }
 iroh-base = { version = "0.28.0", features = ["key"] }
-iroh-relay = { path = "../iroh-relay", optional = true }
+iroh-relay = { path = "../iroh-relay", features = ["client"] }
 libc = "0.2.139"
 netdev = "0.30.0"
 netwatch = { version = "0.1.0", path = "../net-tools/netwatch" }
@@ -137,7 +137,6 @@ duct = "0.13.6"
 [features]
 default = ["metrics", "discovery-pkarr-dht", "iroh-relay"]
 iroh-relay = [
-    "dep:iroh-relay",
     "dep:tokio-rustls-acme",
     "dep:axum",
     "dep:clap",
