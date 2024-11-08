@@ -33,7 +33,6 @@ use crate::{
 #[derive(Debug, Copy, Clone)]
 pub(super) enum NetworkMessage {
     /// A change was detected.
-    #[allow(dead_code)]
     Change,
 }
 
@@ -81,7 +80,6 @@ impl Actor {
         let interface_state = State::new().await;
         let wall_time = Instant::now();
 
-        // Use flume channels, as tokio::mpsc is not safe to use across ffi boundaries.
         let (mon_sender, mon_receiver) = mpsc::channel(MON_CHAN_CAPACITY);
         let route_monitor = RouteMonitor::new(mon_sender)?;
         let (actor_sender, actor_receiver) = mpsc::channel(ACTOR_CHAN_CAPACITY);
@@ -102,7 +100,7 @@ impl Actor {
         self.actor_sender.clone()
     }
 
-    pub(super) async fn run(mut self) {
+    pub(super) async fn run(mut self) -> Result<()> {
         const DEBOUNCE: Duration = Duration::from_millis(250);
 
         let mut last_event = None;
@@ -127,10 +125,14 @@ impl Actor {
                         debounce_interval.reset_immediately();
                     }
                 }
-                Some(_event) = self.mon_receiver.recv() => {
-                    trace!("network activity detected");
-                    last_event.replace(false);
-                    debounce_interval.reset_immediately();
+                Some(event) = self.mon_receiver.recv() => {
+                    match event {
+                        NetworkMessage::Change => {
+                            trace!("network activity detected");
+                            last_event.replace(false);
+                            debounce_interval.reset_immediately();
+                        }
+                    }
                 }
                 Some(msg) = self.actor_receiver.recv() => match msg {
                     ActorMessage::Subscribe(callback, s) => {
@@ -153,6 +155,8 @@ impl Actor {
                 }
             }
         }
+
+        Ok(())
     }
 
     fn next_callback_token(&mut self) -> CallbackToken {

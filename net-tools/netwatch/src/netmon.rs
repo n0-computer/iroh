@@ -2,10 +2,9 @@
 
 use anyhow::Result;
 use futures_lite::future::Boxed as BoxFuture;
-use tokio::{
-    sync::{mpsc, oneshot},
-    task::JoinHandle,
-};
+use tokio::sync::{mpsc, oneshot};
+use tokio_util::task::AbortOnDropHandle;
+use tracing::warn;
 
 mod actor;
 #[cfg(target_os = "android")]
@@ -30,14 +29,9 @@ use self::actor::{Actor, ActorMessage};
 #[derive(Debug)]
 pub struct Monitor {
     /// Task handle for the monitor task.
-    handle: JoinHandle<()>,
+    #[allow(dead_code)]
+    handle: AbortOnDropHandle<()>,
     actor_tx: mpsc::Sender<ActorMessage>,
-}
-
-impl Drop for Monitor {
-    fn drop(&mut self) {
-        self.handle.abort();
-    }
 }
 
 impl Monitor {
@@ -47,10 +41,15 @@ impl Monitor {
         let actor_tx = actor.subscribe();
 
         let handle = tokio::task::spawn(async move {
-            actor.run().await;
+            if let Err(err) = actor.run().await {
+                warn!("netmon actor died: {:?}", err);
+            }
         });
 
-        Ok(Monitor { handle, actor_tx })
+        Ok(Monitor {
+            handle: AbortOnDropHandle::new(handle),
+            actor_tx,
+        })
     }
 
     /// Subscribe to network changes.
