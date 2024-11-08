@@ -10,9 +10,8 @@ use iroh_net::{
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
     Endpoint, NodeAddr,
 };
-use tracing::{trace, warn};
-
 use iroh_relay::{RelayMap, RelayMode, RelayUrl};
+use tracing::{trace, warn};
 
 use crate::{
     client_handler, stats::TransferResult, ClientStats, ConnectionSelector, EndpointSelector, Opt,

@@ -4,14 +4,13 @@ use std::net::Ipv4Addr;
 use anyhow::Result;
 pub use dns_and_pkarr_servers::DnsPkarrServer;
 pub use dns_server::create_dns_resolver;
-use tokio::sync::oneshot;
-
-use crate::defaults::DEFAULT_STUN_PORT;
-
 use iroh_relay::{
     server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
     RelayMap, RelayNode, RelayUrl,
 };
+use tokio::sync::oneshot;
+
+use crate::defaults::DEFAULT_STUN_PORT;
 
 /// A drop guard to clean up test infrastructure.
 ///

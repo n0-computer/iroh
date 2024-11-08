@@ -13,6 +13,7 @@ use std::{
 
 use anyhow::{bail, Context as _, Result};
 use hyper::HeaderMap;
+use iroh_base::key::PublicKey;
 use iroh_metrics::{core::UsageStatsReport, inc, inc_by, report_usage_stats};
 use time::{Date, OffsetDateTime};
 use tokio::sync::mpsc;
@@ -36,7 +37,6 @@ use crate::{
         types::ServerMessage,
     },
 };
-use iroh_base::key::PublicKey;
 
 // TODO: skipping `verboseDropKeys` for now
 

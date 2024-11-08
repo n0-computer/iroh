@@ -150,8 +150,9 @@ pub fn parse_response(b: &[u8]) -> Result<(TransactionId, SocketAddr), Error> {
 #[cfg(test)]
 mod tests {
 
-    use super::*;
     use std::net::{IpAddr, Ipv4Addr};
+
+    use super::*;
 
     // TODO(@divma): what's this and why is it commented?
     // Test to check if an existing stun server works

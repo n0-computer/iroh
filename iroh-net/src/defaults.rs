@@ -1,8 +1,7 @@
 //! Default values used in [`iroh-net`][`crate`]
 
-use url::Url;
-
 use iroh_relay::{RelayMap, RelayNode};
+use url::Url;
 
 /// The default STUN port used by the Relay server.
 ///

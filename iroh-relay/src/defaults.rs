@@ -20,9 +20,8 @@ pub const DEFAULT_METRICS_PORT: u16 = 9090;
 pub mod prod {
     use url::Url;
 
-    use crate::{RelayMap, RelayNode};
-
     use super::*;
+    use crate::{RelayMap, RelayNode};
 
     /// Hostname of the default NA relay.
     pub const NA_RELAY_HOSTNAME: &str = "use1-1.relay.iroh.network.";
@@ -89,9 +88,8 @@ pub mod prod {
 pub mod staging {
     use url::Url;
 
-    use crate::{RelayMap, RelayNode};
-
     use super::*;
+    use crate::{RelayMap, RelayNode};
 
     /// Hostname of the default NA relay.
     pub const NA_RELAY_HOSTNAME: &str = "staging-use1-1.relay.iroh.network.";

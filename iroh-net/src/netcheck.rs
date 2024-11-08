@@ -17,6 +17,7 @@ use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use hickory_resolver::TokioAsyncResolver as DnsResolver;
 use iroh_metrics::inc;
+use iroh_relay::{protos::stun, RelayMap, RelayUrl};
 use netwatch::{IpFamily, UdpSocket};
 use tokio::{
     sync::{self, mpsc, oneshot},
@@ -24,8 +25,6 @@ use tokio::{
 };
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
-
-use iroh_relay::{protos::stun, RelayMap, RelayUrl};
 
 mod metrics;
 mod reportgen;
@@ -773,6 +772,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use bytes::BytesMut;
+    use iroh_relay::RelayNode;
     use tokio::time;
     use tracing::info;
 
@@ -781,7 +781,6 @@ mod tests {
         defaults::{staging::EU_RELAY_HOSTNAME, DEFAULT_STUN_PORT},
         ping::Pinger,
     };
-    use iroh_relay::RelayNode;
 
     mod stun_utils {
         //! Utils for testing that expose a simple stun server.

@@ -44,10 +44,8 @@ use crate::{
     defaults::timeouts::*,
     http::{Protocol, RELAY_PATH},
     protos::relay::DerpCodec,
-    RelayUrl,
+    util, RelayUrl,
 };
-
-use crate::util;
 
 pub(crate) mod conn;
 pub(crate) mod streams;

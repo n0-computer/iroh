@@ -583,6 +583,7 @@ mod tests {
 
     use anyhow::Result;
     use bytes::Bytes;
+    use iroh_base::key::{PublicKey, SecretKey};
     use reqwest::Url;
     use tokio::{sync::mpsc, task::JoinHandle};
     use tracing::{info, info_span, Instrument};
@@ -590,8 +591,6 @@ mod tests {
 
     use super::*;
     use crate::client::{conn::ReceivedMessage, Client, ClientBuilder};
-
-    use iroh_base::key::{PublicKey, SecretKey};
 
     pub(crate) fn make_tls_config() -> TlsConfig {
         let subject_alt_names = vec!["localhost".to_string()];

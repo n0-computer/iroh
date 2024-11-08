@@ -12,21 +12,23 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_lite::StreamExt;
 use futures_util::SinkExt;
+use iroh_base::key::PublicKey;
 use iroh_metrics::{inc, inc_by};
 use tokio::sync::mpsc;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{trace, Instrument};
 
 use crate::{
-    protos::disco,
-    protos::relay::{write_frame, Frame, KEEP_ALIVE},
+    protos::{
+        disco,
+        relay::{write_frame, Frame, KEEP_ALIVE},
+    },
     server::{
         metrics::Metrics,
         streams::RelayIo,
         types::{Packet, ServerMessage},
     },
 };
-use iroh_base::key::PublicKey;
 
 /// The [`Server`] side representation of a [`Client`]'s connection.
 ///
@@ -460,6 +462,7 @@ impl ClientConnIo {
 #[cfg(test)]
 mod tests {
     use anyhow::bail;
+    use iroh_base::key::SecretKey;
     use tokio_util::codec::Framed;
 
     use super::*;
@@ -468,7 +471,6 @@ mod tests {
         protos::relay::{recv_frame, DerpCodec, FrameType},
         server::streams::MaybeTlsStream,
     };
-    use iroh_base::key::SecretKey;
 
     #[tokio::test]
     async fn test_client_conn_io_basic() -> Result<()> {

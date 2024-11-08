@@ -10,6 +10,7 @@ use anyhow::Context;
 use backoff::backoff::Backoff;
 use bytes::{Bytes, BytesMut};
 use iroh_metrics::{inc, inc_by};
+use iroh_relay::{self as relay, client::ClientError, ReceivedMessage, RelayUrl, MAX_PACKET_SIZE};
 use tokio::{
     sync::{mpsc, oneshot},
     task::{JoinHandle, JoinSet},
@@ -20,7 +21,6 @@ use tracing::{debug, info, info_span, trace, warn, Instrument};
 
 use super::{ActorMessage, MagicSock, Metrics as MagicsockMetrics, RelayContents};
 use crate::key::{NodeId, PUBLIC_KEY_LENGTH};
-use iroh_relay::{self as relay, client::ClientError, ReceivedMessage, RelayUrl, MAX_PACKET_SIZE};
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
 const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);

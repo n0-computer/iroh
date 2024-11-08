@@ -10,10 +10,10 @@ use std::{
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
-use iroh_relay::defaults::{
-    DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_STUN_PORT,
+use iroh_relay::{
+    defaults::{DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_STUN_PORT},
+    server as relay,
 };
-use iroh_relay::server as relay;
 use serde::{Deserialize, Serialize};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
 use tracing::debug;

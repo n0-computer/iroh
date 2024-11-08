@@ -439,13 +439,13 @@ mod tests {
         time::SystemTime,
     };
 
+    use iroh_relay::RelayMode;
     use parking_lot::Mutex;
     use rand::Rng;
     use tokio_util::task::AbortOnDropHandle;
 
     use super::*;
     use crate::key::SecretKey;
-    use iroh_relay::RelayMode;
 
     #[derive(Debug, Clone, Default)]
     struct TestDiscoveryShared {
@@ -732,6 +732,7 @@ mod test_dns_pkarr {
 
     use anyhow::Result;
     use iroh_base::key::SecretKey;
+    use iroh_relay::{RelayMap, RelayMode};
     use tokio_util::task::AbortOnDropHandle;
 
     use crate::{
@@ -744,7 +745,6 @@ mod test_dns_pkarr {
         },
         AddrInfo, Endpoint, NodeAddr,
     };
-    use iroh_relay::{RelayMap, RelayMode};
 
     const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
 

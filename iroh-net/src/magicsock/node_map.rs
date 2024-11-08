@@ -10,6 +10,7 @@ use std::{
 use futures_lite::stream::Stream;
 use iroh_base::key::NodeId;
 use iroh_metrics::inc;
+use iroh_relay::RelayUrl;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
@@ -27,7 +28,6 @@ use crate::{
     key::PublicKey,
     NodeAddr,
 };
-use iroh_relay::RelayUrl;
 
 mod best_addr;
 mod node_state;

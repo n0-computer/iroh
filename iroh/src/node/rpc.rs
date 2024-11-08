@@ -4,11 +4,9 @@ use std::{
     time::Duration,
 };
 
-use crate::base::node_addr::RelayUrl;
 use anyhow::{anyhow, Result};
 use futures_lite::{Stream, StreamExt};
-use iroh_base::key::NodeId;
-use iroh_base::node_addr::NodeAddr;
+use iroh_base::{key::NodeId, node_addr::NodeAddr};
 use iroh_blobs::{
     export::ExportProgress,
     net_protocol::Blobs as BlobsProtocol,
@@ -29,6 +27,7 @@ use tracing::{debug, info, warn};
 
 use super::IrohServerEndpoint;
 use crate::{
+    base::node_addr::RelayUrl,
     client::NodeStatus,
     node::NodeInner,
     rpc_protocol::{

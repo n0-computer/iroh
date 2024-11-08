@@ -6,6 +6,7 @@ use std::{
 };
 
 use iroh_metrics::inc;
+use iroh_relay::{protos::stun, RelayUrl};
 use netwatch::ip::is_unicast_link_local;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -26,9 +27,6 @@ use crate::{
     util::relay_only_mode,
     NodeAddr, NodeId,
 };
-
-use iroh_relay::protos::stun;
-use iroh_relay::RelayUrl;
 
 /// Number of addresses that are not active that we keep around per node.
 ///

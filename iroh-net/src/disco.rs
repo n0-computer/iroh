@@ -24,12 +24,12 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
+use iroh_relay::RelayUrl;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
 use super::key::PublicKey;
 use crate::key;
-use iroh_relay::RelayUrl;
 
 // TODO: custom magicn
 /// The 6 byte header of all discovery messages.

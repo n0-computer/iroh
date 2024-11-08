@@ -4,10 +4,8 @@ use std::net::Ipv4Addr;
 use anyhow::Result;
 use tokio::sync::oneshot;
 
-use crate::defaults::DEFAULT_STUN_PORT;
-
 use super::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig};
-use crate::{RelayMap, RelayNode, RelayUrl};
+use crate::{defaults::DEFAULT_STUN_PORT, RelayMap, RelayNode, RelayUrl};
 
 /// A drop guard to clean up test infrastructure.
 ///

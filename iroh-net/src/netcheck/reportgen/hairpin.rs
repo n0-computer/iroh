@@ -15,6 +15,7 @@
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use anyhow::{bail, Context, Result};
+use iroh_relay::protos::stun;
 use netwatch::UdpSocket;
 use tokio::{sync::oneshot, time::Instant};
 use tokio_util::task::AbortOnDropHandle;
@@ -24,8 +25,6 @@ use crate::{
     defaults::timeouts::HAIRPIN_CHECK_TIMEOUT,
     netcheck::{self, reportgen, Inflight},
 };
-
-use iroh_relay::protos::stun;
 
 /// Handle to the hairpin actor.
 ///
