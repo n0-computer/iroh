@@ -56,6 +56,8 @@ pub struct Metrics {
     /// Number of connections we have removed because of an error
     pub disconnects: Counter,
 
+    /// Number of unique client keys per day for just this relay
+    pub unique_client_keys_local_1d: Counter,
     /// Number of unique client keys per day
     pub unique_client_keys_1d: Counter,
     /// Number of unique client keys per 7 days
@@ -108,6 +110,7 @@ impl Default for Metrics {
             accepts: Counter::new("Number of times this server has accepted a connection."),
             disconnects: Counter::new("Number of clients that have then disconnected."),
 
+            unique_client_keys_local_1d: Counter::new("Number of unique client keys per day for just this relay."),
             unique_client_keys_1d: Counter::new("Number of unique client keys per day."),
             unique_client_keys_7d: Counter::new("Number of unique client keys per 7 days."),
             unique_client_keys_30d: Counter::new("Number of unique client keys per 30 days."),
@@ -201,12 +204,6 @@ impl ClientCounter {
                         .sadd(format!("{}_1d", relay_key), node_id_str.clone())
                         .ignore();
                     pipeline
-                        .sadd(format!("{}_7d", relay_key), node_id_str.clone())
-                        .ignore();
-                    pipeline
-                        .sadd(format!("{}_30d", relay_key), node_id_str.clone())
-                        .ignore();
-                    pipeline
                         .sadd(format!("{}_1d", global_key), node_id_str.clone())
                         .ignore();
                     pipeline
@@ -217,12 +214,6 @@ impl ClientCounter {
                         .ignore();
                 }
                 pipeline.expire(format!("{}_1d", relay_key), 86400).ignore(); // 1 day
-                pipeline
-                    .expire(format!("{}_7d", relay_key), 604800)
-                    .ignore(); // 7 days
-                pipeline
-                    .expire(format!("{}_30d", relay_key), 2592000)
-                    .ignore(); // 30 days
                 pipeline
                     .expire(format!("{}_1d", global_key), 86400)
                     .ignore(); // 1 day
@@ -264,24 +255,30 @@ impl ClientCounter {
                     }
                     tracing::debug!("Batch update Redis done");
 
-                    let unique_nodes_1d =
+                    let unique_nodes_local_1d =
                         get_unique_nodes(&rclient_clone, format!("{}_1d", relay_key).as_str())
                             .await
                             .unwrap_or(0);
+                    let unique_nodes_1d =
+                        get_unique_nodes(&rclient_clone, format!("{}_1d", global_key).as_str())
+                            .await
+                            .unwrap_or(0);
                     let unique_nodes_7d =
-                        get_unique_nodes(&rclient_clone, format!("{}_7d", relay_key).as_str())
+                        get_unique_nodes(&rclient_clone, format!("{}_7d", global_key).as_str())
                             .await
                             .unwrap_or(0);
                     let unique_nodes_30d =
-                        get_unique_nodes(&rclient_clone, format!("{}_30d", relay_key).as_str())
+                        get_unique_nodes(&rclient_clone, format!("{}_30d", global_key).as_str())
                             .await
                             .unwrap_or(0);
                     tracing::debug!(
-                        "Unique nodes 1 7 30 days: {} {} {}",
+                        "Unique nodes local_1d 1d 7d 30d days: {} {} {} {}",
+                        unique_nodes_local_1d,
                         unique_nodes_1d,
                         unique_nodes_7d,
                         unique_nodes_30d
                     );
+                    iroh_metrics::set!(Metrics, unique_client_keys_local_1d, unique_nodes_local_1d);
                     iroh_metrics::set!(Metrics, unique_client_keys_1d, unique_nodes_1d);
                     iroh_metrics::set!(Metrics, unique_client_keys_7d, unique_nodes_7d);
                     iroh_metrics::set!(Metrics, unique_client_keys_30d, unique_nodes_30d);
