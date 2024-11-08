@@ -18,11 +18,6 @@ pub fn default_resolver() -> &'static DnsResolver {
     &DNS_RESOLVER
 }
 
-/// Get the DNS resolver used within iroh-net.
-pub fn resolver() -> &'static TokioAsyncResolver {
-    Lazy::force(&DNS_RESOLVER)
-}
-
 /// Deprecated IPv6 site-local anycast addresses still configured by windows.
 ///
 /// Windows still configures these site-local addresses as soon even as an IPv6 loopback
