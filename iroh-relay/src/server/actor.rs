@@ -291,8 +291,8 @@ impl ServerActor {
                                 None, // TODO(arqu): attribute to user id; possibly with the re-introduction of request tokens or other auth
                                 Some(key.to_string()),
                             )).await;
-                            // let nc = self.client_counter.update(key);
-                            // inc_by!(Metrics, unique_client_keys, nc);
+                            let nc = self.client_counter.update(key);
+                            inc_by!(Metrics, unique_client_keys, nc);
 
                             // build and register client, starting up read & write loops for the
                             // client connection

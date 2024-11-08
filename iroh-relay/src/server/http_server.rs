@@ -265,7 +265,7 @@ impl ServerState {
                             debug!("[{http_str}] relay: Connection opened from {peer_addr}");
                             let tls_config = tls_config.clone();
                             let service = service.clone();
-                            println!("spawning new accept task, currently handling {} tasks", set.len());
+
                             // spawn a task to handle the connection
                             set.spawn(async move {
                                 if let Err(error) = service
@@ -281,7 +281,6 @@ impl ServerState {
                                         }
                                     }
                                 }
-                                println!("spawn done");
                             }.instrument(info_span!("conn", peer = %peer_addr)));
                         }
                         Err(err) => {
@@ -551,13 +550,11 @@ impl RelayService {
     where
         I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync + 'static,
     {
-        let mut builder = hyper::server::conn::http1::Builder::new();
-        let conn = builder
+        let conn = hyper::server::conn::http1::Builder::new()
             .serve_connection(hyper_util::rt::TokioIo::new(io), self)
             .with_upgrades();
 
         conn.await?;
-        println!("connection shutdwon");
 
         Ok(())
     }
