@@ -1,8 +1,8 @@
 //! This module exports [`looks_like_disco_wrapper`] as the only disco-related relay
-//! funcionality.
+//! functionality.
 //!
 //! Despite the relay not being able to read disco messages by design, it does attempt to
-//! identify this trafic to ensure hole-punching messages are not lost do to congestion.
+//! identify this traffic to ensure hole-punching messages are not lost do to congestion.
 
 /// The 6 byte header of all discovery messages.
 pub const MAGIC: &str = "TS💬"; // 6 bytes: 0x54 53 f0 9f 92 ac
