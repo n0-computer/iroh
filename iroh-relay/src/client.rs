@@ -44,11 +44,12 @@ use crate::{
     defaults::timeouts::*,
     http::{Protocol, RELAY_PATH},
     protos::relay::DerpCodec,
-    util, RelayUrl,
+    RelayUrl,
 };
 
 pub(crate) mod conn;
 pub(crate) mod streams;
+mod util;
 
 /// Possible connection errors on the [`Client`]
 #[derive(Debug, thiserror::Error)]

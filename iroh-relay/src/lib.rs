@@ -17,7 +17,6 @@ pub mod protos;
 #[cfg(feature = "server")]
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]
 pub mod server;
-mod util;
 
 #[cfg(test)]
 mod dns;
