@@ -2,11 +2,11 @@
 
 use anyhow::Result;
 use futures_lite::stream::Boxed as BoxStream;
-use iroh_relay::force_staging_infra;
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
     dns::ResolverExt,
+    endpoint::force_staging_infra,
     Endpoint, NodeId,
 };
 

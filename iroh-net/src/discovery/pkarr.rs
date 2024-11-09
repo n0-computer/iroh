@@ -48,7 +48,6 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
 use futures_util::stream::BoxStream;
-use iroh_relay::force_staging_infra;
 use pkarr::SignedPacket;
 use tokio::{
     task::JoinHandle,
@@ -61,6 +60,7 @@ use watchable::{Watchable, Watcher};
 use crate::{
     discovery::{Discovery, DiscoveryItem},
     dns::node_info::NodeInfo,
+    endpoint::force_staging_infra,
     key::SecretKey,
     AddrInfo, Endpoint, NodeId,
 };

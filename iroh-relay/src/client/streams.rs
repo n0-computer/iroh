@@ -36,7 +36,7 @@ impl AsyncRead for MaybeTlsStreamReader {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_read(cx, buf),
             Self::Tls(stream) => Pin::new(stream).poll_read(cx, buf),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "server"))]
             Self::Mem(stream) => Pin::new(stream).poll_read(cx, buf),
         }
     }

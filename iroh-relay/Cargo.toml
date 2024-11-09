@@ -74,7 +74,7 @@ serde_json = "1.0.107"
 duct = "0.13.6"
 
 [features]
-default = ["metrics", "server", "client"]
+default = ["metrics", "server"]
 server = [
     "dep:tokio-rustls-acme",
     "dep:clap",
@@ -85,7 +85,6 @@ server = [
 ]
 metrics = ["iroh-metrics/metrics", "server"]
 test-utils = []
-client = []
 
 [[bin]]
 name = "iroh-relay"

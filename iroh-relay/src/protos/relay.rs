@@ -4,8 +4,7 @@ use std::time::Duration;
 
 use anyhow::{bail, ensure};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-// TODO(@divma): check what changed
-// #[cfg(feature = "server")]
+#[cfg(feature = "server")]
 use futures_lite::{Stream, StreamExt};
 use futures_sink::Sink;
 use futures_util::SinkExt;
@@ -167,9 +166,8 @@ pub(crate) async fn send_client_key<S: Sink<Frame, Error = std::io::Error> + Unp
 
 /// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
-// TODO(@divma): weird I had to change this
-// #[cfg(feature = "server")]
-// #[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]
+#[cfg(any(test, feature = "server"))]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]
 pub(crate) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
     stream: S,
 ) -> anyhow::Result<(PublicKey, ClientInfo)> {
@@ -539,9 +537,9 @@ impl Encoder<Frame> for DerpCodec {
 
 /// Receives the next frame and matches the frame type. If the correct type is found returns the content,
 /// otherwise an error.
-// TODO(@divma): what's going on
-// #[cfg(feature = "server")]
-// #[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]
+#[cfg(feature = "server")]
+#[cfg(any(test, feature = "server"))]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]
 pub(crate) async fn recv_frame<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
     frame_type: FrameType,
     mut stream: S,

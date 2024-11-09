@@ -24,7 +24,6 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use derive_more::Debug;
 use futures_lite::{Stream, StreamExt};
-use iroh_relay::force_staging_infra;
 use pin_project::pin_project;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, instrument, trace, warn};
@@ -1356,6 +1355,15 @@ fn proxy_url_from_env() -> Option<Url> {
     }
 
     None
+}
+
+/// Environment variable to force the use of staging relays.
+#[cfg_attr(iroh_docsrs, doc(cfg(not(test))))]
+pub const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
+
+/// Returns `true` if the use of staging relays is forced.
+pub fn force_staging_infra() -> bool {
+    matches!(std::env::var(ENV_FORCE_STAGING_RELAYS), Ok(value) if !value.is_empty())
 }
 
 /// Returns the default relay mode.
