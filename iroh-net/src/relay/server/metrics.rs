@@ -110,7 +110,9 @@ impl Default for Metrics {
             accepts: Counter::new("Number of times this server has accepted a connection."),
             disconnects: Counter::new("Number of clients that have then disconnected."),
 
-            unique_client_keys_local_1d: Counter::new("Number of unique client keys per day for just this relay."),
+            unique_client_keys_local_1d: Counter::new(
+                "Number of unique client keys per day for just this relay.",
+            ),
             unique_client_keys_1d: Counter::new("Number of unique client keys per day."),
             unique_client_keys_7d: Counter::new("Number of unique client keys per 7 days."),
             unique_client_keys_30d: Counter::new("Number of unique client keys per 30 days."),
@@ -132,21 +134,16 @@ impl Metric for Metrics {
     }
 }
 
+#[derive(Default)]
 pub(crate) struct ClientCounter {
     client_tx: Option<tokio::sync::mpsc::Sender<PublicKey>>,
-}
-
-impl Default for ClientCounter {
-    fn default() -> Self {
-        Self { client_tx: None }
-    }
 }
 
 impl ClientCounter {
     /// Updates the client counter.
     pub async fn update(&mut self, client: PublicKey) {
         if let Some(tx) = &self.client_tx {
-            if let Err(_) = tx.send(client).await {
+            if tx.send(client).await.is_err() {
                 tracing::error!("client counter channel closed, not updating client count!");
             }
         }

@@ -546,7 +546,6 @@ impl RelayService {
             .serve_connection(hyper_util::rt::TokioIo::new(io), self)
             .with_upgrades()
             .await?;
-
         Ok(())
     }
 }
