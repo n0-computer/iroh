@@ -42,7 +42,7 @@ hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
 igd-next = { version = "0.15.1", features = ["aio_tokio"] }
 iroh-base = { version = "0.28.0", features = ["key"] }
-iroh-relay = { version = "0.29", path = "../iroh-relay" }
+iroh-relay = { version = "0.28", path = "../iroh-relay" }
 libc = "0.2.139"
 netdev = "0.30.0"
 netwatch = { version = "0.1.0", path = "../net-tools/netwatch" }

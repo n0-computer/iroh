@@ -3129,7 +3129,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-relay"
-version = "0.29.0"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

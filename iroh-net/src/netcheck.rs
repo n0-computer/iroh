@@ -812,7 +812,7 @@ mod tests {
             _guard: oneshot::Sender<()>,
         }
 
-        // (read_ipv4, read_ipv5)
+        // (read_ipv4, read_ipv6)
         #[derive(Debug, Default, Clone)]
         pub struct StunStats(Arc<Mutex<(usize, usize)>>);
 
