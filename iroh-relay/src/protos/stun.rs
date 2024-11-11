@@ -154,46 +154,6 @@ mod tests {
 
     use super::*;
 
-    // TODO(@divma): what's this and why is it commented?
-    // Test to check if an existing stun server works
-    // #[tokio::test]
-    // async fn test_stun_server() {
-    //     use tokio::net::UdpSocket;
-    //     use std::sync::Arc;
-    //     use hickory_resolver::TokioAsyncResolver;
-
-    //     let domain = "cert-test.iroh.computer";
-    //     let port = 3478;
-
-    //     let txid = TransactionId::default();
-    //     let req = request(txid);
-    //     let socket = Arc::new(UdpSocket::bind("0.0.0.0:0").await.unwrap());
-
-    //     let resolver = TokioAsyncResolver::tokio_from_system_conf().unwrap();
-    //     let response = resolver.lookup_ip(domain).await.unwrap();
-    //     dbg!(&response);
-
-    //     let server_socket = socket.clone();
-    //     let server_task = tokio::task::spawn(async move {
-    //         let mut buf = vec![0u8; 64000];
-    //         let len = server_socket.recv(&mut buf).await.unwrap();
-    //         dbg!(len);
-    //         buf.truncate(len);
-    //         buf
-    //     });
-
-    //     for addr in response {
-    //         let addr = SocketAddr::new(addr, port);
-    //         println!("sending to {addr}");
-    //         socket.send_to(&req, addr).await.unwrap();
-    //     }
-
-    //     let response = server_task.await.unwrap();
-    //     let (txid_back, response_addr) = parse_response(&response).unwrap();
-    //     assert_eq!(txid, txid_back);
-    //     println!("got {response_addr}");
-    // }
-
     struct ResponseTestCase {
         name: &'static str,
         data: Vec<u8>,

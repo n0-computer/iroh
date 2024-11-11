@@ -1,5 +1,4 @@
-//! Crate defaults.
-// TODO(@divma): decent docs, re-eval pub
+//! Default values used in the relay.
 
 /// The efault STUN port used by the Relay server.
 ///
