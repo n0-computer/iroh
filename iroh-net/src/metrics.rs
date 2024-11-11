@@ -1,6 +1,6 @@
 //! Co-locating all of the iroh-net metrics structs
-#[cfg(feature = "iroh-relay")]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
+#[cfg(feature = "test-utils")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "test-utils")))]
 pub use iroh_relay::server::Metrics as RelayMetrics;
 pub use portmapper::Metrics as PortmapMetrics;
 

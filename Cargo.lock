@@ -3075,7 +3075,6 @@ dependencies = [
  "iroh-metrics",
  "iroh-net",
  "iroh-quinn",
- "iroh-relay",
  "rcgen",
  "rustls",
  "socket2",

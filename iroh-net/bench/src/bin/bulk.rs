@@ -40,7 +40,7 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
             metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
             #[cfg(feature = "local-relay")]
             if opt.with_relay {
-                metrics.insert(iroh_relay::server::Metrics::new(reg));
+                metrics.insert(iroh_net::metrics::RelayMetrics::new(reg));
             }
         })?;
     }
