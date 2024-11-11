@@ -2,6 +2,12 @@
 name = "iroh-relay"
 version = "0.29.0"
 edition = "2021"
+readme = "README.md"
+description = "Iroh's relay server and client"
+license = "MIT OR Apache-2.0"
+authors = ["n0 team"]
+repository = "https://github.com/n0-computer/iroh"
+keywords = ["networking", "holepunching", "p2p"]
 
 [lints]
 workspace = true
