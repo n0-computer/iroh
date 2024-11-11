@@ -42,8 +42,6 @@ mod clients;
 mod http_server;
 mod metrics;
 pub(crate) mod streams;
-// #[cfg(feature = "test-utils")]
-// pub mod testing;
 pub(crate) mod types;
 
 pub use self::{
