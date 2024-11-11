@@ -2629,7 +2629,7 @@ dependencies = [
  "iroh-quinn",
  "iroh-relay",
  "iroh-router",
- "iroh-test 0.28.0",
+ "iroh-test",
  "nested_enum_utils",
  "num_cpus",
  "parking_lot",
@@ -2672,7 +2672,7 @@ dependencies = [
  "getrandom",
  "hex",
  "iroh-blake3",
- "iroh-test 0.28.0",
+ "iroh-test",
  "once_cell",
  "postcard",
  "proptest",
@@ -2833,7 +2833,7 @@ dependencies = [
  "http 1.1.0",
  "iroh-metrics",
  "iroh-net",
- "iroh-test 0.28.0",
+ "iroh-test",
  "lru",
  "mainline",
  "parking_lot",
@@ -3004,7 +3004,7 @@ dependencies = [
  "iroh-quinn-proto",
  "iroh-quinn-udp",
  "iroh-relay",
- "iroh-test 0.28.0",
+ "iroh-test",
  "libc",
  "mainline",
  "netdev",
@@ -3129,7 +3129,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-relay"
-version = "0.1.0"
+version = "0.29.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3152,7 +3152,7 @@ dependencies = [
  "hyper-util",
  "iroh-base",
  "iroh-metrics",
- "iroh-test 0.27.0",
+ "iroh-test",
  "libc",
  "num_enum",
  "once_cell",
@@ -3202,18 +3202,6 @@ dependencies = [
  "iroh-net",
  "tokio",
  "tokio-util",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "iroh-test"
-version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0656192e6e80d714b316a9b9ca1bdf160de46a85b708034c0355c3e6c25b91a1"
-dependencies = [
- "anyhow",
- "tokio",
  "tracing",
  "tracing-subscriber",
 ]

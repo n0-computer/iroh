@@ -537,7 +537,6 @@ impl Encoder<Frame> for DerpCodec {
 
 /// Receives the next frame and matches the frame type. If the correct type is found returns the content,
 /// otherwise an error.
-#[cfg(feature = "server")]
 #[cfg(any(test, feature = "server"))]
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]
 pub(crate) async fn recv_frame<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
