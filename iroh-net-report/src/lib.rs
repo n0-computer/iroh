@@ -247,8 +247,11 @@ impl Client {
         dm: RelayMap,
         stun_conn4: Option<Arc<UdpSocket>>,
         stun_conn6: Option<Arc<UdpSocket>>,
+        quic_endpoint: Option<quinn::Endpoint>,
     ) -> Result<Arc<Report>> {
-        let rx = self.get_report_channel(dm, stun_conn4, stun_conn6).await?;
+        let rx = self
+            .get_report_channel(dm, stun_conn4, stun_conn6, quic_endpoint)
+            .await?;
         match rx.await {
             Ok(res) => res,
             Err(_) => Err(anyhow!("channel closed, actor awol")),
@@ -261,6 +264,7 @@ impl Client {
         dm: RelayMap,
         stun_conn4: Option<Arc<UdpSocket>>,
         stun_conn6: Option<Arc<UdpSocket>>,
+        quic_endpoint: Option<quinn::Endpoint>,
     ) -> Result<oneshot::Receiver<Result<Arc<Report>>>> {
         // TODO: consider if RelayMap should be made to easily clone?  It seems expensive
         // right now.
@@ -270,6 +274,7 @@ impl Client {
                 relay_map: dm,
                 stun_sock_v4: stun_conn4,
                 stun_sock_v6: stun_conn6,
+                quic_endpoint,
                 response_tx: tx,
             })
             .await?;
@@ -309,6 +314,10 @@ pub(crate) enum Message {
         ///
         /// Like `stun_sock_v4` but for IPv6.
         stun_sock_v6: Option<Arc<UdpSocket>>,
+        /// Endpoint to create a QUIC connection, to do QUIC address discovery.
+        ///
+        /// If not provided, will not do QUIC address discovery.
+        quic_endpoint: Option<quinn::Endpoint>,
         /// Channel to receive the response.
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     },
@@ -448,9 +457,16 @@ impl Actor {
                     relay_map,
                     stun_sock_v4,
                     stun_sock_v6,
+                    quic_endpoint,
                     response_tx,
                 } => {
-                    self.handle_run_check(relay_map, stun_sock_v4, stun_sock_v6, response_tx);
+                    self.handle_run_check(
+                        relay_map,
+                        stun_sock_v4,
+                        stun_sock_v6,
+                        quic_endpoint,
+                        response_tx,
+                    );
                 }
                 Message::ReportReady { report } => {
                     self.handle_report_ready(report);
@@ -478,6 +494,7 @@ impl Actor {
         relay_map: RelayMap,
         stun_sock_v4: Option<Arc<UdpSocket>>,
         stun_sock_v6: Option<Arc<UdpSocket>>,
+        quic_endpoint: Option<quinn::Endpoint>,
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     ) {
         if self.current_report_run.is_some() {
@@ -528,6 +545,7 @@ impl Actor {
             relay_map,
             stun_sock_v4,
             stun_sock_v6,
+            quic_endpoint,
             self.dns_resolver.clone(),
         );
 
@@ -971,7 +989,7 @@ mod tests {
         // Note that the ProbePlan will change with each iteration.
         for i in 0..5 {
             println!("--round {}", i);
-            let r = client.get_report(dm.clone(), None, None).await?;
+            let r = client.get_report(dm.clone(), None, None, None).await?;
 
             assert!(r.udp, "want UDP");
             assert_eq!(
@@ -1012,7 +1030,7 @@ mod tests {
         let resolver = crate::dns::tests::resolver();
         let mut client = Client::new(None, resolver.clone())?;
 
-        let r = client.get_report(dm, None, None).await?;
+        let r = client.get_report(dm, None, None, None).await?;
         let mut r: Report = (*r).clone();
         r.portmap_probe = None;
 
@@ -1281,7 +1299,7 @@ mod tests {
             )
         };
 
-        let r = client.get_report(dm, Some(sock), None).await?;
+        let r = client.get_report(dm, Some(sock), None, None).await?;
         dbg!(&r);
         assert_eq!(r.hair_pinning, Some(true));
 

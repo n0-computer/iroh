@@ -1,6 +1,6 @@
 //! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
-//!
-//! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
+
+//!//! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
 //! more details on how iroh-net connections work.
 //!
@@ -529,13 +529,15 @@ impl Endpoint {
         )?;
         trace!("created quinn endpoint");
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
-        Ok(Self {
-            msock,
-            endpoint,
+        let ep = Self {
+            msock: msock.clone(),
+            endpoint: endpoint.clone(),
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
             cancel_token: CancellationToken::new(),
             static_config: Arc::new(static_config),
-        })
+        };
+        msock.set_quic_endpoint(Some(endpoint));
+        Ok(ep)
     }
 
     /// Sets the list of accepted ALPN protocols.

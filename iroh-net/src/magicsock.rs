@@ -218,6 +218,10 @@ pub(crate) struct MagicSock {
     pconn6: Option<UdpConn>,
     /// NetReport client
     net_reporter: net_report::Addr,
+    /// Handle to the underlying quinn::Endpoint.
+    ///
+    /// Used in netcheck for QUIC address discovery.
+    quic_endpoint: Arc<RwLock<Option<quinn::Endpoint>>>,
     /// The state for an active DiscoKey.
     disco_secrets: DiscoSecrets,
 
@@ -268,6 +272,16 @@ impl MagicSock {
     /// If we are not connected to any relay nodes, set this to `None`.
     fn set_my_relay(&self, my_relay: Option<RelayUrl>) -> Option<RelayUrl> {
         self.my_relay.replace(my_relay)
+    }
+
+    /// Sets the internal `quinn::Endpoint` that is used for QUIC address
+    /// discovery.
+    pub(crate) fn set_quic_endpoint(&self, endpoint: Option<quinn::Endpoint>) {
+        let mut ep = self
+            .quic_endpoint
+            .write()
+            .expect("MagicSock::endpoint RwLock is poisoned");
+        *ep = endpoint;
     }
 
     fn is_closing(&self) -> bool {
@@ -1445,6 +1459,7 @@ impl Handle {
             dns_resolver,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
+            quic_endpoint: Arc::new(RwLock::new(None)),
         });
 
         let mut actor_tasks = JoinSet::default();
@@ -1969,8 +1984,6 @@ impl Actor {
         #[cfg(not(windows))]
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
         // Reasoning for this here: https://github.com/n0-computer/iroh/pull/2595#issuecomment-2290947319
-        #[cfg(windows)]
-        let dst_ip = None;
 
         let mut out = Vec::new();
         for part in parts {
@@ -2208,11 +2221,12 @@ impl Actor {
         let relay_map = self.msock.relay_map.clone();
         let pconn4 = Some(self.pconn4.as_socket());
         let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
+        let quic_endpoint = self.msock.quic_endpoint.read().expect("poisoned").clone();
 
         debug!("requesting net_report report");
         match self
             .net_reporter
-            .get_report_channel(relay_map, pconn4, pconn6)
+            .get_report_channel(relay_map, pconn4, pconn6, quic_endpoint)
             .await
         {
             Ok(rx) => {

@@ -360,7 +360,12 @@ async fn report(
     };
     println!("getting report using relay map {dm:#?}");
 
-    let r = client.get_report(dm, None, None).await?;
+    // TODO(ramfox): hmm, should we be implicitly creating a quinn endpoint
+    // internally? that would require some configuration for tls, which seems v
+    // annoying.
+    // thinking we should expect others to create one and pass it in, if they
+    // want to use it. Can be a `doctor report` option `--quic-addr-discovery`
+    let r = client.get_report(dm, None, None, None).await?;
     println!("{r:#?}");
     Ok(())
 }
