@@ -8,10 +8,10 @@ use iroh_base::key::NodeId;
 use iroh_metrics::inc;
 use tokio::{
     sync::{mpsc, Notify},
-    task::JoinHandle,
     time::Duration,
 };
-use tracing::{debug, error, info_span, trace, warn, Instrument};
+use tokio_util::task::AbortOnDropHandle;
+use tracing::{debug, error, info_span, trace, Instrument};
 
 use crate::{
     magicsock::{ConnectionType, ConnectionTypeStream},
@@ -21,7 +21,7 @@ use crate::{
 #[derive(Debug)]
 pub(super) struct RttHandle {
     // We should and some point use this to propagate panics and errors.
-    pub(super) _handle: JoinHandle<()>,
+    pub(super) _handle: AbortOnDropHandle<()>,
     pub(super) msg_tx: mpsc::Sender<RttMessage>,
 }
 
@@ -33,13 +33,16 @@ impl RttHandle {
             tick: Notify::new(),
         };
         let (msg_tx, msg_rx) = mpsc::channel(16);
-        let _handle = tokio::spawn(
+        let handle = tokio::spawn(
             async move {
                 actor.run(msg_rx).await;
             }
             .instrument(info_span!("rtt-actor")),
         );
-        Self { _handle, msg_tx }
+        Self {
+            _handle: AbortOnDropHandle::new(handle),
+            msg_tx,
+        }
     }
 }
 
@@ -87,12 +90,18 @@ impl RttActor {
         cleanup_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
-                Some(msg) = msg_rx.recv() => self.handle_msg(msg),
-                item = self.connection_events.next(),
-                    if !self.connection_events.is_empty() => self.do_reset_rtt(item),
+                biased;
+                msg = msg_rx.recv() => {
+                    match msg {
+                        Some(msg) => self.handle_msg(msg),
+                        None => break,
+                    }
+                }
+                item = self.connection_events.next(), if !self.connection_events.is_empty() => {
+                    self.do_reset_rtt(item);
+                }
                 _ = cleanup_interval.tick() => self.do_connections_cleanup(),
                 () = self.tick.notified() => continue,
-                else => break,
             }
         }
         debug!("rtt-actor finished");
@@ -156,7 +165,7 @@ impl RttActor {
                 None => error!("No connection found for stream item"),
             },
             None => {
-                warn!("self.conn_type_changes is empty but was polled");
+                trace!("No more connections");
             }
         }
     }
@@ -169,5 +178,31 @@ impl RttActor {
                 self.connection_events.remove(*key);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_actor_mspc_close() {
+        let mut actor = RttActor {
+            connection_events: stream_group::StreamGroup::new().keyed(),
+            connections: HashMap::new(),
+            tick: Notify::new(),
+        };
+        let (msg_tx, msg_rx) = mpsc::channel(16);
+        let handle = tokio::spawn(async move {
+            actor.run(msg_rx).await;
+        });
+
+        // Dropping the msg_tx should stop the actor
+        drop(msg_tx);
+
+        let task_res = tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("timeout - actor did not finish");
+        assert!(task_res.is_ok());
     }
 }
