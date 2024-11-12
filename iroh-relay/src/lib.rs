@@ -16,7 +16,6 @@
 //! - [`client`]: A client for establishing connections to the relay.
 //! - *Server Binary*: A CLI for running your own relay server. It can be configured to also offer
 //!   STUN support and expose metrics.
-//!
 // Based on tailscale/derp/derp.go
 
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
