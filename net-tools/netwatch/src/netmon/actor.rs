@@ -81,7 +81,6 @@ impl Actor {
         let interface_state = State::new().await;
         let wall_time = Instant::now();
 
-        // Use flume channels, as tokio::mpsc is not safe to use across ffi boundaries.
         let (mon_sender, mon_receiver) = mpsc::channel(MON_CHAN_CAPACITY);
         let route_monitor = RouteMonitor::new(mon_sender)?;
         let (actor_sender, actor_receiver) = mpsc::channel(ACTOR_CHAN_CAPACITY);
@@ -112,6 +111,7 @@ impl Actor {
         loop {
             tokio::select! {
                 biased;
+
                 _ = debounce_interval.tick() => {
                     if let Some(time_jumped) = last_event.take() {
                         if let Err(err) = self.handle_potential_change(time_jumped).await {
@@ -127,29 +127,40 @@ impl Actor {
                         debounce_interval.reset_immediately();
                     }
                 }
-                Some(_event) = self.mon_receiver.recv() => {
-                    trace!("network activity detected");
-                    last_event.replace(false);
-                    debounce_interval.reset_immediately();
+                event = self.mon_receiver.recv() => {
+                    match event {
+                        Some(NetworkMessage::Change) => {
+                            trace!("network activity detected");
+                            last_event.replace(false);
+                            debounce_interval.reset_immediately();
+                        }
+                        None => {
+                            debug!("shutting down, network monitor receiver gone");
+                            break;
+                        }
+                    }
                 }
-                Some(msg) = self.actor_receiver.recv() => match msg {
-                    ActorMessage::Subscribe(callback, s) => {
-                        let token = self.next_callback_token();
-                        self.callbacks.insert(token, Arc::new(callback));
-                        s.send(token).ok();
+                msg = self.actor_receiver.recv() => {
+                    match msg {
+                        Some(ActorMessage::Subscribe(callback, s)) => {
+                            let token = self.next_callback_token();
+                            self.callbacks.insert(token, Arc::new(callback));
+                            s.send(token).ok();
+                        }
+                        Some(ActorMessage::Unsubscribe(token, s)) => {
+                            self.callbacks.remove(&token);
+                            s.send(()).ok();
+                        }
+                        Some(ActorMessage::NetworkChange) => {
+                            trace!("external network activity detected");
+                            last_event.replace(false);
+                            debounce_interval.reset_immediately();
+                        }
+                        None => {
+                            debug!("shutting down, actor receiver gone");
+                            break;
+                        }
                     }
-                    ActorMessage::Unsubscribe(token, s) => {
-                        self.callbacks.remove(&token);
-                        s.send(()).ok();
-                    }
-                    ActorMessage::NetworkChange => {
-                        trace!("external network activity detected");
-                        last_event.replace(false);
-                        debounce_interval.reset_immediately();
-                    }
-                },
-                else => {
-                    break;
                 }
             }
         }

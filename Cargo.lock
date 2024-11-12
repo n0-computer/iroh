@@ -3626,6 +3626,7 @@ dependencies = [
  "thiserror",
  "time",
  "tokio",
+ "tokio-util",
  "tracing",
  "windows 0.51.1",
  "wmi",
