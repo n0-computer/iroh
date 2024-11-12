@@ -3,9 +3,9 @@
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
 use anyhow::{ensure, Result};
+pub use iroh_relay::RelayUrl;
 use serde::{Deserialize, Serialize};
 
-use super::RelayUrl;
 use crate::defaults::DEFAULT_STUN_PORT;
 
 /// Configuration of the relay servers for an [`Endpoint`].

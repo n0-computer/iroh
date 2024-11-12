@@ -34,7 +34,7 @@ use tokio::{
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
-use crate::{relay::http::RELAY_PROBE_PATH, stun};
+use crate::{http::RELAY_PROBE_PATH, protos::stun};
 
 pub(crate) mod actor;
 pub(crate) mod client_conn;
@@ -208,7 +208,7 @@ impl Server {
             use iroh_metrics::core::Metric;
 
             iroh_metrics::core::Core::init(|reg, metrics| {
-                metrics.insert(crate::metrics::RelayMetrics::new(reg));
+                metrics.insert(metrics::Metrics::new(reg));
                 metrics.insert(StunMetrics::new(reg));
             });
             tasks.spawn(
@@ -611,7 +611,7 @@ async fn run_captive_portal_service(http_listener: TcpListener) -> Result<()> {
                 let handler = CaptivePortalService;
 
                 tasks.spawn(async move {
-                    let stream = crate::relay::server::streams::MaybeTlsStream::Plain(stream);
+                    let stream = crate::server::streams::MaybeTlsStream::Plain(stream);
                     let stream = hyper_util::rt::TokioIo::new(stream);
                     if let Err(err) = hyper::server::conn::http1::Builder::new()
                         .serve_connection(stream, handler)
@@ -715,7 +715,7 @@ mod tests {
     use iroh_base::{key::SecretKey, node_addr::RelayUrl};
 
     use super::*;
-    use crate::relay::{
+    use crate::{
         client::{conn::ReceivedMessage, ClientBuilder},
         http::{Protocol, HTTP_UPGRADE_PROTOCOL},
     };

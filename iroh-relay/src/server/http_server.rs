@@ -18,7 +18,7 @@ use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, warn, Instrument};
 use tungstenite::handshake::derive_accept_key;
 
-use crate::relay::{
+use crate::{
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
     server::{
         actor::{ClientConnHandler, ServerActorTask},
@@ -583,16 +583,14 @@ mod tests {
 
     use anyhow::Result;
     use bytes::Bytes;
+    use iroh_base::key::{PublicKey, SecretKey};
     use reqwest::Url;
     use tokio::{sync::mpsc, task::JoinHandle};
     use tracing::{info, info_span, Instrument};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
-    use crate::{
-        key::{PublicKey, SecretKey},
-        relay::client::{conn::ReceivedMessage, Client, ClientBuilder},
-    };
+    use crate::client::{conn::ReceivedMessage, Client, ClientBuilder};
 
     pub(crate) fn make_tls_config() -> TlsConfig {
         let subject_alt_names = vec!["localhost".to_string()];

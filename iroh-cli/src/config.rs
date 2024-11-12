@@ -13,7 +13,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use iroh::{
     client::Iroh,
     docs::{AuthorId, NamespaceId},
-    net::relay::{RelayMap, RelayNode},
+    net::{RelayMap, RelayNode},
     node::GcPolicy,
 };
 use parking_lot::RwLock;

@@ -1,8 +1,9 @@
 //! Types that are shared between [`super::actor`] and [`super::client_conn`].
 
 use bytes::Bytes;
+use iroh_base::key::PublicKey;
 
-use crate::{key::PublicKey, relay::server::client_conn::ClientConnBuilder};
+use crate::server::client_conn::ClientConnBuilder;
 
 /// A request to write a dataframe to a Client
 #[derive(Debug, Clone)]

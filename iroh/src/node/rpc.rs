@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use futures_lite::{Stream, StreamExt};
+use iroh_base::{key::NodeId, node_addr::NodeAddr};
 use iroh_blobs::{
     export::ExportProgress,
     net_protocol::Blobs as BlobsProtocol,
@@ -18,7 +19,6 @@ use iroh_blobs::{
 };
 use iroh_docs::{engine::Engine, net::DOCS_ALPN};
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
-use iroh_net::{relay::RelayUrl, NodeAddr, NodeId};
 use iroh_router::Router;
 use quic_rpc::server::{RpcChannel, RpcServerError};
 use tokio::task::JoinSet;
@@ -27,6 +27,7 @@ use tracing::{debug, info, warn};
 
 use super::IrohServerEndpoint;
 use crate::{
+    base::node_addr::RelayUrl,
     client::NodeStatus,
     node::NodeInner,
     rpc_protocol::{

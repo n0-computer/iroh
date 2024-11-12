@@ -7,13 +7,14 @@ use std::{
 };
 
 use iroh_base::key::NodeId;
+use iroh_relay::protos::stun;
 use tracing::{debug, event, Level};
 
 use super::{
     node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT},
     IpPort, PingRole, Source,
 };
-use crate::{disco::SendAddr, magicsock::HEARTBEAT_INTERVAL, stun};
+use crate::{disco::SendAddr, magicsock::HEARTBEAT_INTERVAL};
 
 /// The minimum time between pings to an endpoint.
 ///
