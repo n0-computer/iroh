@@ -456,7 +456,14 @@ async fn server_stun_listener(sock: UdpSocket) -> Result<()> {
     loop {
         tokio::select! {
             biased;
-            _ = tasks.join_next(), if !tasks.is_empty() => (),
+
+            Some(res) = tasks.join_next(), if !tasks.is_empty() => {
+                if let Err(err) = res {
+                    if err.is_panic() {
+                        panic!("task panicked: {:#?}", err);
+                    }
+                }
+            }
             res = sock.recv_from(&mut buffer) => {
                 match res {
                     Ok((n, src_addr)) => {
@@ -605,28 +612,42 @@ async fn run_captive_portal_service(http_listener: TcpListener) -> Result<()> {
     let mut tasks = JoinSet::new();
 
     loop {
-        match http_listener.accept().await {
-            Ok((stream, peer_addr)) => {
-                debug!(%peer_addr, "Connection opened",);
-                let handler = CaptivePortalService;
+        tokio::select! {
+            biased;
 
-                tasks.spawn(async move {
-                    let stream = crate::server::streams::MaybeTlsStream::Plain(stream);
-                    let stream = hyper_util::rt::TokioIo::new(stream);
-                    if let Err(err) = hyper::server::conn::http1::Builder::new()
-                        .serve_connection(stream, handler)
-                        .with_upgrades()
-                        .await
-                    {
-                        error!("Failed to serve connection: {err:?}");
+            Some(res) = tasks.join_next(), if !tasks.is_empty() => {
+                if let Err(err) = res {
+                    if err.is_panic() {
+                        panic!("task panicked: {:#?}", err);
                     }
-                });
+                }
             }
-            Err(err) => {
-                error!(
-                    "[CaptivePortalService] failed to accept connection: {:#?}",
-                    err
-                );
+
+            res = http_listener.accept() => {
+                match res {
+                    Ok((stream, peer_addr)) => {
+                        debug!(%peer_addr, "Connection opened",);
+                        let handler = CaptivePortalService;
+
+                        tasks.spawn(async move {
+                            let stream = crate::server::streams::MaybeTlsStream::Plain(stream);
+                            let stream = hyper_util::rt::TokioIo::new(stream);
+                            if let Err(err) = hyper::server::conn::http1::Builder::new()
+                                .serve_connection(stream, handler)
+                                .with_upgrades()
+                                .await
+                            {
+                                error!("Failed to serve connection: {err:?}");
+                            }
+                        });
+                    }
+                    Err(err) => {
+                        error!(
+                            "[CaptivePortalService] failed to accept connection: {:#?}",
+                            err
+                        );
+                    }
+                }
             }
         }
     }
