@@ -100,17 +100,12 @@
 <a href="#100" id="100">100</a>
 <a href="#101" id="101">101</a>
 <a href="#102" id="102">102</a>
-<a href="#103" id="103">103</a>
-<a href="#104" id="104">104</a>
-<a href="#105" id="105">105</a>
-<a href="#106" id="106">106</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Monitoring of networking interfaces and route changes.
 
 </span><span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::future::Boxed <span class="kw">as </span>BoxFuture;
 <span class="kw">use </span>tokio::sync::{mpsc, oneshot};
 <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
-<span class="kw">use </span>tracing::warn;
 
 <span class="kw">mod </span>actor;
 <span class="attr">#[cfg(target_os = <span class="string">"android"</span>)]
@@ -135,8 +130,7 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>Monitor {
     <span class="doccomment">/// Task handle for the monitor task.
-    </span><span class="attr">#[allow(dead_code)]
-    </span>handle: AbortOnDropHandle&lt;()&gt;,
+    </span>_handle: AbortOnDropHandle&lt;()&gt;,
     actor_tx: mpsc::Sender&lt;ActorMessage&gt;,
 }
 
@@ -147,13 +141,11 @@
         <span class="kw">let </span>actor_tx = actor.subscribe();
 
         <span class="kw">let </span>handle = tokio::task::spawn(<span class="kw">async move </span>{
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = actor.run().<span class="kw">await </span>{
-                <span class="macro">warn!</span>(<span class="string">"netmon actor died: {:?}"</span>, err);
-            }
+            actor.run().<span class="kw">await</span>;
         });
 
         <span class="prelude-val">Ok</span>(Monitor {
-            handle: AbortOnDropHandle::new(handle),
+            _handle: AbortOnDropHandle::new(handle),
             actor_tx,
         })
     }
