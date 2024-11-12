@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["authors","docs"]};
+window.SIDEBAR_ITEMS = {"enum":["ImportProgress","LiveEvent","Origin","ShareMode","SyncReason"],"struct":["Client","Doc","Entry","ExportFileOutcome","ExportFileProgress","ImportFileOutcome","ImportFileProgress","SyncEvent"]};

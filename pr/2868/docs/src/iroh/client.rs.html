@@ -119,14 +119,6 @@
 <a href="#119" id="119">119</a>
 <a href="#120" id="120">120</a>
 <a href="#121" id="121">121</a>
-<a href="#122" id="122">122</a>
-<a href="#123" id="123">123</a>
-<a href="#124" id="124">124</a>
-<a href="#125" id="125">125</a>
-<a href="#126" id="126">126</a>
-<a href="#127" id="127">127</a>
-<a href="#128" id="128">128</a>
-<a href="#129" id="129">129</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Client to an Iroh node.
 //!
 //! See the documentation for [`Iroh`] for more information.
@@ -143,16 +135,8 @@
 
 <span class="kw">mod </span>quic;
 
-<span class="comment">// TODO: deprecate
-</span><span class="kw">pub mod </span>docs {
-    <span class="doccomment">//! Docs related client.
-
-    </span><span class="attr">#[doc(inline)]
-    </span><span class="kw">pub use </span>iroh_docs::rpc::client::<span class="kw-2">*</span>;
-}
-
 <span class="kw">pub use </span>iroh_blobs::rpc::client::{blobs, tags};
-<span class="kw">pub use </span>iroh_docs::rpc::client::docs::Doc;
+<span class="kw">pub use </span>iroh_docs::rpc::client::{authors, docs, docs::Doc};
 <span class="kw">pub use </span>iroh_gossip::rpc::client <span class="kw">as </span>gossip;
 
 <span class="kw">pub use </span><span class="self">self</span>::net::NodeStatus;
