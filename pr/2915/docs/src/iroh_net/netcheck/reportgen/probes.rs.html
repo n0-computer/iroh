@@ -818,9 +818,6 @@
 <a href="#818" id="818">818</a>
 <a href="#819" id="819">819</a>
 <a href="#820" id="820">820</a>
-<a href="#821" id="821">821</a>
-<a href="#822" id="822">822</a>
-<a href="#823" id="823">823</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The relay probes.
 //!
 //! All the probes try and establish the latency to the relay servers.  Preferably the STUN
@@ -833,10 +830,7 @@
 <span class="kw">use </span>netwatch::interfaces;
 <span class="kw">use </span>tokio::time::Duration;
 
-<span class="kw">use crate</span>::{
-    netcheck::Report,
-    relay::{RelayMap, RelayNode, RelayUrl},
-};
+<span class="kw">use crate</span>::{netcheck::Report, RelayMap, RelayNode, RelayUrl};
 
 <span class="doccomment">/// The retransmit interval used when netcheck first runs.
 ///

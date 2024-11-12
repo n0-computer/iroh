@@ -508,6 +508,7 @@
 <a href="#508" id="508">508</a>
 <a href="#509" id="509">509</a>
 <a href="#510" id="510">510</a>
+<a href="#511" id="511">511</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     fmt::Debug,
     sync::{Arc, Mutex},
@@ -516,6 +517,7 @@
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
+<span class="kw">use </span>iroh_base::{key::NodeId, node_addr::NodeAddr};
 <span class="kw">use </span>iroh_blobs::{
     export::ExportProgress,
     net_protocol::Blobs <span class="kw">as </span>BlobsProtocol,
@@ -528,7 +530,6 @@
 };
 <span class="kw">use </span>iroh_docs::{engine::Engine, net::DOCS_ALPN};
 <span class="kw">use </span>iroh_gossip::net::{Gossip, GOSSIP_ALPN};
-<span class="kw">use </span>iroh_net::{relay::RelayUrl, NodeAddr, NodeId};
 <span class="kw">use </span>iroh_router::Router;
 <span class="kw">use </span>quic_rpc::server::{RpcChannel, RpcServerError};
 <span class="kw">use </span>tokio::task::JoinSet;
@@ -537,6 +538,7 @@
 
 <span class="kw">use </span><span class="kw">super</span>::IrohServerEndpoint;
 <span class="kw">use crate</span>::{
+    base::node_addr::RelayUrl,
     client::NodeStatus,
     node::NodeInner,
     rpc_protocol::{

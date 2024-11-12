@@ -458,26 +458,16 @@
 <a href="#458" id="458">458</a>
 <a href="#459" id="459">459</a>
 <a href="#460" id="460">460</a>
-<a href="#461" id="461">461</a>
-<a href="#462" id="462">462</a>
-<a href="#463" id="463">463</a>
-<a href="#464" id="464">464</a>
-<a href="#465" id="465">465</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">pub use </span>dns_and_pkarr_servers::DnsPkarrServer;
 <span class="kw">pub use </span>dns_server::create_dns_resolver;
+<span class="kw">use </span>iroh_relay::server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig};
 <span class="kw">use </span>tokio::sync::oneshot;
 
-<span class="kw">use crate</span>::{
-    defaults::DEFAULT_STUN_PORT,
-    relay::{
-        server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
-        RelayMap, RelayNode, RelayUrl,
-    },
-};
+<span class="kw">use crate</span>::{defaults::DEFAULT_STUN_PORT, RelayMap, RelayNode, RelayUrl};
 
 <span class="doccomment">/// A drop guard to clean up test infrastructure.
 ///

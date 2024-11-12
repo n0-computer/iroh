@@ -1720,7 +1720,6 @@
 <a href="#1720" id="1720">1720</a>
 <a href="#1721" id="1721">1721</a>
 <a href="#1722" id="1722">1722</a>
-<a href="#1723" id="1723">1723</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
@@ -1729,6 +1728,7 @@
 };
 
 <span class="kw">use </span>iroh_metrics::inc;
+<span class="kw">use </span>iroh_relay::{protos::stun, RelayUrl};
 <span class="kw">use </span>netwatch::ip::is_unicast_link_local;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::sync::mpsc;
@@ -1746,8 +1746,6 @@
     endpoint::AddrInfo,
     key::PublicKey,
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
-    relay::RelayUrl,
-    stun,
     util::relay_only_mode,
     NodeAddr, NodeId,
 };
