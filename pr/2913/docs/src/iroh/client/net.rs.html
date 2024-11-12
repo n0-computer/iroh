@@ -140,6 +140,7 @@
 <a href="#140" id="140">140</a>
 <a href="#141" id="141">141</a>
 <a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API to manage the iroh networking stack.
 //!
 //! The main entry point is the [`Client`].
@@ -155,7 +156,8 @@
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
-<span class="kw">use </span>iroh_net::{endpoint::RemoteInfo, relay::RelayUrl, NodeAddr, NodeId};
+<span class="kw">use </span>iroh_base::node_addr::RelayUrl;
+<span class="kw">use </span>iroh_net::{endpoint::RemoteInfo, NodeAddr, NodeId};
 <span class="kw">use </span>ref_cast::RefCast;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 

@@ -774,12 +774,6 @@
 <a href="#774" id="774">774</a>
 <a href="#775" id="775">775</a>
 <a href="#776" id="776">776</a>
-<a href="#777" id="777">777</a>
-<a href="#778" id="778">778</a>
-<a href="#779" id="779">779</a>
-<a href="#780" id="780">780</a>
-<a href="#781" id="781">781</a>
-<a href="#782" id="782">782</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
@@ -792,6 +786,7 @@
 <span class="kw">use </span>backoff::backoff::Backoff;
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
+<span class="kw">use </span>iroh_relay::{<span class="self">self </span><span class="kw">as </span>relay, client::ClientError, ReceivedMessage, RelayUrl, MAX_PACKET_SIZE};
 <span class="kw">use </span>tokio::{
     sync::{mpsc, oneshot},
     task::{JoinHandle, JoinSet},
@@ -801,14 +796,7 @@
 <span class="kw">use </span>tracing::{debug, info, info_span, trace, warn, Instrument};
 
 <span class="kw">use super</span>::{ActorMessage, MagicSock, Metrics <span class="kw">as </span>MagicsockMetrics, RelayContents};
-<span class="kw">use crate</span>::{
-    key::{NodeId, PUBLIC_KEY_LENGTH},
-    relay::{
-        <span class="self">self</span>,
-        client::{conn::ReceivedMessage, ClientError},
-        RelayUrl, MAX_PACKET_SIZE,
-    },
-};
+<span class="kw">use </span><span class="kw">crate</span>::key::{NodeId, PUBLIC_KEY_LENGTH};
 
 <span class="doccomment">/// How long a non-home relay connection needs to be idle (last written to) before we close it.
 </span><span class="kw">const </span>RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(<span class="number">60</span>);
@@ -997,7 +985,7 @@
                 }
 
                 <span class="kw">match </span>msg {
-                    relay::client::conn::ReceivedMessage::ReceivedPacket { source, data } =&gt; {
+                    ReceivedMessage::ReceivedPacket { source, data } =&gt; {
                         <span class="macro">trace!</span>(len=%data.len(), <span class="string">"received msg"</span>);
                         <span class="comment">// If this is a new sender we hadn't seen before, remember it and
                         // register a route for this peer.
@@ -1024,7 +1012,7 @@
 
                         ReadResult::Continue
                     }
-                    relay::client::conn::ReceivedMessage::Ping(data) =&gt; {
+                    ReceivedMessage::Ping(data) =&gt; {
                         <span class="comment">// Best effort reply to the ping.
                         </span><span class="kw">let </span>dc = <span class="self">self</span>.relay_client.clone();
                         tokio::task::spawn(<span class="kw">async move </span>{
@@ -1034,8 +1022,8 @@
                         });
                         ReadResult::Continue
                     }
-                    relay::client::conn::ReceivedMessage::Health { .. } =&gt; ReadResult::Continue,
-                    relay::client::conn::ReceivedMessage::PeerGone(key) =&gt; {
+                    ReceivedMessage::Health { .. } =&gt; ReadResult::Continue,
+                    ReceivedMessage::PeerGone(key) =&gt; {
                         <span class="self">self</span>.node_present.remove(<span class="kw-2">&amp;</span>key);
                         ReadResult::Continue
                     }
