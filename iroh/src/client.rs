@@ -14,16 +14,8 @@ pub use crate::rpc_protocol::RpcService;
 
 mod quic;
 
-// TODO: deprecate
-pub mod docs {
-    //! Docs related client.
-
-    #[doc(inline)]
-    pub use iroh_docs::rpc::client::*;
-}
-
 pub use iroh_blobs::rpc::client::{blobs, tags};
-pub use iroh_docs::rpc::client::docs::Doc;
+pub use iroh_docs::rpc::client::{authors, docs, docs::Doc};
 pub use iroh_gossip::rpc::client as gossip;
 
 pub use self::net::NodeStatus;
