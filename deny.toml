@@ -34,6 +34,7 @@ license-files = [
 [advisories]
 ignore = [
       "RUSTSEC-2024-0370", # unmaintained, no upgrade available
+      "RUSTSEC-2024-0384", # unmaintained, no upgrade available
 ]
 
 [sources]
