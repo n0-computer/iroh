@@ -1,3 +1,5 @@
+//! Exposes [`Client`], which allows to establish connections to a relay server.
+//!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
 use std::{
