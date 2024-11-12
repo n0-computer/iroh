@@ -323,7 +323,7 @@ async fn env_author(from_config: Option<AuthorId>, iroh: &Iroh) -> Result<Author
     {
         Ok(author)
     } else {
-        iroh.docs().author_default().await
+        iroh.authors().default().await
     }
 }
 
