@@ -34,7 +34,7 @@ license-files = [
 [advisories]
 ignore = [
       "RUSTSEC-2024-0370", # unmaintained, no upgrade available
-]
+      "RUSTSEC-2024-0384" # instant is no longer maintained. This is not a direct dependency so can't be fixed on our end
 
 [sources]
 allow-git = [
