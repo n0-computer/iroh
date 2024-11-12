@@ -12,8 +12,7 @@ use crate::{interfaces::bsd::WireMessage, ip::is_link_local};
 
 #[derive(Debug)]
 pub(super) struct RouteMonitor {
-    #[allow(dead_code)]
-    handle: AbortOnDropHandle<()>,
+    _handle: AbortOnDropHandle<()>,
 }
 
 fn create_socket() -> Result<tokio::net::UnixStream> {
@@ -72,7 +71,7 @@ impl RouteMonitor {
         });
 
         Ok(RouteMonitor {
-            handle: AbortOnDropHandle::new(handle),
+            _handle: AbortOnDropHandle::new(handle),
         })
     }
 }

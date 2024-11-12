@@ -4,7 +4,6 @@ use anyhow::Result;
 use futures_lite::future::Boxed as BoxFuture;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::task::AbortOnDropHandle;
-use tracing::warn;
 
 mod actor;
 #[cfg(target_os = "android")]
@@ -29,8 +28,7 @@ use self::actor::{Actor, ActorMessage};
 #[derive(Debug)]
 pub struct Monitor {
     /// Task handle for the monitor task.
-    #[allow(dead_code)]
-    handle: AbortOnDropHandle<()>,
+    _handle: AbortOnDropHandle<()>,
     actor_tx: mpsc::Sender<ActorMessage>,
 }
 
@@ -41,13 +39,11 @@ impl Monitor {
         let actor_tx = actor.subscribe();
 
         let handle = tokio::task::spawn(async move {
-            if let Err(err) = actor.run().await {
-                warn!("netmon actor died: {:?}", err);
-            }
+            actor.run().await;
         });
 
         Ok(Monitor {
-            handle: AbortOnDropHandle::new(handle),
+            _handle: AbortOnDropHandle::new(handle),
             actor_tx,
         })
     }
