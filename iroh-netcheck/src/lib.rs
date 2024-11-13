@@ -26,9 +26,11 @@ use tokio::{
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-use crate::{RelayMap, RelayUrl};
+pub(crate) use relay_map::{RelayMap, RelayMode, RelayNode, RelayUrl};
 
+pub mod defaults;
 mod metrics;
+mod relay_map;
 mod reportgen;
 
 pub use metrics::Metrics;

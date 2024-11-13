@@ -21,10 +21,8 @@ use tokio::{sync::oneshot, time::Instant};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-use crate::{
-    defaults::timeouts::HAIRPIN_CHECK_TIMEOUT,
-    netcheck::{self, reportgen, Inflight},
-};
+use crate::defaults::timeouts::HAIRPIN_CHECK_TIMEOUT;
+use crate::{self, reportgen, Inflight};
 
 /// Handle to the hairpin actor.
 ///
@@ -36,7 +34,7 @@ pub(super) struct Client {
 }
 
 impl Client {
-    pub(super) fn new(netcheck: netcheck::Addr, reportgen: reportgen::Addr) -> Self {
+    pub(super) fn new(netcheck: Addr, reportgen: reportgen::Addr) -> Self {
         let (addr, msg_rx) = oneshot::channel();
 
         let actor = Actor {
@@ -84,7 +82,7 @@ enum Message {
 #[derive(Debug)]
 struct Actor {
     msg_rx: oneshot::Receiver<Message>,
-    netcheck: netcheck::Addr,
+    netcheck: Addr,
     reportgen: reportgen::Addr,
 }
 
@@ -119,7 +117,7 @@ impl Actor {
         };
         let (msg_response_tx, msg_response_rx) = oneshot::channel();
         self.netcheck
-            .send(netcheck::Message::InFlightStun(inflight, msg_response_tx))
+            .send(Message::InFlightStun(inflight, msg_response_tx))
             .await
             .context("netcheck actor gone")?;
         msg_response_rx.await.context("netcheck actor died")?;
@@ -203,7 +201,7 @@ mod tests {
 
         // Setup fake netcheck and reportstate actors, hairpinning interacts with them.
         let (netcheck_tx, mut netcheck_rx) = mpsc::channel(32);
-        let netcheck_addr = netcheck::Addr {
+        let netcheck_addr = Addr {
             sender: netcheck_tx,
         };
         let (reportstate_tx, mut reportstate_rx) = mpsc::channel(32);
@@ -230,8 +228,7 @@ mod tests {
         // back the STUN request once it arrives.
         let dummy_netcheck = tokio::spawn(
             async move {
-                let netcheck::Message::InFlightStun(inflight, resp_tx) =
-                    netcheck_rx.recv().await.unwrap()
+                let Message::InFlightStun(inflight, resp_tx) = netcheck_rx.recv().await.unwrap()
                 else {
                     panic!("Wrong message received");
                 };
@@ -278,7 +275,7 @@ mod tests {
 
         // Setup fake netcheck and reportstate actors, hairpinning interacts with them.
         let (netcheck_tx, _netcheck_rx) = mpsc::channel(32);
-        let netcheck_addr = netcheck::Addr {
+        let netcheck_addr = Addr {
             sender: netcheck_tx,
         };
         let (reportstate_tx, _reportstate_rx) = mpsc::channel(32);
