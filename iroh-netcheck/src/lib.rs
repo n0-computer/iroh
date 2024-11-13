@@ -30,6 +30,7 @@ pub(crate) use relay_map::{RelayMap, RelayMode, RelayNode, RelayUrl};
 
 pub mod defaults;
 mod metrics;
+mod ping;
 mod relay_map;
 mod reportgen;
 
