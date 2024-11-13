@@ -309,24 +309,6 @@
 <a href="#309" id="309">309</a>
 <a href="#310" id="310">310</a>
 <a href="#311" id="311">311</a>
-<a href="#312" id="312">312</a>
-<a href="#313" id="313">313</a>
-<a href="#314" id="314">314</a>
-<a href="#315" id="315">315</a>
-<a href="#316" id="316">316</a>
-<a href="#317" id="317">317</a>
-<a href="#318" id="318">318</a>
-<a href="#319" id="319">319</a>
-<a href="#320" id="320">320</a>
-<a href="#321" id="321">321</a>
-<a href="#322" id="322">322</a>
-<a href="#323" id="323">323</a>
-<a href="#324" id="324">324</a>
-<a href="#325" id="325">325</a>
-<a href="#326" id="326">326</a>
-<a href="#327" id="327">327</a>
-<a href="#328" id="328">328</a>
-<a href="#329" id="329">329</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
 </span><span class="comment">// Based on tailscale/derp/derp_server.go
 
@@ -335,8 +317,8 @@
 <span class="kw">use </span>anyhow::{bail, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>iroh_base::key::PublicKey;
 <span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>tokio::{sync::mpsc, task::JoinSet};
-<span class="kw">use </span>tracing::{trace, warn, Instrument, Span};
+<span class="kw">use </span>tokio::sync::mpsc;
+<span class="kw">use </span>tracing::{trace, warn};
 
 <span class="kw">use super</span>::{
     actor::Packet,
@@ -350,23 +332,22 @@
 <span class="doccomment">/// Manages the connections to all currently connected clients.
 </span><span class="attr">#[derive(Debug, Default)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Clients {
-    inner: HashMap&lt;PublicKey, Client&gt;,
+    <span class="doccomment">/// The list of all currently connected clients.
+    </span>inner: HashMap&lt;PublicKey, Client&gt;,
     <span class="doccomment">/// The next connection number to use.
     </span>conn_num: usize,
 }
 
 <span class="kw">impl </span>Clients {
     <span class="kw">pub async fn </span>shutdown(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="macro">trace!</span>(<span class="string">"shutting down conn"</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>handles = JoinSet::default();
-        <span class="kw">for </span>(<span class="kw">_</span>, client) <span class="kw">in </span><span class="self">self</span>.inner.drain() {
-            handles.spawn(<span class="kw">async move </span>{ client.shutdown().<span class="kw">await </span>}.instrument(Span::current()));
-        }
-        <span class="kw">while let </span><span class="prelude-val">Some</span>(t) = handles.join_next().<span class="kw">await </span>{
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = t {
-                <span class="macro">trace!</span>(<span class="string">"shutdown error: {:?}"</span>, err);
-            }
-        }
+        <span class="macro">trace!</span>(<span class="string">"shutting down {} clients"</span>, <span class="self">self</span>.inner.len());
+
+        futures_buffered::join_all(
+            <span class="self">self</span>.inner
+                .drain()
+                .map(|(<span class="kw">_</span>, client)| <span class="kw">async move </span>{ client.shutdown().<span class="kw">await </span>}),
+        )
+        .<span class="kw">await</span>;
     }
 
     <span class="doccomment">/// Record that `src` sent or forwarded a packet to `dst`
@@ -428,8 +409,7 @@
         <span class="kw">if let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.inner.get(key) {
             <span class="kw">let </span>res = client.send_packet(packet);
             <span class="kw">return </span><span class="self">self</span>.process_result(key, res).<span class="kw">await</span>;
-        };
-        <span class="macro">warn!</span>(<span class="string">"Could not find client for {key:?}, dropping packet"</span>);
+        }
         <span class="macro">bail!</span>(<span class="string">"Could not find client for {key:?}, dropped packet"</span>);
     }
 
@@ -437,8 +417,7 @@
         <span class="kw">if let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.inner.get(key) {
             <span class="kw">let </span>res = client.send_disco_packet(packet);
             <span class="kw">return </span><span class="self">self</span>.process_result(key, res).<span class="kw">await</span>;
-        };
-        <span class="macro">warn!</span>(<span class="string">"Could not find client for {key:?}, dropping disco packet"</span>);
+        }
         <span class="macro">bail!</span>(<span class="string">"Could not find client for {key:?}, dropped packet"</span>);
     }
 
@@ -447,7 +426,7 @@
             <span class="kw">let </span>res = client.send_peer_gone(peer);
             <span class="kw">let _ </span>= <span class="self">self</span>.process_result_no_fallback(key, res);
             <span class="kw">return</span>;
-        };
+        }
         <span class="macro">warn!</span>(<span class="string">"Could not find client for {key:?}, dropping peer gone packet"</span>);
     }
 
@@ -486,17 +465,6 @@
 <span class="doccomment">/// Represents a connection to a client.
 </span><span class="comment">// TODO: expand to allow for _multiple connections_ associated with a single PublicKey. This
 // introduces some questions around which connection should be prioritized when forwarding packets
-//
-// From goimpl:
-//
-// "Represents one or more connections to a client
-//
-// In the common cast, the client should only have one connection to the relay server for a given
-// key. When they're connected multiple times, we record their set of connection, and keep their
-// connections open to make them happy (to keep them from spinning, etc) and keep track of which
-// is the latest connection. If only the last is sending traffic, that last one is the active
-// connection and it gets traffic. Otherwise, in the case of a cloned node key, the whole set of
-// connections doesn't receive data frames."
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Client {
     <span class="doccomment">/// The client connection associated with the [`PublicKey`]
@@ -544,11 +512,7 @@
     }
 }
 
-<span class="comment">// TODO: in the goimpl, it also tries 3 times to send a packet. But, in go we can clone receiver
-// channels, so each client is able to drain any full channels of "older" packets
-// &amp; attempt to try to send the message again. We can't drain any channels here,
-// so I'm not sure if we should come up with some mechanism to request the channel
-// be drained, or just leave it
+<span class="doccomment">/// Tries up to `3` times to send a message into the given channel, retrying iff it is full.
 </span><span class="kw">fn </span>try_send&lt;T&gt;(sender: <span class="kw-2">&amp;</span>mpsc::Sender&lt;T&gt;, msg: T) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendError&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>msg = msg;
     <span class="kw">for _ in </span><span class="number">0</span>..RETRIES {
