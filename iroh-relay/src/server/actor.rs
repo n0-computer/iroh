@@ -19,8 +19,6 @@ use crate::{
     server::{client_conn::ClientConnConfig, clients::Clients, metrics::Metrics},
 };
 
-// TODO: skipping `verboseDropKeys` for now
-
 #[derive(Debug)]
 pub(super) enum Message {
     SendPacket {
