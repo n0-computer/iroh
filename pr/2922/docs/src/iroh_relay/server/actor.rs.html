@@ -364,12 +364,6 @@
 <a href="#364" id="364">364</a>
 <a href="#365" id="365">365</a>
 <a href="#366" id="366">366</a>
-<a href="#367" id="367">367</a>
-<a href="#368" id="368">368</a>
-<a href="#369" id="369">369</a>
-<a href="#370" id="370">370</a>
-<a href="#371" id="371">371</a>
-<a href="#372" id="372">372</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The main event loop for the relay server.
 //!
 //! based on tailscale/derp/derp_server.go
@@ -646,20 +640,14 @@
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>iroh_base::key::SecretKey;
     <span class="kw">use </span>tokio::io::DuplexStream;
-    <span class="kw">use </span>tokio_util::codec::{Framed, FramedRead, FramedWrite};
-    <span class="kw">use </span>tracing_subscriber::{prelude::<span class="kw-2">*</span>, EnvFilter};
+    <span class="kw">use </span>tokio_util::codec::Framed;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{
-        client::{
-            conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage},
-            streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
-        },
-        protos::relay::{recv_frame, ClientInfo, DerpCodec, Frame, FrameType, PROTOCOL_VERSION},
+        protos::relay::{recv_frame, DerpCodec, Frame, FrameType},
         server::{
             client_conn::ClientConnConfig,
             streams::{MaybeTlsStream, RelayedStream},
-            MaybeTlsStreamServer,
         },
     };
 

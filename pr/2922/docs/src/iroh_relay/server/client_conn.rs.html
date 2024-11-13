@@ -559,38 +559,6 @@
 <a href="#559" id="559">559</a>
 <a href="#560" id="560">560</a>
 <a href="#561" id="561">561</a>
-<a href="#562" id="562">562</a>
-<a href="#563" id="563">563</a>
-<a href="#564" id="564">564</a>
-<a href="#565" id="565">565</a>
-<a href="#566" id="566">566</a>
-<a href="#567" id="567">567</a>
-<a href="#568" id="568">568</a>
-<a href="#569" id="569">569</a>
-<a href="#570" id="570">570</a>
-<a href="#571" id="571">571</a>
-<a href="#572" id="572">572</a>
-<a href="#573" id="573">573</a>
-<a href="#574" id="574">574</a>
-<a href="#575" id="575">575</a>
-<a href="#576" id="576">576</a>
-<a href="#577" id="577">577</a>
-<a href="#578" id="578">578</a>
-<a href="#579" id="579">579</a>
-<a href="#580" id="580">580</a>
-<a href="#581" id="581">581</a>
-<a href="#582" id="582">582</a>
-<a href="#583" id="583">583</a>
-<a href="#584" id="584">584</a>
-<a href="#585" id="585">585</a>
-<a href="#586" id="586">586</a>
-<a href="#587" id="587">587</a>
-<a href="#588" id="588">588</a>
-<a href="#589" id="589">589</a>
-<a href="#590" id="590">590</a>
-<a href="#591" id="591">591</a>
-<a href="#592" id="592">592</a>
-<a href="#593" id="593">593</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::time::Duration;
@@ -816,25 +784,21 @@
                 peer = <span class="self">self</span>.peer_gone.recv() =&gt; {
                     <span class="kw">let </span>peer = peer.context(<span class="string">"Server.peer_gone dropped"</span>)<span class="question-mark">?</span>;
                     <span class="macro">trace!</span>(<span class="string">"peer gone: {:?}"</span>, peer);
-                    <span class="self">self</span>.send_peer_gone(peer).<span class="kw">await</span><span class="question-mark">?</span>;
+                    <span class="self">self</span>.write_frame(Frame::PeerGone { peer }).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
                 packet = <span class="self">self</span>.send_queue.recv() =&gt; {
                     <span class="kw">let </span>packet = packet.context(<span class="string">"Server.send_queue dropped"</span>)<span class="question-mark">?</span>;
                     <span class="macro">trace!</span>(<span class="string">"send packet"</span>);
                     <span class="self">self</span>.send_packet(packet).<span class="kw">await</span>.context(<span class="string">"send packet"</span>)<span class="question-mark">?</span>;
-                    <span class="comment">// TODO: stats
-                    // record `packet.enqueuedAt`
-                </span>}
+                }
                 packet = <span class="self">self</span>.disco_send_queue.recv() =&gt; {
                     <span class="kw">let </span>packet = packet.context(<span class="string">"Server.disco_send_queue dropped"</span>)<span class="question-mark">?</span>;
                     <span class="macro">trace!</span>(<span class="string">"send disco packet"</span>);
                     <span class="self">self</span>.send_packet(packet).<span class="kw">await</span>.context(<span class="string">"send packet"</span>)<span class="question-mark">?</span>;
-                    <span class="comment">// TODO: stats
-                    // record `packet.enqueuedAt`
-                </span>}
+                }
                 <span class="kw">_ </span>= keep_alive.tick() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"keep alive"</span>);
-                    <span class="self">self</span>.send_keep_alive().<span class="kw">await</span>.context(<span class="string">"send keep alive"</span>)<span class="question-mark">?</span>;
+                    <span class="self">self</span>.write_frame(Frame::KeepAlive).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
             }
 
@@ -847,31 +811,6 @@
     /// Errors if the send does not happen within the `timeout` duration
     </span><span class="kw">async fn </span>write_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: Frame) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         write_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>.stream, frame, <span class="self">self</span>.timeout).<span class="kw">await
-    </span>}
-
-    <span class="doccomment">/// Sends a `keep alive` frame, does not flush
-    ///
-    /// Errors if the send does not happen within the `timeout` duration
-    </span><span class="kw">async fn </span>send_keep_alive(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="self">self</span>.write_frame(Frame::KeepAlive).<span class="kw">await
-    </span>}
-
-    <span class="doccomment">/// Send a `pong` frame, does not flush
-    ///
-    /// Errors if the send does not happen within the `timeout` duration
-    </span><span class="kw">async fn </span>send_pong(<span class="kw-2">&amp;mut </span><span class="self">self</span>, data: [u8; <span class="number">8</span>]) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="comment">// TODO: stats
-        // record `send_pong`
-        </span><span class="self">self</span>.write_frame(Frame::Pong { data }).<span class="kw">await
-    </span>}
-
-    <span class="doccomment">/// Sends a peer gone frame, does not flush
-    ///
-    /// Errors if the send does not happen within the `timeout` duration
-    </span><span class="kw">async fn </span>send_peer_gone(<span class="kw-2">&amp;mut </span><span class="self">self</span>, peer: PublicKey) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="comment">// TODO: stats
-        // c.s.peerGoneFrames.Add(1)
-        </span><span class="self">self</span>.write_frame(Frame::PeerGone { peer }).<span class="kw">await
     </span>}
 
     <span class="doccomment">/// Writes contents to the client in a `RECV_PACKET` frame.
@@ -924,11 +863,8 @@
     }
 
     <span class="kw">async fn </span>handle_frame_ping(<span class="kw-2">&amp;mut </span><span class="self">self</span>, data: [u8; <span class="number">8</span>]) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="comment">// TODO:stats
-        // c.s.gotPing.Add(1)
-
-        // TODO: add rate limiter
-        </span><span class="self">self</span>.send_pong(data).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="comment">// TODO: add rate limiter
+        </span><span class="self">self</span>.write_frame(Frame::Pong { data }).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">inc!</span>(Metrics, sent_pong);
         <span class="prelude-val">Ok</span>(())
     }
