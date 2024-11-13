@@ -6,7 +6,7 @@ use std::{collections::HashMap, time::Duration};
 
 use anyhow::{bail, Result};
 use bytes::Bytes;
-use iroh_base::key::PublicKey;
+use iroh_base::key::NodeId;
 use iroh_metrics::{core::UsageStatsReport, inc, inc_by, report_usage_stats};
 use time::{Date, OffsetDateTime};
 use tokio::sync::mpsc;
@@ -24,18 +24,18 @@ use crate::{
 #[derive(Debug)]
 pub(super) enum Message {
     SendPacket {
-        dst: PublicKey,
+        dst: NodeId,
         data: Bytes,
-        src: PublicKey,
+        src: NodeId,
     },
     SendDiscoPacket {
-        dst: PublicKey,
+        dst: NodeId,
         data: Bytes,
-        src: PublicKey,
+        src: NodeId,
     },
     CreateClient(ClientConnConfig),
     RemoveClient {
-        key: PublicKey,
+        node_id: NodeId,
         conn_num: usize,
     },
 }
@@ -44,7 +44,7 @@ pub(super) enum Message {
 #[derive(Debug, Clone)]
 pub(super) struct Packet {
     /// The sender of the packet
-    pub(super) src: PublicKey,
+    pub(super) src: NodeId,
     /// The data packet bytes.
     pub(super) data: Bytes,
 }
@@ -185,8 +185,11 @@ impl Actor {
             Message::CreateClient(client_builder) => {
                 inc!(Metrics, accepts);
 
-                trace!(key = client_builder.key.fmt_short(), "create client");
-                let key = client_builder.key;
+                trace!(
+                    node_id = client_builder.node_id.fmt_short(),
+                    "create client"
+                );
+                let node_id = client_builder.node_id;
 
                 // build and register client, starting up read & write loops for the client connection
                 self.clients.register(client_builder).await;
@@ -196,31 +199,31 @@ impl Actor {
                         "relay_server".to_string(), // TODO: other id?
                         1,
                         None, // TODO(arqu): attribute to user id; possibly with the re-introduction of request tokens or other auth
-                        Some(key.to_string()),
+                        Some(node_id.to_string()),
                     ))
                     .await;
                 });
-                let nc = self.client_counter.update(key);
+                let nc = self.client_counter.update(node_id);
                 inc_by!(Metrics, unique_client_keys, nc);
             }
-            Message::RemoveClient { key, conn_num } => {
+            Message::RemoveClient { node_id, conn_num } => {
                 inc!(Metrics, disconnects);
-                trace!(key = %key.fmt_short(), "remove client");
+                trace!(node_id = %node_id.fmt_short(), "remove client");
                 // ensure we still have the client in question
-                if self.clients.has_client(&key, conn_num) {
-                    // remove the client from the map of clients, & notify any peers that it
+                if self.clients.has_client(&node_id, conn_num) {
+                    // remove the client from the map of clients, & notify any nodes that it
                     // has sent messages that it has left the network
-                    self.clients.unregister(&key).await;
+                    self.clients.unregister(&node_id).await;
                 }
             }
         }
     }
 }
 
-/// Counts how many `PublicKey`s seen, how many times.
+/// Counts how many `NodeId`s seen, how many times.
 /// Gets reset every day.
 struct ClientCounter {
-    clients: HashMap<PublicKey, usize>,
+    clients: HashMap<NodeId, usize>,
     last_clear_date: Date,
 }
 
@@ -243,7 +246,7 @@ impl ClientCounter {
     }
 
     /// Updates the client counter.
-    fn update(&mut self, client: PublicKey) -> u64 {
+    fn update(&mut self, client: NodeId) -> u64 {
         self.check_and_clear();
         let new_conn = !self.clients.contains_key(&client);
         let counter = self.clients.entry(client).or_insert(0);
@@ -269,13 +272,13 @@ mod tests {
     };
 
     fn test_client_builder(
-        key: PublicKey,
+        node_id: NodeId,
         server_channel: mpsc::Sender<Message>,
     ) -> (ClientConnConfig, Framed<DuplexStream, DerpCodec>) {
         let (test_io, io) = tokio::io::duplex(1024);
         (
             ClientConnConfig {
-                key,
+                node_id,
                 stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
@@ -299,8 +302,8 @@ mod tests {
                 .instrument(info_span!("relay.server")),
         );
 
-        let key_a = SecretKey::generate().public();
-        let (client_a, mut a_io) = test_client_builder(key_a, server_channel.clone());
+        let node_id_a = SecretKey::generate().public();
+        let (client_a, mut a_io) = test_client_builder(node_id_a, server_channel.clone());
 
         // create client a
         server_channel
@@ -309,8 +312,8 @@ mod tests {
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 
         // server message: create client b
-        let key_b = SecretKey::generate().public();
-        let (client_b, mut b_io) = test_client_builder(key_b, server_channel.clone());
+        let node_id_b = SecretKey::generate().public();
+        let (client_b, mut b_io) = test_client_builder(node_id_b, server_channel.clone());
         server_channel
             .send(Message::CreateClient(client_b))
             .await
@@ -318,14 +321,15 @@ mod tests {
 
         // write message from b to a
         let msg = b"hello world!";
-        crate::client::conn::send_packet(&mut b_io, &None, key_a, Bytes::from_static(msg)).await?;
+        crate::client::conn::send_packet(&mut b_io, &None, node_id_a, Bytes::from_static(msg))
+            .await?;
 
         // get message on a's reader
         let frame = recv_frame(FrameType::RecvPacket, &mut a_io).await?;
         assert_eq!(
             frame,
             Frame::RecvPacket {
-                src_key: key_b,
+                src_key: node_id_b,
                 content: msg.to_vec().into()
             }
         );
@@ -333,16 +337,16 @@ mod tests {
         // remove b
         server_channel
             .send(Message::RemoveClient {
-                key: key_b,
+                node_id: node_id_b,
                 conn_num: 1,
             })
             .await
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 
-        // get peer gone message on a about b leaving the network
+        // get the nodes gone message on a about b leaving the network
         // (we get this message because b has sent us a packet before)
         let frame = recv_frame(FrameType::PeerGone, &mut a_io).await?;
-        assert_eq!(Frame::PeerGone { peer: key_b }, frame);
+        assert_eq!(Frame::NodeGone { node_id: node_id_b }, frame);
 
         // close gracefully
         done.cancel();

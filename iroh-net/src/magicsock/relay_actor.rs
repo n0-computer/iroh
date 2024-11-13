@@ -247,7 +247,7 @@ impl ActiveRelay {
                         ReadResult::Continue
                     }
                     ReceivedMessage::Health { .. } => ReadResult::Continue,
-                    ReceivedMessage::PeerGone(key) => {
+                    ReceivedMessage::NodeGone(key) => {
                         self.node_present.remove(&key);
                         ReadResult::Continue
                     }

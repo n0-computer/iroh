@@ -222,8 +222,8 @@ pub(crate) enum Frame {
     NotePreferred {
         preferred: bool,
     },
-    PeerGone {
-        peer: PublicKey,
+    NodeGone {
+        node_id: PublicKey,
     },
     Ping {
         data: [u8; 8],
@@ -248,7 +248,7 @@ impl Frame {
             Frame::RecvPacket { .. } => FrameType::RecvPacket,
             Frame::KeepAlive => FrameType::KeepAlive,
             Frame::NotePreferred { .. } => FrameType::NotePreferred,
-            Frame::PeerGone { .. } => FrameType::PeerGone,
+            Frame::NodeGone { .. } => FrameType::PeerGone,
             Frame::Ping { .. } => FrameType::Ping,
             Frame::Pong { .. } => FrameType::Pong,
             Frame::Health { .. } => FrameType::Health,
@@ -271,7 +271,7 @@ impl Frame {
             } => PUBLIC_KEY_LENGTH + content.len(),
             Frame::KeepAlive => 0,
             Frame::NotePreferred { .. } => 1,
-            Frame::PeerGone { .. } => PUBLIC_KEY_LENGTH,
+            Frame::NodeGone { .. } => PUBLIC_KEY_LENGTH,
             Frame::Ping { .. } => 8,
             Frame::Pong { .. } => 8,
             Frame::Health { problem } => problem.len(),
@@ -331,7 +331,7 @@ impl Frame {
                     dst.put_u8(NOT_PREFERRED);
                 }
             }
-            Frame::PeerGone { peer } => {
+            Frame::NodeGone { node_id: peer } => {
                 dst.put(peer.as_ref());
             }
             Frame::Ping { data } => {
@@ -430,7 +430,7 @@ impl Frame {
                     "invalid peer gone frame length"
                 );
                 let peer = PublicKey::try_from(&content[..32])?;
-                Self::PeerGone { peer }
+                Self::NodeGone { node_id: peer }
             }
             FrameType::Ping => {
                 anyhow::ensure!(content.len() == 8, "invalid ping frame length");
@@ -636,8 +636,8 @@ mod tests {
             (Frame::KeepAlive, "06"),
             (Frame::NotePreferred { preferred: true }, "07 01"),
             (
-                Frame::PeerGone {
-                    peer: client_key.public(),
+                Frame::NodeGone {
+                    node_id: client_key.public(),
                 },
                 "08 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
                 a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
@@ -731,7 +731,7 @@ mod proptests {
             (key(), data(32)).prop_map(|(src_key, content)| Frame::RecvPacket { src_key, content });
         let keep_alive = Just(Frame::KeepAlive);
         let note_preferred = any::<bool>().prop_map(|preferred| Frame::NotePreferred { preferred });
-        let peer_gone = key().prop_map(|peer| Frame::PeerGone { peer });
+        let peer_gone = key().prop_map(|peer| Frame::NodeGone { node_id: peer });
         let ping = prop::array::uniform8(any::<u8>()).prop_map(|data| Frame::Ping { data });
         let pong = prop::array::uniform8(any::<u8>()).prop_map(|data| Frame::Pong { data });
         let health = data(0).prop_map(|problem| Frame::Health { problem });

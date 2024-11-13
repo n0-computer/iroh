@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{bail, Result};
-use iroh_base::key::PublicKey;
+use iroh_base::key::NodeId;
 use iroh_metrics::inc;
 use tokio::sync::mpsc;
 use tracing::{trace, warn};
@@ -22,7 +22,7 @@ const RETRIES: usize = 3;
 #[derive(Debug, Default)]
 pub(super) struct Clients {
     /// The list of all currently connected clients.
-    inner: HashMap<PublicKey, Client>,
+    inner: HashMap<NodeId, Client>,
     /// The next connection number to use.
     conn_num: usize,
 }
@@ -40,17 +40,17 @@ impl Clients {
     }
 
     /// Record that `src` sent or forwarded a packet to `dst`
-    pub fn record_send(&mut self, src: &PublicKey, dst: PublicKey) {
+    pub fn record_send(&mut self, src: &NodeId, dst: NodeId) {
         if let Some(client) = self.inner.get_mut(src) {
             client.record_send(dst);
         }
     }
 
-    pub fn contains_key(&self, key: &PublicKey) -> bool {
+    pub fn contains_key(&self, key: &NodeId) -> bool {
         self.inner.contains_key(key)
     }
 
-    pub fn has_client(&self, key: &PublicKey, conn_num: usize) -> bool {
+    pub fn has_client(&self, key: &NodeId, conn_num: usize) -> bool {
         if let Some(client) = self.inner.get(key) {
             return client.conn.conn_num == conn_num;
         }
@@ -65,11 +65,11 @@ impl Clients {
 
     pub async fn register(&mut self, client_config: ClientConnConfig) {
         // this builds the client handler & starts the read & write loops to that client connection
-        let key = client_config.key;
+        let key = client_config.node_id;
         trace!("registering client: {:?}", key);
         let conn_num = self.next_conn_num();
         let client = ClientConn::new(client_config, conn_num);
-        // TODO: in future, do not remove clients that share a publicKey, instead,
+        // TODO: in future, do not remove clients that share a NodeId, instead,
         // expand the `Client` struct to handle multiple connections & a policy for
         // how to handle who we write to when multiple connections exist.
         let client = Client::new(client);
@@ -82,7 +82,7 @@ impl Clients {
     /// Removes the client from the map of clients, & sends a notification
     /// to each client that peers has sent data to, to let them know that
     /// peer is gone from the network.
-    pub async fn unregister(&mut self, peer: &PublicKey) {
+    pub async fn unregister(&mut self, peer: &NodeId) {
         trace!("unregistering client: {:?}", peer);
         if let Some(client) = self.inner.remove(peer) {
             for key in client.sent_to.iter() {
@@ -93,8 +93,8 @@ impl Clients {
         }
     }
 
-    /// Attempt to send a packet to client with [`PublicKey`] `key`
-    pub async fn send_packet(&mut self, key: &PublicKey, packet: Packet) -> Result<()> {
+    /// Attempt to send a packet to client with [`NodeId`] `key`
+    pub async fn send_packet(&mut self, key: &NodeId, packet: Packet) -> Result<()> {
         if let Some(client) = self.inner.get(key) {
             let res = client.send_packet(packet);
             return self.process_result(key, res).await;
@@ -102,7 +102,7 @@ impl Clients {
         bail!("Could not find client for {key:?}, dropped packet");
     }
 
-    pub async fn send_disco_packet(&mut self, key: &PublicKey, packet: Packet) -> Result<()> {
+    pub async fn send_disco_packet(&mut self, key: &NodeId, packet: Packet) -> Result<()> {
         if let Some(client) = self.inner.get(key) {
             let res = client.send_disco_packet(packet);
             return self.process_result(key, res).await;
@@ -110,7 +110,7 @@ impl Clients {
         bail!("Could not find client for {key:?}, dropped packet");
     }
 
-    fn send_peer_gone(&mut self, key: &PublicKey, peer: PublicKey) {
+    fn send_peer_gone(&mut self, key: &NodeId, peer: NodeId) {
         if let Some(client) = self.inner.get(key) {
             let res = client.send_peer_gone(peer);
             let _ = self.process_result_no_fallback(key, res);
@@ -119,7 +119,7 @@ impl Clients {
         warn!("Could not find client for {key:?}, dropping peer gone packet");
     }
 
-    async fn process_result(&mut self, key: &PublicKey, res: Result<(), SendError>) -> Result<()> {
+    async fn process_result(&mut self, key: &NodeId, res: Result<(), SendError>) -> Result<()> {
         match res {
             Ok(_) => return Ok(()),
             Err(SendError::PacketDropped) => {
@@ -135,7 +135,7 @@ impl Clients {
 
     fn process_result_no_fallback(
         &mut self,
-        key: &PublicKey,
+        key: &NodeId,
         res: Result<(), SendError>,
     ) -> Result<()> {
         match res {
@@ -152,14 +152,14 @@ impl Clients {
 }
 
 /// Represents a connection to a client.
-// TODO: expand to allow for _multiple connections_ associated with a single PublicKey. This
+// TODO: expand to allow for _multiple connections_ associated with a single NodeId. This
 // introduces some questions around which connection should be prioritized when forwarding packets
 #[derive(Debug)]
 pub(super) struct Client {
-    /// The client connection associated with the [`PublicKey`]
+    /// The client connection associated with the [`NodeId`]
     conn: ClientConn,
     /// list of peers we have sent messages to
-    sent_to: HashSet<PublicKey>,
+    sent_to: HashSet<NodeId>,
 }
 
 impl Client {
@@ -171,7 +171,7 @@ impl Client {
     }
 
     /// Record that this client sent a packet to the `dst` client
-    fn record_send(&mut self, dst: PublicKey) {
+    fn record_send(&mut self, dst: NodeId) {
         self.sent_to.insert(dst);
     }
 
@@ -187,7 +187,7 @@ impl Client {
         try_send(&self.conn.disco_send_queue, packet)
     }
 
-    fn send_peer_gone(&self, key: PublicKey) -> Result<(), SendError> {
+    fn send_peer_gone(&self, key: NodeId) -> Result<(), SendError> {
         let res = try_send(&self.conn.peer_gone, key);
         match res {
             Ok(_) => {
@@ -238,14 +238,12 @@ mod tests {
         server::streams::{MaybeTlsStream, RelayedStream},
     };
 
-    fn test_client_builder(
-        key: PublicKey,
-    ) -> (ClientConnConfig, FramedRead<DuplexStream, DerpCodec>) {
+    fn test_client_builder(key: NodeId) -> (ClientConnConfig, FramedRead<DuplexStream, DerpCodec>) {
         let (test_io, io) = tokio::io::duplex(1024);
         let (server_channel, _) = mpsc::channel(10);
         (
             ClientConnConfig {
-                key,
+                node_id: key,
                 stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
@@ -299,7 +297,7 @@ mod tests {
         // send peer_gone
         clients.send_peer_gone(&a_key, b_key);
         let frame = recv_frame(FrameType::PeerGone, &mut a_rw).await?;
-        assert_eq!(frame, Frame::PeerGone { peer: b_key });
+        assert_eq!(frame, Frame::NodeGone { node_id: b_key });
 
         clients.unregister(&a_key.clone()).await;
 

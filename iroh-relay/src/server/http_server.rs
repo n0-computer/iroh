@@ -490,7 +490,7 @@ impl Inner {
 
         trace!("accept: build client conn");
         let client_conn_builder = ClientConnConfig {
-            key: client_key,
+            node_id: client_key,
             stream: io,
             write_timeout: self.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,

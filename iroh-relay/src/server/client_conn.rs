@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_lite::StreamExt;
 use futures_util::SinkExt;
-use iroh_base::key::PublicKey;
+use iroh_base::key::NodeId;
 use iroh_metrics::{inc, inc_by};
 use tokio::sync::mpsc;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -27,7 +27,7 @@ use crate::{
 /// Configuration for a [`ClientConn`].
 #[derive(Debug)]
 pub(super) struct ClientConnConfig {
-    pub(super) key: PublicKey,
+    pub(super) node_id: NodeId,
     pub(super) stream: RelayedStream,
     pub(super) write_timeout: Duration,
     pub(super) channel_capacity: usize,
@@ -43,7 +43,7 @@ pub(super) struct ClientConn {
     /// Unique counter, incremented each time we accept a new connection.
     pub(super) conn_num: usize,
     /// Identity of the connected peer.
-    pub(super) key: PublicKey,
+    pub(super) key: NodeId,
     /// Used to close the connection loop.
     done: CancellationToken,
     /// Actor handle.
@@ -53,7 +53,7 @@ pub(super) struct ClientConn {
     /// Queue of disco packets intended for the client.
     pub(super) disco_send_queue: mpsc::Sender<Packet>,
     /// Channel to notify the client that a previous sender has disconnected.
-    pub(super) peer_gone: mpsc::Sender<PublicKey>,
+    pub(super) peer_gone: mpsc::Sender<NodeId>,
 }
 
 impl ClientConn {
@@ -62,7 +62,7 @@ impl ClientConn {
     /// Call [`ClientConn::shutdown`] to close the read and write loops before dropping the [`ClientConn`]
     pub fn new(config: ClientConnConfig, conn_num: usize) -> ClientConn {
         let ClientConnConfig {
-            key,
+            node_id: key,
             stream: io,
             write_timeout,
             channel_capacity,
@@ -81,7 +81,7 @@ impl ClientConn {
             timeout: write_timeout,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
-            peer_gone: peer_gone_r,
+            node_gone: peer_gone_r,
             key,
             preferred: false,
             server_channel: server_channel.clone(),
@@ -97,7 +97,10 @@ impl ClientConn {
 
                 // remove the client when the actor terminates, no matter how it exits
                 let _ = server_channel
-                    .send(actor::Message::RemoveClient { key, conn_num })
+                    .send(actor::Message::RemoveClient {
+                        node_id: key,
+                        conn_num,
+                    })
                     .await;
                 match res {
                     Err(e) => {
@@ -167,14 +170,14 @@ struct Actor {
     /// Important packets queued to send to the client
     disco_send_queue: mpsc::Receiver<Packet>,
     /// Notify the client that a previous sender has disconnected
-    peer_gone: mpsc::Receiver<PublicKey>,
-    /// [`PublicKey`] of this client
-    key: PublicKey,
+    node_gone: mpsc::Receiver<NodeId>,
+    /// [`NodeId`] of this client
+    key: NodeId,
     /// Channel used to communicate with the server about actions
     /// it needs to take on behalf of the client
     server_channel: mpsc::Sender<actor::Message>,
     /// Notes that the client considers this the preferred connection (important in cases
-    /// where the client moves to a different network, but has the same PublicKey)
+    /// where the client moves to a different network, but has the same NodeId)
     preferred: bool,
 }
 
@@ -210,10 +213,10 @@ impl Actor {
                         }
                     }
                 }
-                peer = self.peer_gone.recv() => {
-                    let peer = peer.context("Server.peer_gone dropped")?;
-                    trace!("peer gone: {:?}", peer);
-                    self.write_frame(Frame::PeerGone { peer }).await?;
+                node_id = self.node_gone.recv() => {
+                    let node_id = node_id.context("Server.node_gone dropped")?;
+                    trace!("node_id gone: {:?}", node_id);
+                    self.write_frame(Frame::NodeGone { node_id }).await?;
                 }
                 packet = self.send_queue.recv() => {
                     let packet = packet.context("Server.send_queue dropped")?;
@@ -289,7 +292,7 @@ impl Actor {
         Ok(())
     }
 
-    async fn handle_frame_send_packet(&self, dst_key: PublicKey, data: Bytes) -> Result<()> {
+    async fn handle_frame_send_packet(&self, dst_key: NodeId, data: Bytes) -> Result<()> {
         let message = if disco::looks_like_disco_wrapper(&data) {
             inc!(Metrics, disco_packets_recv);
             actor::Message::SendDiscoPacket {
@@ -343,7 +346,7 @@ mod tests {
             timeout: Duration::from_secs(1),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
-            peer_gone: peer_gone_r,
+            node_gone: peer_gone_r,
 
             key,
             server_channel: server_channel_s,
@@ -390,7 +393,7 @@ mod tests {
         println!("send peer gone");
         peer_gone_s.send(key).await?;
         let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
-        assert_eq!(frame, Frame::PeerGone { peer: key });
+        assert_eq!(frame, Frame::NodeGone { node_id: key });
 
         // Read tests
         println!("--read");
@@ -483,7 +486,7 @@ mod tests {
             timeout: Duration::from_secs(1),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
-            peer_gone: peer_gone_r,
+            node_gone: peer_gone_r,
 
             key,
             server_channel: server_channel_s,
