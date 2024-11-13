@@ -9,7 +9,7 @@ authors = ["n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.75"
+rust-version = "1.76"
 
 [lints]
 workspace = true
@@ -34,10 +34,14 @@ iroh-io = { version = "0.6.0", features = ["stats"] }
 iroh-metrics = { version = "0.27.0", path = "../iroh-metrics", optional = true }
 iroh-net = { version = "0.27.0", path = "../iroh-net" }
 meadowcap = "0.1.0"
+nested_enum_utils = "0.1.0"
 postcard = { version = "1", default-features = false, features = [ "alloc", "use-std", "experimental-derive", ] }
+quic-rpc = "0.15.0"
+quic-rpc-derive = "0.15.0"
 rand = "0.8.5"
 rand_core = "0.6.4"
 redb = { version = "2.0.0" }
+ref-cast = "1.0.23"
 self_cell = "1.0.4"
 serde = { version = "1.0.164", features = ["derive"] }
 sha2 = "0.10.8"
@@ -62,6 +66,7 @@ rand_chacha = "0.3.1"
 tokio = { version = "1", features = ["sync", "macros"] }
 proptest = "1.2.0"
 tempfile = "3.4"
+testresult = "0.4.0"
 test-strategy = "0.3.1"
 tracing-subscriber = "0.3.18"
 

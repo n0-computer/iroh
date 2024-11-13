@@ -2473,15 +2473,14 @@ dependencies = [
  "iroh-net",
  "iroh-quinn",
  "iroh-test",
- "iroh-willow",
  "nested_enum_utils",
  "num_cpus",
  "parking_lot",
  "portable-atomic",
  "postcard",
  "proptest",
- "quic-rpc",
- "quic-rpc-derive",
+ "quic-rpc 0.12.0",
+ "quic-rpc-derive 0.12.0",
  "rand",
  "rand_chacha",
  "ref-cast",
@@ -2630,7 +2629,7 @@ dependencies = [
  "pkarr",
  "portable-atomic",
  "postcard",
- "quic-rpc",
+ "quic-rpc 0.12.0",
  "rand",
  "rand_xorshift",
  "ratatui",
@@ -3008,12 +3007,16 @@ dependencies = [
  "iroh-net",
  "iroh-test",
  "meadowcap",
+ "nested_enum_utils",
  "postcard",
  "proptest",
+ "quic-rpc 0.15.0",
+ "quic-rpc-derive 0.15.0",
  "rand",
  "rand_chacha",
  "rand_core",
  "redb 2.1.1",
+ "ref-cast",
  "self_cell",
  "serde",
  "sha2",
@@ -3021,6 +3024,7 @@ dependencies = [
  "syncify",
  "tempfile",
  "test-strategy 0.3.1",
+ "testresult",
  "thiserror",
  "tokio",
  "tokio-stream",
@@ -4261,13 +4265,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "quic-rpc"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61e131f594054d27d077162815db3b5e9ddd76a28fbb9091b68095971e75c286"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "educe",
+ "flume",
+ "futures-lite 2.3.0",
+ "futures-sink",
+ "futures-util",
+ "hex",
+ "pin-project",
+ "serde",
+ "slab",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "quic-rpc-derive"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6150a9fd3cf6c34d25730fe55a247b99d1c6e4fad6e7b7843f729a431a57e919"
 dependencies = [
  "proc-macro2",
- "quic-rpc",
+ "quic-rpc 0.12.0",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "quic-rpc-derive"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cbef4c942978f74ef296ae40d43d4375c9d730b65a582688a358108cfd5c0cf7"
+dependencies = [
+ "proc-macro2",
+ "quic-rpc 0.15.0",
  "quote",
  "syn 1.0.109",
 ]

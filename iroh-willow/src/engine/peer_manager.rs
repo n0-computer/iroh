@@ -406,6 +406,7 @@ impl PeerManager {
                         peer_info.conn_state = ConnState::None;
                         match &peer_info.session_state {
                             SessionState::None => {
+                                println!("Error: {err:#}");
                                 peer_info
                                     .abort_pending_intents(err.context("failed while establishing"))
                                     .await;
