@@ -40,13 +40,17 @@ use url::Host;
 
 use super::NetcheckMetrics;
 use crate::{
+    self as netcheck,
     defaults::DEFAULT_STUN_PORT,
-    dns::{DnsResolver, ResolverExt},
-    netcheck::{self, Report},
+    // dns::{DnsResolver, ResolverExt},
     ping::{PingError, Pinger},
     util::MaybeFuture,
-    RelayMap, RelayNode, RelayUrl,
+    RelayMap,
+    RelayNode,
+    RelayUrl,
+    Report,
 };
+use hickory_resolver::TokioAsyncResolver as DnsResolver;
 
 mod hairpin;
 mod probes;
