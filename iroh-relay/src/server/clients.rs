@@ -22,6 +22,8 @@ const RETRIES: usize = 3;
 #[derive(Debug, Default)]
 pub(super) struct Clients {
     inner: HashMap<PublicKey, Client>,
+    /// The next connection number to use.
+    conn_num: usize,
 }
 
 impl Clients {
@@ -56,11 +58,18 @@ impl Clients {
         false
     }
 
+    fn next_conn_num(&mut self) -> usize {
+        let conn_num = self.conn_num;
+        self.conn_num = self.conn_num.wrapping_add(1);
+        conn_num
+    }
+
     pub async fn register(&mut self, client_config: ClientConnConfig) {
         // this builds the client handler & starts the read & write loops to that client connection
         let key = client_config.key;
         trace!("registering client: {:?}", key);
-        let client = ClientConn::new(client_config);
+        let conn_num = self.next_conn_num();
+        let client = ClientConn::new(client_config, conn_num);
         // TODO: in future, do not remove clients that share a publicKey, instead,
         // expand the `Client` struct to handle multiple connections & a policy for
         // how to handle who we write to when multiple connections exist.

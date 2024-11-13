@@ -19,7 +19,7 @@ use crate::{
         relay::{write_frame, Frame, KEEP_ALIVE},
     },
     server::{
-        actor::{self, new_conn_num, Packet},
+        actor::{self, Packet},
         metrics::Metrics,
     },
 };
@@ -64,7 +64,7 @@ impl ClientConn {
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
     /// Call [`ClientConn::shutdown`] to close the read and write loops before dropping the [`ClientConn`]
-    pub fn new(config: ClientConnConfig) -> ClientConn {
+    pub fn new(config: ClientConnConfig, conn_num: usize) -> ClientConn {
         let ClientConnConfig {
             key,
             stream: io,
@@ -72,7 +72,6 @@ impl ClientConn {
             channel_capacity,
             server_channel,
         } = config;
-        let conn_num = new_conn_num();
 
         let done = CancellationToken::new();
         let client_id = (key, conn_num);

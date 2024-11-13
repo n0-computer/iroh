@@ -2,11 +2,7 @@
 //!
 //! based on tailscale/derp/derp_server.go
 
-use std::{
-    collections::HashMap,
-    sync::atomic::{AtomicUsize, Ordering},
-    time::Duration,
-};
+use std::{collections::HashMap, time::Duration};
 
 use anyhow::{bail, Result};
 use bytes::Bytes;
@@ -24,11 +20,6 @@ use crate::{
 };
 
 // TODO: skipping `verboseDropKeys` for now
-
-static CONN_NUM: AtomicUsize = AtomicUsize::new(1);
-pub(crate) fn new_conn_num() -> usize {
-    CONN_NUM.fetch_add(1, Ordering::Relaxed)
-}
 
 #[derive(derive_more::Debug)]
 pub(super) enum Message {
