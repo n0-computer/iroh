@@ -43,7 +43,7 @@ async fn spawn_node(persist_test_mode: bool) -> (NodeAddr, Client, iroh_blobs::s
             let endpoint = Endpoint::builder()
                 .secret_key(secret_key)
                 .alpns(vec![iroh_willow::ALPN.to_vec()])
-                .relay_mode(iroh_net::relay::RelayMode::Disabled)
+                .relay_mode(iroh_net::RelayMode::Disabled)
                 .bind()
                 .await?;
 

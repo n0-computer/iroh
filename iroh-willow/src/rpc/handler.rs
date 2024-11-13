@@ -2,7 +2,6 @@ use anyhow::Result;
 use futures_lite::Stream;
 use futures_util::SinkExt;
 use futures_util::StreamExt;
-use iroh_base::rpc::{RpcError, RpcResult};
 use iroh_net::Endpoint;
 use quic_rpc::server::ChannelTypes;
 use quic_rpc::server::{RpcChannel, RpcServerError};
@@ -14,7 +13,7 @@ use crate::rpc::proto::*;
 use crate::Engine;
 
 fn map_err(err: anyhow::Error) -> RpcError {
-    RpcError::from(err)
+    RpcError::new(&*err)
 }
 
 impl Engine {
@@ -137,7 +136,7 @@ impl Engine {
                         if let Err(err) =
                             sync_with_peer(&engine, req, events_tx.clone(), update_stream).await
                         {
-                            let _ = events_tx.send(Err(err.into())).await;
+                            let _ = events_tx.send(Err(RpcError::new(&*err))).await;
                         }
                     });
                     ReceiverStream::new(events_rx)
@@ -171,14 +170,14 @@ impl Engine {
             }
             Addr(msg) => {
                 chan.rpc(msg, endpoint, |endpoint, _req| async move {
-                    let addr = endpoint.node_addr().await?;
+                    let addr = endpoint.node_addr().await.map_err(map_err)?;
                     Ok(addr)
                 })
                 .await
             }
             AddAddr(msg) => {
                 chan.rpc(msg, endpoint, |endpoint, req| async move {
-                    endpoint.add_node_addr(req.addr)?;
+                    endpoint.add_node_addr(req.addr).map_err(map_err)?;
                     Ok(())
                 })
                 .await
