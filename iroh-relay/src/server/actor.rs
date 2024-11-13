@@ -91,7 +91,7 @@ impl ServerActorTask {
         self.cancel.cancel();
         match self.loop_handler.await {
             Ok(Ok(())) => {}
-            Ok(Err(e)) => warn!("error shutting down server: {e:?}"),
+            Ok(Err(e)) => warn!("error shutting down server: {e:#}"),
             Err(e) => warn!("error waiting for the server process to close: {e:?}"),
         }
     }
@@ -143,12 +143,7 @@ impl Actor {
     async fn handle_message(&mut self, msg: Message) {
         match msg {
             Message::SendPacket { dst, data, src } => {
-                trace!(
-                    "send packet from: {:?} to: {:?} ({}b)",
-                    src,
-                    dst,
-                    data.len()
-                );
+                trace!(?src, ?dst, len = data.len(), "send packet");
                 if self.clients.contains_key(&dst) {
                     match self.clients.send_packet(&dst, Packet { data, src }).await {
                         Ok(()) => {
@@ -156,22 +151,17 @@ impl Actor {
                             inc!(Metrics, send_packets_sent);
                         }
                         Err(err) => {
-                            trace!("failed to send packet to {dst:?}: {err:?}");
+                            trace!(?dst, "failed to send packet: {err:#}");
                             inc!(Metrics, send_packets_dropped);
                         }
                     }
                 } else {
-                    warn!("no way to reach client {dst:?}, dropped packet");
+                    warn!(?dst, "no way to reach client, dropped packet");
                     inc!(Metrics, send_packets_dropped);
                 }
             }
             Message::SendDiscoPacket { dst, data, src } => {
-                trace!(
-                    "send disco packet from: {:?} to: {:?} ({}b)",
-                    src,
-                    dst,
-                    data.len()
-                );
+                trace!(?src, ?dst, len=data.len(), "send disco packet");
                 if self.clients.contains_key(&dst) {
                     match self
                         .clients
@@ -183,19 +173,19 @@ impl Actor {
                             inc!(Metrics, disco_packets_sent);
                         }
                         Err(err) => {
-                            trace!("failed to send disco packet to {dst:?}: {err:?}");
+                            trace!(?dst, "failed to send disco packet: {err:#}");
                             inc!(Metrics, disco_packets_dropped);
                         }
                     }
                 } else {
-                    warn!("disco: no way to reach client {dst:?}, dropped packet");
+                    warn!(?dst, "disco: no way to reach client, dropped packet");
                     inc!(Metrics, disco_packets_dropped);
                 }
             }
             Message::CreateClient(client_builder) => {
                 inc!(Metrics, accepts);
 
-                trace!("create client: {:?}", client_builder.key);
+                trace!(key = client_builder.key.fmt_short(), "create client");
                 let key = client_builder.key;
 
                 // build and register client, starting up read & write loops for the client connection
@@ -215,7 +205,7 @@ impl Actor {
             }
             Message::RemoveClient { key, conn_num } => {
                 inc!(Metrics, disconnects);
-                trace!("remove client: {:?}", key);
+                trace!(key = %key.fmt_short(), "remove client");
                 // ensure we still have the client in question
                 if self.clients.has_client(&key, conn_num) {
                     // remove the client from the map of clients, & notify any peers that it

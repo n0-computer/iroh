@@ -110,7 +110,7 @@ impl ClientConn {
                     }
                 }
             }
-            .instrument(tracing::debug_span!("client_conn actor")),
+            .instrument(tracing::info_span!("client_conn_actor")),
         );
 
         ClientConn {
