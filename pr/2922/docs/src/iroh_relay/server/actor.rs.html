@@ -358,6 +358,8 @@
 <a href="#358" id="358">358</a>
 <a href="#359" id="359">359</a>
 <a href="#360" id="360">360</a>
+<a href="#361" id="361">361</a>
+<a href="#362" id="362">362</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The main event loop for the relay server.
 //!
 //! based on tailscale/derp/derp_server.go
@@ -371,7 +373,7 @@
 <span class="kw">use </span>time::{Date, OffsetDateTime};
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-<span class="kw">use </span>tracing::{info_span, trace, warn, Instrument};
+<span class="kw">use </span>tracing::{info, info_span, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{
     defaults::timeouts::SERVER_WRITE_TIMEOUT <span class="kw">as </span>WRITE_TIMEOUT,
@@ -423,7 +425,7 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) server_channel: mpsc::Sender&lt;Message&gt;,
     <span class="doccomment">/// Server loop handler
     </span>loop_handler: AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
-    <span class="doccomment">/// Done token, forces a hard shutdown. To gracefully shutdown, use [`ServerActorTask::close`]
+    <span class="doccomment">/// Token to shutdown the actor loop.
     </span>cancel: CancellationToken,
 }
 
@@ -480,7 +482,7 @@
             <span class="macro">tokio::select!</span> {
                 biased;
                 <span class="kw">_ </span>= done.cancelled() =&gt; {
-                    <span class="macro">warn!</span>(<span class="string">"server actor loop cancelled, closing loop"</span>);
+                    <span class="macro">info!</span>(<span class="string">"server actor loop cancelled, closing loop"</span>);
                     <span class="comment">// TODO: stats: drain channel &amp; count dropped packets etc
                     // close all client connections and client read/write loops
                     </span><span class="self">self</span>.clients.shutdown().<span class="kw">await</span>;
@@ -510,20 +512,18 @@
                     data.len()
                 );
                 <span class="kw">if </span><span class="self">self</span>.clients.contains_key(<span class="kw-2">&amp;</span>dst) {
-                    <span class="comment">// if this client is in our local network, just try to send the packet
-                    </span><span class="kw">if </span><span class="self">self
-                        </span>.clients
-                        .send_packet(<span class="kw-2">&amp;</span>dst, Packet { data, src })
-                        .<span class="kw">await
-                        </span>.is_ok()
-                    {
-                        <span class="self">self</span>.clients.record_send(<span class="kw-2">&amp;</span>src, dst);
-                        <span class="macro">inc!</span>(Metrics, send_packets_sent);
-                    } <span class="kw">else </span>{
-                        <span class="macro">inc!</span>(Metrics, send_packets_dropped);
+                    <span class="kw">match </span><span class="self">self</span>.clients.send_packet(<span class="kw-2">&amp;</span>dst, Packet { data, src }).<span class="kw">await </span>{
+                        <span class="prelude-val">Ok</span>(()) =&gt; {
+                            <span class="self">self</span>.clients.record_send(<span class="kw-2">&amp;</span>src, dst);
+                            <span class="macro">inc!</span>(Metrics, send_packets_sent);
+                        }
+                        <span class="prelude-val">Err</span>(err) =&gt; {
+                            <span class="macro">trace!</span>(<span class="string">"failed to send packet to {dst:?}: {err:?}"</span>);
+                            <span class="macro">inc!</span>(Metrics, send_packets_dropped);
+                        }
                     }
                 } <span class="kw">else </span>{
-                    <span class="macro">warn!</span>(<span class="string">"send packet: no way to reach client {dst:?}, dropped packet"</span>);
+                    <span class="macro">warn!</span>(<span class="string">"no way to reach client {dst:?}, dropped packet"</span>);
                     <span class="macro">inc!</span>(Metrics, send_packets_dropped);
                 }
             }
@@ -535,20 +535,22 @@
                     data.len()
                 );
                 <span class="kw">if </span><span class="self">self</span>.clients.contains_key(<span class="kw-2">&amp;</span>dst) {
-                    <span class="comment">// if this client is in our local network, just try to send the packet
-                    </span><span class="kw">if </span><span class="self">self
+                    <span class="kw">match </span><span class="self">self
                         </span>.clients
                         .send_disco_packet(<span class="kw-2">&amp;</span>dst, Packet { data, src })
                         .<span class="kw">await
-                        </span>.is_ok()
-                    {
-                        <span class="self">self</span>.clients.record_send(<span class="kw-2">&amp;</span>src, dst);
-                        <span class="macro">inc!</span>(Metrics, disco_packets_sent);
-                    } <span class="kw">else </span>{
-                        <span class="macro">inc!</span>(Metrics, disco_packets_dropped);
+                    </span>{
+                        <span class="prelude-val">Ok</span>(()) =&gt; {
+                            <span class="self">self</span>.clients.record_send(<span class="kw-2">&amp;</span>src, dst);
+                            <span class="macro">inc!</span>(Metrics, disco_packets_sent);
+                        }
+                        <span class="prelude-val">Err</span>(err) =&gt; {
+                            <span class="macro">trace!</span>(<span class="string">"failed to send disco packet to {dst:?}: {err:?}"</span>);
+                            <span class="macro">inc!</span>(Metrics, disco_packets_dropped);
+                        }
                     }
                 } <span class="kw">else </span>{
-                    <span class="macro">warn!</span>(<span class="string">"send disco packet: no way to reach client {dst:?}, dropped packet"</span>);
+                    <span class="macro">warn!</span>(<span class="string">"disco: no way to reach client {dst:?}, dropped packet"</span>);
                     <span class="macro">inc!</span>(Metrics, disco_packets_dropped);
                 }
             }
@@ -587,7 +589,9 @@
     }
 }
 
-<span class="kw">struct </span>ClientCounter {
+<span class="doccomment">/// Counts how many `PublicKey`s seen, how many times.
+/// Gets reset every day.
+</span><span class="kw">struct </span>ClientCounter {
     clients: HashMap&lt;PublicKey, usize&gt;,
     last_clear_date: Date,
 }
