@@ -421,7 +421,7 @@
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ServerActorTask {
     <span class="doccomment">/// Specifies how long to wait before failing when writing to a client.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) write_timeout: Duration,
-    <span class="doccomment">/// Channel on which to communicate to the [`ServerActor`]
+    <span class="doccomment">/// Channel on which to communicate to the [`Actor`]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) server_channel: mpsc::Sender&lt;Message&gt;,
     <span class="doccomment">/// Server loop handler
     </span>loop_handler: AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
