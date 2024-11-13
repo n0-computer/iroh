@@ -2778,6 +2778,7 @@ dependencies = [
  "human-time",
  "indicatif",
  "iroh",
+ "iroh-docs",
  "iroh-gossip",
  "iroh-metrics",
  "nix 0.27.1",
@@ -2864,7 +2865,7 @@ dependencies = [
 [[package]]
 name = "iroh-docs"
 version = "0.28.0"
-source = "git+https://github.com/n0-computer/iroh-docs?branch=main#c3017de4573930fd03a05ec4aa6c7ab7a84f1890"
+source = "git+https://github.com/n0-computer/iroh-docs?branch=main#9166b226fedc889218986eb6ef2a3d3cdcdee367"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2883,15 +2884,20 @@ dependencies = [
  "iroh-net",
  "iroh-router",
  "lru",
+ "nested_enum_utils",
  "num_enum",
+ "portable-atomic",
  "postcard",
+ "quic-rpc",
+ "quic-rpc-derive",
  "rand",
  "rand_core",
  "redb 1.5.1",
  "redb 2.2.0",
  "self_cell",
  "serde",
- "strum 0.25.0",
+ "serde-error",
+ "strum 0.26.3",
  "tempfile",
  "thiserror",
  "tokio",
