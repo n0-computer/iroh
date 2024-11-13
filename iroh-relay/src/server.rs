@@ -84,6 +84,8 @@ pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     pub relay: Option<RelayConfig<EC, EA>>,
     /// Configuration for the STUN server, disabled if `None`.
     pub stun: Option<StunConfig>,
+    /// Configuration for the QUIC server, disabled if `None`.
+    pub quic: Option<QuicConfig<EC, EA>>,
     /// Socket to serve metrics on.
     #[cfg(feature = "metrics")]
     #[cfg_attr(iroh_docsrs, doc(cfg(feature = "metrics")))]
@@ -120,6 +122,35 @@ pub struct StunConfig {
     ///
     /// Normally you'd chose port `3478`, see [`crate::defaults::DEFAULT_STUN_PORT`].
     pub bind_addr: SocketAddr,
+}
+
+/// Configuration for the QUIC server.
+#[derive(Debug)]
+// TODO(ramfox): limits? Limiting connections or accepted # of connections from a single IP? from a single node ID?
+pub struct QuicConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
+    /// The socket address on which the QUIC server should bind.
+    ///
+    /// Normally you'd chose port `7842`, see [`crate::defaults::DEFAULT_QUIC_PORT`].
+    pub bind_addr: SocketAddr,
+    /// The TLS configuration for the QUIC server.
+    pub tls: TlsConfig<EC, EA>,
+}
+
+impl<EC, EA> QuicConfig<EC, EA>
+where
+    EC: fmt::Debug + 'static,
+    EA: fmt::Debug + 'static,
+{
+    /// Create a new [`QuicConfig`] from a [`TlsConfig`].
+    pub fn new(tls: TlsConfig<EC, EA>) -> Self {
+        Self {
+            bind_addr: SocketAddr::new(
+                tls.https_bind_addr.ip(),
+                crate::defaults::DEFAULT_QUIC_PORT,
+            ),
+            tls,
+        }
+    }
 }
 
 /// TLS configuration for Relay server.
@@ -713,6 +744,7 @@ mod tests {
                 tls: None,
                 limits: Default::default(),
             }),
+            quic: None,
             stun: None,
             metrics_addr: None,
         })
@@ -742,6 +774,7 @@ mod tests {
                 limits: Default::default(),
             }),
             stun: None,
+            quic: None,
             metrics_addr: Some((Ipv4Addr::LOCALHOST, 1234).into()),
         })
         .await
@@ -1012,6 +1045,7 @@ mod tests {
             stun: Some(StunConfig {
                 bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
             }),
+            quic: None,
             metrics_addr: None,
         })
         .await
