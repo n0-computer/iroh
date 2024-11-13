@@ -223,25 +223,21 @@ impl ConnActor {
                 peer = self.peer_gone.recv() => {
                     let peer = peer.context("Server.peer_gone dropped")?;
                     trace!("peer gone: {:?}", peer);
-                    self.send_peer_gone(peer).await?;
+                    self.write_frame(Frame::PeerGone { peer }).await?;
                 }
                 packet = self.send_queue.recv() => {
                     let packet = packet.context("Server.send_queue dropped")?;
                     trace!("send packet");
                     self.send_packet(packet).await.context("send packet")?;
-                    // TODO: stats
-                    // record `packet.enqueuedAt`
                 }
                 packet = self.disco_send_queue.recv() => {
                     let packet = packet.context("Server.disco_send_queue dropped")?;
                     trace!("send disco packet");
                     self.send_packet(packet).await.context("send packet")?;
-                    // TODO: stats
-                    // record `packet.enqueuedAt`
                 }
                 _ = keep_alive.tick() => {
                     trace!("keep alive");
-                    self.send_keep_alive().await.context("send keep alive")?;
+                    self.write_frame(Frame::KeepAlive).await?;
                 }
             }
 
@@ -254,31 +250,6 @@ impl ConnActor {
     /// Errors if the send does not happen within the `timeout` duration
     async fn write_frame(&mut self, frame: Frame) -> Result<()> {
         write_frame(&mut self.stream, frame, self.timeout).await
-    }
-
-    /// Sends a `keep alive` frame, does not flush
-    ///
-    /// Errors if the send does not happen within the `timeout` duration
-    async fn send_keep_alive(&mut self) -> Result<()> {
-        self.write_frame(Frame::KeepAlive).await
-    }
-
-    /// Send a `pong` frame, does not flush
-    ///
-    /// Errors if the send does not happen within the `timeout` duration
-    async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
-        // TODO: stats
-        // record `send_pong`
-        self.write_frame(Frame::Pong { data }).await
-    }
-
-    /// Sends a peer gone frame, does not flush
-    ///
-    /// Errors if the send does not happen within the `timeout` duration
-    async fn send_peer_gone(&mut self, peer: PublicKey) -> Result<()> {
-        // TODO: stats
-        // c.s.peerGoneFrames.Add(1)
-        self.write_frame(Frame::PeerGone { peer }).await
     }
 
     /// Writes contents to the client in a `RECV_PACKET` frame.
@@ -331,11 +302,8 @@ impl ConnActor {
     }
 
     async fn handle_frame_ping(&mut self, data: [u8; 8]) -> Result<()> {
-        // TODO:stats
-        // c.s.gotPing.Add(1)
-
         // TODO: add rate limiter
-        self.send_pong(data).await?;
+        self.write_frame(Frame::Pong { data }).await?;
         inc!(Metrics, sent_pong);
         Ok(())
     }

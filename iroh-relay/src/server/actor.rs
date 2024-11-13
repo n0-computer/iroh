@@ -274,20 +274,14 @@ mod tests {
     use bytes::Bytes;
     use iroh_base::key::SecretKey;
     use tokio::io::DuplexStream;
-    use tokio_util::codec::{Framed, FramedRead, FramedWrite};
-    use tracing_subscriber::{prelude::*, EnvFilter};
+    use tokio_util::codec::Framed;
 
     use super::*;
     use crate::{
-        client::{
-            conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage},
-            streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
-        },
-        protos::relay::{recv_frame, ClientInfo, DerpCodec, Frame, FrameType, PROTOCOL_VERSION},
+        protos::relay::{recv_frame, DerpCodec, Frame, FrameType},
         server::{
             client_conn::ClientConnConfig,
             streams::{MaybeTlsStream, RelayedStream},
-            MaybeTlsStreamServer,
         },
     };
 

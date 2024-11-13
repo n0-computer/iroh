@@ -78,7 +78,7 @@ impl Clients {
         trace!("unregistering client: {:?}", peer);
         if let Some(client) = self.inner.remove(peer) {
             for key in client.sent_to.iter() {
-                self.send_peer_gone_no_fallback(key, *peer);
+                self.send_peer_gone(key, *peer);
             }
             warn!("pruning connection {peer:?}");
             client.shutdown().await;
@@ -104,16 +104,7 @@ impl Clients {
         bail!("Could not find client for {key:?}, dropped packet");
     }
 
-    pub async fn send_peer_gone(&mut self, key: &PublicKey, peer: PublicKey) {
-        if let Some(client) = self.inner.get(key) {
-            let res = client.send_peer_gone(peer);
-            let _ = self.process_result(key, res).await;
-            return;
-        };
-        warn!("Could not find client for {key:?}, dropping peer gone packet");
-    }
-
-    fn send_peer_gone_no_fallback(&mut self, key: &PublicKey, peer: PublicKey) {
+    fn send_peer_gone(&mut self, key: &PublicKey, peer: PublicKey) {
         if let Some(client) = self.inner.get(key) {
             let res = client.send_peer_gone(peer);
             let _ = self.process_result_no_fallback(key, res);
@@ -313,7 +304,7 @@ mod tests {
         );
 
         // send peer_gone
-        clients.send_peer_gone(&a_key, b_key).await;
+        clients.send_peer_gone(&a_key, b_key);
         let frame = recv_frame(FrameType::PeerGone, &mut a_rw).await?;
         assert_eq!(frame, Frame::PeerGone { peer: b_key });
 
