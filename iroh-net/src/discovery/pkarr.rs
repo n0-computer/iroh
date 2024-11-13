@@ -60,8 +60,8 @@ use watchable::{Watchable, Watcher};
 use crate::{
     discovery::{Discovery, DiscoveryItem},
     dns::node_info::NodeInfo,
+    endpoint::force_staging_infra,
     key::SecretKey,
-    relay::force_staging_infra,
     AddrInfo, Endpoint, NodeId,
 };
 

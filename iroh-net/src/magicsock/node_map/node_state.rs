@@ -6,6 +6,7 @@ use std::{
 };
 
 use iroh_metrics::inc;
+use iroh_relay::{protos::stun, RelayUrl};
 use netwatch::ip::is_unicast_link_local;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -23,8 +24,6 @@ use crate::{
     endpoint::AddrInfo,
     key::PublicKey,
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
-    relay::RelayUrl,
-    stun,
     util::relay_only_mode,
     NodeAddr, NodeId,
 };

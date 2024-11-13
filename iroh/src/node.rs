@@ -204,7 +204,7 @@ impl<D: BaoStore> Node<D> {
     }
 
     /// Get the relay server we are connected to.
-    pub fn home_relay(&self) -> Option<iroh_net::relay::RelayUrl> {
+    pub fn home_relay(&self) -> Option<iroh_net::RelayUrl> {
         self.inner.endpoint.home_relay()
     }
 
@@ -499,7 +499,7 @@ mod tests {
     use bytes::Bytes;
     use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
     use iroh_blobs::{provider::AddProgress, util::SetTagOption, BlobFormat};
-    use iroh_net::{key::SecretKey, relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
+    use iroh_net::{key::SecretKey, test_utils::DnsPkarrServer, NodeAddr, RelayMode};
 
     use super::*;
     use crate::client::blobs::{AddOutcome, WrapOption};

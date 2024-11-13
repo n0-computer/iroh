@@ -13,17 +13,17 @@ use tokio::{
     net::TcpStream,
 };
 
-use crate::util::chain;
+use super::util;
 
 pub enum MaybeTlsStreamReader {
-    Raw(chain::Chain<std::io::Cursor<Bytes>, tokio::io::ReadHalf<ProxyStream>>),
+    Raw(util::Chain<std::io::Cursor<Bytes>, tokio::io::ReadHalf<ProxyStream>>),
     Tls(
-        chain::Chain<
+        util::Chain<
             std::io::Cursor<Bytes>,
             tokio::io::ReadHalf<tokio_rustls::client::TlsStream<ProxyStream>>,
         >,
     ),
-    #[cfg(test)]
+    #[cfg(all(test, feature = "server"))]
     Mem(tokio::io::ReadHalf<tokio::io::DuplexStream>),
 }
 
@@ -36,7 +36,7 @@ impl AsyncRead for MaybeTlsStreamReader {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_read(cx, buf),
             Self::Tls(stream) => Pin::new(stream).poll_read(cx, buf),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "server"))]
             Self::Mem(stream) => Pin::new(stream).poll_read(cx, buf),
         }
     }
@@ -45,7 +45,7 @@ impl AsyncRead for MaybeTlsStreamReader {
 pub enum MaybeTlsStreamWriter {
     Raw(tokio::io::WriteHalf<ProxyStream>),
     Tls(tokio::io::WriteHalf<tokio_rustls::client::TlsStream<ProxyStream>>),
-    #[cfg(test)]
+    #[cfg(all(test, feature = "server"))]
     Mem(tokio::io::WriteHalf<tokio::io::DuplexStream>),
 }
 
@@ -58,7 +58,7 @@ impl AsyncWrite for MaybeTlsStreamWriter {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_write(cx, buf),
             Self::Tls(stream) => Pin::new(stream).poll_write(cx, buf),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "server"))]
             Self::Mem(stream) => Pin::new(stream).poll_write(cx, buf),
         }
     }
@@ -70,7 +70,7 @@ impl AsyncWrite for MaybeTlsStreamWriter {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_flush(cx),
             Self::Tls(stream) => Pin::new(stream).poll_flush(cx),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "server"))]
             Self::Mem(stream) => Pin::new(stream).poll_flush(cx),
         }
     }
@@ -82,7 +82,7 @@ impl AsyncWrite for MaybeTlsStreamWriter {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_shutdown(cx),
             Self::Tls(stream) => Pin::new(stream).poll_shutdown(cx),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "server"))]
             Self::Mem(stream) => Pin::new(stream).poll_shutdown(cx),
         }
     }
@@ -95,7 +95,7 @@ impl AsyncWrite for MaybeTlsStreamWriter {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
             Self::Tls(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "server"))]
             Self::Mem(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
         }
     }
@@ -109,7 +109,7 @@ pub fn downcast_upgrade(
             let inner = io.into_inner();
             let (reader, writer) = tokio::io::split(inner);
             // Prepend data to the reader to avoid data loss
-            let reader = chain::chain(std::io::Cursor::new(read_buf), reader);
+            let reader = util::chain(std::io::Cursor::new(read_buf), reader);
             Ok((
                 MaybeTlsStreamReader::Raw(reader),
                 MaybeTlsStreamWriter::Raw(writer),
@@ -122,7 +122,7 @@ pub fn downcast_upgrade(
                 let inner = io.into_inner();
                 let (reader, writer) = tokio::io::split(inner);
                 // Prepend data to the reader to avoid data loss
-                let reader = chain::chain(std::io::Cursor::new(read_buf), reader);
+                let reader = util::chain(std::io::Cursor::new(read_buf), reader);
 
                 return Ok((
                     MaybeTlsStreamReader::Tls(reader),
@@ -139,7 +139,7 @@ pub fn downcast_upgrade(
 
 pub enum ProxyStream {
     Raw(TcpStream),
-    Proxied(chain::Chain<std::io::Cursor<Bytes>, MaybeTlsStream>),
+    Proxied(util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream>),
 }
 
 impl AsyncRead for ProxyStream {

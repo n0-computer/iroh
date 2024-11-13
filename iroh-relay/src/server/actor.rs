@@ -13,6 +13,7 @@ use std::{
 
 use anyhow::{bail, Context as _, Result};
 use hyper::HeaderMap;
+use iroh_base::key::PublicKey;
 use iroh_metrics::{core::UsageStatsReport, inc, inc_by, report_usage_stats};
 use time::{Date, OffsetDateTime};
 use tokio::sync::mpsc;
@@ -22,21 +23,18 @@ use tracing::{info_span, trace, Instrument};
 use tungstenite::protocol::Role;
 
 use crate::{
-    defaults::timeouts::relay::SERVER_WRITE_TIMEOUT as WRITE_TIMEOUT,
-    key::PublicKey,
-    relay::{
-        codec::{
-            recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
-            SERVER_CHANNEL_SIZE,
-        },
-        http::Protocol,
-        server::{
-            client_conn::ClientConnBuilder,
-            clients::Clients,
-            metrics::Metrics,
-            streams::{MaybeTlsStream, RelayIo},
-            types::ServerMessage,
-        },
+    defaults::timeouts::SERVER_WRITE_TIMEOUT as WRITE_TIMEOUT,
+    http::Protocol,
+    protos::relay::{
+        recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+        SERVER_CHANNEL_SIZE,
+    },
+    server::{
+        client_conn::ClientConnBuilder,
+        clients::Clients,
+        metrics::Metrics,
+        streams::{MaybeTlsStream, RelayIo},
+        types::ServerMessage,
     },
 };
 
@@ -52,7 +50,7 @@ fn new_conn_num() -> usize {
 /// Will forcefully abort the server actor loop when dropped.
 /// For stopping gracefully, use [`ServerActorTask::close`].
 ///
-/// Responsible for managing connections to relay [`Conn`](crate::relay::RelayConn)s, sending packets from one client to another.
+/// Responsible for managing connections to relay [`Conn`](crate::RelayConn)s, sending packets from one client to another.
 #[derive(Debug)]
 pub struct ServerActorTask {
     /// Optionally specifies how long to wait before failing when writing
@@ -366,12 +364,12 @@ mod tests {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
-    use crate::relay::{
+    use crate::{
         client::{
             conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage},
             streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
         },
-        codec::{recv_frame, ClientInfo, Frame, FrameType},
+        protos::relay::{recv_frame, ClientInfo, Frame, FrameType},
     };
 
     fn test_client_builder(
@@ -426,8 +424,7 @@ mod tests {
 
         // write message from b to a
         let msg = b"hello world!";
-        crate::relay::client::conn::send_packet(&mut b_io, &None, key_a, Bytes::from_static(msg))
-            .await?;
+        crate::client::conn::send_packet(&mut b_io, &None, key_a, Bytes::from_static(msg)).await?;
 
         // get message on a's reader
         let frame = recv_frame(FrameType::RecvPacket, &mut a_io).await?;
@@ -483,7 +480,7 @@ mod tests {
             let client_info = ClientInfo {
                 version: PROTOCOL_VERSION,
             };
-            crate::relay::codec::send_client_key(&mut client_writer, &client_key, &client_info)
+            crate::protos::relay::send_client_key(&mut client_writer, &client_key, &client_info)
                 .await?;
 
             Ok(())

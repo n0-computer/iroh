@@ -10,6 +10,7 @@ use std::{
 use futures_lite::stream::Stream;
 use iroh_base::key::NodeId;
 use iroh_metrics::inc;
+use iroh_relay::RelayUrl;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
@@ -25,8 +26,7 @@ use super::{
 use crate::{
     disco::{CallMeMaybe, Pong, SendAddr},
     key::PublicKey,
-    relay::RelayUrl,
-    stun, NodeAddr,
+    NodeAddr,
 };
 
 mod best_addr;
@@ -161,7 +161,7 @@ impl NodeMap {
         &self,
         id: usize,
         dst: SendAddr,
-        tx_id: stun::TransactionId,
+        tx_id: stun_rs::TransactionId,
         purpose: DiscoPingPurpose,
         msg_sender: tokio::sync::mpsc::Sender<ActorMessage>,
     ) {
@@ -170,7 +170,7 @@ impl NodeMap {
         }
     }
 
-    pub(super) fn notify_ping_timeout(&self, id: usize, tx_id: stun::TransactionId) {
+    pub(super) fn notify_ping_timeout(&self, id: usize, tx_id: stun_rs::TransactionId) {
         if let Some(ep) = self.inner.lock().get_mut(NodeStateKey::Idx(id)) {
             ep.ping_timeout(tx_id);
         }
@@ -778,7 +778,7 @@ mod tests {
         info!("Adding alive addresses");
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SendAddr::Udp(SocketAddr::new(LOCALHOST, 7000 + i as u16));
-            let txid = stun::TransactionId::from([i as u8; 12]);
+            let txid = stun_rs::TransactionId::from([i as u8; 12]);
             // Note that this already invokes .prune_direct_addresses() because these are
             // new UDP paths.
             endpoint.handle_ping(addr, txid);

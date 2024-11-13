@@ -8,7 +8,7 @@ use iroh_blobs::{
 };
 use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
-use iroh_net::{relay::RelayUrl, NodeAddr, NodeId};
+use iroh_net::{NodeAddr, NodeId};
 use iroh_router::Router;
 use quic_rpc::server::{RpcChannel, RpcServerError};
 use tokio::task::JoinSet;
@@ -16,6 +16,7 @@ use tracing::{debug, info, warn};
 
 use super::IrohServerEndpoint;
 use crate::{
+    base::node_addr::RelayUrl,
     client::NodeStatus,
     node::NodeInner,
     rpc_protocol::{

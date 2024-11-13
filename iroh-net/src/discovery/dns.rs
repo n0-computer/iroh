@@ -6,7 +6,7 @@ use futures_lite::stream::Boxed as BoxStream;
 use crate::{
     discovery::{Discovery, DiscoveryItem},
     dns::ResolverExt,
-    relay::force_staging_infra,
+    endpoint::force_staging_infra,
     Endpoint, NodeId,
 };
 

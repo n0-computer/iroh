@@ -12,28 +12,28 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_lite::StreamExt;
 use futures_util::SinkExt;
+use iroh_base::key::PublicKey;
 use iroh_metrics::{inc, inc_by};
 use tokio::sync::mpsc;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{trace, Instrument};
 
 use crate::{
-    disco::looks_like_disco_wrapper,
-    key::PublicKey,
-    relay::{
-        codec::{write_frame, Frame, KEEP_ALIVE},
-        server::{
-            metrics::Metrics,
-            streams::RelayIo,
-            types::{Packet, ServerMessage},
-        },
+    protos::{
+        disco,
+        relay::{write_frame, Frame, KEEP_ALIVE},
+    },
+    server::{
+        metrics::Metrics,
+        streams::RelayIo,
+        types::{Packet, ServerMessage},
     },
 };
 
 /// The [`Server`] side representation of a [`Client`]'s connection.
 ///
-/// [`Server`]: crate::relay::server::Server
-/// [`Client`]: crate::relay::client::Client
+/// [`Server`]: crate::server::Server
+/// [`Client`]: crate::client::Client
 #[derive(Debug)]
 pub(crate) struct ClientConnManager {
     /// Static after construction, process-wide unique counter, incremented each time we accept
@@ -446,7 +446,7 @@ impl ClientConnIo {
     /// destination is not connected, or if the destination client can
     /// not fit any more messages in its queue.
     async fn transfer_packet(&self, dstkey: PublicKey, packet: Packet) -> Result<()> {
-        if looks_like_disco_wrapper(&packet.bytes) {
+        if disco::looks_like_disco_wrapper(&packet.bytes) {
             inc!(Metrics, disco_packets_recv);
             self.send_server(ServerMessage::SendDiscoPacket((dstkey, packet)))
                 .await?;
@@ -462,16 +462,14 @@ impl ClientConnIo {
 #[cfg(test)]
 mod tests {
     use anyhow::bail;
+    use iroh_base::key::SecretKey;
     use tokio_util::codec::Framed;
 
     use super::*;
     use crate::{
-        key::SecretKey,
-        relay::{
-            client::conn,
-            codec::{recv_frame, DerpCodec, FrameType},
-            server::streams::MaybeTlsStream,
-        },
+        client::conn,
+        protos::relay::{recv_frame, DerpCodec, FrameType},
+        server::streams::MaybeTlsStream,
     };
 
     #[tokio::test]
@@ -585,7 +583,7 @@ mod tests {
         // send disco packet
         println!("  send disco packet");
         // starts with `MAGIC` & key, then data
-        let mut disco_data = crate::disco::MAGIC.as_bytes().to_vec();
+        let mut disco_data = disco::MAGIC.as_bytes().to_vec();
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
         conn::send_packet(&mut io_rw, &None, target, disco_data.clone().into()).await?;

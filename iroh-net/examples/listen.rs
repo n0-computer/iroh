@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use futures_lite::StreamExt;
-use iroh_net::{endpoint::ConnectionError, key::SecretKey, relay::RelayMode, Endpoint};
+use iroh_net::{endpoint::ConnectionError, key::SecretKey, Endpoint, RelayMode};
 use tracing::{debug, info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`

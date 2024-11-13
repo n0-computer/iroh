@@ -12,8 +12,7 @@ use iroh::{
     client::Iroh,
     net::{
         endpoint::{DirectAddrInfo, RemoteInfo},
-        relay::RelayUrl,
-        NodeAddr, NodeId,
+        NodeAddr, NodeId, RelayUrl,
     },
 };
 

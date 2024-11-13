@@ -2,8 +2,8 @@
 
 pub(crate) const HTTP_UPGRADE_PROTOCOL: &str = "iroh derp http";
 pub(crate) const WEBSOCKET_UPGRADE_PROTOCOL: &str = "websocket";
-#[cfg(feature = "iroh-relay")] // only used in the server for now
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
+#[cfg(feature = "server")] // only used in the server for now
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]
 pub(crate) const SUPPORTED_WEBSOCKET_VERSION: &str = "13";
 
 /// The HTTP path under which the relay accepts relaying connections
@@ -13,8 +13,8 @@ pub const RELAY_PATH: &str = "/relay";
 pub const RELAY_PROBE_PATH: &str = "/ping";
 /// The legacy HTTP path under which the relay used to accept relaying connections.
 /// We keep this for backwards compatibility.
-#[cfg(feature = "iroh-relay")] // legacy paths only used on server-side for backwards compat
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
+#[cfg(feature = "server")] // legacy paths only used on server-side for backwards compat
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]
 pub(crate) const LEGACY_RELAY_PATH: &str = "/derp";
 
 /// The HTTP upgrade protocol used for relaying.

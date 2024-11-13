@@ -1,7 +1,8 @@
 use anyhow::Result;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use libc::{RTAX_DST, RTAX_IFP};
-use tokio::{io::AsyncReadExt, sync::mpsc, task::JoinHandle};
+use tokio::{io::AsyncReadExt, sync::mpsc};
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{trace, warn};
 
 use super::actor::NetworkMessage;
@@ -11,22 +12,23 @@ use crate::{interfaces::bsd::WireMessage, ip::is_link_local};
 
 #[derive(Debug)]
 pub(super) struct RouteMonitor {
-    handle: JoinHandle<()>,
+    _handle: AbortOnDropHandle<()>,
 }
 
-impl Drop for RouteMonitor {
-    fn drop(&mut self) {
-        self.handle.abort();
-    }
+fn create_socket() -> Result<tokio::net::UnixStream> {
+    let socket = socket2::Socket::new(libc::AF_ROUTE.into(), socket2::Type::RAW, None)?;
+    socket.set_nonblocking(true)?;
+    let socket_std: std::os::unix::net::UnixStream = socket.into();
+    let socket: tokio::net::UnixStream = socket_std.try_into()?;
+
+    trace!("AF_ROUTE socket bound");
+
+    Ok(socket)
 }
 
 impl RouteMonitor {
     pub(super) fn new(sender: mpsc::Sender<NetworkMessage>) -> Result<Self> {
-        let socket = socket2::Socket::new(libc::AF_ROUTE.into(), socket2::Type::RAW, None)?;
-        socket.set_nonblocking(true)?;
-        let socket_std: std::os::unix::net::UnixStream = socket.into();
-        let mut socket: tokio::net::UnixStream = socket_std.try_into()?;
-
+        let mut socket = create_socket()?;
         let handle = tokio::task::spawn(async move {
             trace!("AF_ROUTE monitor started");
 
@@ -52,12 +54,25 @@ impl RouteMonitor {
                     }
                     Err(err) => {
                         warn!("AF_ROUTE: error reading: {:?}", err);
+                        // recreate socket, as it is likely in an invalid state
+                        // TODO: distinguish between different errors?
+                        match create_socket() {
+                            Ok(new_socket) => {
+                                socket = new_socket;
+                            }
+                            Err(err) => {
+                                warn!("AF_ROUTE: unable to bind a new socket: {:?}", err);
+                                // TODO: what to do here?
+                            }
+                        }
                     }
                 }
             }
         });
 
-        Ok(RouteMonitor { handle })
+        Ok(RouteMonitor {
+            _handle: AbortOnDropHandle::new(handle),
+        })
     }
 }
 

@@ -2,7 +2,7 @@
 
 use url::Url;
 
-use crate::relay::{RelayMap, RelayNode};
+use crate::{RelayMap, RelayNode};
 
 /// The default STUN port used by the Relay server.
 ///
@@ -164,30 +164,4 @@ pub(crate) mod timeouts {
 
     /// Default Pinger timeout
     pub(crate) const DEFAULT_PINGER_TIMEOUT: Duration = Duration::from_secs(5);
-
-    /// Timeouts specifically used in the iroh-relay
-    pub(crate) mod relay {
-        use super::*;
-
-        /// Timeout used by the relay client while connecting to the relay server,
-        /// using `TcpStream::connect`
-        pub(crate) const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
-        /// Timeout for expecting a pong from the relay server
-        pub(crate) const PING_TIMEOUT: Duration = Duration::from_secs(5);
-        /// Timeout for the entire relay connection, which includes dns, dialing
-        /// the server, upgrading the connection, and completing the handshake
-        pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-        /// Timeout for our async dns resolver
-        pub(crate) const DNS_TIMEOUT: Duration = Duration::from_secs(1);
-
-        /// Maximum time the client will wait to receive on the connection, since
-        /// the last message. Longer than this time and the client will consider
-        /// the connection dead.
-        pub(crate) const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
-
-        /// Maximum time the server will attempt to get a successful write to the connection.
-        #[cfg(feature = "iroh-relay")]
-        #[cfg_attr(iroh_docsrs, doc(cfg(feature = "iroh-relay")))]
-        pub(crate) const SERVER_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
-    }
 }
