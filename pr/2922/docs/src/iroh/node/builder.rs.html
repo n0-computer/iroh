@@ -985,6 +985,9 @@
 <a href="#985" id="985">985</a>
 <a href="#986" id="986">986</a>
 <a href="#987" id="987">987</a>
+<a href="#988" id="988">988</a>
+<a href="#989" id="989">989</a>
+<a href="#990" id="990">990</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -1067,7 +1070,8 @@
     endpoint: Endpoint,
     gossip: Gossip,
     downloader: Downloader,
-) -&gt; anyhow::Result&lt;<span class="prelude-ty">Option</span>&lt;Engine&gt;&gt; {
+    local_pool_handle: LocalPoolHandle,
+) -&gt; anyhow::Result&lt;<span class="prelude-ty">Option</span>&lt;Engine&lt;S&gt;&gt;&gt; {
     <span class="kw">let </span>docs_store = <span class="kw">match </span>storage {
         DocsStorage::Disabled =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>),
         DocsStorage::Memory =&gt; iroh_docs::store::fs::Store::memory(),
@@ -1080,6 +1084,7 @@
         blobs_store,
         downloader,
         default_author_storage,
+        local_pool_handle,
     )
     .<span class="kw">await</span><span class="question-mark">?</span>;
     <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(engine))
@@ -1671,6 +1676,7 @@
             endpoint.clone(),
             gossip.clone(),
             downloader.clone(),
+            lp.handle().clone(),
         )
         .<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -1820,7 +1826,7 @@
         store: D,
         gossip: Gossip,
         downloader: Downloader,
-        docs: <span class="prelude-ty">Option</span>&lt;Engine&gt;,
+        docs: <span class="prelude-ty">Option</span>&lt;Engine&lt;D&gt;&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="comment">// Register blobs.
         </span><span class="kw">let </span>blobs_proto = BlobsProtocol::new_with_events(

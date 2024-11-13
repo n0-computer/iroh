@@ -111,9 +111,6 @@
 <a href="#111" id="111">111</a>
 <a href="#112" id="112">112</a>
 <a href="#113" id="113">113</a>
-<a href="#114" id="114">114</a>
-<a href="#115" id="115">115</a>
-<a href="#116" id="116">116</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Send data over the internet.
 //!
 //! # Getting started
@@ -165,13 +162,10 @@
 //!   manage and share content-addressed blobs of data
 //! - [tags](crate::client::tags):
 //!   tags to tell iroh what data is important
-//! - [gossip](iroh_gossip::RpcClient):
+//! - [gossip](crate::client::gossip):
 //!   exchange data with other nodes via a gossip protocol
-//!
-//! - [authors](crate::client::authors):
-//!   interact with document authors
 //! - [docs](crate::client::docs):
-//!   interact with documents
+//!   interact with documents and document authors
 //!
 //! The subsystem clients can be obtained cheaply from the main iroh client.
 //! They are also cheaply cloneable and can be shared across threads.
