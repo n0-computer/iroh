@@ -700,7 +700,7 @@
 ///     to speak to the node ID associated with that client.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>Actor {
-    <span class="doccomment">/// IO Steram to talk to the client
+    <span class="doccomment">/// IO Stream to talk to the client
     </span>stream: RelayedStream,
     <span class="doccomment">/// Maximum time we wait to complete a write to the client
     </span>timeout: Duration,
@@ -777,7 +777,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="doccomment">/// Writes the given frame to the conneciton.
+    <span class="doccomment">/// Writes the given frame to the connection.
     ///
     /// Errors if the send does not happen within the `timeout` duration
     </span><span class="kw">async fn </span>write_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: Frame) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
