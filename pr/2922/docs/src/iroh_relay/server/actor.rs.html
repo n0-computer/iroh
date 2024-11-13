@@ -361,8 +361,6 @@
 <a href="#361" id="361">361</a>
 <a href="#362" id="362">362</a>
 <a href="#363" id="363">363</a>
-<a href="#364" id="364">364</a>
-<a href="#365" id="365">365</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The main event loop for the relay server.
 //!
 //! based on tailscale/derp/derp_server.go
@@ -384,9 +382,7 @@
     server::{client_conn::ClientConnConfig, clients::Clients, metrics::Metrics},
 };
 
-<span class="comment">// TODO: skipping `verboseDropKeys` for now
-
-</span><span class="attr">#[derive(Debug)]
+<span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>Message {
     SendPacket {
         dst: NodeId,
