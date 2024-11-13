@@ -158,7 +158,7 @@ impl ClientConn {
 ///     to speak to the node ID associated with that client.
 #[derive(Debug)]
 struct Actor {
-    /// IO Steram to talk to the client
+    /// IO Stream to talk to the client
     stream: RelayedStream,
     /// Maximum time we wait to complete a write to the client
     timeout: Duration,
@@ -235,7 +235,7 @@ impl Actor {
         Ok(())
     }
 
-    /// Writes the given frame to the conneciton.
+    /// Writes the given frame to the connection.
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn write_frame(&mut self, frame: Frame) -> Result<()> {
