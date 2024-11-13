@@ -1,6 +1,6 @@
-//! based on tailscale/derp/derp_server.go
-//!
 //! The "Server" side of the client. Uses the `ClientConnManager`.
+// Based on tailscale/derp/derp_server.go
+
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{bail, Result};

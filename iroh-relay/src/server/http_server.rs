@@ -638,11 +638,16 @@ mod tests {
     use iroh_base::key::{PublicKey, SecretKey};
     use reqwest::Url;
     use tokio::{sync::mpsc, task::JoinHandle};
+    use tokio_util::codec::{FramedRead, FramedWrite};
     use tracing::{info, info_span, Instrument};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
-    use crate::client::{conn::ReceivedMessage, Client, ClientBuilder};
+    use crate::client::{
+        conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage},
+        streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
+        Client, ClientBuilder,
+    };
 
     pub(crate) fn make_tls_config() -> TlsConfig {
         let subject_alt_names = vec!["localhost".to_string()];
@@ -858,6 +863,214 @@ mod tests {
         client_a_task.abort();
         client_b.close().await?;
         client_b_task.abort();
+        Ok(())
+    }
+
+    fn make_test_client(secret_key: SecretKey) -> (tokio::io::DuplexStream, ConnBuilder) {
+        let (client, server) = tokio::io::duplex(10);
+        let (client_reader, client_writer) = tokio::io::split(client);
+
+        let client_reader = MaybeTlsStreamReader::Mem(client_reader);
+        let client_writer = MaybeTlsStreamWriter::Mem(client_writer);
+
+        let client_reader = ConnReader::Derp(FramedRead::new(client_reader, DerpCodec));
+        let client_writer = ConnWriter::Derp(FramedWrite::new(client_writer, DerpCodec));
+
+        (
+            server,
+            ConnBuilder::new(secret_key, None, client_reader, client_writer),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_server_basic() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
+        // create the server!
+        let server_task: ServerActorTask = ServerActorTask::spawn();
+        let service = RelayService::new(
+            Default::default(),
+            Default::default(),
+            server_task.server_channel.clone(),
+            server_task.write_timeout,
+        );
+
+        // create client a and connect it to the server
+        let key_a = SecretKey::generate();
+        let public_key_a = key_a.public();
+        let (rw_a, client_a_builder) = make_test_client(key_a);
+        let s = service.clone();
+        let handler_task = tokio::spawn(async move {
+            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
+                .await
+        });
+        let (client_a, mut client_receiver_a) = client_a_builder.build().await?;
+        handler_task.await??;
+
+        // create client b and connect it to the server
+        let key_b = SecretKey::generate();
+        let public_key_b = key_b.public();
+        let (rw_b, client_b_builder) = make_test_client(key_b);
+        let s = service.clone();
+        let handler_task = tokio::spawn(async move {
+            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
+                .await
+        });
+        let (client_b, mut client_receiver_b) = client_b_builder.build().await?;
+        handler_task.await??;
+
+        // send message from a to b!
+        let msg = Bytes::from_static(b"hello client b!!");
+        client_a.send(public_key_b, msg.clone()).await?;
+        match client_receiver_b.recv().await? {
+            ReceivedMessage::ReceivedPacket { source, data } => {
+                assert_eq!(public_key_a, source);
+                assert_eq!(&msg[..], data);
+            }
+            msg => {
+                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+            }
+        }
+
+        // send message from b to a!
+        let msg = Bytes::from_static(b"nice to meet you client a!!");
+        client_b.send(public_key_a, msg.clone()).await?;
+        match client_receiver_a.recv().await? {
+            ReceivedMessage::ReceivedPacket { source, data } => {
+                assert_eq!(public_key_b, source);
+                assert_eq!(&msg[..], data);
+            }
+            msg => {
+                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+            }
+        }
+
+        // close the server and clients
+        server_task.close().await;
+
+        // client connections have been shutdown
+        let res = client_a
+            .send(public_key_b, Bytes::from_static(b"try to send"))
+            .await;
+        assert!(res.is_err());
+        assert!(client_receiver_b.recv().await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_server_replace_client() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+
+        // create the server!
+        let server_task: ServerActorTask = ServerActorTask::spawn();
+        let service = RelayService::new(
+            Default::default(),
+            Default::default(),
+            server_task.server_channel.clone(),
+            server_task.write_timeout,
+        );
+
+        // create client a and connect it to the server
+        let key_a = SecretKey::generate();
+        let public_key_a = key_a.public();
+        let (rw_a, client_a_builder) = make_test_client(key_a);
+        let s = service.clone();
+        let handler_task = tokio::spawn(async move {
+            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
+                .await
+        });
+        let (client_a, mut client_receiver_a) = client_a_builder.build().await?;
+        handler_task.await??;
+
+        // create client b and connect it to the server
+        let key_b = SecretKey::generate();
+        let public_key_b = key_b.public();
+        let (rw_b, client_b_builder) = make_test_client(key_b.clone());
+        let s = service.clone();
+        let handler_task = tokio::spawn(async move {
+            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
+                .await
+        });
+        let (client_b, mut client_receiver_b) = client_b_builder.build().await?;
+        handler_task.await??;
+
+        // send message from a to b!
+        let msg = Bytes::from_static(b"hello client b!!");
+        client_a.send(public_key_b, msg.clone()).await?;
+        match client_receiver_b.recv().await? {
+            ReceivedMessage::ReceivedPacket { source, data } => {
+                assert_eq!(public_key_a, source);
+                assert_eq!(&msg[..], data);
+            }
+            msg => {
+                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+            }
+        }
+
+        // send message from b to a!
+        let msg = Bytes::from_static(b"nice to meet you client a!!");
+        client_b.send(public_key_a, msg.clone()).await?;
+        match client_receiver_a.recv().await? {
+            ReceivedMessage::ReceivedPacket { source, data } => {
+                assert_eq!(public_key_b, source);
+                assert_eq!(&msg[..], data);
+            }
+            msg => {
+                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+            }
+        }
+
+        // create client b and connect it to the server
+        let (new_rw_b, new_client_b_builder) = make_test_client(key_b);
+        let s = service.clone();
+        let handler_task = tokio::spawn(async move {
+            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(new_rw_b))
+                .await
+        });
+        let (new_client_b, mut new_client_receiver_b) = new_client_b_builder.build().await?;
+        handler_task.await??;
+
+        // assert!(client_b.recv().await.is_err());
+
+        // send message from a to b!
+        let msg = Bytes::from_static(b"are you still there, b?!");
+        client_a.send(public_key_b, msg.clone()).await?;
+        match new_client_receiver_b.recv().await? {
+            ReceivedMessage::ReceivedPacket { source, data } => {
+                assert_eq!(public_key_a, source);
+                assert_eq!(&msg[..], data);
+            }
+            msg => {
+                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+            }
+        }
+
+        // send message from b to a!
+        let msg = Bytes::from_static(b"just had a spot of trouble but I'm back now,a!!");
+        new_client_b.send(public_key_a, msg.clone()).await?;
+        match client_receiver_a.recv().await? {
+            ReceivedMessage::ReceivedPacket { source, data } => {
+                assert_eq!(public_key_b, source);
+                assert_eq!(&msg[..], data);
+            }
+            msg => {
+                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+            }
+        }
+
+        // close the server and clients
+        server_task.close().await;
+
+        // client connections have been shutdown
+        let res = client_a
+            .send(public_key_b, Bytes::from_static(b"try to send"))
+            .await;
+        assert!(res.is_err());
+        assert!(new_client_receiver_b.recv().await.is_err());
         Ok(())
     }
 }
