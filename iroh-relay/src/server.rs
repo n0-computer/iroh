@@ -404,7 +404,7 @@ async fn relay_supervisor(
         (Some(relay), _) => {
             tokio::select! {
                 biased;
-                Some(ret) = tasks.join_next() => ret,
+                Some(ret) = tasks.join_next(), if !tasks.is_empty() => ret,
                 ret = relay.task_handle() => ret.map(anyhow::Ok),
                 else => Ok(Err(anyhow!("Empty JoinSet (unreachable)"))),
             }

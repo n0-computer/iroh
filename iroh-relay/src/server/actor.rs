@@ -135,13 +135,15 @@ impl Actor {
                     self.clients.shutdown().await;
                     return Ok(());
                 }
-                Some(msg) = self.receiver.recv() => {
-                    self.handle_message(msg).await;
-                }
-                else => {
-                    warn!("unexpected server error, shutting down server loop");
-                    self.clients.shutdown().await;
-                    bail!("unexpected server error, closed client connections, and shutting down server loop");
+                msg = self.receiver.recv() => match msg {
+                    Some(msg) => {
+                        self.handle_message(msg).await;
+                    }
+                    None => {
+                        warn!("unexpected actor error: receiver gone, shutting down actor loop");
+                        self.clients.shutdown().await;
+                        bail!("unexpected actor error, closed client connections, and shutting down actor loop");
+                    }
                 }
             }
         }
