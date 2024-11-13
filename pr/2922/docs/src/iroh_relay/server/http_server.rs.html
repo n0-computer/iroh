@@ -1566,7 +1566,7 @@
 
         <span class="macro">trace!</span>(<span class="string">"accept: build client conn"</span>);
         <span class="kw">let </span>client_conn_builder = ClientConnConfig {
-            key: client_key,
+            node_id: client_key,
             stream: io,
             write_timeout: <span class="self">self</span>.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,

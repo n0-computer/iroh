@@ -550,6 +550,9 @@
 <a href="#550" id="550">550</a>
 <a href="#551" id="551">551</a>
 <a href="#552" id="552">552</a>
+<a href="#553" id="553">553</a>
+<a href="#554" id="554">554</a>
+<a href="#555" id="555">555</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
 //!
 //! based on tailscale/derp/derp_client.go
@@ -571,7 +574,7 @@
     stream::{SplitSink, SplitStream, StreamExt},
     SinkExt,
 };
-<span class="kw">use </span>iroh_base::key::{PublicKey, SecretKey};
+<span class="kw">use </span>iroh_base::key::{NodeId, SecretKey};
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tokio_tungstenite_wasm::WebSocketStream;
 <span class="kw">use </span>tokio_util::{
@@ -649,12 +652,12 @@
     <span class="doccomment">/// Sends a packet to the node identified by `dstkey`
     ///
     /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
-    </span><span class="kw">pub async fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, dstkey: PublicKey, packet: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="macro">trace!</span>(%dstkey, len = packet.len(), <span class="string">"[RELAY] send"</span>);
+    </span><span class="kw">pub async fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId, packet: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="macro">trace!</span>(%dst, len = packet.len(), <span class="string">"[RELAY] send"</span>);
 
         <span class="self">self</span>.inner
             .writer_channel
-            .send(ConnWriterMessage::Packet((dstkey, packet)))
+            .send(ConnWriterMessage::Packet((dst, packet)))
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
@@ -728,7 +731,7 @@
             // This predated FrameType::Ping/FrameType::Pong.
             </span><span class="prelude-val">Ok</span>(ReceivedMessage::KeepAlive)
         }
-        Frame::PeerGone { peer } =&gt; <span class="prelude-val">Ok</span>(ReceivedMessage::PeerGone(peer)),
+        Frame::NodeGone { node_id } =&gt; <span class="prelude-val">Ok</span>(ReceivedMessage::NodeGone(node_id)),
         Frame::RecvPacket { src_key, content } =&gt; {
             <span class="kw">let </span>packet = ReceivedMessage::ReceivedPacket {
                 source: src_key,
@@ -761,8 +764,8 @@
 <span class="doccomment">/// The kinds of messages we can send to the [`Server`](crate::server::Server)
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">enum </span>ConnWriterMessage {
-    <span class="doccomment">/// Send a packet (addressed to the [`PublicKey`]) to the server
-    </span>Packet((PublicKey, Bytes)),
+    <span class="doccomment">/// Send a packet (addressed to the [`NodeId`]) to the server
+    </span>Packet((NodeId, Bytes)),
     <span class="doccomment">/// Send a pong to the server
     </span>Pong([u8; <span class="number">8</span>]),
     <span class="doccomment">/// Send a ping to the server
@@ -1002,15 +1005,15 @@
 </span><span class="kw">pub enum </span>ReceivedMessage {
     <span class="doccomment">/// Represents an incoming packet.
     </span>ReceivedPacket {
-        <span class="doccomment">/// The [`PublicKey`] of the packet sender.
-        </span>source: PublicKey,
+        <span class="doccomment">/// The [`NodeId`] of the packet sender.
+        </span>source: NodeId,
         <span class="doccomment">/// The received packet bytes.
         </span><span class="attr">#[debug(skip)]
         </span>data: Bytes, <span class="comment">// TODO: ref
     </span>},
     <span class="doccomment">/// Indicates that the client identified by the underlying public key had previously sent you a
     /// packet but has now disconnected from the server.
-    </span>PeerGone(PublicKey),
+    </span>NodeGone(NodeId),
     <span class="doccomment">/// Request from a client or server to reply to the
     /// other side with a [`ReceivedMessage::Pong`] with the given payload.
     </span>Ping([u8; <span class="number">8</span>]),
@@ -1047,7 +1050,7 @@
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>send_packet&lt;S: Sink&lt;Frame, Error = std::io::Error&gt; + Unpin&gt;(
     <span class="kw-2">mut </span>writer: S,
     rate_limiter: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;RateLimiter&gt;,
-    dst_key: PublicKey,
+    dst: NodeId,
     packet: Bytes,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
     <span class="macro">ensure!</span>(
@@ -1056,7 +1059,10 @@
         packet.len()
     );
 
-    <span class="kw">let </span>frame = Frame::SendPacket { dst_key, packet };
+    <span class="kw">let </span>frame = Frame::SendPacket {
+        dst_key: dst,
+        packet,
+    };
     <span class="kw">if let </span><span class="prelude-val">Some</span>(rate_limiter) = rate_limiter {
         <span class="kw">if </span>rate_limiter.check_n(frame.len()).is_err() {
             <span class="macro">tracing::warn!</span>(<span class="string">"dropping send: rate limit reached"</span>);

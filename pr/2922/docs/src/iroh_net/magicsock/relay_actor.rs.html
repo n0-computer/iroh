@@ -1023,7 +1023,7 @@
                         ReadResult::Continue
                     }
                     ReceivedMessage::Health { .. } =&gt; ReadResult::Continue,
-                    ReceivedMessage::PeerGone(key) =&gt; {
+                    ReceivedMessage::NodeGone(key) =&gt; {
                         <span class="self">self</span>.node_present.remove(<span class="kw-2">&amp;</span>key);
                         ReadResult::Continue
                     }

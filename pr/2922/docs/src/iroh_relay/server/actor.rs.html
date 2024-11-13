@@ -350,6 +350,10 @@
 <a href="#350" id="350">350</a>
 <a href="#351" id="351">351</a>
 <a href="#352" id="352">352</a>
+<a href="#353" id="353">353</a>
+<a href="#354" id="354">354</a>
+<a href="#355" id="355">355</a>
+<a href="#356" id="356">356</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The main event loop for the relay server.
 //!
 //! based on tailscale/derp/derp_server.go
@@ -358,7 +362,7 @@
 
 <span class="kw">use </span>anyhow::{bail, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
-<span class="kw">use </span>iroh_base::key::PublicKey;
+<span class="kw">use </span>iroh_base::key::NodeId;
 <span class="kw">use </span>iroh_metrics::{core::UsageStatsReport, inc, inc_by, report_usage_stats};
 <span class="kw">use </span>time::{Date, OffsetDateTime};
 <span class="kw">use </span>tokio::sync::mpsc;
@@ -376,18 +380,18 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>Message {
     SendPacket {
-        dst: PublicKey,
+        dst: NodeId,
         data: Bytes,
-        src: PublicKey,
+        src: NodeId,
     },
     SendDiscoPacket {
-        dst: PublicKey,
+        dst: NodeId,
         data: Bytes,
-        src: PublicKey,
+        src: NodeId,
     },
     CreateClient(ClientConnConfig),
     RemoveClient {
-        key: PublicKey,
+        node_id: NodeId,
         conn_num: usize,
     },
 }
@@ -396,7 +400,7 @@
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Packet {
     <span class="doccomment">/// The sender of the packet
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) src: PublicKey,
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) src: NodeId,
     <span class="doccomment">/// The data packet bytes.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) data: Bytes,
 }
@@ -537,8 +541,11 @@
             Message::CreateClient(client_builder) =&gt; {
                 <span class="macro">inc!</span>(Metrics, accepts);
 
-                <span class="macro">trace!</span>(key = client_builder.key.fmt_short(), <span class="string">"create client"</span>);
-                <span class="kw">let </span>key = client_builder.key;
+                <span class="macro">trace!</span>(
+                    node_id = client_builder.node_id.fmt_short(),
+                    <span class="string">"create client"
+                </span>);
+                <span class="kw">let </span>node_id = client_builder.node_id;
 
                 <span class="comment">// build and register client, starting up read &amp; write loops for the client connection
                 </span><span class="self">self</span>.clients.register(client_builder).<span class="kw">await</span>;
@@ -548,31 +555,31 @@
                         <span class="string">"relay_server"</span>.to_string(), <span class="comment">// TODO: other id?
                         </span><span class="number">1</span>,
                         <span class="prelude-val">None</span>, <span class="comment">// TODO(arqu): attribute to user id; possibly with the re-introduction of request tokens or other auth
-                        </span><span class="prelude-val">Some</span>(key.to_string()),
+                        </span><span class="prelude-val">Some</span>(node_id.to_string()),
                     ))
                     .<span class="kw">await</span>;
                 });
-                <span class="kw">let </span>nc = <span class="self">self</span>.client_counter.update(key);
+                <span class="kw">let </span>nc = <span class="self">self</span>.client_counter.update(node_id);
                 <span class="macro">inc_by!</span>(Metrics, unique_client_keys, nc);
             }
-            Message::RemoveClient { key, conn_num } =&gt; {
+            Message::RemoveClient { node_id, conn_num } =&gt; {
                 <span class="macro">inc!</span>(Metrics, disconnects);
-                <span class="macro">trace!</span>(key = %key.fmt_short(), <span class="string">"remove client"</span>);
+                <span class="macro">trace!</span>(node_id = %node_id.fmt_short(), <span class="string">"remove client"</span>);
                 <span class="comment">// ensure we still have the client in question
-                </span><span class="kw">if </span><span class="self">self</span>.clients.has_client(<span class="kw-2">&amp;</span>key, conn_num) {
-                    <span class="comment">// remove the client from the map of clients, &amp; notify any peers that it
+                </span><span class="kw">if </span><span class="self">self</span>.clients.has_client(<span class="kw-2">&amp;</span>node_id, conn_num) {
+                    <span class="comment">// remove the client from the map of clients, &amp; notify any nodes that it
                     // has sent messages that it has left the network
-                    </span><span class="self">self</span>.clients.unregister(<span class="kw-2">&amp;</span>key).<span class="kw">await</span>;
+                    </span><span class="self">self</span>.clients.unregister(<span class="kw-2">&amp;</span>node_id).<span class="kw">await</span>;
                 }
             }
         }
     }
 }
 
-<span class="doccomment">/// Counts how many `PublicKey`s seen, how many times.
+<span class="doccomment">/// Counts how many `NodeId`s seen, how many times.
 /// Gets reset every day.
 </span><span class="kw">struct </span>ClientCounter {
-    clients: HashMap&lt;PublicKey, usize&gt;,
+    clients: HashMap&lt;NodeId, usize&gt;,
     last_clear_date: Date,
 }
 
@@ -595,7 +602,7 @@
     }
 
     <span class="doccomment">/// Updates the client counter.
-    </span><span class="kw">fn </span>update(<span class="kw-2">&amp;mut </span><span class="self">self</span>, client: PublicKey) -&gt; u64 {
+    </span><span class="kw">fn </span>update(<span class="kw-2">&amp;mut </span><span class="self">self</span>, client: NodeId) -&gt; u64 {
         <span class="self">self</span>.check_and_clear();
         <span class="kw">let </span>new_conn = !<span class="self">self</span>.clients.contains_key(<span class="kw-2">&amp;</span>client);
         <span class="kw">let </span>counter = <span class="self">self</span>.clients.entry(client).or_insert(<span class="number">0</span>);
@@ -621,13 +628,13 @@
     };
 
     <span class="kw">fn </span>test_client_builder(
-        key: PublicKey,
+        node_id: NodeId,
         server_channel: mpsc::Sender&lt;Message&gt;,
     ) -&gt; (ClientConnConfig, Framed&lt;DuplexStream, DerpCodec&gt;) {
         <span class="kw">let </span>(test_io, io) = tokio::io::duplex(<span class="number">1024</span>);
         (
             ClientConnConfig {
-                key,
+                node_id,
                 stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
                 write_timeout: Duration::from_secs(<span class="number">1</span>),
                 channel_capacity: <span class="number">10</span>,
@@ -651,8 +658,8 @@
                 .instrument(<span class="macro">info_span!</span>(<span class="string">"relay.server"</span>)),
         );
 
-        <span class="kw">let </span>key_a = SecretKey::generate().public();
-        <span class="kw">let </span>(client_a, <span class="kw-2">mut </span>a_io) = test_client_builder(key_a, server_channel.clone());
+        <span class="kw">let </span>node_id_a = SecretKey::generate().public();
+        <span class="kw">let </span>(client_a, <span class="kw-2">mut </span>a_io) = test_client_builder(node_id_a, server_channel.clone());
 
         <span class="comment">// create client a
         </span>server_channel
@@ -661,8 +668,8 @@
             </span>.map_err(|<span class="kw">_</span>| <span class="macro">anyhow::anyhow!</span>(<span class="string">"server gone"</span>))<span class="question-mark">?</span>;
 
         <span class="comment">// server message: create client b
-        </span><span class="kw">let </span>key_b = SecretKey::generate().public();
-        <span class="kw">let </span>(client_b, <span class="kw-2">mut </span>b_io) = test_client_builder(key_b, server_channel.clone());
+        </span><span class="kw">let </span>node_id_b = SecretKey::generate().public();
+        <span class="kw">let </span>(client_b, <span class="kw-2">mut </span>b_io) = test_client_builder(node_id_b, server_channel.clone());
         server_channel
             .send(Message::CreateClient(client_b))
             .<span class="kw">await
@@ -670,14 +677,15 @@
 
         <span class="comment">// write message from b to a
         </span><span class="kw">let </span>msg = <span class="string">b"hello world!"</span>;
-        <span class="kw">crate</span>::client::conn::send_packet(<span class="kw-2">&amp;mut </span>b_io, <span class="kw-2">&amp;</span><span class="prelude-val">None</span>, key_a, Bytes::from_static(msg)).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">crate</span>::client::conn::send_packet(<span class="kw-2">&amp;mut </span>b_io, <span class="kw-2">&amp;</span><span class="prelude-val">None</span>, node_id_a, Bytes::from_static(msg))
+            .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// get message on a's reader
         </span><span class="kw">let </span>frame = recv_frame(FrameType::RecvPacket, <span class="kw-2">&amp;mut </span>a_io).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(
             frame,
             Frame::RecvPacket {
-                src_key: key_b,
+                src_key: node_id_b,
                 content: msg.to_vec().into()
             }
         );
@@ -685,16 +693,16 @@
         <span class="comment">// remove b
         </span>server_channel
             .send(Message::RemoveClient {
-                key: key_b,
+                node_id: node_id_b,
                 conn_num: <span class="number">1</span>,
             })
             .<span class="kw">await
             </span>.map_err(|<span class="kw">_</span>| <span class="macro">anyhow::anyhow!</span>(<span class="string">"server gone"</span>))<span class="question-mark">?</span>;
 
-        <span class="comment">// get peer gone message on a about b leaving the network
+        <span class="comment">// get the nodes gone message on a about b leaving the network
         // (we get this message because b has sent us a packet before)
         </span><span class="kw">let </span>frame = recv_frame(FrameType::PeerGone, <span class="kw-2">&amp;mut </span>a_io).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="macro">assert_eq!</span>(Frame::PeerGone { peer: key_b }, frame);
+        <span class="macro">assert_eq!</span>(Frame::NodeGone { node_id: node_id_b }, frame);
 
         <span class="comment">// close gracefully
         </span>done.cancel();

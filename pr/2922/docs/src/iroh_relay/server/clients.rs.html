@@ -307,15 +307,13 @@
 <a href="#307" id="307">307</a>
 <a href="#308" id="308">308</a>
 <a href="#309" id="309">309</a>
-<a href="#310" id="310">310</a>
-<a href="#311" id="311">311</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
 </span><span class="comment">// Based on tailscale/derp/derp_server.go
 
 </span><span class="kw">use </span>std::collections::{HashMap, HashSet};
 
 <span class="kw">use </span>anyhow::{bail, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>iroh_base::key::PublicKey;
+<span class="kw">use </span>iroh_base::key::NodeId;
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tracing::{trace, warn};
@@ -333,7 +331,7 @@
 </span><span class="attr">#[derive(Debug, Default)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Clients {
     <span class="doccomment">/// The list of all currently connected clients.
-    </span>inner: HashMap&lt;PublicKey, Client&gt;,
+    </span>inner: HashMap&lt;NodeId, Client&gt;,
     <span class="doccomment">/// The next connection number to use.
     </span>conn_num: usize,
 }
@@ -351,17 +349,17 @@
     }
 
     <span class="doccomment">/// Record that `src` sent or forwarded a packet to `dst`
-    </span><span class="kw">pub fn </span>record_send(<span class="kw-2">&amp;mut </span><span class="self">self</span>, src: <span class="kw-2">&amp;</span>PublicKey, dst: PublicKey) {
+    </span><span class="kw">pub fn </span>record_send(<span class="kw-2">&amp;mut </span><span class="self">self</span>, src: <span class="kw-2">&amp;</span>NodeId, dst: NodeId) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.inner.get_mut(src) {
             client.record_send(dst);
         }
     }
 
-    <span class="kw">pub fn </span>contains_key(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>PublicKey) -&gt; bool {
+    <span class="kw">pub fn </span>contains_key(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>NodeId) -&gt; bool {
         <span class="self">self</span>.inner.contains_key(key)
     }
 
-    <span class="kw">pub fn </span>has_client(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>PublicKey, conn_num: usize) -&gt; bool {
+    <span class="kw">pub fn </span>has_client(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>NodeId, conn_num: usize) -&gt; bool {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.inner.get(key) {
             <span class="kw">return </span>client.conn.conn_num == conn_num;
         }
@@ -376,11 +374,11 @@
 
     <span class="kw">pub async fn </span>register(<span class="kw-2">&amp;mut </span><span class="self">self</span>, client_config: ClientConnConfig) {
         <span class="comment">// this builds the client handler &amp; starts the read &amp; write loops to that client connection
-        </span><span class="kw">let </span>key = client_config.key;
+        </span><span class="kw">let </span>key = client_config.node_id;
         <span class="macro">trace!</span>(<span class="string">"registering client: {:?}"</span>, key);
         <span class="kw">let </span>conn_num = <span class="self">self</span>.next_conn_num();
         <span class="kw">let </span>client = ClientConn::new(client_config, conn_num);
-        <span class="comment">// TODO: in future, do not remove clients that share a publicKey, instead,
+        <span class="comment">// TODO: in future, do not remove clients that share a NodeId, instead,
         // expand the `Client` struct to handle multiple connections &amp; a policy for
         // how to handle who we write to when multiple connections exist.
         </span><span class="kw">let </span>client = Client::new(client);
@@ -393,7 +391,7 @@
     <span class="doccomment">/// Removes the client from the map of clients, &amp; sends a notification
     /// to each client that peers has sent data to, to let them know that
     /// peer is gone from the network.
-    </span><span class="kw">pub async fn </span>unregister(<span class="kw-2">&amp;mut </span><span class="self">self</span>, peer: <span class="kw-2">&amp;</span>PublicKey) {
+    </span><span class="kw">pub async fn </span>unregister(<span class="kw-2">&amp;mut </span><span class="self">self</span>, peer: <span class="kw-2">&amp;</span>NodeId) {
         <span class="macro">trace!</span>(<span class="string">"unregistering client: {:?}"</span>, peer);
         <span class="kw">if let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.inner.remove(peer) {
             <span class="kw">for </span>key <span class="kw">in </span>client.sent_to.iter() {
@@ -404,8 +402,8 @@
         }
     }
 
-    <span class="doccomment">/// Attempt to send a packet to client with [`PublicKey`] `key`
-    </span><span class="kw">pub async fn </span>send_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>PublicKey, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="doccomment">/// Attempt to send a packet to client with [`NodeId`] `key`
+    </span><span class="kw">pub async fn </span>send_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>NodeId, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.inner.get(key) {
             <span class="kw">let </span>res = client.send_packet(packet);
             <span class="kw">return </span><span class="self">self</span>.process_result(key, res).<span class="kw">await</span>;
@@ -413,7 +411,7 @@
         <span class="macro">bail!</span>(<span class="string">"Could not find client for {key:?}, dropped packet"</span>);
     }
 
-    <span class="kw">pub async fn </span>send_disco_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>PublicKey, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">pub async fn </span>send_disco_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>NodeId, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.inner.get(key) {
             <span class="kw">let </span>res = client.send_disco_packet(packet);
             <span class="kw">return </span><span class="self">self</span>.process_result(key, res).<span class="kw">await</span>;
@@ -421,7 +419,7 @@
         <span class="macro">bail!</span>(<span class="string">"Could not find client for {key:?}, dropped packet"</span>);
     }
 
-    <span class="kw">fn </span>send_peer_gone(<span class="kw-2">&amp;mut </span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>PublicKey, peer: PublicKey) {
+    <span class="kw">fn </span>send_peer_gone(<span class="kw-2">&amp;mut </span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>NodeId, peer: NodeId) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.inner.get(key) {
             <span class="kw">let </span>res = client.send_peer_gone(peer);
             <span class="kw">let _ </span>= <span class="self">self</span>.process_result_no_fallback(key, res);
@@ -430,7 +428,7 @@
         <span class="macro">warn!</span>(<span class="string">"Could not find client for {key:?}, dropping peer gone packet"</span>);
     }
 
-    <span class="kw">async fn </span>process_result(<span class="kw-2">&amp;mut </span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>PublicKey, res: <span class="prelude-ty">Result</span>&lt;(), SendError&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">async fn </span>process_result(<span class="kw-2">&amp;mut </span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>NodeId, res: <span class="prelude-ty">Result</span>&lt;(), SendError&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">match </span>res {
             <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
             <span class="prelude-val">Err</span>(SendError::PacketDropped) =&gt; {
@@ -446,7 +444,7 @@
 
     <span class="kw">fn </span>process_result_no_fallback(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        key: <span class="kw-2">&amp;</span>PublicKey,
+        key: <span class="kw-2">&amp;</span>NodeId,
         res: <span class="prelude-ty">Result</span>&lt;(), SendError&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">match </span>res {
@@ -463,14 +461,14 @@
 }
 
 <span class="doccomment">/// Represents a connection to a client.
-</span><span class="comment">// TODO: expand to allow for _multiple connections_ associated with a single PublicKey. This
+</span><span class="comment">// TODO: expand to allow for _multiple connections_ associated with a single NodeId. This
 // introduces some questions around which connection should be prioritized when forwarding packets
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Client {
-    <span class="doccomment">/// The client connection associated with the [`PublicKey`]
+    <span class="doccomment">/// The client connection associated with the [`NodeId`]
     </span>conn: ClientConn,
     <span class="doccomment">/// list of peers we have sent messages to
-    </span>sent_to: HashSet&lt;PublicKey&gt;,
+    </span>sent_to: HashSet&lt;NodeId&gt;,
 }
 
 <span class="kw">impl </span>Client {
@@ -482,7 +480,7 @@
     }
 
     <span class="doccomment">/// Record that this client sent a packet to the `dst` client
-    </span><span class="kw">fn </span>record_send(<span class="kw-2">&amp;mut </span><span class="self">self</span>, dst: PublicKey) {
+    </span><span class="kw">fn </span>record_send(<span class="kw-2">&amp;mut </span><span class="self">self</span>, dst: NodeId) {
         <span class="self">self</span>.sent_to.insert(dst);
     }
 
@@ -498,7 +496,7 @@
         try_send(<span class="kw-2">&amp;</span><span class="self">self</span>.conn.disco_send_queue, packet)
     }
 
-    <span class="kw">fn </span>send_peer_gone(<span class="kw-2">&amp;</span><span class="self">self</span>, key: PublicKey) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendError&gt; {
+    <span class="kw">fn </span>send_peer_gone(<span class="kw-2">&amp;</span><span class="self">self</span>, key: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendError&gt; {
         <span class="kw">let </span>res = try_send(<span class="kw-2">&amp;</span><span class="self">self</span>.conn.peer_gone, key);
         <span class="kw">match </span>res {
             <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
@@ -549,14 +547,12 @@
         server::streams::{MaybeTlsStream, RelayedStream},
     };
 
-    <span class="kw">fn </span>test_client_builder(
-        key: PublicKey,
-    ) -&gt; (ClientConnConfig, FramedRead&lt;DuplexStream, DerpCodec&gt;) {
+    <span class="kw">fn </span>test_client_builder(key: NodeId) -&gt; (ClientConnConfig, FramedRead&lt;DuplexStream, DerpCodec&gt;) {
         <span class="kw">let </span>(test_io, io) = tokio::io::duplex(<span class="number">1024</span>);
         <span class="kw">let </span>(server_channel, <span class="kw">_</span>) = mpsc::channel(<span class="number">10</span>);
         (
             ClientConnConfig {
-                key,
+                node_id: key,
                 stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
                 write_timeout: Duration::from_secs(<span class="number">1</span>),
                 channel_capacity: <span class="number">10</span>,
@@ -610,7 +606,7 @@
         <span class="comment">// send peer_gone
         </span>clients.send_peer_gone(<span class="kw-2">&amp;</span>a_key, b_key);
         <span class="kw">let </span>frame = recv_frame(FrameType::PeerGone, <span class="kw-2">&amp;mut </span>a_rw).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="macro">assert_eq!</span>(frame, Frame::PeerGone { peer: b_key });
+        <span class="macro">assert_eq!</span>(frame, Frame::NodeGone { node_id: b_key });
 
         clients.unregister(<span class="kw-2">&amp;</span>a_key.clone()).<span class="kw">await</span>;
 

@@ -540,6 +540,9 @@
 <a href="#540" id="540">540</a>
 <a href="#541" id="541">541</a>
 <a href="#542" id="542">542</a>
+<a href="#543" id="543">543</a>
+<a href="#544" id="544">544</a>
+<a href="#545" id="545">545</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::time::Duration;
@@ -548,7 +551,7 @@
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>futures_lite::StreamExt;
 <span class="kw">use </span>futures_util::SinkExt;
-<span class="kw">use </span>iroh_base::key::PublicKey;
+<span class="kw">use </span>iroh_base::key::NodeId;
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -569,7 +572,7 @@
 <span class="doccomment">/// Configuration for a [`ClientConn`].
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ClientConnConfig {
-    <span class="kw">pub</span>(<span class="kw">super</span>) key: PublicKey,
+    <span class="kw">pub</span>(<span class="kw">super</span>) node_id: NodeId,
     <span class="kw">pub</span>(<span class="kw">super</span>) stream: RelayedStream,
     <span class="kw">pub</span>(<span class="kw">super</span>) write_timeout: Duration,
     <span class="kw">pub</span>(<span class="kw">super</span>) channel_capacity: usize,
@@ -585,7 +588,7 @@
     <span class="doccomment">/// Unique counter, incremented each time we accept a new connection.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) conn_num: usize,
     <span class="doccomment">/// Identity of the connected peer.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) key: PublicKey,
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) key: NodeId,
     <span class="doccomment">/// Used to close the connection loop.
     </span>done: CancellationToken,
     <span class="doccomment">/// Actor handle.
@@ -595,7 +598,7 @@
     <span class="doccomment">/// Queue of disco packets intended for the client.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) disco_send_queue: mpsc::Sender&lt;Packet&gt;,
     <span class="doccomment">/// Channel to notify the client that a previous sender has disconnected.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) peer_gone: mpsc::Sender&lt;PublicKey&gt;,
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) peer_gone: mpsc::Sender&lt;NodeId&gt;,
 }
 
 <span class="kw">impl </span>ClientConn {
@@ -604,7 +607,7 @@
     /// Call [`ClientConn::shutdown`] to close the read and write loops before dropping the [`ClientConn`]
     </span><span class="kw">pub fn </span>new(config: ClientConnConfig, conn_num: usize) -&gt; ClientConn {
         <span class="kw">let </span>ClientConnConfig {
-            key,
+            node_id: key,
             stream: io,
             write_timeout,
             channel_capacity,
@@ -623,7 +626,7 @@
             timeout: write_timeout,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
-            peer_gone: peer_gone_r,
+            node_gone: peer_gone_r,
             key,
             preferred: <span class="bool-val">false</span>,
             server_channel: server_channel.clone(),
@@ -639,7 +642,10 @@
 
                 <span class="comment">// remove the client when the actor terminates, no matter how it exits
                 </span><span class="kw">let _ </span>= server_channel
-                    .send(actor::Message::RemoveClient { key, conn_num })
+                    .send(actor::Message::RemoveClient {
+                        node_id: key,
+                        conn_num,
+                    })
                     .<span class="kw">await</span>;
                 <span class="kw">match </span>res {
                     <span class="prelude-val">Err</span>(e) =&gt; {
@@ -709,14 +715,14 @@
     <span class="doccomment">/// Important packets queued to send to the client
     </span>disco_send_queue: mpsc::Receiver&lt;Packet&gt;,
     <span class="doccomment">/// Notify the client that a previous sender has disconnected
-    </span>peer_gone: mpsc::Receiver&lt;PublicKey&gt;,
-    <span class="doccomment">/// [`PublicKey`] of this client
-    </span>key: PublicKey,
+    </span>node_gone: mpsc::Receiver&lt;NodeId&gt;,
+    <span class="doccomment">/// [`NodeId`] of this client
+    </span>key: NodeId,
     <span class="doccomment">/// Channel used to communicate with the server about actions
     /// it needs to take on behalf of the client
     </span>server_channel: mpsc::Sender&lt;actor::Message&gt;,
     <span class="doccomment">/// Notes that the client considers this the preferred connection (important in cases
-    /// where the client moves to a different network, but has the same PublicKey)
+    /// where the client moves to a different network, but has the same NodeId)
     </span>preferred: bool,
 }
 
@@ -752,10 +758,10 @@
                         }
                     }
                 }
-                peer = <span class="self">self</span>.peer_gone.recv() =&gt; {
-                    <span class="kw">let </span>peer = peer.context(<span class="string">"Server.peer_gone dropped"</span>)<span class="question-mark">?</span>;
-                    <span class="macro">trace!</span>(<span class="string">"peer gone: {:?}"</span>, peer);
-                    <span class="self">self</span>.write_frame(Frame::PeerGone { peer }).<span class="kw">await</span><span class="question-mark">?</span>;
+                node_id = <span class="self">self</span>.node_gone.recv() =&gt; {
+                    <span class="kw">let </span>node_id = node_id.context(<span class="string">"Server.node_gone dropped"</span>)<span class="question-mark">?</span>;
+                    <span class="macro">trace!</span>(<span class="string">"node_id gone: {:?}"</span>, node_id);
+                    <span class="self">self</span>.write_frame(Frame::NodeGone { node_id }).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
                 packet = <span class="self">self</span>.send_queue.recv() =&gt; {
                     <span class="kw">let </span>packet = packet.context(<span class="string">"Server.send_queue dropped"</span>)<span class="question-mark">?</span>;
@@ -831,7 +837,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">async fn </span>handle_frame_send_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, dst_key: PublicKey, data: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">async fn </span>handle_frame_send_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, dst_key: NodeId, data: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>message = <span class="kw">if </span>disco::looks_like_disco_wrapper(<span class="kw-2">&amp;</span>data) {
             <span class="macro">inc!</span>(Metrics, disco_packets_recv);
             actor::Message::SendDiscoPacket {
@@ -885,7 +891,7 @@
             timeout: Duration::from_secs(<span class="number">1</span>),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
-            peer_gone: peer_gone_r,
+            node_gone: peer_gone_r,
 
             key,
             server_channel: server_channel_s,
@@ -932,7 +938,7 @@
         </span><span class="macro">println!</span>(<span class="string">"send peer gone"</span>);
         peer_gone_s.send(key).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>frame = recv_frame(FrameType::PeerGone, <span class="kw-2">&amp;mut </span>io_rw).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="macro">assert_eq!</span>(frame, Frame::PeerGone { peer: key });
+        <span class="macro">assert_eq!</span>(frame, Frame::NodeGone { node_id: key });
 
         <span class="comment">// Read tests
         </span><span class="macro">println!</span>(<span class="string">"--read"</span>);
@@ -1025,7 +1031,7 @@
             timeout: Duration::from_secs(<span class="number">1</span>),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
-            peer_gone: peer_gone_r,
+            node_gone: peer_gone_r,
 
             key,
             server_channel: server_channel_s,
