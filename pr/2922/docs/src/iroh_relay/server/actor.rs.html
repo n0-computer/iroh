@@ -354,6 +354,15 @@
 <a href="#354" id="354">354</a>
 <a href="#355" id="355">355</a>
 <a href="#356" id="356">356</a>
+<a href="#357" id="357">357</a>
+<a href="#358" id="358">358</a>
+<a href="#359" id="359">359</a>
+<a href="#360" id="360">360</a>
+<a href="#361" id="361">361</a>
+<a href="#362" id="362">362</a>
+<a href="#363" id="363">363</a>
+<a href="#364" id="364">364</a>
+<a href="#365" id="365">365</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The main event loop for the relay server.
 //!
 //! based on tailscale/derp/derp_server.go
@@ -365,7 +374,7 @@
 <span class="kw">use </span>iroh_base::key::NodeId;
 <span class="kw">use </span>iroh_metrics::{core::UsageStatsReport, inc, inc_by, report_usage_stats};
 <span class="kw">use </span>time::{Date, OffsetDateTime};
-<span class="kw">use </span>tokio::sync::mpsc;
+<span class="kw">use </span>tokio::{sync::mpsc, task::JoinSet};
 <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{info, info_span, trace, warn, Instrument};
 
@@ -472,9 +481,11 @@
     }
 
     <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>, done: CancellationToken) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>tasks = JoinSet::new();
         <span class="kw">loop </span>{
             <span class="macro">tokio::select!</span> {
                 biased;
+
                 <span class="kw">_ </span>= done.cancelled() =&gt; {
                     <span class="macro">info!</span>(<span class="string">"server actor loop cancelled, closing loop"</span>);
                     <span class="comment">// TODO: stats: drain channel &amp; count dropped packets etc
@@ -482,9 +493,16 @@
                     </span><span class="self">self</span>.clients.shutdown().<span class="kw">await</span>;
                     <span class="kw">return </span><span class="prelude-val">Ok</span>(());
                 }
+                <span class="prelude-val">Some</span>(res) = tasks.join_next(), <span class="kw">if </span>!tasks.is_empty() =&gt; {
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
+                        <span class="kw">if </span>err.is_panic() {
+                            <span class="macro">panic!</span>(<span class="string">"Task paniced: {err:?}"</span>);
+                        }
+                    }
+                }
                 msg = <span class="self">self</span>.receiver.recv() =&gt; <span class="kw">match </span>msg {
                     <span class="prelude-val">Some</span>(msg) =&gt; {
-                        <span class="self">self</span>.handle_message(msg).<span class="kw">await</span>;
+                        <span class="self">self</span>.handle_message(msg, <span class="kw-2">&amp;mut </span>tasks).<span class="kw">await</span>;
                     }
                     <span class="prelude-val">None </span>=&gt; {
                         <span class="macro">warn!</span>(<span class="string">"unexpected actor error: receiver gone, shutting down actor loop"</span>);
@@ -496,7 +514,7 @@
         }
     }
 
-    <span class="kw">async fn </span>handle_message(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: Message) {
+    <span class="kw">async fn </span>handle_message(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: Message, tasks: <span class="kw-2">&amp;mut </span>JoinSet&lt;()&gt;) {
         <span class="kw">match </span>msg {
             Message::SendPacket { dst, data, src } =&gt; {
                 <span class="macro">trace!</span>(<span class="question-mark">?</span>src, <span class="question-mark">?</span>dst, len = data.len(), <span class="string">"send packet"</span>);
@@ -549,7 +567,7 @@
 
                 <span class="comment">// build and register client, starting up read &amp; write loops for the client connection
                 </span><span class="self">self</span>.clients.register(client_builder).<span class="kw">await</span>;
-                tokio::task::spawn(<span class="kw">async move </span>{
+                tasks.spawn(<span class="kw">async move </span>{
                     report_usage_stats(<span class="kw-2">&amp;</span>UsageStatsReport::new(
                         <span class="string">"relay_accepts"</span>.to_string(),
                         <span class="string">"relay_server"</span>.to_string(), <span class="comment">// TODO: other id?
