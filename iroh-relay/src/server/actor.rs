@@ -131,7 +131,7 @@ impl Actor {
                 Some(res) = tasks.join_next(), if !tasks.is_empty() => {
                     if let Err(err) = res {
                         if err.is_panic() {
-                            panic!("Task paniced: {err:?}");
+                            panic!("Task panicked: {err:?}");
                         }
                     }
                 }
