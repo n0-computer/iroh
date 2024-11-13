@@ -589,7 +589,7 @@
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ClientConnConfig {
     <span class="kw">pub</span>(<span class="kw">super</span>) key: PublicKey,
     <span class="kw">pub</span>(<span class="kw">super</span>) stream: RelayedStream,
-    <span class="kw">pub</span>(<span class="kw">super</span>) write_timeout: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) write_timeout: Duration,
     <span class="kw">pub</span>(<span class="kw">super</span>) channel_capacity: usize,
     <span class="kw">pub</span>(<span class="kw">super</span>) server_channel: mpsc::Sender&lt;actor::Message&gt;,
 }
@@ -660,7 +660,7 @@
                 <span class="kw">let </span>res = actor.run(io_done).<span class="kw">await</span>;
 
                 <span class="kw">let _ </span>= server_channel
-                    .send(actor::Message::RemoveClient((key, conn_num)))
+                    .send(actor::Message::RemoveClient { key, conn_num })
                     .<span class="kw">await</span>;
                 <span class="kw">match </span>res {
                     <span class="prelude-val">Err</span>(e) =&gt; {
@@ -726,7 +726,7 @@
     <span class="doccomment">/// Io to talk to the client
     </span>stream: RelayedStream,
     <span class="doccomment">/// Max time we wait to complete a write to the client
-    </span>timeout: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
+    </span>timeout: Duration,
     <span class="doccomment">/// Packets queued to send to the client
     </span>send_queue: mpsc::Receiver&lt;Packet&gt;,
     <span class="doccomment">/// Important packets queued to send to the client
@@ -808,7 +808,7 @@
     ///
     /// Errors if the send does not happen within the `timeout` duration
     </span><span class="kw">async fn </span>write_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: Frame) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        write_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>.stream, frame, <span class="self">self</span>.timeout).<span class="kw">await
+        write_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>.stream, frame, <span class="prelude-val">Some</span>(<span class="self">self</span>.timeout)).<span class="kw">await
     </span>}
 
     <span class="doccomment">/// Writes contents to the client in a `RECV_PACKET` frame.
@@ -918,7 +918,7 @@
 
         <span class="kw">let </span>actor = ConnActor {
             stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
-            timeout: <span class="prelude-val">None</span>,
+            timeout: Duration::from_secs(<span class="number">1</span>),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
             peer_gone: peer_gone_r,
@@ -1058,7 +1058,7 @@
         <span class="macro">println!</span>(<span class="string">"-- create client conn"</span>);
         <span class="kw">let </span>actor = ConnActor {
             stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
-            timeout: <span class="prelude-val">None</span>,
+            timeout: Duration::from_secs(<span class="number">1</span>),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
             peer_gone: peer_gone_r,

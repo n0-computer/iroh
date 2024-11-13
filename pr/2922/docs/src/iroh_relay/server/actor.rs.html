@@ -355,6 +355,9 @@
 <a href="#355" id="355">355</a>
 <a href="#356" id="356">356</a>
 <a href="#357" id="357">357</a>
+<a href="#358" id="358">358</a>
+<a href="#359" id="359">359</a>
+<a href="#360" id="360">360</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The main event loop for the relay server.
 //!
 //! based on tailscale/derp/derp_server.go
@@ -378,7 +381,7 @@
 
 <span class="comment">// TODO: skipping `verboseDropKeys` for now
 
-</span><span class="attr">#[derive(derive_more::Debug)]
+</span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>Message {
     SendPacket {
         dst: PublicKey,
@@ -390,9 +393,11 @@
         data: Bytes,
         src: PublicKey,
     },
-    <span class="attr">#[debug(<span class="string">"CreateClient"</span>)]
-    </span>CreateClient(ClientConnConfig),
-    RemoveClient((PublicKey, usize)),
+    CreateClient(ClientConnConfig),
+    RemoveClient {
+        key: PublicKey,
+        conn_num: usize,
+    },
 }
 
 <span class="doccomment">/// A request to write a dataframe to a Client
@@ -412,17 +417,15 @@
 /// Responsible for managing connections to relay [`Conn`](crate::RelayConn)s, sending packets from one client to another.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ServerActorTask {
-    <span class="doccomment">/// Optionally specifies how long to wait before failing when writing
-    /// to a client
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) write_timeout: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
+    <span class="doccomment">/// Specifies how long to wait before failing when writing to a client.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) write_timeout: Duration,
     <span class="doccomment">/// Channel on which to communicate to the [`ServerActor`]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) server_channel: mpsc::Sender&lt;Message&gt;,
     <span class="doccomment">/// Server loop handler
     </span>loop_handler: AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
     <span class="doccomment">/// Done token, forces a hard shutdown. To gracefully shutdown, use [`ServerActorTask::close`]
     </span>cancel: CancellationToken,
-    <span class="comment">// TODO: stats collection
-</span>}
+}
 
 <span class="kw">impl </span>ServerActorTask {
     <span class="doccomment">/// Creates a new `ServerActorTask` and start the actor.
@@ -436,7 +439,7 @@
         ));
 
         <span class="self">Self </span>{
-            write_timeout: <span class="prelude-val">Some</span>(WRITE_TIMEOUT),
+            write_timeout: WRITE_TIMEOUT,
             server_channel: server_channel_s,
             loop_handler: server_task,
             cancel: cancel_token,
@@ -570,7 +573,7 @@
                 <span class="kw">let </span>nc = <span class="self">self</span>.client_counter.update(key);
                 <span class="macro">inc_by!</span>(Metrics, unique_client_keys, nc);
             }
-            Message::RemoveClient((key, conn_num)) =&gt; {
+            Message::RemoveClient { key, conn_num } =&gt; {
                 <span class="macro">inc!</span>(Metrics, disconnects);
                 <span class="macro">trace!</span>(<span class="string">"remove client: {:?}"</span>, key);
                 <span class="comment">// ensure we still have the client in question
@@ -642,7 +645,7 @@
             ClientConnConfig {
                 key,
                 stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
-                write_timeout: <span class="prelude-val">None</span>,
+                write_timeout: Duration::from_secs(<span class="number">1</span>),
                 channel_capacity: <span class="number">10</span>,
                 server_channel,
             },
@@ -697,7 +700,10 @@
 
         <span class="comment">// remove b
         </span>server_channel
-            .send(Message::RemoveClient((key_b, <span class="number">2</span>)))
+            .send(Message::RemoveClient {
+                key: key_b,
+                conn_num: <span class="number">1</span>,
+            })
             .<span class="kw">await
             </span>.map_err(|<span class="kw">_</span>| <span class="macro">anyhow::anyhow!</span>(<span class="string">"server gone"</span>))<span class="question-mark">?</span>;
 

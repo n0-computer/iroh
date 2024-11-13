@@ -1491,7 +1491,7 @@
     handlers: Handlers,
     headers: HeaderMap,
     server_channel: mpsc::Sender&lt;Message&gt;,
-    write_timeout: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
+    write_timeout: Duration,
 }
 
 <span class="kw">impl </span>Inner {
@@ -1598,7 +1598,7 @@
         handlers: Handlers,
         headers: HeaderMap,
         server_channel: mpsc::Sender&lt;Message&gt;,
-        write_timeout: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
+        write_timeout: Duration,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>(Arc::new(Inner {
             handlers,
