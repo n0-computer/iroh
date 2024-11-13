@@ -75,20 +75,6 @@ pub enum DocsStorage {
     Persistent(PathBuf),
 }
 
-/// Storage backend for spaces.
-#[derive(Debug, Clone)]
-pub enum SpacesStorage {
-    /// Disable docs completely.
-    Disabled,
-    /// In-memory storage.
-    Memory,
-    /// File-based persistent storage.
-    Persistent(PathBuf),
-    /// (test only) persistent storage with in-memory redb backend.
-    #[cfg(feature = "test-utils")]
-    PersistentTest,
-}
-
 /// Builder for the [`Node`].
 ///
 /// You must supply a blob store and a document store.
@@ -131,7 +117,6 @@ where
     dns_resolver: Option<DnsResolver>,
     node_discovery: DiscoveryConfig,
     docs_storage: DocsStorage,
-    spaces_storage: SpacesStorage,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
     /// Callback to register when a gc loop is done
@@ -261,7 +246,6 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             rpc_addr: None,
             gc_policy: GcPolicy::Disabled,
             docs_storage: DocsStorage::Disabled,
-            spaces_storage: SpacesStorage::Memory,
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -298,8 +282,6 @@ impl<D: Map> Builder<D> {
             rpc_addr: None,
             gc_policy: GcPolicy::Disabled,
             docs_storage,
-            // TODO: Expose in function
-            spaces_storage: SpacesStorage::Disabled,
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -343,7 +325,6 @@ where
             }
             DocsStorage::Disabled => DocsStorage::Disabled,
         };
-        let spaces_storage = SpacesStorage::Persistent(IrohPaths::SpacesDatabase.with_root(root));
 
         let secret_key_path = IrohPaths::SecretKey.with_root(root);
         let secret_key = load_secret_key(secret_key_path).await?;
@@ -361,7 +342,6 @@ where
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
             docs_storage,
-            spaces_storage,
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -369,19 +349,6 @@ where
             blob_events: self.blob_events,
             transport_config: self.transport_config,
         })
-    }
-
-    /// Enables the persistent store, but with an in-memory backend.
-    ///
-    /// There's significant differences between the naive spaces in-memory store
-    /// and the persistent store, even if it's using the in-memory backend,
-    /// making it useful to test these two implementations against each other.
-    #[cfg(feature = "test-utils")]
-    pub fn enable_spaces_persist_test_mode(mut self, test_mode: bool) -> Self {
-        if test_mode == true {
-            self.spaces_storage = SpacesStorage::PersistentTest;
-        }
-        self
     }
 
     /// Configure rpc endpoint.
@@ -432,12 +399,6 @@ where
                 DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root))
             }
         };
-        self
-    }
-
-    /// Disables spaces support on this node completely.
-    pub fn disable_spaces(mut self) -> Self {
-        self.spaces_storage = SpacesStorage::Disabled;
         self
     }
 
@@ -704,51 +665,6 @@ where
         )
         .await?;
 
-        let blobs_store = self.blobs_store.clone();
-        let willow = match self.spaces_storage {
-            SpacesStorage::Disabled => None,
-            SpacesStorage::Memory => {
-                let create_store = move || {
-                    // iroh_willow::store::memory::Store::new(blobs_store)
-                    iroh_willow::store::persistent::Store::new_memory(blobs_store)
-                        .expect("couldn't initialize store")
-                };
-                let engine = iroh_willow::Engine::spawn(
-                    endpoint.clone(),
-                    create_store,
-                    iroh_willow::engine::AcceptOpts::default(),
-                );
-                Some(engine)
-            }
-            SpacesStorage::Persistent(path) => {
-                let create_store = move || {
-                    iroh_willow::store::persistent::Store::new(path, blobs_store)
-                        .expect("failed to spawn persistent store") // TODO(matheus23): introduce fallibility?
-                };
-                let engine = iroh_willow::Engine::spawn(
-                    endpoint.clone(),
-                    create_store,
-                    iroh_willow::engine::AcceptOpts::default(),
-                );
-                Some(engine)
-            }
-            #[cfg(feature = "test-utils")]
-            SpacesStorage::PersistentTest => {
-                let create_store = move || {
-                    iroh_willow::store::persistent::Store::new_memory(blobs_store)
-                        .expect("couldn't initialize store")
-                };
-                let engine = iroh_willow::Engine::spawn(
-                    endpoint.clone(),
-                    create_store,
-                    iroh_willow::engine::AcceptOpts::default(),
-                );
-                Some(engine)
-            }
-        };
-        // Spawn the willow engine.
-        // TODO: Allow to disable.
-
         // Initialize the internal RPC connection.
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection::<RpcService>(32);
         let internal_rpc = quic_rpc::transport::boxed::ServerEndpoint::new(internal_rpc);
@@ -764,7 +680,6 @@ where
             client,
             cancel_token: CancellationToken::new(),
             local_pool_handle: lp.handle().clone(),
-            willow,
         });
 
         let protocol_builder = ProtocolBuilder {
@@ -915,10 +830,6 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         // Register docs, if enabled.
         if let Some(docs) = docs {
             self = self.accept(DOCS_ALPN.to_vec(), Arc::new(docs));
-        }
-
-        if let Some(engine) = self.inner.willow.clone() {
-            self = self.accept(iroh_willow::ALPN.to_vec(), Arc::new(engine));
         }
 
         self

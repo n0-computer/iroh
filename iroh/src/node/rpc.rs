@@ -75,7 +75,6 @@ use crate::{
 };
 
 mod docs;
-mod spaces;
 
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 /// Chunk size for getting blobs over RPC
@@ -108,10 +107,6 @@ impl<D: BaoStore> Handler<D> {
 
     fn blobs_store(&self) -> D {
         self.blobs().store().clone()
-    }
-
-    fn spaces(&self) -> Result<&iroh_willow::Engine, RpcError> {
-        self.inner.willow.as_ref().ok_or_else(spaces_disabled)
     }
 
     async fn with_docs<T, F, Fut>(self, f: F) -> RpcResult<T>
@@ -478,7 +473,6 @@ impl<D: BaoStore> Handler<D> {
             Authors(msg) => self.handle_authors_request(msg, chan).await,
             Docs(msg) => self.handle_docs_request(msg, chan).await,
             Gossip(msg) => self.handle_gossip_request(msg, chan).await,
-            Spaces(msg) => self.handle_spaces_request(msg, chan).await,
         }
     }
 
@@ -1393,8 +1387,4 @@ impl<D: BaoStore> Handler<D> {
 
 fn docs_disabled() -> RpcError {
     anyhow!("docs are disabled").into()
-}
-
-fn spaces_disabled() -> RpcError {
-    anyhow::anyhow!("spaces are disabled").into()
 }

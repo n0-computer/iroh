@@ -23,7 +23,6 @@ pub mod docs;
 pub mod gossip;
 pub mod net;
 pub mod node;
-pub mod spaces;
 pub mod tags;
 
 /// The RPC service for the iroh provider process.
@@ -42,7 +41,6 @@ pub enum Request {
     Tags(tags::Request),
     Authors(authors::Request),
     Gossip(gossip::Request),
-    Spaces(spaces::Request),
 }
 
 /// The response enum, listing all possible responses.
@@ -57,7 +55,6 @@ pub enum Response {
     Docs(docs::Response),
     Authors(authors::Response),
     Gossip(gossip::Response),
-    Spaces(spaces::Response),
 }
 
 impl quic_rpc::Service for RpcService {

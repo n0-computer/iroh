@@ -128,7 +128,6 @@ struct NodeInner<D> {
     cancel_token: CancellationToken,
     client: crate::client::Iroh,
     local_pool_handle: LocalPoolHandle,
-    willow: Option<iroh_willow::Engine>,
 }
 
 /// In memory node.

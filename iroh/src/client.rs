@@ -22,7 +22,6 @@ pub mod blobs;
 pub mod docs;
 pub mod gossip;
 pub mod net;
-pub mod spaces;
 pub mod tags;
 
 /// Iroh rpc connection - boxed so that we can have a concrete type.
@@ -69,11 +68,6 @@ impl Iroh {
     /// Returns the docs client.
     pub fn docs(&self) -> &docs::Client {
         docs::Client::ref_cast(&self.rpc)
-    }
-
-    /// Returns the spaces client.
-    pub fn spaces(&self) -> &spaces::Client {
-        spaces::Client::ref_cast(&self.rpc)
     }
 
     /// Returns the authors client.
