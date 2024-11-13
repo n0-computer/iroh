@@ -10,9 +10,8 @@ use iroh_base::key::PublicKey;
 use iroh_metrics::{inc, inc_by};
 use tokio::sync::mpsc;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::{trace, warn, Instrument};
+use tracing::{info, trace, warn, Instrument};
 
-use super::streams::RelayedStream;
 use crate::{
     protos::{
         disco,
@@ -21,6 +20,7 @@ use crate::{
     server::{
         actor::{self, Packet},
         metrics::Metrics,
+        streams::RelayedStream,
     },
 };
 
@@ -40,23 +40,19 @@ pub(super) struct ClientConnConfig {
 /// [`Client`]: crate::client::Client
 #[derive(Debug)]
 pub(super) struct ClientConn {
-    /// Static after construction, process-wide unique counter, incremented each time we accept
+    /// Unique counter, incremented each time we accept a new connection.
     pub(super) conn_num: usize,
-
     /// Identity of the connected peer.
     pub(super) key: PublicKey,
-
-    /// Used to close the connection.
+    /// Used to close the connection loop.
     done: CancellationToken,
-
     /// Actor handle.
-    handle: AbortOnDropHandle<Result<()>>,
-
-    /// Queue of packets intended for the client
+    handle: AbortOnDropHandle<()>,
+    /// Queue of packets intended for the client.
     pub(super) send_queue: mpsc::Sender<Packet>,
-    /// Queue of important packets intended for the client
+    /// Queue of disco packets intended for the client.
     pub(super) disco_send_queue: mpsc::Sender<Packet>,
-    /// Notify the client that a previous sender has disconnected
+    /// Channel to notify the client that a previous sender has disconnected.
     pub(super) peer_gone: mpsc::Sender<PublicKey>,
 }
 
@@ -80,7 +76,7 @@ impl ClientConn {
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(channel_capacity);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(channel_capacity);
 
-        let actor = ConnActor {
+        let actor = Actor {
             stream: io,
             timeout: write_timeout,
             send_queue: send_queue_r,
@@ -99,6 +95,7 @@ impl ClientConn {
                 let (key, conn_num) = io_client_id;
                 let res = actor.run(io_done).await;
 
+                // remove the client when the actor terminates, no matter how it exits
                 let _ = server_channel
                     .send(actor::Message::RemoveClient { key, conn_num })
                     .await;
@@ -107,15 +104,13 @@ impl ClientConn {
                         warn!(
                             "connection manager for {key:?} {conn_num}: writer closed in error {e}"
                         );
-                        Err(e)
                     }
-                    Ok(_) => {
-                        warn!("connection manager for {key:?} {conn_num}: writer closed");
-                        Ok(())
+                    Ok(()) => {
+                        info!("connection manager for {key:?} {conn_num}: writer closed");
                     }
                 }
             }
-            .instrument(tracing::debug_span!("actor")),
+            .instrument(tracing::debug_span!("client_conn actor")),
         );
 
         ClientConn {
@@ -131,7 +126,7 @@ impl ClientConn {
 
     /// Shutdown the reader and writer loops and closes the connection.
     ///
-    /// Logs any shutdown errors as warnings.
+    /// Any shutdown errors will be logged as warnings.
     pub async fn shutdown(self) {
         self.done.cancel();
         if let Err(e) = self.handle.await {
@@ -139,7 +134,7 @@ impl ClientConn {
                 "error closing actor loop for client connection {:?} {}: {e:?}",
                 self.key, self.conn_num
             );
-        }
+        };
     }
 }
 
@@ -151,7 +146,7 @@ impl ClientConn {
 /// it errors on return.
 /// If writes do not complete in the given `timeout`, it will also error.
 ///
-/// On the "write" side, the [`ConnActor`] can send the client:
+/// On the "write" side, the [`Actor`] can send the client:
 ///  - a KEEP_ALIVE frame
 ///  - a PEER_GONE frame to inform the client that a peer they have previously sent messages to
 ///    is gone from the network
@@ -162,10 +157,10 @@ impl ClientConn {
 ///     - note whether the client is `preferred`, aka this client is the preferred way
 ///     to speak to the node ID associated with that client.
 #[derive(Debug)]
-struct ConnActor {
-    /// Io to talk to the client
+struct Actor {
+    /// IO Steram to talk to the client
     stream: RelayedStream,
-    /// Max time we wait to complete a write to the client
+    /// Maximum time we wait to complete a write to the client
     timeout: Duration,
     /// Packets queued to send to the client
     send_queue: mpsc::Receiver<Packet>,
@@ -173,20 +168,17 @@ struct ConnActor {
     disco_send_queue: mpsc::Receiver<Packet>,
     /// Notify the client that a previous sender has disconnected
     peer_gone: mpsc::Receiver<PublicKey>,
-
     /// [`PublicKey`] of this client
     key: PublicKey,
-
-    /// Channels used to communicate with the server about actions
+    /// Channel used to communicate with the server about actions
     /// it needs to take on behalf of the client
     server_channel: mpsc::Sender<actor::Message>,
-
     /// Notes that the client considers this the preferred connection (important in cases
     /// where the client moves to a different network, but has the same PublicKey)
     preferred: bool,
 }
 
-impl ConnActor {
+impl Actor {
     async fn run(mut self, done: CancellationToken) -> Result<()> {
         let jitter = Duration::from_secs(5);
         let mut keep_alive = tokio::time::interval(KEEP_ALIVE + jitter);
@@ -194,15 +186,14 @@ impl ConnActor {
         keep_alive.tick().await;
 
         loop {
-            trace!("tick");
             tokio::select! {
                 biased;
 
                 _ = done.cancelled() => {
-                    trace!("cancelled");
+                    trace!("actor loop cancelled, exiting");
                     // final flush
                     self.stream.flush().await.context("flush")?;
-                    return Ok(());
+                    break;
                 }
                 read_res = self.stream.next() => {
                     trace!("handle frame");
@@ -239,9 +230,9 @@ impl ConnActor {
                     self.write_frame(Frame::KeepAlive).await?;
                 }
             }
-
             self.stream.flush().await.context("tick flush")?;
         }
+        Ok(())
     }
 
     /// Writes the given frame to the conneciton.
@@ -274,7 +265,7 @@ impl ConnActor {
         // for the same public key
         match frame {
             Frame::NotePreferred { preferred } => {
-                self.handle_frame_note_preferred(preferred);
+                self.preferred = preferred;
                 inc!(Metrics, other_packets_recv);
             }
             Frame::SendPacket { dst_key, packet } => {
@@ -283,8 +274,10 @@ impl ConnActor {
                 inc_by!(Metrics, bytes_recv, packet_len as u64);
             }
             Frame::Ping { data } => {
-                self.handle_frame_ping(data).await?;
                 inc!(Metrics, got_ping);
+                // TODO: add rate limiter
+                self.write_frame(Frame::Pong { data }).await?;
+                inc!(Metrics, sent_pong);
             }
             Frame::Health { .. } => {
                 inc!(Metrics, other_packets_recv);
@@ -293,17 +286,6 @@ impl ConnActor {
                 inc!(Metrics, unknown_frames);
             }
         }
-        Ok(())
-    }
-
-    fn handle_frame_note_preferred(&mut self, preferred: bool) {
-        self.preferred = preferred;
-    }
-
-    async fn handle_frame_ping(&mut self, data: [u8; 8]) -> Result<()> {
-        // TODO: add rate limiter
-        self.write_frame(Frame::Pong { data }).await?;
-        inc!(Metrics, sent_pong);
         Ok(())
     }
 
@@ -356,7 +338,7 @@ mod tests {
         let mut io_rw = Framed::new(io_rw, DerpCodec);
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
-        let actor = ConnActor {
+        let actor = Actor {
             stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
             timeout: Duration::from_secs(1),
             send_queue: send_queue_r,
@@ -496,7 +478,7 @@ mod tests {
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
         println!("-- create client conn");
-        let actor = ConnActor {
+        let actor = Actor {
             stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
             timeout: Duration::from_secs(1),
             send_queue: send_queue_r,
