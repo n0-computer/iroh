@@ -1,17 +1,18 @@
 [workspace]
 members = [
-    "iroh",
-    "iroh-blobs",
-    "iroh-base",
-    "iroh-dns-server",
-    "iroh-gossip",
-    "iroh-metrics",
-    "iroh-net",
-    "iroh-docs",
-    "iroh-test",
-    "iroh-net/bench",
-    "iroh-cli",
-    "iroh-willow",
+  "iroh",
+  "iroh-base",
+  "iroh-dns-server",
+  "iroh-metrics",
+  "iroh-net",
+  "iroh-test",
+  "iroh-net/bench",
+  "iroh-cli",
+  "iroh-relay",
+  "iroh-router",
+  "iroh-willow",
+  "net-tools/netwatch",
+  "net-tools/portmapper",
 ]
 resolver = "2"
 
@@ -63,3 +64,13 @@ unused-async = "warn"
 willow-data-model = { git = "https://github.com/n0-computer/willow-rs.git", branch = "main" }
 willow-encoding = { git = "https://github.com/n0-computer/willow-rs.git", branch = "main" }
 meadowcap = { git = "https://github.com/n0-computer/willow-rs.git", branch = "main" }
+
+iroh-base = { path = "./iroh-base" }
+iroh-net = { path = "./iroh-net" }
+iroh-metrics = { path = "./iroh-metrics" }
+iroh-test = { path = "./iroh-test" }
+iroh-router = { path = "./iroh-router" }
+
+iroh-gossip = { git = "https://github.com/n0-computer/iroh-gossip", branch = "main" }
+iroh-docs = { git = "https://github.com/n0-computer/iroh-docs", branch = "main" }
+iroh-blobs = { git = "https://github.com/n0-computer/iroh-blobs", branch = "main" }
