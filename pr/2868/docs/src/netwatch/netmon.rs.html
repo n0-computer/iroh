@@ -100,19 +100,12 @@
 <a href="#100" id="100">100</a>
 <a href="#101" id="101">101</a>
 <a href="#102" id="102">102</a>
-<a href="#103" id="103">103</a>
-<a href="#104" id="104">104</a>
-<a href="#105" id="105">105</a>
-<a href="#106" id="106">106</a>
-<a href="#107" id="107">107</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Monitoring of networking interfaces and route changes.
 
 </span><span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::future::Boxed <span class="kw">as </span>BoxFuture;
-<span class="kw">use </span>tokio::{
-    sync::{mpsc, oneshot},
-    task::JoinHandle,
-};
+<span class="kw">use </span>tokio::sync::{mpsc, oneshot};
+<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
 <span class="kw">mod </span>actor;
 <span class="attr">#[cfg(target_os = <span class="string">"android"</span>)]
@@ -137,14 +130,8 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>Monitor {
     <span class="doccomment">/// Task handle for the monitor task.
-    </span>handle: JoinHandle&lt;()&gt;,
+    </span>_handle: AbortOnDropHandle&lt;()&gt;,
     actor_tx: mpsc::Sender&lt;ActorMessage&gt;,
-}
-
-<span class="kw">impl </span>Drop <span class="kw">for </span>Monitor {
-    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="self">self</span>.handle.abort();
-    }
 }
 
 <span class="kw">impl </span>Monitor {
@@ -157,7 +144,10 @@
             actor.run().<span class="kw">await</span>;
         });
 
-        <span class="prelude-val">Ok</span>(Monitor { handle, actor_tx })
+        <span class="prelude-val">Ok</span>(Monitor {
+            _handle: AbortOnDropHandle::new(handle),
+            actor_tx,
+        })
     }
 
     <span class="doccomment">/// Subscribe to network changes.

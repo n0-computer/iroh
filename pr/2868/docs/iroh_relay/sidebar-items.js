@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["DEV_MODE_HTTP_PORT"],"enum":["CertMode"],"fn":["build_relay_config","load_certs","load_secret_key","main"],"mod":["cfg_defaults","metrics"],"struct":["Cli","Config","Limits","TlsConfig"]};
+window.SIDEBAR_ITEMS = {"enum":["ReceivedMessage"],"mod":["client","defaults","http","protos","server"],"struct":["RelayConn","RelayUrl"]};

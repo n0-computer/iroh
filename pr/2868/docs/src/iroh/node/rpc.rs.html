@@ -283,6 +283,7 @@
 <a href="#283" id="283">283</a>
 <a href="#284" id="284">284</a>
 <a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt::Debug, sync::Arc, time::Duration};
 
 <span class="kw">use </span>anyhow::Result;
@@ -293,7 +294,7 @@
 };
 <span class="kw">use </span>iroh_docs::net::DOCS_ALPN;
 <span class="kw">use </span>iroh_gossip::net::{Gossip, GOSSIP_ALPN};
-<span class="kw">use </span>iroh_net::{relay::RelayUrl, NodeAddr, NodeId};
+<span class="kw">use </span>iroh_net::{NodeAddr, NodeId};
 <span class="kw">use </span>iroh_router::Router;
 <span class="kw">use </span>quic_rpc::server::{RpcChannel, RpcServerError};
 <span class="kw">use </span>tokio::task::JoinSet;
@@ -301,6 +302,7 @@
 
 <span class="kw">use </span><span class="kw">super</span>::IrohServerEndpoint;
 <span class="kw">use crate</span>::{
+    base::node_addr::RelayUrl,
     client::NodeStatus,
     node::NodeInner,
     rpc_protocol::{

@@ -1876,6 +1876,14 @@
 <a href="#1876" id="1876">1876</a>
 <a href="#1877" id="1877">1877</a>
 <a href="#1878" id="1878">1878</a>
+<a href="#1879" id="1879">1879</a>
+<a href="#1880" id="1880">1880</a>
+<a href="#1881" id="1881">1881</a>
+<a href="#1882" id="1882">1882</a>
+<a href="#1883" id="1883">1883</a>
+<a href="#1884" id="1884">1884</a>
+<a href="#1885" id="1885">1885</a>
+<a href="#1886" id="1886">1886</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -1914,8 +1922,7 @@
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
     magicsock::{<span class="self">self</span>, Handle, QuicMappedAddr},
-    relay::{force_staging_infra, RelayMode, RelayUrl},
-    tls, NodeId,
+    tls, NodeId, RelayMode, RelayUrl,
 };
 
 <span class="kw">mod </span>rtt_actor;
@@ -3235,6 +3242,15 @@
 
     <span class="prelude-val">None
 </span>}
+
+<span class="doccomment">/// Environment variable to force the use of staging relays.
+</span><span class="attr">#[cfg_attr(iroh_docsrs, doc(cfg(not(test))))]
+</span><span class="kw">pub const </span>ENV_FORCE_STAGING_RELAYS: <span class="kw-2">&amp;</span>str = <span class="string">"IROH_FORCE_STAGING_RELAYS"</span>;
+
+<span class="doccomment">/// Returns `true` if the use of staging relays is forced.
+</span><span class="kw">pub fn </span>force_staging_infra() -&gt; bool {
+    <span class="macro">matches!</span>(std::env::var(ENV_FORCE_STAGING_RELAYS), <span class="prelude-val">Ok</span>(value) <span class="kw">if </span>!value.is_empty())
+}
 
 <span class="doccomment">/// Returns the default relay mode.
 ///

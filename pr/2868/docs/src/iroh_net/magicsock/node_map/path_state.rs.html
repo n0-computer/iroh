@@ -324,6 +324,7 @@
 <a href="#324" id="324">324</a>
 <a href="#325" id="325">325</a>
 <a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The state kept for each network path to a remote node.
 
 </span><span class="kw">use </span>std::{
@@ -333,13 +334,14 @@
 };
 
 <span class="kw">use </span>iroh_base::key::NodeId;
+<span class="kw">use </span>iroh_relay::protos::stun;
 <span class="kw">use </span>tracing::{debug, event, Level};
 
 <span class="kw">use super</span>::{
     node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT},
     IpPort, PingRole, Source,
 };
-<span class="kw">use crate</span>::{disco::SendAddr, magicsock::HEARTBEAT_INTERVAL, stun};
+<span class="kw">use crate</span>::{disco::SendAddr, magicsock::HEARTBEAT_INTERVAL};
 
 <span class="doccomment">/// The minimum time between pings to an endpoint.
 ///

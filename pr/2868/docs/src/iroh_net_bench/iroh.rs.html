@@ -286,7 +286,6 @@
 <a href="#286" id="286">286</a>
 <a href="#287" id="287">287</a>
 <a href="#288" id="288">288</a>
-<a href="#289" id="289">289</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::SocketAddr,
     time::{Duration, Instant},
@@ -297,8 +296,7 @@
 <span class="kw">use </span>futures_lite::StreamExt <span class="kw">as _</span>;
 <span class="kw">use </span>iroh_net::{
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
-    relay::{RelayMap, RelayMode, RelayUrl},
-    Endpoint, NodeAddr,
+    Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl,
 };
 <span class="kw">use </span>tracing::{trace, warn};
 

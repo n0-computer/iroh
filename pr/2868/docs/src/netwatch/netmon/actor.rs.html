@@ -253,6 +253,17 @@
 <a href="#253" id="253">253</a>
 <a href="#254" id="254">254</a>
 <a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap,
     sync::Arc,
@@ -336,8 +347,7 @@
         <span class="kw">let </span>interface_state = State::new().<span class="kw">await</span>;
         <span class="kw">let </span>wall_time = Instant::now();
 
-        <span class="comment">// Use flume channels, as tokio::mpsc is not safe to use across ffi boundaries.
-        </span><span class="kw">let </span>(mon_sender, mon_receiver) = mpsc::channel(MON_CHAN_CAPACITY);
+        <span class="kw">let </span>(mon_sender, mon_receiver) = mpsc::channel(MON_CHAN_CAPACITY);
         <span class="kw">let </span>route_monitor = RouteMonitor::new(mon_sender)<span class="question-mark">?</span>;
         <span class="kw">let </span>(actor_sender, actor_receiver) = mpsc::channel(ACTOR_CHAN_CAPACITY);
 
@@ -367,6 +377,7 @@
         <span class="kw">loop </span>{
             <span class="macro">tokio::select!</span> {
                 biased;
+
                 <span class="kw">_ </span>= debounce_interval.tick() =&gt; {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(time_jumped) = last_event.take() {
                         <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.handle_potential_change(time_jumped).<span class="kw">await </span>{
@@ -382,29 +393,40 @@
                         debounce_interval.reset_immediately();
                     }
                 }
-                <span class="prelude-val">Some</span>(_event) = <span class="self">self</span>.mon_receiver.recv() =&gt; {
-                    <span class="macro">trace!</span>(<span class="string">"network activity detected"</span>);
-                    last_event.replace(<span class="bool-val">false</span>);
-                    debounce_interval.reset_immediately();
+                event = <span class="self">self</span>.mon_receiver.recv() =&gt; {
+                    <span class="kw">match </span>event {
+                        <span class="prelude-val">Some</span>(NetworkMessage::Change) =&gt; {
+                            <span class="macro">trace!</span>(<span class="string">"network activity detected"</span>);
+                            last_event.replace(<span class="bool-val">false</span>);
+                            debounce_interval.reset_immediately();
+                        }
+                        <span class="prelude-val">None </span>=&gt; {
+                            <span class="macro">debug!</span>(<span class="string">"shutting down, network monitor receiver gone"</span>);
+                            <span class="kw">break</span>;
+                        }
+                    }
                 }
-                <span class="prelude-val">Some</span>(msg) = <span class="self">self</span>.actor_receiver.recv() =&gt; <span class="kw">match </span>msg {
-                    ActorMessage::Subscribe(callback, s) =&gt; {
-                        <span class="kw">let </span>token = <span class="self">self</span>.next_callback_token();
-                        <span class="self">self</span>.callbacks.insert(token, Arc::new(callback));
-                        s.send(token).ok();
+                msg = <span class="self">self</span>.actor_receiver.recv() =&gt; {
+                    <span class="kw">match </span>msg {
+                        <span class="prelude-val">Some</span>(ActorMessage::Subscribe(callback, s)) =&gt; {
+                            <span class="kw">let </span>token = <span class="self">self</span>.next_callback_token();
+                            <span class="self">self</span>.callbacks.insert(token, Arc::new(callback));
+                            s.send(token).ok();
+                        }
+                        <span class="prelude-val">Some</span>(ActorMessage::Unsubscribe(token, s)) =&gt; {
+                            <span class="self">self</span>.callbacks.remove(<span class="kw-2">&amp;</span>token);
+                            s.send(()).ok();
+                        }
+                        <span class="prelude-val">Some</span>(ActorMessage::NetworkChange) =&gt; {
+                            <span class="macro">trace!</span>(<span class="string">"external network activity detected"</span>);
+                            last_event.replace(<span class="bool-val">false</span>);
+                            debounce_interval.reset_immediately();
+                        }
+                        <span class="prelude-val">None </span>=&gt; {
+                            <span class="macro">debug!</span>(<span class="string">"shutting down, actor receiver gone"</span>);
+                            <span class="kw">break</span>;
+                        }
                     }
-                    ActorMessage::Unsubscribe(token, s) =&gt; {
-                        <span class="self">self</span>.callbacks.remove(<span class="kw-2">&amp;</span>token);
-                        s.send(()).ok();
-                    }
-                    ActorMessage::NetworkChange =&gt; {
-                        <span class="macro">trace!</span>(<span class="string">"external network activity detected"</span>);
-                        last_event.replace(<span class="bool-val">false</span>);
-                        debounce_interval.reset_immediately();
-                    }
-                },
-                <span class="kw">else </span>=&gt; {
-                    <span class="kw">break</span>;
                 }
             }
         }

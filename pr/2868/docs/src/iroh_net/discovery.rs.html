@@ -879,7 +879,6 @@
 <a href="#879" id="879">879</a>
 <a href="#880" id="880">880</a>
 <a href="#881" id="881">881</a>
-<a href="#882" id="882">882</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh-net node a [`NodeAddr`] is needed, which may contain a
@@ -1326,7 +1325,7 @@
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use crate</span>::{key::SecretKey, relay::RelayMode};
+    <span class="kw">use crate</span>::{key::SecretKey, RelayMode};
 
     <span class="attr">#[derive(Debug, Clone, Default)]
     </span><span class="kw">struct </span>TestDiscoveryShared {
@@ -1618,13 +1617,12 @@
     <span class="kw">use crate</span>::{
         discovery::pkarr::PkarrPublisher,
         dns::{node_info::NodeInfo, ResolverExt},
-        relay::{RelayMap, RelayMode},
         test_utils::{
             dns_server::{create_dns_resolver, run_dns_server},
             pkarr_dns_state::State,
             run_relay_server, DnsPkarrServer,
         },
-        AddrInfo, Endpoint, NodeAddr,
+        AddrInfo, Endpoint, NodeAddr, RelayMap, RelayMode,
     };
 
     <span class="kw">const </span>PUBLISH_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
