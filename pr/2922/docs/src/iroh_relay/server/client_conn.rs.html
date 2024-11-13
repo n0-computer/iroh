@@ -558,7 +558,6 @@
 <a href="#558" id="558">558</a>
 <a href="#559" id="559">559</a>
 <a href="#560" id="560">560</a>
-<a href="#561" id="561">561</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::time::Duration;
@@ -580,7 +579,7 @@
         relay::{write_frame, Frame, KEEP_ALIVE},
     },
     server::{
-        actor::{<span class="self">self</span>, new_conn_num, Packet},
+        actor::{<span class="self">self</span>, Packet},
         metrics::Metrics,
     },
 };
@@ -625,7 +624,7 @@
     <span class="doccomment">/// Creates a client from a connection &amp; starts a read and write loop to handle io to and from
     /// the client
     /// Call [`ClientConn::shutdown`] to close the read and write loops before dropping the [`ClientConn`]
-    </span><span class="kw">pub fn </span>new(config: ClientConnConfig) -&gt; ClientConn {
+    </span><span class="kw">pub fn </span>new(config: ClientConnConfig, conn_num: usize) -&gt; ClientConn {
         <span class="kw">let </span>ClientConnConfig {
             key,
             stream: io,
@@ -633,7 +632,6 @@
             channel_capacity,
             server_channel,
         } = config;
-        <span class="kw">let </span>conn_num = new_conn_num();
 
         <span class="kw">let </span>done = CancellationToken::new();
         <span class="kw">let </span>client_id = (key, conn_num);
