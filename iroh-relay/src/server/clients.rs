@@ -6,8 +6,8 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{bail, Result};
 use iroh_base::key::PublicKey;
 use iroh_metrics::inc;
-use tokio::{sync::mpsc, task::JoinSet};
-use tracing::{trace, warn, Instrument, Span};
+use tokio::sync::mpsc;
+use tracing::{trace, warn};
 
 use super::{
     actor::Packet,
@@ -21,6 +21,7 @@ const RETRIES: usize = 3;
 /// Manages the connections to all currently connected clients.
 #[derive(Debug, Default)]
 pub(super) struct Clients {
+    /// The list of all currently connected clients.
     inner: HashMap<PublicKey, Client>,
     /// The next connection number to use.
     conn_num: usize,
@@ -28,16 +29,14 @@ pub(super) struct Clients {
 
 impl Clients {
     pub async fn shutdown(&mut self) {
-        trace!("shutting down conn");
-        let mut handles = JoinSet::default();
-        for (_, client) in self.inner.drain() {
-            handles.spawn(async move { client.shutdown().await }.instrument(Span::current()));
-        }
-        while let Some(t) = handles.join_next().await {
-            if let Err(err) = t {
-                trace!("shutdown error: {:?}", err);
-            }
-        }
+        trace!("shutting down {} clients", self.inner.len());
+
+        futures_buffered::join_all(
+            self.inner
+                .drain()
+                .map(|(_, client)| async move { client.shutdown().await }),
+        )
+        .await;
     }
 
     /// Record that `src` sent or forwarded a packet to `dst`
@@ -99,8 +98,7 @@ impl Clients {
         if let Some(client) = self.inner.get(key) {
             let res = client.send_packet(packet);
             return self.process_result(key, res).await;
-        };
-        warn!("Could not find client for {key:?}, dropping packet");
+        }
         bail!("Could not find client for {key:?}, dropped packet");
     }
 
@@ -108,8 +106,7 @@ impl Clients {
         if let Some(client) = self.inner.get(key) {
             let res = client.send_disco_packet(packet);
             return self.process_result(key, res).await;
-        };
-        warn!("Could not find client for {key:?}, dropping disco packet");
+        }
         bail!("Could not find client for {key:?}, dropped packet");
     }
 
@@ -118,7 +115,7 @@ impl Clients {
             let res = client.send_peer_gone(peer);
             let _ = self.process_result_no_fallback(key, res);
             return;
-        };
+        }
         warn!("Could not find client for {key:?}, dropping peer gone packet");
     }
 
@@ -157,17 +154,6 @@ impl Clients {
 /// Represents a connection to a client.
 // TODO: expand to allow for _multiple connections_ associated with a single PublicKey. This
 // introduces some questions around which connection should be prioritized when forwarding packets
-//
-// From goimpl:
-//
-// "Represents one or more connections to a client
-//
-// In the common cast, the client should only have one connection to the relay server for a given
-// key. When they're connected multiple times, we record their set of connection, and keep their
-// connections open to make them happy (to keep them from spinning, etc) and keep track of which
-// is the latest connection. If only the last is sending traffic, that last one is the active
-// connection and it gets traffic. Otherwise, in the case of a cloned node key, the whole set of
-// connections doesn't receive data frames."
 #[derive(Debug)]
 pub(super) struct Client {
     /// The client connection associated with the [`PublicKey`]
@@ -215,11 +201,7 @@ impl Client {
     }
 }
 
-// TODO: in the goimpl, it also tries 3 times to send a packet. But, in go we can clone receiver
-// channels, so each client is able to drain any full channels of "older" packets
-// & attempt to try to send the message again. We can't drain any channels here,
-// so I'm not sure if we should come up with some mechanism to request the channel
-// be drained, or just leave it
+/// Tries up to `3` times to send a message into the given channel, retrying iff it is full.
 fn try_send<T>(sender: &mpsc::Sender<T>, msg: T) -> Result<(), SendError> {
     let mut msg = msg;
     for _ in 0..RETRIES {
