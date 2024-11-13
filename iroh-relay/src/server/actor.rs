@@ -9,7 +9,7 @@ use bytes::Bytes;
 use iroh_base::key::NodeId;
 use iroh_metrics::{core::UsageStatsReport, inc, inc_by, report_usage_stats};
 use time::{Date, OffsetDateTime};
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, task::JoinSet};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{info, info_span, trace, warn, Instrument};
 
@@ -116,9 +116,11 @@ impl Actor {
     }
 
     async fn run(mut self, done: CancellationToken) -> Result<()> {
+        let mut tasks = JoinSet::new();
         loop {
             tokio::select! {
                 biased;
+
                 _ = done.cancelled() => {
                     info!("server actor loop cancelled, closing loop");
                     // TODO: stats: drain channel & count dropped packets etc
@@ -126,9 +128,16 @@ impl Actor {
                     self.clients.shutdown().await;
                     return Ok(());
                 }
+                Some(res) = tasks.join_next(), if !tasks.is_empty() => {
+                    if let Err(err) = res {
+                        if err.is_panic() {
+                            panic!("Task paniced: {err:?}");
+                        }
+                    }
+                }
                 msg = self.receiver.recv() => match msg {
                     Some(msg) => {
-                        self.handle_message(msg).await;
+                        self.handle_message(msg, &mut tasks).await;
                     }
                     None => {
                         warn!("unexpected actor error: receiver gone, shutting down actor loop");
@@ -140,7 +149,7 @@ impl Actor {
         }
     }
 
-    async fn handle_message(&mut self, msg: Message) {
+    async fn handle_message(&mut self, msg: Message, tasks: &mut JoinSet<()>) {
         match msg {
             Message::SendPacket { dst, data, src } => {
                 trace!(?src, ?dst, len = data.len(), "send packet");
@@ -193,7 +202,7 @@ impl Actor {
 
                 // build and register client, starting up read & write loops for the client connection
                 self.clients.register(client_builder).await;
-                tokio::task::spawn(async move {
+                tasks.spawn(async move {
                     report_usage_stats(&UsageStatsReport::new(
                         "relay_accepts".to_string(),
                         "relay_server".to_string(), // TODO: other id?
