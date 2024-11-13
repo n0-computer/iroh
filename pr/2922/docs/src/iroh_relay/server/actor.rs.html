@@ -614,6 +614,8 @@
 <a href="#614" id="614">614</a>
 <a href="#615" id="615">615</a>
 <a href="#616" id="616">616</a>
+<a href="#617" id="617">617</a>
+<a href="#618" id="618">618</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The main event loop for the relay server.
 //!
 //! based on tailscale/derp/derp_server.go
@@ -751,13 +753,15 @@
                     </span><span class="self">self</span>.clients.shutdown().<span class="kw">await</span>;
                     <span class="kw">return </span><span class="prelude-val">Ok</span>(());
                 }
-                <span class="prelude-val">Some</span>(msg) = <span class="self">self</span>.receiver.recv() =&gt; {
-                    <span class="self">self</span>.handle_message(msg).<span class="kw">await</span>;
-                }
-                <span class="kw">else </span>=&gt; {
-                    <span class="macro">warn!</span>(<span class="string">"unexpected server error, shutting down server loop"</span>);
-                    <span class="self">self</span>.clients.shutdown().<span class="kw">await</span>;
-                    <span class="macro">bail!</span>(<span class="string">"unexpected server error, closed client connections, and shutting down server loop"</span>);
+                msg = <span class="self">self</span>.receiver.recv() =&gt; <span class="kw">match </span>msg {
+                    <span class="prelude-val">Some</span>(msg) =&gt; {
+                        <span class="self">self</span>.handle_message(msg).<span class="kw">await</span>;
+                    }
+                    <span class="prelude-val">None </span>=&gt; {
+                        <span class="macro">warn!</span>(<span class="string">"unexpected actor error: receiver gone, shutting down actor loop"</span>);
+                        <span class="self">self</span>.clients.shutdown().<span class="kw">await</span>;
+                        <span class="macro">bail!</span>(<span class="string">"unexpected actor error, closed client connections, and shutting down actor loop"</span>);
+                    }
                 }
             }
         }
