@@ -25,8 +25,6 @@ use http::{
 };
 use hyper::body::Incoming;
 use iroh_metrics::inc;
-// Module defined in this file.
-use stun_metrics::StunMetrics;
 use tokio::{
     net::{TcpListener, UdpSocket},
     task::JoinSet,
@@ -34,7 +32,7 @@ use tokio::{
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
-use crate::{http::RELAY_PROBE_PATH, protos::stun};
+use crate::{http::RELAY_PROBE_PATH, protos};
 
 pub(crate) mod actor;
 pub(crate) mod client_conn;
@@ -43,7 +41,10 @@ mod http_server;
 mod metrics;
 pub(crate) mod streams;
 
-pub use self::{metrics::Metrics, streams::MaybeTlsStream as MaybeTlsStreamServer};
+pub use self::{
+    metrics::{Metrics, StunMetrics},
+    streams::MaybeTlsStream as MaybeTlsStreamServer,
+};
 
 const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Tailscale-Challenge";
 const NO_CONTENT_RESPONSE_HEADER: &str = "X-Tailscale-Response";
@@ -464,7 +465,7 @@ async fn server_stun_listener(sock: UdpSocket) -> Result<()> {
                     Ok((n, src_addr)) => {
                         inc!(StunMetrics, requests);
                         let pkt = &buffer[..n];
-                        if !stun::is(pkt) {
+                        if !protos::stun::is(pkt) {
                             debug!(%src_addr, "STUN: ignoring non stun packet");
                             inc!(StunMetrics, bad_requests);
                             continue;
@@ -484,20 +485,19 @@ async fn server_stun_listener(sock: UdpSocket) -> Result<()> {
 
 /// Handles a single STUN request, doing all logging required.
 async fn handle_stun_request(src_addr: SocketAddr, pkt: Vec<u8>, sock: Arc<UdpSocket>) {
-    let handle =
-        AbortOnDropHandle::new(tokio::task::spawn_blocking(
-            move || match stun::parse_binding_request(&pkt) {
-                Ok(txid) => {
-                    debug!(%src_addr, %txid, "STUN: received binding request");
-                    Some((txid, stun::response(txid, src_addr)))
-                }
-                Err(err) => {
-                    inc!(StunMetrics, bad_requests);
-                    warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
-                    None
-                }
-            },
-        ));
+    let handle = AbortOnDropHandle::new(tokio::task::spawn_blocking(move || {
+        match protos::stun::parse_binding_request(&pkt) {
+            Ok(txid) => {
+                debug!(%src_addr, %txid, "STUN: received binding request");
+                Some((txid, protos::stun::response(txid, src_addr)))
+            }
+            Err(err) => {
+                inc!(StunMetrics, bad_requests);
+                warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
+                None
+            }
+        }
+    }));
     let (txid, response) = match handle.await {
         Ok(Some(val)) => val,
         Ok(None) => return,
@@ -670,54 +670,6 @@ impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
                     .map_err(|err| Box::new(err) as HyperError);
                 Box::pin(async move { r })
             }
-        }
-    }
-}
-
-mod stun_metrics {
-    use iroh_metrics::{
-        core::{Counter, Metric},
-        struct_iterable::Iterable,
-    };
-
-    /// StunMetrics tracked for the DERPER
-    #[allow(missing_docs)]
-    #[derive(Debug, Clone, Iterable)]
-    pub struct StunMetrics {
-        /*
-         * Metrics about STUN requests over ipv6
-         */
-        /// Number of stun requests made
-        pub requests: Counter,
-        /// Number of successful requests over ipv4
-        pub ipv4_success: Counter,
-        /// Number of successful requests over ipv6
-        pub ipv6_success: Counter,
-
-        /// Number of bad requests, either non-stun packets or incorrect binding request
-        pub bad_requests: Counter,
-        /// Number of failures
-        pub failures: Counter,
-    }
-
-    impl Default for StunMetrics {
-        fn default() -> Self {
-            Self {
-                /*
-                 * Metrics about STUN requests
-                 */
-                requests: Counter::new("Number of STUN requests made to the server."),
-                ipv4_success: Counter::new("Number of successful ipv4 STUN requests served."),
-                ipv6_success: Counter::new("Number of successful ipv6 STUN requests served."),
-                bad_requests: Counter::new("Number of bad requests made to the STUN endpoint."),
-                failures: Counter::new("Number of STUN requests that end in failure."),
-            }
-        }
-    }
-
-    impl Metric for StunMetrics {
-        fn name() -> &'static str {
-            "stun"
         }
     }
 }
@@ -1047,8 +999,8 @@ mod tests {
         .await
         .unwrap();
 
-        let txid = stun::TransactionId::default();
-        let req = stun::request(txid);
+        let txid = protos::stun::TransactionId::default();
+        let req = protos::stun::request(txid);
         let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         socket
             .send_to(&req, server.stun_addr().unwrap())
@@ -1060,7 +1012,7 @@ mod tests {
         let (len, addr) = socket.recv_from(&mut buf).await.unwrap();
         assert_eq!(addr, server.stun_addr().unwrap());
         buf.truncate(len);
-        let (txid_back, response_addr) = stun::parse_response(&buf).unwrap();
+        let (txid_back, response_addr) = protos::stun::parse_response(&buf).unwrap();
         assert_eq!(txid, txid_back);
         assert_eq!(response_addr, socket.local_addr().unwrap());
     }
