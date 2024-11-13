@@ -117,14 +117,52 @@
 <a href="#117" id="117">117</a>
 <a href="#118" id="118">118</a>
 <a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>iroh_metrics::{
     core::{Counter, Metric},
     struct_iterable::Iterable,
 };
 
 <span class="doccomment">/// Metrics tracked for the relay server
-</span><span class="attr">#[allow(missing_docs)]
-#[derive(Debug, Clone, Iterable)]
+</span><span class="attr">#[derive(Debug, Clone, Iterable)]
 </span><span class="kw">pub struct </span>Metrics {
     <span class="comment">/*
      * Metrics about packets
@@ -234,6 +272,46 @@
 <span class="kw">impl </span>Metric <span class="kw">for </span>Metrics {
     <span class="kw">fn </span>name() -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
         <span class="string">"relayserver"
+    </span>}
+}
+
+<span class="doccomment">/// StunMetrics tracked for the DERPER
+</span><span class="attr">#[derive(Debug, Clone, Iterable)]
+</span><span class="kw">pub struct </span>StunMetrics {
+    <span class="comment">/*
+     * Metrics about STUN requests
+     */
+    </span><span class="doccomment">/// Number of stun requests made
+    </span><span class="kw">pub </span>requests: Counter,
+    <span class="doccomment">/// Number of successful requests over ipv4
+    </span><span class="kw">pub </span>ipv4_success: Counter,
+    <span class="doccomment">/// Number of successful requests over ipv6
+    </span><span class="kw">pub </span>ipv6_success: Counter,
+
+    <span class="doccomment">/// Number of bad requests, either non-stun packets or incorrect binding request
+    </span><span class="kw">pub </span>bad_requests: Counter,
+    <span class="doccomment">/// Number of failures
+    </span><span class="kw">pub </span>failures: Counter,
+}
+
+<span class="kw">impl </span>Default <span class="kw">for </span>StunMetrics {
+    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            <span class="comment">/*
+             * Metrics about STUN requests
+             */
+            </span>requests: Counter::new(<span class="string">"Number of STUN requests made to the server."</span>),
+            ipv4_success: Counter::new(<span class="string">"Number of successful ipv4 STUN requests served."</span>),
+            ipv6_success: Counter::new(<span class="string">"Number of successful ipv6 STUN requests served."</span>),
+            bad_requests: Counter::new(<span class="string">"Number of bad requests made to the STUN endpoint."</span>),
+            failures: Counter::new(<span class="string">"Number of STUN requests that end in failure."</span>),
+        }
+    }
+}
+
+<span class="kw">impl </span>Metric <span class="kw">for </span>StunMetrics {
+    <span class="kw">fn </span>name() -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
+        <span class="string">"stun"
     </span>}
 }
 </code></pre></div></section></main></body></html>

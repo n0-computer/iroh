@@ -1017,54 +1017,6 @@
 <a href="#1017" id="1017">1017</a>
 <a href="#1018" id="1018">1018</a>
 <a href="#1019" id="1019">1019</a>
-<a href="#1020" id="1020">1020</a>
-<a href="#1021" id="1021">1021</a>
-<a href="#1022" id="1022">1022</a>
-<a href="#1023" id="1023">1023</a>
-<a href="#1024" id="1024">1024</a>
-<a href="#1025" id="1025">1025</a>
-<a href="#1026" id="1026">1026</a>
-<a href="#1027" id="1027">1027</a>
-<a href="#1028" id="1028">1028</a>
-<a href="#1029" id="1029">1029</a>
-<a href="#1030" id="1030">1030</a>
-<a href="#1031" id="1031">1031</a>
-<a href="#1032" id="1032">1032</a>
-<a href="#1033" id="1033">1033</a>
-<a href="#1034" id="1034">1034</a>
-<a href="#1035" id="1035">1035</a>
-<a href="#1036" id="1036">1036</a>
-<a href="#1037" id="1037">1037</a>
-<a href="#1038" id="1038">1038</a>
-<a href="#1039" id="1039">1039</a>
-<a href="#1040" id="1040">1040</a>
-<a href="#1041" id="1041">1041</a>
-<a href="#1042" id="1042">1042</a>
-<a href="#1043" id="1043">1043</a>
-<a href="#1044" id="1044">1044</a>
-<a href="#1045" id="1045">1045</a>
-<a href="#1046" id="1046">1046</a>
-<a href="#1047" id="1047">1047</a>
-<a href="#1048" id="1048">1048</a>
-<a href="#1049" id="1049">1049</a>
-<a href="#1050" id="1050">1050</a>
-<a href="#1051" id="1051">1051</a>
-<a href="#1052" id="1052">1052</a>
-<a href="#1053" id="1053">1053</a>
-<a href="#1054" id="1054">1054</a>
-<a href="#1055" id="1055">1055</a>
-<a href="#1056" id="1056">1056</a>
-<a href="#1057" id="1057">1057</a>
-<a href="#1058" id="1058">1058</a>
-<a href="#1059" id="1059">1059</a>
-<a href="#1060" id="1060">1060</a>
-<a href="#1061" id="1061">1061</a>
-<a href="#1062" id="1062">1062</a>
-<a href="#1063" id="1063">1063</a>
-<a href="#1064" id="1064">1064</a>
-<a href="#1065" id="1065">1065</a>
-<a href="#1066" id="1066">1066</a>
-<a href="#1067" id="1067">1067</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
@@ -1092,8 +1044,6 @@
 };
 <span class="kw">use </span>hyper::body::Incoming;
 <span class="kw">use </span>iroh_metrics::inc;
-<span class="comment">// Module defined in this file.
-</span><span class="kw">use </span>stun_metrics::StunMetrics;
 <span class="kw">use </span>tokio::{
     net::{TcpListener, UdpSocket},
     task::JoinSet,
@@ -1101,7 +1051,7 @@
 <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
-<span class="kw">use crate</span>::{http::RELAY_PROBE_PATH, protos::stun};
+<span class="kw">use crate</span>::{http::RELAY_PROBE_PATH, protos};
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>actor;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>client_conn;
@@ -1110,7 +1060,10 @@
 <span class="kw">mod </span>metrics;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>streams;
 
-<span class="kw">pub use </span><span class="self">self</span>::{metrics::Metrics, streams::MaybeTlsStream <span class="kw">as </span>MaybeTlsStreamServer};
+<span class="kw">pub use </span><span class="self">self</span>::{
+    metrics::{Metrics, StunMetrics},
+    streams::MaybeTlsStream <span class="kw">as </span>MaybeTlsStreamServer,
+};
 
 <span class="kw">const </span>NO_CONTENT_CHALLENGE_HEADER: <span class="kw-2">&amp;</span>str = <span class="string">"X-Tailscale-Challenge"</span>;
 <span class="kw">const </span>NO_CONTENT_RESPONSE_HEADER: <span class="kw-2">&amp;</span>str = <span class="string">"X-Tailscale-Response"</span>;
@@ -1531,7 +1484,7 @@
                     <span class="prelude-val">Ok</span>((n, src_addr)) =&gt; {
                         <span class="macro">inc!</span>(StunMetrics, requests);
                         <span class="kw">let </span>pkt = <span class="kw-2">&amp;</span>buffer[..n];
-                        <span class="kw">if </span>!stun::is(pkt) {
+                        <span class="kw">if </span>!protos::stun::is(pkt) {
                             <span class="macro">debug!</span>(%src_addr, <span class="string">"STUN: ignoring non stun packet"</span>);
                             <span class="macro">inc!</span>(StunMetrics, bad_requests);
                             <span class="kw">continue</span>;
@@ -1551,20 +1504,19 @@
 
 <span class="doccomment">/// Handles a single STUN request, doing all logging required.
 </span><span class="kw">async fn </span>handle_stun_request(src_addr: SocketAddr, pkt: Vec&lt;u8&gt;, sock: Arc&lt;UdpSocket&gt;) {
-    <span class="kw">let </span>handle =
-        AbortOnDropHandle::new(tokio::task::spawn_blocking(
-            <span class="kw">move </span>|| <span class="kw">match </span>stun::parse_binding_request(<span class="kw-2">&amp;</span>pkt) {
-                <span class="prelude-val">Ok</span>(txid) =&gt; {
-                    <span class="macro">debug!</span>(%src_addr, %txid, <span class="string">"STUN: received binding request"</span>);
-                    <span class="prelude-val">Some</span>((txid, stun::response(txid, src_addr)))
-                }
-                <span class="prelude-val">Err</span>(err) =&gt; {
-                    <span class="macro">inc!</span>(StunMetrics, bad_requests);
-                    <span class="macro">warn!</span>(%src_addr, <span class="string">"STUN: invalid binding request: {:?}"</span>, err);
-                    <span class="prelude-val">None
-                </span>}
-            },
-        ));
+    <span class="kw">let </span>handle = AbortOnDropHandle::new(tokio::task::spawn_blocking(<span class="kw">move </span>|| {
+        <span class="kw">match </span>protos::stun::parse_binding_request(<span class="kw-2">&amp;</span>pkt) {
+            <span class="prelude-val">Ok</span>(txid) =&gt; {
+                <span class="macro">debug!</span>(%src_addr, %txid, <span class="string">"STUN: received binding request"</span>);
+                <span class="prelude-val">Some</span>((txid, protos::stun::response(txid, src_addr)))
+            }
+            <span class="prelude-val">Err</span>(err) =&gt; {
+                <span class="macro">inc!</span>(StunMetrics, bad_requests);
+                <span class="macro">warn!</span>(%src_addr, <span class="string">"STUN: invalid binding request: {:?}"</span>, err);
+                <span class="prelude-val">None
+            </span>}
+        }
+    }));
     <span class="kw">let </span>(txid, response) = <span class="kw">match </span>handle.<span class="kw">await </span>{
         <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(val)) =&gt; val,
         <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; <span class="kw">return</span>,
@@ -1738,54 +1690,6 @@
                 Box::pin(<span class="kw">async move </span>{ r })
             }
         }
-    }
-}
-
-<span class="kw">mod </span>stun_metrics {
-    <span class="kw">use </span>iroh_metrics::{
-        core::{Counter, Metric},
-        struct_iterable::Iterable,
-    };
-
-    <span class="doccomment">/// StunMetrics tracked for the DERPER
-    </span><span class="attr">#[allow(missing_docs)]
-    #[derive(Debug, Clone, Iterable)]
-    </span><span class="kw">pub struct </span>StunMetrics {
-        <span class="comment">/*
-         * Metrics about STUN requests over ipv6
-         */
-        </span><span class="doccomment">/// Number of stun requests made
-        </span><span class="kw">pub </span>requests: Counter,
-        <span class="doccomment">/// Number of successful requests over ipv4
-        </span><span class="kw">pub </span>ipv4_success: Counter,
-        <span class="doccomment">/// Number of successful requests over ipv6
-        </span><span class="kw">pub </span>ipv6_success: Counter,
-
-        <span class="doccomment">/// Number of bad requests, either non-stun packets or incorrect binding request
-        </span><span class="kw">pub </span>bad_requests: Counter,
-        <span class="doccomment">/// Number of failures
-        </span><span class="kw">pub </span>failures: Counter,
-    }
-
-    <span class="kw">impl </span>Default <span class="kw">for </span>StunMetrics {
-        <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-            <span class="self">Self </span>{
-                <span class="comment">/*
-                 * Metrics about STUN requests
-                 */
-                </span>requests: Counter::new(<span class="string">"Number of STUN requests made to the server."</span>),
-                ipv4_success: Counter::new(<span class="string">"Number of successful ipv4 STUN requests served."</span>),
-                ipv6_success: Counter::new(<span class="string">"Number of successful ipv6 STUN requests served."</span>),
-                bad_requests: Counter::new(<span class="string">"Number of bad requests made to the STUN endpoint."</span>),
-                failures: Counter::new(<span class="string">"Number of STUN requests that end in failure."</span>),
-            }
-        }
-    }
-
-    <span class="kw">impl </span>Metric <span class="kw">for </span>StunMetrics {
-        <span class="kw">fn </span>name() -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
-            <span class="string">"stun"
-        </span>}
     }
 }
 
@@ -2114,8 +2018,8 @@
         .<span class="kw">await
         </span>.unwrap();
 
-        <span class="kw">let </span>txid = stun::TransactionId::default();
-        <span class="kw">let </span>req = stun::request(txid);
+        <span class="kw">let </span>txid = protos::stun::TransactionId::default();
+        <span class="kw">let </span>req = protos::stun::request(txid);
         <span class="kw">let </span>socket = UdpSocket::bind(<span class="string">"127.0.0.1:0"</span>).<span class="kw">await</span>.unwrap();
         socket
             .send_to(<span class="kw-2">&amp;</span>req, server.stun_addr().unwrap())
@@ -2127,7 +2031,7 @@
         <span class="kw">let </span>(len, addr) = socket.recv_from(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await</span>.unwrap();
         <span class="macro">assert_eq!</span>(addr, server.stun_addr().unwrap());
         buf.truncate(len);
-        <span class="kw">let </span>(txid_back, response_addr) = stun::parse_response(<span class="kw-2">&amp;</span>buf).unwrap();
+        <span class="kw">let </span>(txid_back, response_addr) = protos::stun::parse_response(<span class="kw-2">&amp;</span>buf).unwrap();
         <span class="macro">assert_eq!</span>(txid, txid_back);
         <span class="macro">assert_eq!</span>(response_addr, socket.local_addr().unwrap());
     }
