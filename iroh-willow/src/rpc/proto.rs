@@ -16,7 +16,6 @@ use crate::{
     },
     store::traits::{StoreEvent, SubscribeParams},
 };
-use iroh_base::rpc::{RpcError, RpcResult};
 use iroh_blobs::Hash;
 use iroh_net::{NodeAddr, NodeId};
 use nested_enum_utils::enum_conversions;
@@ -32,6 +31,9 @@ impl quic_rpc::Service for RpcService {
     type Req = Request;
     type Res = Response;
 }
+
+pub type RpcError = serde_error::Error;
+pub type RpcResult<T> = std::result::Result<T, RpcError>;
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]

@@ -478,6 +478,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b048fb63fd8b5923fc5aa7b340d8e156aec7ec02f0c78fa8a6ddc2613f6f71de"
 
 [[package]]
+name = "blake3"
+version = "1.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d82033247fd8e890df8f740e407ad4d038debb9eb1f40533fffb32e7d17dc6f7"
+dependencies = [
+ "arrayref",
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1021,7 +1034,9 @@ dependencies = [
  "curve25519-dalek-derive",
  "digest",
  "fiat-crypto",
+ "rand_core",
  "rustc_version",
+ "serde",
  "subtle",
  "zeroize",
 ]
@@ -2647,6 +2662,7 @@ dependencies = [
  "serde_json",
  "strum 0.25.0",
  "tempfile",
+ "test-strategy 0.4.0",
  "testdir",
  "testresult",
  "thiserror",
@@ -2705,7 +2721,7 @@ dependencies = [
 [[package]]
 name = "iroh-blobs"
 version = "0.28.1"
-source = "git+https://github.com/n0-computer/iroh-blobs?branch=main#2337e46d89d6f2f2fda512439890ab74bab24fb4"
+source = "git+https://github.com/n0-computer/iroh-blobs?branch=matheus23/verified-streams#51f5707402f2a31a78a68fde40b480777e7d545a"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -3223,6 +3239,63 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-willow"
+version = "0.27.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "curve25519-dalek",
+ "derive_more",
+ "ed25519-dalek",
+ "either",
+ "futures-buffered",
+ "futures-concurrency",
+ "futures-lite 2.4.0",
+ "futures-util",
+ "genawaiter",
+ "hex",
+ "iroh-base",
+ "iroh-blake3",
+ "iroh-blobs",
+ "iroh-io",
+ "iroh-metrics",
+ "iroh-net",
+ "iroh-test",
+ "meadowcap",
+ "nested_enum_utils",
+ "postcard",
+ "proptest",
+ "quic-rpc",
+ "quic-rpc-derive",
+ "rand",
+ "rand_chacha",
+ "rand_core",
+ "redb 2.2.0",
+ "ref-cast",
+ "self_cell",
+ "serde",
+ "serde-error",
+ "sha2",
+ "strum 0.26.3",
+ "syncify",
+ "tempfile",
+ "test-strategy 0.3.1",
+ "testresult",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "ufotofu",
+ "willow-data-model",
+ "willow-encoding",
+ "willow-store",
+ "zerocopy",
+ "zerocopy-derive",
+]
+
+[[package]]
 name = "is-terminal"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3445,10 +3518,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
 
 [[package]]
+name = "maybe-std"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4958ec1997b05011d5c786bf4093cd48578bd9be2737350ab38659694083ddde"
+
+[[package]]
 name = "md5"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
+
+[[package]]
+name = "meadowcap"
+version = "0.1.0"
+source = "git+https://github.com/n0-computer/willow-rs.git?branch=main#1e9943e39d08f9ec8b79fc6a5805be449a19f5d0"
+dependencies = [
+ "either",
+ "signature",
+ "syncify",
+ "ufotofu",
+ "willow-data-model",
+ "willow-encoding",
+]
 
 [[package]]
 name = "memalloc"
@@ -5650,6 +5742,52 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e9426b2a0c03e6cc2ea8dbc0168dbbf943f88755e409fb91bcb8f6a268305f4a"
 
 [[package]]
+name = "structmeta"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78ad9e09554f0456d67a69c1584c9798ba733a5b50349a6c0d0948710523922d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "structmeta-derive 0.2.0",
+ "syn 2.0.87",
+]
+
+[[package]]
+name = "structmeta"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e1575d8d40908d70f6fd05537266b90ae71b15dbbe7a8b7dffa2b759306d329"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "structmeta-derive 0.3.0",
+ "syn 2.0.87",
+]
+
+[[package]]
+name = "structmeta-derive"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a60bcaff7397072dca0017d1db428e30d5002e00b6847703e2e42005c95fbe00"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.87",
+]
+
+[[package]]
+name = "structmeta-derive"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "152a0b65a590ff6c3da95cabe2353ee04e6167c896b28e3b14478c2636c922fc"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.87",
+]
+
+[[package]]
 name = "strum"
 version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5803,6 +5941,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "syncify"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e2f83220c0c5abf77ec9f4910c6590f75f1bf1405c7f2762bf35fb1bd11c5e7"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.87",
+]
+
+[[package]]
 name = "synstructure"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5859,6 +6008,30 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "test-strategy"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8361c808554228ad09bfed70f5c823caf8a3450b6881cc3a38eb57e8c08c1d9"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "structmeta 0.2.0",
+ "syn 2.0.87",
+]
+
+[[package]]
+name = "test-strategy"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bf41af45e3f54cc184831d629d41d5b2bda8297e29c81add7ae4f362ed5e01b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "structmeta 0.3.0",
+ "syn 2.0.87",
 ]
 
 [[package]]
@@ -6374,6 +6547,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2896d95c02a80c6d6a5d6e953d479f5ddf2dfdb6a244441010e373ac0fb88971"
 
 [[package]]
+name = "ufotofu"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "530b5dd047cf0fbc98b5138a17419d9f914de9b98971b6ac8a1b9e2050b711ef"
+dependencies = [
+ "either",
+ "ufotofu_queues",
+ "wrapper",
+]
+
+[[package]]
+name = "ufotofu_queues"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d903d5bc0e14d24559dac3b9690d004ad3fb08d66f93d87d28f5cb3466b5b55b"
+
+[[package]]
 name = "unarray"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6668,6 +6858,46 @@ name = "widestring"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7219d36b6eac893fa81e84ebe06485e7dcbb616177469b142df14f1f4deb1311"
+
+[[package]]
+name = "willow-data-model"
+version = "0.1.0"
+source = "git+https://github.com/n0-computer/willow-rs.git?branch=main#1e9943e39d08f9ec8b79fc6a5805be449a19f5d0"
+dependencies = [
+ "bytes",
+ "either",
+ "syncify",
+ "ufotofu",
+ "willow-encoding",
+]
+
+[[package]]
+name = "willow-encoding"
+version = "0.1.0"
+source = "git+https://github.com/n0-computer/willow-rs.git?branch=main#1e9943e39d08f9ec8b79fc6a5805be449a19f5d0"
+dependencies = [
+ "either",
+ "syncify",
+ "ufotofu",
+]
+
+[[package]]
+name = "willow-store"
+version = "0.1.0"
+source = "git+https://github.com/n0-computer/willow-store.git?branch=matheus23/redb-ref#3a29c592fe071ff87fa763bd4650bfed789a53e6"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "genawaiter",
+ "hex",
+ "itertools 0.13.0",
+ "redb 2.2.0",
+ "ref-cast",
+ "self_cell",
+ "smallvec",
+ "tracing",
+ "zerocopy",
+]
 
 [[package]]
 name = "winapi"
@@ -6992,6 +7222,15 @@ dependencies = [
  "thiserror",
  "windows 0.58.0",
  "windows-core 0.58.0",
+]
+
+[[package]]
+name = "wrapper"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2bbc2d8fbd2f17a297df6d6492526a91b947c04ec80536c0877fd35df1c889d"
+dependencies = [
+ "maybe-std",
 ]
 
 [[package]]

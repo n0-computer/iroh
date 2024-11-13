@@ -21,7 +21,7 @@ allow = [
       "Unicode-DFS-2016",
       "Zlib",
       "MPL-2.0", # https://fossa.com/blog/open-source-software-licenses-101-mozilla-public-license-2-0/
-      "CC-PDDC" # https://spdx.org/licenses/CC-PDDC.html
+      "CC-PDDC", # https://spdx.org/licenses/CC-PDDC.html
       "Unicode-3.0",
 ]
 

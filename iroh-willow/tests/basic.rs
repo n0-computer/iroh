@@ -412,7 +412,7 @@ mod util {
         ) -> Result<Self> {
             let endpoint = Endpoint::builder()
                 .secret_key(secret_key)
-                .relay_mode(iroh_net::relay::RelayMode::Disabled)
+                .relay_mode(iroh_net::RelayMode::Disabled)
                 .alpns(vec![ALPN.to_vec()])
                 .bind()
                 .await?;
