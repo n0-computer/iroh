@@ -19,7 +19,7 @@ use futures_util::{
     stream::{SplitSink, SplitStream, StreamExt},
     SinkExt,
 };
-use iroh_base::key::{PublicKey, SecretKey};
+use iroh_base::key::{NodeId, SecretKey};
 use tokio::sync::mpsc;
 use tokio_tungstenite_wasm::WebSocketStream;
 use tokio_util::{
@@ -97,12 +97,12 @@ impl Conn {
     /// Sends a packet to the node identified by `dstkey`
     ///
     /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
-    pub async fn send(&self, dstkey: PublicKey, packet: Bytes) -> Result<()> {
-        trace!(%dstkey, len = packet.len(), "[RELAY] send");
+    pub async fn send(&self, dst: NodeId, packet: Bytes) -> Result<()> {
+        trace!(%dst, len = packet.len(), "[RELAY] send");
 
         self.inner
             .writer_channel
-            .send(ConnWriterMessage::Packet((dstkey, packet)))
+            .send(ConnWriterMessage::Packet((dst, packet)))
             .await?;
         Ok(())
     }
@@ -176,7 +176,7 @@ fn process_incoming_frame(frame: Frame) -> Result<ReceivedMessage> {
             // This predated FrameType::Ping/FrameType::Pong.
             Ok(ReceivedMessage::KeepAlive)
         }
-        Frame::PeerGone { peer } => Ok(ReceivedMessage::PeerGone(peer)),
+        Frame::NodeGone { node_id } => Ok(ReceivedMessage::NodeGone(node_id)),
         Frame::RecvPacket { src_key, content } => {
             let packet = ReceivedMessage::ReceivedPacket {
                 source: src_key,
@@ -209,8 +209,8 @@ fn process_incoming_frame(frame: Frame) -> Result<ReceivedMessage> {
 /// The kinds of messages we can send to the [`Server`](crate::server::Server)
 #[derive(Debug)]
 enum ConnWriterMessage {
-    /// Send a packet (addressed to the [`PublicKey`]) to the server
-    Packet((PublicKey, Bytes)),
+    /// Send a packet (addressed to the [`NodeId`]) to the server
+    Packet((NodeId, Bytes)),
     /// Send a pong to the server
     Pong([u8; 8]),
     /// Send a ping to the server
@@ -450,15 +450,15 @@ impl ConnBuilder {
 pub enum ReceivedMessage {
     /// Represents an incoming packet.
     ReceivedPacket {
-        /// The [`PublicKey`] of the packet sender.
-        source: PublicKey,
+        /// The [`NodeId`] of the packet sender.
+        source: NodeId,
         /// The received packet bytes.
         #[debug(skip)]
         data: Bytes, // TODO: ref
     },
     /// Indicates that the client identified by the underlying public key had previously sent you a
     /// packet but has now disconnected from the server.
-    PeerGone(PublicKey),
+    NodeGone(NodeId),
     /// Request from a client or server to reply to the
     /// other side with a [`ReceivedMessage::Pong`] with the given payload.
     Ping([u8; 8]),
@@ -495,7 +495,7 @@ pub enum ReceivedMessage {
 pub(crate) async fn send_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(
     mut writer: S,
     rate_limiter: &Option<RateLimiter>,
-    dst_key: PublicKey,
+    dst: NodeId,
     packet: Bytes,
 ) -> Result<()> {
     ensure!(
@@ -504,7 +504,10 @@ pub(crate) async fn send_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(
         packet.len()
     );
 
-    let frame = Frame::SendPacket { dst_key, packet };
+    let frame = Frame::SendPacket {
+        dst_key: dst,
+        packet,
+    };
     if let Some(rate_limiter) = rate_limiter {
         if rate_limiter.check_n(frame.len()).is_err() {
             tracing::warn!("dropping send: rate limit reached");

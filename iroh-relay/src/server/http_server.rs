@@ -1,4 +1,6 @@
-use std::{collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
+use std::{
+    collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
+};
 
 use anyhow::{bail, ensure, Context as _, Result};
 use bytes::Bytes;
@@ -12,17 +14,25 @@ use hyper::{
     upgrade::Upgraded,
     HeaderMap, Method, Request, Response, StatusCode,
 };
-use tokio::net::{TcpListener, TcpStream};
+use iroh_metrics::inc;
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::mpsc,
+};
 use tokio_rustls_acme::AcmeAcceptor;
-use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::{debug, debug_span, error, info, info_span, warn, Instrument};
-use tungstenite::handshake::derive_accept_key;
+use tokio_tungstenite::WebSocketStream;
+use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
+use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
+use tungstenite::{handshake::derive_accept_key, protocol::Role};
 
 use crate::{
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
+    protos::relay::{recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION},
     server::{
-        actor::{ClientConnHandler, ServerActorTask},
-        streams::MaybeTlsStream,
+        actor::{Message, ServerActorTask},
+        client_conn::ClientConnConfig,
+        metrics::Metrics,
+        streams::{MaybeTlsStream, RelayedStream},
     },
 };
 
@@ -53,23 +63,6 @@ fn downcast_upgrade(upgraded: Upgraded) -> Result<(MaybeTlsStream, Bytes)> {
             bail!("could not downcast the upgraded connection to MaybeTlsStream")
         }
     }
-}
-
-/// The server HTTP handler to do HTTP upgrades.
-async fn relay_connection_handler(
-    protocol: Protocol,
-    conn_handler: &ClientConnHandler,
-    upgraded: Upgraded,
-) -> Result<()> {
-    debug!(?protocol, "relay_connection upgraded");
-    let (io, read_buf) = downcast_upgrade(upgraded)?;
-    ensure!(
-        read_buf.is_empty(),
-        "can not deal with buffered data yet: {:?}",
-        read_buf
-    );
-
-    conn_handler.accept(protocol, io).await
 }
 
 /// The Relay HTTP server.
@@ -200,100 +193,74 @@ impl ServerBuilder {
 
     /// Builds and spawns an HTTP(S) Relay Server.
     pub async fn spawn(self) -> Result<Server> {
-        let relay_server = ServerActorTask::new();
-        let relay_handler = relay_server.client_conn_handler(self.headers.clone());
+        let server_task = ServerActorTask::spawn();
+        let service = RelayService::new(
+            self.handlers,
+            self.headers,
+            server_task.server_channel.clone(),
+            server_task.write_timeout,
+        );
 
-        let service = RelayService::new(self.handlers, relay_handler, self.headers);
+        let addr = self.addr;
+        let tls_config = self.tls_config;
 
-        let server_state = ServerState {
-            addr: self.addr,
-            tls_config: self.tls_config,
-            server: relay_server,
-            service,
-        };
+        // Bind a TCP listener on `addr` and handles content using HTTPS.
 
-        // Spawns some server tasks, we only wait till all tasks are started.
-        server_state.serve().await
-    }
-}
-
-#[derive(Debug)]
-struct ServerState {
-    addr: SocketAddr,
-    tls_config: Option<TlsConfig>,
-    server: ServerActorTask,
-    service: RelayService,
-}
-
-impl ServerState {
-    // Binds a TCP listener on `addr` and handles content using HTTPS.
-    // Returns the local [`SocketAddr`] on which the server is listening.
-    async fn serve(self) -> Result<Server> {
-        let ServerState {
-            addr,
-            tls_config,
-            server,
-            service,
-        } = self;
         let listener = TcpListener::bind(&addr)
             .await
             .with_context(|| format!("failed to bind server socket to {addr}"))?;
+
         // we will use this cancel token to stop the infinite loop in the `listener.accept() task`
         let cancel_server_loop = CancellationToken::new();
+
         let addr = listener.local_addr()?;
         let http_str = tls_config.as_ref().map_or("HTTP/WS", |_| "HTTPS/WSS");
         info!("[{http_str}] relay: serving on {addr}");
+
         let cancel = cancel_server_loop.clone();
-        let task = tokio::task::spawn(async move {
-            // create a join set to track all our connection tasks
-            let mut set = tokio::task::JoinSet::new();
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = cancel.cancelled() => {
-                        break;
-                    }
-                    Some(res) = set.join_next(), if !set.is_empty() => {
-                        if let Err(err) = res {
-                            if err.is_panic() {
-                                panic!("task panicked: {:#?}", err);
+        let task = tokio::task::spawn(
+            async move {
+                // create a join set to track all our connection tasks
+                let mut set = tokio::task::JoinSet::new();
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => {
+                            break;
+                        }
+                        Some(res) = set.join_next(), if !set.is_empty() => {
+                            if let Err(err) = res {
+                                if err.is_panic() {
+                                    panic!("task panicked: {:#?}", err);
+                                }
+                            }
+                        }
+                        res = listener.accept() => match res {
+                            Ok((stream, peer_addr)) => {
+                                debug!("connection opened from {peer_addr}");
+                                let tls_config = tls_config.clone();
+                                let service = service.clone();
+                                // spawn a task to handle the connection
+                                set.spawn(async move {
+                                    service
+                                        .handle_connection(stream, tls_config)
+                                        .await
+                                }.instrument(info_span!("conn", peer = %peer_addr)));
+                            }
+                            Err(err) => {
+                                error!("failed to accept connection: {err}");
                             }
                         }
                     }
-                    res = listener.accept() => match res {
-                        Ok((stream, peer_addr)) => {
-                            debug!("[{http_str}] relay: Connection opened from {peer_addr}");
-                            let tls_config = tls_config.clone();
-                            let service = service.clone();
-                            // spawn a task to handle the connection
-                            set.spawn(async move {
-                                if let Err(error) = service
-                                    .handle_connection(stream, tls_config)
-                                    .await
-                                {
-                                    match error.downcast_ref::<std::io::Error>() {
-                                        Some(io_error) if io_error.kind() == std::io::ErrorKind::UnexpectedEof => {
-                                            debug!(reason=?error, "[{http_str}] relay: peer disconnected");
-                                        },
-                                        _ => {
-                                            error!(?error, "[{http_str}] relay: failed to handle connection");
-                                        }
-                                    }
-                                }
-                            }.instrument(info_span!("conn", peer = %peer_addr)));
-                        }
-                        Err(err) => {
-                            error!("[{http_str}] relay: failed to accept connection: {err}");
-                        }
-                    }
                 }
+                // TODO: if the task this is running in is aborted this server is not shut
+                // down.
+                server_task.close().await;
+                set.shutdown().await;
+                debug!("server has been shutdown.");
             }
-            // TODO: if the task this is running in is aborted this server is not shut
-            // down.
-            server.close().await;
-            set.shutdown().await;
-            debug!("[{http_str}] relay: server has been shutdown.");
-        }.instrument(info_span!("relay-http-serve")));
+            .instrument(info_span!("relay-http-serve")),
+        );
 
         Ok(Server {
             addr,
@@ -303,16 +270,15 @@ impl ServerState {
     }
 }
 
-impl Service<Request<Incoming>> for ClientConnHandler {
-    type Response = Response<BytesBody>;
-    type Error = hyper::Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
-
-    fn call(&self, mut req: Request<Incoming>) -> Self::Future {
+impl RelayService {
+    fn call_client_conn(
+        &self,
+        mut req: Request<Incoming>,
+    ) -> Pin<Box<dyn Future<Output = Result<Response<BytesBody>, hyper::Error>> + Send>> {
         // TODO: soooo much cloning. See if there is an alternative
-        let closure_conn_handler = self.clone();
+        let this = self.clone();
         let mut builder = Response::builder();
-        for (key, value) in self.default_headers.iter() {
+        for (key, value) in self.0.headers.iter() {
             builder = builder.header(key, value);
         }
 
@@ -372,12 +338,8 @@ impl Service<Request<Incoming>> for ClientConnHandler {
                     async move {
                         match hyper::upgrade::on(&mut req).await {
                             Ok(upgraded) => {
-                                if let Err(e) = relay_connection_handler(
-                                    protocol,
-                                    &closure_conn_handler,
-                                    upgraded,
-                                )
-                                .await
+                                if let Err(e) =
+                                    this.0.relay_connection_handler(protocol, upgraded).await
                                 {
                                     warn!(
                                         "upgrade to \"{}\": io error: {:?}",
@@ -427,9 +389,9 @@ impl Service<Request<Incoming>> for RelayService {
             (req.method(), req.uri().path()),
             (&hyper::Method::GET, LEGACY_RELAY_PATH | RELAY_PATH)
         ) {
-            let h = self.0.relay_handler.clone();
+            let this = self.clone();
             // otherwise handle the relay connection as normal
-            return Box::pin(async move { h.call(req).await.map_err(Into::into) });
+            return Box::pin(async move { this.call_client_conn(req).await.map_err(Into::into) });
         }
 
         // check all other possible endpoints
@@ -450,9 +412,10 @@ struct RelayService(Arc<Inner>);
 
 #[derive(Debug)]
 struct Inner {
-    relay_handler: ClientConnHandler,
     handlers: Handlers,
     headers: HeaderMap,
+    server_channel: mpsc::Sender<Message>,
+    write_timeout: Duration,
 }
 
 impl Inner {
@@ -476,6 +439,72 @@ impl Inner {
         let r = res.status(StatusCode::NOT_FOUND).body(body)?;
         HyperResult::Ok(r)
     }
+
+    /// The server HTTP handler to do HTTP upgrades.
+    async fn relay_connection_handler(&self, protocol: Protocol, upgraded: Upgraded) -> Result<()> {
+        debug!(?protocol, "relay_connection upgraded");
+        let (io, read_buf) = downcast_upgrade(upgraded)?;
+        ensure!(
+            read_buf.is_empty(),
+            "can not deal with buffered data yet: {:?}",
+            read_buf
+        );
+
+        self.accept(protocol, io).await
+    }
+
+    /// Adds a new connection to the server and serves it.
+    ///
+    /// Will error if it takes too long (10 sec) to write or read to the connection, if there is
+    /// some read or write error to the connection,  if the server is meant to verify clients,
+    /// and is unable to verify this one, or if there is some issue communicating with the server.
+    ///
+    /// The provided [`AsyncRead`] and [`AsyncWrite`] must be already connected to the connection.
+    ///
+    /// [`AsyncRead`]: tokio::io::AsyncRead
+    /// [`AsyncWrite`]: tokio::io::AsyncWrite
+    async fn accept(&self, protocol: Protocol, io: MaybeTlsStream) -> Result<()> {
+        trace!(?protocol, "accept: start");
+        let mut io = match protocol {
+            Protocol::Relay => {
+                inc!(Metrics, derp_accepts);
+                RelayedStream::Derp(Framed::new(io, DerpCodec))
+            }
+            Protocol::Websocket => {
+                inc!(Metrics, websocket_accepts);
+                RelayedStream::Ws(WebSocketStream::from_raw_socket(io, Role::Server, None).await)
+            }
+        };
+        trace!("accept: recv client key");
+        let (client_key, info) = recv_client_key(&mut io)
+            .await
+            .context("unable to receive client information")?;
+
+        if info.version != PROTOCOL_VERSION {
+            bail!(
+                "unexpected client version {}, expected {}",
+                info.version,
+                PROTOCOL_VERSION
+            );
+        }
+
+        trace!("accept: build client conn");
+        let client_conn_builder = ClientConnConfig {
+            node_id: client_key,
+            stream: io,
+            write_timeout: self.write_timeout,
+            channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
+            server_channel: self.server_channel.clone(),
+        };
+        trace!("accept: create client");
+        self.server_channel
+            .send(Message::CreateClient(client_conn_builder))
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!("server channel closed, the server is probably shutdown")
+            })?;
+        Ok(())
+    }
 }
 
 /// TLS Certificate Authority acceptor.
@@ -489,28 +518,44 @@ pub enum TlsAcceptor {
 }
 
 impl RelayService {
-    fn new(handlers: Handlers, relay_handler: ClientConnHandler, headers: HeaderMap) -> Self {
+    fn new(
+        handlers: Handlers,
+        headers: HeaderMap,
+        server_channel: mpsc::Sender<Message>,
+        write_timeout: Duration,
+    ) -> Self {
         Self(Arc::new(Inner {
-            relay_handler,
             handlers,
             headers,
+            server_channel,
+            write_timeout,
         }))
     }
 
     /// Handle the incoming connection.
     ///
     /// If a `tls_config` is given, will serve the connection using HTTPS.
-    async fn handle_connection(
-        self,
-        stream: TcpStream,
-        tls_config: Option<TlsConfig>,
-    ) -> Result<()> {
-        match tls_config {
-            Some(tls_config) => self.tls_serve_connection(stream, tls_config).await,
+    async fn handle_connection(self, stream: TcpStream, tls_config: Option<TlsConfig>) {
+        let res = match tls_config {
+            Some(tls_config) => {
+                debug!("HTTPS: serve connection");
+                self.tls_serve_connection(stream, tls_config).await
+            }
             None => {
                 debug!("HTTP: serve connection");
                 self.serve_connection(MaybeTlsStream::Plain(stream)).await
             }
+        };
+        match res {
+            Ok(()) => {}
+            Err(error) => match error.downcast_ref::<std::io::Error>() {
+                Some(io_error) if io_error.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    debug!(reason=?error, "peer disconnected");
+                }
+                _ => {
+                    error!(?error, "failed to handle connection");
+                }
+            },
         }
     }
 
@@ -593,11 +638,16 @@ mod tests {
     use iroh_base::key::{PublicKey, SecretKey};
     use reqwest::Url;
     use tokio::{sync::mpsc, task::JoinHandle};
+    use tokio_util::codec::{FramedRead, FramedWrite};
     use tracing::{info, info_span, Instrument};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
-    use crate::client::{conn::ReceivedMessage, Client, ClientBuilder};
+    use crate::client::{
+        conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage},
+        streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
+        Client, ClientBuilder,
+    };
 
     pub(crate) fn make_tls_config() -> TlsConfig {
         let subject_alt_names = vec!["localhost".to_string()];
@@ -813,6 +863,214 @@ mod tests {
         client_a_task.abort();
         client_b.close().await?;
         client_b_task.abort();
+        Ok(())
+    }
+
+    fn make_test_client(secret_key: SecretKey) -> (tokio::io::DuplexStream, ConnBuilder) {
+        let (client, server) = tokio::io::duplex(10);
+        let (client_reader, client_writer) = tokio::io::split(client);
+
+        let client_reader = MaybeTlsStreamReader::Mem(client_reader);
+        let client_writer = MaybeTlsStreamWriter::Mem(client_writer);
+
+        let client_reader = ConnReader::Derp(FramedRead::new(client_reader, DerpCodec));
+        let client_writer = ConnWriter::Derp(FramedWrite::new(client_writer, DerpCodec));
+
+        (
+            server,
+            ConnBuilder::new(secret_key, None, client_reader, client_writer),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_server_basic() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
+        // create the server!
+        let server_task: ServerActorTask = ServerActorTask::spawn();
+        let service = RelayService::new(
+            Default::default(),
+            Default::default(),
+            server_task.server_channel.clone(),
+            server_task.write_timeout,
+        );
+
+        // create client a and connect it to the server
+        let key_a = SecretKey::generate();
+        let public_key_a = key_a.public();
+        let (rw_a, client_a_builder) = make_test_client(key_a);
+        let s = service.clone();
+        let handler_task = tokio::spawn(async move {
+            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
+                .await
+        });
+        let (client_a, mut client_receiver_a) = client_a_builder.build().await?;
+        handler_task.await??;
+
+        // create client b and connect it to the server
+        let key_b = SecretKey::generate();
+        let public_key_b = key_b.public();
+        let (rw_b, client_b_builder) = make_test_client(key_b);
+        let s = service.clone();
+        let handler_task = tokio::spawn(async move {
+            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
+                .await
+        });
+        let (client_b, mut client_receiver_b) = client_b_builder.build().await?;
+        handler_task.await??;
+
+        // send message from a to b!
+        let msg = Bytes::from_static(b"hello client b!!");
+        client_a.send(public_key_b, msg.clone()).await?;
+        match client_receiver_b.recv().await? {
+            ReceivedMessage::ReceivedPacket { source, data } => {
+                assert_eq!(public_key_a, source);
+                assert_eq!(&msg[..], data);
+            }
+            msg => {
+                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+            }
+        }
+
+        // send message from b to a!
+        let msg = Bytes::from_static(b"nice to meet you client a!!");
+        client_b.send(public_key_a, msg.clone()).await?;
+        match client_receiver_a.recv().await? {
+            ReceivedMessage::ReceivedPacket { source, data } => {
+                assert_eq!(public_key_b, source);
+                assert_eq!(&msg[..], data);
+            }
+            msg => {
+                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+            }
+        }
+
+        // close the server and clients
+        server_task.close().await;
+
+        // client connections have been shutdown
+        let res = client_a
+            .send(public_key_b, Bytes::from_static(b"try to send"))
+            .await;
+        assert!(res.is_err());
+        assert!(client_receiver_b.recv().await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_server_replace_client() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+
+        // create the server!
+        let server_task: ServerActorTask = ServerActorTask::spawn();
+        let service = RelayService::new(
+            Default::default(),
+            Default::default(),
+            server_task.server_channel.clone(),
+            server_task.write_timeout,
+        );
+
+        // create client a and connect it to the server
+        let key_a = SecretKey::generate();
+        let public_key_a = key_a.public();
+        let (rw_a, client_a_builder) = make_test_client(key_a);
+        let s = service.clone();
+        let handler_task = tokio::spawn(async move {
+            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
+                .await
+        });
+        let (client_a, mut client_receiver_a) = client_a_builder.build().await?;
+        handler_task.await??;
+
+        // create client b and connect it to the server
+        let key_b = SecretKey::generate();
+        let public_key_b = key_b.public();
+        let (rw_b, client_b_builder) = make_test_client(key_b.clone());
+        let s = service.clone();
+        let handler_task = tokio::spawn(async move {
+            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
+                .await
+        });
+        let (client_b, mut client_receiver_b) = client_b_builder.build().await?;
+        handler_task.await??;
+
+        // send message from a to b!
+        let msg = Bytes::from_static(b"hello client b!!");
+        client_a.send(public_key_b, msg.clone()).await?;
+        match client_receiver_b.recv().await? {
+            ReceivedMessage::ReceivedPacket { source, data } => {
+                assert_eq!(public_key_a, source);
+                assert_eq!(&msg[..], data);
+            }
+            msg => {
+                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+            }
+        }
+
+        // send message from b to a!
+        let msg = Bytes::from_static(b"nice to meet you client a!!");
+        client_b.send(public_key_a, msg.clone()).await?;
+        match client_receiver_a.recv().await? {
+            ReceivedMessage::ReceivedPacket { source, data } => {
+                assert_eq!(public_key_b, source);
+                assert_eq!(&msg[..], data);
+            }
+            msg => {
+                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+            }
+        }
+
+        // create client b and connect it to the server
+        let (new_rw_b, new_client_b_builder) = make_test_client(key_b);
+        let s = service.clone();
+        let handler_task = tokio::spawn(async move {
+            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(new_rw_b))
+                .await
+        });
+        let (new_client_b, mut new_client_receiver_b) = new_client_b_builder.build().await?;
+        handler_task.await??;
+
+        // assert!(client_b.recv().await.is_err());
+
+        // send message from a to b!
+        let msg = Bytes::from_static(b"are you still there, b?!");
+        client_a.send(public_key_b, msg.clone()).await?;
+        match new_client_receiver_b.recv().await? {
+            ReceivedMessage::ReceivedPacket { source, data } => {
+                assert_eq!(public_key_a, source);
+                assert_eq!(&msg[..], data);
+            }
+            msg => {
+                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+            }
+        }
+
+        // send message from b to a!
+        let msg = Bytes::from_static(b"just had a spot of trouble but I'm back now,a!!");
+        new_client_b.send(public_key_a, msg.clone()).await?;
+        match client_receiver_a.recv().await? {
+            ReceivedMessage::ReceivedPacket { source, data } => {
+                assert_eq!(public_key_b, source);
+                assert_eq!(&msg[..], data);
+            }
+            msg => {
+                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+            }
+        }
+
+        // close the server and clients
+        server_task.close().await;
+
+        // client connections have been shutdown
+        let res = client_a
+            .send(public_key_b, Bytes::from_static(b"try to send"))
+            .await;
+        assert!(res.is_err());
+        assert!(new_client_receiver_b.recv().await.is_err());
         Ok(())
     }
 }
