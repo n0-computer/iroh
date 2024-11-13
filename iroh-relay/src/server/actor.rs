@@ -21,7 +21,7 @@ use crate::{
 
 // TODO: skipping `verboseDropKeys` for now
 
-#[derive(derive_more::Debug)]
+#[derive(Debug)]
 pub(super) enum Message {
     SendPacket {
         dst: PublicKey,
@@ -33,9 +33,11 @@ pub(super) enum Message {
         data: Bytes,
         src: PublicKey,
     },
-    #[debug("CreateClient")]
     CreateClient(ClientConnConfig),
-    RemoveClient((PublicKey, usize)),
+    RemoveClient {
+        key: PublicKey,
+        conn_num: usize,
+    },
 }
 
 /// A request to write a dataframe to a Client
@@ -55,16 +57,14 @@ pub(super) struct Packet {
 /// Responsible for managing connections to relay [`Conn`](crate::RelayConn)s, sending packets from one client to another.
 #[derive(Debug)]
 pub(super) struct ServerActorTask {
-    /// Optionally specifies how long to wait before failing when writing
-    /// to a client
-    pub(super) write_timeout: Option<Duration>,
+    /// Specifies how long to wait before failing when writing to a client.
+    pub(super) write_timeout: Duration,
     /// Channel on which to communicate to the [`ServerActor`]
     pub(super) server_channel: mpsc::Sender<Message>,
     /// Server loop handler
     loop_handler: AbortOnDropHandle<Result<()>>,
     /// Done token, forces a hard shutdown. To gracefully shutdown, use [`ServerActorTask::close`]
     cancel: CancellationToken,
-    // TODO: stats collection
 }
 
 impl ServerActorTask {
@@ -79,7 +79,7 @@ impl ServerActorTask {
         ));
 
         Self {
-            write_timeout: Some(WRITE_TIMEOUT),
+            write_timeout: WRITE_TIMEOUT,
             server_channel: server_channel_s,
             loop_handler: server_task,
             cancel: cancel_token,
@@ -213,7 +213,7 @@ impl Actor {
                 let nc = self.client_counter.update(key);
                 inc_by!(Metrics, unique_client_keys, nc);
             }
-            Message::RemoveClient((key, conn_num)) => {
+            Message::RemoveClient { key, conn_num } => {
                 inc!(Metrics, disconnects);
                 trace!("remove client: {:?}", key);
                 // ensure we still have the client in question
@@ -285,7 +285,7 @@ mod tests {
             ClientConnConfig {
                 key,
                 stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
-                write_timeout: None,
+                write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
                 server_channel,
             },
@@ -340,7 +340,10 @@ mod tests {
 
         // remove b
         server_channel
-            .send(Message::RemoveClient((key_b, 2)))
+            .send(Message::RemoveClient {
+                key: key_b,
+                conn_num: 1,
+            })
             .await
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 

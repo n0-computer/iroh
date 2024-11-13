@@ -415,7 +415,7 @@ struct Inner {
     handlers: Handlers,
     headers: HeaderMap,
     server_channel: mpsc::Sender<Message>,
-    write_timeout: Option<Duration>,
+    write_timeout: Duration,
 }
 
 impl Inner {
@@ -522,7 +522,7 @@ impl RelayService {
         handlers: Handlers,
         headers: HeaderMap,
         server_channel: mpsc::Sender<Message>,
-        write_timeout: Option<Duration>,
+        write_timeout: Duration,
     ) -> Self {
         Self(Arc::new(Inner {
             handlers,

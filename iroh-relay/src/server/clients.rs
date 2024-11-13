@@ -243,6 +243,8 @@ enum SendError {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use bytes::Bytes;
     use iroh_base::key::SecretKey;
     use tokio::io::DuplexStream;
@@ -263,7 +265,7 @@ mod tests {
             ClientConnConfig {
                 key,
                 stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
-                write_timeout: None,
+                write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
                 server_channel,
             },

@@ -29,7 +29,7 @@ use crate::{
 pub(super) struct ClientConnConfig {
     pub(super) key: PublicKey,
     pub(super) stream: RelayedStream,
-    pub(super) write_timeout: Option<Duration>,
+    pub(super) write_timeout: Duration,
     pub(super) channel_capacity: usize,
     pub(super) server_channel: mpsc::Sender<actor::Message>,
 }
@@ -100,7 +100,7 @@ impl ClientConn {
                 let res = actor.run(io_done).await;
 
                 let _ = server_channel
-                    .send(actor::Message::RemoveClient((key, conn_num)))
+                    .send(actor::Message::RemoveClient { key, conn_num })
                     .await;
                 match res {
                     Err(e) => {
@@ -166,7 +166,7 @@ struct ConnActor {
     /// Io to talk to the client
     stream: RelayedStream,
     /// Max time we wait to complete a write to the client
-    timeout: Option<Duration>,
+    timeout: Duration,
     /// Packets queued to send to the client
     send_queue: mpsc::Receiver<Packet>,
     /// Important packets queued to send to the client
@@ -248,7 +248,7 @@ impl ConnActor {
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn write_frame(&mut self, frame: Frame) -> Result<()> {
-        write_frame(&mut self.stream, frame, self.timeout).await
+        write_frame(&mut self.stream, frame, Some(self.timeout)).await
     }
 
     /// Writes contents to the client in a `RECV_PACKET` frame.
@@ -358,7 +358,7 @@ mod tests {
 
         let actor = ConnActor {
             stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
-            timeout: None,
+            timeout: Duration::from_secs(1),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
             peer_gone: peer_gone_r,
@@ -498,7 +498,7 @@ mod tests {
         println!("-- create client conn");
         let actor = ConnActor {
             stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
-            timeout: None,
+            timeout: Duration::from_secs(1),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
             peer_gone: peer_gone_r,
