@@ -154,8 +154,12 @@ fn cli_provide_tree_resume() -> Result<()> {
     {
         // import the files into an ephemeral iroh to use the generated blobs db in tests
         let provider = make_provider_in(&src_iroh_data_dir_pre, Input::Path(src.clone()), false)?;
-        // small synchronization points: allow iroh to be ready for transfer
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        // small synchronization point: allow iroh to be ready for transfer
+        #[cfg(target_os = "windows")]
+        let wait = 10u64;
+        #[cfg(not(target_os = "windows"))]
+        let wait = 5u64;
+        std::thread::sleep(std::time::Duration::from_secs(wait));
         let _ticket = match_provide_output(&provider, count, BlobOrCollection::Collection)?;
     }
 
@@ -236,8 +240,12 @@ fn cli_provide_file_resume() -> Result<()> {
     {
         // import the files into an ephemeral iroh to use the generated blobs db in tests
         let provider = make_provider_in(&src_iroh_data_dir_pre, Input::Path(file.clone()), false)?;
-        // small synchronization points: allow iroh to be ready for transfer
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        // small synchronization point: allow iroh to be ready for transfer
+        #[cfg(target_os = "windows")]
+        let wait = 10u64;
+        #[cfg(not(target_os = "windows"))]
+        let wait = 5u64;
+        std::thread::sleep(std::time::Duration::from_secs(wait));
         let _ticket = match_provide_output(&provider, count, BlobOrCollection::Blob)?;
     }
 
@@ -865,7 +873,8 @@ fn match_provide_output<T: Read>(
 ///         (r"hello world!", 1),
 ///         (r"\S*$", 1),
 ///         (r"\d{2}/\d{2}/\d{4}", 3),
-///     ]);
+///     ],
+/// );
 /// ```
 fn assert_matches_line<R: BufRead, I>(reader: R, expressions: I) -> Vec<(usize, Vec<String>)>
 where

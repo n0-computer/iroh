@@ -10,7 +10,7 @@ args = [
      "--config",
      "unstable_features=true",
      "--config",
-     "imports_granularity=Crate,group_imports=StdExternalCrate,reorder_imports=true",
+     "imports_granularity=Crate,group_imports=StdExternalCrate,reorder_imports=true,format_code_in_doc_comments=true",
 ]
 
 [tasks.format-check]
@@ -24,5 +24,5 @@ args = [
      "--config",
      "unstable_features=true",
      "--config",
-     "imports_granularity=Crate,group_imports=StdExternalCrate,reorder_imports=true",
+     "imports_granularity=Crate,group_imports=StdExternalCrate,reorder_imports=true,format_code_in_doc_comments=true",
 ]

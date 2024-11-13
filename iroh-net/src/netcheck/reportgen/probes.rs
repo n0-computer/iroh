@@ -7,13 +7,10 @@
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
 use anyhow::{ensure, Result};
+use netwatch::interfaces;
 use tokio::time::Duration;
 
-use crate::{
-    net::interfaces,
-    netcheck::Report,
-    relay::{RelayMap, RelayNode, RelayUrl},
-};
+use crate::{netcheck::Report, RelayMap, RelayNode, RelayUrl};
 
 /// The retransmit interval used when netcheck first runs.
 ///

@@ -46,11 +46,11 @@
 //! [`PkarrPublisher`] and [`DnsDiscovery`]:
 //!
 //! ```no_run
-//! use iroh_net::discovery::dns::DnsDiscovery;
-//! use iroh_net::discovery::pkarr::PkarrPublisher;
-//! use iroh_net::discovery::ConcurrentDiscovery;
-//! use iroh_net::key::SecretKey;
-//! use iroh_net::Endpoint;
+//! use iroh_net::{
+//!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
+//!     key::SecretKey,
+//!     Endpoint,
+//! };
 //!
 //! # async fn wrapper() -> anyhow::Result<()> {
 //! let secret_key = SecretKey::generate();
@@ -114,6 +114,7 @@ pub mod dns;
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "discovery-local-network")))]
 pub mod local_swarm_discovery;
 pub mod pkarr;
+pub mod static_provider;
 
 /// Node discovery for [`super::Endpoint`].
 ///
@@ -443,7 +444,7 @@ mod tests {
     use tokio_util::task::AbortOnDropHandle;
 
     use super::*;
-    use crate::{key::SecretKey, relay::RelayMode};
+    use crate::{key::SecretKey, RelayMode};
 
     #[derive(Debug, Clone, Default)]
     struct TestDiscoveryShared {
@@ -735,13 +736,12 @@ mod test_dns_pkarr {
     use crate::{
         discovery::pkarr::PkarrPublisher,
         dns::{node_info::NodeInfo, ResolverExt},
-        relay::{RelayMap, RelayMode},
         test_utils::{
             dns_server::{create_dns_resolver, run_dns_server},
             pkarr_dns_state::State,
             run_relay_server, DnsPkarrServer,
         },
-        AddrInfo, Endpoint, NodeAddr,
+        AddrInfo, Endpoint, NodeAddr, RelayMap, RelayMode,
     };
 
     const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);

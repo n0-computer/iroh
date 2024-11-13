@@ -37,10 +37,9 @@ use iroh::{
         endpoint::{self, Connection, ConnectionTypeStream, RecvStream, RemoteInfo, SendStream},
         key::{PublicKey, SecretKey},
         metrics::MagicsockMetrics,
-        netcheck, portmapper,
-        relay::{RelayMap, RelayMode, RelayUrl},
+        netcheck,
         ticket::NodeTicket,
-        Endpoint, NodeAddr, NodeId,
+        Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl,
     },
     util::{path::IrohPaths, progress::ProgressWriter},
 };

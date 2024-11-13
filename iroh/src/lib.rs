@@ -51,11 +51,8 @@
 //!   tags to tell iroh what data is important
 //! - [gossip](crate::client::gossip):
 //!   exchange data with other nodes via a gossip protocol
-//!
-//! - [authors](crate::client::authors):
-//!   interact with document authors
 //! - [docs](crate::client::docs):
-//!   interact with documents
+//!   interact with documents and document authors
 //!
 //! The subsystem clients can be obtained cheaply from the main iroh client.
 //! They are also cheaply cloneable and can be shared across threads.
@@ -87,7 +84,6 @@
 //!
 //! - `metrics`: Enable metrics collection. Enabled by default.
 //! - `fs-store`: Enables the disk based storage backend for `iroh-blobs`. Enabled by default.
-//!
 #![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
@@ -102,6 +98,8 @@ pub use iroh_docs as docs;
 pub use iroh_gossip as gossip;
 #[doc(inline)]
 pub use iroh_net as net;
+#[doc(inline)]
+pub use iroh_router as router;
 
 pub mod client;
 pub mod node;

@@ -35,6 +35,8 @@ use futures_lite::{FutureExt, Stream, StreamExt};
 use futures_util::stream::BoxStream;
 use iroh_base::key::NodeId;
 use iroh_metrics::{inc, inc_by};
+use iroh_relay::protos::stun;
+use netwatch::{interfaces, ip::LocalAddresses, netmon};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use smallvec::{smallvec, SmallVec};
@@ -64,10 +66,7 @@ use crate::{
     dns::DnsResolver,
     endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
-    net::{interfaces, ip::LocalAddresses, netmon},
-    netcheck, portmapper,
-    relay::{RelayMap, RelayUrl},
-    stun, AddrInfo,
+    netcheck, AddrInfo, RelayMap, RelayUrl,
 };
 
 mod metrics;
@@ -1699,7 +1698,7 @@ impl quinn::UdpPoller for IoPoller {
 enum ActorMessage {
     Shutdown,
     ReceiveRelay(RelayReadResult),
-    EndpointPingExpired(usize, stun::TransactionId),
+    EndpointPingExpired(usize, stun_rs::TransactionId),
     NetcheckReport(Result<Option<Arc<netcheck::Report>>>, &'static str),
     NetworkChange,
     #[cfg(test)]
@@ -2784,7 +2783,7 @@ mod tests {
     use tokio_util::task::AbortOnDropHandle;
 
     use super::*;
-    use crate::{defaults::staging::EU_RELAY_HOSTNAME, relay::RelayMode, tls, Endpoint};
+    use crate::{defaults::staging::EU_RELAY_HOSTNAME, tls, Endpoint, RelayMode};
 
     const ALPN: &[u8] = b"n0/test/1";
 

@@ -280,6 +280,24 @@ jobs:
             upload_url: ${{ github.event.inputs.upload_url || needs.create-release.outputs.upload_url }}
             asset_path: ${{ env.ASSET }}
 
+        - name: attach artifacts
+          uses: actions/upload-artifact@v4
+          if : matrix.os != 'windows-latest'
+          with:
+            name: iroh-${{ matrix.release-os }}-${{ matrix.release-arch }}-bundle
+            path: iroh-*.tar.gz
+            compression-level: 0
+            retention-days: 1
+          
+        - name: attach artifacts
+          uses: actions/upload-artifact@v4
+          if : matrix.os == 'windows-latest'
+          with:
+            name: iroh-${{ matrix.release-os }}-${{ matrix.release-arch }}-bundle
+            path: iroh-*.zip
+            compression-level: 0
+            retention-days: 1
+
     docker:
       needs: build_release
       uses: './.github/workflows/docker.yaml'

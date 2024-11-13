@@ -9,12 +9,11 @@ use std::{
 };
 
 use anyhow::{bail, Context as _};
+use netwatch::UdpSocket;
 use quinn::AsyncUdpSocket;
 use quinn_udp::{Transmit, UdpSockRef};
 use tokio::io::Interest;
 use tracing::{debug, trace};
-
-use crate::net::UdpSocket;
 
 /// A UDP socket implementing Quinn's [`AsyncUdpSocket`].
 #[derive(Clone, Debug)]
@@ -197,11 +196,12 @@ where
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
+    use netwatch::IpFamily;
     use tokio::sync::mpsc;
     use tracing::{info_span, Instrument};
 
     use super::*;
-    use crate::{key, net::IpFamily, tls};
+    use crate::{key, tls};
 
     const ALPN: &[u8] = b"n0/test/1";
 

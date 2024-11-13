@@ -10,7 +10,7 @@ use bao_tree::{blake3, ChunkNum, ChunkRanges};
 use bytes::Bytes;
 use futures_lite::FutureExt;
 use iroh::node::{Builder, DocsStorage};
-use iroh_base::node_addr::AddrInfoOptions;
+use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
 use iroh_blobs::{
     format::collection::Collection,
     get::{
@@ -19,7 +19,7 @@ use iroh_blobs::{
     },
     protocol::{GetRequest, RangeSpecSeq},
     store::{MapMut, Store},
-    BlobFormat, Hash,
+    Hash,
 };
 use iroh_net::{defaults::staging::default_relay_map, key::SecretKey, NodeAddr, NodeId};
 use rand::RngCore;
@@ -386,15 +386,11 @@ async fn test_run_ticket() {
     let node = test_node(db).spawn().await.unwrap();
     let _drop_guard = node.cancel_token().drop_guard();
 
-    let ticket = node
-        .blobs()
-        .share(
-            hash,
-            BlobFormat::HashSeq,
-            AddrInfoOptions::RelayAndAddresses,
-        )
-        .await
-        .unwrap();
+    let mut addr = node.net().node_addr().await.unwrap();
+    addr.apply_options(AddrInfoOptions::RelayAndAddresses);
+    let ticket = BlobTicket::new(addr, hash, iroh_blobs::BlobFormat::HashSeq)
+        .expect("ticket creation failed");
+
     tokio::time::timeout(Duration::from_secs(10), async move {
         let request = GetRequest::all(hash);
         run_collection_get_request(SecretKey::generate(), ticket.node_addr().clone(), request).await

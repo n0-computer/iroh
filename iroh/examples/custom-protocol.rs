@@ -50,7 +50,7 @@ use iroh::{
         endpoint::{get_remote_node_id, Connecting},
         Endpoint, NodeId,
     },
-    node::ProtocolHandler,
+    router::ProtocolHandler,
 };
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -118,7 +118,7 @@ async fn main() -> Result<()> {
 
             // Print out our query results.
             for hash in hashes {
-                read_and_print(node.blobs(), hash).await?;
+                read_and_print(&node.blobs(), hash).await?;
             }
         }
     }

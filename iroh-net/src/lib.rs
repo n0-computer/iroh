@@ -4,7 +4,8 @@
 //! interface to [QUIC] connections and streams to the user, while implementing direct
 //! connectivity using [hole punching] complemented by relay servers under the hood.
 //!
-//! Connecting to a remote node looks roughly like this:
+//! An iroh-net node is created and controlled by the [`Endpoint`], e.g. connecting to
+//! another node:
 //!
 //! ```no_run
 //! # use iroh_net::{Endpoint, NodeAddr};
@@ -18,7 +19,7 @@
 //! # }
 //! ```
 //!
-//! The other side can accept incoming connections like this:
+//! The other node can accept incoming connections using the [`Endpoint`] as well:
 //!
 //! ```no_run
 //! # use iroh_net::{Endpoint, NodeAddr};
@@ -183,8 +184,7 @@
 //! ```no_run
 //! use anyhow::{Context, Result};
 //! use futures_lite::StreamExt;
-//! use iroh_net::ticket::NodeTicket;
-//! use iroh_net::{Endpoint, NodeAddr};
+//! use iroh_net::{ticket::NodeTicket, Endpoint, NodeAddr};
 //!
 //! async fn accept() -> Result<()> {
 //!     // To accept connections at least one ALPN must be configured.
@@ -224,7 +224,7 @@
 //! [`discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
 //! [number 0]: https://n0.computer
-//! [`RelayMode::Default`]: crate::relay::RelayMode::Default
+//! [`RelayMode::Default`]: crate::RelayMode::Default
 //! [the discovery module]: crate::discovery
 //! [`Connection::open_bi`]: crate::endpoint::Connection::open_bi
 //! [`Connection::accept_bi`]: crate::endpoint::Connection::accept_bi
@@ -241,18 +241,18 @@ pub mod dns;
 pub mod endpoint;
 mod magicsock;
 pub mod metrics;
-pub mod net;
 pub mod netcheck;
 pub mod ping;
-pub mod portmapper;
-pub mod relay;
-pub mod stun;
+mod relay_map;
 pub mod ticket;
 pub mod tls;
+
 pub(crate) mod util;
 
 pub use endpoint::{AddrInfo, Endpoint, NodeAddr};
 pub use iroh_base::{key, key::NodeId};
+pub use iroh_relay as relay;
+pub use relay_map::{RelayMap, RelayMode, RelayNode, RelayUrl};
 
 #[cfg(any(test, feature = "test-utils"))]
 #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]

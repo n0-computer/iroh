@@ -21,7 +21,7 @@ async fn spawn_node() -> (NodeAddr, Iroh) {
             let secret_key = SecretKey::generate();
             let node = iroh::node::Builder::default()
                 .secret_key(secret_key)
-                .relay_mode(iroh_net::relay::RelayMode::Disabled)
+                .relay_mode(iroh_net::RelayMode::Disabled)
                 .node_discovery(iroh::node::DiscoveryConfig::None)
                 .spawn()
                 .await?;

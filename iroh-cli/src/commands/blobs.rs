@@ -19,6 +19,7 @@ use iroh::{
     base::{node_addr::AddrInfoOptions, ticket::BlobTicket},
     blobs::{
         get::{db::DownloadProgress, progress::BlobProgress, Stats},
+        net_protocol::DownloadMode,
         provider::AddProgress,
         store::{
             ConsistencyCheckProgress, ExportFormat, ExportMode, ReportLevel, ValidateProgress,
@@ -28,12 +29,11 @@ use iroh::{
     },
     client::{
         blobs::{
-            BlobInfo, BlobStatus, CollectionInfo, DownloadMode, DownloadOptions,
-            IncompleteBlobInfo, WrapOption,
+            BlobInfo, BlobStatus, CollectionInfo, DownloadOptions, IncompleteBlobInfo, WrapOption,
         },
         Iroh,
     },
-    net::{key::PublicKey, relay::RelayUrl, NodeAddr},
+    net::{key::PublicKey, NodeAddr, RelayUrl},
 };
 use tokio::io::AsyncWriteExt;
 
@@ -370,7 +370,9 @@ impl BlobCommands {
                     BlobFormat::Raw
                 };
                 let status = iroh.blobs().status(hash).await?;
-                let ticket = iroh.blobs().share(hash, format, addr_options).await?;
+                let mut addr: NodeAddr = iroh.net().node_addr().await?;
+                addr.apply_options(addr_options);
+                let ticket = BlobTicket::new(addr, hash, format)?;
 
                 let (blob_status, size) = match (status, format) {
                     (BlobStatus::Complete { size }, BlobFormat::Raw) => ("blob", size),
