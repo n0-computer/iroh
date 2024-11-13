@@ -3,10 +3,7 @@ use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
-use super::RpcService;
-
-type RpcError = serde_error::Error;
-type RpcResult<T> = Result<T, RpcError>;
+use super::{RpcResult, RpcService};
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]

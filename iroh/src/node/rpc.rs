@@ -103,7 +103,7 @@ impl<D: BaoStore> Handler<D> {
         }
     }
 
-    async fn handle_blobs_and_tags_request(
+    async fn handle_blobs_request(
         self,
         msg: iroh_blobs::rpc::proto::Request,
         chan: RpcChannel<iroh_blobs::rpc::proto::RpcService>,
@@ -160,10 +160,7 @@ impl<D: BaoStore> Handler<D> {
         match msg {
             Net(msg) => self.handle_net_request(msg, chan).await,
             Node(msg) => self.handle_node_request(msg, chan).await,
-            BlobsAndTags(msg) => {
-                self.handle_blobs_and_tags_request(msg, chan.map().boxed())
-                    .await
-            }
+            BlobsAndTags(msg) => self.handle_blobs_request(msg, chan.map().boxed()).await,
             Docs(msg) => self.handle_docs_request(msg, chan).await,
             Gossip(msg) => self.handle_gossip_request(msg, chan).await,
         }

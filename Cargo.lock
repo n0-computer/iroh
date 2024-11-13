@@ -392,7 +392,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1f7a89a8ee5889d2593ae422ce6e1bb03e48a0e8a16e4fa0882dfcbe7e182ef"
 dependencies = [
  "bytes",
- "futures-lite 2.4.0",
+ "futures-lite 2.5.0",
  "genawaiter",
  "iroh-blake3",
  "iroh-io",
@@ -1698,9 +1698,9 @@ dependencies = [
 
 [[package]]
 name = "futures-lite"
-version = "2.4.0"
+version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f1fa2f9765705486b33fd2acf1577f8ec449c2ba1f318ae5447697b7c08d210"
+checksum = "cef40d21ae2c515b51041df9ed313ed21e572df340ea58a922a0aefe7e8891a1"
 dependencies = [
  "fastrand 2.1.1",
  "futures-core",
@@ -2613,7 +2613,7 @@ dependencies = [
  "console",
  "derive_more",
  "futures-buffered",
- "futures-lite 2.4.0",
+ "futures-lite 2.5.0",
  "futures-util",
  "genawaiter",
  "hex",
@@ -2713,7 +2713,7 @@ dependencies = [
  "chrono",
  "derive_more",
  "futures-buffered",
- "futures-lite 2.4.0",
+ "futures-lite 2.5.0",
  "futures-util",
  "genawaiter",
  "hashlink",
@@ -2771,7 +2771,7 @@ dependencies = [
  "dirs-next",
  "duct",
  "futures-buffered",
- "futures-lite 2.4.0",
+ "futures-lite 2.5.0",
  "futures-util",
  "hex",
  "human-time",
@@ -2825,7 +2825,7 @@ dependencies = [
  "clap",
  "derive_more",
  "dirs-next",
- "futures-lite 2.4.0",
+ "futures-lite 2.5.0",
  "governor",
  "hickory-proto 0.25.0-alpha.2",
  "hickory-resolver",
@@ -2872,7 +2872,7 @@ dependencies = [
  "derive_more",
  "ed25519-dalek",
  "futures-buffered",
- "futures-lite 2.4.0",
+ "futures-lite 2.5.0",
  "futures-util",
  "hex",
  "iroh-base",
@@ -2916,7 +2916,7 @@ dependencies = [
  "derive_more",
  "ed25519-dalek",
  "futures-concurrency",
- "futures-lite 2.4.0",
+ "futures-lite 2.5.0",
  "futures-util",
  "indexmap 2.6.0",
  "iroh-base",
@@ -2945,7 +2945,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "17e302c5ad649c6a7aa9ae8468e1c4dc2469321af0c6de7341c1be1bdaab434b"
 dependencies = [
  "bytes",
- "futures-lite 2.4.0",
+ "futures-lite 2.5.0",
  "pin-project",
  "smallvec",
  "tokio",
@@ -2988,7 +2988,7 @@ dependencies = [
  "duct",
  "futures-buffered",
  "futures-concurrency",
- "futures-lite 2.4.0",
+ "futures-lite 2.5.0",
  "futures-sink",
  "futures-util",
  "genawaiter",
@@ -3074,7 +3074,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
- "futures-lite 2.4.0",
+ "futures-lite 2.5.0",
  "hdrhistogram",
  "iroh-metrics",
  "iroh-net",
@@ -3085,6 +3085,26 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "iroh-node-util"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures-lite 2.5.0",
+ "iroh-net",
+ "nested_enum_utils",
+ "quic-rpc",
+ "quic-rpc-derive",
+ "ref-cast",
+ "serde",
+ "serde-error",
+ "strum 0.26.3",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -3143,7 +3163,7 @@ dependencies = [
  "anyhow",
  "clap",
  "futures-buffered",
- "futures-lite 2.4.0",
+ "futures-lite 2.5.0",
  "futures-util",
  "iroh-net",
  "tokio",
@@ -3557,7 +3577,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "derive_more",
- "futures-lite 2.4.0",
+ "futures-lite 2.5.0",
  "futures-sink",
  "futures-util",
  "libc",
@@ -4191,7 +4211,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "derive_more",
- "futures-lite 2.4.0",
+ "futures-lite 2.5.0",
  "futures-util",
  "igd-next",
  "iroh-metrics",
@@ -4444,7 +4464,7 @@ dependencies = [
  "derive_more",
  "educe",
  "flume",
- "futures-lite 2.4.0",
+ "futures-lite 2.5.0",
  "futures-sink",
  "futures-util",
  "hex",
@@ -5166,9 +5186,9 @@ dependencies = [
 
 [[package]]
 name = "serde"
-version = "1.0.214"
+version = "1.0.215"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f55c3193aca71c12ad7890f1785d2b73e1b9f63a0bbc353c08ef26fe03fc56b5"
+checksum = "6513c1ad0b11a9376da888e3e0baa0077f1aed55c17f50e7b2397136129fb88f"
 dependencies = [
  "serde_derive",
 ]
@@ -5203,9 +5223,9 @@ dependencies = [
 
 [[package]]
 name = "serde_derive"
-version = "1.0.214"
+version = "1.0.215"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de523f781f095e28fa605cdce0f8307e451cc0fd14e2eb4cd2e98a355b147766"
+checksum = "ad1e866f866923f252f05c889987993144fb74e722403468a4ebd70c3cd756c0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5789,9 +5809,9 @@ dependencies = [
 
 [[package]]
 name = "tempfile"
-version = "3.13.0"
+version = "3.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0f2c9fc62d0beef6951ccffd757e241266a2c833136efbe35af6cd2567dca5b"
+checksum = "28cce251fcbc87fac86a866eeb0d6c2d536fc16d06f184bb61aeae11aa4cee0c"
 dependencies = [
  "cfg-if",
  "fastrand 2.1.1",

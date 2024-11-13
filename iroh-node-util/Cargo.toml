@@ -1,0 +1,23 @@
+[package]
+name = "iroh-node-util"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.93"
+tokio = "1.41.1"
+iroh-net = { path = "../iroh-net" }
+tempfile = "3.14.0"
+strum = "0.26.3"
+nested_enum_utils = "0.1.0"
+quic-rpc-derive = "0.15.0"
+serde = "1.0.215"
+serde-error = "0.1.3"
+quic-rpc = "0.15.0"
+futures-lite = "2.5.0"
+ref-cast = "1.0.23"
+tracing = "0.1.40"
+tokio-util = "0.7.12"
+
+[lints]
+workspace = true
