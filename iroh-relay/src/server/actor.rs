@@ -59,7 +59,7 @@ pub(super) struct Packet {
 pub(super) struct ServerActorTask {
     /// Specifies how long to wait before failing when writing to a client.
     pub(super) write_timeout: Duration,
-    /// Channel on which to communicate to the [`ServerActor`]
+    /// Channel on which to communicate to the [`Actor`]
     pub(super) server_channel: mpsc::Sender<Message>,
     /// Server loop handler
     loop_handler: AbortOnDropHandle<Result<()>>,
