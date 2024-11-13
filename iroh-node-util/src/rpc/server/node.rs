@@ -7,7 +7,13 @@ use quic_rpc::server::{ChannelTypes, RpcChannel, RpcServerError};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 
-use crate::rpc::{client::net::NodeStatus, proto::{node::{self, ShutdownRequest, StatsRequest, StatsResponse, StatusRequest}, RpcError, RpcResult, RpcService}};
+use crate::rpc::{
+    client::net::NodeStatus,
+    proto::{
+        node::{self, ShutdownRequest, StatsRequest, StatsResponse, StatusRequest},
+        RpcError, RpcResult, RpcService,
+    },
+};
 
 struct Node {
     endpoint: Endpoint,
@@ -16,7 +22,6 @@ struct Node {
 }
 
 impl Node {
-
     async fn handle_rpc_request<C: ChannelTypes<RpcService>>(
         self,
         msg: node::Request,
@@ -56,7 +61,6 @@ impl Node {
         res
     }
 
-
     async fn node_status(self, _: StatusRequest) -> RpcResult<NodeStatus> {
         Ok(NodeStatus {
             addr: self
@@ -64,15 +68,11 @@ impl Node {
                 .node_addr()
                 .await
                 .map_err(|e| RpcError::new(&*e))?,
-            listen_addrs: self
-                .local_endpoint_addresses()
-                .await
-                .unwrap_or_default(),
+            listen_addrs: self.local_endpoint_addresses().await.unwrap_or_default(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             rpc_addr: self.rpc_addr,
         })
     }
-
 
     async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
         let endpoints = self

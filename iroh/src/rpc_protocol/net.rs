@@ -1,4 +1,4 @@
-use iroh_net::{endpoint::RemoteInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
+use iroh_net::{endpoint::RemoteInfo, key::PublicKey, NodeAddr, NodeId, RelayUrl};
 use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};

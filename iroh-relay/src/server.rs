@@ -34,7 +34,7 @@ use tokio::{
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
-use crate::{relay::http::RELAY_PROBE_PATH, stun};
+use crate::{http::RELAY_PROBE_PATH, protos::stun};
 
 pub(crate) mod actor;
 pub(crate) mod client_conn;
@@ -208,7 +208,7 @@ impl Server {
             use iroh_metrics::core::Metric;
 
             iroh_metrics::core::Core::init(|reg, metrics| {
-                metrics.insert(crate::metrics::RelayMetrics::new(reg));
+                metrics.insert(metrics::Metrics::new(reg));
                 metrics.insert(StunMetrics::new(reg));
             });
             tasks.spawn(
@@ -456,7 +456,14 @@ async fn server_stun_listener(sock: UdpSocket) -> Result<()> {
     loop {
         tokio::select! {
             biased;
-            _ = tasks.join_next(), if !tasks.is_empty() => (),
+
+            Some(res) = tasks.join_next(), if !tasks.is_empty() => {
+                if let Err(err) = res {
+                    if err.is_panic() {
+                        panic!("task panicked: {:#?}", err);
+                    }
+                }
+            }
             res = sock.recv_from(&mut buffer) => {
                 match res {
                     Ok((n, src_addr)) => {
@@ -605,28 +612,42 @@ async fn run_captive_portal_service(http_listener: TcpListener) -> Result<()> {
     let mut tasks = JoinSet::new();
 
     loop {
-        match http_listener.accept().await {
-            Ok((stream, peer_addr)) => {
-                debug!(%peer_addr, "Connection opened",);
-                let handler = CaptivePortalService;
+        tokio::select! {
+            biased;
 
-                tasks.spawn(async move {
-                    let stream = crate::relay::server::streams::MaybeTlsStream::Plain(stream);
-                    let stream = hyper_util::rt::TokioIo::new(stream);
-                    if let Err(err) = hyper::server::conn::http1::Builder::new()
-                        .serve_connection(stream, handler)
-                        .with_upgrades()
-                        .await
-                    {
-                        error!("Failed to serve connection: {err:?}");
+            Some(res) = tasks.join_next(), if !tasks.is_empty() => {
+                if let Err(err) = res {
+                    if err.is_panic() {
+                        panic!("task panicked: {:#?}", err);
                     }
-                });
+                }
             }
-            Err(err) => {
-                error!(
-                    "[CaptivePortalService] failed to accept connection: {:#?}",
-                    err
-                );
+
+            res = http_listener.accept() => {
+                match res {
+                    Ok((stream, peer_addr)) => {
+                        debug!(%peer_addr, "Connection opened",);
+                        let handler = CaptivePortalService;
+
+                        tasks.spawn(async move {
+                            let stream = crate::server::streams::MaybeTlsStream::Plain(stream);
+                            let stream = hyper_util::rt::TokioIo::new(stream);
+                            if let Err(err) = hyper::server::conn::http1::Builder::new()
+                                .serve_connection(stream, handler)
+                                .with_upgrades()
+                                .await
+                            {
+                                error!("Failed to serve connection: {err:?}");
+                            }
+                        });
+                    }
+                    Err(err) => {
+                        error!(
+                            "[CaptivePortalService] failed to accept connection: {:#?}",
+                            err
+                        );
+                    }
+                }
             }
         }
     }
@@ -715,7 +736,7 @@ mod tests {
     use iroh_base::{key::SecretKey, node_addr::RelayUrl};
 
     use super::*;
-    use crate::relay::{
+    use crate::{
         client::{conn::ReceivedMessage, ClientBuilder},
         http::{Protocol, HTTP_UPGRADE_PROTOCOL},
     };

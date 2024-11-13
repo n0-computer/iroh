@@ -71,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
         .secret_key(key)
         .node_discovery(cfg)
         .bind_random_port()
-        .relay_mode(iroh_net::relay::RelayMode::Disabled)
+        .relay_mode(iroh_net::RelayMode::Disabled)
         .spawn()
         .await?;
 

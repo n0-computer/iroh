@@ -38,9 +38,8 @@ use iroh::{
         key::{PublicKey, SecretKey},
         metrics::MagicsockMetrics,
         netcheck,
-        relay::{RelayMap, RelayMode, RelayUrl},
         ticket::NodeTicket,
-        Endpoint, NodeAddr, NodeId,
+        Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl,
     },
     util::{path::IrohPaths, progress::ProgressWriter},
 };

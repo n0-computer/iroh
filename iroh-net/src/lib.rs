@@ -224,7 +224,7 @@
 //! [`discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
 //! [number 0]: https://n0.computer
-//! [`RelayMode::Default`]: crate::relay::RelayMode::Default
+//! [`RelayMode::Default`]: crate::RelayMode::Default
 //! [the discovery module]: crate::discovery
 //! [`Connection::open_bi`]: crate::endpoint::Connection::open_bi
 //! [`Connection::accept_bi`]: crate::endpoint::Connection::accept_bi
@@ -243,14 +243,16 @@ mod magicsock;
 pub mod metrics;
 pub mod netcheck;
 pub mod ping;
-pub mod relay;
-pub mod stun;
+mod relay_map;
 pub mod ticket;
 pub mod tls;
+
 pub(crate) mod util;
 
 pub use endpoint::{AddrInfo, Endpoint, NodeAddr};
 pub use iroh_base::{key, key::NodeId};
+pub use iroh_relay as relay;
+pub use relay_map::{RelayMap, RelayMode, RelayNode, RelayUrl};
 
 #[cfg(any(test, feature = "test-utils"))]
 #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]

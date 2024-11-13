@@ -1,7 +1,10 @@
+//! Exposes [`Client`], which allows to establish connections to a relay server.
+//!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
 use std::{
     collections::HashMap,
+    future,
     net::{IpAddr, SocketAddr},
     sync::Arc,
     time::Duration,
@@ -12,6 +15,7 @@ use bytes::Bytes;
 use conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMessage};
 use futures_lite::future::Boxed as BoxFuture;
 use futures_util::StreamExt;
+use hickory_resolver::TokioAsyncResolver as DnsResolver;
 use http_body_util::Empty;
 use hyper::{
     body::Incoming,
@@ -20,6 +24,7 @@ use hyper::{
     Request,
 };
 use hyper_util::rt::TokioIo;
+use iroh_base::key::{NodeId, PublicKey, SecretKey};
 use rand::Rng;
 use rustls::client::Resumption;
 use streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
@@ -38,19 +43,15 @@ use tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
 use url::Url;
 
 use crate::{
-    defaults::timeouts::relay::*,
-    dns::{DnsResolver, ResolverExt},
-    key::{NodeId, PublicKey, SecretKey},
-    relay::{
-        codec::DerpCodec,
-        http::{Protocol, RELAY_PATH},
-        RelayUrl,
-    },
-    util::chain,
+    defaults::timeouts::*,
+    http::{Protocol, RELAY_PATH},
+    protos::relay::DerpCodec,
+    RelayUrl,
 };
 
 pub(crate) mod conn;
 pub(crate) mod streams;
+mod util;
 
 /// Possible connection errors on the [`Client`]
 #[derive(Debug, thiserror::Error)]
@@ -409,7 +410,7 @@ impl Client {
     /// Returns [`ClientError::Closed`] if the [`Client`] is closed.
     ///
     /// If there is already an active relay connection, returns the already
-    /// connected [`crate::relay::RelayConn`].
+    /// connected [`crate::RelayConn`].
     pub async fn connect(&self) -> Result<Conn, ClientError> {
         self.send_actor(ActorMessage::Connect).await
     }
@@ -864,7 +865,10 @@ impl Actor {
     async fn dial_url_direct(&self) -> Result<TcpStream, ClientError> {
         debug!(%self.url, "dial url");
         let prefer_ipv6 = self.prefer_ipv6().await;
-        let dst_ip = resolve_host(&self.dns_resolver, &self.url, prefer_ipv6).await?;
+        let dst_ip = self
+            .dns_resolver
+            .resolve_host(&self.url, prefer_ipv6)
+            .await?;
 
         let port = url_port(&self.url)
             .ok_or_else(|| ClientError::InvalidUrl("missing url port".into()))?;
@@ -888,12 +892,15 @@ impl Actor {
     async fn dial_url_proxy(
         &self,
         proxy_url: Url,
-    ) -> Result<chain::Chain<std::io::Cursor<Bytes>, MaybeTlsStream>, ClientError> {
+    ) -> Result<util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream>, ClientError> {
         debug!(%self.url, %proxy_url, "dial url via proxy");
 
         // Resolve proxy DNS
         let prefer_ipv6 = self.prefer_ipv6().await;
-        let proxy_ip = resolve_host(&self.dns_resolver, &proxy_url, prefer_ipv6).await?;
+        let proxy_ip = self
+            .dns_resolver
+            .resolve_host(&proxy_url, prefer_ipv6)
+            .await?;
 
         let proxy_port = url_port(&proxy_url)
             .ok_or_else(|| ClientError::Proxy("missing proxy url port".into()))?;
@@ -976,7 +983,7 @@ impl Actor {
             return Err(ClientError::Proxy("invalid upgrade".to_string()));
         };
 
-        let res = chain::chain(std::io::Cursor::new(read_buf), io.into_inner());
+        let res = util::chain(std::io::Cursor::new(read_buf), io.into_inner());
 
         Ok(res)
     }
@@ -1010,7 +1017,7 @@ impl Actor {
                 }
             }
         }
-        std::future::pending().await
+        future::pending().await
     }
 
     /// Close the underlying relay connection. The next time the client takes some action that
@@ -1040,34 +1047,64 @@ fn host_header_value(relay_url: RelayUrl) -> Result<String, ClientError> {
     Ok(host_header_value)
 }
 
-async fn resolve_host(
-    resolver: &DnsResolver,
-    url: &Url,
-    prefer_ipv6: bool,
-) -> Result<IpAddr, ClientError> {
-    let host = url
-        .host()
-        .ok_or_else(|| ClientError::InvalidUrl("missing host".into()))?;
-    match host {
-        url::Host::Domain(domain) => {
-            // Need to do a DNS lookup
-            let mut addrs = resolver
-                .lookup_ipv4_ipv6(domain, DNS_TIMEOUT)
-                .await
-                .map_err(|e| ClientError::Dns(Some(e)))?
-                .peekable();
+trait DnsExt {
+    fn lookup_ipv4<N: hickory_resolver::IntoName>(
+        &self,
+        host: N,
+    ) -> impl future::Future<Output = anyhow::Result<Option<IpAddr>>>;
 
-            let found = if prefer_ipv6 {
-                let first = addrs.peek().copied();
-                addrs.find(IpAddr::is_ipv6).or(first)
-            } else {
-                addrs.next()
-            };
+    fn lookup_ipv6<N: hickory_resolver::IntoName>(
+        &self,
+        host: N,
+    ) -> impl future::Future<Output = anyhow::Result<Option<IpAddr>>>;
 
-            found.ok_or_else(|| ClientError::Dns(None))
+    fn resolve_host(
+        &self,
+        url: &Url,
+        prefer_ipv6: bool,
+    ) -> impl future::Future<Output = Result<IpAddr, ClientError>>;
+}
+
+impl DnsExt for DnsResolver {
+    async fn lookup_ipv4<N: hickory_resolver::IntoName>(
+        &self,
+        host: N,
+    ) -> anyhow::Result<Option<IpAddr>> {
+        let addrs = tokio::time::timeout(DNS_TIMEOUT, self.ipv4_lookup(host)).await??;
+        Ok(addrs.into_iter().next().map(|ip| IpAddr::V4(ip.0)))
+    }
+
+    async fn lookup_ipv6<N: hickory_resolver::IntoName>(
+        &self,
+        host: N,
+    ) -> anyhow::Result<Option<IpAddr>> {
+        let addrs = tokio::time::timeout(DNS_TIMEOUT, self.ipv6_lookup(host)).await??;
+        Ok(addrs.into_iter().next().map(|ip| IpAddr::V6(ip.0)))
+    }
+
+    async fn resolve_host(&self, url: &Url, prefer_ipv6: bool) -> Result<IpAddr, ClientError> {
+        let host = url
+            .host()
+            .ok_or_else(|| ClientError::InvalidUrl("missing host".into()))?;
+        match host {
+            url::Host::Domain(domain) => {
+                // Need to do a DNS lookup
+                let lookup = tokio::join!(self.lookup_ipv4(domain), self.lookup_ipv6(domain));
+                let (v4, v6) = match lookup {
+                    (Err(ipv4_err), Err(ipv6_err)) => {
+                        let err = anyhow::anyhow!("Ipv4: {:?}, Ipv6: {:?}", ipv4_err, ipv6_err);
+                        return Err(ClientError::Dns(Some(err)));
+                    }
+                    (Err(_), Ok(v6)) => (None, v6),
+                    (Ok(v4), Err(_)) => (v4, None),
+                    (Ok(v4), Ok(v6)) => (v4, v6),
+                };
+                if prefer_ipv6 { v6.or(v4) } else { v4.or(v6) }
+                    .ok_or_else(|| ClientError::Dns(None))
+            }
+            url::Host::Ipv4(ip) => Ok(IpAddr::V4(ip)),
+            url::Host::Ipv6(ip) => Ok(IpAddr::V6(ip)),
         }
-        url::Host::Ipv4(ip) => Ok(IpAddr::V4(ip)),
-        url::Host::Ipv6(ip) => Ok(IpAddr::V6(ip)),
     }
 }
 

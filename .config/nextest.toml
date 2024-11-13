@@ -8,3 +8,6 @@ run-in-isolation = { max-threads = 32 }
 filter = 'test(::run_in_isolation::)'
 test-group = 'run-in-isolation'
 threads-required = 32
+
+[profile.default]
+slow-timeout = { period = "20s", terminate-after = 3 }
