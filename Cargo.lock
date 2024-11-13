@@ -2864,7 +2864,7 @@ dependencies = [
 [[package]]
 name = "iroh-docs"
 version = "0.28.0"
-source = "git+https://github.com/n0-computer/iroh-docs?branch=remove-entry-newtype#d6d1a3cf0138f9130ca4ea7d4160455da39ea27e"
+source = "git+https://github.com/n0-computer/iroh-docs?branch=main#9166b226fedc889218986eb6ef2a3d3cdcdee367"
 dependencies = [
  "anyhow",
  "async-channel",
