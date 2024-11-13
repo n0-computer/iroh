@@ -17,8 +17,6 @@
 //! macro.
 use serde::{Deserialize, Serialize};
 
-pub mod authors;
-pub mod docs;
 pub mod net;
 pub mod node;
 
@@ -33,9 +31,8 @@ pub struct RpcService;
 pub enum Request {
     Node(node::Request),
     Net(net::Request),
-    Docs(docs::Request),
-    Authors(authors::Request),
     Gossip(iroh_gossip::RpcRequest),
+    Docs(iroh_docs::rpc::proto::Request),
     BlobsAndTags(iroh_blobs::rpc::proto::Request),
 }
 
@@ -46,9 +43,8 @@ pub enum Request {
 pub enum Response {
     Node(node::Response),
     Net(net::Response),
-    Docs(docs::Response),
-    Authors(authors::Response),
     Gossip(iroh_gossip::RpcResponse),
+    Docs(iroh_docs::rpc::proto::Response),
     BlobsAndTags(iroh_blobs::rpc::proto::Response),
 }
 

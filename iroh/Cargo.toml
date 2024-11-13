@@ -36,7 +36,7 @@ iroh-router = { version = "0.28.0" }
 nested_enum_utils = "0.1.0"
 num_cpus = { version = "1.15.0" }
 portable-atomic = "1"
-iroh-docs = { version = "0.28.0" }
+iroh-docs = { version = "0.28.0", features = ["rpc"] }
 iroh-gossip = "0.28.1"
 parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }

@@ -80,7 +80,8 @@ async fn spawn_docs<S: iroh_blobs::store::Store>(
     endpoint: Endpoint,
     gossip: Gossip,
     downloader: Downloader,
-) -> anyhow::Result<Option<Engine>> {
+    local_pool_handle: LocalPoolHandle,
+) -> anyhow::Result<Option<Engine<S>>> {
     let docs_store = match storage {
         DocsStorage::Disabled => return Ok(None),
         DocsStorage::Memory => iroh_docs::store::fs::Store::memory(),
@@ -93,6 +94,7 @@ async fn spawn_docs<S: iroh_blobs::store::Store>(
         blobs_store,
         downloader,
         default_author_storage,
+        local_pool_handle,
     )
     .await?;
     Ok(Some(engine))
@@ -684,6 +686,7 @@ where
             endpoint.clone(),
             gossip.clone(),
             downloader.clone(),
+            lp.handle().clone(),
         )
         .await?;
 
@@ -833,7 +836,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         store: D,
         gossip: Gossip,
         downloader: Downloader,
-        docs: Option<Engine>,
+        docs: Option<Engine<D>>,
     ) -> Self {
         // Register blobs.
         let blobs_proto = BlobsProtocol::new_with_events(
