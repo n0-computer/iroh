@@ -540,24 +540,6 @@
 <a href="#540" id="540">540</a>
 <a href="#541" id="541">541</a>
 <a href="#542" id="542">542</a>
-<a href="#543" id="543">543</a>
-<a href="#544" id="544">544</a>
-<a href="#545" id="545">545</a>
-<a href="#546" id="546">546</a>
-<a href="#547" id="547">547</a>
-<a href="#548" id="548">548</a>
-<a href="#549" id="549">549</a>
-<a href="#550" id="550">550</a>
-<a href="#551" id="551">551</a>
-<a href="#552" id="552">552</a>
-<a href="#553" id="553">553</a>
-<a href="#554" id="554">554</a>
-<a href="#555" id="555">555</a>
-<a href="#556" id="556">556</a>
-<a href="#557" id="557">557</a>
-<a href="#558" id="558">558</a>
-<a href="#559" id="559">559</a>
-<a href="#560" id="560">560</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::time::Duration;
@@ -570,9 +552,8 @@
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-<span class="kw">use </span>tracing::{trace, warn, Instrument};
+<span class="kw">use </span>tracing::{info, trace, warn, Instrument};
 
-<span class="kw">use </span><span class="kw">super</span>::streams::RelayedStream;
 <span class="kw">use crate</span>::{
     protos::{
         disco,
@@ -581,6 +562,7 @@
     server::{
         actor::{<span class="self">self</span>, Packet},
         metrics::Metrics,
+        streams::RelayedStream,
     },
 };
 
@@ -600,23 +582,19 @@
 /// [`Client`]: crate::client::Client
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ClientConn {
-    <span class="doccomment">/// Static after construction, process-wide unique counter, incremented each time we accept
+    <span class="doccomment">/// Unique counter, incremented each time we accept a new connection.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) conn_num: usize,
-
     <span class="doccomment">/// Identity of the connected peer.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) key: PublicKey,
-
-    <span class="doccomment">/// Used to close the connection.
+    <span class="doccomment">/// Used to close the connection loop.
     </span>done: CancellationToken,
-
     <span class="doccomment">/// Actor handle.
-    </span>handle: AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
-
-    <span class="doccomment">/// Queue of packets intended for the client
+    </span>handle: AbortOnDropHandle&lt;()&gt;,
+    <span class="doccomment">/// Queue of packets intended for the client.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) send_queue: mpsc::Sender&lt;Packet&gt;,
-    <span class="doccomment">/// Queue of important packets intended for the client
+    <span class="doccomment">/// Queue of disco packets intended for the client.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) disco_send_queue: mpsc::Sender&lt;Packet&gt;,
-    <span class="doccomment">/// Notify the client that a previous sender has disconnected
+    <span class="doccomment">/// Channel to notify the client that a previous sender has disconnected.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) peer_gone: mpsc::Sender&lt;PublicKey&gt;,
 }
 
@@ -640,7 +618,7 @@
         <span class="kw">let </span>(disco_send_queue_s, disco_send_queue_r) = mpsc::channel(channel_capacity);
         <span class="kw">let </span>(peer_gone_s, peer_gone_r) = mpsc::channel(channel_capacity);
 
-        <span class="kw">let </span>actor = ConnActor {
+        <span class="kw">let </span>actor = Actor {
             stream: io,
             timeout: write_timeout,
             send_queue: send_queue_r,
@@ -659,7 +637,8 @@
                 <span class="kw">let </span>(key, conn_num) = io_client_id;
                 <span class="kw">let </span>res = actor.run(io_done).<span class="kw">await</span>;
 
-                <span class="kw">let _ </span>= server_channel
+                <span class="comment">// remove the client when the actor terminates, no matter how it exits
+                </span><span class="kw">let _ </span>= server_channel
                     .send(actor::Message::RemoveClient { key, conn_num })
                     .<span class="kw">await</span>;
                 <span class="kw">match </span>res {
@@ -667,15 +646,13 @@
                         <span class="macro">warn!</span>(
                             <span class="string">"connection manager for {key:?} {conn_num}: writer closed in error {e}"
                         </span>);
-                        <span class="prelude-val">Err</span>(e)
                     }
-                    <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"connection manager for {key:?} {conn_num}: writer closed"</span>);
-                        <span class="prelude-val">Ok</span>(())
+                    <span class="prelude-val">Ok</span>(()) =&gt; {
+                        <span class="macro">info!</span>(<span class="string">"connection manager for {key:?} {conn_num}: writer closed"</span>);
                     }
                 }
             }
-            .instrument(<span class="macro">tracing::debug_span!</span>(<span class="string">"actor"</span>)),
+            .instrument(<span class="macro">tracing::debug_span!</span>(<span class="string">"client_conn actor"</span>)),
         );
 
         ClientConn {
@@ -691,7 +668,7 @@
 
     <span class="doccomment">/// Shutdown the reader and writer loops and closes the connection.
     ///
-    /// Logs any shutdown errors as warnings.
+    /// Any shutdown errors will be logged as warnings.
     </span><span class="kw">pub async fn </span>shutdown(<span class="self">self</span>) {
         <span class="self">self</span>.done.cancel();
         <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.handle.<span class="kw">await </span>{
@@ -699,7 +676,7 @@
                 <span class="string">"error closing actor loop for client connection {:?} {}: {e:?}"</span>,
                 <span class="self">self</span>.key, <span class="self">self</span>.conn_num
             );
-        }
+        };
     }
 }
 
@@ -711,7 +688,7 @@
 /// it errors on return.
 /// If writes do not complete in the given `timeout`, it will also error.
 ///
-/// On the "write" side, the [`ConnActor`] can send the client:
+/// On the "write" side, the [`Actor`] can send the client:
 ///  - a KEEP_ALIVE frame
 ///  - a PEER_GONE frame to inform the client that a peer they have previously sent messages to
 ///    is gone from the network
@@ -722,10 +699,10 @@
 ///     - note whether the client is `preferred`, aka this client is the preferred way
 ///     to speak to the node ID associated with that client.
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">struct </span>ConnActor {
-    <span class="doccomment">/// Io to talk to the client
+</span><span class="kw">struct </span>Actor {
+    <span class="doccomment">/// IO Steram to talk to the client
     </span>stream: RelayedStream,
-    <span class="doccomment">/// Max time we wait to complete a write to the client
+    <span class="doccomment">/// Maximum time we wait to complete a write to the client
     </span>timeout: Duration,
     <span class="doccomment">/// Packets queued to send to the client
     </span>send_queue: mpsc::Receiver&lt;Packet&gt;,
@@ -733,20 +710,17 @@
     </span>disco_send_queue: mpsc::Receiver&lt;Packet&gt;,
     <span class="doccomment">/// Notify the client that a previous sender has disconnected
     </span>peer_gone: mpsc::Receiver&lt;PublicKey&gt;,
-
     <span class="doccomment">/// [`PublicKey`] of this client
     </span>key: PublicKey,
-
-    <span class="doccomment">/// Channels used to communicate with the server about actions
+    <span class="doccomment">/// Channel used to communicate with the server about actions
     /// it needs to take on behalf of the client
     </span>server_channel: mpsc::Sender&lt;actor::Message&gt;,
-
     <span class="doccomment">/// Notes that the client considers this the preferred connection (important in cases
     /// where the client moves to a different network, but has the same PublicKey)
     </span>preferred: bool,
 }
 
-<span class="kw">impl </span>ConnActor {
+<span class="kw">impl </span>Actor {
     <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>, done: CancellationToken) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>jitter = Duration::from_secs(<span class="number">5</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>keep_alive = tokio::time::interval(KEEP_ALIVE + jitter);
@@ -754,15 +728,14 @@
         </span>keep_alive.tick().<span class="kw">await</span>;
 
         <span class="kw">loop </span>{
-            <span class="macro">trace!</span>(<span class="string">"tick"</span>);
             <span class="macro">tokio::select!</span> {
                 biased;
 
                 <span class="kw">_ </span>= done.cancelled() =&gt; {
-                    <span class="macro">trace!</span>(<span class="string">"cancelled"</span>);
+                    <span class="macro">trace!</span>(<span class="string">"actor loop cancelled, exiting"</span>);
                     <span class="comment">// final flush
                     </span><span class="self">self</span>.stream.flush().<span class="kw">await</span>.context(<span class="string">"flush"</span>)<span class="question-mark">?</span>;
-                    <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                    <span class="kw">break</span>;
                 }
                 read_res = <span class="self">self</span>.stream.next() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"handle frame"</span>);
@@ -799,9 +772,9 @@
                     <span class="self">self</span>.write_frame(Frame::KeepAlive).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
             }
-
             <span class="self">self</span>.stream.flush().<span class="kw">await</span>.context(<span class="string">"tick flush"</span>)<span class="question-mark">?</span>;
         }
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="doccomment">/// Writes the given frame to the conneciton.
@@ -834,7 +807,7 @@
         // for the same public key
         </span><span class="kw">match </span>frame {
             Frame::NotePreferred { preferred } =&gt; {
-                <span class="self">self</span>.handle_frame_note_preferred(preferred);
+                <span class="self">self</span>.preferred = preferred;
                 <span class="macro">inc!</span>(Metrics, other_packets_recv);
             }
             Frame::SendPacket { dst_key, packet } =&gt; {
@@ -843,8 +816,10 @@
                 <span class="macro">inc_by!</span>(Metrics, bytes_recv, packet_len <span class="kw">as </span>u64);
             }
             Frame::Ping { data } =&gt; {
-                <span class="self">self</span>.handle_frame_ping(data).<span class="kw">await</span><span class="question-mark">?</span>;
                 <span class="macro">inc!</span>(Metrics, got_ping);
+                <span class="comment">// TODO: add rate limiter
+                </span><span class="self">self</span>.write_frame(Frame::Pong { data }).<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="macro">inc!</span>(Metrics, sent_pong);
             }
             Frame::Health { .. } =&gt; {
                 <span class="macro">inc!</span>(Metrics, other_packets_recv);
@@ -853,17 +828,6 @@
                 <span class="macro">inc!</span>(Metrics, unknown_frames);
             }
         }
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="kw">fn </span>handle_frame_note_preferred(<span class="kw-2">&amp;mut </span><span class="self">self</span>, preferred: bool) {
-        <span class="self">self</span>.preferred = preferred;
-    }
-
-    <span class="kw">async fn </span>handle_frame_ping(<span class="kw-2">&amp;mut </span><span class="self">self</span>, data: [u8; <span class="number">8</span>]) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="comment">// TODO: add rate limiter
-        </span><span class="self">self</span>.write_frame(Frame::Pong { data }).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="macro">inc!</span>(Metrics, sent_pong);
         <span class="prelude-val">Ok</span>(())
     }
 
@@ -916,7 +880,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>io_rw = Framed::new(io_rw, DerpCodec);
         <span class="kw">let </span>(server_channel_s, <span class="kw-2">mut </span>server_channel_r) = mpsc::channel(<span class="number">10</span>);
 
-        <span class="kw">let </span>actor = ConnActor {
+        <span class="kw">let </span>actor = Actor {
             stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
             timeout: Duration::from_secs(<span class="number">1</span>),
             send_queue: send_queue_r,
@@ -1056,7 +1020,7 @@
         <span class="kw">let </span>(server_channel_s, <span class="kw-2">mut </span>server_channel_r) = mpsc::channel(<span class="number">10</span>);
 
         <span class="macro">println!</span>(<span class="string">"-- create client conn"</span>);
-        <span class="kw">let </span>actor = ConnActor {
+        <span class="kw">let </span>actor = Actor {
             stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
             timeout: Duration::from_secs(<span class="number">1</span>),
             send_queue: send_queue_r,
