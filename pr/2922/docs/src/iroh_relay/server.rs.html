@@ -1016,7 +1016,6 @@
 <a href="#1016" id="1016">1016</a>
 <a href="#1017" id="1017">1017</a>
 <a href="#1018" id="1018">1018</a>
-<a href="#1019" id="1019">1019</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
@@ -1416,17 +1415,15 @@
     <span class="kw-2">mut </span>relay_http_server: <span class="prelude-ty">Option</span>&lt;http_server::Server&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
     <span class="kw">let </span>res = <span class="kw">match </span>(relay_http_server.as_mut(), tasks.len()) {
-        (<span class="prelude-val">None</span>, <span class="kw">_</span>) =&gt; tasks
-            .join_next()
-            .<span class="kw">await
-            </span>.unwrap_or_else(|| <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Nothing to supervise"</span>)))),
+        (<span class="prelude-val">None</span>, <span class="number">0</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Nothing to supervise"</span>))),
+        (<span class="prelude-val">None</span>, <span class="kw">_</span>) =&gt; tasks.join_next().<span class="kw">await</span>.expect(<span class="string">"checked"</span>),
         (<span class="prelude-val">Some</span>(relay), <span class="number">0</span>) =&gt; relay.task_handle().<span class="kw">await</span>.map(anyhow::Ok),
         (<span class="prelude-val">Some</span>(relay), <span class="kw">_</span>) =&gt; {
             <span class="macro">tokio::select!</span> {
                 biased;
-                <span class="prelude-val">Some</span>(ret) = tasks.join_next(), <span class="kw">if </span>!tasks.is_empty() =&gt; ret,
+
+                ret = tasks.join_next() =&gt; ret.expect(<span class="string">"checked"</span>),
                 ret = relay.task_handle() =&gt; ret.map(anyhow::Ok),
-                <span class="kw">else </span>=&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Empty JoinSet (unreachable)"</span>))),
             }
         }
     };
@@ -1450,12 +1447,13 @@
     };
 
     <span class="comment">// Ensure the HTTP server terminated, there is no harm in calling this after it is
-    // already shut down.  The JoinSet is aborted on drop.
+    // already shut down.
     </span><span class="kw">if let </span><span class="prelude-val">Some</span>(server) = relay_http_server {
         server.shutdown();
     }
 
-    tasks.shutdown().<span class="kw">await</span>;
+    <span class="comment">// Stop all remaining tasks
+    </span>tasks.shutdown().<span class="kw">await</span>;
 
     ret
 }
