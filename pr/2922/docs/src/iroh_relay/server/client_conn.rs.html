@@ -652,7 +652,7 @@
                     }
                 }
             }
-            .instrument(<span class="macro">tracing::debug_span!</span>(<span class="string">"client_conn actor"</span>)),
+            .instrument(<span class="macro">tracing::info_span!</span>(<span class="string">"client_conn_actor"</span>)),
         );
 
         ClientConn {
