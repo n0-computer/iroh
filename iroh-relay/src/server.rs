@@ -397,17 +397,15 @@ async fn relay_supervisor(
     mut relay_http_server: Option<http_server::Server>,
 ) -> Result<()> {
     let res = match (relay_http_server.as_mut(), tasks.len()) {
-        (None, _) => tasks
-            .join_next()
-            .await
-            .unwrap_or_else(|| Ok(Err(anyhow!("Nothing to supervise")))),
+        (None, 0) => Ok(Err(anyhow!("Nothing to supervise"))),
+        (None, _) => tasks.join_next().await.expect("checked"),
         (Some(relay), 0) => relay.task_handle().await.map(anyhow::Ok),
         (Some(relay), _) => {
             tokio::select! {
                 biased;
-                Some(ret) = tasks.join_next(), if !tasks.is_empty() => ret,
+
+                ret = tasks.join_next() => ret.expect("checked"),
                 ret = relay.task_handle() => ret.map(anyhow::Ok),
-                else => Ok(Err(anyhow!("Empty JoinSet (unreachable)"))),
             }
         }
     };
@@ -431,11 +429,12 @@ async fn relay_supervisor(
     };
 
     // Ensure the HTTP server terminated, there is no harm in calling this after it is
-    // already shut down.  The JoinSet is aborted on drop.
+    // already shut down.
     if let Some(server) = relay_http_server {
         server.shutdown();
     }
 
+    // Stop all remaining tasks
     tasks.shutdown().await;
 
     ret

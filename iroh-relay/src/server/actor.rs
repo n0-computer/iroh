@@ -161,7 +161,7 @@ impl Actor {
                 }
             }
             Message::SendDiscoPacket { dst, data, src } => {
-                trace!(?src, ?dst, len=data.len(), "send disco packet");
+                trace!(?src, ?dst, len = data.len(), "send disco packet");
                 if self.clients.contains_key(&dst) {
                     match self
                         .clients
