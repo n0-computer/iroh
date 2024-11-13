@@ -55,5 +55,5 @@ iroh-test = { path = "./iroh-test" }
 iroh-router = { path = "./iroh-router" }
 
 iroh-gossip = { git = "https://github.com/n0-computer/iroh-gossip", branch = "main" }
-iroh-docs = { git = "https://github.com/n0-computer/iroh-docs", branch = "refactor-extract-rpc" }
+iroh-docs = { git = "https://github.com/n0-computer/iroh-docs", branch = "main" }
 iroh-blobs = { git = "https://github.com/n0-computer/iroh-blobs", branch = "main" }
