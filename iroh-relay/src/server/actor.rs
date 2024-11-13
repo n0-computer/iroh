@@ -11,7 +11,7 @@ use iroh_metrics::{core::UsageStatsReport, inc, inc_by, report_usage_stats};
 use time::{Date, OffsetDateTime};
 use tokio::sync::mpsc;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::{info_span, trace, warn, Instrument};
+use tracing::{info, info_span, trace, warn, Instrument};
 
 use crate::{
     defaults::timeouts::SERVER_WRITE_TIMEOUT as WRITE_TIMEOUT,
@@ -63,7 +63,7 @@ pub(super) struct ServerActorTask {
     pub(super) server_channel: mpsc::Sender<Message>,
     /// Server loop handler
     loop_handler: AbortOnDropHandle<Result<()>>,
-    /// Done token, forces a hard shutdown. To gracefully shutdown, use [`ServerActorTask::close`]
+    /// Token to shutdown the actor loop.
     cancel: CancellationToken,
 }
 
@@ -120,7 +120,7 @@ impl Actor {
             tokio::select! {
                 biased;
                 _ = done.cancelled() => {
-                    warn!("server actor loop cancelled, closing loop");
+                    info!("server actor loop cancelled, closing loop");
                     // TODO: stats: drain channel & count dropped packets etc
                     // close all client connections and client read/write loops
                     self.clients.shutdown().await;
@@ -150,20 +150,18 @@ impl Actor {
                     data.len()
                 );
                 if self.clients.contains_key(&dst) {
-                    // if this client is in our local network, just try to send the packet
-                    if self
-                        .clients
-                        .send_packet(&dst, Packet { data, src })
-                        .await
-                        .is_ok()
-                    {
-                        self.clients.record_send(&src, dst);
-                        inc!(Metrics, send_packets_sent);
-                    } else {
-                        inc!(Metrics, send_packets_dropped);
+                    match self.clients.send_packet(&dst, Packet { data, src }).await {
+                        Ok(()) => {
+                            self.clients.record_send(&src, dst);
+                            inc!(Metrics, send_packets_sent);
+                        }
+                        Err(err) => {
+                            trace!("failed to send packet to {dst:?}: {err:?}");
+                            inc!(Metrics, send_packets_dropped);
+                        }
                     }
                 } else {
-                    warn!("send packet: no way to reach client {dst:?}, dropped packet");
+                    warn!("no way to reach client {dst:?}, dropped packet");
                     inc!(Metrics, send_packets_dropped);
                 }
             }
@@ -175,20 +173,22 @@ impl Actor {
                     data.len()
                 );
                 if self.clients.contains_key(&dst) {
-                    // if this client is in our local network, just try to send the packet
-                    if self
+                    match self
                         .clients
                         .send_disco_packet(&dst, Packet { data, src })
                         .await
-                        .is_ok()
                     {
-                        self.clients.record_send(&src, dst);
-                        inc!(Metrics, disco_packets_sent);
-                    } else {
-                        inc!(Metrics, disco_packets_dropped);
+                        Ok(()) => {
+                            self.clients.record_send(&src, dst);
+                            inc!(Metrics, disco_packets_sent);
+                        }
+                        Err(err) => {
+                            trace!("failed to send disco packet to {dst:?}: {err:?}");
+                            inc!(Metrics, disco_packets_dropped);
+                        }
                     }
                 } else {
-                    warn!("send disco packet: no way to reach client {dst:?}, dropped packet");
+                    warn!("disco: no way to reach client {dst:?}, dropped packet");
                     inc!(Metrics, disco_packets_dropped);
                 }
             }
@@ -227,6 +227,8 @@ impl Actor {
     }
 }
 
+/// Counts how many `PublicKey`s seen, how many times.
+/// Gets reset every day.
 struct ClientCounter {
     clients: HashMap<PublicKey, usize>,
     last_clear_date: Date,
