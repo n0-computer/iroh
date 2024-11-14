@@ -3165,6 +3165,7 @@ dependencies = [
  "crypto_box",
  "derive_more",
  "duct",
+ "futures-buffered",
  "futures-lite 2.5.0",
  "futures-sink",
  "futures-util",

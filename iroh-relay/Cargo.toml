@@ -19,6 +19,7 @@ base64 = "0.22.1"
 bytes = "1.7"
 clap = { version = "4", features = ["derive"], optional = true }
 derive_more = { version = "1.0.0", features = ["debug", "display", "from", "try_into", "deref"] }
+futures-buffered = "0.2.9"
 futures-lite = "2.3"
 futures-sink = "0.3.25"
 futures-util = "0.3.25"

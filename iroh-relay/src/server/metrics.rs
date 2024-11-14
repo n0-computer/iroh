@@ -4,7 +4,6 @@ use iroh_metrics::{
 };
 
 /// Metrics tracked for the relay server
-#[allow(missing_docs)]
 #[derive(Debug, Clone, Iterable)]
 pub struct Metrics {
     /*
@@ -115,5 +114,45 @@ impl Default for Metrics {
 impl Metric for Metrics {
     fn name() -> &'static str {
         "relayserver"
+    }
+}
+
+/// StunMetrics tracked for the DERPER
+#[derive(Debug, Clone, Iterable)]
+pub struct StunMetrics {
+    /*
+     * Metrics about STUN requests
+     */
+    /// Number of stun requests made
+    pub requests: Counter,
+    /// Number of successful requests over ipv4
+    pub ipv4_success: Counter,
+    /// Number of successful requests over ipv6
+    pub ipv6_success: Counter,
+
+    /// Number of bad requests, either non-stun packets or incorrect binding request
+    pub bad_requests: Counter,
+    /// Number of failures
+    pub failures: Counter,
+}
+
+impl Default for StunMetrics {
+    fn default() -> Self {
+        Self {
+            /*
+             * Metrics about STUN requests
+             */
+            requests: Counter::new("Number of STUN requests made to the server."),
+            ipv4_success: Counter::new("Number of successful ipv4 STUN requests served."),
+            ipv6_success: Counter::new("Number of successful ipv6 STUN requests served."),
+            bad_requests: Counter::new("Number of bad requests made to the STUN endpoint."),
+            failures: Counter::new("Number of STUN requests that end in failure."),
+        }
+    }
+}
+
+impl Metric for StunMetrics {
+    fn name() -> &'static str {
+        "stun"
     }
 }
