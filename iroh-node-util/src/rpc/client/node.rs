@@ -13,6 +13,10 @@ pub struct Client {
 }
 
 impl Client {
+    pub fn new(rpc: RpcClient<RpcService>) -> Self {
+        Self { rpc }
+    }
+
     /// Shuts down the node.
     ///
     /// If `force` is true, the node will be shut down instantly without

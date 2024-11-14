@@ -79,6 +79,10 @@ pub struct Client {
 }
 
 impl Client {
+    pub fn new(rpc: RpcClient<RpcService>) -> Self {
+        Self { rpc }
+    }
+
     /// Fetches information about currently known remote nodes.
     ///
     /// This streams a *current snapshot*. It does not keep the stream open after finishing

@@ -5,10 +5,8 @@
 use std::collections::BTreeMap;
 
 use anyhow::Result;
-use futures_lite::{Stream, StreamExt};
-use ref_cast::RefCast;
+use iroh_node_util::rpc::{client::net::NodeStatus, proto::node::CounterStats};
 
-use crate::rpc_protocol::node::{CounterStats, ShutdownRequest, StatsRequest, StatusRequest};
 #[doc(inline)]
 pub use crate::rpc_protocol::RpcService;
 
@@ -17,10 +15,9 @@ mod quic;
 pub use iroh_blobs::rpc::client::{blobs, tags};
 pub use iroh_docs::rpc::client::{authors, docs, docs::Doc};
 pub use iroh_gossip::rpc::client as gossip;
+pub use iroh_node_util::rpc::client::{net, node};
 
-pub use self::net::NodeStatus;
 pub(crate) use self::quic::{connect_raw as quic_connect_raw, RPC_ALPN};
-pub mod net;
 
 // Keep this type exposed, otherwise every occurrence of `RpcClient` in the API
 // will show up as `RpcClient<RpcService, Connection<RpcService>>` in the docs.
@@ -80,8 +77,13 @@ impl Iroh {
     }
 
     /// Returns the net client.
-    pub fn net(&self) -> &net::Client {
-        net::Client::ref_cast(&self.rpc)
+    pub fn net(&self) -> net::Client {
+        net::Client::new(self.rpc.clone().map().boxed())
+    }
+
+    /// Returns the net client.
+    pub fn node(&self) -> node::Client {
+        node::Client::new(self.rpc.clone().map().boxed())
     }
 
     /// Shuts down the node.
@@ -89,33 +91,16 @@ impl Iroh {
     /// If `force` is true, the node will be shut down instantly without
     /// waiting for things to stop gracefully.
     pub async fn shutdown(&self, force: bool) -> Result<()> {
-        self.rpc.rpc(ShutdownRequest { force }).await?;
-        Ok(())
+        self.node().shutdown(force).await
     }
 
     /// Fetches statistics of the running node.
     pub async fn stats(&self) -> Result<BTreeMap<String, CounterStats>> {
-        let res = self.rpc.rpc(StatsRequest {}).await??;
-        Ok(res.stats)
+        self.node().stats().await
     }
 
     /// Fetches status information about this node.
     pub async fn status(&self) -> Result<NodeStatus> {
-        let response = self.rpc.rpc(StatusRequest).await??;
-        Ok(response)
+        self.node().status().await
     }
-}
-
-fn flatten<T, E1, E2>(
-    s: impl Stream<Item = Result<Result<T, E1>, E2>>,
-) -> impl Stream<Item = Result<T>>
-where
-    E1: std::error::Error + Send + Sync + 'static,
-    E2: std::error::Error + Send + Sync + 'static,
-{
-    s.map(|res| match res {
-        Ok(Ok(res)) => Ok(res),
-        Ok(Err(err)) => Err(err.into()),
-        Err(err) => Err(err.into()),
-    })
 }

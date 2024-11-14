@@ -8,10 +8,11 @@ use std::{
 };
 
 use anyhow::{bail, Context};
+use iroh_node_util::rpc::proto::node::StatusRequest;
 use quic_rpc::transport::{boxed::BoxedConnector, quinn::QuinnConnector};
 
 use super::{Iroh, RpcClient};
-use crate::{node::RpcStatus, rpc_protocol::node::StatusRequest};
+use crate::node::RpcStatus;
 
 /// ALPN used by irohs RPC mechanism.
 // TODO: Change to "/iroh-rpc/1"
@@ -46,8 +47,11 @@ pub(crate) async fn connect_raw(addr: SocketAddr) -> anyhow::Result<RpcClient> {
     let connection = QuinnConnector::new(endpoint, addr, server_name);
     let connection = BoxedConnector::new(connection);
     let client = RpcClient::new(connection);
+    let node_client = client
+        .clone()
+        .map::<iroh_node_util::rpc::proto::RpcService>();
     // Do a status request to check if the server is running.
-    let _version = tokio::time::timeout(Duration::from_secs(1), client.rpc(StatusRequest))
+    let _version = tokio::time::timeout(Duration::from_secs(1), node_client.rpc(StatusRequest))
         .await
         .context("Iroh node is not running")??;
     Ok(client)

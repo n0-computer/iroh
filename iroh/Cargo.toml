@@ -32,6 +32,7 @@ iroh-base = { version = "0.28.0", features = ["key"] }
 iroh-io = { version = "0.6.0", features = ["stats"] }
 iroh-metrics = { version = "0.28.0", optional = true }
 iroh-net = { version = "0.28.1", features = ["discovery-local-network"] }
+iroh-node-util = { path = "../iroh-node-util" }
 iroh-router = { version = "0.28.0" }
 nested_enum_utils = "0.1.0"
 num_cpus = { version = "1.15.0" }
