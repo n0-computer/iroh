@@ -28,7 +28,6 @@ pub struct RpcService;
 pub enum Request {
     Node(iroh_node_util::rpc::proto::Request),
     Gossip(iroh_gossip::RpcRequest),
-    Docs(iroh_docs::rpc::proto::Request),
     BlobsAndTags(iroh_blobs::rpc::proto::Request),
 }
 
@@ -39,7 +38,6 @@ pub enum Request {
 pub enum Response {
     Node(iroh_node_util::rpc::proto::Response),
     Gossip(iroh_gossip::RpcResponse),
-    Docs(iroh_docs::rpc::proto::Response),
     BlobsAndTags(iroh_blobs::rpc::proto::Response),
 }
 

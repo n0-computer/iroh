@@ -20,7 +20,13 @@ cc = "=1.1.31" # enforce cc version, because of https://github.com/rust-lang/cc-
 anyhow = { version = "1" }
 async-channel = "2.3.1"
 bytes = "1.7"
-derive_more = { version = "1.0.0", features = ["debug", "display", "from", "try_into", "from_str"] }
+derive_more = { version = "1.0.0", features = [
+    "debug",
+    "display",
+    "from",
+    "try_into",
+    "from_str",
+] }
 futures-lite = "2.3"
 futures-util = "0.3"
 iroh-blobs = { version = "0.28.0", features = ["downloader"] }
@@ -35,8 +41,15 @@ nested_enum_utils = "0.1.0"
 num_cpus = { version = "1.15.0" }
 iroh-gossip = "0.28.1"
 parking_lot = "0.12.1"
-postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-quic-rpc = { version = "0.15", default-features = false, features = ["flume-transport", "quinn-transport"] }
+postcard = { version = "1", default-features = false, features = [
+    "alloc",
+    "use-std",
+    "experimental-derive",
+] }
+quic-rpc = { version = "0.15", default-features = false, features = [
+    "flume-transport",
+    "quinn-transport",
+] }
 quic-rpc-derive = { version = "0.15" }
 quinn = { package = "iroh-quinn", version = "0.12" }
 serde = { version = "1", features = ["derive"] }
@@ -63,7 +76,11 @@ metrics = ["iroh-metrics", "iroh-blobs/metrics"]
 fs-store = ["iroh-blobs/fs-store"]
 test = []
 examples = ["dep:clap", "dep:indicatif"]
-discovery-local-network = ["iroh-net/discovery-local-network", "examples", "dep:console"]
+discovery-local-network = [
+    "iroh-net/discovery-local-network",
+    "examples",
+    "dep:console",
+]
 discovery-pkarr-dht = ["iroh-net/discovery-pkarr-dht"]
 test-utils = ["iroh-net/test-utils"]
 

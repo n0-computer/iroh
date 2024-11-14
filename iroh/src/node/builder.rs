@@ -16,10 +16,6 @@ use iroh_blobs::{
     store::{Map, Store as BaoStore},
     util::local_pool::{self, LocalPool, LocalPoolHandle, PanicMode},
 };
-use iroh_docs::{
-    engine::{DefaultAuthorStorage, Engine},
-    net::DOCS_ALPN,
-};
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 #[cfg(not(test))]
 use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
@@ -61,51 +57,11 @@ pub const DEFAULT_BIND_ADDR_V4: SocketAddrV4 =
 pub const DEFAULT_BIND_ADDR_V6: SocketAddrV6 =
     SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, DEFAULT_BIND_PORT + 1, 0, 0);
 
-/// Storage backend for documents.
-#[derive(Debug, Clone)]
-pub enum DocsStorage {
-    /// Disable docs completely.
-    Disabled,
-    /// In-memory storage.
-    Memory,
-    /// File-based persistent storage.
-    Persistent(PathBuf),
-}
-
-/// Start the engine, and prepare the selected storage version.
-async fn spawn_docs<S: iroh_blobs::store::Store>(
-    storage: DocsStorage,
-    blobs_store: S,
-    default_author_storage: DefaultAuthorStorage,
-    endpoint: Endpoint,
-    gossip: Gossip,
-    downloader: Downloader,
-    local_pool_handle: LocalPoolHandle,
-) -> anyhow::Result<Option<Engine<S>>> {
-    let docs_store = match storage {
-        DocsStorage::Disabled => return Ok(None),
-        DocsStorage::Memory => iroh_docs::store::fs::Store::memory(),
-        DocsStorage::Persistent(path) => iroh_docs::store::fs::Store::persistent(path)?,
-    };
-    let engine = Engine::spawn(
-        endpoint,
-        gossip,
-        docs_store,
-        blobs_store,
-        downloader,
-        default_author_storage,
-        local_pool_handle,
-    )
-    .await?;
-    Ok(Some(engine))
-}
-
 /// Builder for the [`Node`].
 ///
 /// You must supply a blob store and a document store.
 ///
 /// Blob store implementations are available in [`iroh_blobs::store`].
-/// Document store implementations are available in [`iroh_docs::store`].
 ///
 /// Everything else is optional, with some sensible defaults.
 ///
@@ -141,7 +97,6 @@ where
     gc_policy: GcPolicy,
     dns_resolver: Option<DnsResolver>,
     node_discovery: DiscoveryConfig,
-    docs_storage: DocsStorage,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
     /// Callback to register when a gc loop is done
@@ -158,18 +113,6 @@ pub enum StorageConfig {
     Mem,
     /// On disk persistet, at this location.
     Persistent(PathBuf),
-}
-
-impl StorageConfig {
-    fn default_author_storage(&self) -> DefaultAuthorStorage {
-        match self {
-            StorageConfig::Persistent(ref root) => {
-                let path = IrohPaths::DefaultAuthor.with_root(root);
-                DefaultAuthorStorage::Persistent(path)
-            }
-            StorageConfig::Mem => DefaultAuthorStorage::Mem,
-        }
-    }
 }
 
 /// Configuration for node discovery.
@@ -269,7 +212,6 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             rpc_endpoint: mk_external_rpc(),
             rpc_addr: None,
             gc_policy: GcPolicy::Disabled,
-            docs_storage: DocsStorage::Disabled,
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -282,11 +224,7 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
 
 impl<D: Map> Builder<D> {
     /// Creates a new builder for [`Node`] using the given databases.
-    pub fn with_db_and_store(
-        blobs_store: D,
-        docs_storage: DocsStorage,
-        storage: StorageConfig,
-    ) -> Self {
+    pub fn with_db_and_store(blobs_store: D, storage: StorageConfig) -> Self {
         // Use staging in testing
         let relay_mode = match force_staging_infra() {
             true => RelayMode::Staging,
@@ -305,7 +243,6 @@ impl<D: Map> Builder<D> {
             rpc_endpoint: mk_external_rpc(),
             rpc_addr: None,
             gc_policy: GcPolicy::Disabled,
-            docs_storage,
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -343,12 +280,6 @@ where
             .with_context(|| {
                 format!("Failed to load blobs database from {}", blob_dir.display())
             })?;
-        let docs_storage = match self.docs_storage {
-            DocsStorage::Persistent(_) | DocsStorage::Memory => {
-                DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root))
-            }
-            DocsStorage::Disabled => DocsStorage::Disabled,
-        };
 
         let secret_key_path = IrohPaths::SecretKey.with_root(root);
         let secret_key = load_secret_key(secret_key_path).await?;
@@ -365,7 +296,6 @@ where
             relay_mode: self.relay_mode,
             dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
-            docs_storage,
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -412,17 +342,6 @@ where
     /// By default garbage collection is disabled.
     pub fn gc_policy(mut self, gc_policy: GcPolicy) -> Self {
         self.gc_policy = gc_policy;
-        self
-    }
-
-    /// Enables documents support on this node.
-    pub fn enable_docs(mut self) -> Self {
-        self.docs_storage = match self.storage {
-            StorageConfig::Mem => DocsStorage::Memory,
-            StorageConfig::Persistent(ref root) => {
-                DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root))
-            }
-        };
         self
     }
 
@@ -677,19 +596,6 @@ where
         // Initialize the downloader.
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
 
-        // Spawn the docs engine, if enabled.
-        // This returns None for DocsStorage::Disabled, otherwise Some(DocsProtocol).
-        let docs = spawn_docs(
-            self.docs_storage,
-            self.blobs_store.clone(),
-            self.storage.default_author_storage(),
-            endpoint.clone(),
-            gossip.clone(),
-            downloader.clone(),
-            lp.handle().clone(),
-        )
-        .await?;
-
         // Initialize the internal RPC connection.
         let (internal_rpc, controller) = quic_rpc::transport::flume::channel(32);
         let internal_rpc = quic_rpc::transport::boxed::BoxedListener::new(internal_rpc);
@@ -723,7 +629,6 @@ where
             self.blobs_store,
             gossip,
             downloader,
-            docs,
         );
 
         Ok(protocol_builder)
@@ -836,7 +741,6 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         store: D,
         gossip: Gossip,
         downloader: Downloader,
-        docs: Option<Engine<D>>,
     ) -> Self {
         // Register blobs.
         let blobs_proto = BlobsProtocol::new_with_events(
@@ -850,11 +754,6 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
 
         // Register gossip.
         self = self.accept(GOSSIP_ALPN.to_vec(), Arc::new(gossip));
-
-        // Register docs, if enabled.
-        if let Some(docs) = docs {
-            self = self.accept(DOCS_ALPN.to_vec(), Arc::new(docs));
-        }
 
         self
     }

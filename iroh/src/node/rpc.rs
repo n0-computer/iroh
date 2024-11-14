@@ -1,8 +1,8 @@
 use std::{collections::BTreeMap, fmt::Debug, sync::Arc};
 
 use anyhow::Result;
+use futures_lite::Stream;
 use iroh_blobs::{net_protocol::Blobs as BlobsProtocol, store::Store as BaoStore};
-use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_node_util::rpc::proto::node::CounterStats;
 use iroh_router::Router;
@@ -113,28 +113,6 @@ impl<D: BaoStore> Handler<D> {
             .map_err(|e| e.errors_into())
     }
 
-    async fn handle_docs_request(
-        self,
-        msg: iroh_docs::rpc::proto::Request,
-        chan: RpcChannel<RpcService, IrohServerEndpoint>,
-    ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
-        if let Some(docs) = self
-            .router
-            .get_protocol::<iroh_docs::engine::Engine<D>>(DOCS_ALPN)
-        {
-            let chan = chan.map::<iroh_docs::rpc::proto::RpcService>();
-            docs.as_ref()
-                .clone()
-                .handle_rpc_request(msg, chan)
-                .await
-                .map_err(|e| e.errors_into())
-        } else {
-            Err(RpcServerError::SendError(anyhow::anyhow!(
-                "Docs is not enabled"
-            )))
-        }
-    }
-
     pub(crate) async fn handle_rpc_request(
         self,
         msg: Request,
@@ -145,7 +123,6 @@ impl<D: BaoStore> Handler<D> {
         match msg {
             Node(msg) => self.handle_node_request(msg, chan).await,
             BlobsAndTags(msg) => self.handle_blobs_request(msg, chan.map().boxed()).await,
-            Docs(msg) => self.handle_docs_request(msg, chan).await,
             Gossip(msg) => self.handle_gossip_request(msg, chan).await,
         }
     }

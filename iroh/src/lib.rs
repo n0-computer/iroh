@@ -93,8 +93,6 @@ pub use iroh_base as base;
 #[doc(inline)]
 pub use iroh_blobs as blobs;
 #[doc(inline)]
-pub use iroh_docs as docs;
-#[doc(inline)]
 pub use iroh_gossip as gossip;
 #[doc(inline)]
 pub use iroh_net as net;
