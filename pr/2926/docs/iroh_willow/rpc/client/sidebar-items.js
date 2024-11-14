@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["Client","EntryForm","IntentExistsError","Space","SpaceTicket","SyncHandle","SyncHandleSet","SyncProgress"],"type":["EventReceiver","UpdateSender"]};
