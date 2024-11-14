@@ -6,12 +6,7 @@ pub use crate::rpc_protocol::RpcService;
 
 mod quic;
 
-pub use iroh_blobs::rpc::client::{blobs, tags};
-<<<<<<< HEAD
-pub use iroh_gossip::rpc::client as gossip;
 pub use iroh_node_util::rpc::client::{net, node};
-=======
->>>>>>> d9b832c90 (refactor(iroh): remove iroh-gossip)
 
 pub(crate) use self::quic::{connect_raw as quic_connect_raw, RPC_ALPN};
 
@@ -50,16 +45,6 @@ impl Iroh {
     /// Returns the actual [`RpcClient`].
     pub fn client(&self) -> RpcClient {
         self.rpc.clone()
-    }
-
-    /// Returns the blobs client.
-    pub fn blobs(&self) -> blobs::Client {
-        blobs::Client::new(self.rpc.clone().map().boxed())
-    }
-
-    /// Returns the tags client.
-    pub fn tags(&self) -> tags::Client {
-        tags::Client::new(self.rpc.clone().map().boxed())
     }
 
     /// Returns the net client.

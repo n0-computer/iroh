@@ -29,7 +29,6 @@ derive_more = { version = "1.0.0", features = [
 ] }
 futures-lite = "2.3"
 futures-util = "0.3"
-iroh-blobs = { version = "0.28.0", features = ["downloader"] }
 iroh-base = { version = "0.28.0", features = ["key"] }
 iroh-docs = { version = "0.28.0", features = ["rpc"] }
 iroh-io = { version = "0.6.0", features = ["stats"] }
@@ -72,8 +71,8 @@ serde-error = "0.1.3"
 
 [features]
 default = ["metrics", "fs-store"]
-metrics = ["iroh-metrics", "iroh-blobs/metrics"]
-fs-store = ["iroh-blobs/fs-store"]
+metrics = ["iroh-metrics"]
+fs-store = []
 test = []
 examples = ["dep:clap", "dep:indicatif"]
 discovery-local-network = [

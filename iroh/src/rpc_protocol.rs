@@ -27,7 +27,6 @@ pub struct RpcService;
 #[nested_enum_utils::enum_conversions()]
 pub enum Request {
     Node(iroh_node_util::rpc::proto::Request),
-    BlobsAndTags(iroh_blobs::rpc::proto::Request),
 }
 
 /// The response enum, listing all possible responses.
@@ -36,7 +35,6 @@ pub enum Request {
 #[nested_enum_utils::enum_conversions()]
 pub enum Response {
     Node(iroh_node_util::rpc::proto::Response),
-    BlobsAndTags(iroh_blobs::rpc::proto::Response),
 }
 
 impl quic_rpc::Service for RpcService {

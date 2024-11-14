@@ -38,7 +38,6 @@
 use std::{
     collections::BTreeSet,
     fmt::Debug,
-    marker::PhantomData,
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
@@ -49,11 +48,6 @@ use anyhow::{anyhow, Result};
 use futures_lite::StreamExt;
 use futures_util::future::{MapErr, Shared};
 use iroh_base::key::PublicKey;
-use iroh_blobs::{
-    net_protocol::Blobs as BlobsProtocol,
-    store::Store as BaoStore,
-    util::local_pool::{LocalPool, LocalPoolHandle},
-};
 use iroh_net::{
     endpoint::{DirectAddrsStream, RemoteInfo},
     AddrInfo, Endpoint, NodeAddr,
@@ -72,9 +66,7 @@ mod rpc;
 mod rpc_status;
 
 pub use self::{
-    builder::{
-        Builder, DiscoveryConfig, GcPolicy, ProtocolBuilder, StorageConfig, DEFAULT_RPC_ADDR,
-    },
+    builder::{Builder, DiscoveryConfig, ProtocolBuilder, StorageConfig, DEFAULT_RPC_ADDR},
     rpc_status::RpcStatus,
 };
 
@@ -100,8 +92,8 @@ pub type IrohServerEndpoint = quic_rpc::transport::boxed::BoxedListener<
 /// await the [`Node`] struct directly, it will complete when the task completes.  If
 /// this is dropped the node task is not stopped but keeps running.
 #[derive(Debug, Clone)]
-pub struct Node<D> {
-    inner: Arc<NodeInner<D>>,
+pub struct Node {
+    inner: Arc<NodeInner>,
     // `Node` needs to be `Clone + Send`, and we need to `task.await` in its `shutdown()` impl.
     // So we need
     // - `Shared` so we can `task.await` from all `Node` clones
@@ -115,43 +107,37 @@ pub struct Node<D> {
 pub(crate) type JoinErrToStr = Box<dyn Fn(JoinError) -> String + Send + Sync + 'static>;
 
 #[derive(derive_more::Debug)]
-struct NodeInner<D> {
-    db: PhantomData<D>,
+struct NodeInner {
     rpc_addr: Option<SocketAddr>,
     endpoint: Endpoint,
     cancel_token: CancellationToken,
     client: crate::client::Iroh,
-    local_pool_handle: LocalPoolHandle,
 }
 
 /// In memory node.
-pub type MemNode = Node<iroh_blobs::store::mem::Store>;
+#[deprecated]
+pub type MemNode = Node;
 
 /// Persistent node.
-pub type FsNode = Node<iroh_blobs::store::fs::Store>;
+#[deprecated]
+pub type FsNode = Node;
 
-impl MemNode {
+impl Node {
     /// Returns a new builder for the [`Node`], by default configured to run in memory.
     ///
     /// Once done with the builder call [`Builder::spawn`] to create the node.
-    pub fn memory() -> Builder<iroh_blobs::store::mem::Store> {
-        Builder::default()
+    pub fn memory() -> Builder {
+        Builder::memory()
     }
-}
 
-impl FsNode {
     /// Returns a new builder for the [`Node`], configured to persist all data
     /// from the given path.
     ///
     /// Once done with the builder call [`Builder::spawn`] to create the node.
-    pub async fn persistent(
-        root: impl AsRef<Path>,
-    ) -> Result<Builder<iroh_blobs::store::fs::Store>> {
-        Builder::default().persist(root).await
+    pub async fn persistent(root: impl AsRef<Path>) -> Result<Builder> {
+        Builder::memory().persist(root).await
     }
-}
 
-impl<D: BaoStore> Node<D> {
     /// Returns the [`Endpoint`] of the node.
     ///
     /// This can be used to establish connections to other nodes under any
@@ -193,11 +179,6 @@ impl<D: BaoStore> Node<D> {
     /// Return a client to control this node over an in-memory channel.
     pub fn client(&self) -> &crate::client::Iroh {
         &self.inner.client
-    }
-
-    /// Returns a reference to the used `LocalPoolHandle`.
-    pub fn local_pool_handle(&self) -> &LocalPoolHandle {
-        &self.inner.local_pool_handle
     }
 
     /// Get the relay server we are connected to.
@@ -242,7 +223,7 @@ impl<D: BaoStore> Node<D> {
     }
 }
 
-impl<D> std::ops::Deref for Node<D> {
+impl std::ops::Deref for Node {
     type Target = crate::client::Iroh;
 
     fn deref(&self) -> &Self::Target {
@@ -250,7 +231,7 @@ impl<D> std::ops::Deref for Node<D> {
     }
 }
 
-impl<D: iroh_blobs::store::Store> NodeInner<D> {
+impl NodeInner {
     async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
         let endpoints = self
             .endpoint
@@ -267,10 +248,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         external_rpc: IrohServerEndpoint,
         internal_rpc: IrohServerEndpoint,
         router: Router,
-        gc_policy: GcPolicy,
-        gc_done_callback: Option<Box<dyn Fn() + Send>>,
         nodes_data_path: Option<PathBuf>,
-        local_pool: LocalPool,
     ) {
         let (ipv4, ipv6) = self.endpoint.bound_sockets();
         debug!(
@@ -285,37 +263,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         // Setup the RPC servers.
         let external_rpc = RpcServer::new(external_rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
-
-        // Spawn a task for the garbage collection.
-        if let GcPolicy::Interval(gc_period) = gc_policy {
-            let router = router.clone();
-            let handle = local_pool.spawn(move || async move {
-                let blobs = router
-                    .get_protocol::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
-                    .expect("missing blobs");
-
-                blobs
-                    .store()
-                    .gc_run(
-                        iroh_blobs::store::GcConfig {
-                            period: gc_period,
-                            done_callback: gc_done_callback,
-                        },
-                        || async move { BTreeSet::default() },
-                    )
-                    .await;
-            });
-            // We cannot spawn tasks that run on the local pool directly into the join set,
-            // so instead we create a new task that supervises the local task.
-            join_set.spawn({
-                async move {
-                    if let Err(err) = handle.await {
-                        return Err(anyhow::Error::from(err));
-                    }
-                    Ok(())
-                }
-            });
-        }
 
         if let Some(nodes_data_path) = nodes_data_path {
             let ep = self.endpoint.clone();
@@ -417,7 +364,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
 
         // Abort remaining local tasks.
         tracing::info!("Shutting down local pool");
-        local_pool.shutdown().await;
     }
 }
 

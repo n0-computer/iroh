@@ -1,8 +1,6 @@
 use std::{collections::BTreeMap, fmt::Debug, sync::Arc};
 
 use anyhow::Result;
-use futures_lite::Stream;
-use iroh_blobs::{net_protocol::Blobs as BlobsProtocol, store::Store as BaoStore};
 use iroh_node_util::rpc::proto::node::CounterStats;
 use iroh_router::Router;
 use quic_rpc::server::{RpcChannel, RpcServerError};
@@ -16,18 +14,21 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub(crate) struct Handler<D> {
-    pub(crate) inner: Arc<NodeInner<D>>,
-    pub(crate) router: Router,
+pub(crate) struct Handler {
+    pub(crate) inner: Arc<NodeInner>,
+    pub(crate) _router: Router,
 }
 
-impl<D> Handler<D> {
-    pub fn new(inner: Arc<NodeInner<D>>, router: Router) -> Self {
-        Self { inner, router }
+impl Handler {
+    pub fn new(inner: Arc<NodeInner>, router: Router) -> Self {
+        Self {
+            inner,
+            _router: router,
+        }
     }
 }
 
-impl<D: BaoStore> iroh_node_util::rpc::server::AbstractNode for NodeInner<D> {
+impl iroh_node_util::rpc::server::AbstractNode for NodeInner {
     fn endpoint(&self) -> &iroh_net::Endpoint {
         &self.endpoint
     }
@@ -49,15 +50,9 @@ impl<D: BaoStore> iroh_node_util::rpc::server::AbstractNode for NodeInner<D> {
     }
 }
 
-impl<D: BaoStore> Handler<D> {
-    fn blobs(&self) -> Arc<BlobsProtocol<D>> {
-        self.router
-            .get_protocol::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
-            .expect("missing blobs")
-    }
-
+impl Handler {
     pub(crate) fn spawn_rpc_request(
-        inner: Arc<NodeInner<D>>,
+        inner: Arc<NodeInner>,
         join_set: &mut JoinSet<anyhow::Result<()>>,
         accepting: quic_rpc::server::Accepting<RpcService, IrohServerEndpoint>,
         router: Router,
@@ -83,17 +78,6 @@ impl<D: BaoStore> Handler<D> {
             .map_err(|e| e.errors_into())
     }
 
-    async fn handle_blobs_request(
-        self,
-        msg: iroh_blobs::rpc::proto::Request,
-        chan: RpcChannel<iroh_blobs::rpc::proto::RpcService>,
-    ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
-        self.blobs()
-            .handle_rpc_request(msg, chan)
-            .await
-            .map_err(|e| e.errors_into())
-    }
-
     pub(crate) async fn handle_rpc_request(
         self,
         msg: Request,
@@ -103,7 +87,6 @@ impl<D: BaoStore> Handler<D> {
         debug!("handling rpc request: {msg}");
         match msg {
             Node(msg) => self.handle_node_request(msg, chan).await,
-            BlobsAndTags(msg) => self.handle_blobs_request(msg, chan.map().boxed()).await,
         }
     }
 }
