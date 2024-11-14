@@ -2621,7 +2621,6 @@ dependencies = [
  "indicatif",
  "iroh",
  "iroh-base",
- "iroh-blobs",
  "iroh-docs",
  "iroh-gossip",
  "iroh-io",

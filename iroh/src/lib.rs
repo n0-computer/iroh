@@ -91,8 +91,6 @@
 #[doc(inline)]
 pub use iroh_base as base;
 #[doc(inline)]
-pub use iroh_blobs as blobs;
-#[doc(inline)]
 pub use iroh_net as net;
 #[doc(inline)]
 pub use iroh_router as router;
