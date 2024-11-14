@@ -2,7 +2,6 @@ use std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use futures_buffered::join_all;
-
 use futures_lite::{future::Boxed, StreamExt};
 use futures_util::{FutureExt, TryFutureExt};
 use iroh_net::{
@@ -14,10 +13,10 @@ use tokio::{
     task::{AbortHandle, JoinSet},
 };
 use tokio_stream::{wrappers::ReceiverStream, StreamMap};
-
 use tokio_util::{either::Either, sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error_span, instrument, trace, warn, Instrument, Span};
 
+use super::actor::ActorHandle;
 use crate::{
     interest::Interests,
     net::{
@@ -30,8 +29,6 @@ use crate::{
         Error, InitialTransmission, Role, SessionEvent, SessionHandle, SessionInit, SessionUpdate,
     },
 };
-
-use super::actor::ActorHandle;
 
 /// Timeout at shutdown after which we abort connections that failed to terminate gracefully.
 const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);

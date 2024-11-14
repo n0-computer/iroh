@@ -11,6 +11,12 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error_span, trace, Instrument, Span};
 
+use super::{
+    channels::ChannelReceivers,
+    data::{DataReceiver, DataSender},
+    reconciler::Reconciler,
+    SessionMode,
+};
 use crate::{
     net::ConnHandle,
     proto::wgps::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
@@ -30,13 +36,6 @@ use crate::{
         channel::Receiver,
         stream::{Cancelable, CancelableReceiver},
     },
-};
-
-use super::{
-    channels::ChannelReceivers,
-    data::{DataReceiver, DataSender},
-    reconciler::Reconciler,
-    SessionMode,
 };
 
 const INITIAL_GUARANTEES: u64 = u64::MAX;

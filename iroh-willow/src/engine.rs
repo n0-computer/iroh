@@ -25,9 +25,7 @@ mod actor;
 mod peer_manager;
 
 use self::peer_manager::PeerManager;
-
-pub use self::actor::ActorHandle;
-pub use self::peer_manager::AcceptOpts;
+pub use self::{actor::ActorHandle, peer_manager::AcceptOpts};
 
 const PEER_MANAGER_INBOX_CAP: usize = 128;
 

@@ -17,9 +17,9 @@ pub type NamespaceId = keys::NamespaceId;
 pub type UserSignature = keys::UserSignature;
 pub type NamespaceSignature = keys::NamespaceSignature;
 
-use super::data_model::{Entry, MAX_COMPONENT_COUNT, MAX_COMPONENT_LENGTH, MAX_PATH_LENGTH};
-
 pub use meadowcap::{AccessMode, IsCommunal};
+
+use super::data_model::{Entry, MAX_COMPONENT_COUNT, MAX_COMPONENT_LENGTH, MAX_PATH_LENGTH};
 
 #[derive(Debug, derive_more::From, Serialize, Deserialize)]
 pub enum SecretKey {
@@ -137,12 +137,11 @@ pub fn is_wider_than(a: &McCapability, b: &McCapability) -> bool {
 pub mod serde_encoding {
     use serde::{de, Deserialize, Deserializer};
 
+    use super::*;
     use crate::{
         proto::grouping::Area,
         util::codec2::{from_bytes, from_bytes_relative, to_vec, to_vec_relative},
     };
-
-    use super::*;
 
     pub mod read_authorisation {
         use super::*;

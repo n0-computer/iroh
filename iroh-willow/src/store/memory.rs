@@ -5,31 +5,32 @@
 //! It does not have good performance, it does a lot of iterating. But it is concise and can
 //! hopefully easily kept correct.
 
-use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
-use std::pin::Pin;
-use std::rc::{Rc, Weak};
-use std::task::{ready, Context, Poll, Waker};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, VecDeque},
+    pin::Pin,
+    rc::{Rc, Weak},
+    task::{ready, Context, Poll, Waker},
+};
 
 use anyhow::Result;
 use futures_util::Stream;
 use tracing::debug;
 
-use crate::proto::data_model::PathExt;
-use crate::proto::grouping::Area;
+use super::{
+    traits::{StoreEvent, SubscribeParams},
+    EntryOrigin,
+};
 use crate::{
     interest::{CapSelector, CapabilityPack},
     proto::{
-        data_model::{AuthorisedEntry, Path, SubspaceId, WriteCapability},
-        grouping::Range3d,
+        data_model::{AuthorisedEntry, Path, PathExt, SubspaceId, WriteCapability},
+        grouping::{Area, Range3d},
         keys::{NamespaceId, NamespaceSecretKey, UserId, UserSecretKey},
         meadowcap::{self, is_wider_than, ReadAuthorisation},
     },
     store::traits,
 };
-
-use super::traits::{StoreEvent, SubscribeParams};
-use super::EntryOrigin;
 
 #[derive(Debug, Clone, Default)]
 pub struct Store<PS> {

@@ -673,9 +673,13 @@ fn flatten_interests(interests: &InterestMap) -> NamespaceInterests {
 pub mod serde_encoding {
     use serde::{Deserialize, Serialize};
 
-    use crate::proto::grouping::serde_encoding::{SerdeArea, SerdeAreaOfInterest};
-    use crate::proto::keys::NamespaceId;
-    use crate::session::intents::EventKind;
+    use crate::{
+        proto::{
+            grouping::serde_encoding::{SerdeArea, SerdeAreaOfInterest},
+            keys::NamespaceId,
+        },
+        session::intents::EventKind,
+    };
 
     /// Serializable version of EventKind
     #[derive(Debug, Clone, Serialize, Deserialize)]

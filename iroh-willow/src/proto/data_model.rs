@@ -2,15 +2,13 @@
 
 use iroh_base::hash::Hash;
 use ufotofu::sync::{consumer::IntoVec, producer::FromSlice};
+pub use willow_data_model::{InvalidPathError, UnauthorisedWriteError};
 use willow_encoding::sync::{Decodable, Encodable};
 
 use super::{
     keys,
     meadowcap::{self},
 };
-
-pub use willow_data_model::InvalidPathError;
-pub use willow_data_model::UnauthorisedWriteError;
 
 /// A type for identifying namespaces.
 pub type NamespaceId = keys::NamespaceId;
@@ -206,14 +204,12 @@ pub type AuthorisedEntry = willow_data_model::AuthorisedEntry<
     AuthorisationToken,
 >;
 
-use syncify::syncify;
-use syncify::syncify_replace;
+use syncify::{syncify, syncify_replace};
 
 #[syncify(encoding_sync)]
 mod encoding {
     #[syncify_replace(use ufotofu::sync::{BulkConsumer, BulkProducer};)]
     use ufotofu::local_nb::{BulkConsumer, BulkProducer};
-
     #[syncify_replace(use willow_encoding::sync::{Decodable, Encodable};)]
     use willow_encoding::{Decodable, Encodable};
 
@@ -249,9 +245,8 @@ mod encoding {
 pub mod serde_encoding {
     use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
-    use crate::util::codec2::{from_bytes, to_vec};
-
     use super::*;
+    use crate::util::codec2::{from_bytes, to_vec};
 
     pub mod path {
 
@@ -299,10 +294,10 @@ pub mod serde_encoding {
     pub struct SerdeEntry(#[serde(with = "entry")] pub Entry);
 
     pub mod authorised_entry {
-        use crate::proto::meadowcap::serde_encoding::SerdeMcCapability;
         use keys::UserSignature;
 
         use super::*;
+        use crate::proto::meadowcap::serde_encoding::SerdeMcCapability;
         pub fn serialize<S: Serializer>(
             entry: &AuthorisedEntry,
             serializer: S,

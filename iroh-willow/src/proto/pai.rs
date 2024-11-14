@@ -155,14 +155,12 @@ impl FragmentKit {
     }
 }
 
-use syncify::syncify;
-use syncify::syncify_replace;
+use syncify::{syncify, syncify_replace};
 
 #[syncify(encoding_sync)]
 mod encoding {
     #[syncify_replace(use ufotofu::sync::BulkConsumer;)]
     use ufotofu::local_nb::BulkConsumer;
-
     #[syncify_replace(use willow_encoding::sync::Encodable;)]
     use willow_encoding::Encodable;
 

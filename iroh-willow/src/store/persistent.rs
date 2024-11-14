@@ -1,7 +1,3 @@
-use anyhow::Result;
-use ed25519_dalek::ed25519;
-use futures_util::Stream;
-use redb::{Database, ReadableTable};
 use std::{
     cell::{Ref, RefCell, RefMut},
     collections::HashMap,
@@ -12,9 +8,19 @@ use std::{
     task::{ready, Context, Poll},
     time::Duration,
 };
+
+use anyhow::Result;
+use ed25519_dalek::ed25519;
+use futures_util::Stream;
+use redb::{Database, ReadableTable};
 use willow_data_model::SubspaceId as _;
 use willow_store::{QueryRange, QueryRange3d};
 
+use super::{
+    memory,
+    traits::{self, SplitAction, StoreEvent, SubscribeParams},
+    willow_store_glue::{to_query, IrohWillowParams},
+};
 use crate::{
     interest::{CapSelector, CapabilityPack},
     proto::{
@@ -30,12 +36,6 @@ use crate::{
     store::willow_store_glue::{
         path_to_blobseq, to_range3d, StoredAuthorisedEntry, StoredTimestamp,
     },
-};
-
-use super::{
-    memory,
-    traits::{self, SplitAction, StoreEvent, SubscribeParams},
-    willow_store_glue::{to_query, IrohWillowParams},
 };
 
 mod tables;

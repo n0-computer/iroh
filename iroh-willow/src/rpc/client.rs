@@ -15,23 +15,6 @@ use std::{
     task::{ready, Context, Poll},
 };
 
-use crate::{
-    form::{AuthForm, SubspaceForm, TimestampForm},
-    interest::{
-        AreaOfInterestSelector, CapSelector, CapabilityPack, DelegateTo, Interests, RestrictArea,
-    },
-    proto::{
-        data_model::{AuthorisedEntry, Path, SubspaceId},
-        grouping::{Area, Range3d},
-        keys::{NamespaceId, NamespaceKind, UserId},
-        meadowcap::{AccessMode, SecretKey},
-    },
-    session::{
-        intents::{serde_encoding::Event, Completion, IntentUpdate},
-        SessionInit, SessionMode,
-    },
-    store::traits::{StoreEvent, SubscribeParams},
-};
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
@@ -44,9 +27,25 @@ use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 use tokio_stream::{StreamMap, StreamNotifyClose};
 
-use crate::rpc::proto::*;
-
 use super::RpcClient;
+use crate::{
+    form::{AuthForm, SubspaceForm, TimestampForm},
+    interest::{
+        AreaOfInterestSelector, CapSelector, CapabilityPack, DelegateTo, Interests, RestrictArea,
+    },
+    proto::{
+        data_model::{AuthorisedEntry, Path, SubspaceId},
+        grouping::{Area, Range3d},
+        keys::{NamespaceId, NamespaceKind, UserId},
+        meadowcap::{AccessMode, SecretKey},
+    },
+    rpc::proto::*,
+    session::{
+        intents::{serde_encoding::Event, Completion, IntentUpdate},
+        SessionInit, SessionMode,
+    },
+    store::traits::{StoreEvent, SubscribeParams},
+};
 
 /// Iroh Willow client.
 #[derive(Debug, Clone, RefCast)]
@@ -433,7 +432,6 @@ pub struct SpaceTicket {
 /// otherwise the session will be blocked from progressing.
 ///
 /// The `SyncHandle` can also submit new interests into the session.
-///
 // This version of SyncHandle differs from the one in iroh-willow intents module
 // by using the Event type instead of EventKind, which serializes the error to a string
 // to cross the RPC boundary. Maybe look into making the main iroh_willow Error type

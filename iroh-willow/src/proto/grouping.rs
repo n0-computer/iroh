@@ -129,9 +129,8 @@ impl Point {
 pub mod serde_encoding {
     use serde::{de, Deserialize, Deserializer, Serialize};
 
-    use crate::util::codec2::{from_bytes_relative, to_vec_relative};
-
     use super::*;
+    use crate::util::codec2::{from_bytes_relative, to_vec_relative};
 
     pub mod area {
         use super::*;

@@ -420,6 +420,7 @@ mod tests {
     use rand_chacha::ChaCha12Rng;
     use tracing::{info, Instrument};
 
+    use super::{establish, prepare_channels};
     use crate::{
         engine::ActorHandle,
         form::{AuthForm, EntryForm, PayloadForm, SubspaceForm, TimestampForm},
@@ -434,8 +435,6 @@ mod tests {
         },
         session::{intents::Intent, Role, SessionHandle, SessionInit, SessionMode},
     };
-
-    use super::{establish, prepare_channels};
 
     const ALPN: &[u8] = b"iroh-willow/0";
 

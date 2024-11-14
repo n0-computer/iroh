@@ -12,9 +12,7 @@ use ed25519_dalek::{SignatureError, Signer, SigningKey, Verifier, VerifyingKey};
 use iroh_base::base32;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
-use willow_store::FixedSize;
-use willow_store::IsLowerBound;
-use willow_store::LowerBound;
+use willow_store::{FixedSize, IsLowerBound, LowerBound};
 
 use super::meadowcap::IsCommunal;
 
@@ -593,9 +591,8 @@ impl FromStr for NamespaceId {
 }
 
 mod willow_impls {
-    use crate::util::increment_by_one;
-
     use super::*;
+    use crate::util::increment_by_one;
 
     impl willow_data_model::SubspaceId for UserId {
         fn successor(&self) -> Option<Self> {
@@ -675,14 +672,12 @@ mod willow_impls {
     }
 }
 
-use syncify::syncify;
-use syncify::syncify_replace;
+use syncify::{syncify, syncify_replace};
 
 #[syncify(encoding_sync)]
 mod encoding {
     #[syncify_replace(use ufotofu::sync::{BulkConsumer, BulkProducer};)]
     use ufotofu::local_nb::{BulkConsumer, BulkProducer};
-
     use willow_encoding::DecodeError;
     #[syncify_replace(use willow_encoding::sync::{Encodable, Decodable};)]
     use willow_encoding::{Decodable, Encodable};

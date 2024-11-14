@@ -125,10 +125,10 @@ pub enum AreaOfInterestSelector {
 
 mod serde_area_of_interest_set {
     // TODO: Less clones and allocs.
-    use crate::proto::grouping::serde_encoding::SerdeAreaOfInterest;
     use serde::Deserializer;
 
     use super::*;
+    use crate::proto::grouping::serde_encoding::SerdeAreaOfInterest;
     pub fn serialize<S: serde::Serializer>(
         items: &HashSet<AreaOfInterest>,
         serializer: S,

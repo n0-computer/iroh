@@ -7,6 +7,7 @@ use std::{
 use futures_lite::Stream;
 use tracing::trace;
 
+use super::Error;
 use crate::{
     proto::wgps::{
         Channel, DataMessage, IntersectionMessage, LogicalChannel, Message, ReconciliationMessage,
@@ -14,8 +15,6 @@ use crate::{
     },
     util::channel::{Receiver, Sender, WriteError},
 };
-
-use super::Error;
 
 #[derive(Debug)]
 pub struct MessageReceiver<T> {

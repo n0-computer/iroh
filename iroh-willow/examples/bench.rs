@@ -99,11 +99,6 @@ mod util {
     use bytes::Bytes;
     use futures_concurrency::future::TryJoin;
     use iroh_net::{Endpoint, NodeId};
-    use rand::SeedableRng;
-    use rand_chacha::ChaCha12Rng;
-    use rand_core::CryptoRngCore;
-    use tokio::task::JoinHandle;
-
     use iroh_willow::{
         engine::{AcceptOpts, Engine},
         form::EntryForm,
@@ -115,6 +110,10 @@ mod util {
         },
         ALPN,
     };
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha12Rng;
+    use rand_core::CryptoRngCore;
+    use tokio::task::JoinHandle;
 
     pub fn create_rng(seed: &str) -> ChaCha12Rng {
         let seed = iroh_base::hash::Hash::new(seed);

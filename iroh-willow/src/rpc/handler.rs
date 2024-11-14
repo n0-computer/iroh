@@ -1,16 +1,12 @@
 use anyhow::Result;
 use futures_lite::Stream;
-use futures_util::SinkExt;
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use iroh_net::Endpoint;
-use quic_rpc::server::ChannelTypes;
-use quic_rpc::server::{RpcChannel, RpcServerError};
+use quic_rpc::server::{ChannelTypes, RpcChannel, RpcServerError};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::form::EntryOrForm;
-use crate::rpc::proto::*;
-use crate::Engine;
+use crate::{form::EntryOrForm, rpc::proto::*, Engine};
 
 fn map_err(err: anyhow::Error) -> RpcError {
     RpcError::new(&*err)
