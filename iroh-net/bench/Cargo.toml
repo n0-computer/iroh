@@ -25,7 +25,7 @@ tracing-subscriber = { version = "0.3.0", default-features = false, features = [
     "local-time",
 ] }
 socket2 = "0.5"
-futures-lite = "2.3.0"
+futures-lite = "2.5"
 
 [features]
 default = []

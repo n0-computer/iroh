@@ -16,9 +16,9 @@ workspace = true
 anyhow = { version = "1" }
 atomic-waker = "1.1.2"
 bytes = "1.7"
-futures-lite = "2.3"
-futures-sink = "0.3.25"
-futures-util = "0.3.25"
+futures-lite = "2.5"
+futures-sink = "0.3"
+futures-util = "0.3"
 libc = "0.2.139"
 netdev = "0.30.0"
 once_cell = "1.18.0"
@@ -49,12 +49,7 @@ rtnetlink = "0.13.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 wmi = "0.13"
-windows = { version = "0.51", features = [
-    "Win32_NetworkManagement_IpHelper",
-    "Win32_Foundation",
-    "Win32_NetworkManagement_Ndis",
-    "Win32_Networking_WinSock",
-] }
+windows = { version = "0.52", features = ["Win32_NetworkManagement_IpHelper", "Win32_Foundation", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
 serde = { version = "1", features = ["derive"] }
 derive_more = { version = "1.0.0", features = ["debug"] }
 
