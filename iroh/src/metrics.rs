@@ -69,7 +69,6 @@ impl Metric for Metrics {
 pub fn try_init_metrics_collection() -> std::io::Result<()> {
     iroh_metrics::core::Core::try_init(|reg, metrics| {
         metrics.insert(crate::metrics::Metrics::new(reg));
-        metrics.insert(iroh_docs::metrics::Metrics::new(reg));
         metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
         metrics.insert(iroh_net::metrics::NetReportMetrics::new(reg));
         metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
@@ -83,10 +82,6 @@ pub fn get_metrics() -> anyhow::Result<BTreeMap<String, CounterStats>> {
     let mut map = BTreeMap::new();
     let core =
         iroh_metrics::core::Core::get().ok_or_else(|| anyhow::anyhow!("metrics are disabled"))?;
-    collect(
-        core.get_collector::<iroh_docs::metrics::Metrics>(),
-        &mut map,
-    );
     collect(
         core.get_collector::<iroh_net::metrics::MagicsockMetrics>(),
         &mut map,

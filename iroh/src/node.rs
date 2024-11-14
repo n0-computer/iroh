@@ -54,7 +54,6 @@ use iroh_blobs::{
     store::Store as BaoStore,
     util::local_pool::{LocalPool, LocalPoolHandle},
 };
-use iroh_docs::{engine::Engine, net::DOCS_ALPN};
 use iroh_net::{
     endpoint::{DirectAddrsStream, RemoteInfo},
     AddrInfo, Endpoint, NodeAddr,
@@ -74,8 +73,7 @@ mod rpc_status;
 
 pub use self::{
     builder::{
-        Builder, DiscoveryConfig, DocsStorage, GcPolicy, ProtocolBuilder, StorageConfig,
-        DEFAULT_RPC_ADDR,
+        Builder, DiscoveryConfig, GcPolicy, ProtocolBuilder, StorageConfig, DEFAULT_RPC_ADDR,
     },
     rpc_status::RpcStatus,
 };
@@ -292,7 +290,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         if let GcPolicy::Interval(gc_period) = gc_policy {
             let router = router.clone();
             let handle = local_pool.spawn(move || async move {
-                let docs_engine = router.get_protocol::<Engine<D>>(DOCS_ALPN);
                 let blobs = router
                     .get_protocol::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
                     .expect("missing blobs");
@@ -304,32 +301,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                             period: gc_period,
                             done_callback: gc_done_callback,
                         },
-                        move || {
-                            let docs_engine = docs_engine.clone();
-                            async move {
-                                let mut live = BTreeSet::default();
-                                if let Some(docs) = docs_engine {
-                                    let doc_hashes = match docs.sync.content_hashes().await {
-                                        Ok(hashes) => hashes,
-                                        Err(err) => {
-                                            tracing::warn!("Error getting doc hashes: {}", err);
-                                            return live;
-                                        }
-                                    };
-                                    for hash in doc_hashes {
-                                        match hash {
-                                            Ok(hash) => {
-                                                live.insert(hash);
-                                            }
-                                            Err(err) => {
-                                                tracing::error!("Error getting doc hash: {}", err);
-                                            }
-                                        }
-                                    }
-                                }
-                                live
-                            }
-                        },
+                        || async move { BTreeSet::default() },
                     )
                     .await;
             });
@@ -580,33 +552,6 @@ mod tests {
         .await
         .context("timeout")?
         .context("get failed")?;
-
-        Ok(())
-    }
-
-    #[cfg(feature = "fs-store")]
-    #[tokio::test]
-    async fn test_shutdown() -> Result<()> {
-        let _guard = iroh_test::logging::setup();
-
-        let iroh_root = tempfile::TempDir::new()?;
-        {
-            let iroh = Node::persistent(iroh_root.path())
-                .await?
-                .enable_docs()
-                .spawn()
-                .await?;
-            let doc = iroh.docs().create().await?;
-            drop(doc);
-            iroh.shutdown().await?;
-        }
-
-        let iroh = Node::persistent(iroh_root.path())
-            .await?
-            .enable_docs()
-            .spawn()
-            .await?;
-        let _doc = iroh.docs().create().await?;
 
         Ok(())
     }

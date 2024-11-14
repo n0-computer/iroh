@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use bao_tree::{blake3, ChunkNum, ChunkRanges};
 use bytes::Bytes;
 use futures_lite::FutureExt;
-use iroh::node::{Builder, DocsStorage};
+use iroh::node::Builder;
 use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
 use iroh_blobs::{
     format::collection::Collection,
@@ -37,8 +37,7 @@ async fn dial(secret_key: SecretKey, peer: NodeAddr) -> anyhow::Result<quinn::Co
 }
 
 fn test_node<D: Store>(db: D) -> Builder<D> {
-    iroh::node::Builder::with_db_and_store(db, DocsStorage::Memory, iroh::node::StorageConfig::Mem)
-        .bind_random_port()
+    iroh::node::Builder::with_db_and_store(db, iroh::node::StorageConfig::Mem).bind_random_port()
 }
 
 #[tokio::test]

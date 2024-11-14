@@ -6,7 +6,7 @@ use std::{
 use anyhow::Result;
 use bao_tree::{blake3, io::sync::Outboard, ChunkRanges};
 use bytes::Bytes;
-use iroh::node::{self, DocsStorage, Node};
+use iroh::node::{self, Node};
 use iroh_blobs::{
     hashseq::HashSeq,
     store::{EntryStatus, MapMut, Store},
@@ -44,18 +44,14 @@ where
     S: iroh_blobs::store::Store,
 {
     let (gc_send, gc_recv) = async_channel::unbounded();
-    let node = node::Builder::with_db_and_store(
-        bao_store,
-        DocsStorage::Memory,
-        iroh::node::StorageConfig::Mem,
-    )
-    .gc_policy(iroh::node::GcPolicy::Interval(gc_period))
-    .register_gc_done_cb(Box::new(move || {
-        gc_send.send_blocking(()).ok();
-    }))
-    .spawn()
-    .await
-    .unwrap();
+    let node = node::Builder::with_db_and_store(bao_store, iroh::node::StorageConfig::Mem)
+        .gc_policy(iroh::node::GcPolicy::Interval(gc_period))
+        .register_gc_done_cb(Box::new(move || {
+            gc_send.send_blocking(()).ok();
+        }))
+        .spawn()
+        .await
+        .unwrap();
     (node, gc_recv)
 }
 
