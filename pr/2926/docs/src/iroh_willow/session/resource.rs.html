@@ -162,15 +162,13 @@
 <a href="#162" id="162">162</a>
 <a href="#163" id="163">163</a>
 <a href="#164" id="164">164</a>
-<a href="#165" id="165">165</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map, HashMap, VecDeque},
     task::{Context, Poll, Waker},
 };
 
-<span class="kw">use </span><span class="kw">crate</span>::proto::wgps::{IsHandle, ResourceHandle};
-
 <span class="kw">use </span><span class="kw">super</span>::Error;
+<span class="kw">use </span><span class="kw">crate</span>::proto::wgps::{IsHandle, ResourceHandle};
 
 <span class="doccomment">/// The bind scope for resources.
 ///

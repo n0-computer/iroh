@@ -143,7 +143,6 @@
 <a href="#143" id="143">143</a>
 <a href="#144" id="144">144</a>
 <a href="#145" id="145">145</a>
-<a href="#146" id="146">146</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Store for entries, secrets, and capabilities used in the Willow engine.
 //!
 //! The storage backend is defined in the [`Storage`] trait and its associated types.
@@ -154,22 +153,21 @@
 <span class="kw">use </span>rand_core::CryptoRngCore;
 <span class="kw">use </span>traits::EntryStorage;
 
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::traits::EntryOrigin;
+<span class="kw">use </span><span class="self">self</span>::{
+    auth::{Auth, AuthError},
+    traits::Storage,
+};
 <span class="kw">use crate</span>::{
     form::{AuthForm, EntryForm, EntryOrForm, SubspaceForm, TimestampForm},
     interest::{CapSelector, UserSelector},
     proto::{
-        data_model::Entry,
-        data_model::{AuthorisedEntry, PayloadDigest},
+        data_model::{AuthorisedEntry, Entry, PayloadDigest},
         keys::{NamespaceId, NamespaceKind, NamespaceSecretKey, UserId},
     },
     store::traits::SecretStorage,
     util::time::system_time_now,
 };
-
-<span class="kw">use </span><span class="self">self</span>::auth::{Auth, AuthError};
-<span class="kw">use </span><span class="self">self</span>::traits::Storage;
-
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::traits::EntryOrigin;
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>auth;
 <span class="kw">pub mod </span>memory;

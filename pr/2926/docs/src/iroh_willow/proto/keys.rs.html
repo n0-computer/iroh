@@ -808,11 +808,6 @@
 <a href="#808" id="808">808</a>
 <a href="#809" id="809">809</a>
 <a href="#810" id="810">810</a>
-<a href="#811" id="811">811</a>
-<a href="#812" id="812">812</a>
-<a href="#813" id="813">813</a>
-<a href="#814" id="814">814</a>
-<a href="#815" id="815">815</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Public-key crypto types for willow
 //!
 //! This modules defines types which are wrappers around [`ed25519_dalek`] public-key crypto types.
@@ -827,9 +822,7 @@
 <span class="kw">use </span>iroh_base::base32;
 <span class="kw">use </span>rand_core::CryptoRngCore;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
-<span class="kw">use </span>willow_store::FixedSize;
-<span class="kw">use </span>willow_store::IsLowerBound;
-<span class="kw">use </span>willow_store::LowerBound;
+<span class="kw">use </span>willow_store::{FixedSize, IsLowerBound, LowerBound};
 
 <span class="kw">use </span><span class="kw">super</span>::meadowcap::IsCommunal;
 
@@ -1408,9 +1401,8 @@
 }
 
 <span class="kw">mod </span>willow_impls {
-    <span class="kw">use </span><span class="kw">crate</span>::util::increment_by_one;
-
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::util::increment_by_one;
 
     <span class="kw">impl </span>willow_data_model::SubspaceId <span class="kw">for </span>UserId {
         <span class="kw">fn </span>successor(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt; {
@@ -1490,14 +1482,12 @@
     }
 }
 
-<span class="kw">use </span>syncify::syncify;
-<span class="kw">use </span>syncify::syncify_replace;
+<span class="kw">use </span>syncify::{syncify, syncify_replace};
 
 <span class="attr">#[syncify(encoding_sync)]
 </span><span class="kw">mod </span>encoding {
     <span class="attr">#[syncify_replace(<span class="kw">use </span>ufotofu::sync::{BulkConsumer, BulkProducer};)]
     </span><span class="kw">use </span>ufotofu::local_nb::{BulkConsumer, BulkProducer};
-
     <span class="kw">use </span>willow_encoding::DecodeError;
     <span class="attr">#[syncify_replace(<span class="kw">use </span>willow_encoding::sync::{Encodable, Decodable};)]
     </span><span class="kw">use </span>willow_encoding::{Decodable, Encodable};

@@ -753,14 +753,10 @@
 <a href="#753" id="753">753</a>
 <a href="#754" id="754">754</a>
 <a href="#755" id="755">755</a>
-<a href="#756" id="756">756</a>
-<a href="#757" id="757">757</a>
-<a href="#758" id="758">758</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{collections::HashMap, future::Future, sync::Arc, time::Duration};
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_buffered::join_all;
-
 <span class="kw">use </span>futures_lite::{future::Boxed, StreamExt};
 <span class="kw">use </span>futures_util::{FutureExt, TryFutureExt};
 <span class="kw">use </span>iroh_net::{
@@ -772,10 +768,10 @@
     task::{AbortHandle, JoinSet},
 };
 <span class="kw">use </span>tokio_stream::{wrappers::ReceiverStream, StreamMap};
-
 <span class="kw">use </span>tokio_util::{either::Either, sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, error_span, instrument, trace, warn, Instrument, Span};
 
+<span class="kw">use </span><span class="kw">super</span>::actor::ActorHandle;
 <span class="kw">use crate</span>::{
     interest::Interests,
     net::{
@@ -788,8 +784,6 @@
         Error, InitialTransmission, Role, SessionEvent, SessionHandle, SessionInit, SessionUpdate,
     },
 };
-
-<span class="kw">use </span><span class="kw">super</span>::actor::ActorHandle;
 
 <span class="doccomment">/// Timeout at shutdown after which we abort connections that failed to terminate gracefully.
 </span><span class="kw">const </span>GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);

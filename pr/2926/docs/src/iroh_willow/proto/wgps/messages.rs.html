@@ -539,16 +539,20 @@
 <a href="#539" id="539">539</a>
 <a href="#540" id="540">540</a>
 <a href="#541" id="541">541</a>
-<a href="#542" id="542">542</a>
-<a href="#543" id="543">543</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::io::Write;
 
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
+<span class="kw">use super</span>::{
+    channels::LogicalChannel,
+    fingerprint::Fingerprint,
+    handles::{
+        AreaOfInterestHandle, CapabilityHandle, HandleType, IntersectionHandle, StaticTokenHandle,
+    },
+};
 <span class="kw">use crate</span>::{
     proto::{
-        data_model::serde_encoding::SerdeEntry,
-        data_model::Entry,
+        data_model::{serde_encoding::SerdeEntry, Entry},
         grouping::{
             serde_encoding::{SerdeAreaOfInterest, SerdeRange3d},
             Area,
@@ -557,14 +561,6 @@
         wgps::AccessChallenge,
     },
     util::codec::{DecodeOutcome, Decoder, Encoder},
-};
-
-<span class="kw">use super</span>::{
-    channels::LogicalChannel,
-    fingerprint::Fingerprint,
-    handles::{
-        AreaOfInterestHandle, CapabilityHandle, HandleType, IntersectionHandle, StaticTokenHandle,
-    },
 };
 
 <span class="kw">pub type </span>StaticToken = meadowcap::serde_encoding::SerdeMcCapability;

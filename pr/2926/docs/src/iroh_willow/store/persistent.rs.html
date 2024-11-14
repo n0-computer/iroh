@@ -753,11 +753,7 @@
 <a href="#753" id="753">753</a>
 <a href="#754" id="754">754</a>
 <a href="#755" id="755">755</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>ed25519_dalek::ed25519;
-<span class="kw">use </span>futures_util::Stream;
-<span class="kw">use </span>redb::{Database, ReadableTable};
-<span class="kw">use </span>std::{
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     cell::{Ref, RefCell, RefMut},
     collections::HashMap,
     ops::DerefMut,
@@ -767,9 +763,19 @@
     task::{ready, Context, Poll},
     time::Duration,
 };
+
+<span class="kw">use </span>anyhow::Result;
+<span class="kw">use </span>ed25519_dalek::ed25519;
+<span class="kw">use </span>futures_util::Stream;
+<span class="kw">use </span>redb::{Database, ReadableTable};
 <span class="kw">use </span>willow_data_model::SubspaceId <span class="kw">as _</span>;
 <span class="kw">use </span>willow_store::{QueryRange, QueryRange3d};
 
+<span class="kw">use super</span>::{
+    memory,
+    traits::{<span class="self">self</span>, SplitAction, StoreEvent, SubscribeParams},
+    willow_store_glue::{to_query, IrohWillowParams},
+};
 <span class="kw">use crate</span>::{
     interest::{CapSelector, CapabilityPack},
     proto::{
@@ -785,12 +791,6 @@
     store::willow_store_glue::{
         path_to_blobseq, to_range3d, StoredAuthorisedEntry, StoredTimestamp,
     },
-};
-
-<span class="kw">use super</span>::{
-    memory,
-    traits::{<span class="self">self</span>, SplitAction, StoreEvent, SubscribeParams},
-    willow_store_glue::{to_query, IrohWillowParams},
 };
 
 <span class="kw">mod </span>tables;

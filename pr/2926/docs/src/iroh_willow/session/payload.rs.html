@@ -174,7 +174,6 @@
 <a href="#174" id="174">174</a>
 <a href="#175" id="175">175</a>
 <a href="#176" id="176">176</a>
-<a href="#177" id="177">177</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::io;
 
 <span class="kw">use </span>bytes::Bytes;
@@ -189,13 +188,12 @@
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tokio_stream::wrappers::ReceiverStream;
 
+<span class="kw">use </span><span class="kw">super</span>::Error;
 <span class="kw">use crate</span>::{
     proto::{data_model::PayloadDigest, wgps::Message},
     session::channels::ChannelSenders,
     util::pipe::chunked_pipe,
 };
-
-<span class="kw">use </span><span class="kw">super</span>::Error;
 
 <span class="kw">const </span>CHUNK_SIZE: usize = <span class="number">1024 </span>* <span class="number">32</span>;
 

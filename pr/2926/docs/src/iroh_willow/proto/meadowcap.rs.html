@@ -273,7 +273,6 @@
 <a href="#273" id="273">273</a>
 <a href="#274" id="274">274</a>
 <a href="#275" id="275">275</a>
-<a href="#276" id="276">276</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The capability system of Willow.
 //!
 //! Contains an instantiation of [`meadowcap`] for use in iroh-willow.
@@ -293,9 +292,9 @@
 <span class="kw">pub type </span>UserSignature = keys::UserSignature;
 <span class="kw">pub type </span>NamespaceSignature = keys::NamespaceSignature;
 
-<span class="kw">use </span><span class="kw">super</span>::data_model::{Entry, MAX_COMPONENT_COUNT, MAX_COMPONENT_LENGTH, MAX_PATH_LENGTH};
-
 <span class="kw">pub use </span>meadowcap::{AccessMode, IsCommunal};
+
+<span class="kw">use </span><span class="kw">super</span>::data_model::{Entry, MAX_COMPONENT_COUNT, MAX_COMPONENT_LENGTH, MAX_PATH_LENGTH};
 
 <span class="attr">#[derive(Debug, derive_more::From, Serialize, Deserialize)]
 </span><span class="kw">pub enum </span>SecretKey {
@@ -413,12 +412,11 @@
 <span class="kw">pub mod </span>serde_encoding {
     <span class="kw">use </span>serde::{de, Deserialize, Deserializer};
 
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{
         proto::grouping::Area,
         util::codec2::{from_bytes, from_bytes_relative, to_vec, to_vec_relative},
     };
-
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="kw">pub mod </span>read_authorisation {
         <span class="kw">use super</span>::<span class="kw-2">*</span>;

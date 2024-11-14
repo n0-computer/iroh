@@ -177,9 +177,12 @@
 <a href="#177" id="177">177</a>
 <a href="#178" id="178">178</a>
 <a href="#179" id="179">179</a>
-<a href="#180" id="180">180</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>futures_lite::StreamExt;
 
+<span class="kw">use super</span>::{
+    aoi_finder::AoiIntersection,
+    payload::{send_payload_chunked, CurrentPayload},
+};
 <span class="kw">use crate</span>::{
     proto::{
         data_model::AuthorisedEntry,
@@ -191,11 +194,6 @@
         Store,
     },
     util::stream::CancelableReceiver,
-};
-
-<span class="kw">use super</span>::{
-    aoi_finder::AoiIntersection,
-    payload::{send_payload_chunked, CurrentPayload},
 };
 
 <span class="attr">#[derive(Debug)]

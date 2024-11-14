@@ -283,7 +283,15 @@
 <a href="#283" id="283">283</a>
 <a href="#284" id="284">284</a>
 <a href="#285" id="285">285</a>
-</pre></div><pre class="rust"><code><span class="kw">use crate</span>::{
+<a href="#286" id="286">286</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>iroh_blobs::Hash;
+<span class="kw">use </span>iroh_net::{NodeAddr, NodeId};
+<span class="kw">use </span>nested_enum_utils::enum_conversions;
+<span class="kw">use </span>quic_rpc::pattern::try_server_streaming::StreamCreated;
+<span class="kw">use </span>quic_rpc_derive::rpc_requests;
+<span class="kw">use </span>serde::{Deserialize, Serialize};
+
+<span class="kw">use crate</span>::{
     form::{AuthForm, SubspaceForm, TimestampForm},
     interest::{CapSelector, CapabilityPack, DelegateTo},
     proto::{
@@ -301,12 +309,6 @@
     },
     store::traits::{StoreEvent, SubscribeParams},
 };
-<span class="kw">use </span>iroh_blobs::Hash;
-<span class="kw">use </span>iroh_net::{NodeAddr, NodeId};
-<span class="kw">use </span>nested_enum_utils::enum_conversions;
-<span class="kw">use </span>quic_rpc::pattern::try_server_streaming::StreamCreated;
-<span class="kw">use </span>quic_rpc_derive::rpc_requests;
-<span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="doccomment">/// The RPC service type for the spaces protocol.
 </span><span class="attr">#[derive(Debug, Clone)]

@@ -539,7 +539,6 @@
 <a href="#539" id="539">539</a>
 <a href="#540" id="540">540</a>
 <a href="#541" id="541">541</a>
-<a href="#542" id="542">542</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{future::Future, sync::Arc};
 
 <span class="kw">use </span>futures_concurrency::{
@@ -553,6 +552,12 @@
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{debug, error_span, trace, Instrument, Span};
 
+<span class="kw">use super</span>::{
+    channels::ChannelReceivers,
+    data::{DataReceiver, DataSender},
+    reconciler::Reconciler,
+    SessionMode,
+};
 <span class="kw">use crate</span>::{
     net::ConnHandle,
     proto::wgps::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
@@ -572,13 +577,6 @@
         channel::Receiver,
         stream::{Cancelable, CancelableReceiver},
     },
-};
-
-<span class="kw">use super</span>::{
-    channels::ChannelReceivers,
-    data::{DataReceiver, DataSender},
-    reconciler::Reconciler,
-    SessionMode,
 };
 
 <span class="kw">const </span>INITIAL_GUARANTEES: u64 = u64::MAX;

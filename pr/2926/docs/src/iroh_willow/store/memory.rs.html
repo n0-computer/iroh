@@ -512,6 +512,7 @@
 <a href="#512" id="512">512</a>
 <a href="#513" id="513">513</a>
 <a href="#514" id="514">514</a>
+<a href="#515" id="515">515</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! In-memory storage implementation for testing purposes.
 //!
 //! This is a minimal, but spec-compliant (unless there's bugs) implementation of a willow store.
@@ -519,31 +520,32 @@
 //! It does not have good performance, it does a lot of iterating. But it is concise and can
 //! hopefully easily kept correct.
 
-</span><span class="kw">use </span>std::cell::RefCell;
-<span class="kw">use </span>std::collections::{HashMap, VecDeque};
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::rc::{Rc, Weak};
-<span class="kw">use </span>std::task::{ready, Context, Poll, Waker};
+</span><span class="kw">use </span>std::{
+    cell::RefCell,
+    collections::{HashMap, VecDeque},
+    pin::Pin,
+    rc::{Rc, Weak},
+    task::{ready, Context, Poll, Waker},
+};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_util::Stream;
 <span class="kw">use </span>tracing::debug;
 
-<span class="kw">use </span><span class="kw">crate</span>::proto::data_model::PathExt;
-<span class="kw">use </span><span class="kw">crate</span>::proto::grouping::Area;
+<span class="kw">use super</span>::{
+    traits::{StoreEvent, SubscribeParams},
+    EntryOrigin,
+};
 <span class="kw">use crate</span>::{
     interest::{CapSelector, CapabilityPack},
     proto::{
-        data_model::{AuthorisedEntry, Path, SubspaceId, WriteCapability},
-        grouping::Range3d,
+        data_model::{AuthorisedEntry, Path, PathExt, SubspaceId, WriteCapability},
+        grouping::{Area, Range3d},
         keys::{NamespaceId, NamespaceSecretKey, UserId, UserSecretKey},
         meadowcap::{<span class="self">self</span>, is_wider_than, ReadAuthorisation},
     },
     store::traits,
 };
-
-<span class="kw">use </span><span class="kw">super</span>::traits::{StoreEvent, SubscribeParams};
-<span class="kw">use </span><span class="kw">super</span>::EntryOrigin;
 
 <span class="attr">#[derive(Debug, Clone, Default)]
 </span><span class="kw">pub struct </span>Store&lt;PS&gt; {

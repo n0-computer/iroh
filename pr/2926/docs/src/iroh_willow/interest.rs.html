@@ -476,10 +476,10 @@
 
 <span class="kw">mod </span>serde_area_of_interest_set {
     <span class="comment">// TODO: Less clones and allocs.
-    </span><span class="kw">use </span><span class="kw">crate</span>::proto::grouping::serde_encoding::SerdeAreaOfInterest;
-    <span class="kw">use </span>serde::Deserializer;
+    </span><span class="kw">use </span>serde::Deserializer;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::proto::grouping::serde_encoding::SerdeAreaOfInterest;
     <span class="kw">pub fn </span>serialize&lt;S: serde::Serializer&gt;(
         items: <span class="kw-2">&amp;</span>HashSet&lt;AreaOfInterest&gt;,
         serializer: S,

@@ -186,8 +186,6 @@
 <a href="#186" id="186">186</a>
 <a href="#187" id="187">187</a>
 <a href="#188" id="188">188</a>
-<a href="#189" id="189">189</a>
-<a href="#190" id="190">190</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Primitives for [Private Area Intersection]
 //!
 //! * Uses ristretto255 and SHA512 for `hash_into_group`.
@@ -345,14 +343,12 @@
     }
 }
 
-<span class="kw">use </span>syncify::syncify;
-<span class="kw">use </span>syncify::syncify_replace;
+<span class="kw">use </span>syncify::{syncify, syncify_replace};
 
 <span class="attr">#[syncify(encoding_sync)]
 </span><span class="kw">mod </span>encoding {
     <span class="attr">#[syncify_replace(<span class="kw">use </span>ufotofu::sync::BulkConsumer;)]
     </span><span class="kw">use </span>ufotofu::local_nb::BulkConsumer;
-
     <span class="attr">#[syncify_replace(<span class="kw">use </span>willow_encoding::sync::Encodable;)]
     </span><span class="kw">use </span>willow_encoding::Encodable;
 

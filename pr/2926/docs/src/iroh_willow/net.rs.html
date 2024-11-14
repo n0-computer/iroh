@@ -840,7 +840,6 @@
 <a href="#840" id="840">840</a>
 <a href="#841" id="841">841</a>
 <a href="#842" id="842">842</a>
-<a href="#843" id="843">843</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Networking implementation for iroh-willow.
 
 </span><span class="kw">use </span>std::{future::Future, io, time::Duration};
@@ -1263,6 +1262,7 @@
     <span class="kw">use </span>rand_chacha::ChaCha12Rng;
     <span class="kw">use </span>tracing::{info, Instrument};
 
+    <span class="kw">use super</span>::{establish, prepare_channels};
     <span class="kw">use crate</span>::{
         engine::ActorHandle,
         form::{AuthForm, EntryForm, PayloadForm, SubspaceForm, TimestampForm},
@@ -1277,8 +1277,6 @@
         },
         session::{intents::Intent, Role, SessionHandle, SessionInit, SessionMode},
     };
-
-    <span class="kw">use super</span>::{establish, prepare_channels};
 
     <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"iroh-willow/0"</span>;
 

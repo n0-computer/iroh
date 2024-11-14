@@ -258,7 +258,6 @@
 <a href="#258" id="258">258</a>
 <a href="#259" id="259">259</a>
 <a href="#260" id="260">260</a>
-<a href="#261" id="261">261</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Utilities for Willow's entry [groupings](https://willowprotocol.org/specs/grouping-entries/index.html#grouping_entries).
 
 </span><span class="kw">use </span>serde::{Deserialize, Serialize};
@@ -390,9 +389,8 @@
 <span class="kw">pub mod </span>serde_encoding {
     <span class="kw">use </span>serde::{de, Deserialize, Deserializer, Serialize};
 
-    <span class="kw">use </span><span class="kw">crate</span>::util::codec2::{from_bytes_relative, to_vec_relative};
-
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::util::codec2::{from_bytes_relative, to_vec_relative};
 
     <span class="kw">pub mod </span>area {
         <span class="kw">use super</span>::<span class="kw-2">*</span>;

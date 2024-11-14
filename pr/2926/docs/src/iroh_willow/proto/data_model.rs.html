@@ -334,24 +334,17 @@
 <a href="#334" id="334">334</a>
 <a href="#335" id="335">335</a>
 <a href="#336" id="336">336</a>
-<a href="#337" id="337">337</a>
-<a href="#338" id="338">338</a>
-<a href="#339" id="339">339</a>
-<a href="#340" id="340">340</a>
-<a href="#341" id="341">341</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Types for the basic data model of Willow.
 
 </span><span class="kw">use </span>iroh_base::hash::Hash;
 <span class="kw">use </span>ufotofu::sync::{consumer::IntoVec, producer::FromSlice};
+<span class="kw">pub use </span>willow_data_model::{InvalidPathError, UnauthorisedWriteError};
 <span class="kw">use </span>willow_encoding::sync::{Decodable, Encodable};
 
 <span class="kw">use super</span>::{
     keys,
     meadowcap::{<span class="self">self</span>},
 };
-
-<span class="kw">pub use </span>willow_data_model::InvalidPathError;
-<span class="kw">pub use </span>willow_data_model::UnauthorisedWriteError;
 
 <span class="doccomment">/// A type for identifying namespaces.
 </span><span class="kw">pub type </span>NamespaceId = keys::NamespaceId;
@@ -547,14 +540,12 @@
     AuthorisationToken,
 &gt;;
 
-<span class="kw">use </span>syncify::syncify;
-<span class="kw">use </span>syncify::syncify_replace;
+<span class="kw">use </span>syncify::{syncify, syncify_replace};
 
 <span class="attr">#[syncify(encoding_sync)]
 </span><span class="kw">mod </span>encoding {
     <span class="attr">#[syncify_replace(<span class="kw">use </span>ufotofu::sync::{BulkConsumer, BulkProducer};)]
     </span><span class="kw">use </span>ufotofu::local_nb::{BulkConsumer, BulkProducer};
-
     <span class="attr">#[syncify_replace(<span class="kw">use </span>willow_encoding::sync::{Decodable, Encodable};)]
     </span><span class="kw">use </span>willow_encoding::{Decodable, Encodable};
 
@@ -590,9 +581,8 @@
 <span class="kw">pub mod </span>serde_encoding {
     <span class="kw">use </span>serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
-    <span class="kw">use </span><span class="kw">crate</span>::util::codec2::{from_bytes, to_vec};
-
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::util::codec2::{from_bytes, to_vec};
 
     <span class="kw">pub mod </span>path {
 
@@ -640,10 +630,10 @@
     </span><span class="kw">pub struct </span>SerdeEntry(<span class="attr">#[serde(with = <span class="string">"entry"</span>)] </span><span class="kw">pub </span>Entry);
 
     <span class="kw">pub mod </span>authorised_entry {
-        <span class="kw">use </span><span class="kw">crate</span>::proto::meadowcap::serde_encoding::SerdeMcCapability;
         <span class="kw">use </span>keys::UserSignature;
 
         <span class="kw">use super</span>::<span class="kw-2">*</span>;
+        <span class="kw">use </span><span class="kw">crate</span>::proto::meadowcap::serde_encoding::SerdeMcCapability;
         <span class="kw">pub fn </span>serialize&lt;S: Serializer&gt;(
             entry: <span class="kw-2">&amp;</span>AuthorisedEntry,
             serializer: S,

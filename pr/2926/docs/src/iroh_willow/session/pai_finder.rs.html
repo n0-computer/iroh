@@ -728,9 +728,6 @@
 <a href="#728" id="728">728</a>
 <a href="#729" id="729">729</a>
 <a href="#730" id="730">730</a>
-<a href="#731" id="731">731</a>
-<a href="#732" id="732">732</a>
-<a href="#733" id="733">733</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Private Area Intersection finder
 //!
 //! As defined by the willow spec: [Private Area Intersection](https://willowprotocol.org/specs/pai/index.html)
@@ -742,13 +739,11 @@
 //!
 //! [earthstar]: https://github.com/earthstar-project/willow-js/blob/0db4b9ec7710fb992ab75a17bd8557040d9a1062/src/wgps/pai/pai_finder.ts
 //! [willow]: https://github.com/earthstar-project/earthstar/blob/16d6d4028c22fdbb72f7395013b29be7dcd9217a/src/schemes/schemes.ts#L662
-//!
 
 </span><span class="kw">use </span>std::collections::{HashMap, HashSet};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
-
 <span class="kw">use </span>tracing::{debug, trace};
 
 <span class="kw">use crate</span>::{
@@ -1241,6 +1236,7 @@
     <span class="kw">use </span>tokio_util::sync::PollSender;
     <span class="kw">use </span>tracing::{error_span, Instrument, Span};
 
+    <span class="kw">use super</span>::{Input, Output, PaiFinder};
     <span class="kw">use crate</span>::{
         proto::{
             data_model::{Path, PathExt},
@@ -1254,8 +1250,6 @@
         },
         session::{pai_finder::PaiIntersection, Error},
     };
-
-    <span class="kw">use super</span>::{Input, Output, PaiFinder};
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>pai_smoke() {
