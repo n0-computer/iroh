@@ -3,7 +3,6 @@ use std::{collections::BTreeMap, fmt::Debug, sync::Arc};
 use anyhow::Result;
 use futures_lite::Stream;
 use iroh_blobs::{net_protocol::Blobs as BlobsProtocol, store::Store as BaoStore};
-use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_node_util::rpc::proto::node::CounterStats;
 use iroh_router::Router;
 use quic_rpc::server::{RpcChannel, RpcServerError};
@@ -95,24 +94,6 @@ impl<D: BaoStore> Handler<D> {
             .map_err(|e| e.errors_into())
     }
 
-    async fn handle_gossip_request(
-        self,
-        msg: iroh_gossip::RpcRequest,
-        chan: RpcChannel<RpcService, IrohServerEndpoint>,
-    ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
-        let gossip = self
-            .router
-            .get_protocol::<Gossip>(GOSSIP_ALPN)
-            .expect("missing gossip");
-        let chan = chan.map::<iroh_gossip::RpcService>();
-        gossip
-            .as_ref()
-            .clone()
-            .handle_rpc_request(msg, chan)
-            .await
-            .map_err(|e| e.errors_into())
-    }
-
     pub(crate) async fn handle_rpc_request(
         self,
         msg: Request,
@@ -123,7 +104,6 @@ impl<D: BaoStore> Handler<D> {
         match msg {
             Node(msg) => self.handle_node_request(msg, chan).await,
             BlobsAndTags(msg) => self.handle_blobs_request(msg, chan.map().boxed()).await,
-            Gossip(msg) => self.handle_gossip_request(msg, chan).await,
         }
     }
 }

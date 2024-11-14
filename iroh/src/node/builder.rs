@@ -16,7 +16,6 @@ use iroh_blobs::{
     store::{Map, Store as BaoStore},
     util::local_pool::{self, LocalPool, LocalPoolHandle, PanicMode},
 };
-use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 #[cfg(not(test))]
 use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 use iroh_net::{
@@ -591,8 +590,6 @@ where
         let addr = endpoint.node_addr().await?;
         trace!("endpoint address: {addr:?}");
 
-        // Initialize the gossip protocol.
-        let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.info);
         // Initialize the downloader.
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
 
@@ -627,7 +624,6 @@ where
         let protocol_builder = protocol_builder.register_iroh_protocols(
             self.blob_events,
             self.blobs_store,
-            gossip,
             downloader,
         );
 
@@ -739,7 +735,6 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         mut self,
         blob_events: EventSender,
         store: D,
-        gossip: Gossip,
         downloader: Downloader,
     ) -> Self {
         // Register blobs.
@@ -751,9 +746,6 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
             self.endpoint().clone(),
         );
         self = self.accept(iroh_blobs::protocol::ALPN.to_vec(), Arc::new(blobs_proto));
-
-        // Register gossip.
-        self = self.accept(GOSSIP_ALPN.to_vec(), Arc::new(gossip));
 
         self
     }
