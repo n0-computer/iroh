@@ -484,27 +484,18 @@ async fn server_stun_listener(sock: UdpSocket) -> Result<()> {
 
 /// Handles a single STUN request, doing all logging required.
 async fn handle_stun_request(src_addr: SocketAddr, pkt: Vec<u8>, sock: Arc<UdpSocket>) {
-    let handle = AbortOnDropHandle::new(tokio::task::spawn_blocking(move || {
-        match protos::stun::parse_binding_request(&pkt) {
-            Ok(txid) => {
-                debug!(%src_addr, %txid, "STUN: received binding request");
-                Some((txid, protos::stun::response(txid, src_addr)))
-            }
-            Err(err) => {
-                inc!(StunMetrics, bad_requests);
-                warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
-                None
-            }
+    let (txid, response) = match protos::stun::parse_binding_request(&pkt) {
+        Ok(txid) => {
+            debug!(%src_addr, %txid, "STUN: received binding request");
+            (txid, protos::stun::response(txid, src_addr))
         }
-    }));
-    let (txid, response) = match handle.await {
-        Ok(Some(val)) => val,
-        Ok(None) => return,
         Err(err) => {
-            error!("{err:#}");
+            inc!(StunMetrics, bad_requests);
+            warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
             return;
         }
     };
+
     match sock.send_to(&response, src_addr).await {
         Ok(len) => {
             if len != response.len() {
