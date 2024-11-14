@@ -21,10 +21,11 @@ use std::{
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::Arc,
+    task::{Context, Poll},
     time::Duration,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use iroh_metrics::inc;
 use iroh_relay::{http::RELAY_PROBE_PATH, protos::stun};
 use netwatch::{interfaces, UdpSocket};
@@ -42,13 +43,9 @@ use super::NetcheckMetrics;
 use crate::{
     self as netcheck,
     defaults::DEFAULT_STUN_PORT,
-    // dns::{DnsResolver, ResolverExt},
+    dns::ResolverExt,
     ping::{PingError, Pinger},
-    util::MaybeFuture,
-    RelayMap,
-    RelayNode,
-    RelayUrl,
-    Report,
+    RelayMap, RelayNode, RelayUrl, Report,
 };
 use hickory_resolver::TokioAsyncResolver as DnsResolver;
 
@@ -58,14 +55,10 @@ mod probes;
 use probes::{Probe, ProbePlan, ProbeProto};
 
 use crate::defaults::timeouts::{
-    CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, DNS_TIMEOUT, OVERALL_REPORT_TIMEOUT,
-    PROBES_TIMEOUT,
+    CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, OVERALL_REPORT_TIMEOUT, PROBES_TIMEOUT,
 };
 
 const ENOUGH_NODES: usize = 3;
-
-/// Delay used to perform staggered dns queries.
-const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 
 /// Holds the state for a single invocation of [`netcheck::Client::get_report`].
 ///
@@ -900,7 +893,7 @@ async fn check_captive_portal(
         // Ideally we would try to resolve **both** IPv4 and IPv6 rather than purely race
         // them.  But our resolver doesn't support that yet.
         let addrs: Vec<_> = dns_resolver
-            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
+            .lookup_ipv4_ipv6_staggered(domain)
             .await?
             .map(|ipaddr| SocketAddr::new(ipaddr, 0))
             .collect();
@@ -963,10 +956,7 @@ async fn get_relay_addr(
         ProbeProto::StunIpv4 | ProbeProto::IcmpV4 => match relay_node.url.host() {
             Some(url::Host::Domain(hostname)) => {
                 debug!(?proto, %hostname, "Performing DNS A lookup for relay addr");
-                match dns_resolver
-                    .lookup_ipv4_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
-                    .await
-                {
+                match dns_resolver.lookup_ipv4_staggered(hostname).await {
                     Ok(mut addrs) => addrs
                         .next()
                         .map(|ip| ip.to_canonical())
@@ -983,10 +973,7 @@ async fn get_relay_addr(
         ProbeProto::StunIpv6 | ProbeProto::IcmpV6 => match relay_node.url.host() {
             Some(url::Host::Domain(hostname)) => {
                 debug!(?proto, %hostname, "Performing DNS AAAA lookup for relay addr");
-                match dns_resolver
-                    .lookup_ipv6_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
-                    .await
-                {
+                match dns_resolver.lookup_ipv6_staggered(hostname).await {
                     Ok(mut addrs) => addrs
                         .next()
                         .map(|ip| ip.to_canonical())
@@ -1071,7 +1058,7 @@ async fn measure_https_latency(
         // but staggered for reliability.  Ideally this tries to resolve **both** IPv4 and
         // IPv6 though.  But our resolver does not have a function for that yet.
         let addrs: Vec<_> = dns_resolver
-            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
+            .lookup_ipv4_ipv6_staggered(domain)
             .await?
             .map(|ipaddr| SocketAddr::new(ipaddr, 0))
             .collect();
@@ -1173,6 +1160,31 @@ fn update_report(report: &mut Report, probe_report: ProbeReport) {
         .icmpv6
         .map(|val| val || probe_report.icmpv6.unwrap_or_default())
         .or(probe_report.icmpv6);
+}
+
+/// Resolves to pending if the inner is `None`.
+#[derive(Debug)]
+pub(crate) struct MaybeFuture<T> {
+    /// Future to be polled.
+    pub inner: Option<T>,
+}
+
+// NOTE: explicit implementation to bypass derive unnecessary bounds
+impl<T> Default for MaybeFuture<T> {
+    fn default() -> Self {
+        MaybeFuture { inner: None }
+    }
+}
+
+impl<T: Future + Unpin> Future for MaybeFuture<T> {
+    type Output = T::Output;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.inner {
+            Some(ref mut t) => Pin::new(t).poll(cx),
+            None => Poll::Pending,
+        }
+    }
 }
 
 #[cfg(test)]

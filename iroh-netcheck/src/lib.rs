@@ -29,6 +29,7 @@ use tracing::{debug, error, info_span, trace, warn, Instrument};
 pub(crate) use relay_map::{RelayMap, RelayMode, RelayNode, RelayUrl};
 
 pub mod defaults;
+mod dns;
 mod metrics;
 mod ping;
 mod relay_map;
