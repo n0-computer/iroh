@@ -32,10 +32,9 @@ mod resource;
 mod run;
 mod static_tokens;
 
-pub(crate) use self::challenge::InitialTransmission;
-pub(crate) use self::channels::Channels;
-pub(crate) use self::error::Error;
-pub(crate) use self::run::run_session;
+pub(crate) use self::{
+    challenge::InitialTransmission, channels::Channels, error::Error, run::run_session,
+};
 
 /// Id per session to identify store subscriptions.
 pub(crate) type SessionId = u64;

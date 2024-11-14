@@ -2,10 +2,16 @@ use std::io::Write;
 
 use serde::{Deserialize, Serialize};
 
+use super::{
+    channels::LogicalChannel,
+    fingerprint::Fingerprint,
+    handles::{
+        AreaOfInterestHandle, CapabilityHandle, HandleType, IntersectionHandle, StaticTokenHandle,
+    },
+};
 use crate::{
     proto::{
-        data_model::serde_encoding::SerdeEntry,
-        data_model::Entry,
+        data_model::{serde_encoding::SerdeEntry, Entry},
         grouping::{
             serde_encoding::{SerdeAreaOfInterest, SerdeRange3d},
             Area,
@@ -14,14 +20,6 @@ use crate::{
         wgps::AccessChallenge,
     },
     util::codec::{DecodeOutcome, Decoder, Encoder},
-};
-
-use super::{
-    channels::LogicalChannel,
-    fingerprint::Fingerprint,
-    handles::{
-        AreaOfInterestHandle, CapabilityHandle, HandleType, IntersectionHandle, StaticTokenHandle,
-    },
 };
 
 pub type StaticToken = meadowcap::serde_encoding::SerdeMcCapability;

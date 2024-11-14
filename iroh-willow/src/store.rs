@@ -8,22 +8,21 @@ use anyhow::{anyhow, Context, Result};
 use rand_core::CryptoRngCore;
 use traits::EntryStorage;
 
+pub(crate) use self::traits::EntryOrigin;
+use self::{
+    auth::{Auth, AuthError},
+    traits::Storage,
+};
 use crate::{
     form::{AuthForm, EntryForm, EntryOrForm, SubspaceForm, TimestampForm},
     interest::{CapSelector, UserSelector},
     proto::{
-        data_model::Entry,
-        data_model::{AuthorisedEntry, PayloadDigest},
+        data_model::{AuthorisedEntry, Entry, PayloadDigest},
         keys::{NamespaceId, NamespaceKind, NamespaceSecretKey, UserId},
     },
     store::traits::SecretStorage,
     util::time::system_time_now,
 };
-
-use self::auth::{Auth, AuthError};
-use self::traits::Storage;
-
-pub(crate) use self::traits::EntryOrigin;
 
 pub(crate) mod auth;
 pub mod memory;

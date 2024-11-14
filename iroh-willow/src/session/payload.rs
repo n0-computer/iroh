@@ -12,13 +12,12 @@ use iroh_io::TokioStreamReader;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
+use super::Error;
 use crate::{
     proto::{data_model::PayloadDigest, wgps::Message},
     session::channels::ChannelSenders,
     util::pipe::chunked_pipe,
 };
-
-use super::Error;
 
 const CHUNK_SIZE: usize = 1024 * 32;
 

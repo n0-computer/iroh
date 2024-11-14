@@ -1,5 +1,9 @@
 use futures_lite::StreamExt;
 
+use super::{
+    aoi_finder::AoiIntersection,
+    payload::{send_payload_chunked, CurrentPayload},
+};
 use crate::{
     proto::{
         data_model::AuthorisedEntry,
@@ -11,11 +15,6 @@ use crate::{
         Store,
     },
     util::stream::CancelableReceiver,
-};
-
-use super::{
-    aoi_finder::AoiIntersection,
-    payload::{send_payload_chunked, CurrentPayload},
 };
 
 #[derive(Debug)]

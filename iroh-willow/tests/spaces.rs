@@ -31,7 +31,9 @@ use tracing::{error, info};
 
 /// Spawn an iroh node in a separate thread and tokio runtime, and return
 /// the address and client.
-async fn spawn_node(persist_test_mode: bool) -> (NodeAddr, Client, iroh_blobs::store::mem::Store, DropGuard) {
+async fn spawn_node(
+    persist_test_mode: bool,
+) -> (NodeAddr, Client, iroh_blobs::store::mem::Store, DropGuard) {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -171,7 +173,7 @@ async fn spawn_node(persist_test_mode: bool) -> (NodeAddr, Client, iroh_blobs::s
             }
 
             engine.shutdown().await?;
-        
+
             anyhow::Ok(())
         })?;
         anyhow::Ok(())
@@ -359,7 +361,10 @@ async fn space_to_map(
         let key = String::from_utf8(key_component.to_vec())?;
 
         use iroh_blobs::store::*;
-        let entry = blobs.get(&entry.payload_digest().0).await?.ok_or_else(|| anyhow::anyhow!("blob missing"))?;
+        let entry = blobs
+            .get(&entry.payload_digest().0)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("blob missing"))?;
         let mut reader = entry.data_reader().await?;
         let value = reader.read_to_end().await?;
 
@@ -407,9 +412,7 @@ async fn spaces_smoke() -> TestResult {
 
     let betty_user = betty.create_user().await?;
     let alfie_user = alfie.create_user().await?;
-    let alfie_space = alfie
-        .create(NamespaceKind::Owned, alfie_user)
-        .await?;
+    let alfie_space = alfie.create(NamespaceKind::Owned, alfie_user).await?;
 
     let namespace = alfie_space.namespace_id();
 
@@ -504,9 +507,7 @@ async fn spaces_subscription() -> TestResult {
 
     let betty_user = betty.create_user().await?;
     let alfie_user = alfie.create_user().await?;
-    let alfie_space = alfie
-        .create(NamespaceKind::Owned, alfie_user)
-        .await?;
+    let alfie_space = alfie.create(NamespaceKind::Owned, alfie_user).await?;
 
     let _namespace = alfie_space.namespace_id();
 
@@ -588,9 +589,7 @@ async fn test_restricted_area() -> testresult::TestResult {
     info!("betty is {}", betty_addr.node_id.fmt_short());
     let alfie_user = alfie.create_user().await?;
     let betty_user = betty.create_user().await?;
-    let alfie_space = alfie
-        .create(NamespaceKind::Owned, alfie_user)
-        .await?;
+    let alfie_space = alfie.create(NamespaceKind::Owned, alfie_user).await?;
     let space_ticket = alfie_space
         .share(
             betty_user,

@@ -3,9 +3,8 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use crate::proto::wgps::{IsHandle, ResourceHandle};
-
 use super::Error;
+use crate::proto::wgps::{IsHandle, ResourceHandle};
 
 /// The bind scope for resources.
 ///
