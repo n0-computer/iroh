@@ -24,6 +24,7 @@ use http::{
     response::Builder as ResponseBuilder, HeaderMap, Method, Request, Response, StatusCode,
 };
 use hyper::body::Incoming;
+#[cfg(feature = "test-utils")]
 use iroh_base::node_addr::RelayUrl;
 use iroh_metrics::inc;
 use tokio::{
