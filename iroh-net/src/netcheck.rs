@@ -771,7 +771,7 @@ pub(crate) fn os_has_ipv6() -> bool {
 
 #[cfg(test)]
 mod test_utils {
-    //! Crates a relay server against to which perform tests.
+    //! Creates a relay server against which to perform tests
 
     use std::sync::Arc;
 
