@@ -1187,8 +1187,8 @@ mod tests {
 
         let mut report = Report::default();
 
-        // A STUN IPv4 probe from the EU relay server.
-        let probe_report_eu = ProbeReport {
+        // A STUN IPv4 probe from the the first relay server.
+        let probe_report_a = ProbeReport {
             ipv4_can_send: true,
             ipv6_can_send: false,
             icmpv4: None,
@@ -1200,7 +1200,7 @@ mod tests {
             },
             addr: Some((Ipv4Addr::new(203, 0, 113, 1), 1234).into()),
         };
-        update_report(&mut report, probe_report_eu.clone());
+        update_report(&mut report, probe_report_a.clone());
 
         assert!(report.udp);
         assert_eq!(
@@ -1215,15 +1215,15 @@ mod tests {
         assert!(!report.ipv6_can_send);
 
         // A second STUN IPv4 probe, same external IP detected but slower.
-        let probe_report_na = ProbeReport {
+        let probe_report_b = ProbeReport {
             latency: Some(Duration::from_millis(8)),
             probe: Probe::StunIpv4 {
                 delay: Duration::ZERO,
                 node: relay_b.clone(),
             },
-            ..probe_report_eu
+            ..probe_report_a
         };
-        update_report(&mut report, probe_report_na);
+        update_report(&mut report, probe_report_b);
 
         assert!(report.udp);
         assert_eq!(
@@ -1238,7 +1238,7 @@ mod tests {
         assert!(!report.ipv6_can_send);
 
         // A STUN IPv6 probe, this one is faster.
-        let probe_report_eu_ipv6 = ProbeReport {
+        let probe_report_a_ipv6 = ProbeReport {
             ipv4_can_send: false,
             ipv6_can_send: true,
             icmpv4: None,
@@ -1250,7 +1250,7 @@ mod tests {
             },
             addr: Some((Ipv6Addr::new(2001, 0xdb8, 0, 0, 0, 0, 0, 1), 1234).into()),
         };
-        update_report(&mut report, probe_report_eu_ipv6);
+        update_report(&mut report, probe_report_a_ipv6);
 
         assert!(report.udp);
         assert_eq!(
@@ -1376,19 +1376,14 @@ mod tests {
     //
     // TODO: Not sure what about IPv6 pings using sysctl.
     #[tokio::test]
-    // TODO(@divma): tests ping against live relay
-    async fn test_icmpk_probe_eu_relayer() {
+    async fn test_icmpk_probe() {
         let _logging_guard = iroh_test::logging::setup();
         let pinger = Pinger::new();
-        let relay = crate::defaults::staging::default_eu_relay_node();
-        let resolver = crate::dns::default_resolver();
-        let addr = get_relay_addr(resolver, &relay, ProbeProto::IcmpV4)
-            .await
-            .map_err(|err| format!("{err:#}"))
-            .unwrap();
+        let (server, node) = test_utils::relay().await;
+        let addr = server.stun_addr().expect("test relay serves stun");
         let probe = Probe::IcmpV4 {
             delay: Duration::from_secs(0),
-            node: Arc::new(relay),
+            node,
         };
 
         // A single ICMP packet might get lost.  Try several and take the first.
