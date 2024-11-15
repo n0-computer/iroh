@@ -781,9 +781,7 @@ mod tests {
             .iter()
             .map(|(url, _)| *url)
             .collect();
-        let mut expected = vec![&r1.url, &r2.url];
-        expected.sort();
-        assert_eq!(sorted, expected);
+        assert_eq!(sorted, vec![&r1.url, &r2.url]);
     }
 
     #[tokio::test]
