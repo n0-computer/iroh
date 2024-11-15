@@ -72,18 +72,20 @@ pub async fn connect_client(
     let endpoint =
         quinn::Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
 
+    let secret_key = iroh::SecretKey::generate(&mut rand::rngs::OsRng);
+
     let mut roots = RootCertStore::empty();
     roots.add(server_cert)?;
 
-    let provider = rustls::crypto::ring::default_provider();
+    let client_config = iroh::TlsAuthentication::X509.make_client_config(
+        &secret_key,
+        None,
+        vec![ALPN.to_vec()],
+        false,
+    )?;
 
-    let crypto = rustls::ClientConfig::builder_with_provider(provider.into())
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-
-    let mut client_config = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto)?));
+    let mut client_config =
+        quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_config)?));
     client_config.transport_config(Arc::new(transport_config(opt.max_streams, opt.initial_mtu)));
 
     let connection = endpoint

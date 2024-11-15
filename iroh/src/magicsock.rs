@@ -153,7 +153,9 @@ pub(crate) struct Options {
 impl Default for Options {
     fn default() -> Self {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
-        let server_config = make_default_server_config(&secret_key);
+        // TODO: make configurable
+        let tls_auth = crate::tls::Authentication::X509;
+        let server_config = make_default_server_config(&secret_key, tls_auth);
         Options {
             addr_v4: None,
             addr_v6: None,
@@ -176,8 +178,12 @@ impl Default for Options {
 
 /// Generate a server config with no ALPNS and a default transport configuration
 #[cfg(test)]
-fn make_default_server_config(secret_key: &SecretKey) -> ServerConfig {
-    let quic_server_config = crate::tls::make_server_config(secret_key, vec![], false)
+fn make_default_server_config(
+    secret_key: &SecretKey,
+    tls_auth: crate::tls::Authentication,
+) -> ServerConfig {
+    let quic_server_config = tls_auth
+        .make_server_config(secret_key, vec![], false)
         .expect("should generate valid config");
     let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
     server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
@@ -3909,12 +3915,25 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_two_devices_roundtrip_quinn_raw() -> Result<()> {
-        let make_conn = |addr: SocketAddr| -> anyhow::Result<quinn::Endpoint> {
+    async fn test_two_devices_roundtrip_quinn_raw_x509() -> Result<()> {
+        test_two_devices_roundtrip_quinn_raw(tls::Authentication::X509).await
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_two_devices_roundtrip_quinn_raw_public_key() -> Result<()> {
+        test_two_devices_roundtrip_quinn_raw(tls::Authentication::RawPublicKey).await
+    }
+
+    async fn test_two_devices_roundtrip_quinn_raw(tls_auth: tls::Authentication) -> Result<()> {
+        let make_conn = |addr: SocketAddr,
+                         tls_auth: tls::Authentication|
+         -> anyhow::Result<quinn::Endpoint> {
             let key = SecretKey::generate(rand::thread_rng());
             let conn = std::net::UdpSocket::bind(addr)?;
 
-            let quic_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
+            let quic_server_config =
+                tls_auth.make_server_config(&key, vec![ALPN.to_vec()], false)?;
             let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
@@ -3928,7 +3947,7 @@ mod tests {
             )?;
 
             let quic_client_config =
-                tls::make_client_config(&key, None, vec![ALPN.to_vec()], None, false)?;
+                tls_auth.make_client_config(&key, None, vec![ALPN.to_vec()], None, false)?;
             let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
@@ -3938,8 +3957,8 @@ mod tests {
             Ok(quic_ep)
         };
 
-        let m1 = make_conn("127.0.0.1:0".parse().unwrap())?;
-        let m2 = make_conn("127.0.0.1:0".parse().unwrap())?;
+        let m1 = make_conn("127.0.0.1:0".parse().unwrap(), tls_auth)?;
+        let m2 = make_conn("127.0.0.1:0".parse().unwrap(), tls_auth)?;
 
         // msg from  a -> b
         macro_rules! roundtrip {
@@ -4058,11 +4077,15 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_two_devices_roundtrip_quinn_rebinding_conn() -> Result<()> {
-        fn make_conn(addr: SocketAddr) -> anyhow::Result<quinn::Endpoint> {
+        fn make_conn(
+            addr: SocketAddr,
+            tls_auth: tls::Authentication,
+        ) -> anyhow::Result<quinn::Endpoint> {
             let key = SecretKey::generate(rand::thread_rng());
             let conn = UdpConn::wrap(Arc::new(bind_with_fallback(addr)?));
 
-            let quic_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
+            let quic_server_config =
+                tls_auth.make_server_config(&key, vec![ALPN.to_vec()], false)?;
             let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
@@ -4076,7 +4099,7 @@ mod tests {
             )?;
 
             let quic_client_config =
-                tls::make_client_config(&key, None, vec![ALPN.to_vec()], None, false)?;
+                tls_auth.make_client_config(&key, None, vec![ALPN.to_vec()], None, false)?;
             let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
@@ -4086,8 +4109,9 @@ mod tests {
             Ok(quic_ep)
         }
 
-        let m1 = make_conn("127.0.0.1:7770".parse().unwrap())?;
-        let m2 = make_conn("127.0.0.1:7771".parse().unwrap())?;
+        let tls_auth = tls::Authentication::X509;
+        let m1 = make_conn("127.0.0.1:7770".parse().unwrap(), tls_auth)?;
+        let m2 = make_conn("127.0.0.1:7771".parse().unwrap(), tls_auth)?;
 
         // msg from  a -> b
         macro_rules! roundtrip {
@@ -4300,8 +4324,12 @@ mod tests {
     ///
     /// Use [`magicsock_connect`] to establish connections.
     #[instrument(name = "ep", skip_all, fields(me = secret_key.public().fmt_short()))]
-    async fn magicsock_ep(secret_key: SecretKey) -> anyhow::Result<Handle> {
+    async fn magicsock_ep(
+        secret_key: SecretKey,
+        tls_auth: tls::Authentication,
+    ) -> anyhow::Result<Handle> {
         let server_config = crate::endpoint::make_server_config(
+            tls_auth,
             &secret_key,
             vec![ALPN.to_vec()],
             Arc::new(quinn::TransportConfig::default()),
@@ -4335,6 +4363,7 @@ mod tests {
         ep_secret_key: SecretKey,
         addr: NodeIdMappedAddr,
         node_id: NodeId,
+        tls_auth: tls::Authentication,
     ) -> Result<quinn::Connection> {
         // Endpoint::connect sets this, do the same to have similar behaviour.
         let mut transport_config = quinn::TransportConfig::default();
@@ -4346,6 +4375,7 @@ mod tests {
             addr,
             node_id,
             Arc::new(transport_config),
+            tls_auth,
         )
         .await
     }
@@ -4362,10 +4392,11 @@ mod tests {
         mapped_addr: NodeIdMappedAddr,
         node_id: NodeId,
         transport_config: Arc<quinn::TransportConfig>,
+        tls_auth: tls::Authentication,
     ) -> Result<quinn::Connection> {
         let alpns = vec![ALPN.to_vec()];
         let quic_client_config =
-            tls::make_client_config(&ep_secret_key, Some(node_id), alpns, None, true)?;
+            tls_auth.make_client_config(&ep_secret_key, Some(node_id), alpns, None, true)?;
         let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
         let connect = ep.connect_with(
@@ -4382,13 +4413,16 @@ mod tests {
     async fn test_try_send_no_send_addr() {
         // Regression test: if there is no send_addr we should keep being able to use the
         // Endpoint.
+
+        let tls_auth = tls::Authentication::X509;
+
         let secret_key_1 = SecretKey::from_bytes(&[1u8; 32]);
         let secret_key_2 = SecretKey::from_bytes(&[2u8; 32]);
         let node_id_2 = secret_key_2.public();
         let secret_key_missing_node = SecretKey::from_bytes(&[255u8; 32]);
         let node_id_missing_node = secret_key_missing_node.public();
 
-        let msock_1 = magicsock_ep(secret_key_1.clone()).await.unwrap();
+        let msock_1 = magicsock_ep(secret_key_1.clone(), tls_auth).await.unwrap();
 
         // Generate an address not present in the NodeMap.
         let bad_addr = NodeIdMappedAddr::generate();
@@ -4404,14 +4438,15 @@ mod tests {
                 secret_key_1.clone(),
                 bad_addr,
                 node_id_missing_node,
+                tls_auth,
             ),
         )
         .await;
         assert!(res.is_err(), "expecting timeout");
 
         // Now check we can still create another connection with this endpoint.
-        let msock_2 = magicsock_ep(secret_key_2.clone()).await.unwrap();
-        let ep_2 = msock_2.endpoint().clone();
+        let msock_2 = magicsock_ep(secret_key_2.clone(), tls_auth).await.unwrap();
+
         // This needs an accept task
         let accept_task = tokio::spawn({
             async fn accept(ep: quinn::Endpoint) -> Result<()> {
@@ -4423,8 +4458,9 @@ mod tests {
                 info!("accept finished");
                 Ok(())
             }
+            let ep = msock_2.endpoint().clone();
             async move {
-                if let Err(err) = accept(ep_2).await {
+                if let Err(err) = accept(ep).await {
                     error!("{err:#}");
                 }
             }
@@ -4455,7 +4491,13 @@ mod tests {
         let addr = msock_1.get_mapping_addr(node_id_2).unwrap();
         let res = tokio::time::timeout(
             Duration::from_secs(10),
-            magicsock_connect(msock_1.endpoint(), secret_key_1.clone(), addr, node_id_2),
+            magicsock_connect(
+                msock_1.endpoint(),
+                secret_key_1.clone(),
+                addr,
+                node_id_2,
+                tls_auth,
+            ),
         )
         .await
         .expect("timeout while connecting");
@@ -4472,12 +4514,15 @@ mod tests {
     async fn test_try_send_no_udp_addr_or_relay_url() {
         // This specifically tests the `if udp_addr.is_none() && relay_url.is_none()`
         // behaviour of MagicSock::try_send.
+
+        let tls_auth = tls::Authentication::X509;
+
         let secret_key_1 = SecretKey::from_bytes(&[1u8; 32]);
         let secret_key_2 = SecretKey::from_bytes(&[2u8; 32]);
         let node_id_2 = secret_key_2.public();
 
-        let msock_1 = magicsock_ep(secret_key_1.clone()).await.unwrap();
-        let msock_2 = magicsock_ep(secret_key_2.clone()).await.unwrap();
+        let msock_1 = magicsock_ep(secret_key_1.clone(), tls_auth).await.unwrap();
+        let msock_2 = magicsock_ep(secret_key_2.clone(), tls_auth).await.unwrap();
         let ep_2 = msock_2.endpoint().clone();
 
         // We need a task to accept the connection.
@@ -4530,6 +4575,7 @@ mod tests {
             addr_2,
             node_id_2,
             Arc::new(transport_config),
+            tls_auth,
         )
         .await;
         assert!(res.is_err(), "expected timeout");
@@ -4557,10 +4603,15 @@ mod tests {
         // We can now connect
         tokio::time::timeout(Duration::from_secs(10), async move {
             info!("establishing new connection");
-            let conn =
-                magicsock_connect(msock_1.endpoint(), secret_key_1.clone(), addr_2, node_id_2)
-                    .await
-                    .unwrap();
+            let conn = magicsock_connect(
+                msock_1.endpoint(),
+                secret_key_1.clone(),
+                addr_2,
+                node_id_2,
+                tls_auth,
+            )
+            .await
+            .unwrap();
             info!("have connection");
             let mut stream = conn.open_uni().await.unwrap();
             stream.write_all(b"hello").await.unwrap();
