@@ -765,8 +765,6 @@ mod tests {
         assert_eq!(sorted, vec![&r1.url, &r2.url]);
     }
 
-    /// Test that equal latencies produce relays in alphabetic order....?
-    /// what's the point of this test
     #[tokio::test]
     async fn test_relay_sort_equal_latencies() {
         let _logging = iroh_test::logging::setup();
