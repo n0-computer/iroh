@@ -385,7 +385,13 @@ async fn maybe_load_tls(
         return Ok(None);
     }
     let tls = cfg.tls.as_ref().expect("checked");
-    let cert_config = match tls.cert_mode {
+    let server_config = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .expect("protocols supported by ring")
+    .with_no_client_auth();
+    let (cert_config, server_config) = match tls.cert_mode {
         CertMode::Manual => {
             let cert_path = tls.cert_path();
             let key_path = tls.key_path();
@@ -396,7 +402,8 @@ async fn maybe_load_tls(
                 anyhow::Ok((key, certs))
             })
             .await??;
-            relay::CertConfig::Manual { private_key, certs }
+            let server_config = server_config.with_single_cert(certs.clone(), private_key)?;
+            (relay::CertConfig::Manual { certs }, server_config)
         }
         CertMode::LetsEncrypt => {
             let hostname = tls
@@ -411,12 +418,16 @@ async fn maybe_load_tls(
                 .contact([format!("mailto:{}", contact)])
                 .cache_option(Some(DirCache::new(tls.cert_dir())))
                 .directory_lets_encrypt(tls.prod_tls);
-            relay::CertConfig::LetsEncrypt { config }
+            let state = config.state();
+            let resolver = state.resolver().clone();
+            let server_config = server_config.with_cert_resolver(resolver);
+            (relay::CertConfig::LetsEncrypt { state }, server_config)
         }
     };
     Ok(Some(relay::TlsConfig {
         https_bind_addr: tls.https_bind_addr(&cfg),
         cert: cert_config,
+        server_config,
     }))
 }
 
@@ -424,17 +435,16 @@ async fn maybe_load_tls(
 async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::Error>> {
     let relay_tls = maybe_load_tls(&cfg).await?;
 
-    // you cannot clone the `TlsConfig`, so we need to re-create it
-    // if we want to enable a QUIC server
-    // TODO(ramfox): unsure if we should have an entirely separate
-    // set of certs
     let mut quic_config = None;
     if cfg.enable_quic_addr_discovery {
-        quic_config = maybe_load_tls(&cfg).await?.map(QuicConfig::new);
-
-        if quic_config.is_none() {
+        if let Some(ref tls) = relay_tls {
+            quic_config = Some(QuicConfig::new(
+                tls.server_config.clone(),
+                tls.https_bind_addr.ip().clone(),
+            )?);
+        } else {
             bail!("Must have a valid TLS configuration to enable a QUIC server for QUIC address discovery")
-        };
+        }
     }
 
     let limits = relay::Limits {
