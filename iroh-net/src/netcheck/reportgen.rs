@@ -1181,6 +1181,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_report_stun_working() {
+        let _logging = iroh_test::logging::setup();
         let (_server_a, relay_a) = test_utils::relay().await;
         let (_server_b, relay_b) = test_utils::relay().await;
 
@@ -1266,6 +1267,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_report_icmp() {
+        let _logging = iroh_test::logging::setup();
         let (_server_a, relay_a) = test_utils::relay().await;
         let (_server_b, relay_b) = test_utils::relay().await;
 

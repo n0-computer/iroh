@@ -497,6 +497,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_initial_probeplan() {
+        let _logging = iroh_test::logging::setup();
         let (_server_1, relay_node_1) = test_utils::relay().await;
         let (_server_2, relay_node_2) = test_utils::relay().await;
         let if_state = interfaces::State::fake();
@@ -591,6 +592,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_plan_with_report() {
+        let _logging = iroh_test::logging::setup();
         let (_server_1, relay_node_1) = test_utils::relay().await;
         let (_server_2, relay_node_2) = test_utils::relay().await;
         let if_state = interfaces::State::fake();
@@ -749,6 +751,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_sort_two_latencies() {
+        let _logging = iroh_test::logging::setup();
         let (_server_1, r1) = test_utils::relay().await;
         let (_server_2, r2) = test_utils::relay().await;
         let relay_map = RelayMap::from_nodes([r1.clone(), r2.clone()]).expect("all unique urls");
@@ -767,6 +770,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_sort_equal_latencies() {
+        let _logging = iroh_test::logging::setup();
         let (_server_1, r1) = test_utils::relay().await;
         let (_server_2, r2) = test_utils::relay().await;
         let relay_map = RelayMap::from_nodes([r1.clone(), r2.clone()]).expect("all unique urls");
@@ -785,6 +789,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_sort_missing_latency() {
+        let _logging = iroh_test::logging::setup();
         let (_server_1, r1) = test_utils::relay().await;
         let (_server_2, r2) = test_utils::relay().await;
         let relay_map = RelayMap::from_nodes([r1.clone(), r2.clone()]).expect("all unique urls");
@@ -808,6 +813,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_sort_no_latency() {
+        let _logging = iroh_test::logging::setup();
         let (_server_1, r1) = test_utils::relay().await;
         let (_server_2, r2) = test_utils::relay().await;
         let relay_map = RelayMap::from_nodes([r1.clone(), r2.clone()]).expect("all unique urls");
