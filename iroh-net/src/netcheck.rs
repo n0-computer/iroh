@@ -785,7 +785,7 @@ mod test_utils {
             .expect("should serve relay");
         let node_desc = RelayNode {
             url: server.https_url().expect("should work as relay"),
-            stun_only: false, // the checks above and below guarantees both stun and relay
+            stun_only: false, // the checks above and below guarantee both stun and relay
             stun_port: server.stun_addr().expect("server should serve stun").port(),
         };
 
