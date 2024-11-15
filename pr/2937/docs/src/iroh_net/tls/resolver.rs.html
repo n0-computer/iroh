@@ -83,10 +83,14 @@
 <a href="#83" id="83">83</a>
 <a href="#84" id="84">84</a>
 <a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>iroh_base::key::SecretKey;
-<span class="kw">use </span>webpki::types::{pem::PemObject, CertificateDer, PrivateKeyDer};
+<span class="kw">use </span>webpki::types::{pem::PemObject, CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
 <span class="kw">use super</span>::{certificate, CreateConfigError};
 <span class="kw">use </span><span class="kw">crate</span>::tls::Authentication;
@@ -114,23 +118,27 @@
             Authentication::RawPublicKey =&gt; {
                 <span class="comment">// Directly use the key
                 </span><span class="kw">let </span>client_private_key = secret_key.serialize_secret_pem();
+                <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>client_private_key);
                 <span class="kw">let </span>client_private_key =
-                    PrivateKeyDer::from_pem_slice(client_private_key.as_bytes())
+                    PrivatePkcs8KeyDer::from_pem_slice(client_private_key.as_bytes())
                         .expect(<span class="string">"cannot open private key file"</span>);
+                <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>client_private_key);
                 <span class="kw">let </span>client_private_key =
-                    rustls::crypto::ring::sign::any_ecdsa_type(<span class="kw-2">&amp;</span>client_private_key)<span class="question-mark">?</span>;
-
+                    rustls::crypto::ring::sign::any_eddsa_type(<span class="kw-2">&amp;</span>client_private_key)<span class="question-mark">?</span>;
+                <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>client_private_key);
                 <span class="kw">let </span>client_public_key = client_private_key
                     .public_key()
                     .ok_or(rustls::Error::InconsistentKeys(
                         rustls::InconsistentKeys::Unknown,
                     ))
                     .expect(<span class="string">"cannot load public key"</span>);
+                <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>client_public_key);
                 <span class="kw">let </span>client_public_key_as_cert = CertificateDer::from(client_public_key.to_vec());
                 <span class="kw">let </span>certified_key = rustls::sign::CertifiedKey::new(
                     <span class="macro">vec!</span>[client_public_key_as_cert],
                     client_private_key,
                 );
+                <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>certified_key);
                 Arc::new(certified_key)
             }
         };
