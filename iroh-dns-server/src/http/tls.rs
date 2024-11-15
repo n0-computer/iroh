@@ -74,9 +74,9 @@ impl<I: AsyncRead + AsyncWrite + Unpin + Send + 'static, S: Send + 'static> Acce
 
 impl TlsAcceptor {
     async fn self_signed(domains: Vec<String>) -> Result<Self> {
-        let tls_cert = rcgen::generate_simple_self_signed(domains)?;
-        let key = tls_cert.serialize_private_key_der();
-        let config = RustlsConfig::from_der(vec![tls_cert.serialize_der()?], key).await?;
+        let rcgen::CertifiedKey { cert, key_pair } = rcgen::generate_simple_self_signed(domains)?;
+        let config =
+            RustlsConfig::from_der(vec![cert.der().to_vec()], key_pair.serialize_der()).await?;
         let acceptor = RustlsAcceptor::new(config);
         Ok(Self::Manual(acceptor))
     }

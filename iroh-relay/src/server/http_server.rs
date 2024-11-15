@@ -653,18 +653,15 @@ mod tests {
         let subject_alt_names = vec!["localhost".to_string()];
 
         let cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
-        let rustls_certificate =
-            rustls::pki_types::CertificateDer::from(cert.serialize_der().unwrap());
-        let rustls_key =
-            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.get_key_pair().serialize_der());
-        let rustls_key = rustls::pki_types::PrivateKeyDer::from(rustls_key);
+        let rustls_certificate = cert.cert.der().clone();
+        let rustls_key = rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
         let config = rustls::ServerConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
         ))
         .with_safe_default_protocol_versions()
         .expect("protocols supported by ring")
         .with_no_client_auth()
-        .with_single_cert(vec![(rustls_certificate)], rustls_key)
+        .with_single_cert(vec![(rustls_certificate)], rustls_key.into())
         .expect("cert is right");
 
         let config = Arc::new(config);

@@ -2838,7 +2838,7 @@ dependencies = [
  "mainline",
  "parking_lot",
  "pkarr",
- "rcgen",
+ "rcgen 0.13.1",
  "redb 2.2.0",
  "regex",
  "rustls",
@@ -3026,7 +3026,7 @@ dependencies = [
  "pretty_assertions",
  "rand",
  "rand_chacha",
- "rcgen",
+ "rcgen 0.13.1",
  "regex",
  "reqwest",
  "ring",
@@ -3074,7 +3074,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-net",
  "iroh-quinn",
- "rcgen",
+ "rcgen 0.13.1",
  "rustls",
  "socket2",
  "tokio",
@@ -3167,7 +3167,7 @@ dependencies = [
  "proptest",
  "rand",
  "rand_chacha",
- "rcgen",
+ "rcgen 0.13.1",
  "regex",
  "reqwest",
  "ring",
@@ -4727,6 +4727,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rcgen"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54077e1872c46788540de1ea3d7f4ccb1983d12f9aa909b234468676c1a36779"
+dependencies = [
+ "pem",
+ "ring",
+ "rustls-pki-types",
+ "time",
+ "yasna",
+]
+
+[[package]]
 name = "redb"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6053,7 +6066,7 @@ dependencies = [
  "num-bigint",
  "pem",
  "proc-macro2",
- "rcgen",
+ "rcgen 0.12.1",
  "reqwest",
  "ring",
  "rustls",

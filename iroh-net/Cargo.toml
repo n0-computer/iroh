@@ -25,7 +25,13 @@ base64 = "0.22.1"
 bytes = "1.7"
 clap = { version = "4", features = ["derive"], optional = true }
 der = { version = "0.7", features = ["alloc", "derive"] }
-derive_more = { version = "1.0.0", features = ["debug", "display", "from", "try_into", "deref"] }
+derive_more = { version = "1.0.0", features = [
+    "debug",
+    "display",
+    "from",
+    "try_into",
+    "deref",
+] }
 futures-buffered = "0.2.8"
 futures-concurrency = "7.6.0"
 futures-lite = "2.3"
@@ -50,16 +56,25 @@ num_enum = "0.7"
 once_cell = "1.18.0"
 parking_lot = "0.12.1"
 pin-project = "1"
-pkarr = { version = "2", default-features = false, features = ["async", "relay"] }
+pkarr = { version = "2", default-features = false, features = [
+    "async",
+    "relay",
+] }
 portmapper = { version = "0.1.0", path = "../net-tools/portmapper" }
-postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
+postcard = { version = "1", default-features = false, features = [
+    "alloc",
+    "use-std",
+    "experimental-derive",
+] }
 quinn = { package = "iroh-quinn", version = "0.12.0" }
 quinn-proto = { package = "iroh-quinn-proto", version = "0.12.0" }
 quinn-udp = { package = "iroh-quinn-udp", version = "0.5.5" }
 rand = "0.8"
-rcgen = "0.12"
+rcgen = "0.13"
 regex = { version = "1.7.1", optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+] }
 ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1", features = ["derive", "rc"] }
@@ -69,14 +84,29 @@ stun-rs = "0.1.5"
 surge-ping = "0.8.0"
 thiserror = "1"
 time = "0.3.20"
-tokio = { version = "1", features = ["io-util", "macros", "sync", "rt", "net", "fs", "io-std", "signal", "process"] }
-tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring"] }
+tokio = { version = "1", features = [
+    "io-util",
+    "macros",
+    "sync",
+    "rt",
+    "net",
+    "fs",
+    "io-std",
+    "signal",
+    "process",
+] }
+tokio-rustls = { version = "0.26", default-features = false, features = [
+    "logging",
+    "ring",
+] }
 tokio-stream = { version = "0.1.15" }
 tokio-tungstenite = "0.21"
 tokio-tungstenite-wasm = "0.3"
 tokio-util = { version = "0.7.12", features = ["io-util", "io", "codec", "rt"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+], optional = true }
 tungstenite = "0.21"
 url = { version = "2.4", features = ["serde"] }
 watchable = "1.1.2"
@@ -103,7 +133,12 @@ rtnetlink = "0.13.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 wmi = "0.13"
-windows = { version = "0.51", features = ["Win32_NetworkManagement_IpHelper", "Win32_Foundation", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
+windows = { version = "0.51", features = [
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Foundation",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+] }
 
 [dev-dependencies]
 axum = { version = "0.7.4" }
@@ -112,7 +147,16 @@ criterion = "0.5.1"
 crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
 pretty_assertions = "1.4"
 rand_chacha = "0.3.1"
-tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macros", "time", "test-util"] }
+tokio = { version = "1", features = [
+    "io-util",
+    "sync",
+    "rt",
+    "net",
+    "fs",
+    "macros",
+    "time",
+    "test-util",
+] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 iroh-test = "0.28.0"
 iroh-net = { path = "." }
