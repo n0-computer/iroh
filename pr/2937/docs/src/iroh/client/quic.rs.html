@@ -106,16 +106,19 @@
 
     <span class="doccomment">/// Connects to an iroh node at the given RPC address.
     </span><span class="kw">pub async fn </span>connect_addr(addr: SocketAddr) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>client = connect_raw(addr).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>client = connect_raw(addr, iroh_net::tls::Authentication::X509).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(Iroh::new(client))
     }
 }
 
 <span class="doccomment">/// Create a raw RPC client to an iroh node running on the same computer, but in a different
 /// process.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>connect_raw(addr: SocketAddr) -&gt; anyhow::Result&lt;RpcClient&gt; {
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>connect_raw(
+    addr: SocketAddr,
+    tls_auth: iroh_net::tls::Authentication,
+) -&gt; anyhow::Result&lt;RpcClient&gt; {
     <span class="kw">let </span>bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, <span class="number">0</span>).into();
-    <span class="kw">let </span>endpoint = create_quinn_client(bind_addr, <span class="macro">vec!</span>[RPC_ALPN.to_vec()], <span class="bool-val">false</span>)<span class="question-mark">?</span>;
+    <span class="kw">let </span>endpoint = create_quinn_client(tls_auth, bind_addr, <span class="macro">vec!</span>[RPC_ALPN.to_vec()], <span class="bool-val">false</span>)<span class="question-mark">?</span>;
 
     <span class="kw">let </span>server_name = <span class="string">"localhost"</span>.to_string();
     <span class="kw">let </span>connection = QuinnConnector::new(endpoint, addr, server_name);
@@ -129,17 +132,14 @@
 }
 
 <span class="kw">fn </span>create_quinn_client(
+    tls_auth: iroh_net::tls::Authentication,
     bind_addr: SocketAddr,
     alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;,
     keylog: bool,
 ) -&gt; anyhow::Result&lt;quinn::Endpoint&gt; {
     <span class="kw">let </span>secret_key = iroh_net::key::SecretKey::generate();
-    <span class="kw">let </span>tls_client_config = iroh_net::tls::Authentication::X509.make_client_config(
-        <span class="kw-2">&amp;</span>secret_key,
-        <span class="prelude-val">None</span>,
-        alpn_protocols,
-        keylog,
-    )<span class="question-mark">?</span>;
+    <span class="kw">let </span>tls_client_config =
+        tls_auth.make_client_config(<span class="kw-2">&amp;</span>secret_key, <span class="prelude-val">None</span>, alpn_protocols, keylog)<span class="question-mark">?</span>;
     <span class="kw">let </span><span class="kw-2">mut </span>client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
     <span class="kw">let </span><span class="kw-2">mut </span>endpoint = quinn::Endpoint::client(bind_addr)<span class="question-mark">?</span>;
     <span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();

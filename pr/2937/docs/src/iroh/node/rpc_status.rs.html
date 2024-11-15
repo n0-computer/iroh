@@ -110,6 +110,8 @@
 <a href="#110" id="110">110</a>
 <a href="#111" id="111">111</a>
 <a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, SocketAddr},
     path::Path,
@@ -156,7 +158,9 @@
                     </span>.context(<span class="string">"read rpc lock file"</span>)<span class="question-mark">?</span>;
                 <span class="kw">let </span>running_rpc_port = u16::from_le_bytes(buffer);
                 <span class="kw">let </span>addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), running_rpc_port);
-                <span class="kw">if let </span><span class="prelude-val">Ok</span>(client) = <span class="kw">crate</span>::client::quic_connect_raw(addr).<span class="kw">await </span>{
+                <span class="kw">if let </span><span class="prelude-val">Ok</span>(client) =
+                    <span class="kw">crate</span>::client::quic_connect_raw(addr, iroh_net::tls::Authentication::X509).<span class="kw">await
+                </span>{
                     <span class="kw">return </span><span class="prelude-val">Ok</span>(RpcStatus::Running {
                         port: running_rpc_port,
                         client,

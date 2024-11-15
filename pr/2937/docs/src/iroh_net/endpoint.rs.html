@@ -1885,6 +1885,23 @@
 <a href="#1885" id="1885">1885</a>
 <a href="#1886" id="1886">1886</a>
 <a href="#1887" id="1887">1887</a>
+<a href="#1888" id="1888">1888</a>
+<a href="#1889" id="1889">1889</a>
+<a href="#1890" id="1890">1890</a>
+<a href="#1891" id="1891">1891</a>
+<a href="#1892" id="1892">1892</a>
+<a href="#1893" id="1893">1893</a>
+<a href="#1894" id="1894">1894</a>
+<a href="#1895" id="1895">1895</a>
+<a href="#1896" id="1896">1896</a>
+<a href="#1897" id="1897">1897</a>
+<a href="#1898" id="1898">1898</a>
+<a href="#1899" id="1899">1899</a>
+<a href="#1900" id="1900">1900</a>
+<a href="#1901" id="1901">1901</a>
+<a href="#1902" id="1902">1902</a>
+<a href="#1903" id="1903">1903</a>
+<a href="#1904" id="1904">1904</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -1986,6 +2003,7 @@
     </span>insecure_skip_relay_cert_verify: bool,
     addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;,
     addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
+    tls_auth: tls::Authentication,
 }
 
 <span class="kw">impl </span>Default <span class="kw">for </span>Builder {
@@ -2004,6 +2022,7 @@
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
             addr_v4: <span class="prelude-val">None</span>,
             addr_v6: <span class="prelude-val">None</span>,
+            tls_auth: tls::Authentication::X509,
         }
     }
 }
@@ -2019,6 +2038,7 @@
         <span class="kw">let </span>relay_map = <span class="self">self</span>.relay_mode.relay_map();
         <span class="kw">let </span>secret_key = <span class="self">self</span>.secret_key.unwrap_or_else(SecretKey::generate);
         <span class="kw">let </span>static_config = StaticConfig {
+            tls_auth: <span class="self">self</span>.tls_auth,
             transport_config: Arc::new(<span class="self">self</span>.transport_config.unwrap_or_default()),
             keylog: <span class="self">self</span>.keylog,
             secret_key: secret_key.clone(),
@@ -2192,6 +2212,18 @@
         <span class="self">self
     </span>}
 
+    <span class="doccomment">/// Use libp2p based self signed certificates for TLS.
+    </span><span class="kw">pub fn </span>tls_x509(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.tls_auth = tls::Authentication::X509;
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Use TLS Raw Public Keys
+    </span><span class="kw">pub fn </span>tls_raw_public_keys(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.tls_auth = tls::Authentication::RawPublicKey;
+        <span class="self">self
+    </span>}
+
     <span class="attr">#[cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)]
     </span><span class="doccomment">/// Configures the endpoint to also use the mainline DHT with default settings.
     ///
@@ -2306,6 +2338,7 @@
 <span class="doccomment">/// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>StaticConfig {
+    tls_auth: tls::Authentication,
     secret_key: SecretKey,
     transport_config: Arc&lt;quinn::TransportConfig&gt;,
     keylog: bool,
@@ -2315,6 +2348,7 @@
     <span class="doccomment">/// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
     </span><span class="kw">fn </span>create_server_config(<span class="kw-2">&amp;</span><span class="self">self</span>, alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;ServerConfig&gt; {
         <span class="kw">let </span>server_config = make_server_config(
+            <span class="self">self</span>.tls_auth,
             <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key,
             alpn_protocols,
             <span class="self">self</span>.transport_config.clone(),
@@ -2329,13 +2363,13 @@
 // used by iroh::node::Node (or rather iroh::node::Builder) to create a plain Quinn
 // endpoint.
 </span><span class="kw">pub fn </span>make_server_config(
+    tls_auth: tls::Authentication,
     secret_key: <span class="kw-2">&amp;</span>SecretKey,
     alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;,
     transport_config: Arc&lt;TransportConfig&gt;,
     keylog: bool,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;ServerConfig&gt; {
-    <span class="kw">let </span>quic_server_config =
-        tls::Authentication::X509.make_server_config(secret_key, alpn_protocols, keylog)<span class="question-mark">?</span>;
+    <span class="kw">let </span>quic_server_config = tls_auth.make_server_config(secret_key, alpn_protocols, keylog)<span class="question-mark">?</span>;
     <span class="kw">let </span><span class="kw-2">mut </span>server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
     server_config.transport_config(transport_config);
 

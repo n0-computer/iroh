@@ -988,6 +988,12 @@
 <a href="#988" id="988">988</a>
 <a href="#989" id="989">989</a>
 <a href="#990" id="990">990</a>
+<a href="#991" id="991">991</a>
+<a href="#992" id="992">992</a>
+<a href="#993" id="993">993</a>
+<a href="#994" id="994">994</a>
+<a href="#995" id="995">995</a>
+<a href="#996" id="996">996</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     path::{Path, PathBuf},
@@ -1381,7 +1387,11 @@
 
     <span class="doccomment">/// Configure the default iroh rpc endpoint.
     </span><span class="kw">pub async fn </span>enable_rpc_with_addr(<span class="self">self</span>, <span class="kw-2">mut </span>rpc_addr: SocketAddr) -&gt; <span class="prelude-ty">Result</span>&lt;Builder&lt;D&gt;&gt; {
-        <span class="kw">let </span>(ep, actual_rpc_port) = make_rpc_endpoint(<span class="kw-2">&amp;</span><span class="self">self</span>.secret_key, rpc_addr)<span class="question-mark">?</span>;
+        <span class="kw">let </span>(ep, actual_rpc_port) = make_rpc_endpoint(
+            <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key,
+            rpc_addr,
+            iroh_net::tls::Authentication::X509,
+        )<span class="question-mark">?</span>;
         rpc_addr.set_port(actual_rpc_port);
 
         <span class="kw">let </span>ep = quic_rpc::transport::boxed::BoxedListener::new(ep);
@@ -1940,6 +1950,7 @@
 </span><span class="kw">fn </span>make_rpc_endpoint(
     secret_key: <span class="kw-2">&amp;</span>SecretKey,
     <span class="kw-2">mut </span>rpc_addr: SocketAddr,
+    tls_auth: iroh_net::tls::Authentication,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(
     QuinnListener&lt;<span class="kw">crate</span>::rpc_protocol::Request, <span class="kw">crate</span>::rpc_protocol::Response&gt;,
     u16,
@@ -1949,6 +1960,7 @@
         .max_concurrent_bidi_streams(MAX_RPC_STREAMS.into())
         .max_concurrent_uni_streams(<span class="number">0u32</span>.into());
     <span class="kw">let </span>server_config = iroh_net::endpoint::make_server_config(
+        tls_auth,
         secret_key,
         <span class="macro">vec!</span>[RPC_ALPN.to_vec()],
         Arc::new(transport_config),
