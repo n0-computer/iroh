@@ -497,7 +497,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_initial_probeplan() {
-        let (_servers, relay_map) = test_utils::relay_map().await;
+        let (_servers, relay_map) = test_utils::relay_map(2).await;
         let relay_node_1 = relay_map.nodes().next().unwrap();
         let relay_node_2 = relay_map.nodes().nth(1).unwrap();
         let if_state = interfaces::State::fake();
@@ -591,7 +591,7 @@ mod tests {
     #[tokio::test]
     async fn test_plan_with_report() {
         let _logging = iroh_test::logging::setup();
-        let (_servers, relay_map) = test_utils::relay_map().await;
+        let (_servers, relay_map) = test_utils::relay_map(2).await;
         let relay_node_1 = relay_map.nodes().next().unwrap().clone();
         let relay_node_2 = relay_map.nodes().nth(1).unwrap().clone();
         let if_state = interfaces::State::fake();
@@ -749,7 +749,7 @@ mod tests {
     #[tokio::test]
     async fn test_relay_sort_two_latencies() {
         let _logging = iroh_test::logging::setup();
-        let (_servers, relay_map) = test_utils::relay_map().await;
+        let (_servers, relay_map) = test_utils::relay_map(2).await;
         let r1 = relay_map.nodes().next().unwrap();
         let r2 = relay_map.nodes().nth(1).unwrap();
         let last_report = create_last_report(
@@ -770,7 +770,7 @@ mod tests {
     #[tokio::test]
     async fn test_relay_sort_equal_latencies() {
         let _logging = iroh_test::logging::setup();
-        let (_servers, relay_map) = test_utils::relay_map().await;
+        let (_servers, relay_map) = test_utils::relay_map(2).await;
         let r1 = relay_map.nodes().next().unwrap();
         let r2 = relay_map.nodes().nth(1).unwrap();
         let last_report = create_last_report(
@@ -790,7 +790,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_relay_sort_missing_latency() {
-        let (_servers, relay_map) = test_utils::relay_map().await;
+        let (_servers, relay_map) = test_utils::relay_map(2).await;
         let r1 = relay_map.nodes().next().unwrap();
         let r2 = relay_map.nodes().nth(1).unwrap();
 
@@ -814,7 +814,7 @@ mod tests {
     #[tokio::test]
     async fn test_relay_sort_no_latency() {
         let _logging = iroh_test::logging::setup();
-        let (_servers, relay_map) = test_utils::relay_map().await;
+        let (_servers, relay_map) = test_utils::relay_map(2).await;
         let r1 = relay_map.nodes().next().unwrap();
         let r2 = relay_map.nodes().nth(1).unwrap();
 
