@@ -134,7 +134,7 @@
     keylog: bool,
 ) -&gt; anyhow::Result&lt;quinn::Endpoint&gt; {
     <span class="kw">let </span>secret_key = iroh_net::key::SecretKey::generate();
-    <span class="kw">let </span>tls_client_config = iroh_net::tls::TlsAuthentication::X509.make_client_config(
+    <span class="kw">let </span>tls_client_config = iroh_net::tls::Authentication::X509.make_client_config(
         <span class="kw-2">&amp;</span>secret_key,
         <span class="prelude-val">None</span>,
         alpn_protocols,

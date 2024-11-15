@@ -3890,12 +3890,6 @@
 <a href="#3890" id="3890">3890</a>
 <a href="#3891" id="3891">3891</a>
 <a href="#3892" id="3892">3892</a>
-<a href="#3893" id="3893">3893</a>
-<a href="#3894" id="3894">3894</a>
-<a href="#3895" id="3895">3895</a>
-<a href="#3896" id="3896">3896</a>
-<a href="#3897" id="3897">3897</a>
-<a href="#3898" id="3898">3898</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -7112,11 +7106,8 @@
             <span class="kw">let </span>key = SecretKey::generate();
             <span class="kw">let </span>conn = std::net::UdpSocket::bind(addr)<span class="question-mark">?</span>;
 
-            <span class="kw">let </span>quic_server_config = tls::TlsAuthentication::X509.make_server_config(
-                <span class="kw-2">&amp;</span>key,
-                <span class="macro">vec!</span>[ALPN.to_vec()],
-                <span class="bool-val">false</span>,
-            )<span class="question-mark">?</span>;
+            <span class="kw">let </span>quic_server_config =
+                tls::Authentication::X509.make_server_config(<span class="kw-2">&amp;</span>key, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">false</span>)<span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
             <span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();
             transport_config.keep_alive_interval(<span class="prelude-val">Some</span>(Duration::from_secs(<span class="number">5</span>)));
@@ -7129,7 +7120,7 @@
                 Arc::new(quinn::TokioRuntime),
             )<span class="question-mark">?</span>;
 
-            <span class="kw">let </span>quic_client_config = tls::TlsAuthentication::X509.make_client_config(
+            <span class="kw">let </span>quic_client_config = tls::Authentication::X509.make_client_config(
                 <span class="kw-2">&amp;</span>key,
                 <span class="prelude-val">None</span>,
                 <span class="macro">vec!</span>[ALPN.to_vec()],
@@ -7269,11 +7260,8 @@
             <span class="kw">let </span>key = SecretKey::generate();
             <span class="kw">let </span>conn = UdpConn::bind(addr)<span class="question-mark">?</span>;
 
-            <span class="kw">let </span>quic_server_config = tls::TlsAuthentication::X509.make_server_config(
-                <span class="kw-2">&amp;</span>key,
-                <span class="macro">vec!</span>[ALPN.to_vec()],
-                <span class="bool-val">false</span>,
-            )<span class="question-mark">?</span>;
+            <span class="kw">let </span>quic_server_config =
+                tls::Authentication::X509.make_server_config(<span class="kw-2">&amp;</span>key, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">false</span>)<span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
             <span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();
             transport_config.keep_alive_interval(<span class="prelude-val">Some</span>(Duration::from_secs(<span class="number">5</span>)));
@@ -7286,7 +7274,7 @@
                 Arc::new(quinn::TokioRuntime),
             )<span class="question-mark">?</span>;
 
-            <span class="kw">let </span>quic_client_config = tls::TlsAuthentication::X509.make_client_config(
+            <span class="kw">let </span>quic_client_config = tls::Authentication::X509.make_client_config(
                 <span class="kw-2">&amp;</span>key,
                 <span class="prelude-val">None</span>,
                 <span class="macro">vec!</span>[ALPN.to_vec()],
@@ -7583,7 +7571,7 @@
         transport_config: Arc&lt;quinn::TransportConfig&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection&gt; {
         <span class="kw">let </span>alpns = <span class="macro">vec!</span>[ALPN.to_vec()];
-        <span class="kw">let </span>quic_client_config = tls::TlsAuthentication::X509.make_client_config(
+        <span class="kw">let </span>quic_client_config = tls::Authentication::X509.make_client_config(
             <span class="kw-2">&amp;</span>ep_secret_key,
             <span class="prelude-val">Some</span>(node_id),
             alpns,

@@ -106,10 +106,16 @@
 <a href="#106" id="106">106</a>
 <a href="#107" id="107">107</a>
 <a href="#108" id="108">108</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! TLS configuration based on libp2p TLS specs.
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! TLS configuration for iroh.
 //!
-//! See &lt;https://github.com/libp2p/specs/blob/master/tls/tls.md&gt;.
-//! Based on rust-libp2p/transports/tls
+//! Currently there are two mechanisms available
+//! - Raw Public Keys, using the TLS extension described in [RFC 7250]
+//! - libp2p-tls, based on &lt;https://github.com/libp2p/specs/blob/master/tls/tls.md&gt;.
+//!
+//! [RFC 7250]: https://datatracker.ietf.org/doc/html/rfc7250
 
 </span><span class="kw">use </span>std::sync::Arc;
 
@@ -123,31 +129,17 @@
 <span class="kw">mod </span>resolver;
 <span class="kw">mod </span>verifier;
 
-<span class="doccomment">/// Error for generating iroh p2p TLS configs.
-</span><span class="attr">#[derive(Debug, thiserror::Error)]
-</span><span class="kw">pub enum </span>CreateConfigError {
-    <span class="doccomment">/// Error generating the certificate.
-    </span><span class="attr">#[error(<span class="string">"Error generating the certificate"</span>)]
-    </span>CertError(<span class="attr">#[from] </span>certificate::GenError),
-    <span class="doccomment">/// Error creating QUIC config.
-    </span><span class="attr">#[error(<span class="string">"Error creating QUIC config"</span>)]
-    </span>ConfigError(<span class="attr">#[from] </span>NoInitialCipherSuite),
-    <span class="doccomment">/// Rustls configuration error
-    </span><span class="attr">#[error(<span class="string">"rustls error"</span>)]
-    </span>Rustls(<span class="attr">#[from] </span>rustls::Error),
-}
-
 <span class="doccomment">/// TLS Authentication mechanism
 </span><span class="attr">#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
-</span><span class="kw">pub enum </span>TlsAuthentication {
+</span><span class="kw">pub enum </span>Authentication {
     <span class="doccomment">/// Self signed certificates, based on libp2p-tls
     </span><span class="attr">#[default]
     </span>X509,
-    <span class="doccomment">/// RFC 7250 TLS extension Raw Public Keys.
+    <span class="doccomment">/// RFC 7250 TLS extension: Raw Public Keys.
     </span>RawPublicKey,
 }
 
-<span class="kw">impl </span>TlsAuthentication {
+<span class="kw">impl </span>Authentication {
     <span class="doccomment">/// Create a TLS client configuration.
     ///
     /// If *keylog* is `true` this will enable logging of the pre-master key to the file in the
@@ -213,5 +205,19 @@
         <span class="kw">let </span>config = crypto.try_into()<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(config)
     }
+}
+
+<span class="doccomment">/// Error for generating TLS configs.
+</span><span class="attr">#[derive(Debug, thiserror::Error)]
+</span><span class="kw">pub enum </span>CreateConfigError {
+    <span class="doccomment">/// Error generating the certificate.
+    </span><span class="attr">#[error(<span class="string">"Error generating the certificate"</span>)]
+    </span>CertError(<span class="attr">#[from] </span>certificate::GenError),
+    <span class="doccomment">/// Error creating QUIC config.
+    </span><span class="attr">#[error(<span class="string">"Error creating QUIC config"</span>)]
+    </span>ConfigError(<span class="attr">#[from] </span>NoInitialCipherSuite),
+    <span class="doccomment">/// Rustls configuration error
+    </span><span class="attr">#[error(<span class="string">"rustls error"</span>)]
+    </span>Rustls(<span class="attr">#[from] </span>rustls::Error),
 }
 </code></pre></div></section></main></body></html>

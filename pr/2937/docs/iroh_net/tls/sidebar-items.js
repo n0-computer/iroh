@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["CreateConfigError","TlsAuthentication"],"mod":["certificate"]};
+window.SIDEBAR_ITEMS = {"enum":["Authentication","CreateConfigError"],"mod":["certificate"]};
