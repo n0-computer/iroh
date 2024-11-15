@@ -37,11 +37,11 @@ futures-concurrency = "7.6"
 futures-lite = "2.5"
 futures-sink = "0.3"
 futures-util = "0.3"
-governor = "0.6.0"
+governor = "0.7.0"
 hex = "0.4.3"
 hickory-proto = "=0.25.0-alpha.2"
 hickory-resolver = "=0.25.0-alpha.2"
-hostname = "0.3.1"
+hostname = "0.4"
 http = "1"
 http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
@@ -50,7 +50,7 @@ igd-next = { version = "0.15.1", features = ["aio_tokio"] }
 iroh-base = { version = "0.28.0", features = ["key"] }
 iroh-relay = { version = "0.28", path = "../iroh-relay" }
 libc = "0.2.139"
-netdev = "0.30.0"
+netdev = "0.31.0"
 netwatch = { version = "0.1.0", path = "../net-tools/netwatch" }
 num_enum = "0.7"
 once_cell = "1.18.0"
@@ -100,14 +100,13 @@ tokio-rustls = { version = "0.26", default-features = false, features = [
     "ring",
 ] }
 tokio-stream = { version = "0.1.15" }
-tokio-tungstenite = "0.21"
+tokio-tungstenite = "0.24"
 tokio-tungstenite-wasm = "0.3"
 tokio-util = { version = "0.7", features = ["io-util", "io", "codec", "rt"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
 ], optional = true }
-tungstenite = "0.21"
 url = { version = "2.5", features = ["serde"] }
 watchable = "1.1.2"
 webpki = { package = "rustls-webpki", version = "0.102" }
@@ -128,13 +127,13 @@ genawaiter = { version = "0.99", features = ["futures03"], optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"
-netlink-packet-route = "0.17.0"
+netlink-packet-route = "0.21.0"
 netlink-sys = "0.8.5"
-rtnetlink = "0.13.0"
+rtnetlink = "0.14"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-wmi = "0.13"
-windows = { version = "0.52", features = [
+wmi = "0.14"
+windows = { version = "0.58", features = [
     "Win32_NetworkManagement_IpHelper",
     "Win32_Foundation",
     "Win32_NetworkManagement_Ndis",
@@ -163,7 +162,6 @@ iroh-test = "0.28.0"
 iroh-net = { path = "." }
 serde_json = "1"
 testresult = "0.4.0"
-mainline = "2.0.1"
 iroh-relay = { version = "0.28", path = "../iroh-relay", features = ["test-utils", "server"] }
 
 [[bench]]

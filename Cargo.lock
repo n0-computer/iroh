@@ -401,11 +401,11 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "base64-url"
-version = "2.0.2"
+version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb9fb9fb058cc3063b5fc88d9a21eefa2735871498a04e1650da76ed511c8569"
+checksum = "38e2b6c78c06f7288d5e3c3d683bde35a79531127c83b087e5d0d77c974b4b28"
 dependencies = [
- "base64 0.21.7",
+ "base64 0.22.1",
 ]
 
 [[package]]
@@ -1036,6 +1036,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
 dependencies = [
  "cfg-if",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
+
+[[package]]
+name = "dashmap"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
  "hashbrown 0.14.5",
  "lock_api",
  "once_cell",
@@ -1777,9 +1791,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68a7f542ee6b35af73b06abc0dad1c1bae89964e4e253bc4b587b91c9637867b"
 dependencies = [
  "cfg-if",
- "dashmap",
+ "dashmap 5.5.3",
  "futures",
  "futures-timer",
+ "no-std-compat",
+ "nonzero_ext",
+ "parking_lot",
+ "portable-atomic",
+ "quanta",
+ "rand",
+ "smallvec",
+ "spinning_top",
+]
+
+[[package]]
+name = "governor"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0746aa765db78b521451ef74221663b57ba595bf83f75d0ce23cc09447c8139f"
+dependencies = [
+ "cfg-if",
+ "dashmap 6.1.0",
+ "futures-sink",
+ "futures-timer",
+ "futures-util",
  "no-std-compat",
  "nonzero_ext",
  "parking_lot",
@@ -2058,6 +2093,17 @@ dependencies = [
  "libc",
  "match_cfg",
  "winapi",
+]
+
+[[package]]
+name = "hostname"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9c7c7c8ac16c798734b8a24560c1362120597c40d5e1459f09498f8f6c8f2ba"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "windows 0.52.0",
 ]
 
 [[package]]
@@ -2614,7 +2660,7 @@ dependencies = [
 [[package]]
 name = "iroh-blobs"
 version = "0.28.1"
-source = "git+https://github.com/n0-computer/iroh-blobs?branch=main#cdcb863d7c75cdd7258c8f5001154272df7460c0"
+source = "git+https://github.com/n0-computer/iroh-blobs?branch=main#290eb42cfd2d13202208264c2674ce423829f571"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2657,7 +2703,7 @@ dependencies = [
  "smallvec",
  "strum 0.26.3",
  "tempfile",
- "thiserror 2.0.3",
+ "thiserror",
  "tokio",
  "tokio-util",
  "tracing",
@@ -2737,7 +2783,7 @@ dependencies = [
  "derive_more",
  "dirs-next",
  "futures-lite 2.5.0",
- "governor",
+ "governor 0.6.3",
  "hickory-proto 0.25.0-alpha.2",
  "hickory-resolver",
  "hickory-server",
@@ -2746,7 +2792,6 @@ dependencies = [
  "iroh-net",
  "iroh-test",
  "lru",
- "mainline",
  "parking_lot",
  "pkarr",
  "rcgen 0.13.1",
@@ -2824,7 +2869,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.28.1"
-source = "git+https://github.com/n0-computer/iroh-gossip?branch=main#7c90c3f351585e7a364bfbf3941d07592b20dec6"
+source = "git+https://github.com/n0-computer/iroh-gossip?branch=main#ba0f6b0f54a740d8eae7ee6683f4aa1d8d8c8eb2"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2910,11 +2955,11 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "genawaiter",
- "governor",
+ "governor 0.7.0",
  "hex",
  "hickory-proto 0.25.0-alpha.2",
  "hickory-resolver",
- "hostname",
+ "hostname 0.4.0",
  "http 1.1.0",
  "http-body-util",
  "hyper",
@@ -2930,10 +2975,9 @@ dependencies = [
  "iroh-relay",
  "iroh-test",
  "libc",
- "mainline",
  "netdev",
  "netlink-packet-core",
- "netlink-packet-route",
+ "netlink-packet-route 0.21.0",
  "netlink-sys",
  "netwatch",
  "num_enum",
@@ -2967,16 +3011,15 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-stream",
- "tokio-tungstenite",
+ "tokio-tungstenite 0.24.0",
  "tokio-tungstenite-wasm",
  "tokio-util",
  "tracing",
  "tracing-subscriber",
- "tungstenite",
  "url",
  "watchable",
  "webpki-roots",
- "windows 0.52.0",
+ "windows 0.58.0",
  "wmi",
  "x509-parser",
  "z32",
@@ -2984,7 +3027,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net-bench"
-version = "0.27.0"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3125,11 +3168,11 @@ dependencies = [
  "futures-lite 2.5.0",
  "futures-sink",
  "futures-util",
- "governor",
+ "governor 0.7.0",
  "hex",
  "hickory-proto 0.25.0-alpha.2",
  "hickory-resolver",
- "hostname",
+ "hostname 0.4.0",
  "http 1.1.0",
  "http-body-util",
  "hyper",
@@ -3163,13 +3206,12 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-rustls-acme",
- "tokio-tungstenite",
+ "tokio-tungstenite 0.24.0",
  "tokio-tungstenite-wasm",
  "tokio-util",
  "toml",
  "tracing",
  "tracing-subscriber",
- "tungstenite",
  "url",
  "webpki-roots",
 ]
@@ -3429,12 +3471,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
 
 [[package]]
-name = "memalloc"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df39d232f5c40b0891c10216992c2f250c054105cb1e56f0fc9032db6203ecc1"
-
-[[package]]
 name = "memchr"
 version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3497,15 +3533,15 @@ dependencies = [
 
 [[package]]
 name = "netdev"
-version = "0.30.0"
+version = "0.31.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7516ad2c46cc25da098ed7d6b9a0cbe9e1fbffbd04b1596148b95f2841179c83"
+checksum = "f901362e84cd407be6f8cd9d3a46bccf09136b095792785401ea7d283c79b91d"
 dependencies = [
  "dlopen2",
+ "ipnet",
  "libc",
- "memalloc",
  "netlink-packet-core",
- "netlink-packet-route",
+ "netlink-packet-route 0.17.1",
  "netlink-sys",
  "once_cell",
  "system-configuration",
@@ -3533,6 +3569,35 @@ dependencies = [
  "bitflags 1.3.2",
  "byteorder",
  "libc",
+ "netlink-packet-core",
+ "netlink-packet-utils",
+]
+
+[[package]]
+name = "netlink-packet-route"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74c171cd77b4ee8c7708da746ce392440cb7bcf618d122ec9ecc607b12938bf4"
+dependencies = [
+ "anyhow",
+ "byteorder",
+ "libc",
+ "log",
+ "netlink-packet-core",
+ "netlink-packet-utils",
+]
+
+[[package]]
+name = "netlink-packet-route"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "483325d4bfef65699214858f097d504eb812c38ce7077d165f301ec406c3066e"
+dependencies = [
+ "anyhow",
+ "bitflags 2.6.0",
+ "byteorder",
+ "libc",
+ "log",
  "netlink-packet-core",
  "netlink-packet-utils",
 ]
@@ -3592,7 +3657,7 @@ dependencies = [
  "libc",
  "netdev",
  "netlink-packet-core",
- "netlink-packet-route",
+ "netlink-packet-route 0.21.0",
  "netlink-sys",
  "once_cell",
  "rtnetlink",
@@ -3603,7 +3668,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "windows 0.52.0",
+ "windows 0.58.0",
  "wmi",
 ]
 
@@ -3618,11 +3683,11 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.26.4"
+version = "0.27.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "598beaf3cc6fdd9a5dfb1630c2800c7acd31df7aaf0f565796fba2b53ca1af1b"
+checksum = "2eb04e9c688eff1c89d72b407f168cf79bb9e867a9d3323ed6c01519eb9cc053"
 dependencies = [
- "bitflags 1.3.2",
+ "bitflags 2.6.0",
  "cfg-if",
  "libc",
 ]
@@ -4863,7 +4928,7 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52e44394d2086d010551b14b53b1f24e31647570cd1deb0379e2c21b329aba00"
 dependencies = [
- "hostname",
+ "hostname 0.3.1",
  "quick-error",
 ]
 
@@ -4915,19 +4980,19 @@ dependencies = [
 
 [[package]]
 name = "rtnetlink"
-version = "0.13.1"
+version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a552eb82d19f38c3beed3f786bd23aa434ceb9ac43ab44419ca6d67a7e186c0"
+checksum = "b684475344d8df1859ddb2d395dd3dac4f8f3422a1aa0725993cb375fc5caba5"
 dependencies = [
  "futures",
  "log",
  "netlink-packet-core",
- "netlink-packet-route",
+ "netlink-packet-route 0.19.0",
  "netlink-packet-utils",
  "netlink-proto",
  "netlink-sys",
  "nix 0.26.4",
- "thiserror 1.0.68",
+ "thiserror",
  "tokio",
 ]
 
@@ -6027,7 +6092,19 @@ dependencies = [
  "futures-util",
  "log",
  "tokio",
- "tungstenite",
+ "tungstenite 0.21.0",
+]
+
+[[package]]
+name = "tokio-tungstenite"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edc5f74e248dc973e0dbb7b74c7e0d6fcc301c694ff50049504004ef4d0cdcd9"
+dependencies = [
+ "futures-util",
+ "log",
+ "tokio",
+ "tungstenite 0.24.0",
 ]
 
 [[package]]
@@ -6043,7 +6120,7 @@ dependencies = [
  "js-sys",
  "thiserror 1.0.68",
  "tokio",
- "tokio-tungstenite",
+ "tokio-tungstenite 0.21.0",
  "wasm-bindgen",
  "web-sys",
 ]
@@ -6159,16 +6236,16 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
 name = "tower_governor"
-version = "0.3.2"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3790eac6ad3fb8d9d96c2b040ae06e2517aa24b067545d1078b96ae72f7bb9a7"
+checksum = "aea939ea6cfa7c4880f3e7422616624f97a567c16df67b53b11f0d03917a8e46"
 dependencies = [
  "axum",
  "forwarded-header-value",
- "governor",
+ "governor 0.6.3",
  "http 1.1.0",
  "pin-project",
- "thiserror 1.0.68",
+ "thiserror",
  "tower 0.4.13",
  "tracing",
 ]
@@ -6279,6 +6356,24 @@ dependencies = [
  "sha1",
  "thiserror 1.0.68",
  "url",
+ "utf-8",
+]
+
+[[package]]
+name = "tungstenite"
+version = "0.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18e5b8366ee7a95b16d32197d0b2604b43a0be89dc5fac9f8e96ccafbaedda8a"
+dependencies = [
+ "byteorder",
+ "bytes",
+ "data-encoding",
+ "http 1.1.0",
+ "httparse",
+ "log",
+ "rand",
+ "sha1",
+ "thiserror 1.0.69",
  "utf-8",
 ]
 
@@ -6918,9 +7013,9 @@ dependencies = [
 
 [[package]]
 name = "wmi"
-version = "0.13.4"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff00ac1309d4c462be86f03a55e409509e8bf4323ec296aeb4b381dd9aabe6ec"
+checksum = "fbdda506bdee26ba617bd814538b690e14f59e8185345344cff113a8be21c005"
 dependencies = [
  "chrono",
  "futures",

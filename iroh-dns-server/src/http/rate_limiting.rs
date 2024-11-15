@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use governor::{clock::QuantaInstant, middleware::NoOpMiddleware};
 use serde::{Deserialize, Serialize};
@@ -38,7 +38,7 @@ impl Default for &RateLimitConfig {
 /// This spawns a background thread to clean up the rate limiting cache.
 pub fn create(
     rate_limit_config: &RateLimitConfig,
-) -> Option<GovernorLayer<'static, PeerIpKeyExtractor, NoOpMiddleware<QuantaInstant>>> {
+) -> Option<GovernorLayer<PeerIpKeyExtractor, NoOpMiddleware<QuantaInstant>>> {
     let use_smart_extractor = match rate_limit_config {
         RateLimitConfig::Disabled => {
             tracing::info!("Rate limiting disabled");
@@ -66,11 +66,7 @@ pub fn create(
         .finish()
         .expect("failed to build rate-limiting governor");
 
-    // The governor layer needs a reference that outlives the layer.
-    // The tower_governor crate recommends in its examples to use Box::leak here.
-    // In the unreleased v0.4 of tower_governor this was changed to use an Arc instead.
-    // https://github.com/benwis/tower-governor/pull/27
-    let governor_conf = Box::leak(Box::new(governor_conf));
+    let governor_conf = Arc::new(governor_conf);
 
     // The governor needs a background task for garbage collection (to clear expired records)
     let gc_interval = Duration::from_secs(60);
@@ -82,6 +78,6 @@ pub fn create(
     });
 
     Some(GovernorLayer {
-        config: &*governor_conf,
+        config: governor_conf,
     })
 }

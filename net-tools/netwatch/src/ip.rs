@@ -42,8 +42,8 @@ impl LocalAddresses {
             let addrs = iface
                 .ipv4
                 .iter()
-                .map(|a| IpAddr::V4(a.addr))
-                .chain(iface.ipv6.iter().map(|a| IpAddr::V6(a.addr)));
+                .map(|a| IpAddr::V4(a.addr()))
+                .chain(iface.ipv6.iter().map(|a| IpAddr::V6(a.addr())));
 
             for ip in addrs {
                 let ip = ip.to_canonical();

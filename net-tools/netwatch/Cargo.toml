@@ -20,7 +20,7 @@ futures-lite = "2.5"
 futures-sink = "0.3"
 futures-util = "0.3"
 libc = "0.2.139"
-netdev = "0.30.0"
+netdev = "0.31.0"
 once_cell = "1.18.0"
 quinn-udp = { package = "iroh-quinn-udp", version = "0.5.5" }
 socket2 = "0.5.3"
@@ -43,13 +43,13 @@ tracing = "0.1"
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"
-netlink-packet-route = "0.17.0"
+netlink-packet-route = "0.21.0"
 netlink-sys = "0.8.5"
-rtnetlink = "0.13.0"
+rtnetlink = "0.14"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-wmi = "0.13"
-windows = { version = "0.52", features = ["Win32_NetworkManagement_IpHelper", "Win32_Foundation", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
+wmi = "0.14"
+windows = { version = "0.58", features = ["Win32_NetworkManagement_IpHelper", "Win32_Foundation", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
 serde = { version = "1", features = ["derive"] }
 derive_more = { version = "1.0.0", features = ["debug"] }
 

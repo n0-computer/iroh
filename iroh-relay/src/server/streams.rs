@@ -9,7 +9,7 @@ use anyhow::Result;
 use futures_lite::Stream;
 use futures_sink::Sink;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::{tungstenite, WebSocketStream};
 use tokio_util::codec::Framed;
 
 use crate::protos::relay::{DerpCodec, Frame};
