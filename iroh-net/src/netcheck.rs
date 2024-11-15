@@ -778,7 +778,6 @@ mod test_utils {
     use crate::RelayNode;
     use iroh_relay::server;
 
-    #[track_caller]
     pub(crate) async fn relay() -> (server::Server, Arc<RelayNode>) {
         let server = server::Server::spawn(server::testing::server_config())
             .await
