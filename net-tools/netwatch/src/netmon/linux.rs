@@ -6,7 +6,7 @@ use std::{
 use anyhow::Result;
 use futures_lite::StreamExt;
 use netlink_packet_core::NetlinkPayload;
-use netlink_packet_route::{address, constants::*, route, RtnlMessage};
+use netlink_packet_route::{address, route, RouteNetlinkMessage};
 use netlink_sys::{AsyncSocket, SocketAddr};
 use rtnetlink::new_connection;
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -77,7 +77,7 @@ impl RouteMonitor {
                         break;
                     }
                     NetlinkPayload::InnerMessage(msg) => match msg {
-                        RtnlMessage::NewAddress(msg) => {
+                        RouteNetlinkMessage::NewAddress(msg) => {
                             trace!("NEWADDR: {:?}", msg);
                             let addrs = addr_cache.entry(msg.header.index).or_default();
                             if let Some(addr) = get_nla!(msg, address::Nla::Address) {
@@ -90,7 +90,7 @@ impl RouteMonitor {
                                 }
                             }
                         }
-                        RtnlMessage::DelAddress(msg) => {
+                        RouteNetlinkMessage::DelAddress(msg) => {
                             trace!("DELADDR: {:?}", msg);
                             let addrs = addr_cache.entry(msg.header.index).or_default();
                             if let Some(addr) = get_nla!(msg, address::Nla::Address) {
@@ -98,7 +98,7 @@ impl RouteMonitor {
                             }
                             sender.send(NetworkMessage::Change).await.ok();
                         }
-                        RtnlMessage::NewRoute(msg) | RtnlMessage::DelRoute(msg) => {
+                        RouteNetlinkMessage::NewRoute(msg) | RouteNetlinkMessage::DelRoute(msg) => {
                             trace!("ROUTE:: {:?}", msg);
 
                             // Ignore the following messages
@@ -125,19 +125,19 @@ impl RouteMonitor {
                             }
                             sender.send(NetworkMessage::Change).await.ok();
                         }
-                        RtnlMessage::NewRule(msg) => {
+                        RouteNetlinkMessage::NewRule(msg) => {
                             trace!("NEWRULE: {:?}", msg);
                             sender.send(NetworkMessage::Change).await.ok();
                         }
-                        RtnlMessage::DelRule(msg) => {
+                        RouteNetlinkMessage::DelRule(msg) => {
                             trace!("DELRULE: {:?}", msg);
                             sender.send(NetworkMessage::Change).await.ok();
                         }
-                        RtnlMessage::NewLink(msg) => {
+                        RouteNetlinkMessage::NewLink(msg) => {
                             trace!("NEWLINK: {:?}", msg);
                             // ignored atm
                         }
-                        RtnlMessage::DelLink(msg) => {
+                        RouteNetlinkMessage::DelLink(msg) => {
                             trace!("DELLINK: {:?}", msg);
                             // ignored atm
                         }
