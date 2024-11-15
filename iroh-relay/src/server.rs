@@ -41,7 +41,8 @@ mod clients;
 mod http_server;
 mod metrics;
 pub(crate) mod streams;
-mod testing;
+#[cfg(feature = "test-utils")]
+pub mod testing;
 
 pub use self::{
     metrics::{Metrics, StunMetrics},
