@@ -259,9 +259,9 @@
 
 <span class="kw">impl </span>TlsAcceptor {
     <span class="kw">async fn </span>self_signed(domains: Vec&lt;String&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>tls_cert = rcgen::generate_simple_self_signed(domains)<span class="question-mark">?</span>;
-        <span class="kw">let </span>key = tls_cert.serialize_private_key_der();
-        <span class="kw">let </span>config = RustlsConfig::from_der(<span class="macro">vec!</span>[tls_cert.serialize_der()<span class="question-mark">?</span>], key).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>rcgen::CertifiedKey { cert, key_pair } = rcgen::generate_simple_self_signed(domains)<span class="question-mark">?</span>;
+        <span class="kw">let </span>config =
+            RustlsConfig::from_der(<span class="macro">vec!</span>[cert.der().to_vec()], key_pair.serialize_der()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>acceptor = RustlsAcceptor::new(config);
         <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Manual(acceptor))
     }
