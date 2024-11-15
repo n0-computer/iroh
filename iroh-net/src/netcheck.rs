@@ -770,6 +770,30 @@ pub(crate) fn os_has_ipv6() -> bool {
 }
 
 #[cfg(test)]
+mod test_utils {
+    //! Crates a relay server against to which perform tests.
+
+    use std::sync::Arc;
+
+    use crate::RelayNode;
+    use iroh_relay::server;
+
+    #[track_caller]
+    pub(crate) async fn relay() -> (server::Server, Arc<RelayNode>) {
+        let server = server::Server::spawn(server::testing::server_config())
+            .await
+            .expect("should serve relay");
+        let node_desc = RelayNode {
+            url: server.https_url().expect("should work as relay"),
+            stun_only: false, // the checks above and below guarantees both stun and relay
+            stun_port: server.stun_addr().expect("server should serve stun").port(),
+        };
+
+        (server, Arc::new(node_desc))
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::net::Ipv4Addr;
 
@@ -956,6 +980,7 @@ mod tests {
         Ok(())
     }
 
+    // TODO(@divma): note, this tests stun compatibility with the relays
     #[tokio::test]
     async fn test_iroh_computer_stun() -> Result<()> {
         let _guard = iroh_test::logging::setup();

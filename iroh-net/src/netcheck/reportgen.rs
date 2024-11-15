@@ -1177,16 +1177,13 @@ mod tests {
 
     use testresult::TestResult;
 
+    use super::super::test_utils;
     use super::*;
-    use crate::{
-        defaults::staging::{default_eu_relay_node, default_na_relay_node},
-        test_utils,
-    };
 
-    #[test]
-    fn test_update_report_stun_working() {
-        let eu_relayer = Arc::new(default_eu_relay_node());
-        let na_relayer = Arc::new(default_na_relay_node());
+    #[tokio::test]
+    async fn test_update_report_stun_working() {
+        let (_server_a, relay_a) = test_utils::relay().await;
+        let (_server_b, relay_b) = test_utils::relay().await;
 
         let mut report = Report::default();
 
@@ -1199,7 +1196,7 @@ mod tests {
             latency: Some(Duration::from_millis(5)),
             probe: Probe::StunIpv4 {
                 delay: Duration::ZERO,
-                node: eu_relayer.clone(),
+                node: relay_a.clone(),
             },
             addr: Some((Ipv4Addr::new(203, 0, 113, 1), 1234).into()),
         };
@@ -1207,11 +1204,11 @@ mod tests {
 
         assert!(report.udp);
         assert_eq!(
-            report.relay_latency.get(&eu_relayer.url).unwrap(),
+            report.relay_latency.get(&relay_a.url).unwrap(),
             Duration::from_millis(5)
         );
         assert_eq!(
-            report.relay_v4_latency.get(&eu_relayer.url).unwrap(),
+            report.relay_v4_latency.get(&relay_a.url).unwrap(),
             Duration::from_millis(5)
         );
         assert!(report.ipv4_can_send);
@@ -1222,7 +1219,7 @@ mod tests {
             latency: Some(Duration::from_millis(8)),
             probe: Probe::StunIpv4 {
                 delay: Duration::ZERO,
-                node: na_relayer.clone(),
+                node: relay_b.clone(),
             },
             ..probe_report_eu
         };
@@ -1230,11 +1227,11 @@ mod tests {
 
         assert!(report.udp);
         assert_eq!(
-            report.relay_latency.get(&eu_relayer.url).unwrap(),
+            report.relay_latency.get(&relay_a.url).unwrap(),
             Duration::from_millis(5)
         );
         assert_eq!(
-            report.relay_v4_latency.get(&eu_relayer.url).unwrap(),
+            report.relay_v4_latency.get(&relay_a.url).unwrap(),
             Duration::from_millis(5)
         );
         assert!(report.ipv4_can_send);
@@ -1249,7 +1246,7 @@ mod tests {
             latency: Some(Duration::from_millis(4)),
             probe: Probe::StunIpv6 {
                 delay: Duration::ZERO,
-                node: eu_relayer.clone(),
+                node: relay_a.clone(),
             },
             addr: Some((Ipv6Addr::new(2001, 0xdb8, 0, 0, 0, 0, 0, 1), 1234).into()),
         };
@@ -1257,21 +1254,21 @@ mod tests {
 
         assert!(report.udp);
         assert_eq!(
-            report.relay_latency.get(&eu_relayer.url).unwrap(),
+            report.relay_latency.get(&relay_a.url).unwrap(),
             Duration::from_millis(4)
         );
         assert_eq!(
-            report.relay_v6_latency.get(&eu_relayer.url).unwrap(),
+            report.relay_v6_latency.get(&relay_a.url).unwrap(),
             Duration::from_millis(4)
         );
         assert!(report.ipv4_can_send);
         assert!(report.ipv6_can_send);
     }
 
-    #[test]
-    fn test_update_report_icmp() {
-        let eu_relayer = Arc::new(default_eu_relay_node());
-        let na_relayer = Arc::new(default_na_relay_node());
+    #[tokio::test]
+    async fn test_update_report_icmp() {
+        let (_server_a, relay_a) = test_utils::relay().await;
+        let (_server_b, relay_b) = test_utils::relay().await;
 
         let mut report = Report::default();
 
@@ -1284,7 +1281,7 @@ mod tests {
             latency: Some(Duration::from_millis(5)),
             probe: Probe::IcmpV4 {
                 delay: Duration::ZERO,
-                node: eu_relayer.clone(),
+                node: relay_a.clone(),
             },
             addr: Some((Ipv4Addr::new(203, 0, 113, 1), 1234).into()),
         };
@@ -1303,7 +1300,7 @@ mod tests {
             latency: None,
             probe: Probe::IcmpV4 {
                 delay: Duration::ZERO,
-                node: na_relayer.clone(),
+                node: relay_b.clone(),
             },
             addr: None,
         };
@@ -1320,7 +1317,7 @@ mod tests {
             latency: Some(Duration::from_millis(5)),
             probe: Probe::StunIpv4 {
                 delay: Duration::ZERO,
-                node: eu_relayer.clone(),
+                node: relay_a.clone(),
             },
             addr: Some((Ipv4Addr::new(203, 0, 113, 1), 1234).into()),
         };
@@ -1378,10 +1375,11 @@ mod tests {
     //
     // TODO: Not sure what about IPv6 pings using sysctl.
     #[tokio::test]
+    // TODO(@divma): tests ping against live relay
     async fn test_icmpk_probe_eu_relayer() {
         let _logging_guard = iroh_test::logging::setup();
         let pinger = Pinger::new();
-        let relay = default_eu_relay_node();
+        let relay = crate::defaults::staging::default_eu_relay_node();
         let resolver = crate::dns::default_resolver();
         let addr = get_relay_addr(resolver, &relay, ProbeProto::IcmpV4)
             .await
@@ -1434,20 +1432,16 @@ mod tests {
     #[tokio::test]
     async fn test_measure_https_latency() -> TestResult {
         let _logging_guard = iroh_test::logging::setup();
-        let (_relay_map, relay_url, server) = test_utils::run_relay_server().await?;
+        let (server, relay) = test_utils::relay().await;
         let dns_resolver = crate::dns::resolver();
-        warn!(?relay_url, "RELAY_URL");
-        let node = RelayNode {
-            stun_only: false,
-            stun_port: 0,
-            url: relay_url.clone(),
-        };
+        tracing::info!(relay_url = ?relay.url , "RELAY_URL");
         let (latency, ip) =
-            measure_https_latency(dns_resolver, &node, server.certificates()).await?;
+            measure_https_latency(dns_resolver, &relay, server.certificates()).await?;
 
         assert!(latency > Duration::ZERO);
 
-        let relay_url_ip = relay_url
+        let relay_url_ip = relay
+            .url
             .host_str()
             .context("host")?
             .parse::<std::net::IpAddr>()?;
