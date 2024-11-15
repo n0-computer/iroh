@@ -13,6 +13,7 @@ iroh = { path = ".." }
 iroh-metrics = "0.32"
 n0-future = "0.1.1"
 quinn = { package = "iroh-quinn", version = "0.13" }
+rand = "0.8"
 rcgen = "0.13"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 clap = { version = "4", features = ["derive"] }

@@ -17,7 +17,7 @@ workspace = true
 [dependencies]
 curve25519-dalek = { version = "4.1.3", features = ["serde", "rand_core", "zeroize"], optional = true }
 data-encoding = { version = "2.3.3", optional = true }
-ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core", "zeroize"], optional = true }
+ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"], optional = true }
 derive_more = { version = "1.0.0", features = ["display"], optional = true }
 url = { version = "2.5", features = ["serde"], optional = true }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"], optional = true }

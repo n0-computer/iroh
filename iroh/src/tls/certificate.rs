@@ -5,8 +5,6 @@
 //! Based on rust-libp2p/transports/tls/src/certificate.rs originally licensed under MIT by Parity
 //! Technologies (UK) Ltd.
 
-use std::sync::Arc;
-
 use der::{asn1::OctetStringRef, Decode, Encode, Sequence};
 use iroh_base::{PublicKey, SecretKey, Signature};
 use x509_parser::prelude::*;
@@ -26,45 +24,6 @@ const P2P_SIGNING_PREFIX: [u8; 21] = *b"libp2p-tls-handshake:";
 // Certificates MUST use the NamedCurve encoding for elliptic curve parameters.
 // Similarly, hash functions with an output length less than 256 bits MUST NOT be used.
 static P2P_SIGNATURE_ALGORITHM: &rcgen::SignatureAlgorithm = &rcgen::PKCS_ECDSA_P256_SHA256;
-
-#[derive(Debug)]
-pub(crate) struct AlwaysResolvesCert(Arc<rustls::sign::CertifiedKey>);
-
-impl AlwaysResolvesCert {
-    pub(crate) fn new(
-        cert: rustls::pki_types::CertificateDer<'static>,
-        key: &rustls::pki_types::PrivateKeyDer<'_>,
-    ) -> Result<Self, rustls::Error> {
-        let certified_key = rustls::sign::CertifiedKey::new(
-            vec![cert],
-            rustls::crypto::ring::sign::any_ecdsa_type(key)?,
-        );
-        Ok(Self(Arc::new(certified_key)))
-    }
-}
-
-impl rustls::client::ResolvesClientCert for AlwaysResolvesCert {
-    fn resolve(
-        &self,
-        _root_hint_subjects: &[&[u8]],
-        _sigschemes: &[rustls::SignatureScheme],
-    ) -> Option<Arc<rustls::sign::CertifiedKey>> {
-        Some(Arc::clone(&self.0))
-    }
-
-    fn has_certs(&self) -> bool {
-        true
-    }
-}
-
-impl rustls::server::ResolvesServerCert for AlwaysResolvesCert {
-    fn resolve(
-        &self,
-        _client_hello: rustls::server::ClientHello<'_>,
-    ) -> Option<Arc<rustls::sign::CertifiedKey>> {
-        Some(Arc::clone(&self.0))
-    }
-}
 
 /// The public host key and the signature are ANS.1-encoded
 /// into the SignedKey data structure, which is carried  in the libp2p Public Key Extension.

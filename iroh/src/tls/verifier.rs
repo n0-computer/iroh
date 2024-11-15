@@ -1,73 +1,101 @@
-//! TLS 1.3 certificates and handshakes handling for libp2p
+//! TLS 1.3 certificates and handshakes handling.
 //!
 //! This module handles a verification of a client/server certificate chain
-//! and signatures allegedly by the given certificates.
+//! and signatures allegedly by the given certificates, or using raw public keys.
 //!
-//! Based on rust-libp2p/transports/tls/src/verifier.rs originally licensed under MIT by Parity
-//! Technologies (UK) Ltd.
+//!
+//! libp2p-tls certificate part is based on rust-libp2p/transports/tls/src/verifier.rs originally
+//! licensed under MIT by Parity Technologies (UK) Ltd.
+
 use std::sync::Arc;
 
 use iroh_base::PublicKey;
 use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
-    pki_types::CertificateDer as Certificate,
+    crypto::{verify_tls13_signature_with_raw_key, WebPkiSupportedAlgorithms},
+    pki_types::{pem::PemObject, CertificateDer as Certificate},
     server::danger::{ClientCertVerified, ClientCertVerifier},
     CertificateError, DigitallySignedStruct, DistinguishedName, OtherError, PeerMisbehaved,
     SignatureScheme, SupportedProtocolVersion,
 };
+use webpki::{ring as webpki_algs, types::SubjectPublicKeyInfoDer};
 
-use super::certificate;
+use super::{certificate, Authentication};
 
-/// The protocol versions supported by this verifier.
-///
-/// The spec says:
-///
-/// > The libp2p handshake uses TLS 1.3 (and higher).
-/// > Endpoints MUST NOT negotiate lower TLS versions.
+/// The only TLS version we support is 1.3
 pub static PROTOCOL_VERSIONS: &[&SupportedProtocolVersion] = &[&rustls::version::TLS13];
 
-/// Implementation of the `rustls` certificate verification traits for libp2p.
+static SUPPORTED_SIG_ALGS: WebPkiSupportedAlgorithms = WebPkiSupportedAlgorithms {
+    all: &[
+        webpki_algs::ECDSA_P256_SHA256,
+        webpki_algs::ECDSA_P256_SHA384,
+        webpki_algs::ECDSA_P384_SHA256,
+        webpki_algs::ECDSA_P384_SHA384,
+        webpki_algs::ED25519,
+    ],
+    mapping: &[
+        // Note: for TLS1.2 the curve is not fixed by SignatureScheme. For TLS1.3 it is.
+        (
+            SignatureScheme::ECDSA_NISTP384_SHA384,
+            &[
+                webpki_algs::ECDSA_P384_SHA384,
+                webpki_algs::ECDSA_P256_SHA384,
+            ],
+        ),
+        (
+            SignatureScheme::ECDSA_NISTP256_SHA256,
+            &[
+                webpki_algs::ECDSA_P256_SHA256,
+                webpki_algs::ECDSA_P384_SHA256,
+            ],
+        ),
+        (SignatureScheme::ED25519, &[webpki_algs::ED25519]),
+    ],
+};
+
+/// Implementation of the `rustls` certificate verification traits.
 ///
 /// Only TLS 1.3 is supported. TLS 1.2 should be disabled in the configuration of `rustls`.
 #[derive(Debug)]
-pub struct Libp2pCertificateVerifier {
-    /// The peer ID we intend to connect to
+pub struct CertificateVerifier {
+    /// The peer we intend to connect to.
     remote_peer_id: Option<PublicKey>,
+    /// Which TLS authentication mode to operate in.
+    auth: Authentication,
+    trusted_spki: Vec<SubjectPublicKeyInfoDer<'static>>,
 }
 
-/// libp2p requires the following of X.509 server certificate chains:
+/// We require the following
+/// Either X.509 server certificate chains:
 ///
 /// - Exactly one certificate must be presented.
 /// - The certificate must be self-signed.
-/// - The certificate must have a valid libp2p extension that includes a
-///   signature of its public key.
-impl Libp2pCertificateVerifier {
-    pub fn new() -> Self {
-        Self {
-            remote_peer_id: None,
-        }
-    }
-    pub fn with_remote_peer_id(remote_peer_id: Option<PublicKey>) -> Self {
-        Self { remote_peer_id }
+/// - The certificate must have a valid libp2p extension that includes a signature of its public key.
+///
+/// or a raw public key.
+impl CertificateVerifier {
+    pub fn new(auth: Authentication) -> Self {
+        Self::with_remote_peer_id(auth, None)
     }
 
-    /// Return the list of SignatureSchemes that this verifier will handle,
-    /// in `verify_tls12_signature` and `verify_tls13_signature` calls.
-    ///
-    /// This should be in priority order, with the most preferred first.
-    fn verification_schemes() -> Vec<SignatureScheme> {
-        vec![
-            // TODO SignatureScheme::ECDSA_NISTP521_SHA512 is not supported by `ring` yet
-            SignatureScheme::ECDSA_NISTP384_SHA384,
-            SignatureScheme::ECDSA_NISTP256_SHA256,
-            // TODO SignatureScheme::ED448 is not supported by `ring` yet
-            SignatureScheme::ED25519,
-            // In particular, RSA SHOULD NOT be used.
-        ]
+    pub fn with_remote_peer_id(auth: Authentication, remote_peer_id: Option<PublicKey>) -> Self {
+        let mut trusted_spki = Vec::new();
+        if let Some(key) = remote_peer_id {
+            let pem_key = key.serialize_public_pem();
+            let remote_key = SubjectPublicKeyInfoDer::from_pem_slice(pem_key.as_bytes())
+                .expect("cannot remote open pub key");
+            trusted_spki.push(remote_key);
+        }
+
+        Self {
+            remote_peer_id,
+            auth,
+            trusted_spki,
+        }
     }
 }
 
-impl ServerCertVerifier for Libp2pCertificateVerifier {
+impl ServerCertVerifier for CertificateVerifier {
     fn verify_server_cert(
         &self,
         end_entity: &Certificate,
@@ -76,21 +104,42 @@ impl ServerCertVerifier for Libp2pCertificateVerifier {
         _ocsp_response: &[u8],
         _now: rustls::pki_types::UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
-        let peer_id = verify_presented_certs(end_entity, intermediates)?;
+        match self.auth {
+            Authentication::X509 => {
+                let peer_id = verify_presented_certs(end_entity, intermediates)?;
 
-        if let Some(ref remote_peer_id) = self.remote_peer_id {
-            // The public host key allows the peer to calculate the peer ID of the peer
-            // it is connecting to. Clients MUST verify that the peer ID derived from
-            // the certificate matches the peer ID they intended to connect to,
-            // and MUST abort the connection if there is a mismatch.
-            if remote_peer_id != &peer_id {
-                return Err(rustls::Error::PeerMisbehaved(
-                    PeerMisbehaved::BadCertChainExtensions,
-                ));
+                if let Some(ref remote_peer_id) = self.remote_peer_id {
+                    // The public host key allows the peer to calculate the peer ID of the peer
+                    // it is connecting to. Clients MUST verify that the peer ID derived from
+                    // the certificate matches the peer ID they intended to connect to,
+                    // and MUST abort the connection if there is a mismatch.
+                    if remote_peer_id != &peer_id {
+                        return Err(rustls::Error::PeerMisbehaved(
+                            PeerMisbehaved::BadCertChainExtensions,
+                        ));
+                    }
+                }
+                Ok(ServerCertVerified::assertion())
+            }
+            Authentication::RawPublicKey => {
+                if !intermediates.is_empty() {
+                    return Err(rustls::Error::InvalidCertificate(
+                        CertificateError::UnknownIssuer,
+                    ));
+                }
+                if self.trusted_spki.is_empty() {
+                    return Ok(ServerCertVerified::assertion());
+                }
+                let end_entity_as_spki = SubjectPublicKeyInfoDer::from(end_entity.as_ref());
+
+                match self.trusted_spki.contains(&end_entity_as_spki) {
+                    false => Err(rustls::Error::InvalidCertificate(
+                        CertificateError::UnknownIssuer,
+                    )),
+                    true => Ok(ServerCertVerified::assertion()),
+                }
             }
         }
-
-        Ok(ServerCertVerified::assertion())
     }
 
     fn verify_tls12_signature(
@@ -99,7 +148,9 @@ impl ServerCertVerifier for Libp2pCertificateVerifier {
         _cert: &Certificate,
         _dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        unreachable!("`PROTOCOL_VERSIONS` only allows TLS 1.3")
+        Err(rustls::Error::PeerIncompatible(
+            rustls::PeerIncompatible::Tls12NotOffered,
+        ))
     }
 
     fn verify_tls13_signature(
@@ -108,22 +159,38 @@ impl ServerCertVerifier for Libp2pCertificateVerifier {
         cert: &Certificate,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        verify_tls13_signature(cert, dss.scheme, message, dss.signature())
+        match self.auth {
+            Authentication::X509 => {
+                verify_tls13_signature(cert, dss.scheme, message, dss.signature())
+            }
+            Authentication::RawPublicKey => verify_tls13_signature_with_raw_key(
+                message,
+                &SubjectPublicKeyInfoDer::from(cert.as_ref()),
+                dss,
+                &SUPPORTED_SIG_ALGS,
+            ),
+        }
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        Self::verification_schemes()
+        SUPPORTED_SIG_ALGS.supported_schemes()
+    }
+
+    fn requires_raw_public_keys(&self) -> bool {
+        matches!(self.auth, Authentication::RawPublicKey)
     }
 }
 
-/// libp2p requires the following of X.509 client certificate chains:
+/// We requires either following of X.509 client certificate chains:
 ///
 /// - Exactly one certificate must be presented. In particular, client
 ///   authentication is mandatory in libp2p.
 /// - The certificate must be self-signed.
 /// - The certificate must have a valid libp2p extension that includes a
 ///   signature of its public key.
-impl ClientCertVerifier for Libp2pCertificateVerifier {
+///
+/// or a valid raw public key configuration
+impl ClientCertVerifier for CertificateVerifier {
     fn offer_client_auth(&self) -> bool {
         true
     }
@@ -134,9 +201,29 @@ impl ClientCertVerifier for Libp2pCertificateVerifier {
         intermediates: &[Certificate],
         _now: rustls::pki_types::UnixTime,
     ) -> Result<ClientCertVerified, rustls::Error> {
-        verify_presented_certs(end_entity, intermediates)?;
-
-        Ok(ClientCertVerified::assertion())
+        match self.auth {
+            Authentication::X509 => {
+                verify_presented_certs(end_entity, intermediates)?;
+                Ok(ClientCertVerified::assertion())
+            }
+            Authentication::RawPublicKey => {
+                if !intermediates.is_empty() {
+                    return Err(rustls::Error::InvalidCertificate(
+                        CertificateError::UnknownIssuer,
+                    ));
+                }
+                if self.trusted_spki.is_empty() {
+                    return Ok(ClientCertVerified::assertion());
+                }
+                let end_entity_as_spki = SubjectPublicKeyInfoDer::from(end_entity.as_ref());
+                match self.trusted_spki.contains(&end_entity_as_spki) {
+                    false => Err(rustls::Error::InvalidCertificate(
+                        CertificateError::UnknownIssuer,
+                    )),
+                    true => Ok(ClientCertVerified::assertion()),
+                }
+            }
+        }
     }
 
     fn verify_tls12_signature(
@@ -145,7 +232,9 @@ impl ClientCertVerifier for Libp2pCertificateVerifier {
         _cert: &Certificate,
         _dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        unreachable!("`PROTOCOL_VERSIONS` only allows TLS 1.3")
+        Err(rustls::Error::PeerIncompatible(
+            rustls::PeerIncompatible::Tls12NotOffered,
+        ))
     }
 
     fn verify_tls13_signature(
@@ -154,15 +243,29 @@ impl ClientCertVerifier for Libp2pCertificateVerifier {
         cert: &Certificate,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        verify_tls13_signature(cert, dss.scheme, message, dss.signature())
+        match self.auth {
+            Authentication::X509 => {
+                verify_tls13_signature(cert, dss.scheme, message, dss.signature())
+            }
+            Authentication::RawPublicKey => verify_tls13_signature_with_raw_key(
+                message,
+                &SubjectPublicKeyInfoDer::from(cert.as_ref()),
+                dss,
+                &SUPPORTED_SIG_ALGS,
+            ),
+        }
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        Self::verification_schemes()
+        SUPPORTED_SIG_ALGS.supported_schemes()
     }
 
     fn root_hint_subjects(&self) -> &[DistinguishedName] {
         &[][..]
+    }
+
+    fn requires_raw_public_keys(&self) -> bool {
+        matches!(self.auth, Authentication::RawPublicKey)
     }
 }
 
