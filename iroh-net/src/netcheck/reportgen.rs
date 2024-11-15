@@ -1177,8 +1177,7 @@ mod tests {
 
     use testresult::TestResult;
 
-    use super::super::test_utils;
-    use super::*;
+    use super::{super::test_utils, *};
 
     #[tokio::test]
     async fn test_update_report_stun_working() {

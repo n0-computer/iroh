@@ -775,8 +775,9 @@ mod test_utils {
 
     use std::sync::Arc;
 
-    use crate::RelayNode;
     use iroh_relay::server;
+
+    use crate::RelayNode;
 
     pub(crate) async fn relay() -> (server::Server, Arc<RelayNode>) {
         let server = server::Server::spawn(server::testing::server_config())
