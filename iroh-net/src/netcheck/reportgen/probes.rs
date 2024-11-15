@@ -497,12 +497,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_initial_probeplan() {
-        let _logging = iroh_test::logging::setup();
-        let (_server_1, relay_node_1) = test_utils::relay().await;
-        let (_server_2, relay_node_2) = test_utils::relay().await;
+        let (_servers, relay_map) = test_utils::relay_map().await;
+        let relay_node_1 = relay_map.nodes().next().unwrap();
+        let relay_node_2 = relay_map.nodes().nth(1).unwrap();
         let if_state = interfaces::State::fake();
-        let relay_map = RelayMap::from_nodes([relay_node_1.clone(), relay_node_2.clone()])
-            .expect("all unique urls");
         let plan = ProbePlan::initial(&relay_map, &if_state);
 
         let expected_plan: ProbePlan = [
@@ -593,11 +591,10 @@ mod tests {
     #[tokio::test]
     async fn test_plan_with_report() {
         let _logging = iroh_test::logging::setup();
-        let (_server_1, relay_node_1) = test_utils::relay().await;
-        let (_server_2, relay_node_2) = test_utils::relay().await;
+        let (_servers, relay_map) = test_utils::relay_map().await;
+        let relay_node_1 = relay_map.nodes().next().unwrap().clone();
+        let relay_node_2 = relay_map.nodes().nth(1).unwrap().clone();
         let if_state = interfaces::State::fake();
-        let relay_map = RelayMap::from_nodes([relay_node_1.clone(), relay_node_2.clone()])
-            .expect("all unique urls");
 
         for i in 0..10 {
             println!("round {}", i);
@@ -752,9 +749,9 @@ mod tests {
     #[tokio::test]
     async fn test_relay_sort_two_latencies() {
         let _logging = iroh_test::logging::setup();
-        let (_server_1, r1) = test_utils::relay().await;
-        let (_server_2, r2) = test_utils::relay().await;
-        let relay_map = RelayMap::from_nodes([r1.clone(), r2.clone()]).expect("all unique urls");
+        let (_servers, relay_map) = test_utils::relay_map().await;
+        let r1 = relay_map.nodes().next().unwrap();
+        let r2 = relay_map.nodes().nth(1).unwrap();
         let last_report = create_last_report(
             &r1.url,
             Some(Duration::from_millis(1)),
@@ -768,12 +765,14 @@ mod tests {
         assert_eq!(sorted, vec![&r1.url, &r2.url]);
     }
 
+    /// Test that equal latencies produce relays in alphabetic order....?
+    /// what's the point of this test
     #[tokio::test]
     async fn test_relay_sort_equal_latencies() {
         let _logging = iroh_test::logging::setup();
-        let (_server_1, r1) = test_utils::relay().await;
-        let (_server_2, r2) = test_utils::relay().await;
-        let relay_map = RelayMap::from_nodes([r1.clone(), r2.clone()]).expect("all unique urls");
+        let (_servers, relay_map) = test_utils::relay_map().await;
+        let r1 = relay_map.nodes().next().unwrap();
+        let r2 = relay_map.nodes().nth(1).unwrap();
         let last_report = create_last_report(
             &r1.url,
             Some(Duration::from_millis(2)),
@@ -784,15 +783,16 @@ mod tests {
             .iter()
             .map(|(url, _)| *url)
             .collect();
-        assert_eq!(sorted, vec![&r1.url, &r2.url]);
+        let mut expected = vec![&r1.url, &r2.url];
+        expected.sort();
+        assert_eq!(sorted, expected);
     }
 
     #[tokio::test]
     async fn test_relay_sort_missing_latency() {
-        let _logging = iroh_test::logging::setup();
-        let (_server_1, r1) = test_utils::relay().await;
-        let (_server_2, r2) = test_utils::relay().await;
-        let relay_map = RelayMap::from_nodes([r1.clone(), r2.clone()]).expect("all unique urls");
+        let (_servers, relay_map) = test_utils::relay_map().await;
+        let r1 = relay_map.nodes().next().unwrap();
+        let r2 = relay_map.nodes().nth(1).unwrap();
 
         let last_report =
             create_last_report(&r1.url, None, &r2.url, Some(Duration::from_millis(2)));
@@ -814,9 +814,9 @@ mod tests {
     #[tokio::test]
     async fn test_relay_sort_no_latency() {
         let _logging = iroh_test::logging::setup();
-        let (_server_1, r1) = test_utils::relay().await;
-        let (_server_2, r2) = test_utils::relay().await;
-        let relay_map = RelayMap::from_nodes([r1.clone(), r2.clone()]).expect("all unique urls");
+        let (_servers, relay_map) = test_utils::relay_map().await;
+        let r1 = relay_map.nodes().next().unwrap();
+        let r2 = relay_map.nodes().nth(1).unwrap();
 
         let last_report = create_last_report(&r1.url, None, &r2.url, None);
         let sorted: Vec<_> = sort_relays(&relay_map, &last_report)

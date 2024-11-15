@@ -791,6 +791,22 @@ mod test_utils {
 
         (server, Arc::new(node_desc))
     }
+
+    /// Create a [`crate::RelayMap`] of the given size.
+    ///
+    /// This function uses [`relay`]. Note that the returned map uses internal order that will
+    /// often _not_ match the order of the servers.
+    pub(crate) async fn relay_map(relays: usize) -> (Vec<server::Server>, crate::RelayMap) {
+        let mut servers = Vec::with_capacity(relays);
+        let mut nodes = Vec::with_capacity(relays);
+        for _ in 0..relays {
+            let (relay_server, node) = relay().await;
+            servers.push(relay_server);
+            nodes.push(node);
+        }
+        let map = crate::RelayMap::from_nodes(nodes).expect("unuque urls");
+        (servers, map)
+    }
 }
 
 #[cfg(test)]
