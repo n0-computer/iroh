@@ -42,9 +42,8 @@ pub async fn run_relay_server_with(
     let cert =
         rcgen::generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])
             .expect("valid");
-    let rustls_cert = rustls::pki_types::CertificateDer::from(cert.serialize_der().unwrap());
-    let private_key =
-        rustls::pki_types::PrivatePkcs8KeyDer::from(cert.get_key_pair().serialize_der());
+    let rustls_cert = cert.cert.der();
+    let private_key = rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
     let private_key = rustls::pki_types::PrivateKeyDer::from(private_key);
 
     let config = ServerConfig {
@@ -53,7 +52,7 @@ pub async fn run_relay_server_with(
             tls: Some(TlsConfig {
                 cert: CertConfig::<(), ()>::Manual {
                     private_key,
-                    certs: vec![rustls_cert],
+                    certs: vec![rustls_cert.clone()],
                 },
                 https_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
             }),
