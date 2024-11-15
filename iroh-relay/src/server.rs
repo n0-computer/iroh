@@ -24,6 +24,7 @@ use http::{
     response::Builder as ResponseBuilder, HeaderMap, Method, Request, Response, StatusCode,
 };
 use hyper::body::Incoming;
+use iroh_base::node_addr::RelayUrl;
 use iroh_metrics::inc;
 use tokio::{
     net::{TcpListener, UdpSocket},
@@ -40,6 +41,7 @@ mod clients;
 mod http_server;
 mod metrics;
 pub(crate) mod streams;
+mod testing;
 
 pub use self::{
     metrics::{Metrics, StunMetrics},
@@ -384,6 +386,30 @@ impl Server {
     /// The certificates chain if configured with manual TLS certificates.
     pub fn certificates(&self) -> Option<Vec<rustls::pki_types::CertificateDer<'static>>> {
         self.certificates.clone()
+    }
+
+    /// Get the server's https [`RelayUrl`].
+    ///
+    /// This uses [`Self::https_addr`] so it's mostly useful for local development.
+    #[cfg(feature = "test-utils")]
+    pub fn https_url(&self) -> Option<RelayUrl> {
+        self.https_addr.map(|addr| {
+            url::Url::parse(&format!("https://{addr}"))
+                .expect("valid url")
+                .into()
+        })
+    }
+
+    /// Get the server's http [`RelayUrl`].
+    ///
+    /// This uses [`Self::http_addr`] so it's mostly useful for local development.
+    #[cfg(feature = "test-utils")]
+    pub fn http_url(&self) -> Option<RelayUrl> {
+        self.http_addr.map(|addr| {
+            url::Url::parse(&format!("http://{addr}"))
+                .expect("valid url")
+                .into()
+        })
     }
 }
 
