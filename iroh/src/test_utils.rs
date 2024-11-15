@@ -67,8 +67,13 @@ pub async fn run_relay_server_with(
     quic: bool,
 ) -> Result<(RelayMap, RelayUrl, Server)> {
     let (certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
+    let rustls_cert = certs[0].cert.der();
+    let private_key =
+        rustls::pki_types::PrivatePkcs8KeyDer::from(certs[0].key_pair.serialize_der());
+    let private_key = rustls::pki_types::PrivateKeyDer::from(private_key);
+
     let tls = TlsConfig {
-        cert: CertConfig::<(), ()>::Manual { certs },
+        cert: CertConfig::<(), ()>::Manual { private_key, certs },
         https_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
         quic_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
         server_config,
