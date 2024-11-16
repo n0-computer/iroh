@@ -121,7 +121,7 @@ impl Actor {
             .context("net_report actor gone")?;
         msg_response_rx.await.context("net_report actor died")?;
 
-        if let Err(err) = socket.send_to(&stun::request(txn), dst).await {
+        if let Err(err) = socket.send_to(&stun::request(txn), dst.into()).await {
             warn!(%dst, "failed to send hairpin check");
             return Err(err.into());
         }

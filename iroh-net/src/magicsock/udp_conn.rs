@@ -29,7 +29,10 @@ impl UdpConn {
 
     pub(super) fn bind(addr: SocketAddr) -> anyhow::Result<Self> {
         let sock = bind(addr)?;
-        let state = quinn_udp::UdpSocketState::new(quinn_udp::UdpSockRef::from(&sock))?;
+        let state = sock.with_socket(move |socket| {
+            quinn_udp::UdpSocketState::new(quinn_udp::UdpSockRef::from(socket))
+        })?;
+
         Ok(Self {
             io: Arc::new(sock),
             inner: Arc::new(state),
@@ -61,8 +64,10 @@ impl AsyncUdpSocket for UdpConn {
 
     fn try_send(&self, transmit: &Transmit<'_>) -> io::Result<()> {
         self.io.try_io(Interest::WRITABLE, || {
-            let sock_ref = UdpSockRef::from(&self.io);
-            self.inner.send(sock_ref, transmit)
+            self.io.with_socket(|io| {
+                let sock_ref = UdpSockRef::from(io);
+                self.inner.send(sock_ref, transmit)
+            })
         })
     }
 
@@ -73,9 +78,10 @@ impl AsyncUdpSocket for UdpConn {
         meta: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
         loop {
-            ready!(self.io.poll_recv_ready(cx))?;
+            ready!(self.io.with_socket(|io| io.poll_recv_ready(cx)))?;
             if let Ok(res) = self.io.try_io(Interest::READABLE, || {
-                self.inner.recv(Arc::as_ref(&self.io).into(), bufs, meta)
+                self.io
+                    .with_socket(|io| self.inner.recv(io.into(), bufs, meta))
             }) {
                 for meta in meta.iter().take(res) {
                     trace!(
