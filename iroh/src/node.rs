@@ -433,7 +433,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                         _ => {}
                     }
                 },
-                else => break,
             }
         }
 

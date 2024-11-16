@@ -111,7 +111,12 @@ impl ActiveRelay {
                 self.relay_client.connect().await.context("keepalive")?;
             }
             tokio::select! {
-                Some(msg) = inbox.recv() => {
+                msg = inbox.recv() => {
+                    let Some(msg) = msg else {
+                        debug!("all clients closed");
+                        break;
+                    };
+
                     trace!("tick: inbox: {:?}", msg);
                     match msg {
                         ActiveRelayMessage::GetLastWrite(r) => {
@@ -144,6 +149,7 @@ impl ActiveRelay {
                         }
                     }
                 }
+
                 msg = self.relay_client_receiver.recv() => {
                     trace!("tick: relay_client_receiver");
                     if let Some(msg) = msg {
@@ -152,10 +158,6 @@ impl ActiveRelay {
                             break;
                         }
                     }
-                }
-                else => {
-                    debug!("all clients closed");
-                    break;
                 }
             }
         }
@@ -316,6 +318,7 @@ impl RelayActor {
                     trace!("tick: cleanup");
                     with_cancel(self.cancel_token.child_token(), self.clean_stale_relay()).await;
                 }
+                // This case will never hit. TODO: Figure out what the intention was here
                 else => {
                     trace!("shutting down relay recv loop");
                     break;

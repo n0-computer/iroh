@@ -1821,6 +1821,7 @@ impl Actor {
                         warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
                     }
                 }
+                // This case will never hit. TODO: Figure out what the intention was here
                 else => {
                     trace!("tick: other");
                     inc!(Metrics, actor_tick_other);
