@@ -24,6 +24,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use derive_more::Debug;
 use futures_lite::{Stream, StreamExt};
+use iroh_base::relay_map::RelayMap;
 use pin_project::pin_project;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, instrument, trace, warn};
@@ -36,7 +37,7 @@ use crate::{
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
     magicsock::{self, Handle, QuicMappedAddr},
-    tls, NodeId, RelayMode, RelayUrl,
+    tls, NodeId, RelayUrl,
 };
 
 mod rtt_actor;
@@ -1355,6 +1356,34 @@ fn proxy_url_from_env() -> Option<Url> {
     }
 
     None
+}
+/// Configuration of the relay servers for an [`Endpoint`].
+///
+/// [`Endpoint`]: crate::endpoint::Endpoint
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelayMode {
+    /// Disable relay servers completely.
+    Disabled,
+    /// Use the default relay map, with production relay servers from n0.
+    ///
+    /// See [`crate::defaults::prod`] for the severs used.
+    Default,
+    /// Use the staging relay servers from n0.
+    Staging,
+    /// Use a custom relay map.
+    Custom(RelayMap),
+}
+
+impl RelayMode {
+    /// Returns the relay map for this mode.
+    pub fn relay_map(&self) -> RelayMap {
+        match self {
+            RelayMode::Disabled => RelayMap::empty(),
+            RelayMode::Default => crate::defaults::prod::default_relay_map(),
+            RelayMode::Staging => crate::defaults::staging::default_relay_map(),
+            RelayMode::Custom(relay_map) => relay_map.clone(),
+        }
+    }
 }
 
 /// Environment variable to force the use of staging relays.

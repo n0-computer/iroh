@@ -1445,7 +1445,7 @@ mod tests {
     async fn test_measure_https_latency() -> TestResult {
         let _logging_guard = iroh_test::logging::setup();
         let (server, relay) = test_utils::relay().await;
-        let dns_resolver = crate::dns::resolver();
+        let dns_resolver = crate::dns::tests::resolver();
         tracing::info!(relay_url = ?relay.url , "RELAY_URL");
         let (latency, ip) =
             measure_https_latency(dns_resolver, &relay, server.certificates()).await?;

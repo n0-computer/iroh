@@ -4,4 +4,5 @@
 pub use iroh_relay::server::Metrics as RelayMetrics;
 pub use portmapper::Metrics as PortmapMetrics;
 
-pub use crate::{magicsock::Metrics as MagicsockMetrics, netcheck::Metrics as NetcheckMetrics};
+pub use crate::magicsock::Metrics as MagicsockMetrics;
+pub use netcheck::Metrics as NetcheckMetrics;

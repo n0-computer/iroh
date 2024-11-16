@@ -26,13 +26,12 @@ use tokio::{
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-pub(crate) use relay_map::{RelayMap, RelayMode, RelayNode, RelayUrl};
+use iroh_base::relay_map::{RelayMap, RelayNode, RelayUrl};
 
 pub mod defaults;
 mod dns;
 mod metrics;
 mod ping;
-mod relay_map;
 mod reportgen;
 
 pub use metrics::Metrics;
@@ -960,7 +959,7 @@ mod tests {
         let (stun_addr, stun_stats, _cleanup_guard) =
             stun_utils::serve("127.0.0.1".parse().unwrap()).await?;
 
-        let resolver = crate::dns::default_resolver();
+        let resolver = crate::dns::tests::resolver();
         let mut client = Client::new(None, resolver.clone())?;
         let dm = stun_utils::relay_map_of([stun_addr].into_iter());
 
@@ -1005,8 +1004,8 @@ mod tests {
         let dm = stun_utils::relay_map_of_opts([(stun_addr, false)].into_iter());
 
         // Now create a client and generate a report.
-        let resolver = crate::dns::default_resolver().clone();
-        let mut client = Client::new(None, resolver)?;
+        let resolver = crate::dns::tests::resolver();
+        let mut client = Client::new(None, resolver.clone())?;
 
         let r = client.get_report(dm, None, None).await?;
         let mut r: Report = (*r).clone();
@@ -1206,10 +1205,10 @@ mod tests {
                 want_relay: Some(relay_url(2)), // 2 got fast enough
             },
         ];
+        let resolver = crate::dns::tests::resolver();
         for mut tt in tests {
             println!("test: {}", tt.name);
-            let resolver = crate::dns::default_resolver().clone();
-            let mut actor = Actor::new(None, resolver).unwrap();
+            let mut actor = Actor::new(None, resolver.clone()).unwrap();
             for s in &mut tt.steps {
                 // trigger the timer
                 time::advance(Duration::from_secs(s.after)).await;
@@ -1243,7 +1242,7 @@ mod tests {
         let dm = stun_utils::relay_map_of([stun_addr].into_iter());
         dbg!(&dm);
 
-        let resolver = crate::dns::default_resolver().clone();
+        let resolver = crate::dns::tests::resolver().clone();
         let mut client = Client::new(None, resolver)?;
 
         // Set up an external socket to send STUN requests from, this will be discovered as

@@ -473,7 +473,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::netcheck::{test_utils, RelayLatencies};
+    use crate::{test_utils, RelayLatencies};
 
     /// Shorthand which declares a new ProbeSet.
     ///

@@ -112,6 +112,8 @@ iroh-test = "0.28.0"
 serde_json = "1.0.107"
 testresult = "0.4.0"
 mainline = "2.0.1"
+iroh-relay = { version = "0.28", path = "../iroh-relay", features = ["test-utils", "server"] }
+
 
 [build-dependencies]
 duct = "0.13.6"
