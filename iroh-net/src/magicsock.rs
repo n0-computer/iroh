@@ -60,7 +60,6 @@ use self::{
     udp_conn::UdpConn,
 };
 use crate::{
-    self as netcheck,
     defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
     disco::{self, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},

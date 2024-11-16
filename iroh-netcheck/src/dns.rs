@@ -214,7 +214,7 @@ pub(crate) mod tests {
     static DNS_RESOLVER: Lazy<TokioAsyncResolver> =
         Lazy::new(|| create_default_resolver().expect("unable to create DNS resolver"));
 
-    /// Get the DNS resolver used within iroh-net.
+    /// Get a DNS resolver suitable for testing.
     pub fn resolver() -> &'static TokioAsyncResolver {
         Lazy::force(&DNS_RESOLVER)
     }

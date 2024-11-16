@@ -224,7 +224,7 @@ impl Client {
     ///
     /// Unlike the client itself the returned [`Addr`] does not own the actor task, it only
     /// allows sending messages to the actor.
-    pub(crate) fn addr(&self) -> Addr {
+    pub fn addr(&self) -> Addr {
         self.addr.clone()
     }
 
@@ -334,7 +334,7 @@ pub(crate) enum Message {
 /// Unlike [`Client`] this is the raw channel to send messages over.  Keeping this alive
 /// will not keep the actor alive, which makes this handy to pass to internal tasks.
 #[derive(Debug, Clone)]
-pub(crate) struct Addr {
+pub struct Addr {
     sender: mpsc::Sender<Message>,
 }
 
@@ -768,7 +768,7 @@ async fn recv_stun_once(sock: &UdpSocket, buf: &mut [u8], actor_addr: &Addr) -> 
 }
 
 /// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
-pub(crate) fn os_has_ipv6() -> bool {
+pub fn os_has_ipv6() -> bool {
     UdpSocket::bind_local_v6(0).is_ok()
 }
 
@@ -1257,7 +1257,7 @@ mod tests {
         info!(addr=?sock.local_addr().unwrap(), "Using local addr");
         let task = {
             let sock = sock.clone();
-            let addr = client.addr();
+            let addr = client.addr.clone();
             tokio::spawn(
                 async move {
                     let mut buf = BytesMut::zeroed(64 << 10);

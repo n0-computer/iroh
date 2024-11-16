@@ -125,14 +125,11 @@ pub mod staging {
     }
 }
 
-/// Contains all timeouts that we use in `iroh-net`.
+/// Contains all timeouts that we use in `iroh-netcheck`.
 pub(crate) mod timeouts {
     use std::time::Duration;
 
     // Timeouts for netcheck
-
-    /// Maximum duration to wait for a netcheck report.
-    pub(crate) const NETCHECK_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
 
     /// The maximum amount of time netcheck will spend gathering a single report.
     pub(crate) const OVERALL_REPORT_TIMEOUT: Duration = Duration::from_secs(5);
