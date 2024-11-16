@@ -21,8 +21,7 @@ use tokio::{sync::oneshot, time::Instant};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-use crate::defaults::timeouts::HAIRPIN_CHECK_TIMEOUT;
-use crate::{self as netcheck, reportgen, Inflight};
+use crate::{self as netcheck, defaults::timeouts::HAIRPIN_CHECK_TIMEOUT, reportgen, Inflight};
 
 /// Handle to the hairpin actor.
 ///

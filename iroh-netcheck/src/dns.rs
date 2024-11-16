@@ -1,5 +1,4 @@
-use std::fmt::Write;
-use std::net::IpAddr;
+use std::{fmt::Write, net::IpAddr};
 
 use anyhow::Result;
 use futures_lite::{Future, StreamExt};
@@ -201,8 +200,7 @@ async fn stagger_call<T, F: Fn() -> Fut, Fut: Future<Output = Result<T>>>(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::net::Ipv6Addr;
-    use std::sync::atomic::AtomicUsize;
+    use std::{net::Ipv6Addr, sync::atomic::AtomicUsize};
 
     use once_cell::sync::Lazy;
 

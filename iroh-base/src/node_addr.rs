@@ -11,7 +11,6 @@ use std::{collections::BTreeSet, net::SocketAddr};
 use serde::{Deserialize, Serialize};
 
 use crate::key::{NodeId, PublicKey};
-
 pub use crate::relay_url::RelayUrl;
 
 /// Network-level addressing information for an iroh-net node.

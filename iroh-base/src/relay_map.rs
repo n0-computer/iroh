@@ -2,9 +2,10 @@
 
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
-pub use crate::relay_url::RelayUrl;
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
+
+pub use crate::relay_url::RelayUrl;
 
 /// The default STUN port used by the Relay server.
 ///

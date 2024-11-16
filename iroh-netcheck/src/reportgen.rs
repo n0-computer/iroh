@@ -26,6 +26,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context as _, Result};
+use hickory_resolver::TokioAsyncResolver as DnsResolver;
 use iroh_metrics::inc;
 use iroh_relay::{http::RELAY_PROBE_PATH, protos::stun};
 use netwatch::{interfaces, UdpSocket};
@@ -47,7 +48,6 @@ use crate::{
     ping::{PingError, Pinger},
     RelayMap, RelayNode, RelayUrl, Report,
 };
-use hickory_resolver::TokioAsyncResolver as DnsResolver;
 
 mod hairpin;
 mod probes;

@@ -247,8 +247,11 @@ pub mod tls;
 pub(crate) mod util;
 
 pub use endpoint::{AddrInfo, Endpoint, NodeAddr, RelayMode};
-pub use iroh_base::relay_map::{RelayMap, RelayNode, RelayUrl};
-pub use iroh_base::{key, key::NodeId};
+pub use iroh_base::{
+    key,
+    key::NodeId,
+    relay_map::{RelayMap, RelayNode, RelayUrl},
+};
 pub use iroh_relay as relay;
 
 #[cfg(any(test, feature = "test-utils"))]
