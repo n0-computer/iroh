@@ -203,13 +203,10 @@ async fn stagger_call<T, F: Fn() -> Fut, Fut: Future<Output = Result<T>>>(
 pub(crate) mod tests {
     use std::net::Ipv6Addr;
     use std::sync::atomic::AtomicUsize;
-    use std::time::Duration;
 
     use once_cell::sync::Lazy;
 
     use super::*;
-    const TIMEOUT: Duration = Duration::from_secs(5);
-    const STAGGERING_DELAYS: &[u64] = &[200, 300];
 
     static DNS_RESOLVER: Lazy<TokioAsyncResolver> =
         Lazy::new(|| create_default_resolver().expect("unable to create DNS resolver"));
