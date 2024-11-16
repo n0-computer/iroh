@@ -303,25 +303,36 @@ impl RelayActor {
                     trace!("shutting down");
                     break;
                 }
-                Some(Ok((url, ping_success))) = self.ping_tasks.join_next() => {
-                    if !ping_success {
-                        with_cancel(
-                            self.cancel_token.child_token(),
-                            self.close_or_reconnect_relay(&url, "rebind-ping-fail")
-                        ).await;
+                // `ping_tasks` being empty is a normal situation - in fact it starts empty
+                // until a `MaybeCloseRelaysOnRebind` message is received.
+                Some(task_result) = self.ping_tasks.join_next() => {
+                    match task_result {
+                        Ok((url, ping_success)) => {
+                            if !ping_success {
+                                with_cancel(
+                                    self.cancel_token.child_token(),
+                                    self.close_or_reconnect_relay(&url, "rebind-ping-fail")
+                                ).await;
+                            }
+                        }
+
+                        Err(err) => {
+                            warn!("ping task error: {:?}", err);
+                        }
                     }
                 }
-                Some(msg) = receiver.recv() => {
+
+                msg = receiver.recv() => {
+                    let Some(msg) = msg else {
+                        trace!("shutting down relay recv loop");
+                        break;
+                    };
+
                     with_cancel(self.cancel_token.child_token(), self.handle_msg(msg)).await;
                 }
                 _ = cleanup_timer.tick() => {
                     trace!("tick: cleanup");
                     with_cancel(self.cancel_token.child_token(), self.clean_stale_relay()).await;
-                }
-                // This case will never hit. TODO: Figure out what the intention was here
-                else => {
-                    trace!("shutting down relay recv loop");
-                    break;
                 }
             }
         }
