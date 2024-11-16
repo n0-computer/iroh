@@ -27,6 +27,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use hickory_resolver::TokioAsyncResolver as DnsResolver;
+#[cfg(feature = "metrics")]
 use iroh_metrics::inc;
 use iroh_relay::{http::RELAY_PROBE_PATH, protos::stun};
 use netwatch::{interfaces, UdpSocket};
@@ -40,7 +41,8 @@ use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
 use url::Host;
 
-use super::NetcheckMetrics;
+#[cfg(feature = "metrics")]
+use crate::Metrics;
 use crate::{
     self as netcheck,
     defaults::DEFAULT_STUN_PORT,
@@ -807,10 +809,12 @@ async fn run_stun_probe(
 
             if matches!(probe, Probe::StunIpv4 { .. }) {
                 result.ipv4_can_send = true;
-                inc!(NetcheckMetrics, stun_packets_sent_ipv4);
+                #[cfg(feature = "metrics")]
+                inc!(Metrics, stun_packets_sent_ipv4);
             } else {
                 result.ipv6_can_send = true;
-                inc!(NetcheckMetrics, stun_packets_sent_ipv6);
+                #[cfg(feature = "metrics")]
+                inc!(Metrics, stun_packets_sent_ipv6);
             }
             let (delay, addr) = stun_rx
                 .await

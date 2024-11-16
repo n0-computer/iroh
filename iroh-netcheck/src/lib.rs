@@ -17,6 +17,7 @@ use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use hickory_resolver::TokioAsyncResolver as DnsResolver;
 use iroh_base::relay_map::{RelayMap, RelayNode, RelayUrl};
+#[cfg(feature = "metrics")]
 use iroh_metrics::inc;
 use iroh_relay::protos::stun;
 use netwatch::{IpFamily, UdpSocket};
@@ -29,12 +30,13 @@ use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 pub mod defaults;
 mod dns;
+#[cfg(feature = "metrics")]
 mod metrics;
 mod ping;
 mod reportgen;
 
+#[cfg(feature = "metrics")]
 pub use metrics::Metrics;
-use Metrics as NetcheckMetrics;
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
@@ -356,7 +358,8 @@ impl Addr {
             payload,
             from_addr: src,
         }) {
-            inc!(NetcheckMetrics, stun_packets_dropped);
+            #[cfg(feature = "metrics")]
+            inc!(Metrics, stun_packets_dropped);
             warn!("dropping stun packet from {}", src);
         }
     }
@@ -512,9 +515,11 @@ impl Actor {
             self.reports.last = None; // causes ProbePlan::new below to do a full (initial) plan
             self.reports.next_full = false;
             self.reports.last_full = now;
-            inc!(NetcheckMetrics, reports_full);
+            #[cfg(feature = "metrics")]
+            inc!(Metrics, reports_full);
         }
-        inc!(NetcheckMetrics, reports);
+        #[cfg(feature = "metrics")]
+        inc!(Metrics, reports);
 
         let actor = reportgen::Client::new(
             self.addr(),
@@ -558,12 +563,13 @@ impl Actor {
             return;
         }
 
+        #[cfg(feature = "metrics")]
         match &src {
             SocketAddr::V4(_) => {
-                inc!(NetcheckMetrics, stun_packets_recv_ipv4);
+                inc!(Metrics, stun_packets_recv_ipv4);
             }
             SocketAddr::V6(_) => {
-                inc!(NetcheckMetrics, stun_packets_recv_ipv6);
+                inc!(Metrics, stun_packets_recv_ipv6);
             }
         }
 
