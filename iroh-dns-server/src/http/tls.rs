@@ -90,12 +90,8 @@ impl TlsAcceptor {
         let cert_path = dir.join(format!("{keyname}.crt"));
         let key_path = dir.join(format!("{keyname}.key"));
 
-        let (certs, secret_key) = tokio::task::spawn_blocking(move || {
-            let certs = load_certs(cert_path)?;
-            let key = load_secret_key(key_path)?;
-            anyhow::Ok((certs, key))
-        })
-        .await??;
+        let certs = load_certs(cert_path).await?;
+        let secret_key = load_secret_key(key_path).await?;
 
         let config = config.with_single_cert(certs, secret_key)?;
         let config = RustlsConfig::from_config(Arc::new(config));
@@ -136,23 +132,24 @@ impl TlsAcceptor {
     }
 }
 
-fn load_certs(
+async fn load_certs(
     filename: impl AsRef<Path>,
 ) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>> {
-    let certfile = std::fs::File::open(filename).context("cannot open certificate file")?;
-    let mut reader = std::io::BufReader::new(certfile);
-
+    let certfile = tokio::fs::read(filename)
+        .await
+        .context("cannot open certificate file")?;
+    let mut reader = std::io::Cursor::new(certfile);
     let certs: Result<Vec<_>, std::io::Error> = rustls_pemfile::certs(&mut reader).collect();
     let certs = certs?;
 
     Ok(certs)
 }
 
-fn load_secret_key(
+async fn load_secret_key(
     filename: impl AsRef<Path>,
 ) -> Result<rustls::pki_types::PrivateKeyDer<'static>> {
-    let keyfile = std::fs::File::open(filename.as_ref()).context("cannot open secret key file")?;
-    let mut reader = std::io::BufReader::new(keyfile);
+    let keyfile = std::fs::read(filename.as_ref()).context("cannot open secret key file")?;
+    let mut reader = std::io::Cursor::new(keyfile);
 
     loop {
         match rustls_pemfile::read_one(&mut reader).context("cannot parse secret key .pem file")? {
