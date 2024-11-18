@@ -2870,6 +2870,7 @@ dependencies = [
 [[package]]
 name = "iroh-docs"
 version = "0.28.0"
+source = "git+https://github.com/n0-computer/iroh-docs?branch=cli#c54e186c476fefd9f075374e200f632a7b0ca1f0"
 dependencies = [
  "anyhow",
  "async-channel",
