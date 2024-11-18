@@ -1,5 +1,6 @@
 use std::{
     future::Future,
+    io::ErrorKind,
     net::SocketAddr,
     pin::Pin,
     sync::{atomic::AtomicBool, Arc, RwLock},
@@ -24,7 +25,7 @@ pub struct UdpSocket {
 }
 
 /// UDP socket read/write buffer size (7MB). The value of 7MB is chosen as it
-/// is the max supported by a default configuration of macOS. Some platforms will silently clamp the value.
+/// is the ma supported by a default configuration of macOS. Some platforms will silently clamp the value.
 const SOCKET_BUFFER_SIZE: usize = 7 << 20;
 impl UdpSocket {
     /// Bind only Ipv4 on any interface.
@@ -206,13 +207,29 @@ impl<'a> Future for RecvFut<'a> {
         let guard = socket.read().unwrap();
         let socket = guard.as_ref().expect("missing socket");
 
-        match socket.poll_recv_ready(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(())) => {
-                let res = socket.try_recv(buffer);
-                Poll::Ready(res)
+        loop {
+            println!("looping");
+            match socket.poll_recv_ready(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(())) => {
+                    let res = socket.try_recv(buffer);
+                    dbg!(&res);
+                    if let Err(err) = res {
+                        if err.kind() == ErrorKind::WouldBlock {
+                            continue;
+                        }
+                        return Poll::Ready(Err(err));
+                    }
+                    return Poll::Ready(res);
+                }
+                Poll::Ready(Err(err)) => {
+                    dbg!(&err);
+                    if err.kind() == ErrorKind::WouldBlock {
+                        continue;
+                    }
+                    return Poll::Ready(Err(err));
+                }
             }
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         }
     }
 }
@@ -227,18 +244,29 @@ pub struct RecvFromFut<'a> {
 impl<'a> Future for RecvFromFut<'a> {
     type Output = std::io::Result<(usize, SocketAddr)>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+    fn poll(mut self: Pin<&mut Self>, c: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let Self { socket, buffer } = &mut *self;
         let guard = socket.read().unwrap();
         let socket = guard.as_ref().expect("missing socket");
 
-        match socket.poll_recv_ready(cx) {
+        match socket.poll_recv_ready(c) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(())) => {
                 let res = socket.try_recv_from(buffer);
+                if let Err(err) = res {
+                    if err.kind() == ErrorKind::WouldBlock {
+                        return Poll::Pending;
+                    }
+                    return Poll::Ready(Err(err));
+                }
                 Poll::Ready(res)
             }
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Ready(Err(err)) => {
+                if err.kind() == ErrorKind::WouldBlock {
+                    return Poll::Pending;
+                }
+                Poll::Ready(Err(err))
+            }
         }
     }
 }
@@ -252,11 +280,11 @@ pub struct WritableFut {
 impl Future for WritableFut {
     type Output = std::io::Result<()>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, c: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let guard = self.socket.read().unwrap();
         let socket = guard.as_ref().expect("missing socket");
 
-        socket.poll_send_ready(cx)
+        socket.poll_send_ready(c)
     }
 }
 
@@ -270,17 +298,25 @@ pub struct SendFut<'a> {
 impl<'a> Future for SendFut<'a> {
     type Output = std::io::Result<usize>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, c: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let guard = self.socket.read().unwrap();
         let socket = guard.as_ref().expect("missing socket");
 
-        match socket.poll_send_ready(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(())) => {
-                let res = socket.try_send(self.buffer);
-                Poll::Ready(res)
+        loop {
+            match socket.poll_send_ready(c) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(())) => {
+                    let res = socket.try_send(self.buffer);
+                    if let Err(err) = res {
+                        if err.kind() == ErrorKind::WouldBlock {
+                            continue;
+                        }
+                        return Poll::Ready(Err(err));
+                    }
+                    return Poll::Ready(res);
+                }
+                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
             }
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         }
     }
 }
@@ -296,17 +332,32 @@ pub struct SendToFut<'a> {
 impl<'a> Future for SendToFut<'a> {
     type Output = std::io::Result<usize>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, c: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let guard = self.socket.read().unwrap();
         let socket = guard.as_ref().expect("missing socket");
 
-        match socket.poll_send_ready(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(())) => {
-                let res = socket.try_send_to(self.buffer, self.to);
-                Poll::Ready(res)
+        println!("sending to: {:?}", self.to);
+        loop {
+            match dbg!(socket.poll_send_ready(c)) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(())) => {
+                    let res = socket.try_send_to(self.buffer, self.to);
+                    dbg!(&res);
+                    if let Err(err) = res {
+                        if err.kind() == ErrorKind::WouldBlock {
+                            continue;
+                        }
+                        return Poll::Ready(Err(err));
+                    }
+                    return Poll::Ready(res);
+                }
+                Poll::Ready(Err(err)) => {
+                    if err.kind() == ErrorKind::WouldBlock {
+                        continue;
+                    }
+                    return Poll::Ready(Err(err));
+                }
             }
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         }
     }
 }
@@ -379,5 +430,100 @@ impl Drop for UdpSocket {
                 drop(std_sock);
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_reconnect() -> anyhow::Result<()> {
+        let (s_a, mut r_a) = tokio::sync::mpsc::channel(16);
+        let (s_b, mut r_b) = tokio::sync::mpsc::channel(16);
+        let handle_a = tokio::task::spawn(async move {
+            let socket = UdpSocket::bind_local(IpFamily::V4, 0)?;
+            let addr = socket.local_addr()?;
+            s_b.send(addr).await?;
+            println!("socket bound to {:?}", addr);
+
+            let mut buffer = [0u8; 16];
+            loop {
+                tokio::select! {
+                    biased;
+
+                    Some(_) = r_a.recv() => {
+                        println!("disconnecting");
+                        break;
+                    }
+                    read = socket.recv_from(&mut buffer) => {
+                        match read {
+                            Ok((count, addr)) => {
+                                println!("got {:?}", &buffer[..count]);
+                                println!("sending {:?} to {:?}", &buffer[..count], addr);
+                                socket.send_to(&buffer[..count], addr).await?;
+                            }
+                            Err(err) => {
+                                eprintln!("error reading: {:?}", err);
+                            }
+                        }
+                    }
+                }
+            }
+
+            r_a.recv().await.unwrap();
+            // restart after the second message
+            println!("reconnecting");
+            loop {
+                match socket.recv(&mut buffer).await {
+                    Ok(count) => {
+                        println!("got {:?}", &buffer[..count]);
+                    }
+                    Err(err) => {
+                        eprintln!("error reading: {:?}", err);
+                    }
+                }
+            }
+
+            anyhow::Ok(())
+        });
+
+        let socket = UdpSocket::bind_local(IpFamily::V4, 0)?;
+        println!("socket2 bound to {:?}", socket.local_addr()?);
+        let addr = r_b.recv().await.unwrap();
+
+        socket.connect(addr)?;
+        let mut buffer = [0u8; 16];
+        for i in 0u8..100 {
+            println!("round one - {}", i);
+            socket.send(&[i][..]).await.context("send")?;
+            let count = socket.recv(&mut buffer).await.context("recv")?;
+            assert_eq!(count, 1);
+            assert_eq!(buffer[0], i);
+        }
+
+        // interrupt
+        s_a.send(()).await?;
+
+        // keep sending, should fail
+        for i in 0u8..10 {
+            let res = socket.send(&[i][..]).await;
+            println!("send: {:?}", res);
+            assert!(res.is_err());
+        }
+        // restart
+        s_a.send(()).await?;
+        // keep sending, should succeed
+        for i in 0u8..10 {
+            socket.send(&[i][..]).await?;
+            let count = socket.recv(&mut buffer).await?;
+            assert_eq!(count, 1);
+            assert_eq!(buffer[0], i);
+        }
+
+        handle_a.abort();
+        handle_a.await.ok();
+
+        Ok(())
     }
 }
