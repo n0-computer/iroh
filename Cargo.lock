@@ -2705,13 +2705,15 @@ dependencies = [
 [[package]]
 name = "iroh-blobs"
 version = "0.28.1"
-source = "git+https://github.com/n0-computer/iroh-blobs?branch=main#290eb42cfd2d13202208264c2674ce423829f571"
+source = "git+https://github.com/n0-computer/iroh-blobs?branch=main#cdcb863d7c75cdd7258c8f5001154272df7460c0"
 dependencies = [
  "anyhow",
  "async-channel",
  "bao-tree",
  "bytes",
  "chrono",
+ "clap",
+ "console",
  "derive_more",
  "futures-buffered",
  "futures-lite 2.4.0",
@@ -2719,6 +2721,7 @@ dependencies = [
  "genawaiter",
  "hashlink",
  "hex",
+ "indicatif",
  "iroh-base",
  "iroh-io",
  "iroh-metrics",
@@ -2777,6 +2780,7 @@ dependencies = [
  "human-time",
  "indicatif",
  "iroh",
+ "iroh-blobs",
  "iroh-docs",
  "iroh-gossip",
  "iroh-metrics",

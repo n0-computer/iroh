@@ -6,16 +6,12 @@ use std::{
 use anyhow::{ensure, Context, Result};
 use clap::Parser;
 use iroh::client::Iroh;
+use iroh_blobs::cli::{BlobAddOptions, BlobSource};
 
-use self::{
-    blobs::{BlobAddOptions, BlobSource},
-    rpc::RpcCommands,
-    start::RunType,
-};
+use self::{rpc::RpcCommands, start::RunType};
 use crate::config::{ConsoleEnv, NodeConfig};
 
 pub(crate) mod authors;
-pub(crate) mod blobs;
 pub(crate) mod console;
 pub(crate) mod docs;
 pub(crate) mod doctor;
@@ -23,7 +19,7 @@ pub(crate) mod gossip;
 pub(crate) mod net;
 pub(crate) mod rpc;
 pub(crate) mod start;
-pub(crate) mod tags;
+pub(crate) use iroh_blobs::{cli as blobs, cli::tags};
 
 /// iroh is a tool for building distributed apps.
 ///
@@ -191,7 +187,10 @@ impl Cli {
                     |client| async move {
                         match add_command {
                             None => Ok(()),
-                            Some(command) => command.run(&client).await,
+                            Some(command) => {
+                                let node_addr = client.net().node_addr().await?;
+                                command.run(&client.blobs(), node_addr).await
+                            }
                         }
                     },
                 )
