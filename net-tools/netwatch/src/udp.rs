@@ -79,10 +79,9 @@ impl UdpSocket {
     /// Rebind the underlying socket.
     pub fn rebind(&self) -> Result<()> {
         // Remove old socket
+        let mut guard = self.socket.write().unwrap();
         {
-            let mut guard = self.socket.write().unwrap();
             let socket = guard.take().expect("not yet dropped");
-
             drop(socket);
         }
 
@@ -90,7 +89,7 @@ impl UdpSocket {
         let new_socket = inner_bind(self.addr)?;
 
         // Insert new socket
-        self.socket.write().unwrap().replace(new_socket);
+        guard.replace(new_socket);
 
         // Clear errors
         self.is_broken
@@ -102,10 +101,8 @@ impl UdpSocket {
     fn bind_raw(addr: impl Into<SocketAddr>) -> Result<Self> {
         let mut addr = addr.into();
         let socket = inner_bind(addr)?;
-        if addr.port() == 0 {
-            // update to use selected port
-            addr.set_port(socket.local_addr()?.port());
-        }
+        // update to use selected port
+        addr.set_port(socket.local_addr()?.port());
 
         Ok(UdpSocket {
             socket: Arc::new(RwLock::new(Some(socket))),
