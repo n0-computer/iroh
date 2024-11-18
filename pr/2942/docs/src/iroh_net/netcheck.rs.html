@@ -1281,23 +1281,6 @@
 <a href="#1281" id="1281">1281</a>
 <a href="#1282" id="1282">1282</a>
 <a href="#1283" id="1283">1283</a>
-<a href="#1284" id="1284">1284</a>
-<a href="#1285" id="1285">1285</a>
-<a href="#1286" id="1286">1286</a>
-<a href="#1287" id="1287">1287</a>
-<a href="#1288" id="1288">1288</a>
-<a href="#1289" id="1289">1289</a>
-<a href="#1290" id="1290">1290</a>
-<a href="#1291" id="1291">1291</a>
-<a href="#1292" id="1292">1292</a>
-<a href="#1293" id="1293">1293</a>
-<a href="#1294" id="1294">1294</a>
-<a href="#1295" id="1295">1295</a>
-<a href="#1296" id="1296">1296</a>
-<a href="#1297" id="1297">1297</a>
-<a href="#1298" id="1298">1298</a>
-<a href="#1299" id="1299">1299</a>
-<a href="#1300" id="1300">1300</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! Netcheck is responsible for finding out the network conditions of the current host, like
@@ -2070,6 +2053,46 @@
 }
 
 <span class="attr">#[cfg(test)]
+</span><span class="kw">mod </span>test_utils {
+    <span class="doccomment">//! Creates a relay server against which to perform tests
+
+    </span><span class="kw">use </span>std::sync::Arc;
+
+    <span class="kw">use </span>iroh_relay::server;
+
+    <span class="kw">use </span><span class="kw">crate</span>::RelayNode;
+
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>relay() -&gt; (server::Server, Arc&lt;RelayNode&gt;) {
+        <span class="kw">let </span>server = server::Server::spawn(server::testing::server_config())
+            .<span class="kw">await
+            </span>.expect(<span class="string">"should serve relay"</span>);
+        <span class="kw">let </span>node_desc = RelayNode {
+            url: server.https_url().expect(<span class="string">"should work as relay"</span>),
+            stun_only: <span class="bool-val">false</span>, <span class="comment">// the checks above and below guarantee both stun and relay
+            </span>stun_port: server.stun_addr().expect(<span class="string">"server should serve stun"</span>).port(),
+        };
+
+        (server, Arc::new(node_desc))
+    }
+
+    <span class="doccomment">/// Create a [`crate::RelayMap`] of the given size.
+    ///
+    /// This function uses [`relay`]. Note that the returned map uses internal order that will
+    /// often _not_ match the order of the servers.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>relay_map(relays: usize) -&gt; (Vec&lt;server::Server&gt;, <span class="kw">crate</span>::RelayMap) {
+        <span class="kw">let </span><span class="kw-2">mut </span>servers = Vec::with_capacity(relays);
+        <span class="kw">let </span><span class="kw-2">mut </span>nodes = Vec::with_capacity(relays);
+        <span class="kw">for _ in </span><span class="number">0</span>..relays {
+            <span class="kw">let </span>(relay_server, node) = relay().<span class="kw">await</span>;
+            servers.push(relay_server);
+            nodes.push(node);
+        }
+        <span class="kw">let </span>map = <span class="kw">crate</span>::RelayMap::from_nodes(nodes).expect(<span class="string">"unuque urls"</span>);
+        (servers, map)
+    }
+}
+
+<span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::net::Ipv4Addr;
 
@@ -2078,11 +2101,7 @@
     <span class="kw">use </span>tracing::info;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use crate</span>::{
-        defaults::{staging::EU_RELAY_HOSTNAME, DEFAULT_STUN_PORT},
-        ping::Pinger,
-        RelayNode,
-    };
+    <span class="kw">use </span><span class="kw">crate</span>::ping::Pinger;
 
     <span class="kw">mod </span>stun_utils {
         <span class="doccomment">//! Utils for testing that expose a simple stun server.
@@ -2099,9 +2118,7 @@
         <span class="kw">use super</span>::<span class="kw-2">*</span>;
         <span class="kw">use crate</span>::{RelayMap, RelayNode, RelayUrl};
 
-        <span class="comment">// TODO: make all this private
-
-        </span><span class="doccomment">/// A drop guard to clean up test infrastructure.
+        <span class="doccomment">/// A drop guard to clean up test infrastructure.
         ///
         /// After dropping the test infrastructure will asynchronously shutdown and release its
         /// resources.
@@ -2252,57 +2269,6 @@
             <span class="string">"expected at least 5 stun, got {}"</span>,
             stun_stats.total().<span class="kw">await</span>,
         );
-
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_iroh_computer_stun() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
-
-        <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::default_resolver().clone();
-        <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(<span class="prelude-val">None</span>, resolver).context(<span class="string">"failed to create netcheck client"</span>)<span class="question-mark">?</span>;
-        <span class="kw">let </span>url: RelayUrl = <span class="macro">format!</span>(<span class="string">"https://{}"</span>, EU_RELAY_HOSTNAME).parse().unwrap();
-
-        <span class="kw">let </span>dm = RelayMap::from_nodes([RelayNode {
-            url: url.clone(),
-            stun_only: <span class="bool-val">true</span>,
-            stun_port: DEFAULT_STUN_PORT,
-        }])
-        .expect(<span class="string">"hardcoded"</span>);
-
-        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">10 </span>{
-            <span class="macro">println!</span>(<span class="string">"starting report {}"</span>, i + <span class="number">1</span>);
-            <span class="kw">let </span>now = Instant::now();
-
-            <span class="kw">let </span>r = client
-                .get_report(dm.clone(), <span class="prelude-val">None</span>, <span class="prelude-val">None</span>)
-                .<span class="kw">await
-                </span>.context(<span class="string">"failed to get netcheck report"</span>)<span class="question-mark">?</span>;
-
-            <span class="kw">if </span>r.udp {
-                <span class="macro">assert_eq!</span>(
-                    r.relay_latency.len(),
-                    <span class="number">1</span>,
-                    <span class="string">"expected 1 key in RelayLatency; got {}"</span>,
-                    r.relay_latency.len()
-                );
-                <span class="macro">assert!</span>(
-                    r.relay_latency.iter().next().is_some(),
-                    <span class="string">"expected key 1 in RelayLatency; got {:?}"</span>,
-                    r.relay_latency
-                );
-                <span class="macro">assert!</span>(
-                    r.global_v4.is_some() || r.global_v6.is_some(),
-                    <span class="string">"expected at least one of global_v4 or global_v6"
-                </span>);
-                <span class="macro">assert!</span>(r.preferred_relay.is_some());
-            } <span class="kw">else </span>{
-                <span class="macro">eprintln!</span>(<span class="string">"missing UDP, probe not returned by network"</span>);
-            }
-
-            <span class="macro">println!</span>(<span class="string">"report {} done in {:?}"</span>, i + <span class="number">1</span>, now.elapsed());
-        }
 
         <span class="prelude-val">Ok</span>(())
     }
