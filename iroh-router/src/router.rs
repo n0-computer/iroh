@@ -117,7 +117,11 @@ impl RouterBuilder {
                         break;
                     },
                     // handle incoming p2p connections.
-                    Some(incoming) = endpoint.accept() => {
+                    incoming = endpoint.accept() => {
+                        let Some(incoming) = incoming else {
+                            break;
+                        };
+
                         let protocols = protocols.clone();
                         join_set.spawn(async move {
                             handle_connection(incoming, protocols).await;
@@ -144,7 +148,6 @@ impl RouterBuilder {
                             _ => {}
                         }
                     },
-                    else => break,
                 }
             }
 
