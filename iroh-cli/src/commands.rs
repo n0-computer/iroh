@@ -14,12 +14,12 @@ use crate::config::NodeConfig;
 
 pub(crate) mod console;
 pub(crate) mod doctor;
-pub(crate) mod gossip;
 pub(crate) mod net;
 pub(crate) mod rpc;
 pub(crate) mod start;
 pub(crate) use iroh_blobs::{cli as blobs, cli::tags};
 pub(crate) use iroh_docs::{cli as docs, cli::authors};
+pub(crate) use iroh_gossip::cli as gossip;
 
 /// iroh is a tool for building distributed apps.
 ///
