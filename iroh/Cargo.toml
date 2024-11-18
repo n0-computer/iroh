@@ -51,7 +51,7 @@ quic-rpc-derive = { version = "0.15" }
 quinn = { package = "iroh-quinn", version = "0.12" }
 serde = { version = "1", features = ["derive"] }
 strum = { version = "0.26", features = ["derive"] }
-thiserror = "1"
+thiserror = "2"
 tempfile = "3.4"
 tokio = { version = "1", features = ["io-util", "rt"] }
 tokio-util = { version = "0.7", features = ["codec", "io-util", "io", "time"] }

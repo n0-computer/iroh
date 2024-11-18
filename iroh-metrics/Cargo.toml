@@ -16,7 +16,7 @@ workspace = true
 
 [dependencies]
 anyhow = { version = "1" }
-erased_set = "0.7"
+erased_set = "0.8"
 http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1.1", features = ["tokio"] }

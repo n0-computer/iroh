@@ -63,7 +63,7 @@ serde = { version = "1", features = ["derive", "rc"] }
 smallvec = "1.11.1"
 socket2 = "0.5.3"
 stun-rs = "0.1.5"
-thiserror = "1"
+thiserror = "2"
 time = "0.3.20"
 tokio = { version = "1", features = [
     "io-util",

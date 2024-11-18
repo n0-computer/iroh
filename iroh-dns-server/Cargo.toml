@@ -33,7 +33,7 @@ iroh-metrics = { version = "0.28.0" }
 lru = "0.12.3"
 parking_lot = "0.12.1"
 pkarr = { version = "2.2.0", features = [ "async", "relay", "dht"], default-features = false }
-rcgen = "0.12.1"
+rcgen = "0.13"
 redb = "2.0.0"
 regex = "1.10.3"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
