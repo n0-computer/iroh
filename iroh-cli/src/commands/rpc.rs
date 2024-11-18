@@ -99,7 +99,7 @@ impl RpcCommands {
             Self::Docs { command } => command.run(&iroh.docs(), &iroh.blobs(), env).await,
             Self::Authors { command } => command.run(&iroh.authors(), env).await,
             Self::Tags { command } => command.run(&iroh.tags()).await,
-            Self::Gossip { command } => command.run(iroh).await,
+            Self::Gossip { command } => command.run(&iroh.gossip()).await,
             Self::Stats => {
                 let stats = iroh.stats().await?;
                 for (name, details) in stats.iter() {

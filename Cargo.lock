@@ -2919,16 +2919,18 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.28.1"
-source = "git+https://github.com/n0-computer/iroh-gossip?branch=main#ba0f6b0f54a740d8eae7ee6683f4aa1d8d8c8eb2"
+source = "git+https://github.com/n0-computer/iroh-gossip?branch=cli#16f35050fe47534052e79dcbca42da4212dc6256"
 dependencies = [
  "anyhow",
  "async-channel",
  "bytes",
+ "clap",
  "derive_more",
  "ed25519-dalek",
  "futures-concurrency",
  "futures-lite 2.4.0",
  "futures-util",
+ "hex",
  "indexmap 2.6.0",
  "iroh-base",
  "iroh-blake3",
