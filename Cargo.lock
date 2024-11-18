@@ -2919,7 +2919,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.28.1"
-source = "git+https://github.com/n0-computer/iroh-gossip?branch=cli#16f35050fe47534052e79dcbca42da4212dc6256"
+source = "git+https://github.com/n0-computer/iroh-gossip?branch=main#7c90c3f351585e7a364bfbf3941d07592b20dec6"
 dependencies = [
  "anyhow",
  "async-channel",
