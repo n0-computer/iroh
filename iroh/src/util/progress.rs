@@ -1,10 +1,6 @@
 //! Generic utilities to track progress of data transfers.
 //!
-//! This is not especially specific to iroh but can be helpful together with it.  The
-//! [`ProgressEmitter`] has a [`ProgressEmitter::wrap_async_read`] method which can make it
-//! easy to track process of transfers.
-//!
-//! However based on your environment there might also be better choices for this, e.g. very
+//! Based on your environment there might also be better choices for this, e.g. very
 //! similar and more advanced functionality is available in the `indicatif` crate for
 //! terminal applications.
 
