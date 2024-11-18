@@ -148,7 +148,9 @@ async fn load_certs(
 async fn load_secret_key(
     filename: impl AsRef<Path>,
 ) -> Result<rustls::pki_types::PrivateKeyDer<'static>> {
-    let keyfile = std::fs::read(filename.as_ref()).context("cannot open secret key file")?;
+    let keyfile = tokio::fs::read(filename.as_ref())
+        .await
+        .context("cannot open secret key file")?;
     let mut reader = std::io::Cursor::new(keyfile);
 
     loop {
