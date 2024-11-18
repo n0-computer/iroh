@@ -2705,7 +2705,7 @@ dependencies = [
 [[package]]
 name = "iroh-blobs"
 version = "0.28.1"
-source = "git+https://github.com/n0-computer/iroh-blobs?branch=cli#daad706ee0025e095e76c019c3f8d96d899a5bb3"
+source = "git+https://github.com/n0-computer/iroh-blobs?branch=main#cdcb863d7c75cdd7258c8f5001154272df7460c0"
 dependencies = [
  "anyhow",
  "async-channel",

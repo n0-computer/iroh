@@ -57,4 +57,4 @@ iroh-router = { path = "./iroh-router" }
 
 iroh-gossip = { git = "https://github.com/n0-computer/iroh-gossip", branch = "main" }
 iroh-docs = { git = "https://github.com/n0-computer/iroh-docs", branch = "main" }
-iroh-blobs = { git = "https://github.com/n0-computer/iroh-blobs", branch = "cli" }
+iroh-blobs = { git = "https://github.com/n0-computer/iroh-blobs", branch = "main" }
