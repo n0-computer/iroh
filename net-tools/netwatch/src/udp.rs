@@ -66,7 +66,7 @@ impl UdpSocket {
     }
 
     /// Is the socket broken and needs a rebind?
-    pub fn needs_rebind(&self) -> bool {
+    pub fn is_broken(&self) -> bool {
         self.is_broken.load(std::sync::atomic::Ordering::SeqCst)
     }
 
@@ -77,17 +77,13 @@ impl UdpSocket {
     }
 
     /// Rebind the underlying socket.
-    pub async fn rebind(&self) -> Result<()> {
+    pub fn rebind(&self) -> Result<()> {
         // Remove old socket
         {
             let mut guard = self.socket.write().unwrap();
-            let std_sock = guard.take().expect("not yet dropped").into_std();
-            tokio::runtime::Handle::current()
-                .spawn_blocking(move || {
-                    // Calls libc::close, which can block
-                    drop(std_sock);
-                })
-                .await?;
+            let socket = guard.take().expect("not yet dropped");
+
+            drop(socket);
         }
 
         // Prepare new socket
@@ -104,8 +100,12 @@ impl UdpSocket {
     }
 
     fn bind_raw(addr: impl Into<SocketAddr>) -> Result<Self> {
-        let addr = addr.into();
+        let mut addr = addr.into();
         let socket = inner_bind(addr)?;
+        if addr.port() == 0 {
+            // update to use selected port
+            addr.set_port(socket.local_addr()?.port());
+        }
 
         Ok(UdpSocket {
             socket: Arc::new(RwLock::new(Some(socket))),
@@ -185,10 +185,31 @@ impl UdpSocket {
         Ok(())
     }
 
+    /// Returns the local address of this socket.
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
         let guard = self.socket.read().unwrap();
         let socket = guard.as_ref().expect("missing socket");
         socket.local_addr()
+    }
+
+    /// Closes the socket, and waits for the underlying `libc::close` call to be finished.
+    pub async fn close(self) {
+        let std_sock = self
+            .socket
+            .write()
+            .unwrap()
+            .take()
+            .expect("not yet dropped")
+            .into_std();
+        let res = tokio::runtime::Handle::current()
+            .spawn_blocking(move || {
+                // Calls libc::close, which can block
+                drop(std_sock);
+            })
+            .await;
+        if let Err(err) = res {
+            warn!("failed to close socket: {:?}", err);
+        }
     }
 }
 
@@ -222,13 +243,7 @@ impl<'a> Future for RecvFut<'a> {
                     }
                     return Poll::Ready(res);
                 }
-                Poll::Ready(Err(err)) => {
-                    dbg!(&err);
-                    if err.kind() == ErrorKind::WouldBlock {
-                        continue;
-                    }
-                    return Poll::Ready(Err(err));
-                }
+                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
             }
         }
     }
@@ -244,28 +259,26 @@ pub struct RecvFromFut<'a> {
 impl<'a> Future for RecvFromFut<'a> {
     type Output = std::io::Result<(usize, SocketAddr)>;
 
-    fn poll(mut self: Pin<&mut Self>, c: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let Self { socket, buffer } = &mut *self;
         let guard = socket.read().unwrap();
         let socket = guard.as_ref().expect("missing socket");
 
-        match socket.poll_recv_ready(c) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(())) => {
-                let res = socket.try_recv_from(buffer);
-                if let Err(err) = res {
-                    if err.kind() == ErrorKind::WouldBlock {
-                        return Poll::Pending;
+        loop {
+            match dbg!(socket.poll_recv_ready(cx)) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(())) => {
+                    let res = socket.try_recv_from(buffer);
+                    dbg!(&res);
+                    if let Err(err) = res {
+                        if err.kind() == ErrorKind::WouldBlock {
+                            continue;
+                        }
+                        return Poll::Ready(Err(err));
                     }
-                    return Poll::Ready(Err(err));
+                    return Poll::Ready(res);
                 }
-                Poll::Ready(res)
-            }
-            Poll::Ready(Err(err)) => {
-                if err.kind() == ErrorKind::WouldBlock {
-                    return Poll::Pending;
-                }
-                Poll::Ready(Err(err))
+                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
             }
         }
     }
@@ -351,12 +364,7 @@ impl<'a> Future for SendToFut<'a> {
                     }
                     return Poll::Ready(res);
                 }
-                Poll::Ready(Err(err)) => {
-                    if err.kind() == ErrorKind::WouldBlock {
-                        continue;
-                    }
-                    return Poll::Ready(Err(err));
-                }
+                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
             }
         }
     }
@@ -418,17 +426,14 @@ impl Drop for UdpSocket {
     fn drop(&mut self) {
         // Only spawn_blocking if we are inside a tokio runtime, otherwise we just drop.
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            let std_sock = self
-                .socket
-                .write()
-                .unwrap()
-                .take()
-                .expect("not yet dropped")
-                .into_std();
-            handle.spawn_blocking(move || {
-                // Calls libc::close, which can block
-                drop(std_sock);
-            });
+            if let Some(socket) = self.socket.write().unwrap().take() {
+                // this will be empty if `close` was called before
+                let std_sock = socket.into_std();
+                handle.spawn_blocking(move || {
+                    // Calls libc::close, which can block
+                    drop(std_sock);
+                });
+            }
         }
     }
 }
@@ -439,7 +444,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_reconnect() -> anyhow::Result<()> {
-        let (s_a, mut r_a) = tokio::sync::mpsc::channel(16);
         let (s_b, mut r_b) = tokio::sync::mpsc::channel(16);
         let handle_a = tokio::task::spawn(async move {
             let socket = UdpSocket::bind_local(IpFamily::V4, 0)?;
@@ -448,80 +452,48 @@ mod tests {
             println!("socket bound to {:?}", addr);
 
             let mut buffer = [0u8; 16];
-            loop {
-                tokio::select! {
-                    biased;
-
-                    Some(_) = r_a.recv() => {
-                        println!("disconnecting");
-                        break;
-                    }
-                    read = socket.recv_from(&mut buffer) => {
-                        match read {
-                            Ok((count, addr)) => {
-                                println!("got {:?}", &buffer[..count]);
-                                println!("sending {:?} to {:?}", &buffer[..count], addr);
-                                socket.send_to(&buffer[..count], addr).await?;
-                            }
-                            Err(err) => {
-                                eprintln!("error reading: {:?}", err);
-                            }
-                        }
-                    }
-                }
-            }
-
-            r_a.recv().await.unwrap();
-            // restart after the second message
-            println!("reconnecting");
-            loop {
-                match socket.recv(&mut buffer).await {
-                    Ok(count) => {
+            for i in 0..100 {
+                println!("-- tick {i}");
+                let read = socket.recv_from(&mut buffer).await;
+                match read {
+                    Ok((count, addr)) => {
                         println!("got {:?}", &buffer[..count]);
+                        println!("sending {:?} to {:?}", &buffer[..count], addr);
+                        socket.send_to(&buffer[..count], addr).await?;
                     }
                     Err(err) => {
                         eprintln!("error reading: {:?}", err);
                     }
                 }
             }
-
+            socket.close().await;
             anyhow::Ok(())
         });
 
         let socket = UdpSocket::bind_local(IpFamily::V4, 0)?;
+        let first_addr = socket.local_addr()?;
         println!("socket2 bound to {:?}", socket.local_addr()?);
         let addr = r_b.recv().await.unwrap();
 
-        socket.connect(addr)?;
         let mut buffer = [0u8; 16];
         for i in 0u8..100 {
             println!("round one - {}", i);
-            socket.send(&[i][..]).await.context("send")?;
-            let count = socket.recv(&mut buffer).await.context("recv")?;
+            socket.send_to(&[i][..], addr).await.context("send")?;
+            let (count, from) = socket.recv_from(&mut buffer).await.context("recv")?;
+            assert_eq!(addr, from);
             assert_eq!(count, 1);
             assert_eq!(buffer[0], i);
+
+            // check for errors
+            assert!(!socket.is_broken());
+
+            // rebind
+            socket.rebind()?;
+
+            // check that the socket has the same address as before
+            assert_eq!(socket.local_addr()?, first_addr);
         }
 
-        // interrupt
-        s_a.send(()).await?;
-
-        // keep sending, should fail
-        for i in 0u8..10 {
-            let res = socket.send(&[i][..]).await;
-            println!("send: {:?}", res);
-            assert!(res.is_err());
-        }
-        // restart
-        s_a.send(()).await?;
-        // keep sending, should succeed
-        for i in 0u8..10 {
-            socket.send(&[i][..]).await?;
-            let count = socket.recv(&mut buffer).await?;
-            assert_eq!(count, 1);
-            assert_eq!(buffer[0], i);
-        }
-
-        handle_a.abort();
         handle_a.await.ok();
 
         Ok(())
