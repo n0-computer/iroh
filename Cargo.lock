@@ -389,12 +389,6 @@ checksum = "4c7f02d4ea65f2c1853089ffd8d2787bdbc63de2f0d29dedbcf8ccdfa0ccd4cf"
 
 [[package]]
 name = "base64"
-version = "0.21.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
-
-[[package]]
-name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
@@ -405,7 +399,7 @@ version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "38e2b6c78c06f7288d5e3c3d683bde35a79531127c83b087e5d0d77c974b4b28"
 dependencies = [
- "base64 0.22.1",
+ "base64",
 ]
 
 [[package]]
@@ -2793,7 +2787,7 @@ dependencies = [
  "parking_lot",
  "pkarr",
  "rcgen 0.13.1",
- "redb",
+ "redb 2.2.0",
  "regex",
  "rustls",
  "rustls-pemfile",
@@ -2938,7 +2932,7 @@ dependencies = [
  "anyhow",
  "axum",
  "backoff",
- "base64 0.22.1",
+ "base64",
  "bytes",
  "cc",
  "clap",
@@ -2988,7 +2982,7 @@ dependencies = [
  "pretty_assertions",
  "rand",
  "rand_chacha",
- "rcgen 0.13.1",
+ "rcgen",
  "regex",
  "reqwest",
  "ring",
@@ -3035,7 +3029,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-net",
  "iroh-quinn",
- "rcgen 0.13.1",
+ "rcgen",
  "rustls",
  "socket2",
  "tokio",
@@ -3156,7 +3150,7 @@ name = "iroh-relay"
 version = "0.28.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
+ "base64",
  "bytes",
  "clap",
  "crypto_box",
@@ -3187,7 +3181,7 @@ dependencies = [
  "proptest",
  "rand",
  "rand_chacha",
- "rcgen 0.13.1",
+ "rcgen",
  "regex",
  "reqwest",
  "ring",
@@ -4039,7 +4033,7 @@ version = "3.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e459365e590736a54c3fa561947c84837534b8e9af6fc5bf781307e82658fae"
 dependencies = [
- "base64 0.22.1",
+ "base64",
  "serde",
 ]
 
@@ -4275,7 +4269,7 @@ name = "portmapper"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
+ "base64",
  "bytes",
  "derive_more",
  "futures-lite 2.5.0",
@@ -4745,18 +4739,6 @@ dependencies = [
 
 [[package]]
 name = "rcgen"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48406db8ac1f3cbc7dcdb56ec355343817958a356ff430259bb07baf7607e1e1"
-dependencies = [
- "pem",
- "ring",
- "time",
- "yasna",
-]
-
-[[package]]
-name = "rcgen"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54077e1872c46788540de1ea3d7f4ccb1983d12f9aa909b234468676c1a36779"
@@ -4884,7 +4866,7 @@ version = "0.12.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a77c62af46e79de0a562e1a9849205ffcb7fc1238876e9bd743357570e04046f"
 dependencies = [
- "base64 0.22.1",
+ "base64",
  "bytes",
  "futures-core",
  "futures-util",
@@ -5365,7 +5347,7 @@ version = "3.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e28bdad6db2b8340e449f7108f020b3b092e8583a9e3fb82713e1d4e71fe817"
 dependencies = [
- "base64 0.22.1",
+ "base64",
  "chrono",
  "hex",
  "indexmap 1.9.3",
@@ -5683,7 +5665,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b79cc624c9a747353810310af44f1f03f71eb4561284a894acc0396e6d0de76e"
 dependencies = [
- "base64 0.22.1",
+ "base64",
  "bounded-integer",
  "byteorder",
  "crc",
@@ -6025,30 +6007,29 @@ dependencies = [
 
 [[package]]
 name = "tokio-rustls-acme"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4ee7cbca7da86fa030e33b0deac55bad0e0bf8ab909f1a84666f04447f6339b"
+checksum = "0899f33c58a946878f9242bff2aa46417d2b3cc890b24bf534d73ceb75e079de"
 dependencies = [
  "async-trait",
  "axum-server",
- "base64 0.21.7",
+ "base64",
  "chrono",
  "futures",
  "log",
  "num-bigint",
  "pem",
  "proc-macro2",
- "rcgen 0.12.1",
+ "rcgen",
  "reqwest",
  "ring",
  "rustls",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 1.0.69",
  "time",
  "tokio",
  "tokio-rustls",
- "url",
  "webpki-roots",
  "x509-parser",
 ]
@@ -6478,7 +6459,7 @@ version = "2.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b74fc6b57825be3373f7054754755f03ac3a8f5d70015ccad699ba2029956f4a"
 dependencies = [
- "base64 0.22.1",
+ "base64",
  "log",
  "once_cell",
  "rustls",
