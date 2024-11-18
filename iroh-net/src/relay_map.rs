@@ -112,11 +112,12 @@ impl RelayMap {
     }
 
     /// Constructs the [`RelayMap`] from an iterator of [`RelayNode`]s.
-    pub fn from_nodes(value: impl IntoIterator<Item = RelayNode>) -> Result<Self> {
+    pub fn from_nodes<I: Into<Arc<RelayNode>>>(value: impl IntoIterator<Item = I>) -> Result<Self> {
         let mut map = BTreeMap::new();
         for node in value.into_iter() {
+            let node = node.into();
             ensure!(!map.contains_key(&node.url), "Duplicate node url");
-            map.insert(node.url.clone(), node.into());
+            map.insert(node.url.clone(), node);
         }
         Ok(RelayMap { nodes: map.into() })
     }

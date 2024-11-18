@@ -163,6 +163,7 @@ iroh-net = { path = "." }
 serde_json = "1.0.107"
 testresult = "0.4.0"
 mainline = "2.0.1"
+iroh-relay = { version = "0.28", path = "../iroh-relay", features = ["test-utils", "server"] }
 
 [[bench]]
 name = "key"

@@ -770,6 +770,46 @@ pub(crate) fn os_has_ipv6() -> bool {
 }
 
 #[cfg(test)]
+mod test_utils {
+    //! Creates a relay server against which to perform tests
+
+    use std::sync::Arc;
+
+    use iroh_relay::server;
+
+    use crate::RelayNode;
+
+    pub(crate) async fn relay() -> (server::Server, Arc<RelayNode>) {
+        let server = server::Server::spawn(server::testing::server_config())
+            .await
+            .expect("should serve relay");
+        let node_desc = RelayNode {
+            url: server.https_url().expect("should work as relay"),
+            stun_only: false, // the checks above and below guarantee both stun and relay
+            stun_port: server.stun_addr().expect("server should serve stun").port(),
+        };
+
+        (server, Arc::new(node_desc))
+    }
+
+    /// Create a [`crate::RelayMap`] of the given size.
+    ///
+    /// This function uses [`relay`]. Note that the returned map uses internal order that will
+    /// often _not_ match the order of the servers.
+    pub(crate) async fn relay_map(relays: usize) -> (Vec<server::Server>, crate::RelayMap) {
+        let mut servers = Vec::with_capacity(relays);
+        let mut nodes = Vec::with_capacity(relays);
+        for _ in 0..relays {
+            let (relay_server, node) = relay().await;
+            servers.push(relay_server);
+            nodes.push(node);
+        }
+        let map = crate::RelayMap::from_nodes(nodes).expect("unuque urls");
+        (servers, map)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::net::Ipv4Addr;
 
@@ -778,11 +818,7 @@ mod tests {
     use tracing::info;
 
     use super::*;
-    use crate::{
-        defaults::{staging::EU_RELAY_HOSTNAME, DEFAULT_STUN_PORT},
-        ping::Pinger,
-        RelayNode,
-    };
+    use crate::ping::Pinger;
 
     mod stun_utils {
         //! Utils for testing that expose a simple stun server.
@@ -798,8 +834,6 @@ mod tests {
 
         use super::*;
         use crate::{RelayMap, RelayNode, RelayUrl};
-
-        // TODO: make all this private
 
         /// A drop guard to clean up test infrastructure.
         ///
@@ -952,57 +986,6 @@ mod tests {
             "expected at least 5 stun, got {}",
             stun_stats.total().await,
         );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_iroh_computer_stun() -> Result<()> {
-        let _guard = iroh_test::logging::setup();
-
-        let resolver = crate::dns::default_resolver().clone();
-        let mut client = Client::new(None, resolver).context("failed to create netcheck client")?;
-        let url: RelayUrl = format!("https://{}", EU_RELAY_HOSTNAME).parse().unwrap();
-
-        let dm = RelayMap::from_nodes([RelayNode {
-            url: url.clone(),
-            stun_only: true,
-            stun_port: DEFAULT_STUN_PORT,
-        }])
-        .expect("hardcoded");
-
-        for i in 0..10 {
-            println!("starting report {}", i + 1);
-            let now = Instant::now();
-
-            let r = client
-                .get_report(dm.clone(), None, None)
-                .await
-                .context("failed to get netcheck report")?;
-
-            if r.udp {
-                assert_eq!(
-                    r.relay_latency.len(),
-                    1,
-                    "expected 1 key in RelayLatency; got {}",
-                    r.relay_latency.len()
-                );
-                assert!(
-                    r.relay_latency.iter().next().is_some(),
-                    "expected key 1 in RelayLatency; got {:?}",
-                    r.relay_latency
-                );
-                assert!(
-                    r.global_v4.is_some() || r.global_v6.is_some(),
-                    "expected at least one of global_v4 or global_v6"
-                );
-                assert!(r.preferred_relay.is_some());
-            } else {
-                eprintln!("missing UDP, probe not returned by network");
-            }
-
-            println!("report {} done in {:?}", i + 1, now.elapsed());
-        }
 
         Ok(())
     }
