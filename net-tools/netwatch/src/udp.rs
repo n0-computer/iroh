@@ -229,12 +229,10 @@ impl<'a> Future for RecvFut<'a> {
         let socket = guard.as_ref().expect("missing socket");
 
         loop {
-            println!("looping");
             match socket.poll_recv_ready(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(())) => {
                     let res = socket.try_recv(buffer);
-                    dbg!(&res);
                     if let Err(err) = res {
                         if err.kind() == ErrorKind::WouldBlock {
                             continue;
@@ -265,11 +263,10 @@ impl<'a> Future for RecvFromFut<'a> {
         let socket = guard.as_ref().expect("missing socket");
 
         loop {
-            match dbg!(socket.poll_recv_ready(cx)) {
+            match socket.poll_recv_ready(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(())) => {
                     let res = socket.try_recv_from(buffer);
-                    dbg!(&res);
                     if let Err(err) = res {
                         if err.kind() == ErrorKind::WouldBlock {
                             continue;
@@ -345,17 +342,15 @@ pub struct SendToFut<'a> {
 impl<'a> Future for SendToFut<'a> {
     type Output = std::io::Result<usize>;
 
-    fn poll(self: Pin<&mut Self>, c: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let guard = self.socket.read().unwrap();
         let socket = guard.as_ref().expect("missing socket");
 
-        println!("sending to: {:?}", self.to);
         loop {
-            match dbg!(socket.poll_send_ready(c)) {
+            match socket.poll_send_ready(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(())) => {
                     let res = socket.try_send_to(self.buffer, self.to);
-                    dbg!(&res);
                     if let Err(err) = res {
                         if err.kind() == ErrorKind::WouldBlock {
                             continue;
