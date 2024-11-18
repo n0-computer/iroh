@@ -491,9 +491,6 @@
 <a href="#491" id="491">491</a>
 <a href="#492" id="492">492</a>
 <a href="#493" id="493">493</a>
-<a href="#494" id="494">494</a>
-<a href="#495" id="495">495</a>
-<a href="#496" id="496">496</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     future::Future,
     io::ErrorKind,
@@ -575,10 +572,9 @@
     <span class="doccomment">/// Rebind the underlying socket.
     </span><span class="kw">pub fn </span>rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="comment">// Remove old socket
-        </span>{
-            <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.socket.write().unwrap();
+        </span><span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.socket.write().unwrap();
+        {
             <span class="kw">let </span>socket = guard.take().expect(<span class="string">"not yet dropped"</span>);
-
             drop(socket);
         }
 
@@ -586,7 +582,7 @@
         </span><span class="kw">let </span>new_socket = inner_bind(<span class="self">self</span>.addr)<span class="question-mark">?</span>;
 
         <span class="comment">// Insert new socket
-        </span><span class="self">self</span>.socket.write().unwrap().replace(new_socket);
+        </span>guard.replace(new_socket);
 
         <span class="comment">// Clear errors
         </span><span class="self">self</span>.is_broken
@@ -598,10 +594,8 @@
     <span class="kw">fn </span>bind_raw(addr: <span class="kw">impl </span>Into&lt;SocketAddr&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>addr = addr.into();
         <span class="kw">let </span>socket = inner_bind(addr)<span class="question-mark">?</span>;
-        <span class="kw">if </span>addr.port() == <span class="number">0 </span>{
-            <span class="comment">// update to use selected port
-            </span>addr.set_port(socket.local_addr()<span class="question-mark">?</span>.port());
-        }
+        <span class="comment">// update to use selected port
+        </span>addr.set_port(socket.local_addr()<span class="question-mark">?</span>.port());
 
         <span class="prelude-val">Ok</span>(UdpSocket {
             socket: Arc::new(RwLock::new(<span class="prelude-val">Some</span>(socket))),
