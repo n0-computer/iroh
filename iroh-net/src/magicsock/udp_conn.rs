@@ -1,6 +1,5 @@
 use std::{
     fmt::Debug,
-    future::Future,
     io,
     net::SocketAddr,
     pin::Pin,
@@ -52,13 +51,8 @@ impl UdpConn {
 
 impl AsyncUdpSocket for UdpConn {
     fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn quinn::UdpPoller>> {
-        let sock = self.io.clone();
         Box::pin(IoPoller {
-            next_waiter: move || {
-                let sock = sock.clone();
-                async move { sock.writable().await }
-            },
-            waiter: None,
+            io: self.io.clone(),
         })
     }
 
@@ -153,49 +147,14 @@ fn bind(mut addr: SocketAddr) -> anyhow::Result<UdpSocket> {
 }
 
 /// Poller for when the socket is writable.
-///
-/// The tricky part is that we only have `tokio::net::UdpSocket::writable()` to create the
-/// waiter we need, which does not return a named future type.  In order to be able to store
-/// this waiter in a struct without boxing we need to specify the future itself as a type
-/// parameter, which we can only do if we introduce a second type parameter which returns
-/// the future.  So we end up with a function which we do not need, but it makes the types
-/// work.
-#[derive(derive_more::Debug)]
-#[pin_project::pin_project]
-struct IoPoller<F, Fut>
-where
-    F: Fn() -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = io::Result<()>> + Send + Sync + 'static,
-{
-    /// Function which can create a new waiter if there is none.
-    #[debug("next_waiter")]
-    next_waiter: F,
-    /// The waiter which tells us when the socket is writable.
-    #[debug("waiter")]
-    #[pin]
-    waiter: Option<Fut>,
+#[derive(Debug)]
+struct IoPoller {
+    io: Arc<UdpSocket>,
 }
 
-impl<F, Fut> quinn::UdpPoller for IoPoller<F, Fut>
-where
-    F: Fn() -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = io::Result<()>> + Send + Sync + 'static,
-{
+impl quinn::UdpPoller for IoPoller {
     fn poll_writable(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        let mut this = self.project();
-        if this.waiter.is_none() {
-            this.waiter.set(Some((this.next_waiter)()));
-        }
-        let result = this
-            .waiter
-            .as_mut()
-            .as_pin_mut()
-            .expect("just set")
-            .poll(cx);
-        if result.is_ready() {
-            this.waiter.set(None);
-        }
-        result
+        self.io.with_socket(|io| io.poll_send_ready(cx))
     }
 }
 
