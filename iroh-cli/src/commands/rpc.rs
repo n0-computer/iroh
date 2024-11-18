@@ -3,12 +3,12 @@
 use anyhow::Result;
 use clap::Subcommand;
 use iroh::client::Iroh;
+use iroh_docs::cli::ConsoleEnv;
 
 use super::{
     authors::AuthorCommands, blobs::BlobCommands, docs::DocCommands, gossip::GossipCommands,
     net::NetCommands, tags::TagCommands,
 };
-use crate::config::ConsoleEnv;
 
 /// Commands to manage the iroh RPC.
 #[derive(Subcommand, Debug, Clone)]
@@ -96,8 +96,8 @@ impl RpcCommands {
         match self {
             Self::Net { command } => command.run(iroh).await,
             Self::Blobs { command } => command.run(&iroh.blobs(), node_id().await?).await,
-            Self::Docs { command } => command.run(iroh, env).await,
-            Self::Authors { command } => command.run(iroh, env).await,
+            Self::Docs { command } => command.run(&iroh.docs(), &iroh.blobs(), env).await,
+            Self::Authors { command } => command.run(&iroh.authors(), env).await,
             Self::Tags { command } => command.run(&iroh.tags()).await,
             Self::Gossip { command } => command.run(iroh).await,
             Self::Stats => {

@@ -1166,7 +1166,9 @@ checksum = "658bce805d770f407bc62102fca7c2c64ceef2fbcb2b8bd19d2765ce093980de"
 dependencies = [
  "console",
  "shell-words",
+ "tempfile",
  "thiserror 1.0.68",
+ "zeroize",
 ]
 
 [[package]]
@@ -2868,17 +2870,21 @@ dependencies = [
 [[package]]
 name = "iroh-docs"
 version = "0.28.0"
-source = "git+https://github.com/n0-computer/iroh-docs?branch=main#6f1d8ebf7c344e31b2bcf77eb7e8dd72540c971b"
 dependencies = [
  "anyhow",
  "async-channel",
  "bytes",
+ "clap",
+ "colored",
+ "console",
  "derive_more",
+ "dialoguer",
  "ed25519-dalek",
  "futures-buffered",
  "futures-lite 2.4.0",
  "futures-util",
  "hex",
+ "indicatif",
  "iroh-base",
  "iroh-blake3",
  "iroh-blobs",
@@ -2899,6 +2905,7 @@ dependencies = [
  "self_cell",
  "serde",
  "serde-error",
+ "shellexpand",
  "strum 0.26.3",
  "tempfile",
  "thiserror 2.0.3",
