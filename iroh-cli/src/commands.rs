@@ -18,8 +18,8 @@ pub(crate) mod gossip;
 pub(crate) mod net;
 pub(crate) mod rpc;
 pub(crate) mod start;
-pub use iroh_blobs::{cli as blobs, cli::tags};
-pub use iroh_docs::{cli as docs, cli::authors};
+pub(crate) use iroh_blobs::{cli as blobs, cli::tags};
+pub(crate) use iroh_docs::{cli as docs, cli::authors};
 
 /// iroh is a tool for building distributed apps.
 ///

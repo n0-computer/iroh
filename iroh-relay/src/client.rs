@@ -506,7 +506,13 @@ impl Actor {
                     }
                     msg_sender.send(res).await.ok();
                 }
-                Some(msg) = inbox.recv() => {
+                msg = inbox.recv() => {
+                    let Some(msg) = msg else {
+                        // Shutting down
+                        self.close().await;
+                        break;
+                    };
+
                     match msg {
                         ActorMessage::Connect(s) => {
                             let res = self.connect("actor msg").await.map(|(client, _)| (client));
@@ -545,11 +551,6 @@ impl Actor {
                             s.send(Ok(res)).ok();
                         },
                     }
-                }
-                else => {
-                    // Shutting down
-                    self.close().await;
-                    break;
                 }
             }
         }

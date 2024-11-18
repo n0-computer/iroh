@@ -473,7 +473,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::{defaults::staging::default_relay_map, netcheck::RelayLatencies};
+    use crate::netcheck::{test_utils, RelayLatencies};
 
     /// Shorthand which declares a new ProbeSet.
     ///
@@ -497,7 +497,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_initial_probeplan() {
-        let relay_map = default_relay_map();
+        let (_servers, relay_map) = test_utils::relay_map(2).await;
         let relay_node_1 = relay_map.nodes().next().unwrap();
         let relay_node_2 = relay_map.nodes().nth(1).unwrap();
         let if_state = interfaces::State::fake();
@@ -590,12 +590,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_plan_with_report() {
+        let _logging = iroh_test::logging::setup();
+        let (_servers, relay_map) = test_utils::relay_map(2).await;
+        let relay_node_1 = relay_map.nodes().next().unwrap().clone();
+        let relay_node_2 = relay_map.nodes().nth(1).unwrap().clone();
+        let if_state = interfaces::State::fake();
+
         for i in 0..10 {
             println!("round {}", i);
-            let relay_map = default_relay_map();
-            let relay_node_1 = relay_map.nodes().next().unwrap().clone();
-            let relay_node_2 = relay_map.nodes().nth(1).unwrap().clone();
-            let if_state = interfaces::State::fake();
             let mut latencies = RelayLatencies::new();
             latencies.update_relay(relay_node_1.url.clone(), Duration::from_millis(2));
             latencies.update_relay(relay_node_2.url.clone(), Duration::from_millis(2));
@@ -744,9 +746,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_relay_sort_two_latencies() {
-        let relay_map = default_relay_map();
+    #[tokio::test]
+    async fn test_relay_sort_two_latencies() {
+        let _logging = iroh_test::logging::setup();
+        let (_servers, relay_map) = test_utils::relay_map(2).await;
         let r1 = relay_map.nodes().next().unwrap();
         let r2 = relay_map.nodes().nth(1).unwrap();
         let last_report = create_last_report(
@@ -762,9 +765,10 @@ mod tests {
         assert_eq!(sorted, vec![&r1.url, &r2.url]);
     }
 
-    #[test]
-    fn test_relay_sort_equal_latencies() {
-        let relay_map = default_relay_map();
+    #[tokio::test]
+    async fn test_relay_sort_equal_latencies() {
+        let _logging = iroh_test::logging::setup();
+        let (_servers, relay_map) = test_utils::relay_map(2).await;
         let r1 = relay_map.nodes().next().unwrap();
         let r2 = relay_map.nodes().nth(1).unwrap();
         let last_report = create_last_report(
@@ -780,9 +784,9 @@ mod tests {
         assert_eq!(sorted, vec![&r1.url, &r2.url]);
     }
 
-    #[test]
-    fn test_relay_sort_missing_latency() {
-        let relay_map = default_relay_map();
+    #[tokio::test]
+    async fn test_relay_sort_missing_latency() {
+        let (_servers, relay_map) = test_utils::relay_map(2).await;
         let r1 = relay_map.nodes().next().unwrap();
         let r2 = relay_map.nodes().nth(1).unwrap();
 
@@ -803,9 +807,10 @@ mod tests {
         assert_eq!(sorted, vec![&r1.url, &r2.url]);
     }
 
-    #[test]
-    fn test_relay_sort_no_latency() {
-        let relay_map = default_relay_map();
+    #[tokio::test]
+    async fn test_relay_sort_no_latency() {
+        let _logging = iroh_test::logging::setup();
+        let (_servers, relay_map) = test_utils::relay_map(2).await;
         let r1 = relay_map.nodes().next().unwrap();
         let r2 = relay_map.nodes().nth(1).unwrap();
 
