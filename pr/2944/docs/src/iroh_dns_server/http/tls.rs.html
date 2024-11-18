@@ -182,7 +182,6 @@
 <a href="#182" id="182">182</a>
 <a href="#183" id="183">183</a>
 <a href="#184" id="184">184</a>
-<a href="#185" id="185">185</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     borrow::Cow,
     io,
@@ -275,12 +274,8 @@
         <span class="kw">let </span>cert_path = dir.join(<span class="macro">format!</span>(<span class="string">"{keyname}.crt"</span>));
         <span class="kw">let </span>key_path = dir.join(<span class="macro">format!</span>(<span class="string">"{keyname}.key"</span>));
 
-        <span class="kw">let </span>(certs, secret_key) = tokio::task::spawn_blocking(<span class="kw">move </span>|| {
-            <span class="kw">let </span>certs = load_certs(cert_path)<span class="question-mark">?</span>;
-            <span class="kw">let </span>key = load_secret_key(key_path)<span class="question-mark">?</span>;
-            anyhow::Ok((certs, key))
-        })
-        .<span class="kw">await</span><span class="question-mark">??</span>;
+        <span class="kw">let </span>certs = load_certs(cert_path).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>secret_key = load_secret_key(key_path).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>config = config.with_single_cert(certs, secret_key)<span class="question-mark">?</span>;
         <span class="kw">let </span>config = RustlsConfig::from_config(Arc::new(config));
@@ -321,23 +316,26 @@
     }
 }
 
-<span class="kw">fn </span>load_certs(
+<span class="kw">async fn </span>load_certs(
     filename: <span class="kw">impl </span>AsRef&lt;Path&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;rustls::pki_types::CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;&gt; {
-    <span class="kw">let </span>certfile = std::fs::File::open(filename).context(<span class="string">"cannot open certificate file"</span>)<span class="question-mark">?</span>;
-    <span class="kw">let </span><span class="kw-2">mut </span>reader = std::io::BufReader::new(certfile);
-
+    <span class="kw">let </span>certfile = tokio::fs::read(filename)
+        .<span class="kw">await
+        </span>.context(<span class="string">"cannot open certificate file"</span>)<span class="question-mark">?</span>;
+    <span class="kw">let </span><span class="kw-2">mut </span>reader = std::io::Cursor::new(certfile);
     <span class="kw">let </span>certs: <span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, std::io::Error&gt; = rustls_pemfile::certs(<span class="kw-2">&amp;mut </span>reader).collect();
     <span class="kw">let </span>certs = certs<span class="question-mark">?</span>;
 
     <span class="prelude-val">Ok</span>(certs)
 }
 
-<span class="kw">fn </span>load_secret_key(
+<span class="kw">async fn </span>load_secret_key(
     filename: <span class="kw">impl </span>AsRef&lt;Path&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;rustls::pki_types::PrivateKeyDer&lt;<span class="lifetime">'static</span>&gt;&gt; {
-    <span class="kw">let </span>keyfile = std::fs::File::open(filename.as_ref()).context(<span class="string">"cannot open secret key file"</span>)<span class="question-mark">?</span>;
-    <span class="kw">let </span><span class="kw-2">mut </span>reader = std::io::BufReader::new(keyfile);
+    <span class="kw">let </span>keyfile = tokio::fs::read(filename.as_ref())
+        .<span class="kw">await
+        </span>.context(<span class="string">"cannot open secret key file"</span>)<span class="question-mark">?</span>;
+    <span class="kw">let </span><span class="kw-2">mut </span>reader = std::io::Cursor::new(keyfile);
 
     <span class="kw">loop </span>{
         <span class="kw">match </span>rustls_pemfile::read_one(<span class="kw-2">&amp;mut </span>reader).context(<span class="string">"cannot parse secret key .pem file"</span>)<span class="question-mark">? </span>{

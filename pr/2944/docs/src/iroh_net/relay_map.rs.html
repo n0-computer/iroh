@@ -153,6 +153,7 @@
 <a href="#153" id="153">153</a>
 <a href="#154" id="154">154</a>
 <a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! based on tailscale/tailcfg/derpmap.go
 
 </span><span class="kw">use </span>std::{collections::BTreeMap, fmt, sync::Arc};
@@ -267,11 +268,12 @@
     }
 
     <span class="doccomment">/// Constructs the [`RelayMap`] from an iterator of [`RelayNode`]s.
-    </span><span class="kw">pub fn </span>from_nodes(value: <span class="kw">impl </span>IntoIterator&lt;Item = RelayNode&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub fn </span>from_nodes&lt;I: Into&lt;Arc&lt;RelayNode&gt;&gt;&gt;(value: <span class="kw">impl </span>IntoIterator&lt;Item = I&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>map = BTreeMap::new();
         <span class="kw">for </span>node <span class="kw">in </span>value.into_iter() {
+            <span class="kw">let </span>node = node.into();
             <span class="macro">ensure!</span>(!map.contains_key(<span class="kw-2">&amp;</span>node.url), <span class="string">"Duplicate node url"</span>);
-            map.insert(node.url.clone(), node.into());
+            map.insert(node.url.clone(), node);
         }
         <span class="prelude-val">Ok</span>(RelayMap { nodes: map.into() })
     }

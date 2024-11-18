@@ -6,7 +6,7 @@ var srcIndex = new Map(JSON.parse('[\
 ["iroh_metrics",["",[],["core.rs","lib.rs","metrics.rs","service.rs"]]],\
 ["iroh_net",["",[["discovery",[["pkarr",[],["dht.rs"]]],["dns.rs","local_swarm_discovery.rs","pkarr.rs","static_provider.rs"]],["dns",[],["node_info.rs"]],["endpoint",[],["rtt_actor.rs"]],["magicsock",[["node_map",[],["best_addr.rs","node_state.rs","path_state.rs","udp_paths.rs"]]],["metrics.rs","node_map.rs","relay_actor.rs","timer.rs","udp_conn.rs"]],["netcheck",[["reportgen",[],["hairpin.rs","probes.rs"]]],["metrics.rs","reportgen.rs"]],["tls",[],["certificate.rs","verifier.rs"]]],["defaults.rs","dialer.rs","disco.rs","discovery.rs","dns.rs","endpoint.rs","lib.rs","magicsock.rs","metrics.rs","netcheck.rs","ping.rs","relay_map.rs","test_utils.rs","ticket.rs","tls.rs","util.rs"]]],\
 ["iroh_net_bench",["",[],["iroh.rs","lib.rs","quinn.rs","s2n.rs","stats.rs"]]],\
-["iroh_relay",["",[["client",[],["conn.rs","streams.rs","util.rs"]],["protos",[],["disco.rs","relay.rs","stun.rs"]],["server",[],["actor.rs","client_conn.rs","clients.rs","http_server.rs","metrics.rs","streams.rs"]]],["client.rs","defaults.rs","http.rs","lib.rs","protos.rs","server.rs"]]],\
+["iroh_relay",["",[["client",[],["conn.rs","streams.rs","util.rs"]],["protos",[],["disco.rs","relay.rs","stun.rs"]],["server",[],["actor.rs","client_conn.rs","clients.rs","http_server.rs","metrics.rs","streams.rs","testing.rs"]]],["client.rs","defaults.rs","http.rs","lib.rs","protos.rs","server.rs"]]],\
 ["iroh_router",["",[],["lib.rs","protocol.rs","router.rs"]]],\
 ["iroh_test",["",[],["hexdump.rs","lib.rs","logging.rs"]]],\
 ["netwatch",["",[["interfaces",[],["linux.rs"]],["netmon",[],["actor.rs","linux.rs"]]],["interfaces.rs","ip.rs","ip_family.rs","lib.rs","netmon.rs","udp.rs"]]],\

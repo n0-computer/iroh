@@ -3876,6 +3876,33 @@
 <a href="#3876" id="3876">3876</a>
 <a href="#3877" id="3877">3877</a>
 <a href="#3878" id="3878">3878</a>
+<a href="#3879" id="3879">3879</a>
+<a href="#3880" id="3880">3880</a>
+<a href="#3881" id="3881">3881</a>
+<a href="#3882" id="3882">3882</a>
+<a href="#3883" id="3883">3883</a>
+<a href="#3884" id="3884">3884</a>
+<a href="#3885" id="3885">3885</a>
+<a href="#3886" id="3886">3886</a>
+<a href="#3887" id="3887">3887</a>
+<a href="#3888" id="3888">3888</a>
+<a href="#3889" id="3889">3889</a>
+<a href="#3890" id="3890">3890</a>
+<a href="#3891" id="3891">3891</a>
+<a href="#3892" id="3892">3892</a>
+<a href="#3893" id="3893">3893</a>
+<a href="#3894" id="3894">3894</a>
+<a href="#3895" id="3895">3895</a>
+<a href="#3896" id="3896">3896</a>
+<a href="#3897" id="3897">3897</a>
+<a href="#3898" id="3898">3898</a>
+<a href="#3899" id="3899">3899</a>
+<a href="#3900" id="3900">3900</a>
+<a href="#3901" id="3901">3901</a>
+<a href="#3902" id="3902">3902</a>
+<a href="#3903" id="3903">3903</a>
+<a href="#3904" id="3904">3904</a>
+<a href="#3905" id="3905">3905</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -5645,10 +5672,22 @@
                 discovery_events = events;
             }
         }
+
+        <span class="kw">let </span><span class="kw-2">mut </span>receiver_closed = <span class="bool-val">false</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>portmap_watcher_closed = <span class="bool-val">false</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>link_change_closed = <span class="bool-val">false</span>;
         <span class="kw">loop </span>{
             <span class="macro">inc!</span>(Metrics, actor_tick_main);
             <span class="macro">tokio::select!</span> {
-                <span class="prelude-val">Some</span>(msg) = <span class="self">self</span>.msg_receiver.recv() =&gt; {
+                msg = <span class="self">self</span>.msg_receiver.recv(), <span class="kw">if </span>!receiver_closed =&gt; {
+                    <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
+                        <span class="macro">trace!</span>(<span class="string">"tick: magicsock receiver closed"</span>);
+                        <span class="macro">inc!</span>(Metrics, actor_tick_other);
+
+                        receiver_closed = <span class="bool-val">true</span>;
+                        <span class="kw">continue</span>;
+                    };
+
                     <span class="macro">trace!</span>(<span class="question-mark">?</span>msg, <span class="string">"tick: msg"</span>);
                     <span class="macro">inc!</span>(Metrics, actor_tick_msg);
                     <span class="kw">if </span><span class="self">self</span>.handle_actor_message(msg).<span class="kw">await </span>{
@@ -5660,7 +5699,15 @@
                     <span class="macro">inc!</span>(Metrics, actor_tick_re_stun);
                     <span class="self">self</span>.msock.re_stun(<span class="string">"periodic"</span>);
                 }
-                <span class="prelude-val">Ok</span>(()) = portmap_watcher.changed() =&gt; {
+                change = portmap_watcher.changed(), <span class="kw">if </span>!portmap_watcher_closed =&gt; {
+                    <span class="kw">if </span>change.is_err() {
+                        <span class="macro">trace!</span>(<span class="string">"tick: portmap watcher closed"</span>);
+                        <span class="macro">inc!</span>(Metrics, actor_tick_other);
+
+                        portmap_watcher_closed = <span class="bool-val">true</span>;
+                        <span class="kw">continue</span>;
+                    }
+
                     <span class="macro">trace!</span>(<span class="string">"tick: portmap changed"</span>);
                     <span class="macro">inc!</span>(Metrics, actor_tick_portmap_changed);
                     <span class="kw">let </span>new_external_address = <span class="kw-2">*</span>portmap_watcher.borrow();
@@ -5687,21 +5734,28 @@
                         <span class="self">self</span>.refresh_direct_addrs(reason).<span class="kw">await</span>;
                     }
                 }
-                <span class="prelude-val">Some</span>(is_major) = link_change_r.recv() =&gt; {
+                is_major = link_change_r.recv(), <span class="kw">if </span>!link_change_closed =&gt; {
+                    <span class="kw">let </span><span class="prelude-val">Some</span>(is_major) = is_major <span class="kw">else </span>{
+                        <span class="macro">trace!</span>(<span class="string">"tick: link change receiver closed"</span>);
+                        <span class="macro">inc!</span>(Metrics, actor_tick_other);
+
+                        link_change_closed = <span class="bool-val">true</span>;
+                        <span class="kw">continue</span>;
+                    };
+
                     <span class="macro">trace!</span>(<span class="string">"tick: link change {}"</span>, is_major);
                     <span class="macro">inc!</span>(Metrics, actor_link_change);
                     <span class="self">self</span>.handle_network_change(is_major).<span class="kw">await</span>;
                 }
-                <span class="prelude-val">Some</span>(discovery_item) = discovery_events.next() =&gt; {
+                <span class="comment">// Even if `discovery_events` yields `None`, it could begin to yield
+                // `Some` again in the future, so we don't want to disable this branch
+                // forever like we do with the other branches that yield `Option`s
+                </span><span class="prelude-val">Some</span>(discovery_item) = discovery_events.next() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: discovery event, address discovered: {discovery_item:?}"</span>);
                     <span class="kw">let </span>node_addr = NodeAddr {node_id: discovery_item.node_id, info: discovery_item.addr_info};
                     <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.msock.add_node_addr(node_addr.clone(), Source::Discovery { name: discovery_item.provenance.into() }) {
                         <span class="macro">warn!</span>(<span class="question-mark">?</span>node_addr, <span class="string">"unable to add discovered node address to the node map: {e:?}"</span>);
                     }
-                }
-                <span class="kw">else </span>=&gt; {
-                    <span class="macro">trace!</span>(<span class="string">"tick: other"</span>);
-                    <span class="macro">inc!</span>(Metrics, actor_tick_other);
                 }
             }
         }
