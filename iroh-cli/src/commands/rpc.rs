@@ -92,12 +92,13 @@ pub enum RpcCommands {
 impl RpcCommands {
     /// Run the RPC command given the iroh client and the console environment.
     pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
+        let node_id = || async move { iroh.net().node_addr().await };
         match self {
             Self::Net { command } => command.run(iroh).await,
-            Self::Blobs { command } => command.run(iroh).await,
+            Self::Blobs { command } => command.run(&iroh.blobs(), node_id().await?).await,
             Self::Docs { command } => command.run(iroh, env).await,
             Self::Authors { command } => command.run(iroh, env).await,
-            Self::Tags { command } => command.run(iroh).await,
+            Self::Tags { command } => command.run(&iroh.tags()).await,
             Self::Gossip { command } => command.run(iroh).await,
             Self::Stats => {
                 let stats = iroh.stats().await?;
