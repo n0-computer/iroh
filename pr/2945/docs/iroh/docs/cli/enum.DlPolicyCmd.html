@@ -13,13 +13,13 @@
 Within the Iroh console, the active document can also set with <code>doc switch</code>.</p>
 </div></div><div class="sub-variant-field"><span id="variant.Set.field.kind" class="section-header"><a href="#variant.Set.field.kind" class="anchor field">§</a><code>kind: <a class="enum" href="enum.FetchKind.html" title="enum iroh::docs::cli::FetchKind">FetchKind</a></code></span><div class="docblock"><p>Set the general download policy for this document.</p>
 </div></div><div class="sub-variant-field"><span id="variant.Set.field.except" class="section-header"><a href="#variant.Set.field.except" class="anchor field">§</a><code>except: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="enum" href="../store/enum.FilterKind.html" title="enum iroh::docs::store::FilterKind">FilterKind</a>&gt;</code></span><div class="docblock"><p>Add an exception to the download policy.
-An exception must be formatted as &lt;matching_kind&gt;:<encoding>:<pattern>.</p>
+An exception must be formatted as <code>&lt;matching_kind&gt;:&lt;encoding&gt;:&lt;pattern&gt;</code>.</p>
 <ul>
 <li>
 <p>&lt;matching_kind&gt; can be either <code>prefix</code> or <code>exact</code>.</p>
 </li>
 <li>
-<p><encoding> can be either <code>utf8</code> or <code>hex</code>.</p>
+<p><code>&lt;encoding&gt;</code> can be either <code>utf8</code> or <code>hex</code>.</p>
 </li>
 </ul>
 </div></div></div><section id="variant.Get" class="variant"><a href="#variant.Get" class="anchor">§</a><h3 class="code-header">Get</h3></section><div class="sub-variant" id="variant.Get.fields"><h4>Fields</h4><div class="sub-variant-field"><span id="variant.Get.field.doc" class="section-header"><a href="#variant.Get.field.doc" class="anchor field">§</a><code>doc: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="../struct.NamespaceId.html" title="struct iroh::docs::NamespaceId">NamespaceId</a>&gt;</code></span><div class="docblock"><p>Document to operate on.</p>

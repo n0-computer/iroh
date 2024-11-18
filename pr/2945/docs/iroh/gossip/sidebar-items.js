@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["RpcRequest","RpcResponse"],"mod":["cli","metrics","net","proto","rpc"],"struct":["RpcClient","RpcService"]};
+window.SIDEBAR_ITEMS = {"enum":["RpcRequest","RpcResponse"],"mod":["metrics","net","proto","rpc"],"struct":["RpcClient","RpcService"]};
