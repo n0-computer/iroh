@@ -42,7 +42,7 @@ human-time = "0.1.6"
 indicatif = { version = "0.17", features = ["tokio"] }
 iroh = { version = "0.28.1", path = "../iroh", features = ["metrics"] }
 iroh-gossip = "0.28.1"
-iroh-docs = { version = "0.28.0", features = ["rpc"]}
+iroh-docs = { version = "0.28.0", features = ["rpc", "cli"]}
 iroh-metrics = { version = "0.28.0" }
 iroh-blobs = { version = "0.28.1", features = ["cli"] }
 parking_lot = "0.12.1"
