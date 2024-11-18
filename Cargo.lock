@@ -2660,7 +2660,7 @@ dependencies = [
 [[package]]
 name = "iroh-blobs"
 version = "0.28.1"
-source = "git+https://github.com/n0-computer/iroh-blobs?branch=main#290eb42cfd2d13202208264c2674ce423829f571"
+source = "git+https://github.com/n0-computer/iroh-blobs?branch=main#2337e46d89d6f2f2fda512439890ab74bab24fb4"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2859,7 +2859,7 @@ dependencies = [
  "shellexpand",
  "strum 0.26.3",
  "tempfile",
- "thiserror 2.0.3",
+ "thiserror",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -2869,7 +2869,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.28.1"
-source = "git+https://github.com/n0-computer/iroh-gossip?branch=main#ba0f6b0f54a740d8eae7ee6683f4aa1d8d8c8eb2"
+source = "git+https://github.com/n0-computer/iroh-gossip?branch=main#3d6659daf326f57cbafec189be996b89c7f441bd"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -3332,9 +3332,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.161"
+version = "0.2.162"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e9489c2807c139ffd9c1794f4af0ebe86a828db53ecdc7fea2111d0fed085d1"
+checksum = "18d287de67fe55fd7e1581fe933d965a5a9477b38e949cfa9f8574ef01506398"
 
 [[package]]
 name = "libm"
@@ -5041,9 +5041,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.18"
+version = "0.23.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c9cc1d47e243d655ace55ed38201c19ae02c148ae56412ab8750e8f0166ab7f"
+checksum = "eee87ff5d9b36712a58574e12e9f0ea80f915a5b0ac518d322b24a465617925e"
 dependencies = [
  "log",
  "once_cell",
