@@ -16,7 +16,13 @@
 //! - HTTPS `/generate_204`: Used for net_report probes.
 //! - STUN: UDP port for STUN requests/responses.
 
-use std::{fmt, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
+use std::{
+    fmt::{self, Display},
+    future::Future,
+    net::SocketAddr,
+    pin::Pin,
+    sync::Arc,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use futures_lite::StreamExt;
@@ -79,7 +85,10 @@ fn body_empty() -> BytesBody {
 /// Be aware the generic parameters are for when using the Let's Encrypt TLS configuration.
 /// If not used dummy ones need to be provided, e.g. `ServerConfig::<(), ()>::default()`.
 #[derive(Debug, Default)]
-pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
+pub struct ServerConfig<
+    EC: fmt::Debug + derive_more::Display,
+    EA: fmt::Debug + derive_more::Display = EC,
+> {
     /// Configuration for the Relay server, disabled if `None`.
     pub relay: Option<RelayConfig<EC, EA>>,
     /// Configuration for the STUN server, disabled if `None`.
@@ -95,7 +104,10 @@ pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
 /// This includes the HTTP services hosted by the Relay server, the Relay `/relay` HTTP
 /// endpoint is only one of the services served.
 #[derive(Debug)]
-pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
+pub struct RelayConfig<
+    EC: fmt::Debug + derive_more::Display,
+    EA: fmt::Debug + derive_more::Display = EC,
+> {
     /// The socket address on which the Relay HTTP server should bind.
     ///
     /// Normally you'd choose port `80`.  The bind address for the HTTPS server is
@@ -126,7 +138,10 @@ pub struct StunConfig {
 ///
 /// Normally the Relay server accepts connections on both HTTPS and HTTP.
 #[derive(Debug)]
-pub struct TlsConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
+pub struct TlsConfig<
+    EC: fmt::Debug + derive_more::Display,
+    EA: fmt::Debug + derive_more::Display = EC,
+> {
     /// The socket address on which to serve the HTTPS server.
     ///
     /// Since the captive portal probe has to run over plain text HTTP and TLS is used for
@@ -197,8 +212,8 @@ impl Server {
     /// Starts the server.
     pub async fn spawn<EC, EA>(config: ServerConfig<EC, EA>) -> Result<Self>
     where
-        EC: fmt::Debug + 'static,
-        EA: fmt::Debug + 'static,
+        EC: fmt::Debug + derive_more::Display + 'static,
+        EA: fmt::Debug + derive_more::Display + 'static,
     {
         let mut tasks = JoinSet::new();
 
@@ -697,6 +712,7 @@ mod tests {
     use std::{net::Ipv4Addr, time::Duration};
 
     use bytes::Bytes;
+    use derive_more::derive::Display;
     use http::header::UPGRADE;
     use iroh_base::{key::SecretKey, node_addr::RelayUrl};
 
@@ -707,8 +723,11 @@ mod tests {
     };
 
     async fn spawn_local_relay() -> Result<Server> {
-        Server::spawn(ServerConfig::<(), ()> {
-            relay: Some(RelayConfig {
+        #[derive(Debug, Display)]
+        struct Stub;
+
+        Server::spawn(ServerConfig::<Stub, Stub> {
+            relay: Some(RelayConfig::<Stub, Stub> {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
                 tls: None,
                 limits: Default::default(),
@@ -721,8 +740,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_services() {
+        #[derive(Default, Debug, Display)]
+        struct Stub;
+
         let _guard = iroh_test::logging::setup();
-        let mut server = Server::spawn(ServerConfig::<(), ()>::default())
+        let mut server = Server::spawn(ServerConfig::<Stub, Stub>::default())
             .await
             .unwrap();
         let res = tokio::time::timeout(Duration::from_secs(5), server.task_handle())
@@ -734,8 +756,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_conflicting_bind() {
+        #[derive(Debug, Display)]
+        struct Stub;
+
         let _guard = iroh_test::logging::setup();
-        let mut server = Server::spawn(ServerConfig::<(), ()> {
+        let mut server = Server::spawn(ServerConfig::<Stub, Stub> {
             relay: Some(RelayConfig {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 1234).into(),
                 tls: None,
@@ -1006,8 +1031,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_stun() {
+        #[derive(Debug, Display)]
+        struct Stub;
+
         let _guard = iroh_test::logging::setup();
-        let server = Server::spawn(ServerConfig::<(), ()> {
+        let server = Server::spawn(ServerConfig::<Stub, Stub> {
             relay: None,
             stun: Some(StunConfig {
                 bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
