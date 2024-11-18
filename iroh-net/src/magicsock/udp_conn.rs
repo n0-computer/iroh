@@ -15,10 +15,10 @@ use tokio::io::Interest;
 use tracing::{debug, trace};
 
 /// A UDP socket implementing Quinn's [`AsyncUdpSocket`].
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct UdpConn {
     io: Arc<UdpSocket>,
-    inner: Arc<quinn_udp::UdpSocketState>,
+    inner: quinn_udp::UdpSocketState,
 }
 
 impl UdpConn {
@@ -28,32 +28,42 @@ impl UdpConn {
 
     pub(super) fn bind(addr: SocketAddr) -> anyhow::Result<Self> {
         let sock = bind(addr)?;
-        let state = sock.with_socket(move |socket| {
+        let state = sock.with_socket(|socket| {
             quinn_udp::UdpSocketState::new(quinn_udp::UdpSockRef::from(socket))
         })?;
 
         Ok(Self {
             io: Arc::new(sock),
-            inner: Arc::new(state),
+            inner: state,
         })
+    }
+
+    pub(super) fn rebind(&mut self) -> anyhow::Result<()> {
+        // Rebind underlying socket
+        self.io.rebind()?;
+
+        // update socket state
+        let new_state = self.io.with_socket(|socket| {
+            quinn_udp::UdpSocketState::new(quinn_udp::UdpSockRef::from(socket))
+        })?;
+        self.inner = new_state;
+        Ok(())
     }
 
     pub fn port(&self) -> u16 {
         self.local_addr().map(|p| p.port()).unwrap_or_default()
     }
 
-    #[allow(clippy::unused_async)]
-    pub async fn close(&self) -> Result<(), io::Error> {
-        // Nothing to do atm
-        Ok(())
+    pub(super) fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
+        Box::pin(IoPoller {
+            io: self.io.clone(),
+        })
     }
 }
 
 impl AsyncUdpSocket for UdpConn {
     fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn quinn::UdpPoller>> {
-        Box::pin(IoPoller {
-            io: self.io.clone(),
-        })
+        (&*self).create_io_poller()
     }
 
     fn try_send(&self, transmit: &Transmit<'_>) -> io::Result<()> {
