@@ -143,13 +143,21 @@
 <a href="#143" id="143">143</a>
 <a href="#144" id="144">144</a>
 <a href="#145" id="145">145</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt::Debug, sync::Arc};
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{collections::BTreeMap, fmt::Debug, sync::Arc};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>iroh_blobs::{net_protocol::Blobs <span class="kw">as </span>BlobsProtocol, store::Store <span class="kw">as </span>BaoStore};
 <span class="kw">use </span>iroh_docs::net::DOCS_ALPN;
 <span class="kw">use </span>iroh_gossip::net::{Gossip, GOSSIP_ALPN};
-<span class="kw">use </span>iroh_node_util::rpc::server::AbstractNode;
+<span class="kw">use </span>iroh_node_util::rpc::{proto::node::CounterStats, server::AbstractNode};
 <span class="kw">use </span>iroh_router::Router;
 <span class="kw">use </span>quic_rpc::server::{RpcChannel, RpcServerError};
 <span class="kw">use </span>tokio::task::JoinSet;
@@ -178,12 +186,20 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>.inner.endpoint
     }
 
-    <span class="kw">fn </span>cancel_token(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>tokio_util::sync::CancellationToken {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.inner.cancel_token
+    <span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+        <span class="self">self</span>.inner.cancel_token.cancel();
     }
 
     <span class="kw">fn </span>rpc_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;std::net::SocketAddr&gt; {
         <span class="self">self</span>.inner.rpc_addr
+    }
+
+    <span class="kw">fn </span>stats(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; anyhow::Result&lt;BTreeMap&lt;String, CounterStats&gt;&gt; {
+        <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+        </span><span class="kw">return </span><span class="kw">crate</span>::metrics::get_metrics();
+
+        <span class="attr">#[cfg(not(feature = <span class="string">"metrics"</span>))]
+        </span><span class="macro">anyhow::bail!</span>(<span class="string">"metrics are disabled"</span>)
     }
 }
 
