@@ -188,8 +188,6 @@
 <a href="#188" id="188">188</a>
 <a href="#189" id="189">189</a>
 <a href="#190" id="190">190</a>
-<a href="#191" id="191">191</a>
-<a href="#192" id="192">192</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{net::SocketAddr, time::Duration};
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
@@ -290,9 +288,7 @@
     <span class="attr">#[allow(clippy::unused_async)]
     </span><span class="kw">async fn </span>node_stats(<span class="self">self</span>, _req: StatsRequest) -&gt; RpcResult&lt;StatsResponse&gt; {
         <span class="comment">// TODO
-        </span><span class="kw">let </span>res = <span class="prelude-val">Err</span>(RpcError::new(<span class="kw-2">&amp;*</span><span class="macro">anyhow::anyhow!</span>(<span class="string">"metrics are disabled"</span>)));
-
-        res
+        </span><span class="prelude-val">Err</span>(RpcError::new(<span class="kw-2">&amp;*</span><span class="macro">anyhow::anyhow!</span>(<span class="string">"metrics are disabled"</span>)))
     }
 
     <span class="kw">async fn </span>node_status(<span class="self">self</span>, <span class="kw">_</span>: StatusRequest) -&gt; RpcResult&lt;NodeStatus&gt; {
