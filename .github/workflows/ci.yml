@@ -298,60 +298,6 @@ jobs:
       sim_paths: "sims/iroh/iroh.json,sims/integration"
       pr_number: ${{ github.event.pull_request.number || '' }}
 
-  docker_build_and_test:
-    name: Docker Test
-    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
-    timeout-minutes: 30
-    runs-on: [self-hosted, linux, X64]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
-
-      - name: Prep
-        run: sudo apt-get install musl-tools -y
-
-      - name: Build iroh
-        run: cargo build --profile=dev-ci --all-features --bin iroh --target x86_64-unknown-linux-musl
-
-      - name: Prep bins
-        run: |
-          mkdir -p bins/linux/amd64
-          cp target/x86_64-unknown-linux-musl/dev-ci/iroh bins/linux/amd64/iroh
-
-      - name: Cleanup Docker
-        continue-on-error: true
-        run: |
-          docker kill $(docker ps -q)
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: false
-          load: true
-          tags: n0computer/iroh-test:latest
-          target: iroh
-          platforms: linux/amd64
-          file: docker/Dockerfile.ci
-
-      - name: Run Docker image & stats test
-        run: |
-          docker run -p 9090:9090 -p 4919:4919/udp -Pd n0computer/iroh-test:latest --rpc-addr 0.0.0.0:4919 start
-          # Give the server time to start
-          sleep 3
-          target/x86_64-unknown-linux-musl/dev-ci/iroh --rpc-addr 127.0.0.1:4919 stats
-
   codespell:
     timeout-minutes: 30
     runs-on: ubuntu-latest
