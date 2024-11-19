@@ -74,7 +74,7 @@ url = { version = "2.5.0", features = ["serde"] }
 serde-error = "0.1.3"
 
 [features]
-default = ["metrics", "fs-store", "examples", "example-discovery-local-network"]
+default = ["metrics", "fs-store"]
 metrics = ["iroh-metrics"]
 fs-store = []
 test = []

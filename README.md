@@ -48,11 +48,6 @@ Iroh is delivered as a Rust library and a CLI.
 
 Run `cargo add iroh`, to add `iroh` to your project.
 
-### CLI
-
-Check out https://iroh.computer/docs/install to get started.
-
-The implementation lives in the `iroh-cli` crate.
 
 ### Links
 
