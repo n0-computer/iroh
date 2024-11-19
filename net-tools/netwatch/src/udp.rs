@@ -212,6 +212,20 @@ impl UdpSocket {
     /// Returns `Some(error)` if the error is fatal otherwise `None.
     fn handle_read_error(&self, error: std::io::Error) -> Option<std::io::Error> {
         match error.kind() {
+            std::io::ErrorKind::NotConnected => {
+                // This indicates the underlying socket is broken, and we should attempt to rebind it
+                self.mark_broken();
+                None
+            }
+            _ => Some(error),
+        }
+    }
+
+    /// Handle potential write errors, updating internal state.
+    ///
+    /// Returns `Some(error)` if the error is fatal otherwise `None.
+    fn handle_write_error(&self, error: std::io::Error) -> Option<std::io::Error> {
+        match error.kind() {
             std::io::ErrorKind::BrokenPipe => {
                 // This indicates the underlying socket is broken, and we should attempt to rebind it
                 self.mark_broken();
@@ -236,22 +250,46 @@ impl Future for RecvFut<'_, '_> {
         let Self { socket, buffer } = &mut *self;
 
         loop {
-            let guard = socket.socket.read().unwrap();
-            let socket = guard.as_ref().expect("missing socket");
+            // check if the socket needs a rebind
+            if socket.is_broken() {
+                match socket.rebind() {
+                    Ok(()) => {
+                        // all good
+                    }
+                    Err(err) => {
+                        warn!("failed to rebind socket: {:?}", err);
+                        // TODO: improve error
+                        let err =
+                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
+                        return Poll::Ready(Err(err));
+                    }
+                }
+            }
 
-            match socket.poll_recv_ready(cx) {
+            let guard = socket.socket.read().unwrap();
+            let inner_socket = guard.as_ref().expect("missing socket");
+
+            match inner_socket.poll_recv_ready(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(())) => {
-                    let res = socket.try_recv(buffer);
+                    let res = inner_socket.try_recv(buffer);
                     if let Err(err) = res {
                         if err.kind() == ErrorKind::WouldBlock {
                             continue;
                         }
-                        return Poll::Ready(Err(err));
+                        if let Some(err) = socket.handle_read_error(err) {
+                            return Poll::Ready(Err(err));
+                        }
+                        continue;
                     }
                     return Poll::Ready(res);
                 }
-                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+                Poll::Ready(Err(err)) => {
+                    if let Some(err) = socket.handle_read_error(err) {
+                        return Poll::Ready(Err(err));
+                    }
+                    continue;
+                }
             }
         }
     }
@@ -271,22 +309,45 @@ impl Future for RecvFromFut<'_, '_> {
         let Self { socket, buffer } = &mut *self;
 
         loop {
+            // check if the socket needs a rebind
+            if socket.is_broken() {
+                match socket.rebind() {
+                    Ok(()) => {
+                        // all good
+                    }
+                    Err(err) => {
+                        warn!("failed to rebind socket: {:?}", err);
+                        // TODO: improve error
+                        let err =
+                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
+                        return Poll::Ready(Err(err));
+                    }
+                }
+            }
             let guard = socket.socket.read().unwrap();
-            let socket = guard.as_ref().expect("missing socket");
+            let inner_socket = guard.as_ref().expect("missing socket");
 
-            match socket.poll_recv_ready(cx) {
+            match inner_socket.poll_recv_ready(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(())) => {
-                    let res = socket.try_recv_from(buffer);
+                    let res = inner_socket.try_recv_from(buffer);
                     if let Err(err) = res {
                         if err.kind() == ErrorKind::WouldBlock {
                             continue;
                         }
-                        return Poll::Ready(Err(err));
+                        if let Some(err) = socket.handle_read_error(err) {
+                            return Poll::Ready(Err(err));
+                        }
+                        continue;
                     }
                     return Poll::Ready(res);
                 }
-                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+                Poll::Ready(Err(err)) => {
+                    if let Some(err) = socket.handle_read_error(err) {
+                        return Poll::Ready(Err(err));
+                    }
+                    continue;
+                }
             }
         }
     }
@@ -302,10 +363,36 @@ impl Future for WritableFut<'_> {
     type Output = std::io::Result<()>;
 
     fn poll(self: Pin<&mut Self>, c: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let guard = self.socket.socket.read().unwrap();
-        let socket = guard.as_ref().expect("missing socket");
+        loop {
+            // check if the socket needs a rebind
+            if self.socket.is_broken() {
+                match self.socket.rebind() {
+                    Ok(()) => {
+                        // all good
+                    }
+                    Err(err) => {
+                        warn!("failed to rebind socket: {:?}", err);
+                        // TODO: improve error
+                        let err =
+                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
+                        return Poll::Ready(Err(err));
+                    }
+                }
+            }
+            let guard = self.socket.socket.read().unwrap();
+            let socket = guard.as_ref().expect("missing socket");
 
-        socket.poll_send_ready(c)
+            match socket.poll_send_ready(c) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(())) => return Poll::Ready(Ok(())),
+                Poll::Ready(Err(err)) => {
+                    if let Some(err) = self.socket.handle_write_error(err) {
+                        return Poll::Ready(Err(err));
+                    }
+                    continue;
+                }
+            }
+        }
     }
 }
 
@@ -321,6 +408,21 @@ impl Future for SendFut<'_, '_> {
 
     fn poll(self: Pin<&mut Self>, c: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         loop {
+            // check if the socket needs a rebind
+            if self.socket.is_broken() {
+                match self.socket.rebind() {
+                    Ok(()) => {
+                        // all good
+                    }
+                    Err(err) => {
+                        warn!("failed to rebind socket: {:?}", err);
+                        // TODO: improve error
+                        let err =
+                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
+                        return Poll::Ready(Err(err));
+                    }
+                }
+            }
             let guard = self.socket.socket.read().unwrap();
             let socket = guard.as_ref().expect("missing socket");
 
@@ -332,7 +434,7 @@ impl Future for SendFut<'_, '_> {
                         if err.kind() == ErrorKind::WouldBlock {
                             continue;
                         }
-                        if let Some(err) = self.socket.handle_read_error(err) {
+                        if let Some(err) = self.socket.handle_write_error(err) {
                             return Poll::Ready(Err(err));
                         }
                         continue;
@@ -340,7 +442,7 @@ impl Future for SendFut<'_, '_> {
                     return Poll::Ready(res);
                 }
                 Poll::Ready(Err(err)) => {
-                    if let Some(err) = self.socket.handle_read_error(err) {
+                    if let Some(err) = self.socket.handle_write_error(err) {
                         return Poll::Ready(Err(err));
                     }
                     continue;
@@ -391,7 +493,7 @@ impl Future for SendToFut<'_, '_> {
                             continue;
                         }
 
-                        if let Some(err) = self.socket.handle_read_error(err) {
+                        if let Some(err) = self.socket.handle_write_error(err) {
                             return Poll::Ready(Err(err));
                         }
                         continue;
@@ -399,7 +501,7 @@ impl Future for SendToFut<'_, '_> {
                     return Poll::Ready(res);
                 }
                 Poll::Ready(Err(err)) => {
-                    if let Some(err) = self.socket.handle_read_error(err) {
+                    if let Some(err) = self.socket.handle_write_error(err) {
                         return Poll::Ready(Err(err));
                     }
                     continue;
