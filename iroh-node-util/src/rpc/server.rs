@@ -98,9 +98,7 @@ impl Node {
     #[allow(clippy::unused_async)]
     async fn node_stats(self, _req: StatsRequest) -> RpcResult<StatsResponse> {
         // TODO
-        let res = Err(RpcError::new(&*anyhow::anyhow!("metrics are disabled")));
-
-        res
+        Err(RpcError::new(&*anyhow::anyhow!("metrics are disabled")))
     }
 
     async fn node_status(self, _: StatusRequest) -> RpcResult<NodeStatus> {
