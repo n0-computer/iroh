@@ -53,7 +53,7 @@ base32 = ["dep:data-encoding", "dep:postcard"]
 redb = ["dep:redb"]
 key = ["dep:ed25519-dalek", "dep:once_cell", "dep:rand", "dep:rand_core", "dep:ssh-key", "dep:ttl_cache", "dep:aead", "dep:crypto_box", "dep:zeroize", "dep:url", "dep:derive_more", "dep:getrandom"]
 wasm = ["getrandom?/js"]
-relay = []
+relay = ["dep:url", "dep:derive_more"]
 
 [package.metadata.docs.rs]
 all-features = true
