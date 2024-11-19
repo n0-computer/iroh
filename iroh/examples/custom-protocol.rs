@@ -51,6 +51,10 @@ use iroh::{
     router::ProtocolHandler,
 };
 use iroh_base::hash::Hash;
+use iroh_blobs::{
+    downloader::Downloader, net_protocol::Blobs, rpc::client::blobs::MemClient,
+    util::local_pool::LocalPool,
+};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 #[derive(Debug, Parser)]
@@ -87,11 +91,27 @@ async fn main() -> Result<()> {
     let args = Cli::parse();
 
     // Build a in-memory node. For production code, you'd want a persistent node instead usually.
-    let builder = iroh::node::Node::memory().build().await?;
+    let mut builder = iroh::node::Node::memory().build().await?;
+    let local_pool = LocalPool::default();
+    let store = iroh_blobs::store::mem::Store::new();
+    let downloader = Downloader::new(
+        store.clone(),
+        builder.endpoint().clone(),
+        local_pool.handle().clone(),
+    );
+    let blobs = Arc::new(Blobs::new_with_events(
+        store,
+        local_pool.handle().clone(),
+        Default::default(),
+        downloader,
+        builder.endpoint().clone(),
+    ));
+    let blobs_client = blobs.clone().client();
+    builder = builder.accept(iroh_blobs::protocol::ALPN.to_vec(), blobs);
 
     // Build our custom protocol handler. The `builder` exposes access to various subsystems in the
     // iroh node. In our case, we need a blobs client and the endpoint.
-    let proto = BlobSearch::new(builder.client().blobs().clone(), builder.endpoint().clone());
+    let proto = BlobSearch::new(blobs_client.clone(), builder.endpoint().clone());
 
     // Add our protocol, identified by our ALPN, to the node, and spawn the node.
     let node = builder.accept(ALPN.to_vec(), proto.clone()).spawn().await?;
@@ -117,7 +137,7 @@ async fn main() -> Result<()> {
 
             // Print out our query results.
             for hash in hashes {
-                read_and_print(&node.blobs(), hash).await?;
+                read_and_print(&blobs_client, hash).await?;
             }
         }
     }
@@ -129,7 +149,7 @@ async fn main() -> Result<()> {
 
 #[derive(Debug, Clone)]
 struct BlobSearch {
-    blobs: blobs::Client,
+    blobs: MemClient,
     endpoint: Endpoint,
     index: Arc<Mutex<HashMap<String, Hash>>>,
 }
@@ -180,7 +200,7 @@ impl ProtocolHandler for BlobSearch {
 
 impl BlobSearch {
     /// Create a new protocol handler.
-    pub fn new(blobs: blobs::Client, endpoint: Endpoint) -> Arc<Self> {
+    pub fn new(blobs: MemClient, endpoint: Endpoint) -> Arc<Self> {
         Arc::new(Self {
             blobs,
             endpoint,
@@ -281,7 +301,7 @@ impl BlobSearch {
 }
 
 /// Read a blob from the local blob store and print it to STDOUT.
-async fn read_and_print(blobs: &blobs::Client, hash: Hash) -> Result<()> {
+async fn read_and_print(blobs: &MemClient, hash: Hash) -> Result<()> {
     let content = blobs.read_to_bytes(hash).await?;
     let message = String::from_utf8(content.to_vec())?;
     println!("{}: {message}", hash.fmt_short());

@@ -3,7 +3,10 @@
 //! This is using an in memory database and a random node id.
 //! run this example from the project root:
 //!     $ cargo run --example hello-world-provide
+use std::sync::Arc;
+
 use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
+use iroh_blobs::{downloader::Downloader, net_protocol::Blobs, util::local_pool::LocalPool};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -21,10 +24,27 @@ async fn main() -> anyhow::Result<()> {
     println!("'Hello World' provide example!");
 
     // create a new node
-    let node = iroh::node::Node::memory().spawn().await?;
+    let mut builder = iroh::node::Node::memory().build().await?;
+    let local_pool = LocalPool::default();
+    let store = iroh_blobs::store::mem::Store::new();
+    let downloader = Downloader::new(
+        store.clone(),
+        builder.endpoint().clone(),
+        local_pool.handle().clone(),
+    );
+    let blobs = Arc::new(Blobs::new_with_events(
+        store,
+        local_pool.handle().clone(),
+        Default::default(),
+        downloader,
+        builder.endpoint().clone(),
+    ));
+    let blobs_client = blobs.clone().client();
+    builder = builder.accept(iroh_blobs::protocol::ALPN.to_vec(), blobs);
+    let node = builder.spawn().await?;
 
     // add some data and remember the hash
-    let res = node.blobs().add_bytes("Hello, world!").await?;
+    let res = blobs_client.add_bytes("Hello, world!").await?;
 
     // create a ticket
     let mut addr = node.net().node_addr().await?;

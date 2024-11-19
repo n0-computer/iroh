@@ -37,19 +37,23 @@ async fn main() -> Result<()> {
         BlobTicket::from_str(&args[1]).context("failed parsing blob ticket\n\nGet a ticket by running the follow command in a separate terminal:\n\n`cargo run --example hello-world-provide`")?;
 
     // create a new node
-    let builder = iroh::node::Node::memory().build().await?;
+    let mut builder = iroh::node::Node::memory().build().await?;
     let local_pool = LocalPool::default();
     let store = iroh_blobs::store::mem::Store::new();
-    let downloader = Downloader::new(store.clone(), builder.endpoint(), local_pool.handle());
-    let blobs = Blobs::new_with_events(
+    let downloader = Downloader::new(
+        store.clone(),
+        builder.endpoint().clone(),
+        local_pool.handle().clone(),
+    );
+    let blobs = Arc::new(Blobs::new_with_events(
         store,
         local_pool.handle().clone(),
         Default::default(),
         downloader,
-        builder.endpoint(),
-    );
-    let blobs_client = blobs.client();
-    builder.accept(iroh_blobs::protocol::ALPN.to_vec(), Arc::new(blobs));
+        builder.endpoint().clone(),
+    ));
+    let blobs_client = blobs.clone().client();
+    builder = builder.accept(iroh_blobs::protocol::ALPN.to_vec(), blobs);
     let node = builder.spawn().await?;
 
     println!("fetching hash:  {}", ticket.hash());
@@ -89,7 +93,7 @@ async fn main() -> Result<()> {
 
     // Get the content we have just fetched from the iroh database.
 
-    let bytes = node.blobs().read_to_bytes(ticket.hash()).await?;
+    let bytes = blobs_client.read_to_bytes(ticket.hash()).await?;
     let s = std::str::from_utf8(&bytes).context("unable to parse blob as as utf-8 string")?;
     println!("{s}");
 
