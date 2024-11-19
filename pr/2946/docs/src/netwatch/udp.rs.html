@@ -673,6 +673,11 @@
 <a href="#673" id="673">673</a>
 <a href="#674" id="674">674</a>
 <a href="#675" id="675">675</a>
+<a href="#676" id="676">676</a>
+<a href="#677" id="677">677</a>
+<a href="#678" id="678">678</a>
+<a href="#679" id="679">679</a>
+<a href="#680" id="680">680</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     future::Future,
     io::ErrorKind,
@@ -885,7 +890,7 @@
     <span class="doccomment">/// Handle potential read errors, updating internal state.
     ///
     /// Returns `Some(error)` if the error is fatal otherwise `None.
-    </span><span class="kw">fn </span>handle_read_error(<span class="kw-2">&amp;</span><span class="self">self</span>, error: std::io::Error) -&gt; <span class="prelude-ty">Option</span>&lt;std::io::Error&gt; {
+    </span><span class="kw">pub fn </span>handle_read_error(<span class="kw-2">&amp;</span><span class="self">self</span>, error: std::io::Error) -&gt; <span class="prelude-ty">Option</span>&lt;std::io::Error&gt; {
         <span class="kw">match </span>error.kind() {
             std::io::ErrorKind::NotConnected =&gt; {
                 <span class="comment">// This indicates the underlying socket is broken, and we should attempt to rebind it
@@ -899,7 +904,7 @@
     <span class="doccomment">/// Handle potential write errors, updating internal state.
     ///
     /// Returns `Some(error)` if the error is fatal otherwise `None.
-    </span><span class="kw">fn </span>handle_write_error(<span class="kw-2">&amp;</span><span class="self">self</span>, error: std::io::Error) -&gt; <span class="prelude-ty">Option</span>&lt;std::io::Error&gt; {
+    </span><span class="kw">pub fn </span>handle_write_error(<span class="kw-2">&amp;</span><span class="self">self</span>, error: std::io::Error) -&gt; <span class="prelude-ty">Option</span>&lt;std::io::Error&gt; {
         <span class="kw">match </span>error.kind() {
             std::io::ErrorKind::BrokenPipe =&gt; {
                 <span class="comment">// This indicates the underlying socket is broken, and we should attempt to rebind it
@@ -907,6 +912,40 @@
                 <span class="prelude-val">None
             </span>}
             <span class="kw">_ </span>=&gt; <span class="prelude-val">Some</span>(error),
+        }
+    }
+
+    <span class="doccomment">/// Poll for writable
+    </span><span class="kw">pub fn </span>poll_writable(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;std::io::Result&lt;()&gt;&gt; {
+        <span class="kw">loop </span>{
+            <span class="comment">// check if the socket needs a rebind
+            </span><span class="kw">if </span><span class="self">self</span>.is_broken() {
+                <span class="kw">match </span><span class="self">self</span>.rebind() {
+                    <span class="prelude-val">Ok</span>(()) =&gt; {
+                        <span class="comment">// all good
+                    </span>}
+                    <span class="prelude-val">Err</span>(err) =&gt; {
+                        <span class="macro">warn!</span>(<span class="string">"failed to rebind socket: {:?}"</span>, err);
+                        <span class="comment">// TODO: improve error
+                        </span><span class="kw">let </span>err =
+                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
+                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
+                    }
+                }
+            }
+            <span class="kw">let </span>guard = <span class="self">self</span>.socket.read().unwrap();
+            <span class="kw">let </span>socket = guard.as_ref().expect(<span class="string">"missing socket"</span>);
+
+            <span class="kw">match </span>socket.poll_send_ready(cx) {
+                Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
+                Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(())),
+                Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; {
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(err) = <span class="self">self</span>.handle_write_error(err) {
+                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
+                    }
+                    <span class="kw">continue</span>;
+                }
+            }
         }
     }
 }
@@ -1037,37 +1076,8 @@
 <span class="kw">impl </span>Future <span class="kw">for </span>WritableFut&lt;<span class="lifetime">'_</span>&gt; {
     <span class="kw">type </span>Output = std::io::Result&lt;()&gt;;
 
-    <span class="kw">fn </span>poll(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, c: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
-        <span class="kw">loop </span>{
-            <span class="comment">// check if the socket needs a rebind
-            </span><span class="kw">if </span><span class="self">self</span>.socket.is_broken() {
-                <span class="kw">match </span><span class="self">self</span>.socket.rebind() {
-                    <span class="prelude-val">Ok</span>(()) =&gt; {
-                        <span class="comment">// all good
-                    </span>}
-                    <span class="prelude-val">Err</span>(err) =&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"failed to rebind socket: {:?}"</span>, err);
-                        <span class="comment">// TODO: improve error
-                        </span><span class="kw">let </span>err =
-                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
-                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
-                    }
-                }
-            }
-            <span class="kw">let </span>guard = <span class="self">self</span>.socket.socket.read().unwrap();
-            <span class="kw">let </span>socket = guard.as_ref().expect(<span class="string">"missing socket"</span>);
-
-            <span class="kw">match </span>socket.poll_send_ready(c) {
-                Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
-                Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(())),
-                Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(err) = <span class="self">self</span>.socket.handle_write_error(err) {
-                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
-                    }
-                    <span class="kw">continue</span>;
-                }
-            }
-        }
+    <span class="kw">fn </span>poll(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
+        <span class="self">self</span>.socket.poll_writable(cx)
     }
 }
 
