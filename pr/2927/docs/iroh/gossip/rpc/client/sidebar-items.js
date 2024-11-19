@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["Client","SubscribeOpts"]};
+window.SIDEBAR_ITEMS = {"struct":["Client","SubscribeOpts"],"type":["MemClient"]};

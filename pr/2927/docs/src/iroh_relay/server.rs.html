@@ -1007,6 +1007,34 @@
 <a href="#1007" id="1007">1007</a>
 <a href="#1008" id="1008">1008</a>
 <a href="#1009" id="1009">1009</a>
+<a href="#1010" id="1010">1010</a>
+<a href="#1011" id="1011">1011</a>
+<a href="#1012" id="1012">1012</a>
+<a href="#1013" id="1013">1013</a>
+<a href="#1014" id="1014">1014</a>
+<a href="#1015" id="1015">1015</a>
+<a href="#1016" id="1016">1016</a>
+<a href="#1017" id="1017">1017</a>
+<a href="#1018" id="1018">1018</a>
+<a href="#1019" id="1019">1019</a>
+<a href="#1020" id="1020">1020</a>
+<a href="#1021" id="1021">1021</a>
+<a href="#1022" id="1022">1022</a>
+<a href="#1023" id="1023">1023</a>
+<a href="#1024" id="1024">1024</a>
+<a href="#1025" id="1025">1025</a>
+<a href="#1026" id="1026">1026</a>
+<a href="#1027" id="1027">1027</a>
+<a href="#1028" id="1028">1028</a>
+<a href="#1029" id="1029">1029</a>
+<a href="#1030" id="1030">1030</a>
+<a href="#1031" id="1031">1031</a>
+<a href="#1032" id="1032">1032</a>
+<a href="#1033" id="1033">1033</a>
+<a href="#1034" id="1034">1034</a>
+<a href="#1035" id="1035">1035</a>
+<a href="#1036" id="1036">1036</a>
+<a href="#1037" id="1037">1037</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
@@ -1033,6 +1061,8 @@
     response::Builder <span class="kw">as </span>ResponseBuilder, HeaderMap, Method, Request, Response, StatusCode,
 };
 <span class="kw">use </span>hyper::body::Incoming;
+<span class="attr">#[cfg(feature = <span class="string">"test-utils"</span>)]
+</span><span class="kw">use </span>iroh_base::node_addr::RelayUrl;
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>tokio::{
     net::{TcpListener, UdpSocket},
@@ -1049,6 +1079,8 @@
 <span class="kw">mod </span>http_server;
 <span class="kw">mod </span>metrics;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>streams;
+<span class="attr">#[cfg(feature = <span class="string">"test-utils"</span>)]
+</span><span class="kw">pub mod </span>testing;
 
 <span class="kw">pub use </span><span class="self">self</span>::{
     metrics::{Metrics, StunMetrics},
@@ -1393,6 +1425,30 @@
     <span class="doccomment">/// The certificates chain if configured with manual TLS certificates.
     </span><span class="kw">pub fn </span>certificates(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;Vec&lt;rustls::pki_types::CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;&gt; {
         <span class="self">self</span>.certificates.clone()
+    }
+
+    <span class="doccomment">/// Get the server's https [`RelayUrl`].
+    ///
+    /// This uses [`Self::https_addr`] so it's mostly useful for local development.
+    </span><span class="attr">#[cfg(feature = <span class="string">"test-utils"</span>)]
+    </span><span class="kw">pub fn </span>https_url(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;RelayUrl&gt; {
+        <span class="self">self</span>.https_addr.map(|addr| {
+            url::Url::parse(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"https://{addr}"</span>))
+                .expect(<span class="string">"valid url"</span>)
+                .into()
+        })
+    }
+
+    <span class="doccomment">/// Get the server's http [`RelayUrl`].
+    ///
+    /// This uses [`Self::http_addr`] so it's mostly useful for local development.
+    </span><span class="attr">#[cfg(feature = <span class="string">"test-utils"</span>)]
+    </span><span class="kw">pub fn </span>http_url(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;RelayUrl&gt; {
+        <span class="self">self</span>.http_addr.map(|addr| {
+            url::Url::parse(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"http://{addr}"</span>))
+                .expect(<span class="string">"valid url"</span>)
+                .into()
+        })
     }
 }
 

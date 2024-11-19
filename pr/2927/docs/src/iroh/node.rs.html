@@ -689,8 +689,6 @@
 <a href="#689" id="689">689</a>
 <a href="#690" id="690">690</a>
 <a href="#691" id="691">691</a>
-<a href="#692" id="692">692</a>
-<a href="#693" id="693">693</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node API
 //!
 //! An iroh node is a server that is identified by an Ed25519 keypair and is
@@ -765,7 +763,6 @@
 <span class="kw">mod </span>rpc;
 <span class="kw">mod </span>rpc_status;
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::rpc::RpcResult;
 <span class="kw">pub use </span><span class="self">self</span>::{
     builder::{
         Builder, DiscoveryConfig, DocsStorage, GcPolicy, ProtocolBuilder, StorageConfig,
@@ -1126,7 +1123,6 @@
                         <span class="kw">_ </span>=&gt; {}
                     }
                 },
-                <span class="kw">else </span>=&gt; <span class="kw">break</span>,
             }
         }
 

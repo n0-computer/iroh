@@ -1071,9 +1071,6 @@
 <a href="#1071" id="1071">1071</a>
 <a href="#1072" id="1072">1072</a>
 <a href="#1073" id="1073">1073</a>
-<a href="#1074" id="1074">1074</a>
-<a href="#1075" id="1075">1075</a>
-<a href="#1076" id="1076">1076</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
@@ -1729,18 +1726,15 @@
         <span class="kw">let </span>subject_alt_names = <span class="macro">vec!</span>[<span class="string">"localhost"</span>.to_string()];
 
         <span class="kw">let </span>cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
-        <span class="kw">let </span>rustls_certificate =
-            rustls::pki_types::CertificateDer::from(cert.serialize_der().unwrap());
-        <span class="kw">let </span>rustls_key =
-            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.get_key_pair().serialize_der());
-        <span class="kw">let </span>rustls_key = rustls::pki_types::PrivateKeyDer::from(rustls_key);
+        <span class="kw">let </span>rustls_certificate = cert.cert.der().clone();
+        <span class="kw">let </span>rustls_key = rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
         <span class="kw">let </span>config = rustls::ServerConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
         ))
         .with_safe_default_protocol_versions()
         .expect(<span class="string">"protocols supported by ring"</span>)
         .with_no_client_auth()
-        .with_single_cert(<span class="macro">vec!</span>[(rustls_certificate)], rustls_key)
+        .with_single_cert(<span class="macro">vec!</span>[(rustls_certificate)], rustls_key.into())
         .expect(<span class="string">"cert is right"</span>);
 
         <span class="kw">let </span>config = Arc::new(config);

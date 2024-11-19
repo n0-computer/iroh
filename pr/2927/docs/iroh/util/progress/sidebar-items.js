@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["Progress","ProgressAsyncReader","ProgressEmitter","ProgressWriter"]};
+window.SIDEBAR_ITEMS = {"struct":["ProgressWriter"]};

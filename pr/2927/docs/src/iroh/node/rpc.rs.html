@@ -133,35 +133,23 @@
 <a href="#133" id="133">133</a>
 <a href="#134" id="134">134</a>
 <a href="#135" id="135">135</a>
-<a href="#136" id="136">136</a>
-<a href="#137" id="137">137</a>
-<a href="#138" id="138">138</a>
-<a href="#139" id="139">139</a>
-<a href="#140" id="140">140</a>
-<a href="#141" id="141">141</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt::Debug, sync::Arc, time::Duration};
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt::Debug, sync::Arc};
 
 <span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>iroh_blobs::{
-    net_protocol::Blobs <span class="kw">as </span>BlobsProtocol, store::Store <span class="kw">as </span>BaoStore,
-    util::local_pool::LocalPoolHandle,
-};
+<span class="kw">use </span>iroh_blobs::{net_protocol::Blobs <span class="kw">as </span>BlobsProtocol, store::Store <span class="kw">as </span>BaoStore};
 <span class="kw">use </span>iroh_docs::net::DOCS_ALPN;
 <span class="kw">use </span>iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 <span class="kw">use </span>iroh_node_util::rpc::server::Node;
 <span class="kw">use </span>iroh_router::Router;
 <span class="kw">use </span>quic_rpc::server::{RpcChannel, RpcServerError};
 <span class="kw">use </span>tokio::task::JoinSet;
-<span class="kw">use </span>tracing::{debug, info, warn};
+<span class="kw">use </span>tracing::{debug, warn};
 
 <span class="kw">use </span><span class="kw">super</span>::IrohServerEndpoint;
 <span class="kw">use crate</span>::{
     node::NodeInner,
     rpc_protocol::{Request, RpcService},
 };
-
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>RpcError = serde_error::Error;
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>RpcResult&lt;T&gt; = <span class="prelude-ty">Result</span>&lt;T, RpcError&gt;;
 
 <span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Handler&lt;D&gt; {
@@ -236,6 +224,8 @@
             .expect(<span class="string">"missing gossip"</span>);
         <span class="kw">let </span>chan = chan.map::&lt;iroh_gossip::RpcService&gt;();
         gossip
+            .as_ref()
+            .clone()
             .handle_rpc_request(msg, chan)
             .<span class="kw">await
             </span>.map_err(|e| e.errors_into())
@@ -251,7 +241,9 @@
             .get_protocol::&lt;iroh_docs::engine::Engine&lt;D&gt;&gt;(DOCS_ALPN)
         {
             <span class="kw">let </span>chan = chan.map::&lt;iroh_docs::rpc::proto::RpcService&gt;();
-            docs.handle_rpc_request(msg, chan)
+            docs.as_ref()
+                .clone()
+                .handle_rpc_request(msg, chan)
                 .<span class="kw">await
                 </span>.map_err(|e| e.errors_into())
         } <span class="kw">else </span>{
@@ -274,10 +266,6 @@
             Docs(msg) =&gt; <span class="self">self</span>.handle_docs_request(msg, chan).<span class="kw">await</span>,
             Gossip(msg) =&gt; <span class="self">self</span>.handle_gossip_request(msg, chan).<span class="kw">await</span>,
         }
-    }
-
-    <span class="kw">fn </span>local_pool_handle(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; LocalPoolHandle {
-        <span class="self">self</span>.inner.local_pool_handle.clone()
     }
 }
 </code></pre></div></section></main></body></html>

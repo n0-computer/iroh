@@ -110,7 +110,8 @@ that we are talking about chunk numbers, not bytes.</p>
 single blob. For example, if we want to retrieve chunks <code>0-10</code> and <code>100-110</code>
 of a large file, we would create a <a href="struct.RangeSpecSeq.html" title="struct iroh::blobs::protocol::RangeSpecSeq"><code>RangeSpecSeq</code></a> like this:</p>
 
-<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>ranges = <span class="kw-2">&amp;</span>ChunkRanges::from(..ChunkNum(<span class="number">10</span>)) | <span class="kw-2">&amp;</span>ChunkRanges::from(ChunkNum(<span class="number">100</span>)..ChunkNum(<span class="number">110</span>));
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>ranges =
+    <span class="kw-2">&amp;</span>ChunkRanges::from(..ChunkNum(<span class="number">10</span>)) | <span class="kw-2">&amp;</span>ChunkRanges::from(ChunkNum(<span class="number">100</span>)..ChunkNum(<span class="number">110</span>));
 <span class="kw">let </span>spec = RangeSpecSeq::from_ranges([ranges]);
 <span class="kw">let </span>request = GetRequest::new(hash, spec);</code></pre></div>
 <p>To specify chunk ranges, we use the <a href="../store/bao_tree/type.ChunkRanges.html" title="type iroh::blobs::store::bao_tree::ChunkRanges"><code>ChunkRanges</code></a> type alias.
@@ -163,8 +164,8 @@ do something like mime type detection.</p>
 an infinite sequence.</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>spec = RangeSpecSeq::from_ranges_infinite([
-  ChunkRanges::all(), <span class="comment">// the collection itself
-  </span>ChunkRanges::from(..ChunkNum(<span class="number">1</span>)), <span class="comment">// the first chunk of each child
+    ChunkRanges::all(),               <span class="comment">// the collection itself
+    </span>ChunkRanges::from(..ChunkNum(<span class="number">1</span>)), <span class="comment">// the first chunk of each child
 </span>]);
 <span class="kw">let </span>request = GetRequest::new(hash, spec);</code></pre></div>
 <h4 id="requesting-a-single-child"><a class="doc-anchor" href="#requesting-a-single-child">§</a>Requesting a single child</h4>
@@ -172,9 +173,9 @@ an infinite sequence.</p>
 the following would download the second child of a collection:</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>spec = RangeSpecSeq::from_ranges([
-  ChunkRanges::empty(), <span class="comment">// we don't need the collection itself
-  </span>ChunkRanges::empty(), <span class="comment">// we don't need the first child either
-  </span>ChunkRanges::all(), <span class="comment">// we need the second child completely
+    ChunkRanges::empty(), <span class="comment">// we don't need the collection itself
+    </span>ChunkRanges::empty(), <span class="comment">// we don't need the first child either
+    </span>ChunkRanges::all(),   <span class="comment">// we need the second child completely
 </span>]);
 <span class="kw">let </span>request = GetRequest::new(hash, spec);</code></pre></div>
 <p>However, if you already have the collection, you might as well locally

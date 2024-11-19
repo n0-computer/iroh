@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["fs","io","path","progress"]};
+window.SIDEBAR_ITEMS = {"mod":["fs","path","progress"]};
