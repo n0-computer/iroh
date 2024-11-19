@@ -16,24 +16,32 @@ use crate::rpc::{
     },
 };
 
-#[derive(Debug)]
-pub struct Node {
-    endpoint: Endpoint,
-    cancel_token: CancellationToken,
-    rpc_addr: Option<SocketAddr>,
+pub trait AbstractNode: Sized + Send + Sync + Clone + 'static {
+    fn endpoint(&self) -> &Endpoint;
+
+    fn cancel_token(&self) -> &CancellationToken;
+
+    fn rpc_addr(&self) -> Option<SocketAddr>;
+
+    fn node(self) -> NodeRpc<Self> {
+        NodeRpc(self)
+    }
 }
 
-impl Node {
-    pub fn new(
-        endpoint: Endpoint,
-        cancel_token: CancellationToken,
-        rpc_addr: Option<SocketAddr>,
-    ) -> Self {
-        Self {
-            endpoint,
-            cancel_token,
-            rpc_addr,
-        }
+#[derive(Debug)]
+pub struct NodeRpc<T>(T);
+
+impl<T: AbstractNode> NodeRpc<T> {
+    fn endpoint(&self) -> &Endpoint {
+        self.0.endpoint()
+    }
+
+    fn cancel_token(&self) -> &CancellationToken {
+        self.0.cancel_token()
+    }
+
+    fn rpc_addr(&self) -> Option<SocketAddr> {
+        self.0.rpc_addr()
     }
 
     pub async fn handle_rpc_request<C: ChannelTypes<RpcService>>(
@@ -91,7 +99,7 @@ impl Node {
         } else {
             // trigger a graceful shutdown
             info!("graceful shutdown requested");
-            self.cancel_token.cancel();
+            self.cancel_token().cancel();
         }
     }
 
@@ -104,19 +112,19 @@ impl Node {
     async fn node_status(self, _: StatusRequest) -> RpcResult<NodeStatus> {
         Ok(NodeStatus {
             addr: self
-                .endpoint
+                .endpoint()
                 .node_addr()
                 .await
                 .map_err(|e| RpcError::new(&*e))?,
             listen_addrs: self.local_endpoint_addresses().await.unwrap_or_default(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            rpc_addr: self.rpc_addr,
+            rpc_addr: self.rpc_addr(),
         })
     }
 
     async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
         let endpoints = self
-            .endpoint
+            .endpoint()
             .direct_addresses()
             .next()
             .await
@@ -126,7 +134,7 @@ impl Node {
 
     async fn node_addr(self, _: net::AddrRequest) -> RpcResult<NodeAddr> {
         let addr = self
-            .endpoint
+            .endpoint()
             .node_addr()
             .await
             .map_err(|e| RpcError::new(&*e))?;
@@ -137,7 +145,7 @@ impl Node {
         self,
         _: net::RemoteInfosIterRequest,
     ) -> impl Stream<Item = RpcResult<net::RemoteInfosIterResponse>> + Send + 'static {
-        let mut infos: Vec<_> = self.endpoint.remote_info_iter().collect();
+        let mut infos: Vec<_> = self.endpoint().remote_info_iter().collect();
         infos.sort_by_key(|n| n.node_id.to_string());
         futures_lite::stream::iter(
             infos
@@ -148,14 +156,14 @@ impl Node {
 
     #[allow(clippy::unused_async)]
     async fn node_id(self, _: net::IdRequest) -> RpcResult<NodeId> {
-        Ok(self.endpoint.secret_key().public())
+        Ok(self.endpoint().secret_key().public())
     }
 
     // This method is called as an RPC method, which have to be async
     #[allow(clippy::unused_async)]
     async fn remote_info(self, req: net::RemoteInfoRequest) -> RpcResult<net::RemoteInfoResponse> {
         let net::RemoteInfoRequest { node_id } = req;
-        let info = self.endpoint.remote_info(node_id);
+        let info = self.endpoint().remote_info(node_id);
         Ok(net::RemoteInfoResponse { info })
     }
 
@@ -163,7 +171,7 @@ impl Node {
     #[allow(clippy::unused_async)]
     async fn node_add_addr(self, req: net::AddAddrRequest) -> RpcResult<()> {
         let net::AddAddrRequest { addr } = req;
-        self.endpoint
+        self.endpoint()
             .add_node_addr(addr)
             .map_err(|e| RpcError::new(&*e))?;
         Ok(())
@@ -171,10 +179,10 @@ impl Node {
 
     #[allow(clippy::unused_async)]
     async fn node_relay(self, _: net::RelayRequest) -> RpcResult<Option<RelayUrl>> {
-        Ok(self.endpoint.home_relay())
+        Ok(self.endpoint().home_relay())
     }
 
-    fn node_watch(self, _: net::NodeWatchRequest) -> impl Stream<Item = net::WatchResponse> {
+    fn node_watch(self, _: net::NodeWatchRequest) -> impl Stream<Item = net::WatchResponse> + Send {
         futures_lite::stream::unfold((), |()| async move {
             tokio::time::sleep(HEALTH_POLL_WAIT).await;
             Some((

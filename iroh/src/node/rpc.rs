@@ -4,7 +4,7 @@ use anyhow::Result;
 use iroh_blobs::{net_protocol::Blobs as BlobsProtocol, store::Store as BaoStore};
 use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
-use iroh_node_util::rpc::server::Node;
+use iroh_node_util::rpc::server::AbstractNode;
 use iroh_router::Router;
 use quic_rpc::server::{RpcChannel, RpcServerError};
 use tokio::task::JoinSet;
@@ -25,6 +25,20 @@ pub(crate) struct Handler<D> {
 impl<D> Handler<D> {
     pub fn new(inner: Arc<NodeInner<D>>, router: Router) -> Self {
         Self { inner, router }
+    }
+}
+
+impl<D: BaoStore> iroh_node_util::rpc::server::AbstractNode for Handler<D> {
+    fn endpoint(&self) -> &iroh_net::Endpoint {
+        &self.inner.endpoint
+    }
+
+    fn cancel_token(&self) -> &tokio_util::sync::CancellationToken {
+        &self.inner.cancel_token
+    }
+
+    fn rpc_addr(&self) -> Option<std::net::SocketAddr> {
+        self.inner.rpc_addr
     }
 }
 
@@ -57,12 +71,8 @@ impl<D: BaoStore> Handler<D> {
         chan: RpcChannel<RpcService, IrohServerEndpoint>,
     ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
         debug!("handling node request: {msg:?}");
-        let node = Node::new(
-            self.inner.endpoint.clone(),
-            self.inner.cancel_token.clone(),
-            self.inner.rpc_addr.clone(),
-        );
-        node.handle_rpc_request(msg, chan.map().boxed())
+        self.node()
+            .handle_rpc_request(msg, chan.map().boxed())
             .await
             .map_err(|e| e.errors_into())
     }
