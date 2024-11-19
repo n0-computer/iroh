@@ -91,12 +91,17 @@ impl AsyncUdpSocket for UdpConn {
             });
             match res {
                 Ok(()) => return Ok(()),
-                Err(err) => match self.io.handle_write_error(err) {
-                    Some(err) => return Err(err),
-                    None => {
+                Err(err) => {
+                    if err.kind() == std::io::ErrorKind::WouldBlock {
                         continue;
                     }
-                },
+                    match self.io.handle_write_error(err) {
+                        Some(err) => return Err(err),
+                        None => {
+                            continue;
+                        }
+                    }
+                }
             }
         }
     }
