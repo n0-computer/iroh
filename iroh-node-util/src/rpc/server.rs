@@ -26,8 +26,8 @@ pub trait AbstractNode: Sized + Send + Sync + Clone + 'static {
         NodeRpc(self)
     }
 
-    fn stats(&self) -> BTreeMap<String, CounterStats> {
-        Default::default()
+    fn stats(&self) -> anyhow::Result<BTreeMap<String, CounterStats>> {
+        anyhow::bail!("metrics are disabled");
     }
 }
 
@@ -109,7 +109,7 @@ impl<T: AbstractNode> NodeRpc<T> {
     #[allow(clippy::unused_async)]
     async fn node_stats(self, _req: StatsRequest) -> RpcResult<StatsResponse> {
         Ok(StatsResponse {
-            stats: self.0.stats(),
+            stats: self.0.stats().map_err(|e| RpcError::new(&*e))?,
         })
     }
 

@@ -1,4 +1,4 @@
-use std::{fmt::Debug, sync::Arc};
+use std::{collections::BTreeMap, fmt::Debug, sync::Arc};
 
 use anyhow::Result;
 use iroh_blobs::{net_protocol::Blobs as BlobsProtocol, store::Store as BaoStore};
@@ -41,15 +41,12 @@ impl<D: BaoStore> iroh_node_util::rpc::server::AbstractNode for Handler<D> {
         self.inner.rpc_addr
     }
 
-    fn stats(&self) -> std::collections::BTreeMap<String, CounterStats> {
+    fn stats(&self) -> anyhow::Result<BTreeMap<String, CounterStats>> {
         #[cfg(feature = "metrics")]
-        {
-            iroh_metrics::metrics::
-        }
+        return crate::metrics::get_metrics();
+
         #[cfg(not(feature = "metrics"))]
-        {
-            Default::default()
-        }
+        anyhow::bail!("metrics are disabled")
     }
 }
 
