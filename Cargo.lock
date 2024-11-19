@@ -3104,13 +3104,11 @@ dependencies = [
  "nested_enum_utils",
  "quic-rpc",
  "quic-rpc-derive",
- "ref-cast",
  "serde",
  "serde-error",
  "strum 0.26.3",
  "tempfile",
  "tokio",
- "tokio-util",
  "tracing",
 ]
 

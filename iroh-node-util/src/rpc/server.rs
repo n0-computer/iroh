@@ -1,13 +1,12 @@
-use std::{net::SocketAddr, time::Duration};
+use std::{collections::BTreeMap, net::SocketAddr, time::Duration};
 
 use anyhow::{anyhow, Result};
 use futures_lite::{Stream, StreamExt};
 use iroh_net::{Endpoint, NodeAddr, NodeId, RelayUrl};
 use quic_rpc::server::{ChannelTypes, RpcChannel, RpcServerError};
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, info};
 
-use super::proto::{net, Request};
+use super::proto::{net, node::CounterStats, Request};
 use crate::rpc::{
     client::net::NodeStatus,
     proto::{
@@ -19,12 +18,16 @@ use crate::rpc::{
 pub trait AbstractNode: Sized + Send + Sync + Clone + 'static {
     fn endpoint(&self) -> &Endpoint;
 
-    fn cancel_token(&self) -> &CancellationToken;
+    fn shutdown(&self);
 
     fn rpc_addr(&self) -> Option<SocketAddr>;
 
     fn node(self) -> NodeRpc<Self> {
         NodeRpc(self)
+    }
+
+    fn stats(&self) -> BTreeMap<String, CounterStats> {
+        Default::default()
     }
 }
 
@@ -36,8 +39,8 @@ impl<T: AbstractNode> NodeRpc<T> {
         self.0.endpoint()
     }
 
-    fn cancel_token(&self) -> &CancellationToken {
-        self.0.cancel_token()
+    fn shutdown(&self) {
+        self.0.shutdown()
     }
 
     fn rpc_addr(&self) -> Option<SocketAddr> {
@@ -99,14 +102,15 @@ impl<T: AbstractNode> NodeRpc<T> {
         } else {
             // trigger a graceful shutdown
             info!("graceful shutdown requested");
-            self.cancel_token().cancel();
+            self.shutdown();
         }
     }
 
     #[allow(clippy::unused_async)]
     async fn node_stats(self, _req: StatsRequest) -> RpcResult<StatsResponse> {
-        // TODO
-        Err(RpcError::new(&*anyhow::anyhow!("metrics are disabled")))
+        Ok(StatsResponse {
+            stats: self.0.stats(),
+        })
     }
 
     async fn node_status(self, _: StatusRequest) -> RpcResult<NodeStatus> {

@@ -4,7 +4,7 @@ use anyhow::Result;
 use iroh_blobs::{net_protocol::Blobs as BlobsProtocol, store::Store as BaoStore};
 use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
-use iroh_node_util::rpc::server::AbstractNode;
+use iroh_node_util::rpc::{proto::node::CounterStats, server::AbstractNode};
 use iroh_router::Router;
 use quic_rpc::server::{RpcChannel, RpcServerError};
 use tokio::task::JoinSet;
@@ -33,12 +33,23 @@ impl<D: BaoStore> iroh_node_util::rpc::server::AbstractNode for Handler<D> {
         &self.inner.endpoint
     }
 
-    fn cancel_token(&self) -> &tokio_util::sync::CancellationToken {
-        &self.inner.cancel_token
+    fn shutdown(&self) {
+        self.inner.cancel_token.cancel();
     }
 
     fn rpc_addr(&self) -> Option<std::net::SocketAddr> {
         self.inner.rpc_addr
+    }
+
+    fn stats(&self) -> std::collections::BTreeMap<String, CounterStats> {
+        #[cfg(feature = "metrics")]
+        {
+            iroh_metrics::metrics::
+        }
+        #[cfg(not(feature = "metrics"))]
+        {
+            Default::default()
+        }
     }
 }
 
