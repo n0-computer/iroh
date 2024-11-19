@@ -62,12 +62,6 @@ ref-cast = "1.0.23"
 # Examples
 clap = { version = "4", features = ["derive"], optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
-console = { version = "0.15.5", optional = true }
-iroh-blobs = { version = "0.28", optional = true, features = [
-    "rpc",
-    "downloader",
-    "net_protocol",
-] }
 
 # Documentation tests
 url = { version = "2.5.0", features = ["serde"] }
@@ -81,12 +75,7 @@ test = []
 discovery-pkarr-dht = ["iroh-net/discovery-pkarr-dht"]
 test-utils = ["iroh-net/test-utils"]
 
-examples = ["dep:clap", "dep:indicatif", "dep:iroh-blobs"]
-example-discovery-local-network = [
-    "iroh-net/discovery-local-network",
-    "examples",
-    "dep:console",
-]
+examples = ["dep:clap", "dep:indicatif"]
 
 [dev-dependencies]
 anyhow = { version = "1" }
@@ -111,21 +100,5 @@ all-features = true
 rustdoc-args = ["--cfg", "iroh_docsrs"]
 
 [[example]]
-name = "hello-world-provide"
-required-features = ["examples"]
-
-[[example]]
-name = "hello-world-fetch"
-required-features = ["examples"]
-
-[[example]]
 name = "rpc"
 required-features = ["examples"]
-
-[[example]]
-name = "custom-protocol"
-required-features = ["examples"]
-
-[[example]]
-name = "local-swarm-discovery"
-required-features = ["example-discovery-local-network"]
