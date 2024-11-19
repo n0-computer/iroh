@@ -20,7 +20,7 @@ pub struct UdpSocket {
     socket: RwLock<Option<tokio::net::UdpSocket>>,
     /// The addr we are binding to.
     addr: SocketAddr,
-    /// Set to true, when an error occured, that means we need to rebind the socket.
+    /// Set to true, when an error occurred, that means we need to rebind the socket.
     is_broken: AtomicBool,
 }
 
