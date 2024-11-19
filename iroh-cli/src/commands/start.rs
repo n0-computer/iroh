@@ -46,7 +46,8 @@ where
     F: FnOnce(iroh::client::Iroh) -> T + Send + 'static,
     T: Future<Output = Result<()>> + 'static,
 {
-    let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, iroh_data_root)?;
+    let _guard =
+        iroh_node_util::logging::init_terminal_and_file_logging(&config.file_logs, iroh_data_root)?;
     let metrics_fut = start_metrics_server(config.metrics_addr);
     let metrics_dumper_fut =
         start_metrics_dumper(config.metrics_dump_path.clone(), Duration::from_millis(100));

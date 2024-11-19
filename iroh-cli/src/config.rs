@@ -1,23 +1,23 @@
 //! Configuration for the iroh CLI.
 
 use std::{
-    env,
     net::SocketAddr,
     path::{Path, PathBuf},
-    str::FromStr,
     sync::Arc,
     time::Duration,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use iroh::{
     net::{RelayMap, RelayNode},
     node::GcPolicy,
 };
+use iroh_node_util::config::{config_root, env_file_rust_log};
 use serde::Deserialize;
 
-const ENV_CONFIG_DIR: &str = "IROH_CONFIG_DIR";
-const ENV_FILE_RUST_LOG: &str = "IROH_FILE_RUST_LOG";
+/// BIN_NAME is the name of the binary. This is used in various places, e.g. for the home directory
+/// and for environment variables.
+pub(crate) const BIN_NAME: &str = "iroh";
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub(crate) const CONFIG_FILE_NAME: &str = "iroh.config.toml";
@@ -52,7 +52,7 @@ pub(crate) struct NodeConfig {
     /// Bind address on which to serve Prometheus metrics
     pub(crate) metrics_addr: Option<SocketAddr>,
     /// Configuration for the logfile.
-    pub(crate) file_logs: super::logging::FileLogging,
+    pub(crate) file_logs: iroh_node_util::logging::FileLogging,
     /// Path to dump metrics to in CSV format.
     pub(crate) metrics_dump_path: Option<PathBuf>,
 }
@@ -81,7 +81,7 @@ impl NodeConfig {
     /// default config file will be loaded.  If that is not present the default config will
     /// be used.
     pub(crate) async fn load(file: Option<&Path>) -> Result<NodeConfig> {
-        let default_config = iroh_config_path(CONFIG_FILE_NAME)?;
+        let default_config = config_root(BIN_NAME)?.join(CONFIG_FILE_NAME);
 
         let config_file = match file {
             Some(file) => Some(file),
@@ -101,7 +101,7 @@ impl NodeConfig {
         };
 
         // override from env var
-        if let Some(env_filter) = env_file_rust_log().transpose()? {
+        if let Some(env_filter) = env_file_rust_log(BIN_NAME).transpose()? {
             config.file_logs.rust_log = env_filter;
         }
         Ok(config)
@@ -144,112 +144,17 @@ impl From<GcPolicyConfig> for GcPolicy {
     }
 }
 
-/// Parse [`ENV_FILE_RUST_LOG`] as [`tracing_subscriber::EnvFilter`]. Returns `None` if not
-/// present.
-fn env_file_rust_log() -> Option<Result<crate::logging::EnvFilter>> {
-    match env::var(ENV_FILE_RUST_LOG) {
-        Ok(s) => Some(crate::logging::EnvFilter::from_str(&s).map_err(Into::into)),
-        Err(e) => match e {
-            env::VarError::NotPresent => None,
-            e @ env::VarError::NotUnicode(_) => Some(Err(e.into())),
-        },
-    }
-}
-
-/// Name of directory that wraps all iroh files in a given application directory
-const IROH_DIR: &str = "iroh";
-
-/// Returns the path to the user's iroh config directory.
-///
-/// If the `IROH_CONFIG_DIR` environment variable is set it will be used unconditionally.
-/// Otherwise the returned value depends on the operating system according to the following
-/// table.
-///
-/// | Platform | Value                                 | Example                          |
-/// | -------- | ------------------------------------- | -------------------------------- |
-/// | Linux    | `$XDG_CONFIG_HOME` or `$HOME`/.config/iroh | /home/alice/.config/iroh              |
-/// | macOS    | `$HOME`/Library/Application Support/iroh   | /Users/Alice/Library/Application Support/iroh |
-/// | Windows  | `{FOLDERID_RoamingAppData}`/iroh           | C:\Users\Alice\AppData\Roaming\iroh   |
-pub(crate) fn iroh_config_root() -> Result<PathBuf> {
-    if let Some(val) = env::var_os(ENV_CONFIG_DIR) {
-        return Ok(PathBuf::from(val));
-    }
-    let cfg = dirs_next::config_dir()
-        .ok_or_else(|| anyhow!("operating environment provides no directory for configuration"))?;
-    Ok(cfg.join(IROH_DIR))
-}
-
-/// Path that leads to a file in the iroh config directory.
-pub(crate) fn iroh_config_path(file_name: impl AsRef<Path>) -> Result<PathBuf> {
-    let path = iroh_config_root()?.join(file_name);
-    Ok(path)
-}
-
-/// Returns the path to the user's iroh data directory.
-///
-/// If the `IROH_DATA_DIR` environment variable is set it will be used unconditionally.
-/// Otherwise the returned value depends on the operating system according to the following
-/// table.
-///
-/// | Platform | Value                                         | Example                                  |
-/// | -------- | --------------------------------------------- | ---------------------------------------- |
-/// | Linux    | `$XDG_DATA_HOME`/iroh or `$HOME`/.local/share/iroh | /home/alice/.local/share/iroh                 |
-/// | macOS    | `$HOME`/Library/Application Support/iroh      | /Users/Alice/Library/Application Support/iroh |
-/// | Windows  | `{FOLDERID_RoamingAppData}/iroh`              | C:\Users\Alice\AppData\Roaming\iroh           |
-pub(crate) fn iroh_data_root() -> Result<PathBuf> {
-    let path = if let Some(val) = env::var_os("IROH_DATA_DIR") {
-        PathBuf::from(val)
-    } else {
-        let path = dirs_next::data_dir().ok_or_else(|| {
-            anyhow!("operating environment provides no directory for application data")
-        })?;
-        path.join(IROH_DIR)
-    };
-    let path = if !path.is_absolute() {
-        std::env::current_dir()?.join(path)
-    } else {
-        path
-    };
-    Ok(path)
-}
-
-/// Returns the path to the user's iroh cache directory.
-///
-/// If the `IROH_CACHE_DIR` environment variable is set it will be used unconditionally.
-/// Otherwise the returned value depends on the operating system according to the following
-/// table.
-///
-/// | Platform | Value                                         | Example                                  |
-/// | -------- | --------------------------------------------- | ---------------------------------------- |
-/// | Linux    | `$XDG_CACHE_HOME`/iroh or `$HOME`/.cache/iroh | /home/.cache/iroh                        |
-/// | macOS    | `$HOME`/Library/Caches/iroh                   | /Users/Alice/Library/Caches/iroh         |
-/// | Windows  | `{FOLDERID_LocalAppData}/iroh`                | C:\Users\Alice\AppData\Roaming\iroh      |
-#[allow(dead_code)]
-pub(crate) fn iroh_cache_root() -> Result<PathBuf> {
-    if let Some(val) = env::var_os("IROH_CACHE_DIR") {
-        return Ok(PathBuf::from(val));
-    }
-    let path = dirs_next::cache_dir().ok_or_else(|| {
-        anyhow!("operating environment provides no directory for application data")
-    })?;
-    Ok(path.join(IROH_DIR))
-}
-
-/// Path that leads to a file in the iroh cache directory.
-#[allow(dead_code)]
-pub(crate) fn iroh_cache_path(file_name: &Path) -> Result<PathBuf> {
-    let path = iroh_cache_root()?.join(file_name);
-    Ok(path)
-}
-
 #[cfg(test)]
 mod tests {
-    use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::{
+        net::{Ipv4Addr, Ipv6Addr},
+        str::FromStr,
+    };
 
     use url::Url;
 
     use super::*;
-    use crate::logging::{EnvFilter, Rotation};
+    use iroh_node_util::logging::{EnvFilter, Rotation};
 
     #[test]
     fn test_toml_invalid_field() {
