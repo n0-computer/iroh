@@ -3,7 +3,7 @@ use std::{
     io::ErrorKind,
     net::SocketAddr,
     pin::Pin,
-    sync::{atomic::AtomicBool, Arc, RwLock},
+    sync::{atomic::AtomicBool, RwLock},
     task::Poll,
 };
 
@@ -17,7 +17,7 @@ use super::IpFamily;
 #[derive(Debug)]
 pub struct UdpSocket {
     // TODO: can we drop the Arc and use lifetimes in the futures?
-    socket: Arc<RwLock<Option<tokio::net::UdpSocket>>>,
+    socket: RwLock<Option<tokio::net::UdpSocket>>,
     /// The addr we are binding to.
     addr: SocketAddr,
     /// Set to true, when an error occured, that means we need to rebind the socket.
@@ -105,7 +105,7 @@ impl UdpSocket {
         addr.set_port(socket.local_addr()?.port());
 
         Ok(UdpSocket {
-            socket: Arc::new(RwLock::new(Some(socket))),
+            socket: RwLock::new(Some(socket)),
             addr,
             is_broken: AtomicBool::new(false),
         })
@@ -131,40 +131,38 @@ impl UdpSocket {
         socket.try_io(interest, f)
     }
 
-    pub fn writable(&self) -> WritableFut {
-        WritableFut {
-            socket: self.socket.clone(),
-        }
+    pub fn writable(&self) -> WritableFut<'_> {
+        WritableFut { socket: self }
     }
 
     /// TODO
-    pub fn recv<'a>(&self, buffer: &'a mut [u8]) -> RecvFut<'a> {
+    pub fn recv<'a, 'b>(&'b self, buffer: &'a mut [u8]) -> RecvFut<'a, 'b> {
         RecvFut {
-            socket: self.socket.clone(),
+            socket: self,
             buffer,
         }
     }
 
     /// TODO
-    pub fn recv_from<'a>(&self, buffer: &'a mut [u8]) -> RecvFromFut<'a> {
+    pub fn recv_from<'a, 'b>(&'b self, buffer: &'a mut [u8]) -> RecvFromFut<'a, 'b> {
         RecvFromFut {
-            socket: self.socket.clone(),
+            socket: self,
             buffer,
         }
     }
 
     /// TODO
-    pub fn send<'a>(&self, buffer: &'a [u8]) -> SendFut<'a> {
+    pub fn send<'a, 'b>(&'b self, buffer: &'a [u8]) -> SendFut<'a, 'b> {
         SendFut {
-            socket: self.socket.clone(),
+            socket: self,
             buffer,
         }
     }
 
     /// TODO
-    pub fn send_to<'a>(&self, buffer: &'a [u8], to: SocketAddr) -> SendToFut<'a> {
+    pub fn send_to<'a, 'b>(&'b self, buffer: &'a [u8], to: SocketAddr) -> SendToFut<'a, 'b> {
         SendToFut {
-            socket: self.socket.clone(),
+            socket: self,
             buffer,
             to,
         }
@@ -208,21 +206,46 @@ impl UdpSocket {
             warn!("failed to close socket: {:?}", err);
         }
     }
+
+    /// Handle potential read errors, updating internal state.
+    ///
+    /// Returns `Some(error)` if the error is fatal otherwise `None.
+    fn handle_read_error(&self, error: std::io::Error) -> Option<std::io::Error> {
+        let kind = error.kind();
+        match kind {
+            std::io::ErrorKind::BrokenPipe => {
+                // This indicates the underlying socket is broken, and we should attempt to rebind it
+                self.mark_broken();
+                match self.rebind() {
+                    Ok(()) => None,
+                    Err(err) => {
+                        // Return original error, if we failed to rebind
+                        warn!(
+                            "failed to rebind socket, after error: {:?}: {:?}",
+                            error, err
+                        );
+                        Some(error)
+                    }
+                }
+            }
+            _ => Some(error),
+        }
+    }
 }
 
 /// Receive future
 #[derive(Debug)]
-pub struct RecvFut<'a> {
-    socket: Arc<RwLock<Option<tokio::net::UdpSocket>>>,
+pub struct RecvFut<'a, 'b> {
+    socket: &'b UdpSocket,
     buffer: &'a mut [u8],
 }
 
-impl<'a> Future for RecvFut<'a> {
+impl Future for RecvFut<'_, '_> {
     type Output = std::io::Result<usize>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let Self { socket, buffer } = &mut *self;
-        let guard = socket.read().unwrap();
+        let guard = socket.socket.read().unwrap();
         let socket = guard.as_ref().expect("missing socket");
 
         loop {
@@ -246,17 +269,17 @@ impl<'a> Future for RecvFut<'a> {
 
 /// Receive future
 #[derive(Debug)]
-pub struct RecvFromFut<'a> {
-    socket: Arc<RwLock<Option<tokio::net::UdpSocket>>>,
+pub struct RecvFromFut<'a, 'b> {
+    socket: &'b UdpSocket,
     buffer: &'a mut [u8],
 }
 
-impl<'a> Future for RecvFromFut<'a> {
+impl Future for RecvFromFut<'_, '_> {
     type Output = std::io::Result<(usize, SocketAddr)>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let Self { socket, buffer } = &mut *self;
-        let guard = socket.read().unwrap();
+        let guard = socket.socket.read().unwrap();
         let socket = guard.as_ref().expect("missing socket");
 
         loop {
@@ -280,15 +303,15 @@ impl<'a> Future for RecvFromFut<'a> {
 
 /// Writable future
 #[derive(Debug)]
-pub struct WritableFut {
-    socket: Arc<RwLock<Option<tokio::net::UdpSocket>>>,
+pub struct WritableFut<'a> {
+    socket: &'a UdpSocket,
 }
 
-impl Future for WritableFut {
+impl Future for WritableFut<'_> {
     type Output = std::io::Result<()>;
 
     fn poll(self: Pin<&mut Self>, c: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let guard = self.socket.read().unwrap();
+        let guard = self.socket.socket.read().unwrap();
         let socket = guard.as_ref().expect("missing socket");
 
         socket.poll_send_ready(c)
@@ -297,16 +320,16 @@ impl Future for WritableFut {
 
 /// Send future
 #[derive(Debug)]
-pub struct SendFut<'a> {
-    socket: Arc<RwLock<Option<tokio::net::UdpSocket>>>,
+pub struct SendFut<'a, 'b> {
+    socket: &'b UdpSocket,
     buffer: &'a [u8],
 }
 
-impl<'a> Future for SendFut<'a> {
+impl Future for SendFut<'_, '_> {
     type Output = std::io::Result<usize>;
 
     fn poll(self: Pin<&mut Self>, c: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let guard = self.socket.read().unwrap();
+        let guard = self.socket.socket.read().unwrap();
         let socket = guard.as_ref().expect("missing socket");
 
         loop {
@@ -318,11 +341,19 @@ impl<'a> Future for SendFut<'a> {
                         if err.kind() == ErrorKind::WouldBlock {
                             continue;
                         }
-                        return Poll::Ready(Err(err));
+                        if let Some(err) = self.socket.handle_read_error(err) {
+                            return Poll::Ready(Err(err));
+                        }
+                        continue;
                     }
                     return Poll::Ready(res);
                 }
-                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+                Poll::Ready(Err(err)) => {
+                    if let Some(err) = self.socket.handle_read_error(err) {
+                        return Poll::Ready(Err(err));
+                    }
+                    continue;
+                }
             }
         }
     }
@@ -330,17 +361,17 @@ impl<'a> Future for SendFut<'a> {
 
 /// Send future
 #[derive(Debug)]
-pub struct SendToFut<'a> {
-    socket: Arc<RwLock<Option<tokio::net::UdpSocket>>>,
+pub struct SendToFut<'a, 'b> {
+    socket: &'b UdpSocket,
     buffer: &'a [u8],
     to: SocketAddr,
 }
 
-impl<'a> Future for SendToFut<'a> {
+impl Future for SendToFut<'_, '_> {
     type Output = std::io::Result<usize>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let guard = self.socket.read().unwrap();
+        let guard = self.socket.socket.read().unwrap();
         let socket = guard.as_ref().expect("missing socket");
 
         loop {
@@ -352,11 +383,19 @@ impl<'a> Future for SendToFut<'a> {
                         if err.kind() == ErrorKind::WouldBlock {
                             continue;
                         }
-                        return Poll::Ready(Err(err));
+                        if let Some(err) = self.socket.handle_read_error(err) {
+                            return Poll::Ready(Err(err));
+                        }
+                        continue;
                     }
                     return Poll::Ready(res);
                 }
-                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+                Poll::Ready(Err(err)) => {
+                    if let Some(err) = self.socket.handle_read_error(err) {
+                        return Poll::Ready(Err(err));
+                    }
+                    continue;
+                }
             }
         }
     }
