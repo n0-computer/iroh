@@ -536,6 +536,41 @@
 <a href="#536" id="536">536</a>
 <a href="#537" id="537">537</a>
 <a href="#538" id="538">538</a>
+<a href="#539" id="539">539</a>
+<a href="#540" id="540">540</a>
+<a href="#541" id="541">541</a>
+<a href="#542" id="542">542</a>
+<a href="#543" id="543">543</a>
+<a href="#544" id="544">544</a>
+<a href="#545" id="545">545</a>
+<a href="#546" id="546">546</a>
+<a href="#547" id="547">547</a>
+<a href="#548" id="548">548</a>
+<a href="#549" id="549">549</a>
+<a href="#550" id="550">550</a>
+<a href="#551" id="551">551</a>
+<a href="#552" id="552">552</a>
+<a href="#553" id="553">553</a>
+<a href="#554" id="554">554</a>
+<a href="#555" id="555">555</a>
+<a href="#556" id="556">556</a>
+<a href="#557" id="557">557</a>
+<a href="#558" id="558">558</a>
+<a href="#559" id="559">559</a>
+<a href="#560" id="560">560</a>
+<a href="#561" id="561">561</a>
+<a href="#562" id="562">562</a>
+<a href="#563" id="563">563</a>
+<a href="#564" id="564">564</a>
+<a href="#565" id="565">565</a>
+<a href="#566" id="566">566</a>
+<a href="#567" id="567">567</a>
+<a href="#568" id="568">568</a>
+<a href="#569" id="569">569</a>
+<a href="#570" id="570">570</a>
+<a href="#571" id="571">571</a>
+<a href="#572" id="572">572</a>
+<a href="#573" id="573">573</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     future::Future,
     io::ErrorKind,
@@ -749,23 +784,12 @@
     ///
     /// Returns `Some(error)` if the error is fatal otherwise `None.
     </span><span class="kw">fn </span>handle_read_error(<span class="kw-2">&amp;</span><span class="self">self</span>, error: std::io::Error) -&gt; <span class="prelude-ty">Option</span>&lt;std::io::Error&gt; {
-        <span class="kw">let </span>kind = error.kind();
-        <span class="kw">match </span>kind {
+        <span class="kw">match </span>error.kind() {
             std::io::ErrorKind::BrokenPipe =&gt; {
                 <span class="comment">// This indicates the underlying socket is broken, and we should attempt to rebind it
                 </span><span class="self">self</span>.mark_broken();
-                <span class="kw">match </span><span class="self">self</span>.rebind() {
-                    <span class="prelude-val">Ok</span>(()) =&gt; <span class="prelude-val">None</span>,
-                    <span class="prelude-val">Err</span>(err) =&gt; {
-                        <span class="comment">// Return original error, if we failed to rebind
-                        </span><span class="macro">warn!</span>(
-                            <span class="string">"failed to rebind socket, after error: {:?}: {:?}"</span>,
-                            error, err
-                        );
-                        <span class="prelude-val">Some</span>(error)
-                    }
-                }
-            }
+                <span class="prelude-val">None
+            </span>}
             <span class="kw">_ </span>=&gt; <span class="prelude-val">Some</span>(error),
         }
     }
@@ -881,8 +905,7 @@
                         <span class="kw">if </span>err.kind() == ErrorKind::WouldBlock {
                             <span class="kw">continue</span>;
                         }
-                        drop(guard); <span class="comment">// make sure we are not holding a lock before handling the error
-                        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(err) = <span class="self">self</span>.socket.handle_read_error(err) {
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(err) = <span class="self">self</span>.socket.handle_read_error(err) {
                             <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
                         }
                         <span class="kw">continue</span>;
@@ -890,8 +913,7 @@
                     <span class="kw">return </span>Poll::Ready(res);
                 }
                 Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; {
-                    drop(guard); <span class="comment">// make sure we are not holding a lock before handling the error
-                    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(err) = <span class="self">self</span>.socket.handle_read_error(err) {
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(err) = <span class="self">self</span>.socket.handle_read_error(err) {
                         <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
                     }
                     <span class="kw">continue</span>;
@@ -914,6 +936,22 @@
 
     <span class="kw">fn </span>poll(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
         <span class="kw">loop </span>{
+            <span class="comment">// check if the socket needs a rebind
+            </span><span class="kw">if </span><span class="self">self</span>.socket.is_broken() {
+                <span class="kw">match </span><span class="self">self</span>.socket.rebind() {
+                    <span class="prelude-val">Ok</span>(()) =&gt; {
+                        <span class="comment">// all good
+                    </span>}
+                    <span class="prelude-val">Err</span>(err) =&gt; {
+                        <span class="macro">warn!</span>(<span class="string">"failed to rebind socket: {:?}"</span>, err);
+                        <span class="comment">// TODO: improve error
+                        </span><span class="kw">let </span>err =
+                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
+                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
+                    }
+                }
+            }
+
             <span class="kw">let </span>guard = <span class="self">self</span>.socket.socket.read().unwrap();
             <span class="kw">let </span>socket = guard.as_ref().expect(<span class="string">"missing socket"</span>);
 
@@ -925,8 +963,8 @@
                         <span class="kw">if </span>err.kind() == ErrorKind::WouldBlock {
                             <span class="kw">continue</span>;
                         }
-                        drop(guard); <span class="comment">// make sure we are not holding a lock before handling the error
-                        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(err) = <span class="self">self</span>.socket.handle_read_error(err) {
+
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(err) = <span class="self">self</span>.socket.handle_read_error(err) {
                             <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
                         }
                         <span class="kw">continue</span>;
@@ -934,8 +972,7 @@
                     <span class="kw">return </span>Poll::Ready(res);
                 }
                 Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; {
-                    drop(guard); <span class="comment">// make sure we are not holding a lock before handling the error
-                    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(err) = <span class="self">self</span>.socket.handle_read_error(err) {
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(err) = <span class="self">self</span>.socket.handle_read_error(err) {
                         <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
                     }
                     <span class="kw">continue</span>;
@@ -1071,6 +1108,39 @@
 
         handle_a.<span class="kw">await</span>.ok();
 
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_udp_mark_broken() -&gt; anyhow::Result&lt;()&gt; {
+        <span class="kw">let </span>socket_a = UdpSocket::bind_local(IpFamily::V4, <span class="number">0</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>addr_a = socket_a.local_addr()<span class="question-mark">?</span>;
+        <span class="macro">println!</span>(<span class="string">"socket bound to {:?}"</span>, addr_a);
+
+        <span class="kw">let </span>socket_b = UdpSocket::bind_local(IpFamily::V4, <span class="number">0</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>addr_b = socket_b.local_addr()<span class="question-mark">?</span>;
+        <span class="macro">println!</span>(<span class="string">"socket bound to {:?}"</span>, addr_b);
+
+        <span class="kw">let </span>handle = tokio::task::spawn(<span class="kw">async move </span>{
+            <span class="kw">let </span><span class="kw-2">mut </span>buffer = [<span class="number">0u8</span>; <span class="number">16</span>];
+            <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">2 </span>{
+                <span class="kw">match </span>socket_b.recv_from(<span class="kw-2">&amp;mut </span>buffer).<span class="kw">await </span>{
+                    <span class="prelude-val">Ok</span>((count, addr)) =&gt; {
+                        <span class="macro">println!</span>(<span class="string">"got {:?} from {:?}"</span>, <span class="kw-2">&amp;</span>buffer[..count], addr);
+                    }
+                    <span class="prelude-val">Err</span>(err) =&gt; {
+                        <span class="macro">eprintln!</span>(<span class="string">"error recv: {:?}"</span>, err);
+                    }
+                }
+            }
+        });
+        socket_a.send_to(<span class="kw-2">&amp;</span>[<span class="number">0</span>][..], addr_b).<span class="kw">await</span><span class="question-mark">?</span>;
+        socket_a.mark_broken();
+        <span class="macro">assert!</span>(socket_a.is_broken());
+        socket_a.send_to(<span class="kw-2">&amp;</span>[<span class="number">0</span>][..], addr_b).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">assert!</span>(!socket_a.is_broken());
+
+        handle.<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 }
