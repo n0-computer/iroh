@@ -1,5 +1,9 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 //! Utilities for building iroh nodes.
+#[cfg(feature = "config")]
+pub mod config;
+#[cfg(feature = "logging")]
+pub mod logging;
 pub mod rpc;
 
 use std::path::PathBuf;

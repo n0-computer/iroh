@@ -11,7 +11,8 @@ members = [
   "iroh-relay",
   "iroh-router",
   "net-tools/netwatch",
-  "net-tools/portmapper", "iroh-node-util",
+  "net-tools/portmapper",
+  "iroh-node-util",
 ]
 resolver = "2"
 

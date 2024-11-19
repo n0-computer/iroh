@@ -3099,17 +3099,23 @@ name = "iroh-node-util"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "derive_more",
+ "dirs-next",
  "futures-lite 2.5.0",
  "iroh-net",
  "nested_enum_utils",
  "quic-rpc",
  "quic-rpc-derive",
+ "rustyline",
  "serde",
  "serde-error",
+ "serde_with",
  "strum 0.26.3",
  "tempfile",
  "tokio",
  "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
 ]
 
 [[package]]
