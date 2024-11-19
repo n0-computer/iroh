@@ -28,7 +28,7 @@ use tokio::{
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-pub mod defaults;
+mod defaults;
 mod dns;
 #[cfg(feature = "metrics")]
 mod metrics;

@@ -10,7 +10,7 @@ use crate::defaults::timeouts::DNS_TIMEOUT;
 const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 
 /// Extension trait to [`TokioAsyncResolver`].
-pub trait ResolverExt {
+pub(crate) trait ResolverExt {
     /// Perform an ipv4 lookup with a timeout.
     fn lookup_ipv4<N: IntoName>(
         &self,
