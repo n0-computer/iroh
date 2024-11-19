@@ -28,6 +28,3 @@ ignore = [
     "RUSTSEC-2024-0370", # unmaintained, no upgrade available
     "RUSTSEC-2024-0384", # unmaintained, no upgrade available
 ]
-
-[sources]
-allow-git = ["https://github.com/n0-computer/iroh-blobs.git"]

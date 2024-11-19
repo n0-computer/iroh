@@ -54,5 +54,3 @@ iroh-net = { path = "./iroh-net" }
 iroh-metrics = { path = "./iroh-metrics" }
 iroh-test = { path = "./iroh-test" }
 iroh-router = { path = "./iroh-router" }
-
-iroh-blobs = { git = "https://github.com/n0-computer/iroh-blobs", branch = "main" }
