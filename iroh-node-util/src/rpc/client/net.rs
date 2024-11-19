@@ -39,6 +39,7 @@ pub struct Client {
 }
 
 impl Client {
+    /// Creates a new net client
     pub fn new(rpc: RpcClient<RpcService>) -> Self {
         Self { rpc }
     }

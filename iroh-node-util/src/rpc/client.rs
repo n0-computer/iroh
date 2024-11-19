@@ -1,3 +1,4 @@
+//! Client to interact with iroh nodes and endpoints.
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
 

@@ -1,3 +1,4 @@
+//! Server implementation to handle node and net rpc requests
 use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
@@ -36,6 +37,7 @@ pub trait AbstractNode: Send + Sync + 'static {
 
 struct Handler(Arc<dyn AbstractNode>);
 
+/// Handle rpc requests for the node and net services
 pub async fn handle_rpc_request<C: ChannelTypes<RpcService>>(
     node: Arc<dyn AbstractNode>,
     msg: Request,

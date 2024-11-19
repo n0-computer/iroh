@@ -1,3 +1,6 @@
+//! Client to interact with an iroh node.
+//!
+//! The main entry point is [`Client`].
 use std::collections::BTreeMap;
 
 use anyhow::Result;
@@ -6,6 +9,7 @@ use quic_rpc::RpcClient;
 use super::net::NodeStatus;
 use crate::rpc::proto::{node::*, RpcService};
 
+/// Client to interact with an iroh node.
 #[derive(Debug, Clone)]
 #[repr(transparent)]
 pub struct Client {
@@ -13,6 +17,7 @@ pub struct Client {
 }
 
 impl Client {
+    /// Creates a new node client
     pub fn new(rpc: RpcClient<RpcService>) -> Self {
         Self { rpc }
     }

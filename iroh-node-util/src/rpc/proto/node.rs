@@ -1,3 +1,4 @@
+//! RPC calls to control a generic node.
 use std::collections::BTreeMap;
 
 use nested_enum_utils::enum_conversions;
