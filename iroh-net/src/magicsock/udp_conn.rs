@@ -151,12 +151,18 @@ impl AsyncUdpSocket for UdpConn {
                     }
                     return Poll::Ready(Ok(count));
                 }
-                Err(err) => match self.io.handle_read_error(err) {
-                    Some(err) => return Poll::Ready(Err(err)),
-                    None => {
+                Err(err) => {
+                    // ignore spurious wakeups
+                    if err.kind() == std::io::ErrorKind::WouldBlock {
                         continue;
                     }
-                },
+                    match self.io.handle_read_error(err) {
+                        Some(err) => return Poll::Ready(Err(err)),
+                        None => {
+                            continue;
+                        }
+                    }
+                }
             }
         }
     }
