@@ -190,11 +190,6 @@
 <a href="#190" id="190">190</a>
 <a href="#191" id="191">191</a>
 <a href="#192" id="192">192</a>
-<a href="#193" id="193">193</a>
-<a href="#194" id="194">194</a>
-<a href="#195" id="195">195</a>
-<a href="#196" id="196">196</a>
-<a href="#197" id="197">197</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{net::SocketAddr, time::Duration};
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
@@ -265,7 +260,7 @@
         chan: RpcChannel&lt;RpcService, C&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), RpcServerError&lt;C&gt;&gt; {
         <span class="kw">use </span>net::Request::<span class="kw-2">*</span>;
-        <span class="macro">debug!</span>(<span class="string">"handling node request: {msg}"</span>);
+        <span class="macro">debug!</span>(<span class="string">"handling net request: {msg}"</span>);
         <span class="kw">match </span>msg {
             Watch(msg) =&gt; chan.server_streaming(msg, <span class="self">self</span>, <span class="self">Self</span>::node_watch).<span class="kw">await</span>,
             Id(msg) =&gt; chan.rpc(msg, <span class="self">self</span>, <span class="self">Self</span>::node_id).<span class="kw">await</span>,
@@ -294,12 +289,7 @@
 
     <span class="attr">#[allow(clippy::unused_async)]
     </span><span class="kw">async fn </span>node_stats(<span class="self">self</span>, _req: StatsRequest) -&gt; RpcResult&lt;StatsResponse&gt; {
-        <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-        </span><span class="kw">let </span>res = <span class="prelude-val">Ok</span>(StatsResponse {
-            stats: <span class="kw">crate</span>::metrics::get_metrics().map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>,
-        });
-
-        <span class="attr">#[cfg(not(feature = <span class="string">"metrics"</span>))]
+        <span class="comment">// TODO
         </span><span class="kw">let </span>res = <span class="prelude-val">Err</span>(RpcError::new(<span class="kw-2">&amp;*</span><span class="macro">anyhow::anyhow!</span>(<span class="string">"metrics are disabled"</span>)));
 
         res
