@@ -211,22 +211,11 @@ impl UdpSocket {
     ///
     /// Returns `Some(error)` if the error is fatal otherwise `None.
     fn handle_read_error(&self, error: std::io::Error) -> Option<std::io::Error> {
-        let kind = error.kind();
-        match kind {
+        match error.kind() {
             std::io::ErrorKind::BrokenPipe => {
                 // This indicates the underlying socket is broken, and we should attempt to rebind it
                 self.mark_broken();
-                match self.rebind() {
-                    Ok(()) => None,
-                    Err(err) => {
-                        // Return original error, if we failed to rebind
-                        warn!(
-                            "failed to rebind socket, after error: {:?}: {:?}",
-                            error, err
-                        );
-                        Some(error)
-                    }
-                }
+                None
             }
             _ => Some(error),
         }
@@ -343,7 +332,6 @@ impl Future for SendFut<'_, '_> {
                         if err.kind() == ErrorKind::WouldBlock {
                             continue;
                         }
-                        drop(guard); // make sure we are not holding a lock before handling the error
                         if let Some(err) = self.socket.handle_read_error(err) {
                             return Poll::Ready(Err(err));
                         }
@@ -352,7 +340,6 @@ impl Future for SendFut<'_, '_> {
                     return Poll::Ready(res);
                 }
                 Poll::Ready(Err(err)) => {
-                    drop(guard); // make sure we are not holding a lock before handling the error
                     if let Some(err) = self.socket.handle_read_error(err) {
                         return Poll::Ready(Err(err));
                     }
@@ -376,6 +363,22 @@ impl Future for SendToFut<'_, '_> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         loop {
+            // check if the socket needs a rebind
+            if self.socket.is_broken() {
+                match self.socket.rebind() {
+                    Ok(()) => {
+                        // all good
+                    }
+                    Err(err) => {
+                        warn!("failed to rebind socket: {:?}", err);
+                        // TODO: improve error
+                        let err =
+                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
+                        return Poll::Ready(Err(err));
+                    }
+                }
+            }
+
             let guard = self.socket.socket.read().unwrap();
             let socket = guard.as_ref().expect("missing socket");
 
@@ -387,7 +390,7 @@ impl Future for SendToFut<'_, '_> {
                         if err.kind() == ErrorKind::WouldBlock {
                             continue;
                         }
-                        drop(guard); // make sure we are not holding a lock before handling the error
+
                         if let Some(err) = self.socket.handle_read_error(err) {
                             return Poll::Ready(Err(err));
                         }
@@ -396,7 +399,6 @@ impl Future for SendToFut<'_, '_> {
                     return Poll::Ready(res);
                 }
                 Poll::Ready(Err(err)) => {
-                    drop(guard); // make sure we are not holding a lock before handling the error
                     if let Some(err) = self.socket.handle_read_error(err) {
                         return Poll::Ready(Err(err));
                     }
@@ -533,6 +535,39 @@ mod tests {
 
         handle_a.await.ok();
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_udp_mark_broken() -> anyhow::Result<()> {
+        let socket_a = UdpSocket::bind_local(IpFamily::V4, 0)?;
+        let addr_a = socket_a.local_addr()?;
+        println!("socket bound to {:?}", addr_a);
+
+        let socket_b = UdpSocket::bind_local(IpFamily::V4, 0)?;
+        let addr_b = socket_b.local_addr()?;
+        println!("socket bound to {:?}", addr_b);
+
+        let handle = tokio::task::spawn(async move {
+            let mut buffer = [0u8; 16];
+            for _ in 0..2 {
+                match socket_b.recv_from(&mut buffer).await {
+                    Ok((count, addr)) => {
+                        println!("got {:?} from {:?}", &buffer[..count], addr);
+                    }
+                    Err(err) => {
+                        eprintln!("error recv: {:?}", err);
+                    }
+                }
+            }
+        });
+        socket_a.send_to(&[0][..], addr_b).await?;
+        socket_a.mark_broken();
+        assert!(socket_a.is_broken());
+        socket_a.send_to(&[0][..], addr_b).await?;
+        assert!(!socket_a.is_broken());
+
+        handle.await?;
         Ok(())
     }
 }
