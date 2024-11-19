@@ -15,38 +15,35 @@ use crate::rpc::{
     },
 };
 
+/// Trait that provides a rpc handler for the net and node requests.
 pub trait AbstractNode: Sized + Send + Sync + Clone + 'static {
+    /// Get the endpoint of the node
     fn endpoint(&self) -> &Endpoint;
 
+    /// Shutdown the node, used by the node shutdown rpc call
     fn shutdown(&self);
 
+    /// Rpc address of the node, used by the node status rpc call
     fn rpc_addr(&self) -> Option<SocketAddr>;
 
-    fn node(self) -> NodeRpc<Self> {
-        NodeRpc(self)
-    }
-
+    /// Stats for the node stats rpc call
     fn stats(&self) -> anyhow::Result<BTreeMap<String, CounterStats>> {
         anyhow::bail!("metrics are disabled");
     }
+
+    /// Handler for a node rpc request
+    fn node(self) -> NodeRpc<Self> {
+        NodeRpc(self)
+    }
 }
 
+/// Rpc handler for the node and net requests
+///
+/// This provides the fn `handle_rpc_request` to handle node and net requests.
 #[derive(Debug)]
 pub struct NodeRpc<T>(T);
 
 impl<T: AbstractNode> NodeRpc<T> {
-    fn endpoint(&self) -> &Endpoint {
-        self.0.endpoint()
-    }
-
-    fn shutdown(&self) {
-        self.0.shutdown()
-    }
-
-    fn rpc_addr(&self) -> Option<SocketAddr> {
-        self.0.rpc_addr()
-    }
-
     pub async fn handle_rpc_request<C: ChannelTypes<RpcService>>(
         self,
         msg: Request,
@@ -57,6 +54,10 @@ impl<T: AbstractNode> NodeRpc<T> {
             Node(msg) => self.handle_node_request(msg, chan).await,
             Net(msg) => self.handle_net_request(msg, chan).await,
         }
+    }
+
+    fn endpoint(&self) -> &Endpoint {
+        self.0.endpoint()
     }
 
     async fn handle_node_request<C: ChannelTypes<RpcService>>(
@@ -102,7 +103,7 @@ impl<T: AbstractNode> NodeRpc<T> {
         } else {
             // trigger a graceful shutdown
             info!("graceful shutdown requested");
-            self.shutdown();
+            self.0.shutdown();
         }
     }
 
@@ -122,7 +123,7 @@ impl<T: AbstractNode> NodeRpc<T> {
                 .map_err(|e| RpcError::new(&*e))?,
             listen_addrs: self.local_endpoint_addresses().await.unwrap_or_default(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            rpc_addr: self.rpc_addr(),
+            rpc_addr: self.0.rpc_addr(),
         })
     }
 
