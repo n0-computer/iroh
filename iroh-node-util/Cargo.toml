@@ -39,3 +39,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 [features]
 logging = ["dep:derive_more", "dep:serde_with", "dep:rustyline", "dep:tracing-appender", "dep:tracing-subscriber"]
 config = ["dep:dirs-next"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "iroh_docsrs"]
