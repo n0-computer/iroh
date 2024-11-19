@@ -142,9 +142,7 @@ impl ServerHandle {
 }
 
 async fn handle_connection(conn: quinn::Incoming) -> Result<()> {
-    info!("made it here");
     let connection = conn.await?;
-    info!("made it here too");
     // let span = info_span!(
     //     "connection",
     //     remote = %connection.remote_address(),
@@ -174,45 +172,45 @@ async fn handle_connection(conn: quinn::Incoming) -> Result<()> {
     Ok(())
 }
 
-// async fn handle_request(
-//     (mut send, mut _recv): (quinn::SendStream, quinn::RecvStream),
-// ) -> Result<()> {
-//     let resp = b"test";
-//     send.write_all(resp)
-//         .await
-//         .map_err(|e| anyhow::anyhow!("failed to send response: {}", e))?;
-//     // Gracefully terminate the stream
-//     send.finish()
-//         .map_err(|e| anyhow::anyhow!("failed to shutdown stream: {}", e))?;
-//     info!("complete");
-//     Ok(())
-// }
+/// Client side function to correctly handle QUIC address discovery
+///
+/// Consumes and gracefully closes the connection, even when cancelled early.
+pub async fn get_observed_address_from_conn(
+    conn: quinn::Connection,
+    cancel: CancellationToken,
+) -> Result<SocketAddr> {
+    let mut external_addresses = conn.observed_external_addr();
+    tokio::select! {
+        _ = cancel.cancelled() => {
+            conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+            anyhow::bail!("QUIC address discovery canceled early");
+        },
+        res = external_addresses.wait_for(|addr| addr.is_some()) => {
+            let addr = res?.expect("checked");
+            // gracefully close the connections
+            conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+            Ok(addr)
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{net::Ipv4Addr, sync::Arc};
 
     use super::*;
 
     /// Create certs and rustls::ServerConfig for local use
     ///
-    /// The certificate covers the domains "localhost" and "127.0.0.1".
-    fn generate_self_signed_localhost_config() -> Result<(
+    /// The certificate covers the domain "localhost".
+    fn generate_self_signed_localhost_config(
+        cert: rustls::pki_types::CertificateDer<'static>,
+        private_key: rustls::pki_types::PrivateKeyDer<'static>,
+    ) -> Result<(
         Vec<rustls::pki_types::CertificateDer<'static>>,
         rustls::ServerConfig,
     )> {
-        let cert = rcgen::generate_simple_self_signed(vec![
-            "localhost".to_string(),
-            "127.0.0.1".to_string(),
-        ])
-        .expect("valid");
-        let rustls_certs = vec![rustls::pki_types::CertificateDer::from(
-            cert.serialize_der().unwrap(),
-        )];
-        let private_key =
-            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.get_key_pair().serialize_der());
-        let private_key = rustls::pki_types::PrivateKeyDer::from(private_key);
-
+        let rustls_certs = vec![cert];
         let server_config = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
             rustls::crypto::ring::default_provider(),
         ))
@@ -223,11 +221,25 @@ mod tests {
         Ok((rustls_certs, server_config))
     }
 
+    fn generate_certs_and_priv_key() -> (
+        rustls::pki_types::CertificateDer<'static>,
+        rustls::pki_types::PrivateKeyDer<'static>,
+    ) {
+        let cert =
+            rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).expect("valid");
+        let private_key =
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.get_key_pair().serialize_der());
+        let private_key = rustls::pki_types::PrivateKeyDer::from(private_key);
+        let cert = rustls::pki_types::CertificateDer::from(cert.serialize_der().unwrap());
+        (cert, private_key)
+    }
+
     /// Generates a [`quinn::ClientConfig`] that has quic address discovery enabled.
-    fn generate_quic_addr_disc_client_config() -> quinn::ClientConfig {
-        let roots = rustls::RootCertStore {
-            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-        };
+    fn generate_quic_addr_disc_client_config(
+        cert: rustls::pki_types::CertificateDer<'static>,
+    ) -> Result<quinn::ClientConfig> {
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(cert)?;
         let mut config =
             rustls::ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
                 .with_root_certificates(roots)
@@ -242,25 +254,27 @@ mod tests {
 
         let mut client_config = quinn::ClientConfig::new(Arc::new(config));
         client_config.transport_config(Arc::new(transport));
-        client_config
+        Ok(client_config)
     }
 
     #[tokio::test]
     async fn quic_endpoint_basic() -> anyhow::Result<()> {
+        let localhost: Ipv4Addr = "127.0.0.1".parse()?;
         let _guard = iroh_test::logging::setup();
+        let (cert, private_key) = generate_certs_and_priv_key();
+        let client_cert = cert.clone();
 
-        let (_, server_config) = generate_self_signed_localhost_config()?;
+        let (_, server_config) = generate_self_signed_localhost_config(cert, private_key)?;
 
         let quic_server = QuicServer::spawn(QuicConfig::new(
             server_config,
-            "127.0.0.1".parse()?,
+            localhost.clone().into(),
             Some(0),
         )?)
         .await?;
 
-        let client_config = generate_quic_addr_disc_client_config();
-        let mut client_endpoint =
-            quinn::Endpoint::client(SocketAddr::new("127.0.0.1".parse()?, 0))?;
+        let client_config = generate_quic_addr_disc_client_config(client_cert)?;
+        let mut client_endpoint = quinn::Endpoint::client(SocketAddr::new(localhost.into(), 0))?;
         client_endpoint.set_default_client_config(client_config);
 
         let client_addr = client_endpoint.local_addr()?;
@@ -269,14 +283,8 @@ mod tests {
         let conn = client_endpoint
             .connect(quic_server.bind_addr.clone(), "localhost")?
             .await?;
-        let mut external_addresses = conn.observed_external_addr();
-        let addr = external_addresses
-            .wait_for(|addr| addr.is_some())
-            .await?
-            .expect("checked");
 
-        // gracefully close the connections
-        conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+        let addr = get_observed_address_from_conn(conn, CancellationToken::new()).await?;
         // wait until the endpoint delivers the closing message to the server
         client_endpoint.wait_idle().await;
         // shut down the quic server
