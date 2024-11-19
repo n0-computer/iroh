@@ -1131,7 +1131,7 @@ checksum = "658bce805d770f407bc62102fca7c2c64ceef2fbcb2b8bd19d2765ce093980de"
 dependencies = [
  "console",
  "shell-words",
- "thiserror 1.0.68",
+ "thiserror",
 ]
 
 [[package]]
@@ -2652,7 +2652,7 @@ dependencies = [
 [[package]]
 name = "iroh-blobs"
 version = "0.28.1"
-source = "git+https://github.com/n0-computer/iroh-blobs?branch=main#4c7b8e79f495376245852a14688ce23a12adda85"
+source = "git+https://github.com/n0-computer/iroh-blobs?branch=main#cdcb863d7c75cdd7258c8f5001154272df7460c0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -2848,7 +2848,6 @@ dependencies = [
  "self_cell",
  "serde",
  "serde-error",
- "shellexpand",
  "strum 0.26.3",
  "tempfile",
  "thiserror 1.0.69",
@@ -2861,7 +2860,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.28.1"
-source = "git+https://github.com/n0-computer/iroh-gossip?branch=main#0eba891f601b0a425be3f3a8a870d0c75eacc509"
+source = "git+https://github.com/n0-computer/iroh-gossip?branch=main#7c90c3f351585e7a364bfbf3941d07592b20dec6"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -5008,9 +5007,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "0.38.39"
+version = "0.38.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "375116bee2be9ed569afe2154ea6a99dfdffd257f533f187498c2a8f5feaf4ee"
+checksum = "99e4ea3e1cdc4b559b8e5650f9c8e5998e3e5c1343b4eaf034565f32318d63c0"
 dependencies = [
  "bitflags 2.6.0",
  "errno",
@@ -6185,9 +6184,9 @@ dependencies = [
 
 [[package]]
 name = "tower-http"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8437150ab6bbc8c5f0f519e3d5ed4aa883a83dd4cdd3d1b21f9482936046cb97"
+checksum = "403fa3b783d4b626a8ad51d766ab03cb6d2dbfc46b1c5d4448395e6628dc9697"
 dependencies = [
  "bitflags 2.6.0",
  "bytes",
