@@ -63,7 +63,7 @@ impl UdpConn {
 
 impl AsyncUdpSocket for UdpConn {
     fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn quinn::UdpPoller>> {
-        (&*self).create_io_poller()
+        (*self).create_io_poller()
     }
 
     fn try_send(&self, transmit: &Transmit<'_>) -> io::Result<()> {
