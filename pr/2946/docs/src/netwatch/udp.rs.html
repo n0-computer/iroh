@@ -530,6 +530,12 @@
 <a href="#530" id="530">530</a>
 <a href="#531" id="531">531</a>
 <a href="#532" id="532">532</a>
+<a href="#533" id="533">533</a>
+<a href="#534" id="534">534</a>
+<a href="#535" id="535">535</a>
+<a href="#536" id="536">536</a>
+<a href="#537" id="537">537</a>
+<a href="#538" id="538">538</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     future::Future,
     io::ErrorKind,
@@ -777,10 +783,11 @@
 
     <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
         <span class="kw">let </span><span class="self">Self </span>{ socket, buffer } = <span class="kw-2">&amp;mut *</span><span class="self">self</span>;
-        <span class="kw">let </span>guard = socket.socket.read().unwrap();
-        <span class="kw">let </span>socket = guard.as_ref().expect(<span class="string">"missing socket"</span>);
 
         <span class="kw">loop </span>{
+            <span class="kw">let </span>guard = socket.socket.read().unwrap();
+            <span class="kw">let </span>socket = guard.as_ref().expect(<span class="string">"missing socket"</span>);
+
             <span class="kw">match </span>socket.poll_recv_ready(cx) {
                 Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
                 Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; {
@@ -811,10 +818,11 @@
 
     <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
         <span class="kw">let </span><span class="self">Self </span>{ socket, buffer } = <span class="kw-2">&amp;mut *</span><span class="self">self</span>;
-        <span class="kw">let </span>guard = socket.socket.read().unwrap();
-        <span class="kw">let </span>socket = guard.as_ref().expect(<span class="string">"missing socket"</span>);
 
         <span class="kw">loop </span>{
+            <span class="kw">let </span>guard = socket.socket.read().unwrap();
+            <span class="kw">let </span>socket = guard.as_ref().expect(<span class="string">"missing socket"</span>);
+
             <span class="kw">match </span>socket.poll_recv_ready(cx) {
                 Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
                 Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; {
@@ -861,10 +869,10 @@
     <span class="kw">type </span>Output = std::io::Result&lt;usize&gt;;
 
     <span class="kw">fn </span>poll(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, c: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
-        <span class="kw">let </span>guard = <span class="self">self</span>.socket.socket.read().unwrap();
-        <span class="kw">let </span>socket = guard.as_ref().expect(<span class="string">"missing socket"</span>);
-
         <span class="kw">loop </span>{
+            <span class="kw">let </span>guard = <span class="self">self</span>.socket.socket.read().unwrap();
+            <span class="kw">let </span>socket = guard.as_ref().expect(<span class="string">"missing socket"</span>);
+
             <span class="kw">match </span>socket.poll_send_ready(c) {
                 Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
                 Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; {
@@ -873,7 +881,8 @@
                         <span class="kw">if </span>err.kind() == ErrorKind::WouldBlock {
                             <span class="kw">continue</span>;
                         }
-                        <span class="kw">if let </span><span class="prelude-val">Some</span>(err) = <span class="self">self</span>.socket.handle_read_error(err) {
+                        drop(guard); <span class="comment">// make sure we are not holding a lock before handling the error
+                        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(err) = <span class="self">self</span>.socket.handle_read_error(err) {
                             <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
                         }
                         <span class="kw">continue</span>;
@@ -881,7 +890,8 @@
                     <span class="kw">return </span>Poll::Ready(res);
                 }
                 Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(err) = <span class="self">self</span>.socket.handle_read_error(err) {
+                    drop(guard); <span class="comment">// make sure we are not holding a lock before handling the error
+                    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(err) = <span class="self">self</span>.socket.handle_read_error(err) {
                         <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
                     }
                     <span class="kw">continue</span>;
@@ -903,10 +913,10 @@
     <span class="kw">type </span>Output = std::io::Result&lt;usize&gt;;
 
     <span class="kw">fn </span>poll(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
-        <span class="kw">let </span>guard = <span class="self">self</span>.socket.socket.read().unwrap();
-        <span class="kw">let </span>socket = guard.as_ref().expect(<span class="string">"missing socket"</span>);
-
         <span class="kw">loop </span>{
+            <span class="kw">let </span>guard = <span class="self">self</span>.socket.socket.read().unwrap();
+            <span class="kw">let </span>socket = guard.as_ref().expect(<span class="string">"missing socket"</span>);
+
             <span class="kw">match </span>socket.poll_send_ready(cx) {
                 Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
                 Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; {
@@ -915,7 +925,8 @@
                         <span class="kw">if </span>err.kind() == ErrorKind::WouldBlock {
                             <span class="kw">continue</span>;
                         }
-                        <span class="kw">if let </span><span class="prelude-val">Some</span>(err) = <span class="self">self</span>.socket.handle_read_error(err) {
+                        drop(guard); <span class="comment">// make sure we are not holding a lock before handling the error
+                        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(err) = <span class="self">self</span>.socket.handle_read_error(err) {
                             <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
                         }
                         <span class="kw">continue</span>;
@@ -923,7 +934,8 @@
                     <span class="kw">return </span>Poll::Ready(res);
                 }
                 Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(err) = <span class="self">self</span>.socket.handle_read_error(err) {
+                    drop(guard); <span class="comment">// make sure we are not holding a lock before handling the error
+                    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(err) = <span class="self">self</span>.socket.handle_read_error(err) {
                         <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
                     }
                     <span class="kw">continue</span>;
