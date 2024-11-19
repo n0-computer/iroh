@@ -396,7 +396,7 @@
 
 <span class="kw">impl </span>AsyncUdpSocket <span class="kw">for </span>UdpConn {
     <span class="kw">fn </span>create_io_poller(<span class="self">self</span>: Arc&lt;<span class="self">Self</span>&gt;) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt; {
-        (<span class="kw-2">&amp;*</span><span class="self">self</span>).create_io_poller()
+        (<span class="kw-2">*</span><span class="self">self</span>).create_io_poller()
     }
 
     <span class="kw">fn </span>try_send(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;) -&gt; io::Result&lt;()&gt; {
