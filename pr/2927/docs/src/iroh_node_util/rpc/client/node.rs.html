@@ -38,7 +38,15 @@
 <a href="#38" id="38">38</a>
 <a href="#39" id="39">39</a>
 <a href="#40" id="40">40</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::BTreeMap;
+<a href="#41" id="41">41</a>
+<a href="#42" id="42">42</a>
+<a href="#43" id="43">43</a>
+<a href="#44" id="44">44</a>
+<a href="#45" id="45">45</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! Client to interact with an iroh node.
+//!
+//! The main entry point is [`Client`].
+</span><span class="kw">use </span>std::collections::BTreeMap;
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>quic_rpc::RpcClient;
@@ -46,14 +54,16 @@
 <span class="kw">use </span><span class="kw">super</span>::net::NodeStatus;
 <span class="kw">use </span><span class="kw">crate</span>::rpc::proto::{node::<span class="kw-2">*</span>, RpcService};
 
-<span class="attr">#[derive(Debug, Clone)]
+<span class="doccomment">/// Client to interact with an iroh node.
+</span><span class="attr">#[derive(Debug, Clone)]
 #[repr(transparent)]
 </span><span class="kw">pub struct </span>Client {
     <span class="kw">pub</span>(<span class="kw">super</span>) rpc: RpcClient&lt;RpcService&gt;,
 }
 
 <span class="kw">impl </span>Client {
-    <span class="kw">pub fn </span>new(rpc: RpcClient&lt;RpcService&gt;) -&gt; <span class="self">Self </span>{
+    <span class="doccomment">/// Creates a new node client
+    </span><span class="kw">pub fn </span>new(rpc: RpcClient&lt;RpcService&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{ rpc }
     }
 

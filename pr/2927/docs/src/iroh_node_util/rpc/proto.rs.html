@@ -28,7 +28,14 @@
 <a href="#28" id="28">28</a>
 <a href="#29" id="29">29</a>
 <a href="#30" id="30">30</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>nested_enum_utils::enum_conversions;
+<a href="#31" id="31">31</a>
+<a href="#32" id="32">32</a>
+<a href="#33" id="33">33</a>
+<a href="#34" id="34">34</a>
+<a href="#35" id="35">35</a>
+<a href="#36" id="36">36</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! RPC protocol definitions for controlling iroh-net endpoints and iroh nodes
+</span><span class="kw">use </span>nested_enum_utils::enum_conversions;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="kw">pub mod </span>net;
@@ -37,21 +44,26 @@
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>RpcError = serde_error::Error;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>RpcResult&lt;T&gt; = <span class="prelude-ty">Result</span>&lt;T, RpcError&gt;;
 
-<span class="attr">#[derive(Debug, Serialize, Deserialize)]
+<span class="doccomment">/// Request, either net or node
+</span><span class="attr">#[derive(Debug, Serialize, Deserialize)]
 #[enum_conversions]
+#[allow(missing_docs)]
 </span><span class="kw">pub enum </span>Request {
     Net(net::Request),
     Node(node::Request),
 }
 
-<span class="attr">#[derive(Debug, Serialize, Deserialize)]
+<span class="doccomment">/// Response, either net or node
+</span><span class="attr">#[derive(Debug, Serialize, Deserialize)]
 #[enum_conversions]
+#[allow(missing_docs)]
 </span><span class="kw">pub enum </span>Response {
     Net(net::Response),
     Node(node::Response),
 }
 
-<span class="attr">#[derive(Debug, Clone, Copy)]
+<span class="doccomment">/// The RPC service
+</span><span class="attr">#[derive(Debug, Clone, Copy)]
 </span><span class="kw">pub struct </span>RpcService {}
 
 <span class="kw">impl </span>quic_rpc::Service <span class="kw">for </span>RpcService {

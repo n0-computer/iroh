@@ -194,7 +194,10 @@
 <a href="#194" id="194">194</a>
 <a href="#195" id="195">195</a>
 <a href="#196" id="196">196</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::{collections::BTreeMap, net::SocketAddr, sync::Arc, time::Duration};
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! Server implementation to handle node and net rpc requests
+</span><span class="kw">use </span>std::{collections::BTreeMap, net::SocketAddr, sync::Arc, time::Duration};
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
@@ -232,7 +235,8 @@
 
 <span class="kw">struct </span>Handler(Arc&lt;<span class="kw">dyn </span>AbstractNode&gt;);
 
-<span class="kw">pub async fn </span>handle_rpc_request&lt;C: ChannelTypes&lt;RpcService&gt;&gt;(
+<span class="doccomment">/// Handle rpc requests for the node and net services
+</span><span class="kw">pub async fn </span>handle_rpc_request&lt;C: ChannelTypes&lt;RpcService&gt;&gt;(
     node: Arc&lt;<span class="kw">dyn </span>AbstractNode&gt;,
     msg: Request,
     chan: RpcChannel&lt;RpcService, C&gt;,

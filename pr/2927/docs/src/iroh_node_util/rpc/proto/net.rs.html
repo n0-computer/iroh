@@ -93,15 +93,17 @@
 <a href="#93" id="93">93</a>
 <a href="#94" id="94">94</a>
 <a href="#95" id="95">95</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>iroh_net::{endpoint::RemoteInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
+<a href="#96" id="96">96</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! RPC calls to control an iroh-net endpoint.
+</span><span class="attr">#![allow(missing_docs)]
+</span><span class="kw">use </span>iroh_net::{endpoint::RemoteInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
 <span class="kw">use </span>nested_enum_utils::enum_conversions;
 <span class="kw">use </span>quic_rpc_derive::rpc_requests;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="kw">use super</span>::{RpcResult, RpcService};
 
-<span class="attr">#[allow(missing_docs)]
-#[derive(strum::Display, Debug, Serialize, Deserialize)]
+<span class="attr">#[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[enum_conversions(<span class="kw">super</span>::Request)]
 #[rpc_requests(RpcService)]
 </span><span class="kw">pub enum </span>Request {

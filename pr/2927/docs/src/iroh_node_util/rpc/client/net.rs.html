@@ -107,6 +107,7 @@
 <a href="#107" id="107">107</a>
 <a href="#108" id="108">108</a>
 <a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API to manage the iroh networking stack.
 //!
 //! The main entry point is the [`Client`].
@@ -148,7 +149,8 @@
 }
 
 <span class="kw">impl </span>Client {
-    <span class="kw">pub fn </span>new(rpc: RpcClient&lt;RpcService&gt;) -&gt; <span class="self">Self </span>{
+    <span class="doccomment">/// Creates a new net client
+    </span><span class="kw">pub fn </span>new(rpc: RpcClient&lt;RpcService&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{ rpc }
     }
 
