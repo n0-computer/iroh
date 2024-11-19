@@ -1,12 +1,6 @@
 //! Client to an Iroh node.
 //!
 //! See the documentation for [`Iroh`] for more information.
-
-use std::collections::BTreeMap;
-
-use anyhow::Result;
-use iroh_node_util::rpc::{client::net::NodeStatus, proto::node::CounterStats};
-
 #[doc(inline)]
 pub use crate::rpc_protocol::RpcService;
 
@@ -84,23 +78,5 @@ impl Iroh {
     /// Returns the net client.
     pub fn node(&self) -> node::Client {
         node::Client::new(self.rpc.clone().map().boxed())
-    }
-
-    /// Shuts down the node.
-    ///
-    /// If `force` is true, the node will be shut down instantly without
-    /// waiting for things to stop gracefully.
-    pub async fn shutdown(&self, force: bool) -> Result<()> {
-        self.node().shutdown(force).await
-    }
-
-    /// Fetches statistics of the running node.
-    pub async fn stats(&self) -> Result<BTreeMap<String, CounterStats>> {
-        self.node().stats().await
-    }
-
-    /// Fetches status information about this node.
-    pub async fn status(&self) -> Result<NodeStatus> {
-        self.node().status().await
     }
 }

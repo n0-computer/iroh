@@ -68,7 +68,7 @@ impl Node {
         chan: RpcChannel<RpcService, C>,
     ) -> Result<(), RpcServerError<C>> {
         use net::Request::*;
-        debug!("handling node request: {msg}");
+        debug!("handling net request: {msg}");
         match msg {
             Watch(msg) => chan.server_streaming(msg, self, Self::node_watch).await,
             Id(msg) => chan.rpc(msg, self, Self::node_id).await,
@@ -97,12 +97,7 @@ impl Node {
 
     #[allow(clippy::unused_async)]
     async fn node_stats(self, _req: StatsRequest) -> RpcResult<StatsResponse> {
-        #[cfg(feature = "metrics")]
-        let res = Ok(StatsResponse {
-            stats: crate::metrics::get_metrics().map_err(|e| RpcError::new(&*e))?,
-        });
-
-        #[cfg(not(feature = "metrics"))]
+        // TODO
         let res = Err(RpcError::new(&*anyhow::anyhow!("metrics are disabled")));
 
         res
