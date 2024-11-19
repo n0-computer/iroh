@@ -4,7 +4,7 @@
 //! [`iroh_net::relay::server`].
 
 use std::{
-    net::{Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
 };
 
@@ -137,6 +137,15 @@ struct Config {
     /// Defaults to `true`
     #[serde(default = "cfg_defaults::enable_quic_addr_discovery")]
     enable_quic_addr_discovery: bool,
+    /// Whether to use self-signed local certificates for the QUIC server.
+    ///
+    /// Only considered when `enable_quic_addr_discovery` is `true` and should
+    /// only be used when the relay is run locally in dev mode.
+    ///
+    /// Will ignore any other tls certificates passed to the relay server.
+    ///
+    /// Binds the QUIC server to "127.0.0.1".
+    enable_quic_local_cert: bool,
     /// The port to bind the QUIC server on.
     ///
     /// The socket address will use the ip address from the tls config.
@@ -186,6 +195,7 @@ impl Default for Config {
             enable_stun: true,
             stun_bind_addr: None,
             enable_quic_addr_discovery: true,
+            enable_quic_local_cert: false,
             quic_bind_port: None,
             limits: None,
             enable_metrics: true,
@@ -366,6 +376,7 @@ async fn main() -> Result<()> {
         if cfg.http_bind_addr.is_none() {
             cfg.http_bind_addr = Some((Ipv6Addr::UNSPECIFIED, DEV_MODE_HTTP_PORT).into());
         }
+        cfg.enable_quic_local_cert = true;
     }
     let relay_config = build_relay_config(cfg).await?;
     debug!("{relay_config:#?}");
@@ -444,6 +455,32 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
             quic_config = Some(QuicConfig::new(
                 tls.server_config.clone(),
                 tls.https_bind_addr.ip().clone(),
+                cfg.quic_bind_port,
+            )?);
+        } else if cfg.enable_quic_local_cert {
+            let cert = rcgen::generate_simple_self_signed(vec![
+                "localhost".to_string(),
+                "127.0.0.1".to_string(),
+            ])
+            .expect("valid");
+            let rustls_cert = cert.cert.der();
+            let private_key =
+                rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+            let private_key = rustls::pki_types::PrivateKeyDer::from(private_key);
+            let certs = vec![rustls_cert.clone()];
+            let server_config = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
+                rustls::crypto::ring::default_provider(),
+            ))
+            .with_safe_default_protocol_versions()
+            .expect("protocols supported by ring")
+            .with_no_client_auth();
+
+            let server_config = server_config
+                .with_single_cert(certs.clone(), private_key)
+                .expect("valid");
+            quic_config = Some(QuicConfig::new(
+                server_config,
+                Ipv4Addr::LOCALHOST.into(),
                 cfg.quic_bind_port,
             )?);
         } else {

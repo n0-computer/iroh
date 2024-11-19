@@ -301,7 +301,7 @@ impl Server {
 
         let quic_server = match config.quic {
             Some(quic_config) => {
-                debug!("Starting QUIC server");
+                debug!("Starting QUIC server {}", quic_config.bind_addr);
                 Some(QuicServer::spawn(quic_config).await?)
             }
             None => None,
