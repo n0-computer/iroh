@@ -3,8 +3,8 @@ use std::{
     io,
     net::SocketAddr,
     pin::Pin,
-    sync::Arc,
-    task::{ready, Context, Poll},
+    sync::{Arc, RwLock},
+    task::{Context, Poll},
 };
 
 use anyhow::{bail, Context as _};
@@ -12,13 +12,13 @@ use netwatch::UdpSocket;
 use quinn::AsyncUdpSocket;
 use quinn_udp::{Transmit, UdpSockRef};
 use tokio::io::Interest;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 /// A UDP socket implementing Quinn's [`AsyncUdpSocket`].
 #[derive(Debug)]
 pub struct UdpConn {
     io: Arc<UdpSocket>,
-    inner: quinn_udp::UdpSocketState,
+    inner: RwLock<quinn_udp::UdpSocketState>,
 }
 
 impl UdpConn {
@@ -34,11 +34,11 @@ impl UdpConn {
 
         Ok(Self {
             io: Arc::new(sock),
-            inner: state,
+            inner: RwLock::new(state),
         })
     }
 
-    pub(super) fn rebind(&mut self) -> anyhow::Result<()> {
+    pub(super) fn rebind(&self) -> anyhow::Result<()> {
         // Rebind underlying socket
         self.io.rebind()?;
 
@@ -46,7 +46,7 @@ impl UdpConn {
         let new_state = self.io.with_socket(|socket| {
             quinn_udp::UdpSocketState::new(quinn_udp::UdpSockRef::from(socket))
         })?;
-        self.inner = new_state;
+        *self.inner.write().unwrap() = new_state;
         Ok(())
     }
 
@@ -67,12 +67,38 @@ impl AsyncUdpSocket for UdpConn {
     }
 
     fn try_send(&self, transmit: &Transmit<'_>) -> io::Result<()> {
-        self.io.try_io(Interest::WRITABLE, || {
-            self.io.with_socket(|io| {
-                let sock_ref = UdpSockRef::from(io);
-                self.inner.send(sock_ref, transmit)
-            })
-        })
+        loop {
+            if self.io.is_broken() {
+                match self.rebind() {
+                    Ok(()) => {
+                        // all good
+                    }
+                    Err(err) => {
+                        warn!("failed to rebind socket: {:?}", err);
+                        // TODO: improve error
+                        let err =
+                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
+                        return Err(err);
+                    }
+                }
+            }
+
+            let res = self.io.try_io(Interest::WRITABLE, || {
+                self.io.with_socket(|io| {
+                    let sock_ref = UdpSockRef::from(io);
+                    self.inner.read().unwrap().send(sock_ref, transmit)
+                })
+            });
+            match res {
+                Ok(()) => return Ok(()),
+                Err(err) => match self.io.handle_write_error(err) {
+                    Some(err) => return Err(err),
+                    None => {
+                        continue;
+                    }
+                },
+            }
+        }
     }
 
     fn poll_recv(
@@ -82,22 +108,55 @@ impl AsyncUdpSocket for UdpConn {
         meta: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
         loop {
-            ready!(self.io.with_socket(|io| io.poll_recv_ready(cx)))?;
-            if let Ok(res) = self.io.try_io(Interest::READABLE, || {
-                self.io
-                    .with_socket(|io| self.inner.recv(io.into(), bufs, meta))
-            }) {
-                for meta in meta.iter().take(res) {
-                    trace!(
-                        src = %meta.addr,
-                        len = meta.len,
-                        count = meta.len / meta.stride,
-                        dst = %meta.dst_ip.map(|x| x.to_string()).unwrap_or_default(),
-                        "UDP recv"
-                    );
+            if self.io.is_broken() {
+                match self.rebind() {
+                    Ok(()) => {
+                        // all good
+                    }
+                    Err(err) => {
+                        warn!("failed to rebind socket: {:?}", err);
+                        // TODO: improve error
+                        let err =
+                            std::io::Error::new(std::io::ErrorKind::NotConnected, err.to_string());
+                        return Poll::Ready(Err(err));
+                    }
                 }
+            }
 
-                return Poll::Ready(Ok(res));
+            match self.io.with_socket(|io| io.poll_recv_ready(cx)) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(())) => {}
+                Poll::Ready(Err(err)) => match self.io.handle_read_error(err) {
+                    Some(err) => return Poll::Ready(Err(err)),
+                    None => {
+                        continue;
+                    }
+                },
+            }
+
+            let res = self.io.try_io(Interest::READABLE, || {
+                self.io
+                    .with_socket(|io| self.inner.read().unwrap().recv(io.into(), bufs, meta))
+            });
+            match res {
+                Ok(count) => {
+                    for meta in meta.iter().take(count) {
+                        trace!(
+                            src = %meta.addr,
+                            len = meta.len,
+                            count = meta.len / meta.stride,
+                            dst = %meta.dst_ip.map(|x| x.to_string()).unwrap_or_default(),
+                            "UDP recv"
+                        );
+                    }
+                    return Poll::Ready(Ok(count));
+                }
+                Err(err) => match self.io.handle_read_error(err) {
+                    Some(err) => return Poll::Ready(Err(err)),
+                    None => {
+                        continue;
+                    }
+                },
             }
         }
     }
@@ -107,15 +166,15 @@ impl AsyncUdpSocket for UdpConn {
     }
 
     fn may_fragment(&self) -> bool {
-        self.inner.may_fragment()
+        self.inner.read().unwrap().may_fragment()
     }
 
     fn max_transmit_segments(&self) -> usize {
-        self.inner.max_gso_segments()
+        self.inner.read().unwrap().max_gso_segments()
     }
 
     fn max_receive_segments(&self) -> usize {
-        self.inner.gro_segments()
+        self.inner.read().unwrap().gro_segments()
     }
 }
 
@@ -164,7 +223,7 @@ struct IoPoller {
 
 impl quinn::UdpPoller for IoPoller {
     fn poll_writable(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        self.io.with_socket(|io| io.poll_send_ready(cx))
+        self.io.poll_writable(cx)
     }
 }
 

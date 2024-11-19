@@ -210,7 +210,7 @@ impl UdpSocket {
     /// Handle potential read errors, updating internal state.
     ///
     /// Returns `Some(error)` if the error is fatal otherwise `None.
-    fn handle_read_error(&self, error: std::io::Error) -> Option<std::io::Error> {
+    pub fn handle_read_error(&self, error: std::io::Error) -> Option<std::io::Error> {
         match error.kind() {
             std::io::ErrorKind::NotConnected => {
                 // This indicates the underlying socket is broken, and we should attempt to rebind it
@@ -224,7 +224,7 @@ impl UdpSocket {
     /// Handle potential write errors, updating internal state.
     ///
     /// Returns `Some(error)` if the error is fatal otherwise `None.
-    fn handle_write_error(&self, error: std::io::Error) -> Option<std::io::Error> {
+    pub fn handle_write_error(&self, error: std::io::Error) -> Option<std::io::Error> {
         match error.kind() {
             std::io::ErrorKind::BrokenPipe => {
                 // This indicates the underlying socket is broken, and we should attempt to rebind it
@@ -232,6 +232,40 @@ impl UdpSocket {
                 None
             }
             _ => Some(error),
+        }
+    }
+
+    /// Poll for writable
+    pub fn poll_writable(&self, cx: &mut std::task::Context<'_>) -> Poll<std::io::Result<()>> {
+        loop {
+            // check if the socket needs a rebind
+            if self.is_broken() {
+                match self.rebind() {
+                    Ok(()) => {
+                        // all good
+                    }
+                    Err(err) => {
+                        warn!("failed to rebind socket: {:?}", err);
+                        // TODO: improve error
+                        let err =
+                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
+                        return Poll::Ready(Err(err));
+                    }
+                }
+            }
+            let guard = self.socket.read().unwrap();
+            let socket = guard.as_ref().expect("missing socket");
+
+            match socket.poll_send_ready(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(())) => return Poll::Ready(Ok(())),
+                Poll::Ready(Err(err)) => {
+                    if let Some(err) = self.handle_write_error(err) {
+                        return Poll::Ready(Err(err));
+                    }
+                    continue;
+                }
+            }
         }
     }
 }
@@ -362,37 +396,8 @@ pub struct WritableFut<'a> {
 impl Future for WritableFut<'_> {
     type Output = std::io::Result<()>;
 
-    fn poll(self: Pin<&mut Self>, c: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        loop {
-            // check if the socket needs a rebind
-            if self.socket.is_broken() {
-                match self.socket.rebind() {
-                    Ok(()) => {
-                        // all good
-                    }
-                    Err(err) => {
-                        warn!("failed to rebind socket: {:?}", err);
-                        // TODO: improve error
-                        let err =
-                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
-                        return Poll::Ready(Err(err));
-                    }
-                }
-            }
-            let guard = self.socket.socket.read().unwrap();
-            let socket = guard.as_ref().expect("missing socket");
-
-            match socket.poll_send_ready(c) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Ok(())) => return Poll::Ready(Ok(())),
-                Poll::Ready(Err(err)) => {
-                    if let Some(err) = self.socket.handle_write_error(err) {
-                        return Poll::Ready(Err(err));
-                    }
-                    continue;
-                }
-            }
-        }
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        self.socket.poll_writable(cx)
     }
 }
 
