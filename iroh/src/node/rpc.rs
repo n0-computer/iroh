@@ -1,26 +1,20 @@
-use std::{fmt::Debug, sync::Arc, time::Duration};
+use std::{fmt::Debug, sync::Arc};
 
 use anyhow::Result;
-use iroh_blobs::{
-    net_protocol::Blobs as BlobsProtocol, store::Store as BaoStore,
-    util::local_pool::LocalPoolHandle,
-};
+use iroh_blobs::{net_protocol::Blobs as BlobsProtocol, store::Store as BaoStore};
 use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_node_util::rpc::server::Node;
 use iroh_router::Router;
 use quic_rpc::server::{RpcChannel, RpcServerError};
 use tokio::task::JoinSet;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 use super::IrohServerEndpoint;
 use crate::{
     node::NodeInner,
     rpc_protocol::{Request, RpcService},
 };
-
-pub(crate) type RpcError = serde_error::Error;
-pub(crate) type RpcResult<T> = Result<T, RpcError>;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Handler<D> {
@@ -137,9 +131,5 @@ impl<D: BaoStore> Handler<D> {
             Docs(msg) => self.handle_docs_request(msg, chan).await,
             Gossip(msg) => self.handle_gossip_request(msg, chan).await,
         }
-    }
-
-    fn local_pool_handle(&self) -> LocalPoolHandle {
-        self.inner.local_pool_handle.clone()
     }
 }
