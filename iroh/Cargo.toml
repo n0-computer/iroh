@@ -19,16 +19,13 @@ workspace = true
 cc = "=1.1.31" # enforce cc version, because of https://github.com/rust-lang/cc-rs/issues/1278
 anyhow = { version = "1" }
 async-channel = "2.3.1"
-bao-tree = { version = "0.13", features = ["tokio_fsm"], default-features = false }
 bytes = "1.7"
 derive_more = { version = "1.0.0", features = ["debug", "display", "from", "try_into", "from_str"] }
-futures-buffered = "0.2.4"
 futures-lite = "2.3"
 futures-util = "0.3"
-genawaiter = { version = "0.99", default-features = false, features = ["futures03"] }
-hex = { version = "0.4.3" }
 iroh-blobs = { version = "0.28.0", features = ["downloader"] }
 iroh-base = { version = "0.28.0", features = ["key"] }
+iroh-docs = { version = "0.28.0", features = ["rpc"] }
 iroh-io = { version = "0.6.0", features = ["stats"] }
 iroh-metrics = { version = "0.28.0", optional = true }
 iroh-net = { version = "0.28.1", features = ["discovery-local-network"] }
@@ -36,24 +33,19 @@ iroh-node-util = { path = "../iroh-node-util" }
 iroh-router = { version = "0.28.0" }
 nested_enum_utils = "0.1.0"
 num_cpus = { version = "1.15.0" }
-portable-atomic = "1"
-iroh-docs = { version = "0.28.0", features = ["rpc"] }
 iroh-gossip = "0.28.1"
 parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quic-rpc = { version = "0.15", default-features = false, features = ["flume-transport", "quinn-transport"] }
 quic-rpc-derive = { version = "0.15" }
 quinn = { package = "iroh-quinn", version = "0.12" }
-rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 strum = { version = "0.25", features = ["derive"] }
 thiserror = "1"
 tempfile = "3.4"
 tokio = { version = "1", features = ["io-util", "rt"] }
-tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["codec", "io-util", "io", "time"] }
 tracing = "0.1"
-iroh-relay = { version = "0.28", path = "../iroh-relay" }
 
 # Examples
 clap = { version = "4", features = ["derive"], optional = true }
@@ -77,16 +69,20 @@ test-utils = ["iroh-net/test-utils"]
 
 [dev-dependencies]
 anyhow = { version = "1" }
+bao-tree = { version = "0.13", features = ["tokio_fsm"] }
+futures-buffered = "0.2.4"
 genawaiter = { version = "0.99", features = ["futures03"] }
 iroh = { path = ".", features = ["test-utils"] }
 iroh-test = "0.28.0"
 proptest = "1.2.0"
+rand = "0.8"
 rand_chacha = "0.3.1"
 regex = { version = "1.7.1", features = ["std"] }
 serde_json = "1.0.107"
 testdir = "0.9.1"
 testresult = "0.4.0"
 tokio = { version = "1", features = ["macros", "io-util", "rt"] }
+tokio-stream = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [package.metadata.docs.rs]

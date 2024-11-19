@@ -1767,10 +1767,22 @@ impl Actor {
                 discovery_events = events;
             }
         }
+
+        let mut receiver_closed = false;
+        let mut portmap_watcher_closed = false;
+        let mut link_change_closed = false;
         loop {
             inc!(Metrics, actor_tick_main);
             tokio::select! {
-                Some(msg) = self.msg_receiver.recv() => {
+                msg = self.msg_receiver.recv(), if !receiver_closed => {
+                    let Some(msg) = msg else {
+                        trace!("tick: magicsock receiver closed");
+                        inc!(Metrics, actor_tick_other);
+
+                        receiver_closed = true;
+                        continue;
+                    };
+
                     trace!(?msg, "tick: msg");
                     inc!(Metrics, actor_tick_msg);
                     if self.handle_actor_message(msg).await {
@@ -1782,7 +1794,15 @@ impl Actor {
                     inc!(Metrics, actor_tick_re_stun);
                     self.msock.re_stun("periodic");
                 }
-                Ok(()) = portmap_watcher.changed() => {
+                change = portmap_watcher.changed(), if !portmap_watcher_closed => {
+                    if change.is_err() {
+                        trace!("tick: portmap watcher closed");
+                        inc!(Metrics, actor_tick_other);
+
+                        portmap_watcher_closed = true;
+                        continue;
+                    }
+
                     trace!("tick: portmap changed");
                     inc!(Metrics, actor_tick_portmap_changed);
                     let new_external_address = *portmap_watcher.borrow();
@@ -1809,21 +1829,28 @@ impl Actor {
                         self.refresh_direct_addrs(reason).await;
                     }
                 }
-                Some(is_major) = link_change_r.recv() => {
+                is_major = link_change_r.recv(), if !link_change_closed => {
+                    let Some(is_major) = is_major else {
+                        trace!("tick: link change receiver closed");
+                        inc!(Metrics, actor_tick_other);
+
+                        link_change_closed = true;
+                        continue;
+                    };
+
                     trace!("tick: link change {}", is_major);
                     inc!(Metrics, actor_link_change);
                     self.handle_network_change(is_major).await;
                 }
+                // Even if `discovery_events` yields `None`, it could begin to yield
+                // `Some` again in the future, so we don't want to disable this branch
+                // forever like we do with the other branches that yield `Option`s
                 Some(discovery_item) = discovery_events.next() => {
                     trace!("tick: discovery event, address discovered: {discovery_item:?}");
                     let node_addr = NodeAddr {node_id: discovery_item.node_id, info: discovery_item.addr_info};
                     if let Err(e) = self.msock.add_node_addr(node_addr.clone(), Source::Discovery { name: discovery_item.provenance.into() }) {
                         warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
                     }
-                }
-                else => {
-                    trace!("tick: other");
-                    inc!(Metrics, actor_tick_other);
                 }
             }
         }

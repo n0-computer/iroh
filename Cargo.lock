@@ -175,7 +175,7 @@ dependencies = [
  "nom",
  "num-traits",
  "rusticata-macros",
- "thiserror",
+ "thiserror 1.0.68",
  "time",
 ]
 
@@ -1166,7 +1166,9 @@ checksum = "658bce805d770f407bc62102fca7c2c64ceef2fbcb2b8bd19d2765ce093980de"
 dependencies = [
  "console",
  "shell-words",
- "thiserror",
+ "tempfile",
+ "thiserror 1.0.68",
+ "zeroize",
 ]
 
 [[package]]
@@ -1603,7 +1605,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8835f84f38484cc86f110a805655697908257fb9a7af005234060891557198e9"
 dependencies = [
  "nonempty",
- "thiserror",
+ "thiserror 1.0.68",
 ]
 
 [[package]]
@@ -2011,7 +2013,7 @@ dependencies = [
  "ipnet",
  "once_cell",
  "rand",
- "thiserror",
+ "thiserror 1.0.68",
  "tinyvec",
  "tokio",
  "tracing",
@@ -2041,7 +2043,7 @@ dependencies = [
  "rustls",
  "rustls-pemfile",
  "serde",
- "thiserror",
+ "thiserror 1.0.68",
  "time",
  "tinyvec",
  "tokio",
@@ -2067,7 +2069,7 @@ dependencies = [
  "lru-cache",
  "parking_lot",
  "serde",
- "thiserror",
+ "thiserror 1.0.68",
  "tokio",
  "tracing",
 ]
@@ -2090,7 +2092,7 @@ dependencies = [
  "rustls",
  "serde",
  "smallvec",
- "thiserror",
+ "thiserror 1.0.68",
  "tokio",
  "tokio-rustls",
  "tracing",
@@ -2114,7 +2116,7 @@ dependencies = [
  "prefix-trie",
  "rustls",
  "serde",
- "thiserror",
+ "thiserror 1.0.68",
  "time",
  "tokio",
  "tokio-rustls",
@@ -2616,7 +2618,6 @@ dependencies = [
  "futures-lite 2.5.0",
  "futures-util",
  "genawaiter",
- "hex",
  "indicatif",
  "iroh",
  "iroh-base",
@@ -2628,13 +2629,11 @@ dependencies = [
  "iroh-net",
  "iroh-node-util",
  "iroh-quinn",
- "iroh-relay",
  "iroh-router",
  "iroh-test",
  "nested_enum_utils",
  "num_cpus",
  "parking_lot",
- "portable-atomic",
  "postcard",
  "proptest",
  "quic-rpc",
@@ -2650,7 +2649,7 @@ dependencies = [
  "tempfile",
  "testdir",
  "testresult",
- "thiserror",
+ "thiserror 1.0.68",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -2684,7 +2683,7 @@ dependencies = [
  "serde_json",
  "serde_test",
  "ssh-key",
- "thiserror",
+ "thiserror 1.0.68",
  "ttl_cache",
  "url",
  "zeroize",
@@ -2706,13 +2705,15 @@ dependencies = [
 [[package]]
 name = "iroh-blobs"
 version = "0.28.1"
-source = "git+https://github.com/n0-computer/iroh-blobs?branch=main#2337e46d89d6f2f2fda512439890ab74bab24fb4"
+source = "git+https://github.com/n0-computer/iroh-blobs?branch=main#cdcb863d7c75cdd7258c8f5001154272df7460c0"
 dependencies = [
  "anyhow",
  "async-channel",
  "bao-tree",
  "bytes",
  "chrono",
+ "clap",
+ "console",
  "derive_more",
  "futures-buffered",
  "futures-lite 2.5.0",
@@ -2720,6 +2721,7 @@ dependencies = [
  "genawaiter",
  "hashlink",
  "hex",
+ "indicatif",
  "iroh-base",
  "iroh-io",
  "iroh-metrics",
@@ -2730,7 +2732,6 @@ dependencies = [
  "num_cpus",
  "oneshot",
  "parking_lot",
- "pin-project",
  "portable-atomic",
  "postcard",
  "quic-rpc",
@@ -2747,7 +2748,7 @@ dependencies = [
  "smallvec",
  "strum 0.26.3",
  "tempfile",
- "thiserror",
+ "thiserror 2.0.3",
  "tokio",
  "tokio-util",
  "tracing",
@@ -2779,6 +2780,7 @@ dependencies = [
  "human-time",
  "indicatif",
  "iroh",
+ "iroh-blobs",
  "iroh-docs",
  "iroh-gossip",
  "iroh-metrics",
@@ -2802,7 +2804,7 @@ dependencies = [
  "strum 0.26.3",
  "tempfile",
  "testdir",
- "thiserror",
+ "thiserror 1.0.68",
  "time",
  "tokio",
  "tokio-util",
@@ -2840,7 +2842,7 @@ dependencies = [
  "mainline",
  "parking_lot",
  "pkarr",
- "rcgen",
+ "rcgen 0.13.1",
  "redb 2.2.0",
  "regex",
  "rustls",
@@ -2866,17 +2868,22 @@ dependencies = [
 [[package]]
 name = "iroh-docs"
 version = "0.28.0"
-source = "git+https://github.com/n0-computer/iroh-docs?branch=main#9166b226fedc889218986eb6ef2a3d3cdcdee367"
+source = "git+https://github.com/n0-computer/iroh-docs?branch=main#d4ab8db452bbefe7aab45ed25621dde6b6ee3f15"
 dependencies = [
  "anyhow",
  "async-channel",
  "bytes",
+ "clap",
+ "colored",
+ "console",
  "derive_more",
+ "dialoguer",
  "ed25519-dalek",
  "futures-buffered",
  "futures-lite 2.5.0",
  "futures-util",
  "hex",
+ "indicatif",
  "iroh-base",
  "iroh-blake3",
  "iroh-blobs",
@@ -2884,7 +2891,6 @@ dependencies = [
  "iroh-metrics",
  "iroh-net",
  "iroh-router",
- "lru",
  "nested_enum_utils",
  "num_enum",
  "portable-atomic",
@@ -2898,9 +2904,10 @@ dependencies = [
  "self_cell",
  "serde",
  "serde-error",
+ "shellexpand",
  "strum 0.26.3",
  "tempfile",
- "thiserror",
+ "thiserror 2.0.3",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -2910,16 +2917,18 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.28.1"
-source = "git+https://github.com/n0-computer/iroh-gossip?branch=main#3d6659daf326f57cbafec189be996b89c7f441bd"
+source = "git+https://github.com/n0-computer/iroh-gossip?branch=main#7c90c3f351585e7a364bfbf3941d07592b20dec6"
 dependencies = [
  "anyhow",
  "async-channel",
  "bytes",
+ "clap",
  "derive_more",
  "ed25519-dalek",
  "futures-concurrency",
  "futures-lite 2.5.0",
  "futures-util",
+ "hex",
  "indexmap 2.6.0",
  "iroh-base",
  "iroh-blake3",
@@ -3029,7 +3038,7 @@ dependencies = [
  "pretty_assertions",
  "rand",
  "rand_chacha",
- "rcgen",
+ "rcgen 0.13.1",
  "regex",
  "reqwest",
  "ring",
@@ -3045,7 +3054,7 @@ dependencies = [
  "surge-ping",
  "swarm-discovery",
  "testresult",
- "thiserror",
+ "thiserror 1.0.68",
  "time",
  "tokio",
  "tokio-rustls",
@@ -3077,7 +3086,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-net",
  "iroh-quinn",
- "rcgen",
+ "rcgen 0.13.1",
  "rustls",
  "socket2",
  "tokio",
@@ -3118,7 +3127,7 @@ dependencies = [
  "rustc-hash",
  "rustls",
  "socket2",
- "thiserror",
+ "thiserror 1.0.68",
  "tokio",
  "tracing",
 ]
@@ -3136,7 +3145,7 @@ dependencies = [
  "rustls",
  "rustls-platform-verifier",
  "slab",
- "thiserror",
+ "thiserror 1.0.68",
  "tinyvec",
  "tracing",
 ]
@@ -3190,7 +3199,7 @@ dependencies = [
  "proptest",
  "rand",
  "rand_chacha",
- "rcgen",
+ "rcgen 0.13.1",
  "regex",
  "reqwest",
  "ring",
@@ -3202,7 +3211,7 @@ dependencies = [
  "smallvec",
  "socket2",
  "stun-rs",
- "thiserror",
+ "thiserror 1.0.68",
  "time",
  "tokio",
  "tokio-rustls",
@@ -3304,7 +3313,7 @@ dependencies = [
  "combine",
  "jni-sys",
  "log",
- "thiserror",
+ "thiserror 1.0.68",
  "walkdir",
 ]
 
@@ -3441,7 +3450,7 @@ dependencies = [
  "serde_bencode",
  "serde_bytes",
  "sha1_smol",
- "thiserror",
+ "thiserror 1.0.68",
  "tracing",
 ]
 
@@ -3601,7 +3610,7 @@ dependencies = [
  "anyhow",
  "byteorder",
  "paste",
- "thiserror",
+ "thiserror 1.0.68",
 ]
 
 [[package]]
@@ -3615,7 +3624,7 @@ dependencies = [
  "log",
  "netlink-packet-core",
  "netlink-sys",
- "thiserror",
+ "thiserror 1.0.68",
  "tokio",
 ]
 
@@ -3651,7 +3660,7 @@ dependencies = [
  "rtnetlink",
  "serde",
  "socket2",
- "thiserror",
+ "thiserror 1.0.68",
  "time",
  "tokio",
  "tokio-util",
@@ -4061,7 +4070,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "879952a81a83930934cbf1786752d6dedc3b1f29e8f8fb2ad1d0a36f377cf442"
 dependencies = [
  "memchr",
- "thiserror",
+ "thiserror 1.0.68",
  "ucd-trie",
 ]
 
@@ -4149,7 +4158,7 @@ dependencies = [
  "rand",
  "self_cell",
  "simple-dns",
- "thiserror",
+ "thiserror 1.0.68",
  "tracing",
  "ureq",
  "wasm-bindgen",
@@ -4287,7 +4296,7 @@ dependencies = [
  "serde",
  "smallvec",
  "socket2",
- "thiserror",
+ "thiserror 1.0.68",
  "time",
  "tokio",
  "tokio-util",
@@ -4518,9 +4527,9 @@ dependencies = [
 
 [[package]]
 name = "quic-rpc"
-version = "0.15.0"
+version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61e131f594054d27d077162815db3b5e9ddd76a28fbb9091b68095971e75c286"
+checksum = "dc623a188942fc875926f7baeb2cb08ed4288b64f29072656eb051e360ee7623"
 dependencies = [
  "anyhow",
  "bincode",
@@ -4572,7 +4581,7 @@ dependencies = [
  "rustc-hash",
  "rustls",
  "socket2",
- "thiserror",
+ "thiserror 1.0.68",
  "tokio",
  "tracing",
 ]
@@ -4589,7 +4598,7 @@ dependencies = [
  "rustc-hash",
  "rustls",
  "slab",
- "thiserror",
+ "thiserror 1.0.68",
  "tinyvec",
  "tracing",
 ]
@@ -4750,6 +4759,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rcgen"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54077e1872c46788540de1ea3d7f4ccb1983d12f9aa909b234468676c1a36779"
+dependencies = [
+ "pem",
+ "ring",
+ "rustls-pki-types",
+ "time",
+ "yasna",
+]
+
+[[package]]
 name = "redb"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4784,7 +4806,7 @@ checksum = "ba009ff324d1fc1b900bd1fdb31564febe58a8ccc8a6fdbb93b543d33b13ca43"
 dependencies = [
  "getrandom",
  "libredox",
- "thiserror",
+ "thiserror 1.0.68",
 ]
 
 [[package]]
@@ -4980,7 +5002,7 @@ dependencies = [
  "netlink-proto",
  "netlink-sys",
  "nix 0.26.4",
- "thiserror",
+ "thiserror 1.0.68",
  "tokio",
 ]
 
@@ -5756,7 +5778,7 @@ dependencies = [
  "pnet_packet",
  "rand",
  "socket2",
- "thiserror",
+ "thiserror 1.0.68",
  "tokio",
  "tracing",
 ]
@@ -5909,7 +5931,16 @@ version = "1.0.68"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "02dd99dc800bbb97186339685293e1cc5d9df1f8fae2d0aecd9ff1c77efea892"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 1.0.68",
+]
+
+[[package]]
+name = "thiserror"
+version = "2.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c006c85c7651b3cf2ada4584faa36773bd07bac24acfb39f3c431b36d7e667aa"
+dependencies = [
+ "thiserror-impl 2.0.3",
 ]
 
 [[package]]
@@ -5917,6 +5948,17 @@ name = "thiserror-impl"
 version = "1.0.68"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7c61ec9a6f64d2793d8a45faba21efbe3ced62a886d44c36a009b2b519b4c7e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.87",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "2.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f077553d607adc1caf65430528a576c757a71ed73944b66ebb58ef2bbd243568"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6056,13 +6098,13 @@ dependencies = [
  "num-bigint",
  "pem",
  "proc-macro2",
- "rcgen",
+ "rcgen 0.12.1",
  "reqwest",
  "ring",
  "rustls",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 1.0.68",
  "time",
  "tokio",
  "tokio-rustls",
@@ -6121,7 +6163,7 @@ dependencies = [
  "http 1.1.0",
  "httparse",
  "js-sys",
- "thiserror",
+ "thiserror 1.0.68",
  "tokio",
  "tokio-tungstenite",
  "wasm-bindgen",
@@ -6250,7 +6292,7 @@ dependencies = [
  "governor",
  "http 1.1.0",
  "pin-project",
- "thiserror",
+ "thiserror 1.0.68",
  "tower 0.4.13",
  "tracing",
 ]
@@ -6274,7 +6316,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3566e8ce28cc0a3fe42519fc80e6b4c943cc4c8cef275620eb8dac2d3d4e06cf"
 dependencies = [
  "crossbeam-channel",
- "thiserror",
+ "thiserror 1.0.68",
  "time",
  "tracing-subscriber",
 ]
@@ -6369,7 +6411,7 @@ dependencies = [
  "log",
  "rand",
  "sha1",
- "thiserror",
+ "thiserror 1.0.68",
  "url",
  "utf-8",
 ]
@@ -6652,7 +6694,7 @@ dependencies = [
  "event-listener 4.0.3",
  "futures-util",
  "parking_lot",
- "thiserror",
+ "thiserror 1.0.68",
 ]
 
 [[package]]
@@ -7011,7 +7053,7 @@ dependencies = [
  "futures",
  "log",
  "serde",
- "thiserror",
+ "thiserror 1.0.68",
  "windows 0.58.0",
  "windows-core 0.58.0",
 ]
@@ -7041,7 +7083,7 @@ dependencies = [
  "nom",
  "oid-registry",
  "rusticata-macros",
- "thiserror",
+ "thiserror 1.0.68",
  "time",
 ]
 

@@ -95,6 +95,8 @@ impl<D: BaoStore> Handler<D> {
             .expect("missing gossip");
         let chan = chan.map::<iroh_gossip::RpcService>();
         gossip
+            .as_ref()
+            .clone()
             .handle_rpc_request(msg, chan)
             .await
             .map_err(|e| e.errors_into())
@@ -110,7 +112,9 @@ impl<D: BaoStore> Handler<D> {
             .get_protocol::<iroh_docs::engine::Engine<D>>(DOCS_ALPN)
         {
             let chan = chan.map::<iroh_docs::rpc::proto::RpcService>();
-            docs.handle_rpc_request(msg, chan)
+            docs.as_ref()
+                .clone()
+                .handle_rpc_request(msg, chan)
                 .await
                 .map_err(|e| e.errors_into())
         } else {
