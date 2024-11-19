@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["NodeRpc"],"trait":["AbstractNode"]};
+window.SIDEBAR_ITEMS = {"fn":["handle_rpc_request"],"trait":["AbstractNode"]};

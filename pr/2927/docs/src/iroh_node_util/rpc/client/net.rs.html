@@ -107,17 +107,9 @@
 <a href="#107" id="107">107</a>
 <a href="#108" id="108">108</a>
 <a href="#109" id="109">109</a>
-<a href="#110" id="110">110</a>
-<a href="#111" id="111">111</a>
-<a href="#112" id="112">112</a>
-<a href="#113" id="113">113</a>
-<a href="#114" id="114">114</a>
-<a href="#115" id="115">115</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! API to manage the iroh networking stack.
 //!
 //! The main entry point is the [`Client`].
-//!
-//! You obtain a [`Client`] via [`Iroh::net()`](crate::client::Iroh::net).
 //!
 //! The client can be used to get information about the node, such as the
 //! [node id](Client::node_id) or [node address](Client::node_addr).
@@ -145,14 +137,10 @@
 ///
 /// Cheaply clonable and threadsafe. Use the iroh `net::Client` to access the
 /// iroh net methods from a different thread, process, or remote machine.
-/// The [`Iroh`](crate::client::Iroh) client dereferences to a `node::Client`,
-/// so you have access to this api from the [`Iroh`](crate::client::Iroh) client itself.
 ///
 /// The `node::Client` api allows you to get information *about* the iroh node,
 /// its status, and connection status to other nodes. It also allows you to
 /// provide address information about *other* nodes to your node.
-///
-/// Obtain an iroh `node::Client` via [`Iroh::net()`](crate::client::Iroh::net).
 </span><span class="attr">#[derive(Debug, Clone)]
 #[repr(transparent)]
 </span><span class="kw">pub struct </span>Client {
@@ -169,7 +157,7 @@
     /// This streams a *current snapshot*. It does not keep the stream open after finishing
     /// transferring the snapshot.
     ///
-    /// See also [`Endpoint::remote_info_iter`](crate::net::Endpoint::remote_info_iter).
+    /// See also [`Endpoint::remote_info_iter`](iroh_net::Endpoint::remote_info_iter).
     </span><span class="kw">pub async fn </span>remote_info_iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;RemoteInfo&gt;&gt;&gt; {
         <span class="kw">let </span>stream = <span class="self">self</span>.rpc.server_streaming(RemoteInfosIterRequest {}).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(flatten(stream).map(|res| res.map(|res| res.info)))
@@ -177,7 +165,7 @@
 
     <span class="doccomment">/// Fetches node information about a remote iroh node identified by its [`NodeId`].
     ///
-    /// See also [`Endpoint::remote_info`](crate::net::Endpoint::remote_info).
+    /// See also [`Endpoint::remote_info`](iroh_net::Endpoint::remote_info).
     </span><span class="kw">pub async fn </span>remote_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;RemoteInfo&gt;&gt; {
         <span class="kw">let </span>RemoteInfoResponse { info } = <span class="self">self</span>.rpc.rpc(RemoteInfoRequest { node_id }).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(info)
@@ -185,7 +173,7 @@
 
     <span class="doccomment">/// Fetches the node id of this node.
     ///
-    /// See also [`Endpoint::node_id`](crate::net::Endpoint::node_id).
+    /// See also [`Endpoint::node_id`](iroh_net::Endpoint::node_id).
     </span><span class="kw">pub async fn </span>node_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;NodeId&gt; {
         <span class="kw">let </span>id = <span class="self">self</span>.rpc.rpc(IdRequest).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(id)
@@ -193,7 +181,7 @@
 
     <span class="doccomment">/// Fetches the [`NodeAddr`] for this node.
     ///
-    /// See also [`Endpoint::node_addr`](crate::net::Endpoint::node_addr).
+    /// See also [`Endpoint::node_addr`](iroh_net::Endpoint::node_addr).
     </span><span class="kw">pub async fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;NodeAddr&gt; {
         <span class="kw">let </span>addr = <span class="self">self</span>.rpc.rpc(AddrRequest).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(addr)
@@ -201,7 +189,7 @@
 
     <span class="doccomment">/// Adds a known node address to this node.
     ///
-    /// See also [`Endpoint::add_node_addr`](crate::net::Endpoint::add_node_addr).
+    /// See also [`Endpoint::add_node_addr`](iroh_net::Endpoint::add_node_addr).
     </span><span class="kw">pub async fn </span>add_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: NodeAddr) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="self">self</span>.rpc.rpc(AddAddrRequest { addr }).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(())
@@ -209,7 +197,7 @@
 
     <span class="doccomment">/// Returns the relay server we are connected to.
     ///
-    /// See also [`Endpoint::home_relay`](crate::net::Endpoint::home_relay).
+    /// See also [`Endpoint::home_relay`](iroh_net::Endpoint::home_relay).
     </span><span class="kw">pub async fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt; {
         <span class="kw">let </span>relay = <span class="self">self</span>.rpc.rpc(RelayRequest).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(relay)

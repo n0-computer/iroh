@@ -150,14 +150,13 @@
 <a href="#150" id="150">150</a>
 <a href="#151" id="151">151</a>
 <a href="#152" id="152">152</a>
-<a href="#153" id="153">153</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{collections::BTreeMap, fmt::Debug, sync::Arc};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>iroh_blobs::{net_protocol::Blobs <span class="kw">as </span>BlobsProtocol, store::Store <span class="kw">as </span>BaoStore};
 <span class="kw">use </span>iroh_docs::net::DOCS_ALPN;
 <span class="kw">use </span>iroh_gossip::net::{Gossip, GOSSIP_ALPN};
-<span class="kw">use </span>iroh_node_util::rpc::{proto::node::CounterStats, server::AbstractNode};
+<span class="kw">use </span>iroh_node_util::rpc::proto::node::CounterStats;
 <span class="kw">use </span>iroh_router::Router;
 <span class="kw">use </span>quic_rpc::server::{RpcChannel, RpcServerError};
 <span class="kw">use </span>tokio::task::JoinSet;
@@ -181,17 +180,17 @@
     }
 }
 
-<span class="kw">impl</span>&lt;D: BaoStore&gt; iroh_node_util::rpc::server::AbstractNode <span class="kw">for </span>Handler&lt;D&gt; {
+<span class="kw">impl</span>&lt;D: BaoStore&gt; iroh_node_util::rpc::server::AbstractNode <span class="kw">for </span>NodeInner&lt;D&gt; {
     <span class="kw">fn </span>endpoint(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>iroh_net::Endpoint {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.inner.endpoint
+        <span class="kw-2">&amp;</span><span class="self">self</span>.endpoint
     }
 
     <span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="self">self</span>.inner.cancel_token.cancel();
+        <span class="self">self</span>.cancel_token.cancel();
     }
 
     <span class="kw">fn </span>rpc_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;std::net::SocketAddr&gt; {
-        <span class="self">self</span>.inner.rpc_addr
+        <span class="self">self</span>.rpc_addr
     }
 
     <span class="kw">fn </span>stats(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; anyhow::Result&lt;BTreeMap&lt;String, CounterStats&gt;&gt; {
@@ -232,8 +231,7 @@
         chan: RpcChannel&lt;RpcService, IrohServerEndpoint&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), RpcServerError&lt;IrohServerEndpoint&gt;&gt; {
         <span class="macro">debug!</span>(<span class="string">"handling node request: {msg:?}"</span>);
-        <span class="self">self</span>.node()
-            .handle_rpc_request(msg, chan.map().boxed())
+        iroh_node_util::rpc::server::handle_rpc_request(<span class="self">self</span>.inner, msg, chan.map().boxed())
             .<span class="kw">await
             </span>.map_err(|e| e.errors_into())
     }
