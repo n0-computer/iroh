@@ -1,13 +1,14 @@
 //! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Result;
 
-use quinn::VarInt;
+use quinn::{ApplicationClose, VarInt};
 use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::{debug, error, info, info_span, warn, Instrument};
+use tracing::{debug, info, info_span, warn, Instrument};
 
 use crate::server::QuicConfig;
 
@@ -19,6 +20,7 @@ pub const QUIC_ADDR_DISC_CLOSE_CODE: VarInt = VarInt::from_u32(0);
 pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 
 pub(crate) struct QuicServer {
+    bind_addr: SocketAddr,
     cancel: CancellationToken,
     handle: AbortOnDropHandle<()>,
 }
@@ -43,6 +45,11 @@ impl QuicServer {
         &mut self.handle
     }
 
+    /// Returns the socket address for this QUIC server.
+    pub fn bind_addr(&self) -> &SocketAddr {
+        &self.bind_addr
+    }
+
     /// Spawns a QUIC server that creates and QUIC endpoint and listens
     /// for QUIC connections for address discovery
     ///
@@ -54,9 +61,13 @@ impl QuicServer {
         let mut server_config =
             quinn::ServerConfig::with_crypto(Arc::new(quic_config.server_config));
         let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
-        transport_config.max_concurrent_uni_streams(0_u8.into());
+        transport_config
+            .max_concurrent_uni_streams(0_u8.into())
+            // enable sending quic address discovery frames
+            .send_observed_address_reports(true);
 
         let endpoint = quinn::Endpoint::server(server_config, quic_config.bind_addr)?;
+        let bind_addr = endpoint.local_addr()?;
 
         let cancel = CancellationToken::new();
         let cancel_accept_loop = cancel.clone();
@@ -81,7 +92,12 @@ impl QuicServer {
                     Some(conn) => {
                          debug!("accepting connection from {:?}", conn.remote_address())       ;
                          set.spawn(async move {
-                             handle_connection(conn)
+                             let remote_addr = conn.remote_address();
+                             let res = handle_connection(conn).await;
+                             if let Err(ref err) = res {
+                                 warn!(remote_address = ?remote_addr, "error handling connection {err:?}")
+                             }
+                             res
                          });
                     }
                     None => {
@@ -97,6 +113,7 @@ impl QuicServer {
         debug!("quic endpoint has been shutdown.");
         }.instrument(info_span!("quic-endpoint")),);
         Ok(Self {
+            bind_addr,
             cancel,
             handle: AbortOnDropHandle::new(task),
         })
@@ -125,75 +142,147 @@ impl ServerHandle {
 }
 
 async fn handle_connection(conn: quinn::Incoming) -> Result<()> {
+    info!("made it here");
     let connection = conn.await?;
-    let span = info_span!(
-        "connection",
-        remote = %connection.remote_address(),
-        protocol = %connection
-            .handshake_data()
-            .unwrap()
-            .downcast::<quinn::crypto::rustls::HandshakeData>().unwrap()
-            .protocol
-            .map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned())
-    );
-    async {
-        info!("established");
-
-        // Each stream initiated by the client constitutes a new request.
-        loop {
-            let stream = connection.accept_bi().await;
-            let stream = match stream {
-                Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
-                    info!("connection closed");
-                    return Ok(());
-                }
-                Err(e) => {
-                    return Err(e);
-                }
-                Ok(s) => s,
-            };
-            let fut = handle_request(stream);
-            tokio::spawn(
-                async move {
-                    if let Err(e) = fut.await {
-                        error!("failed: {reason}", reason = e.to_string());
-                    }
-                }
-                .instrument(info_span!("request")),
+    info!("made it here too");
+    // let span = info_span!(
+    //     "connection",
+    //     remote = %connection.remote_address(),
+    //     protocol = %connection
+    //         .handshake_data()
+    //         .unwrap()
+    //         .downcast::<quinn::crypto::rustls::HandshakeData>().unwrap()
+    //         .protocol
+    //         .map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned())
+    // );
+    info!("established");
+    // wait for the client to close the connection
+    let connection_err = connection.closed().await;
+    match connection_err {
+        quinn::ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. })
+            if error_code == QUIC_ADDR_DISC_CLOSE_CODE =>
+        {
+            return Ok(());
+        }
+        _ => {
+            warn!(
+                "{} - error closing connection {connection_err:?}",
+                connection.remote_address()
             );
         }
     }
-    .instrument(span)
-    .await?;
     Ok(())
 }
 
-async fn handle_request(
-    (mut send, mut _recv): (quinn::SendStream, quinn::RecvStream),
-) -> Result<()> {
-    let resp = b"test";
-    send.write_all(resp)
-        .await
-        .map_err(|e| anyhow::anyhow!("failed to send response: {}", e))?;
-    // Gracefully terminate the stream
-    send.finish()
-        .map_err(|e| anyhow::anyhow!("failed to shutdown stream: {}", e))?;
-    info!("complete");
-    Ok(())
-}
+// async fn handle_request(
+//     (mut send, mut _recv): (quinn::SendStream, quinn::RecvStream),
+// ) -> Result<()> {
+//     let resp = b"test";
+//     send.write_all(resp)
+//         .await
+//         .map_err(|e| anyhow::anyhow!("failed to send response: {}", e))?;
+//     // Gracefully terminate the stream
+//     send.finish()
+//         .map_err(|e| anyhow::anyhow!("failed to shutdown stream: {}", e))?;
+//     info!("complete");
+//     Ok(())
+// }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+
+    /// Create certs and rustls::ServerConfig for local use
+    ///
+    /// The certificate covers the domains "localhost" and "127.0.0.1".
+    fn generate_self_signed_localhost_config() -> Result<(
+        Vec<rustls::pki_types::CertificateDer<'static>>,
+        rustls::ServerConfig,
+    )> {
+        let cert = rcgen::generate_simple_self_signed(vec![
+            "localhost".to_string(),
+            "127.0.0.1".to_string(),
+        ])
+        .expect("valid");
+        let rustls_certs = vec![rustls::pki_types::CertificateDer::from(
+            cert.serialize_der().unwrap(),
+        )];
+        let private_key =
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.get_key_pair().serialize_der());
+        let private_key = rustls::pki_types::PrivateKeyDer::from(private_key);
+
+        let server_config = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("protocols supported by ring")
+        .with_no_client_auth()
+        .with_single_cert(rustls_certs.clone(), private_key)?;
+        Ok((rustls_certs, server_config))
+    }
+
+    /// Generates a [`quinn::ClientConfig`] that has quic address discovery enabled.
+    fn generate_quic_addr_disc_client_config() -> quinn::ClientConfig {
+        let roots = rustls::RootCertStore {
+            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+        };
+        let mut config =
+            rustls::ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+        config.alpn_protocols = vec![ALPN_QUIC_ADDR_DISC.into()];
+        let config = quinn_proto::crypto::rustls::QuicClientConfig::try_from(config).unwrap();
+        let mut transport = quinn_proto::TransportConfig::default();
+        // enable address discovery
+        transport
+            .send_observed_address_reports(true)
+            .receive_observed_address_reports(true);
+
+        let mut client_config = quinn::ClientConfig::new(Arc::new(config));
+        client_config.transport_config(Arc::new(transport));
+        client_config
+    }
+
     #[tokio::test]
     async fn quic_endpoint_basic() -> anyhow::Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let _key = iroh_base::key::SecretKey::generate();
-        // create cert from key
-        // start up server on localhost
-        // start up client conn
-        // connect to server ep
-        // wait for addr
-        todo!();
+        let (_, server_config) = generate_self_signed_localhost_config()?;
+
+        let quic_server = QuicServer::spawn(QuicConfig::new(
+            server_config,
+            "127.0.0.1".parse()?,
+            Some(0),
+        )?)
+        .await?;
+
+        let client_config = generate_quic_addr_disc_client_config();
+        let mut client_endpoint =
+            quinn::Endpoint::client(SocketAddr::new("127.0.0.1".parse()?, 0))?;
+        client_endpoint.set_default_client_config(client_config);
+
+        let client_addr = client_endpoint.local_addr()?;
+        println!("{client_addr}");
+
+        let conn = client_endpoint
+            .connect(quic_server.bind_addr.clone(), "localhost")?
+            .await?;
+        let mut external_addresses = conn.observed_external_addr();
+        let addr = external_addresses
+            .wait_for(|addr| addr.is_some())
+            .await?
+            .expect("checked");
+
+        // gracefully close the connections
+        conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+        // wait until the endpoint delivers the closing message to the server
+        client_endpoint.wait_idle().await;
+        // shut down the quic server
+        quic_server.shutdown();
+
+        assert_eq!(client_addr, addr);
+        Ok(())
     }
 }

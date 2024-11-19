@@ -137,10 +137,13 @@ struct Config {
     /// Defaults to `true`
     #[serde(default = "cfg_defaults::enable_quic_addr_discovery")]
     enable_quic_addr_discovery: bool,
-    /// The socket address to bind the QUIC server on.
+    /// The port to bind the QUIC server on.
     ///
-    /// Defaults to using the `http_bind_addr` with the port set to [`DEFAULT_QUIC_PORT`].
-    quic_bind_addr: Option<SocketAddr>,
+    /// The socket address will use the ip address from the tls config.
+    ///
+    /// If `None`, then the [`DEFAULT_QUIC_PORT`] will be used. If 0,
+    /// then the socket will bind to a random unused port.
+    quic_bind_port: Option<u16>,
     /// Rate limiting configuration.
     ///
     /// Disabled if not present.
@@ -183,7 +186,7 @@ impl Default for Config {
             enable_stun: true,
             stun_bind_addr: None,
             enable_quic_addr_discovery: true,
-            quic_bind_addr: None,
+            quic_bind_port: None,
             limits: None,
             enable_metrics: true,
             metrics_bind_addr: None,
@@ -441,6 +444,7 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
             quic_config = Some(QuicConfig::new(
                 tls.server_config.clone(),
                 tls.https_bind_addr.ip().clone(),
+                cfg.quic_bind_port,
             )?);
         } else {
             bail!("Must have a valid TLS configuration to enable a QUIC server for QUIC address discovery")

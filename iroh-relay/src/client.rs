@@ -1113,7 +1113,7 @@ impl DnsExt for DnsResolver {
 #[cfg(any(test, feature = "test-utils"))]
 #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
 #[derive(Debug)]
-struct NoCertVerifier;
+pub(crate) struct NoCertVerifier;
 
 #[cfg(any(test, feature = "test-utils"))]
 impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {

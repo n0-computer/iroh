@@ -41,7 +41,11 @@ use tokio::{
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
-use crate::{http::RELAY_PROBE_PATH, protos, quic::QuicServer};
+use crate::{
+    http::RELAY_PROBE_PATH,
+    protos,
+    quic::{QuicServer, ServerHandle as QuicServerHandle},
+};
 
 pub(crate) mod actor;
 pub(crate) mod client_conn;
@@ -153,11 +157,17 @@ impl std::fmt::Debug for QuicConfig {
 
 impl QuicConfig {
     /// Create a new [`QuicConfig`] from a [`TlsConfig`].
-    pub fn new(mut server_config: rustls::ServerConfig, ip: IpAddr) -> Result<Self> {
+    ///
+    /// If `port` is `None`, will use [`crate::default::DEFAULT_QUIC_PORT`]
+    pub fn new(
+        mut server_config: rustls::ServerConfig,
+        ip: IpAddr,
+        port: Option<u16>,
+    ) -> Result<Self> {
         server_config.alpn_protocols = vec![crate::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
         let server_config: QuicServerConfig = QuicServerConfig::try_from(server_config)?;
         Ok(Self {
-            bind_addr: SocketAddr::new(ip, crate::defaults::DEFAULT_QUIC_PORT),
+            bind_addr: SocketAddr::new(ip, port.unwrap_or(crate::defaults::DEFAULT_QUIC_PORT)),
             server_config,
         })
     }
@@ -223,10 +233,12 @@ pub struct Server {
     /// If the Relay server is not using TLS then it is served from the
     /// [`Server::http_addr`].
     https_addr: Option<SocketAddr>,
+    /// The addres of the QUIC server, if configured.
+    quic_addr: Option<SocketAddr>,
     /// Handle to the relay server.
     relay_handle: Option<http_server::ServerHandle>,
     /// Handle to the quic server.
-    quic_handle: Option<crate::quic::ServerHandle>,
+    quic_handle: Option<QuicServerHandle>,
     /// The main task running the server.
     supervisor: AbortOnDropHandle<Result<()>>,
     /// The certificate for the server.
@@ -294,6 +306,7 @@ impl Server {
             }
             None => None,
         };
+        let quic_addr = quic_server.as_ref().map(|srv| srv.bind_addr().clone());
         let quic_handle = quic_server.as_ref().map(|srv| srv.handle());
 
         let (relay_server, http_addr) = match config.relay {
@@ -387,6 +400,7 @@ impl Server {
             http_addr: http_addr.or(relay_addr),
             stun_addr,
             https_addr: http_addr.and(relay_addr),
+            quic_addr,
             relay_handle,
             quic_handle,
             supervisor: AbortOnDropHandle::new(task),
@@ -425,6 +439,11 @@ impl Server {
     /// The socket address the HTTP server is listening on.
     pub fn http_addr(&self) -> Option<SocketAddr> {
         self.http_addr
+    }
+
+    /// The socket address the QUIC server is listening on.
+    pub fn quic_addr(&self) -> Option<SocketAddr> {
+        self.quic_addr
     }
 
     /// The socket address the STUN server is listening on.

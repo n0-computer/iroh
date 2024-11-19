@@ -739,7 +739,7 @@ mod test_dns_pkarr {
         test_utils::{
             dns_server::{create_dns_resolver, run_dns_server},
             pkarr_dns_state::State,
-            run_relay_server, DnsPkarrServer,
+            run_relay_server_with_stun, DnsPkarrServer,
         },
         AddrInfo, Endpoint, NodeAddr, RelayMap, RelayMode,
     };
@@ -811,7 +811,7 @@ mod test_dns_pkarr {
         let _logging_guard = iroh_test::logging::setup();
 
         let dns_pkarr_server = DnsPkarrServer::run().await?;
-        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
+        let (relay_map, _relay_url, _relay_guard) = run_relay_server_with_stun().await?;
 
         let (ep1, _guard1) = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
         let (ep2, _guard2) = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
@@ -832,7 +832,7 @@ mod test_dns_pkarr {
         let _logging_guard = iroh_test::logging::setup();
 
         let dns_pkarr_server = DnsPkarrServer::run().await?;
-        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
+        let (relay_map, _relay_url, _relay_guard) = run_relay_server_with_stun().await?;
 
         let (ep1, _guard1) = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
         let (ep2, _guard2) = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;

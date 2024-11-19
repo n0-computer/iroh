@@ -614,7 +614,8 @@ mod tests {
     #[tokio::test]
     async fn test_download_via_relay() -> Result<()> {
         let _guard = iroh_test::logging::setup();
-        let (relay_map, relay_url, _guard) = iroh_net::test_utils::run_relay_server().await?;
+        let (relay_map, relay_url, _guard) =
+            iroh_net::test_utils::run_relay_server_with_stun().await?;
 
         let node1 = Node::memory()
             .bind_random_port()
@@ -649,7 +650,8 @@ mod tests {
     #[ignore = "flaky"]
     async fn test_download_via_relay_with_discovery() -> Result<()> {
         let _guard = iroh_test::logging::setup();
-        let (relay_map, _relay_url, _guard) = iroh_net::test_utils::run_relay_server().await?;
+        let (relay_map, _relay_url, _guard) =
+            iroh_net::test_utils::run_relay_server_with_stun().await?;
         let dns_pkarr_server = DnsPkarrServer::run().await?;
 
         let secret1 = SecretKey::generate();
