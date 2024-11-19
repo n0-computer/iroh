@@ -1357,9 +1357,8 @@ fn proxy_url_from_env() -> Option<Url> {
 
     None
 }
+
 /// Configuration of the relay servers for an [`Endpoint`].
-///
-/// [`Endpoint`]: crate::endpoint::Endpoint
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelayMode {
     /// Disable relay servers completely.

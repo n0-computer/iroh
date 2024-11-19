@@ -2,9 +2,8 @@
 //!
 //! Netcheck is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
-//! etc.
-//!
-//! Based on <https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go>
+//! etc and reachability to the configured relays.
+// Based on <https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go>
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -330,7 +329,7 @@ pub(crate) enum Message {
     InFlightStun(Inflight, oneshot::Sender<()>),
 }
 
-/// Sender to the [`Actor`].
+/// Sender to the main service.
 ///
 /// Unlike [`Client`] this is the raw channel to send messages over.  Keeping this alive
 /// will not keep the actor alive, which makes this handy to pass to internal tasks.
