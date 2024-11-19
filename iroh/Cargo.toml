@@ -58,23 +58,25 @@ tempfile = "3.4"
 tokio = { version = "1", features = ["io-util", "rt"] }
 tokio-util = { version = "0.7", features = ["codec", "io-util", "io", "time"] }
 tracing = "0.1"
+iroh-relay = { version = "0.28", path = "../iroh-relay" }
+ref-cast = "1.0.23"
 
 # Examples
 clap = { version = "4", features = ["derive"], optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
-ref-cast = "1.0.23"
 console = { version = "0.15.5", optional = true }
+iroh-blobs = { version = "0.28", optional = true, features = ["rpc"] }
 
 # Documentation tests
 url = { version = "2.5.0", features = ["serde"] }
 serde-error = "0.1.3"
 
 [features]
-default = ["metrics", "fs-store"]
+default = ["metrics", "fs-store", "examples"]
 metrics = ["iroh-metrics"]
 fs-store = []
 test = []
-examples = ["dep:clap", "dep:indicatif"]
+examples = ["dep:clap", "dep:indicatif", "dep:iroh-blobs"]
 discovery-local-network = [
     "iroh-net/discovery-local-network",
     "examples",
@@ -107,22 +109,14 @@ rustdoc-args = ["--cfg", "iroh_docsrs"]
 
 [[example]]
 name = "hello-world-provide"
-
-[[example]]
-name = "hello-world-fetch"
-
-[[example]]
-name = "collection-provide"
-
-[[example]]
-name = "collection-fetch"
-
-[[example]]
-name = "rpc"
 required-features = ["examples"]
 
 [[example]]
-name = "client"
+name = "hello-world-fetch"
+required-features = ["examples"]
+
+[[example]]
+name = "rpc"
 required-features = ["examples"]
 
 [[example]]

@@ -3,10 +3,13 @@
 //!
 //! This is using an in memory database and a random node id.
 //! Run the `provide` example, which will give you instructions on how to run this example.
-use std::{env, str::FromStr};
+use std::{env, str::FromStr, sync::Arc};
 
 use anyhow::{bail, ensure, Context, Result};
-use iroh::{base::ticket::BlobTicket, blobs::BlobFormat};
+use iroh::base::ticket::BlobTicket;
+use iroh_blobs::{
+    downloader::Downloader, net_protocol::Blobs, util::local_pool::LocalPool, BlobFormat,
+};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -34,7 +37,20 @@ async fn main() -> Result<()> {
         BlobTicket::from_str(&args[1]).context("failed parsing blob ticket\n\nGet a ticket by running the follow command in a separate terminal:\n\n`cargo run --example hello-world-provide`")?;
 
     // create a new node
-    let node = iroh::node::Node::memory().spawn().await?;
+    let builder = iroh::node::Node::memory().build().await?;
+    let local_pool = LocalPool::default();
+    let store = iroh_blobs::store::mem::Store::new();
+    let downloader = Downloader::new(store.clone(), builder.endpoint(), local_pool.handle());
+    let blobs = Blobs::new_with_events(
+        store,
+        local_pool.handle().clone(),
+        Default::default(),
+        downloader,
+        builder.endpoint(),
+    );
+    let blobs_client = blobs.client();
+    builder.accept(iroh_blobs::protocol::ALPN.to_vec(), Arc::new(blobs));
+    let node = builder.spawn().await?;
 
     println!("fetching hash:  {}", ticket.hash());
     println!("node id:        {}", node.node_id());
@@ -58,8 +74,7 @@ async fn main() -> Result<()> {
 
     // `download` returns a stream of `DownloadProgress` events. You can iterate through these updates to get progress
     // on the state of your download.
-    let download_stream = node
-        .blobs()
+    let download_stream = blobs_client
         .download(ticket.hash(), ticket.node_addr().clone())
         .await?;
 
