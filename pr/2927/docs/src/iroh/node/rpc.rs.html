@@ -133,13 +133,23 @@
 <a href="#133" id="133">133</a>
 <a href="#134" id="134">134</a>
 <a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt::Debug, sync::Arc};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>iroh_blobs::{net_protocol::Blobs <span class="kw">as </span>BlobsProtocol, store::Store <span class="kw">as </span>BaoStore};
 <span class="kw">use </span>iroh_docs::net::DOCS_ALPN;
 <span class="kw">use </span>iroh_gossip::net::{Gossip, GOSSIP_ALPN};
-<span class="kw">use </span>iroh_node_util::rpc::server::Node;
+<span class="kw">use </span>iroh_node_util::rpc::server::AbstractNode;
 <span class="kw">use </span>iroh_router::Router;
 <span class="kw">use </span>quic_rpc::server::{RpcChannel, RpcServerError};
 <span class="kw">use </span>tokio::task::JoinSet;
@@ -160,6 +170,20 @@
 <span class="kw">impl</span>&lt;D&gt; Handler&lt;D&gt; {
     <span class="kw">pub fn </span>new(inner: Arc&lt;NodeInner&lt;D&gt;&gt;, router: Router) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{ inner, router }
+    }
+}
+
+<span class="kw">impl</span>&lt;D: BaoStore&gt; iroh_node_util::rpc::server::AbstractNode <span class="kw">for </span>Handler&lt;D&gt; {
+    <span class="kw">fn </span>endpoint(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>iroh_net::Endpoint {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.inner.endpoint
+    }
+
+    <span class="kw">fn </span>cancel_token(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>tokio_util::sync::CancellationToken {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.inner.cancel_token
+    }
+
+    <span class="kw">fn </span>rpc_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;std::net::SocketAddr&gt; {
+        <span class="self">self</span>.inner.rpc_addr
     }
 }
 
@@ -192,12 +216,8 @@
         chan: RpcChannel&lt;RpcService, IrohServerEndpoint&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), RpcServerError&lt;IrohServerEndpoint&gt;&gt; {
         <span class="macro">debug!</span>(<span class="string">"handling node request: {msg:?}"</span>);
-        <span class="kw">let </span>node = Node::new(
-            <span class="self">self</span>.inner.endpoint.clone(),
-            <span class="self">self</span>.inner.cancel_token.clone(),
-            <span class="self">self</span>.inner.rpc_addr.clone(),
-        );
-        node.handle_rpc_request(msg, chan.map().boxed())
+        <span class="self">self</span>.node()
+            .handle_rpc_request(msg, chan.map().boxed())
             .<span class="kw">await
             </span>.map_err(|e| e.errors_into())
     }

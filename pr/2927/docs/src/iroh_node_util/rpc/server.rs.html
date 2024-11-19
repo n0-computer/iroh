@@ -188,6 +188,14 @@
 <a href="#188" id="188">188</a>
 <a href="#189" id="189">189</a>
 <a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{net::SocketAddr, time::Duration};
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
@@ -206,24 +214,32 @@
     },
 };
 
-<span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>Node {
-    endpoint: Endpoint,
-    cancel_token: CancellationToken,
-    rpc_addr: <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;,
+<span class="kw">pub trait </span>AbstractNode: Sized + Send + Sync + Clone + <span class="lifetime">'static </span>{
+    <span class="kw">fn </span>endpoint(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Endpoint;
+
+    <span class="kw">fn </span>cancel_token(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>CancellationToken;
+
+    <span class="kw">fn </span>rpc_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;;
+
+    <span class="kw">fn </span>node(<span class="self">self</span>) -&gt; NodeRpc&lt;<span class="self">Self</span>&gt; {
+        NodeRpc(<span class="self">self</span>)
+    }
 }
 
-<span class="kw">impl </span>Node {
-    <span class="kw">pub fn </span>new(
-        endpoint: Endpoint,
-        cancel_token: CancellationToken,
-        rpc_addr: <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;,
-    ) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            endpoint,
-            cancel_token,
-            rpc_addr,
-        }
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">pub struct </span>NodeRpc&lt;T&gt;(T);
+
+<span class="kw">impl</span>&lt;T: AbstractNode&gt; NodeRpc&lt;T&gt; {
+    <span class="kw">fn </span>endpoint(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Endpoint {
+        <span class="self">self</span>.<span class="number">0</span>.endpoint()
+    }
+
+    <span class="kw">fn </span>cancel_token(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>CancellationToken {
+        <span class="self">self</span>.<span class="number">0</span>.cancel_token()
+    }
+
+    <span class="kw">fn </span>rpc_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
+        <span class="self">self</span>.<span class="number">0</span>.rpc_addr()
     }
 
     <span class="kw">pub async fn </span>handle_rpc_request&lt;C: ChannelTypes&lt;RpcService&gt;&gt;(
@@ -281,7 +297,7 @@
         } <span class="kw">else </span>{
             <span class="comment">// trigger a graceful shutdown
             </span><span class="macro">info!</span>(<span class="string">"graceful shutdown requested"</span>);
-            <span class="self">self</span>.cancel_token.cancel();
+            <span class="self">self</span>.cancel_token().cancel();
         }
     }
 
@@ -294,19 +310,19 @@
     <span class="kw">async fn </span>node_status(<span class="self">self</span>, <span class="kw">_</span>: StatusRequest) -&gt; RpcResult&lt;NodeStatus&gt; {
         <span class="prelude-val">Ok</span>(NodeStatus {
             addr: <span class="self">self
-                </span>.endpoint
+                </span>.endpoint()
                 .node_addr()
                 .<span class="kw">await
                 </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>,
             listen_addrs: <span class="self">self</span>.local_endpoint_addresses().<span class="kw">await</span>.unwrap_or_default(),
             version: <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>).to_string(),
-            rpc_addr: <span class="self">self</span>.rpc_addr,
+            rpc_addr: <span class="self">self</span>.rpc_addr(),
         })
     }
 
     <span class="kw">async fn </span>local_endpoint_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;SocketAddr&gt;&gt; {
         <span class="kw">let </span>endpoints = <span class="self">self
-            </span>.endpoint
+            </span>.endpoint()
             .direct_addresses()
             .next()
             .<span class="kw">await
@@ -316,7 +332,7 @@
 
     <span class="kw">async fn </span>node_addr(<span class="self">self</span>, <span class="kw">_</span>: net::AddrRequest) -&gt; RpcResult&lt;NodeAddr&gt; {
         <span class="kw">let </span>addr = <span class="self">self
-            </span>.endpoint
+            </span>.endpoint()
             .node_addr()
             .<span class="kw">await
             </span>.map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
@@ -327,7 +343,7 @@
         <span class="self">self</span>,
         <span class="kw">_</span>: net::RemoteInfosIterRequest,
     ) -&gt; <span class="kw">impl </span>Stream&lt;Item = RpcResult&lt;net::RemoteInfosIterResponse&gt;&gt; + Send + <span class="lifetime">'static </span>{
-        <span class="kw">let </span><span class="kw-2">mut </span>infos: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self</span>.endpoint.remote_info_iter().collect();
+        <span class="kw">let </span><span class="kw-2">mut </span>infos: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self</span>.endpoint().remote_info_iter().collect();
         infos.sort_by_key(|n| n.node_id.to_string());
         futures_lite::stream::iter(
             infos
@@ -338,14 +354,14 @@
 
     <span class="attr">#[allow(clippy::unused_async)]
     </span><span class="kw">async fn </span>node_id(<span class="self">self</span>, <span class="kw">_</span>: net::IdRequest) -&gt; RpcResult&lt;NodeId&gt; {
-        <span class="prelude-val">Ok</span>(<span class="self">self</span>.endpoint.secret_key().public())
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>.endpoint().secret_key().public())
     }
 
     <span class="comment">// This method is called as an RPC method, which have to be async
     </span><span class="attr">#[allow(clippy::unused_async)]
     </span><span class="kw">async fn </span>remote_info(<span class="self">self</span>, req: net::RemoteInfoRequest) -&gt; RpcResult&lt;net::RemoteInfoResponse&gt; {
         <span class="kw">let </span>net::RemoteInfoRequest { node_id } = req;
-        <span class="kw">let </span>info = <span class="self">self</span>.endpoint.remote_info(node_id);
+        <span class="kw">let </span>info = <span class="self">self</span>.endpoint().remote_info(node_id);
         <span class="prelude-val">Ok</span>(net::RemoteInfoResponse { info })
     }
 
@@ -353,7 +369,7 @@
     </span><span class="attr">#[allow(clippy::unused_async)]
     </span><span class="kw">async fn </span>node_add_addr(<span class="self">self</span>, req: net::AddAddrRequest) -&gt; RpcResult&lt;()&gt; {
         <span class="kw">let </span>net::AddAddrRequest { addr } = req;
-        <span class="self">self</span>.endpoint
+        <span class="self">self</span>.endpoint()
             .add_node_addr(addr)
             .map_err(|e| RpcError::new(<span class="kw-2">&amp;*</span>e))<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
@@ -361,10 +377,10 @@
 
     <span class="attr">#[allow(clippy::unused_async)]
     </span><span class="kw">async fn </span>node_relay(<span class="self">self</span>, <span class="kw">_</span>: net::RelayRequest) -&gt; RpcResult&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt; {
-        <span class="prelude-val">Ok</span>(<span class="self">self</span>.endpoint.home_relay())
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>.endpoint().home_relay())
     }
 
-    <span class="kw">fn </span>node_watch(<span class="self">self</span>, <span class="kw">_</span>: net::NodeWatchRequest) -&gt; <span class="kw">impl </span>Stream&lt;Item = net::WatchResponse&gt; {
+    <span class="kw">fn </span>node_watch(<span class="self">self</span>, <span class="kw">_</span>: net::NodeWatchRequest) -&gt; <span class="kw">impl </span>Stream&lt;Item = net::WatchResponse&gt; + Send {
         futures_lite::stream::unfold((), |()| <span class="kw">async move </span>{
             tokio::time::sleep(HEALTH_POLL_WAIT).<span class="kw">await</span>;
             <span class="prelude-val">Some</span>((
