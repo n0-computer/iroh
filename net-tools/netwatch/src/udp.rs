@@ -245,10 +245,11 @@ impl Future for RecvFut<'_, '_> {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let Self { socket, buffer } = &mut *self;
-        let guard = socket.socket.read().unwrap();
-        let socket = guard.as_ref().expect("missing socket");
 
         loop {
+            let guard = socket.socket.read().unwrap();
+            let socket = guard.as_ref().expect("missing socket");
+
             match socket.poll_recv_ready(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(())) => {
@@ -279,10 +280,11 @@ impl Future for RecvFromFut<'_, '_> {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let Self { socket, buffer } = &mut *self;
-        let guard = socket.socket.read().unwrap();
-        let socket = guard.as_ref().expect("missing socket");
 
         loop {
+            let guard = socket.socket.read().unwrap();
+            let socket = guard.as_ref().expect("missing socket");
+
             match socket.poll_recv_ready(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(())) => {
@@ -329,10 +331,10 @@ impl Future for SendFut<'_, '_> {
     type Output = std::io::Result<usize>;
 
     fn poll(self: Pin<&mut Self>, c: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let guard = self.socket.socket.read().unwrap();
-        let socket = guard.as_ref().expect("missing socket");
-
         loop {
+            let guard = self.socket.socket.read().unwrap();
+            let socket = guard.as_ref().expect("missing socket");
+
             match socket.poll_send_ready(c) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(())) => {
@@ -341,6 +343,7 @@ impl Future for SendFut<'_, '_> {
                         if err.kind() == ErrorKind::WouldBlock {
                             continue;
                         }
+                        drop(guard); // make sure we are not holding a lock before handling the error
                         if let Some(err) = self.socket.handle_read_error(err) {
                             return Poll::Ready(Err(err));
                         }
@@ -349,6 +352,7 @@ impl Future for SendFut<'_, '_> {
                     return Poll::Ready(res);
                 }
                 Poll::Ready(Err(err)) => {
+                    drop(guard); // make sure we are not holding a lock before handling the error
                     if let Some(err) = self.socket.handle_read_error(err) {
                         return Poll::Ready(Err(err));
                     }
@@ -371,10 +375,10 @@ impl Future for SendToFut<'_, '_> {
     type Output = std::io::Result<usize>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let guard = self.socket.socket.read().unwrap();
-        let socket = guard.as_ref().expect("missing socket");
-
         loop {
+            let guard = self.socket.socket.read().unwrap();
+            let socket = guard.as_ref().expect("missing socket");
+
             match socket.poll_send_ready(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(())) => {
@@ -383,6 +387,7 @@ impl Future for SendToFut<'_, '_> {
                         if err.kind() == ErrorKind::WouldBlock {
                             continue;
                         }
+                        drop(guard); // make sure we are not holding a lock before handling the error
                         if let Some(err) = self.socket.handle_read_error(err) {
                             return Poll::Ready(Err(err));
                         }
@@ -391,6 +396,7 @@ impl Future for SendToFut<'_, '_> {
                     return Poll::Ready(res);
                 }
                 Poll::Ready(Err(err)) => {
+                    drop(guard); // make sure we are not holding a lock before handling the error
                     if let Some(err) = self.socket.handle_read_error(err) {
                         return Poll::Ready(Err(err));
                     }
