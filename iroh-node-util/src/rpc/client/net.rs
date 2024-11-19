@@ -2,8 +2,6 @@
 //!
 //! The main entry point is the [`Client`].
 //!
-//! You obtain a [`Client`] via [`Iroh::net()`](crate::client::Iroh::net).
-//!
 //! The client can be used to get information about the node, such as the
 //! [node id](Client::node_id) or [node address](Client::node_addr).
 //!
@@ -30,14 +28,10 @@ use crate::rpc::proto::{
 ///
 /// Cheaply clonable and threadsafe. Use the iroh `net::Client` to access the
 /// iroh net methods from a different thread, process, or remote machine.
-/// The [`Iroh`](crate::client::Iroh) client dereferences to a `node::Client`,
-/// so you have access to this api from the [`Iroh`](crate::client::Iroh) client itself.
 ///
 /// The `node::Client` api allows you to get information *about* the iroh node,
 /// its status, and connection status to other nodes. It also allows you to
 /// provide address information about *other* nodes to your node.
-///
-/// Obtain an iroh `node::Client` via [`Iroh::net()`](crate::client::Iroh::net).
 #[derive(Debug, Clone)]
 #[repr(transparent)]
 pub struct Client {
@@ -54,7 +48,7 @@ impl Client {
     /// This streams a *current snapshot*. It does not keep the stream open after finishing
     /// transferring the snapshot.
     ///
-    /// See also [`Endpoint::remote_info_iter`](crate::net::Endpoint::remote_info_iter).
+    /// See also [`Endpoint::remote_info_iter`](iroh_net::Endpoint::remote_info_iter).
     pub async fn remote_info_iter(&self) -> Result<impl Stream<Item = Result<RemoteInfo>>> {
         let stream = self.rpc.server_streaming(RemoteInfosIterRequest {}).await?;
         Ok(flatten(stream).map(|res| res.map(|res| res.info)))
@@ -62,7 +56,7 @@ impl Client {
 
     /// Fetches node information about a remote iroh node identified by its [`NodeId`].
     ///
-    /// See also [`Endpoint::remote_info`](crate::net::Endpoint::remote_info).
+    /// See also [`Endpoint::remote_info`](iroh_net::Endpoint::remote_info).
     pub async fn remote_info(&self, node_id: NodeId) -> Result<Option<RemoteInfo>> {
         let RemoteInfoResponse { info } = self.rpc.rpc(RemoteInfoRequest { node_id }).await??;
         Ok(info)
@@ -70,7 +64,7 @@ impl Client {
 
     /// Fetches the node id of this node.
     ///
-    /// See also [`Endpoint::node_id`](crate::net::Endpoint::node_id).
+    /// See also [`Endpoint::node_id`](iroh_net::Endpoint::node_id).
     pub async fn node_id(&self) -> Result<NodeId> {
         let id = self.rpc.rpc(IdRequest).await??;
         Ok(id)
@@ -78,7 +72,7 @@ impl Client {
 
     /// Fetches the [`NodeAddr`] for this node.
     ///
-    /// See also [`Endpoint::node_addr`](crate::net::Endpoint::node_addr).
+    /// See also [`Endpoint::node_addr`](iroh_net::Endpoint::node_addr).
     pub async fn node_addr(&self) -> Result<NodeAddr> {
         let addr = self.rpc.rpc(AddrRequest).await??;
         Ok(addr)
@@ -86,7 +80,7 @@ impl Client {
 
     /// Adds a known node address to this node.
     ///
-    /// See also [`Endpoint::add_node_addr`](crate::net::Endpoint::add_node_addr).
+    /// See also [`Endpoint::add_node_addr`](iroh_net::Endpoint::add_node_addr).
     pub async fn add_node_addr(&self, addr: NodeAddr) -> Result<()> {
         self.rpc.rpc(AddAddrRequest { addr }).await??;
         Ok(())
@@ -94,7 +88,7 @@ impl Client {
 
     /// Returns the relay server we are connected to.
     ///
-    /// See also [`Endpoint::home_relay`](crate::net::Endpoint::home_relay).
+    /// See also [`Endpoint::home_relay`](iroh_net::Endpoint::home_relay).
     pub async fn home_relay(&self) -> Result<Option<RelayUrl>> {
         let relay = self.rpc.rpc(RelayRequest).await??;
         Ok(relay)

@@ -4,7 +4,7 @@ use anyhow::Result;
 use iroh_blobs::{net_protocol::Blobs as BlobsProtocol, store::Store as BaoStore};
 use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
-use iroh_node_util::rpc::{proto::node::CounterStats, server::AbstractNode};
+use iroh_node_util::rpc::proto::node::CounterStats;
 use iroh_router::Router;
 use quic_rpc::server::{RpcChannel, RpcServerError};
 use tokio::task::JoinSet;
@@ -28,17 +28,17 @@ impl<D> Handler<D> {
     }
 }
 
-impl<D: BaoStore> iroh_node_util::rpc::server::AbstractNode for Handler<D> {
+impl<D: BaoStore> iroh_node_util::rpc::server::AbstractNode for NodeInner<D> {
     fn endpoint(&self) -> &iroh_net::Endpoint {
-        &self.inner.endpoint
+        &self.endpoint
     }
 
     fn shutdown(&self) {
-        self.inner.cancel_token.cancel();
+        self.cancel_token.cancel();
     }
 
     fn rpc_addr(&self) -> Option<std::net::SocketAddr> {
-        self.inner.rpc_addr
+        self.rpc_addr
     }
 
     fn stats(&self) -> anyhow::Result<BTreeMap<String, CounterStats>> {
@@ -79,8 +79,7 @@ impl<D: BaoStore> Handler<D> {
         chan: RpcChannel<RpcService, IrohServerEndpoint>,
     ) -> Result<(), RpcServerError<IrohServerEndpoint>> {
         debug!("handling node request: {msg:?}");
-        self.node()
-            .handle_rpc_request(msg, chan.map().boxed())
+        iroh_node_util::rpc::server::handle_rpc_request(self.inner, msg, chan.map().boxed())
             .await
             .map_err(|e| e.errors_into())
     }

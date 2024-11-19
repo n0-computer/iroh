@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, net::SocketAddr, time::Duration};
+use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
 use futures_lite::{Stream, StreamExt};
@@ -15,8 +15,8 @@ use crate::rpc::{
     },
 };
 
-/// Trait that provides a rpc handler for the net and node requests.
-pub trait AbstractNode: Sized + Send + Sync + Clone + 'static {
+/// Trait that provides fields used by the rpc handler for the net and node requests.
+pub trait AbstractNode: Send + Sync + 'static {
     /// Get the endpoint of the node
     fn endpoint(&self) -> &Endpoint;
 
@@ -24,38 +24,31 @@ pub trait AbstractNode: Sized + Send + Sync + Clone + 'static {
     fn shutdown(&self);
 
     /// Rpc address of the node, used by the node status rpc call
-    fn rpc_addr(&self) -> Option<SocketAddr>;
+    fn rpc_addr(&self) -> Option<SocketAddr> {
+        None
+    }
 
     /// Stats for the node stats rpc call
     fn stats(&self) -> anyhow::Result<BTreeMap<String, CounterStats>> {
         anyhow::bail!("metrics are disabled");
     }
+}
 
-    /// Handler for a node rpc request
-    fn node(self) -> NodeRpc<Self> {
-        NodeRpc(self)
+struct Handler(Arc<dyn AbstractNode>);
+
+pub async fn handle_rpc_request<C: ChannelTypes<RpcService>>(
+    node: Arc<dyn AbstractNode>,
+    msg: Request,
+    chan: RpcChannel<RpcService, C>,
+) -> Result<(), RpcServerError<C>> {
+    use Request::*;
+    match msg {
+        Node(msg) => Handler(node).handle_node_request(msg, chan).await,
+        Net(msg) => Handler(node).handle_net_request(msg, chan).await,
     }
 }
 
-/// Rpc handler for the node and net requests
-///
-/// This provides the fn `handle_rpc_request` to handle node and net requests.
-#[derive(Debug)]
-pub struct NodeRpc<T>(T);
-
-impl<T: AbstractNode> NodeRpc<T> {
-    pub async fn handle_rpc_request<C: ChannelTypes<RpcService>>(
-        self,
-        msg: Request,
-        chan: RpcChannel<RpcService, C>,
-    ) -> Result<(), RpcServerError<C>> {
-        use Request::*;
-        match msg {
-            Node(msg) => self.handle_node_request(msg, chan).await,
-            Net(msg) => self.handle_net_request(msg, chan).await,
-        }
-    }
-
+impl Handler {
     fn endpoint(&self) -> &Endpoint {
         self.0.endpoint()
     }
