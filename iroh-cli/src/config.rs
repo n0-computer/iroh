@@ -151,10 +151,10 @@ mod tests {
         str::FromStr,
     };
 
+    use iroh_node_util::logging::{EnvFilter, Rotation};
     use url::Url;
 
     use super::*;
-    use iroh_node_util::logging::{EnvFilter, Rotation};
 
     #[test]
     fn test_toml_invalid_field() {

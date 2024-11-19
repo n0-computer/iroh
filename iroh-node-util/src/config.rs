@@ -3,7 +3,7 @@ use std::{env, path::PathBuf, str::FromStr};
 
 use anyhow::{anyhow, Result};
 
-/// Parse "<bin>_FILE_RUST_LOG` as [`tracing_subscriber::EnvFilter`]. Returns `None` if not
+/// Parse `<bin>_FILE_RUST_LOG` as [`tracing_subscriber::EnvFilter`]. Returns `None` if not
 /// present.
 pub fn env_file_rust_log(bin: &'static str) -> Option<Result<crate::logging::EnvFilter>> {
     let env_file_rust_log = format!("{}_FILE_RUST_LOG", bin.to_uppercase());
@@ -20,7 +20,7 @@ pub fn env_file_rust_log(bin: &'static str) -> Option<Result<crate::logging::Env
 ///
 /// This is determined by the following steps:
 /// - If the environment variable `<BIN>_CONFIG_DIR` is set, return that.
-/// - If the operating environment provides a config directory, return $CONFIG_DIR/<bin>.
+/// - If the operating environment provides a config directory, return `$CONFIG_DIR/<bin>`.
 /// - Otherwise, return an error.
 ///
 /// The default directories are as follows:
@@ -44,7 +44,7 @@ pub fn config_root(bin: &'static str) -> Result<PathBuf> {
 ///
 /// This is determined by the following steps:
 /// - If the environment variable `<BIN>_DATA_DIR` is set, return that.
-/// - If the operating environment provides a data directory, return $DATA_DIR/<bin>.
+/// - If the operating environment provides a data directory, return `$DATA_DIR/<bin>`.
 /// - Otherwise, return an error.
 ///
 /// The default directories are as follows:
@@ -76,7 +76,7 @@ pub fn data_root(bin: &'static str) -> Result<PathBuf> {
 ///
 /// This is determined by the following steps:
 /// - If the environment variable `<BIN>_CACHE_DIR` is set, return that.
-/// - If the operating environment provides a cache directory, return $CACHE_DIR/<bin>.
+/// - If the operating environment provides a cache directory, return `$CACHE_DIR/<bin>`.
 /// - Otherwise, return an error.
 ///
 /// The default directories are as follows:
