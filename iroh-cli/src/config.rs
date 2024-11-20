@@ -12,7 +12,7 @@ use iroh::{
     net::{RelayMap, RelayNode},
     node::GcPolicy,
 };
-use iroh_node_util::config::{config_root, env_file_rust_log};
+use iroh_node_util::{config::config_root, logging::env_file_rust_log};
 use serde::Deserialize;
 
 /// BIN_NAME is the name of the binary. This is used in various places, e.g. for the home directory

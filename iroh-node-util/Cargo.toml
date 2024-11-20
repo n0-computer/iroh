@@ -3,7 +3,7 @@ name = "iroh-node-util"
 description = "Utilities to build binaries containing an iroh-net endpoint"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
-version = "0.1.0"
+version = "0.28.0"
 edition = "2021"
 authors = ["n0 team"]
 repository = "https://github.com/n0-computer/iroh"
@@ -36,17 +36,9 @@ serde_with = { version = "3.7.0", optional = true }
 tracing-appender = { version = "0.2.3", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
-clap = { version = "4", features = ["derive"], optional = true }
-comfy-table = { version = "7", optional = true }
-colored = { version = "2", optional = true }
-time = { version = "0.3", features = ["formatting"], optional = true }
-human-time = { version = "0.1.6", optional = true }
-
 [features]
 logging = ["dep:derive_more", "dep:serde_with", "dep:rustyline", "dep:tracing-appender", "dep:tracing-subscriber"]
 config = ["dep:dirs-next"]
-cli = ["dep:clap", "dep:comfy-table", "dep:colored", "dep:time", "dep:human-time"]
-default = ["cli"]
 
 [package.metadata.docs.rs]
 all-features = true
