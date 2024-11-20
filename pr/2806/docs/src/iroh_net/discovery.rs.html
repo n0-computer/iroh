@@ -927,11 +927,11 @@
 //! [`PkarrPublisher`] and [`DnsDiscovery`]:
 //!
 //! ```no_run
-//! use iroh_net::discovery::dns::DnsDiscovery;
-//! use iroh_net::discovery::pkarr::PkarrPublisher;
-//! use iroh_net::discovery::ConcurrentDiscovery;
-//! use iroh_net::key::SecretKey;
-//! use iroh_net::Endpoint;
+//! use iroh_net::{
+//!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
+//!     key::SecretKey,
+//!     Endpoint,
+//! };
 //!
 //! # async fn wrapper() -&gt; anyhow::Result&lt;()&gt; {
 //! let secret_key = SecretKey::generate();
@@ -981,12 +981,13 @@
 
 </span><span class="kw">use </span>std::time::Duration;
 
-<span class="kw">use crate</span>::{AddrInfo, Endpoint, NodeId};
 <span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::stream::{Boxed <span class="kw">as </span>BoxStream, StreamExt};
 <span class="kw">use </span>iroh_base::node_addr::NodeAddr;
 <span class="kw">use </span>tokio::{sync::oneshot, task::JoinHandle};
 <span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
+
+<span class="kw">use crate</span>::{AddrInfo, Endpoint, NodeId};
 
 <span class="kw">pub mod </span>dns;
 
@@ -994,6 +995,7 @@
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"discovery-local-network"</span>)))]
 </span><span class="kw">pub mod </span>local_swarm_discovery;
 <span class="kw">pub mod </span>pkarr;
+<span class="kw">pub mod </span>static_provider;
 
 <span class="doccomment">/// Node discovery for [`super::Endpoint`].
 ///
@@ -1322,9 +1324,8 @@
     <span class="kw">use </span>rand::Rng;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
-    <span class="kw">use crate</span>::{key::SecretKey, relay::RelayMode};
-
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use crate</span>::{key::SecretKey, RelayMode};
 
     <span class="attr">#[derive(Debug, Clone, Default)]
     </span><span class="kw">struct </span>TestDiscoveryShared {
@@ -1616,13 +1617,12 @@
     <span class="kw">use crate</span>::{
         discovery::pkarr::PkarrPublisher,
         dns::{node_info::NodeInfo, ResolverExt},
-        relay::{RelayMap, RelayMode},
         test_utils::{
             dns_server::{create_dns_resolver, run_dns_server},
             pkarr_dns_state::State,
             run_relay_server, DnsPkarrServer,
         },
-        AddrInfo, Endpoint, NodeAddr,
+        AddrInfo, Endpoint, NodeAddr, RelayMap, RelayMode,
     };
 
     <span class="kw">const </span>PUBLISH_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);

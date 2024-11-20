@@ -301,6 +301,7 @@
 <a href="#301" id="301">301</a>
 <a href="#302" id="302">302</a>
 <a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Actor to run hairpinning check.
 //!
 //! This actor works as follows:
@@ -318,16 +319,16 @@
 </span><span class="kw">use </span>std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>tokio::sync::oneshot;
-<span class="kw">use </span>tokio::time::Instant;
+<span class="kw">use </span>iroh_relay::protos::stun;
+<span class="kw">use </span>netwatch::UdpSocket;
+<span class="kw">use </span>tokio::{sync::oneshot, time::Instant};
 <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 
-<span class="kw">use </span><span class="kw">crate</span>::net::UdpSocket;
-<span class="kw">use </span><span class="kw">crate</span>::netcheck::{<span class="self">self</span>, reportgen, Inflight};
-<span class="kw">use </span><span class="kw">crate</span>::stun;
-
-<span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::HAIRPIN_CHECK_TIMEOUT;
+<span class="kw">use crate</span>::{
+    defaults::timeouts::HAIRPIN_CHECK_TIMEOUT,
+    netcheck::{<span class="self">self</span>, reportgen, Inflight},
+};
 
 <span class="doccomment">/// Handle to the hairpin actor.
 ///
@@ -479,8 +480,9 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>bytes::BytesMut;
     <span class="kw">use </span>std::time::Duration;
+
+    <span class="kw">use </span>bytes::BytesMut;
     <span class="kw">use </span>tokio::sync::mpsc;
     <span class="kw">use </span>tracing::info;
 

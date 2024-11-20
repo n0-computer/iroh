@@ -503,7 +503,6 @@
 <a href="#503" id="503">503</a>
 <a href="#504" id="504">504</a>
 <a href="#505" id="505">505</a>
-<a href="#506" id="506">506</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Contains the discovery message types.
 //!
 //! A discovery message is:
@@ -530,12 +529,12 @@
 };
 
 <span class="kw">use </span>anyhow::{anyhow, bail, ensure, Context, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>iroh_relay::RelayUrl;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>url::Url;
 
-<span class="kw">use crate</span>::{key, relay::RelayUrl};
-
-<span class="kw">use super</span>::{key::PublicKey, stun};
+<span class="kw">use </span><span class="kw">super</span>::key::PublicKey;
+<span class="kw">use </span><span class="kw">crate</span>::key;
 
 <span class="comment">// TODO: custom magicn
 </span><span class="doccomment">/// The 6 byte header of all discovery messages.
@@ -621,7 +620,7 @@
 <span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
 </span><span class="kw">pub struct </span>Ping {
     <span class="doccomment">/// Random client-generated per-ping transaction ID.
-    </span><span class="kw">pub </span>tx_id: stun::TransactionId,
+    </span><span class="kw">pub </span>tx_id: stun_rs::TransactionId,
 
     <span class="doccomment">/// Allegedly the ping sender's wireguard public key.
     /// It shouldn't be trusted by itself, but can be combined with
@@ -634,7 +633,7 @@
 /// It includes the sender's source IP + port, so it's effectively a STUN response.
 </span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
 </span><span class="kw">pub struct </span>Pong {
-    <span class="kw">pub </span>tx_id: stun::TransactionId,
+    <span class="kw">pub </span>tx_id: stun_rs::TransactionId,
     <span class="doccomment">/// The observed address off the ping sender.
     ///
     /// 18 bytes (16+2) on the wire; v4-mapped ipv6 for IPv4.
@@ -717,7 +716,7 @@
         <span class="kw">let </span>tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().expect(<span class="string">"length checked"</span>);
         <span class="kw">let </span>raw_key = <span class="kw-2">&amp;</span>p[TX_LEN..TX_LEN + key::PUBLIC_KEY_LENGTH];
         <span class="kw">let </span>node_key = PublicKey::try_from(raw_key)<span class="question-mark">?</span>;
-        <span class="kw">let </span>tx_id = stun::TransactionId::from(tx_id);
+        <span class="kw">let </span>tx_id = stun_rs::TransactionId::from(tx_id);
 
         <span class="prelude-val">Ok</span>(Ping { tx_id, node_key })
     }
@@ -797,7 +796,7 @@
     <span class="kw">fn </span>from_bytes(ver: u8, p: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="macro">ensure!</span>(ver == V0, <span class="string">"invalid version"</span>);
         <span class="kw">let </span>tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().context(<span class="string">"message too short"</span>)<span class="question-mark">?</span>;
-        <span class="kw">let </span>tx_id = stun::TransactionId::from(tx_id);
+        <span class="kw">let </span>tx_id = stun_rs::TransactionId::from(tx_id);
         <span class="kw">let </span>src = send_addr_from_bytes(<span class="kw-2">&amp;</span>p[TX_LEN..])<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(Pong {
@@ -910,9 +909,8 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
-
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_to_from_bytes() {
@@ -984,7 +982,7 @@
         <span class="kw">let </span>recv_key = SecretKey::generate();
 
         <span class="kw">let </span>msg = Message::Ping(Ping {
-            tx_id: stun::TransactionId::default(),
+            tx_id: stun_rs::TransactionId::default(),
             node_key: sender_key.public(),
         });
 

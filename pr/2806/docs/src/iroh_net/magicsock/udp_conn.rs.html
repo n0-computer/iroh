@@ -297,12 +297,11 @@
 };
 
 <span class="kw">use </span>anyhow::{bail, Context <span class="kw">as _</span>};
+<span class="kw">use </span>netwatch::UdpSocket;
 <span class="kw">use </span>quinn::AsyncUdpSocket;
 <span class="kw">use </span>quinn_udp::{Transmit, UdpSockRef};
 <span class="kw">use </span>tokio::io::Interest;
-<span class="kw">use </span>tracing::{debug, trace, warn};
-
-<span class="kw">use </span><span class="kw">crate</span>::net::UdpSocket;
+<span class="kw">use </span>tracing::{debug, trace};
 
 <span class="doccomment">/// A UDP socket implementing Quinn's [`AsyncUdpSocket`].
 </span><span class="attr">#[derive(Clone, Debug)]
@@ -425,7 +424,7 @@
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(pconn);
             }
             <span class="prelude-val">Err</span>(err) =&gt; {
-                <span class="macro">warn!</span>(%addr, <span class="string">"failed to bind: {:#?}"</span>, err);
+                <span class="macro">debug!</span>(%addr, <span class="string">"failed to bind: {err:#}"</span>);
                 <span class="kw">continue</span>;
             }
         }
@@ -484,12 +483,13 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use crate</span>::{key, net::IpFamily, tls};
-
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span>anyhow::Result;
+    <span class="kw">use </span>netwatch::IpFamily;
     <span class="kw">use </span>tokio::sync::mpsc;
     <span class="kw">use </span>tracing::{info_span, Instrument};
+
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use crate</span>::{key, tls};
 
     <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/test/1"</span>;
 

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["DEFAULT_RPC_ADDR"],"enum":["DiscoveryConfig","DocsStorage","GcPolicy","RpcStatus","StorageConfig"],"struct":["Builder","Node","ProtocolBuilder"],"trait":["ProtocolHandler"],"type":["FsNode","IrohServerEndpoint","MemNode"]};
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_RPC_ADDR"],"enum":["DiscoveryConfig","DocsStorage","GcPolicy","RpcStatus","StorageConfig"],"struct":["Builder","Node","ProtocolBuilder"],"type":["FsNode","IrohServerEndpoint","MemNode"]};

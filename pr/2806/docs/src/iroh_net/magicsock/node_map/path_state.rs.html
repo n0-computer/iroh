@@ -323,21 +323,25 @@
 <a href="#323" id="323">323</a>
 <a href="#324" id="324">324</a>
 <a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The state kept for each network path to a remote node.
 
-</span><span class="kw">use </span>std::collections::{BTreeMap, HashMap};
-<span class="kw">use </span>std::net::SocketAddr;
-<span class="kw">use </span>std::time::{Duration, Instant};
+</span><span class="kw">use </span>std::{
+    collections::{BTreeMap, HashMap},
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 
 <span class="kw">use </span>iroh_base::key::NodeId;
+<span class="kw">use </span>iroh_relay::protos::stun;
 <span class="kw">use </span>tracing::{debug, event, Level};
 
-<span class="kw">use </span><span class="kw">crate</span>::disco::SendAddr;
-<span class="kw">use </span><span class="kw">crate</span>::magicsock::HEARTBEAT_INTERVAL;
-<span class="kw">use </span><span class="kw">crate</span>::stun;
-
-<span class="kw">use </span><span class="kw">super</span>::node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT};
-<span class="kw">use super</span>::{IpPort, PingRole, Source};
+<span class="kw">use super</span>::{
+    node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT},
+    IpPort, PingRole, Source,
+};
+<span class="kw">use crate</span>::{disco::SendAddr, magicsock::HEARTBEAT_INTERVAL};
 
 <span class="doccomment">/// The minimum time between pings to an endpoint.
 ///

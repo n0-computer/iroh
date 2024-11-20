@@ -828,15 +828,8 @@
 <a href="#828" id="828">828</a>
 <a href="#829" id="829">829</a>
 <a href="#830" id="830">830</a>
-<a href="#831" id="831">831</a>
-<a href="#832" id="832">832</a>
-<a href="#833" id="833">833</a>
-<a href="#834" id="834">834</a>
-<a href="#835" id="835">835</a>
-<a href="#836" id="836">836</a>
-<a href="#837" id="837">837</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     pin::Pin,
@@ -847,6 +840,7 @@
 <span class="kw">use </span>futures_lite::stream::Stream;
 <span class="kw">use </span>iroh_base::key::NodeId;
 <span class="kw">use </span>iroh_metrics::inc;
+<span class="kw">use </span>iroh_relay::RelayUrl;
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>stun_rs::TransactionId;
@@ -862,8 +856,7 @@
 <span class="kw">use crate</span>::{
     disco::{CallMeMaybe, Pong, SendAddr},
     key::PublicKey,
-    relay::RelayUrl,
-    stun, NodeAddr,
+    NodeAddr,
 };
 
 <span class="kw">mod </span>best_addr;
@@ -871,9 +864,8 @@
 <span class="kw">mod </span>path_state;
 <span class="kw">mod </span>udp_paths;
 
-<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">use </span>node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
-
 <span class="kw">pub use </span>node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
+<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">use </span>node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
 
 <span class="doccomment">/// Number of nodes that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`NodeMap::prune_inactive`].
@@ -999,7 +991,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         id: usize,
         dst: SendAddr,
-        tx_id: stun::TransactionId,
+        tx_id: stun_rs::TransactionId,
         purpose: DiscoPingPurpose,
         msg_sender: tokio::sync::mpsc::Sender&lt;ActorMessage&gt;,
     ) {
@@ -1008,7 +1000,7 @@
         }
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>notify_ping_timeout(<span class="kw-2">&amp;</span><span class="self">self</span>, id: usize, tx_id: stun::TransactionId) {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>notify_ping_timeout(<span class="kw-2">&amp;</span><span class="self">self</span>, id: usize, tx_id: stun_rs::TransactionId) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(ep) = <span class="self">self</span>.inner.lock().get_mut(NodeStateKey::Idx(id)) {
             ep.ping_timeout(tx_id);
         }
@@ -1121,10 +1113,7 @@
         <span class="self">self</span>.inner.lock().prune_inactive();
     }
 
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>on_direct_addr_discovered(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        discovered: <span class="kw">impl </span>Iterator&lt;Item = <span class="kw">impl </span>Into&lt;IpPort&gt;&gt;,
-    ) {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>on_direct_addr_discovered(<span class="kw-2">&amp;</span><span class="self">self</span>, discovered: BTreeSet&lt;SocketAddr&gt;) {
         <span class="self">self</span>.inner.lock().on_direct_addr_discovered(discovered);
     }
 }
@@ -1159,10 +1148,7 @@
     }
 
     <span class="doccomment">/// Prunes direct addresses from nodes that claim to share an address we know points to us.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>on_direct_addr_discovered(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        discovered: <span class="kw">impl </span>Iterator&lt;Item = <span class="kw">impl </span>Into&lt;IpPort&gt;&gt;,
-    ) {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>on_direct_addr_discovered(<span class="kw-2">&amp;mut </span><span class="self">self</span>, discovered: BTreeSet&lt;SocketAddr&gt;) {
         <span class="kw">for </span>addr <span class="kw">in </span>discovered {
             <span class="self">self</span>.remove_by_ipp(addr.into(), ClearReason::MatchesOurLocalAddr)
         }
@@ -1492,10 +1478,10 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span><span class="kw">super</span>::node_state::MAX_INACTIVE_DIRECT_ADDRESSES;
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
     <span class="kw">use </span>std::net::Ipv4Addr;
+
+    <span class="kw">use super</span>::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, <span class="kw-2">*</span>};
+    <span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
 
     <span class="kw">impl </span>NodeMap {
         <span class="attr">#[track_caller]
@@ -1622,7 +1608,7 @@
         <span class="macro">info!</span>(<span class="string">"Adding alive addresses"</span>);
         <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..MAX_INACTIVE_DIRECT_ADDRESSES {
             <span class="kw">let </span>addr = SendAddr::Udp(SocketAddr::new(LOCALHOST, <span class="number">7000 </span>+ i <span class="kw">as </span>u16));
-            <span class="kw">let </span>txid = stun::TransactionId::from([i <span class="kw">as </span>u8; <span class="number">12</span>]);
+            <span class="kw">let </span>txid = stun_rs::TransactionId::from([i <span class="kw">as </span>u8; <span class="number">12</span>]);
             <span class="comment">// Note that this already invokes .prune_direct_addresses() because these are
             // new UDP paths.
             </span>endpoint.handle_ping(addr, txid);

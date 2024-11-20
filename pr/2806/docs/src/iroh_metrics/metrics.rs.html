@@ -62,6 +62,24 @@
 <a href="#62" id="62">62</a>
 <a href="#63" id="63">63</a>
 <a href="#64" id="64">64</a>
+<a href="#65" id="65">65</a>
+<a href="#66" id="66">66</a>
+<a href="#67" id="67">67</a>
+<a href="#68" id="68">68</a>
+<a href="#69" id="69">69</a>
+<a href="#70" id="70">70</a>
+<a href="#71" id="71">71</a>
+<a href="#72" id="72">72</a>
+<a href="#73" id="73">73</a>
+<a href="#74" id="74">74</a>
+<a href="#75" id="75">75</a>
+<a href="#76" id="76">76</a>
+<a href="#77" id="77">77</a>
+<a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Metrics collection
 //!
 //! Enables and manages a global registry of metrics.
@@ -77,8 +95,10 @@
 //!
 //! # Example:
 //! ```rust
-//! use iroh_metrics::{inc, inc_by};
-//! use iroh_metrics::core::{Core, Metric, Counter};
+//! use iroh_metrics::{
+//!     core::{Core, Counter, Metric},
+//!     inc, inc_by,
+//! };
 //! use struct_iterable::Iterable;
 //!
 //! #[derive(Debug, Clone, Iterable)]
@@ -89,15 +109,17 @@
 //! impl Default for Metrics {
 //!     fn default() -&gt; Self {
 //!         Self {
-//!             things_added: Counter::new("things_added tracks the number of things we have added"),
+//!             things_added: Counter::new(
+//!                 "things_added tracks the number of things we have added",
+//!             ),
 //!         }
 //!     }
 //! }
 //!
 //! impl Metric for Metrics {
-//!    fn name() -&gt; &amp;'static str {
+//!     fn name() -&gt; &amp;'static str {
 //!         "my_metrics"
-//!    }
+//!     }
 //! }
 //!
 //! Core::init(|reg, metrics| {
@@ -126,4 +148,18 @@
 ) -&gt; anyhow::Result&lt;()&gt; {
     <span class="kw">crate</span>::service::dumper(<span class="kw-2">&amp;</span>path, interval).<span class="kw">await
 </span>}
+
+<span class="doccomment">/// Start a metrics exporter service.
+</span><span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+</span><span class="kw">pub async fn </span>start_metrics_exporter(cfg: <span class="kw">crate</span>::PushMetricsConfig) {
+    <span class="kw">crate</span>::service::exporter(
+        cfg.endpoint,
+        cfg.service_name,
+        cfg.instance_name,
+        cfg.username,
+        cfg.password,
+        std::time::Duration::from_secs(cfg.interval),
+    )
+    .<span class="kw">await</span>;
+}
 </code></pre></div></section></main></body></html>

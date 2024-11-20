@@ -443,20 +443,30 @@
 <a href="#443" id="443">443</a>
 <a href="#444" id="444">444</a>
 <a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
+<a href="#453" id="453">453</a>
+<a href="#454" id="454">454</a>
+<a href="#455" id="455">455</a>
+<a href="#456" id="456">456</a>
+<a href="#457" id="457">457</a>
+<a href="#458" id="458">458</a>
+<a href="#459" id="459">459</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
 <span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>tokio::sync::oneshot;
-
-<span class="kw">use </span><span class="kw">crate</span>::relay::server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig};
-<span class="kw">use crate</span>::{
-    key::SecretKey,
-    relay::{RelayMap, RelayNode, RelayUrl},
-};
-
 <span class="kw">pub use </span>dns_and_pkarr_servers::DnsPkarrServer;
 <span class="kw">pub use </span>dns_server::create_dns_resolver;
+<span class="kw">use </span>iroh_relay::server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig};
+<span class="kw">use </span>tokio::sync::oneshot;
+
+<span class="kw">use crate</span>::{defaults::DEFAULT_STUN_PORT, RelayMap, RelayNode, RelayUrl};
 
 <span class="doccomment">/// A drop guard to clean up test infrastructure.
 ///
@@ -473,53 +483,65 @@
 /// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
 /// When dropped, the returned [`Server`] does will stop running.
 </span><span class="kw">pub async fn </span>run_relay_server() -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server)&gt; {
-    <span class="kw">let </span>secret_key = SecretKey::generate();
-    <span class="kw">let </span>cert = rcgen::generate_simple_self_signed(<span class="macro">vec!</span>[<span class="string">"localhost"</span>.to_string()]).unwrap();
-    <span class="kw">let </span>rustls_cert = rustls::pki_types::CertificateDer::from(cert.serialize_der().unwrap());
-    <span class="kw">let </span>private_key =
-        rustls::pki_types::PrivatePkcs8KeyDer::from(cert.get_key_pair().serialize_der());
+    run_relay_server_with(<span class="prelude-val">Some</span>(StunConfig {
+        bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
+    }))
+    .<span class="kw">await
+</span>}
+
+<span class="doccomment">/// Runs a relay server.
+///
+/// `stun` can be set to `None` to disable stun, or set to `Some` `StunConfig`,
+/// to enable stun on a specific socket.
+///
+/// The return value is similar to [`run_relay_server`].
+</span><span class="kw">pub async fn </span>run_relay_server_with(
+    stun: <span class="prelude-ty">Option</span>&lt;StunConfig&gt;,
+) -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server)&gt; {
+    <span class="kw">let </span>cert =
+        rcgen::generate_simple_self_signed(<span class="macro">vec!</span>[<span class="string">"localhost"</span>.to_string(), <span class="string">"127.0.0.1"</span>.to_string()])
+            .expect(<span class="string">"valid"</span>);
+    <span class="kw">let </span>rustls_cert = cert.cert.der();
+    <span class="kw">let </span>private_key = rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
     <span class="kw">let </span>private_key = rustls::pki_types::PrivateKeyDer::from(private_key);
 
     <span class="kw">let </span>config = ServerConfig {
         relay: <span class="prelude-val">Some</span>(RelayConfig {
             http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
-            secret_key,
             tls: <span class="prelude-val">Some</span>(TlsConfig {
                 cert: CertConfig::&lt;(), ()&gt;::Manual {
                     private_key,
-                    certs: <span class="macro">vec!</span>[rustls_cert],
+                    certs: <span class="macro">vec!</span>[rustls_cert.clone()],
                 },
                 https_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
             }),
             limits: Default::default(),
         }),
-        stun: <span class="prelude-val">Some</span>(StunConfig {
-            bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
-        }),
+        stun,
         <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
         </span>metrics_addr: <span class="prelude-val">None</span>,
     };
     <span class="kw">let </span>server = Server::spawn(config).<span class="kw">await</span>.unwrap();
-    <span class="kw">let </span>url: RelayUrl = <span class="macro">format!</span>(<span class="string">"https://localhost:{}"</span>, server.https_addr().unwrap().port())
+    <span class="kw">let </span>url: RelayUrl = <span class="macro">format!</span>(<span class="string">"https://{}"</span>, server.https_addr().expect(<span class="string">"configured"</span>))
         .parse()
         .unwrap();
     <span class="kw">let </span>m = RelayMap::from_nodes([RelayNode {
         url: url.clone(),
         stun_only: <span class="bool-val">false</span>,
-        stun_port: server.stun_addr().unwrap().port(),
+        stun_port: server.stun_addr().map_or(DEFAULT_STUN_PORT, |s| s.port()),
     }])
     .unwrap();
     <span class="prelude-val">Ok</span>((m, url, server))
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>dns_and_pkarr_servers {
+    <span class="kw">use </span>std::{net::SocketAddr, time::Duration};
+
     <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>iroh_base::key::{NodeId, SecretKey};
-    <span class="kw">use </span>std::{net::SocketAddr, time::Duration};
     <span class="kw">use </span>url::Url;
 
     <span class="kw">use super</span>::{create_dns_resolver, CleanupDropGuard};
-
     <span class="kw">use crate</span>::{
         discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
         dns::DnsResolver,
@@ -592,8 +614,10 @@
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>dns_server {
-    <span class="kw">use </span>std::future::Future;
-    <span class="kw">use </span>std::net::{Ipv4Addr, SocketAddr};
+    <span class="kw">use </span>std::{
+        future::Future,
+        net::{Ipv4Addr, SocketAddr},
+    };
 
     <span class="kw">use </span>anyhow::{ensure, <span class="prelude-ty">Result</span>};
     <span class="kw">use </span>futures_lite::future::Boxed <span class="kw">as </span>BoxFuture;
@@ -698,8 +722,10 @@
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>pkarr_relay {
-    <span class="kw">use </span>std::future::IntoFuture;
-    <span class="kw">use </span>std::net::{Ipv4Addr, SocketAddr};
+    <span class="kw">use </span>std::{
+        future::IntoFuture,
+        net::{Ipv4Addr, SocketAddr},
+    };
 
     <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>axum::{
@@ -713,9 +739,8 @@
     <span class="kw">use </span>tracing::{debug, error, warn};
     <span class="kw">use </span>url::Url;
 
-    <span class="kw">use </span><span class="kw">crate</span>::test_utils::pkarr_dns_state::State <span class="kw">as </span>AppState;
-
     <span class="kw">use </span><span class="kw">super</span>::CleanupDropGuard;
+    <span class="kw">use </span><span class="kw">crate</span>::test_utils::pkarr_dns_state::State <span class="kw">as </span>AppState;
 
     <span class="kw">pub async fn </span>run_pkarr_relay(state: AppState) -&gt; <span class="prelude-ty">Result</span>&lt;(Url, CleanupDropGuard)&gt; {
         <span class="kw">let </span>bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, <span class="number">0</span>));
@@ -772,9 +797,6 @@
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>pkarr_dns_state {
-    <span class="kw">use </span>anyhow::{bail, <span class="prelude-ty">Result</span>};
-    <span class="kw">use </span>parking_lot::{Mutex, MutexGuard};
-    <span class="kw">use </span>pkarr::SignedPacket;
     <span class="kw">use </span>std::{
         collections::{hash_map, HashMap},
         future::Future,
@@ -783,9 +805,15 @@
         time::Duration,
     };
 
-    <span class="kw">use </span><span class="kw">crate</span>::dns::node_info::{node_id_from_hickory_name, NodeInfo};
-    <span class="kw">use </span><span class="kw">crate</span>::test_utils::dns_server::QueryHandler;
-    <span class="kw">use </span><span class="kw">crate</span>::NodeId;
+    <span class="kw">use </span>anyhow::{bail, <span class="prelude-ty">Result</span>};
+    <span class="kw">use </span>parking_lot::{Mutex, MutexGuard};
+    <span class="kw">use </span>pkarr::SignedPacket;
+
+    <span class="kw">use crate</span>::{
+        dns::node_info::{node_id_from_hickory_name, NodeInfo},
+        test_utils::dns_server::QueryHandler,
+        NodeId,
+    };
 
     <span class="attr">#[derive(Debug, Clone)]
     </span><span class="kw">pub struct </span>State {

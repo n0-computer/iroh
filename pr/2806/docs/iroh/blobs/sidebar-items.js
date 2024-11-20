@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["IROH_BLOCK_SIZE"],"enum":["BlobFormat"],"mod":["downloader","export","format","get","hashseq","metrics","protocol","provider","store","util"],"struct":["Hash","HashAndFormat","Tag","TempTag"]};
+window.SIDEBAR_ITEMS = {"constant":["IROH_BLOCK_SIZE"],"enum":["BlobFormat"],"mod":["cli","downloader","export","format","get","hashseq","metrics","net_protocol","protocol","provider","rpc","store","util"],"struct":["Hash","HashAndFormat","Tag","TempTag"]};

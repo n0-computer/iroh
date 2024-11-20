@@ -1365,6 +1365,86 @@
 <a href="#1365" id="1365">1365</a>
 <a href="#1366" id="1366">1366</a>
 <a href="#1367" id="1367">1367</a>
+<a href="#1368" id="1368">1368</a>
+<a href="#1369" id="1369">1369</a>
+<a href="#1370" id="1370">1370</a>
+<a href="#1371" id="1371">1371</a>
+<a href="#1372" id="1372">1372</a>
+<a href="#1373" id="1373">1373</a>
+<a href="#1374" id="1374">1374</a>
+<a href="#1375" id="1375">1375</a>
+<a href="#1376" id="1376">1376</a>
+<a href="#1377" id="1377">1377</a>
+<a href="#1378" id="1378">1378</a>
+<a href="#1379" id="1379">1379</a>
+<a href="#1380" id="1380">1380</a>
+<a href="#1381" id="1381">1381</a>
+<a href="#1382" id="1382">1382</a>
+<a href="#1383" id="1383">1383</a>
+<a href="#1384" id="1384">1384</a>
+<a href="#1385" id="1385">1385</a>
+<a href="#1386" id="1386">1386</a>
+<a href="#1387" id="1387">1387</a>
+<a href="#1388" id="1388">1388</a>
+<a href="#1389" id="1389">1389</a>
+<a href="#1390" id="1390">1390</a>
+<a href="#1391" id="1391">1391</a>
+<a href="#1392" id="1392">1392</a>
+<a href="#1393" id="1393">1393</a>
+<a href="#1394" id="1394">1394</a>
+<a href="#1395" id="1395">1395</a>
+<a href="#1396" id="1396">1396</a>
+<a href="#1397" id="1397">1397</a>
+<a href="#1398" id="1398">1398</a>
+<a href="#1399" id="1399">1399</a>
+<a href="#1400" id="1400">1400</a>
+<a href="#1401" id="1401">1401</a>
+<a href="#1402" id="1402">1402</a>
+<a href="#1403" id="1403">1403</a>
+<a href="#1404" id="1404">1404</a>
+<a href="#1405" id="1405">1405</a>
+<a href="#1406" id="1406">1406</a>
+<a href="#1407" id="1407">1407</a>
+<a href="#1408" id="1408">1408</a>
+<a href="#1409" id="1409">1409</a>
+<a href="#1410" id="1410">1410</a>
+<a href="#1411" id="1411">1411</a>
+<a href="#1412" id="1412">1412</a>
+<a href="#1413" id="1413">1413</a>
+<a href="#1414" id="1414">1414</a>
+<a href="#1415" id="1415">1415</a>
+<a href="#1416" id="1416">1416</a>
+<a href="#1417" id="1417">1417</a>
+<a href="#1418" id="1418">1418</a>
+<a href="#1419" id="1419">1419</a>
+<a href="#1420" id="1420">1420</a>
+<a href="#1421" id="1421">1421</a>
+<a href="#1422" id="1422">1422</a>
+<a href="#1423" id="1423">1423</a>
+<a href="#1424" id="1424">1424</a>
+<a href="#1425" id="1425">1425</a>
+<a href="#1426" id="1426">1426</a>
+<a href="#1427" id="1427">1427</a>
+<a href="#1428" id="1428">1428</a>
+<a href="#1429" id="1429">1429</a>
+<a href="#1430" id="1430">1430</a>
+<a href="#1431" id="1431">1431</a>
+<a href="#1432" id="1432">1432</a>
+<a href="#1433" id="1433">1433</a>
+<a href="#1434" id="1434">1434</a>
+<a href="#1435" id="1435">1435</a>
+<a href="#1436" id="1436">1436</a>
+<a href="#1437" id="1437">1437</a>
+<a href="#1438" id="1438">1438</a>
+<a href="#1439" id="1439">1439</a>
+<a href="#1440" id="1440">1440</a>
+<a href="#1441" id="1441">1441</a>
+<a href="#1442" id="1442">1442</a>
+<a href="#1443" id="1443">1443</a>
+<a href="#1444" id="1444">1444</a>
+<a href="#1445" id="1445">1445</a>
+<a href="#1446" id="1446">1446</a>
+<a href="#1447" id="1447">1447</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single netcheck report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
@@ -1383,31 +1463,37 @@
 //!   - Stop if there are no outstanding tasks/futures, or on timeout.
 //! - Sends the completed report to the netcheck actor.
 
-</span><span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::net::{IpAddr, SocketAddr};
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::time::Duration;
+</span><span class="kw">use </span>std::{
+    future::Future,
+    net::{IpAddr, SocketAddr},
+    pin::Pin,
+    sync::Arc,
+    time::Duration,
+};
 
 <span class="kw">use </span>anyhow::{anyhow, bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>iroh_metrics::inc;
+<span class="kw">use </span>iroh_relay::{http::RELAY_PROBE_PATH, protos::stun};
+<span class="kw">use </span>netwatch::{interfaces, UdpSocket};
 <span class="kw">use </span>rand::seq::IteratorRandom;
-<span class="kw">use </span>tokio::sync::{mpsc, oneshot};
-<span class="kw">use </span>tokio::task::JoinSet;
-<span class="kw">use </span>tokio::time::{<span class="self">self</span>, Instant};
+<span class="kw">use </span>tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinSet,
+    time::{<span class="self">self</span>, Instant},
+};
 <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
+<span class="kw">use </span>url::Host;
 
 <span class="kw">use </span><span class="kw">super</span>::NetcheckMetrics;
-<span class="kw">use </span><span class="kw">crate</span>::defaults::DEFAULT_STUN_PORT;
-<span class="kw">use </span><span class="kw">crate</span>::dns::{DnsResolver, ResolverExt};
-<span class="kw">use </span><span class="kw">crate</span>::net::interfaces;
-<span class="kw">use </span><span class="kw">crate</span>::net::UdpSocket;
-<span class="kw">use </span><span class="kw">crate</span>::netcheck::{<span class="self">self</span>, Report};
-<span class="kw">use </span><span class="kw">crate</span>::ping::{PingError, Pinger};
-<span class="kw">use </span><span class="kw">crate</span>::relay::{RelayMap, RelayNode, RelayUrl};
-<span class="kw">use </span><span class="kw">crate</span>::util::MaybeFuture;
-<span class="kw">use crate</span>::{portmapper, stun};
+<span class="kw">use crate</span>::{
+    defaults::DEFAULT_STUN_PORT,
+    dns::{DnsResolver, ResolverExt},
+    netcheck::{<span class="self">self</span>, Report},
+    ping::{PingError, Pinger},
+    util::MaybeFuture,
+    RelayMap, RelayNode, RelayUrl,
+};
 
 <span class="kw">mod </span>hairpin;
 <span class="kw">mod </span>probes;
@@ -1799,7 +1885,7 @@
                 <span class="kw">match </span>port_mapper.probe().<span class="kw">await </span>{
                     <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(res)) =&gt; <span class="prelude-val">Some</span>(res),
                     <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"skipping port mapping: {err:?}"</span>);
+                        <span class="macro">debug!</span>(<span class="string">"skipping port mapping: {err:?}"</span>);
                         <span class="prelude-val">None
                     </span>}
                     <span class="prelude-val">Err</span>(recv_err) =&gt; {
@@ -1828,6 +1914,7 @@
                 .as_ref()
                 .and_then(|l| l.preferred_relay.clone());
 
+            <span class="kw">let </span>dns_resolver = <span class="self">self</span>.dns_resolver.clone();
             <span class="kw">let </span>dm = <span class="self">self</span>.relay_map.clone();
             <span class="self">self</span>.outstanding_tasks.captive_task = <span class="bool-val">true</span>;
             MaybeFuture {
@@ -1836,7 +1923,7 @@
                     <span class="macro">debug!</span>(<span class="string">"Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}"</span>);
                     <span class="kw">let </span>captive_portal_check = tokio::time::timeout(
                         CAPTIVE_PORTAL_TIMEOUT,
-                        check_captive_portal(<span class="kw-2">&amp;</span>dm, preferred_relay)
+                        check_captive_portal(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>dm, preferred_relay)
                             .instrument(<span class="macro">debug_span!</span>(<span class="string">"captive-portal"</span>)),
                     );
                     <span class="kw">match </span>captive_portal_check.<span class="kw">await </span>{
@@ -2105,7 +2192,7 @@
         </span>}
         Probe::Https { <span class="kw-2">ref </span>node, .. } =&gt; {
             <span class="macro">debug!</span>(<span class="string">"sending probe HTTPS"</span>);
-            <span class="kw">match </span>measure_https_latency(node).<span class="kw">await </span>{
+            <span class="kw">match </span>measure_https_latency(<span class="kw-2">&amp;</span>dns_resolver, node, <span class="prelude-val">None</span>).<span class="kw">await </span>{
                 <span class="prelude-val">Ok</span>((latency, ip)) =&gt; {
                     result.latency = <span class="prelude-val">Some</span>(latency);
                     <span class="comment">// We set these IPv4 and IPv6 but they're not really used
@@ -2215,7 +2302,11 @@
 /// return a "204 No Content" response and checking if that's what we get.
 ///
 /// The boolean return is whether we think we have a captive portal.
-</span><span class="kw">async fn </span>check_captive_portal(dm: <span class="kw-2">&amp;</span>RelayMap, preferred_relay: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
+</span><span class="kw">async fn </span>check_captive_portal(
+    dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
+    dm: <span class="kw-2">&amp;</span>RelayMap,
+    preferred_relay: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
+) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
     <span class="comment">// If we have a preferred relay node and we can use it for non-STUN requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
     </span><span class="kw">let </span>preferred_relay = preferred_relay.and_then(|url| <span class="kw">match </span>dm.get_node(<span class="kw-2">&amp;</span>url) {
@@ -2243,9 +2334,22 @@
         }
     };
 
-    <span class="kw">let </span>client = reqwest::ClientBuilder::new()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()<span class="question-mark">?</span>;
+    <span class="kw">let </span><span class="kw-2">mut </span>builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
+    <span class="kw">if let </span><span class="prelude-val">Some</span>(Host::Domain(domain)) = url.host() {
+        <span class="comment">// Use our own resolver rather than getaddrinfo
+        //
+        // Be careful, a non-zero port will override the port in the URI.
+        //
+        // Ideally we would try to resolve **both** IPv4 and IPv6 rather than purely race
+        // them.  But our resolver doesn't support that yet.
+        </span><span class="kw">let </span>addrs: Vec&lt;<span class="kw">_</span>&gt; = dns_resolver
+            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
+            .<span class="kw">await</span><span class="question-mark">?
+            </span>.map(|ipaddr| SocketAddr::new(ipaddr, <span class="number">0</span>))
+            .collect();
+        builder = builder.resolve_to_addrs(domain, <span class="kw-2">&amp;</span>addrs);
+    }
+    <span class="kw">let </span>client = builder.build()<span class="question-mark">?</span>;
 
     <span class="comment">// Note: the set of valid characters in a challenge and the total
     // length is limited; see is_challenge_char in bin/iroh-relay for more
@@ -2385,34 +2489,72 @@
     <span class="prelude-val">Ok</span>(report)
 }
 
-<span class="attr">#[allow(clippy::unused_async)]
-</span><span class="kw">async fn </span>measure_https_latency(_node: <span class="kw-2">&amp;</span>RelayNode) -&gt; <span class="prelude-ty">Result</span>&lt;(Duration, IpAddr)&gt; {
-    <span class="macro">bail!</span>(<span class="string">"not implemented"</span>);
-    <span class="comment">// TODO:
-    // - needs relayhttp::Client
-    // - measurement hooks to measure server processing time
+<span class="doccomment">/// Executes an HTTPS probe.
+///
+/// If `certs` is provided they will be added to the trusted root certificates, allowing the
+/// use of self-signed certificates for servers.  Currently this is used for testing.
+</span><span class="attr">#[allow(clippy::unused_async)]
+</span><span class="kw">async fn </span>measure_https_latency(
+    dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
+    node: <span class="kw-2">&amp;</span>RelayNode,
+    certs: <span class="prelude-ty">Option</span>&lt;Vec&lt;rustls::pki_types::CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;&gt;,
+) -&gt; <span class="prelude-ty">Result</span>&lt;(Duration, IpAddr)&gt; {
+    <span class="kw">let </span>url = node.url.join(RELAY_PROBE_PATH)<span class="question-mark">?</span>;
 
-    // metricHTTPSend.Add(1)
-    // let ctx, cancel := context.WithTimeout(httpstat.WithHTTPStat(ctx, &amp;result), overallProbeTimeout);
-    // let dc := relayhttp.NewNetcheckClient(c.logf);
-    // let tlsConn, tcpConn, node := dc.DialRegionTLS(ctx, reg)?;
-    // if ta, ok := tlsConn.RemoteAddr().(*net.TCPAddr);
-    // req, err := http.NewRequestWithContext(ctx, "GET", "https://"+node.HostName+"/relay/latency-check", nil);
-    // resp, err := hc.Do(req);
+    <span class="comment">// This should also use same connection establishment as relay client itself, which
+    // needs to be more configurable so users can do more crazy things:
+    // https://github.com/n0-computer/iroh/issues/2901
+    </span><span class="kw">let </span><span class="kw-2">mut </span>builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
+    <span class="kw">if let </span><span class="prelude-val">Some</span>(Host::Domain(domain)) = url.host() {
+        <span class="comment">// Use our own resolver rather than getaddrinfo
+        //
+        // Be careful, a non-zero port will override the port in the URI.
+        //
+        // The relay Client uses `.lookup_ipv4_ipv6` to connect, so use the same function
+        // but staggered for reliability.  Ideally this tries to resolve **both** IPv4 and
+        // IPv6 though.  But our resolver does not have a function for that yet.
+        </span><span class="kw">let </span>addrs: Vec&lt;<span class="kw">_</span>&gt; = dns_resolver
+            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
+            .<span class="kw">await</span><span class="question-mark">?
+            </span>.map(|ipaddr| SocketAddr::new(ipaddr, <span class="number">0</span>))
+            .collect();
+        builder = builder.resolve_to_addrs(domain, <span class="kw-2">&amp;</span>addrs);
+    }
+    <span class="kw">if let </span><span class="prelude-val">Some</span>(certs) = certs {
+        <span class="kw">for </span>cert <span class="kw">in </span>certs {
+            <span class="kw">let </span>cert = reqwest::Certificate::from_der(<span class="kw-2">&amp;</span>cert)<span class="question-mark">?</span>;
+            builder = builder.add_root_certificate(cert);
+        }
+    }
+    <span class="kw">let </span>client = builder.build()<span class="question-mark">?</span>;
 
-    // // relays should give us a nominal status code, so anything else is probably
-    // // an access denied by a MITM proxy (or at the very least a signal not to
-    // // trust this latency check).
-    // if resp.StatusCode &gt; 299 {
-    //     return 0, ip, fmt.Errorf("unexpected status code: %d (%s)", resp.StatusCode, resp.Status)
-    // }
-    // _, err = io.Copy(io.Discard, io.LimitReader(resp.Body, 8&lt;&lt;10));
-    // result.End(c.timeNow())
+    <span class="kw">let </span>start = Instant::now();
+    <span class="kw">let </span><span class="kw-2">mut </span>response = client.request(reqwest::Method::GET, url).send().<span class="kw">await</span><span class="question-mark">?</span>;
+    <span class="kw">let </span>latency = start.elapsed();
+    <span class="kw">if </span>response.status().is_success() {
+        <span class="comment">// Drain the response body to be nice to the server, up to a limit.
+        </span><span class="kw">const </span>MAX_BODY_SIZE: usize = <span class="number">8 </span>&lt;&lt; <span class="number">10</span>; <span class="comment">// 8 KiB
+        </span><span class="kw">let </span><span class="kw-2">mut </span>body_size = <span class="number">0</span>;
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(chunk) = response.chunk().<span class="kw">await</span><span class="question-mark">? </span>{
+            body_size += chunk.len();
+            <span class="kw">if </span>body_size &gt;= MAX_BODY_SIZE {
+                <span class="kw">break</span>;
+            }
+        }
 
-    // // TODO: decide best timing heuristic here.
-    // // Maybe the server should return the tcpinfo_rtt?
-    // return result.ServerProcessing, ip, nil
-</span>}
+        <span class="comment">// Only `None` if a different hyper HttpConnector in the request.
+        </span><span class="kw">let </span>remote_ip = response
+            .remote_addr()
+            .context(<span class="string">"missing HttpInfo from HttpConnector"</span>)<span class="question-mark">?
+            </span>.ip();
+        <span class="prelude-val">Ok</span>((latency, remote_ip))
+    } <span class="kw">else </span>{
+        <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(
+            <span class="string">"Error response from server: '{}'"</span>,
+            response.status().canonical_reason().unwrap_or_default()
+        ))
+    }
+}
 
 <span class="doccomment">/// Updates a netcheck [`Report`] with a new [`ProbeReport`].
 </span><span class="kw">fn </span>update_report(report: <span class="kw-2">&amp;mut </span>Report, probe_report: ProbeReport) {
@@ -2480,19 +2622,20 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::net::{Ipv4Addr, Ipv6Addr};
 
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span>testresult::TestResult;
 
-    <span class="kw">use </span><span class="kw">crate</span>::defaults::staging::{default_eu_relay_node, default_na_relay_node};
+    <span class="kw">use super</span>::{<span class="kw">super</span>::test_utils, <span class="kw-2">*</span>};
 
-    <span class="attr">#[test]
-    </span><span class="kw">fn </span>test_update_report_stun_working() {
-        <span class="kw">let </span>eu_relayer = Arc::new(default_eu_relay_node());
-        <span class="kw">let </span>na_relayer = Arc::new(default_na_relay_node());
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_update_report_stun_working() {
+        <span class="kw">let </span>_logging = iroh_test::logging::setup();
+        <span class="kw">let </span>(_server_a, relay_a) = test_utils::relay().<span class="kw">await</span>;
+        <span class="kw">let </span>(_server_b, relay_b) = test_utils::relay().<span class="kw">await</span>;
 
         <span class="kw">let </span><span class="kw-2">mut </span>report = Report::default();
 
-        <span class="comment">// A STUN IPv4 probe from the EU relay server.
-        </span><span class="kw">let </span>probe_report_eu = ProbeReport {
+        <span class="comment">// A STUN IPv4 probe from the the first relay server.
+        </span><span class="kw">let </span>probe_report_a = ProbeReport {
             ipv4_can_send: <span class="bool-val">true</span>,
             ipv6_can_send: <span class="bool-val">false</span>,
             icmpv4: <span class="prelude-val">None</span>,
@@ -2500,49 +2643,49 @@
             latency: <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">5</span>)),
             probe: Probe::StunIpv4 {
                 delay: Duration::ZERO,
-                node: eu_relayer.clone(),
+                node: relay_a.clone(),
             },
             addr: <span class="prelude-val">Some</span>((Ipv4Addr::new(<span class="number">203</span>, <span class="number">0</span>, <span class="number">113</span>, <span class="number">1</span>), <span class="number">1234</span>).into()),
         };
-        update_report(<span class="kw-2">&amp;mut </span>report, probe_report_eu.clone());
+        update_report(<span class="kw-2">&amp;mut </span>report, probe_report_a.clone());
 
         <span class="macro">assert!</span>(report.udp);
         <span class="macro">assert_eq!</span>(
-            report.relay_latency.get(<span class="kw-2">&amp;</span>eu_relayer.url).unwrap(),
+            report.relay_latency.get(<span class="kw-2">&amp;</span>relay_a.url).unwrap(),
             Duration::from_millis(<span class="number">5</span>)
         );
         <span class="macro">assert_eq!</span>(
-            report.relay_v4_latency.get(<span class="kw-2">&amp;</span>eu_relayer.url).unwrap(),
+            report.relay_v4_latency.get(<span class="kw-2">&amp;</span>relay_a.url).unwrap(),
             Duration::from_millis(<span class="number">5</span>)
         );
         <span class="macro">assert!</span>(report.ipv4_can_send);
         <span class="macro">assert!</span>(!report.ipv6_can_send);
 
         <span class="comment">// A second STUN IPv4 probe, same external IP detected but slower.
-        </span><span class="kw">let </span>probe_report_na = ProbeReport {
+        </span><span class="kw">let </span>probe_report_b = ProbeReport {
             latency: <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">8</span>)),
             probe: Probe::StunIpv4 {
                 delay: Duration::ZERO,
-                node: na_relayer.clone(),
+                node: relay_b.clone(),
             },
-            ..probe_report_eu
+            ..probe_report_a
         };
-        update_report(<span class="kw-2">&amp;mut </span>report, probe_report_na);
+        update_report(<span class="kw-2">&amp;mut </span>report, probe_report_b);
 
         <span class="macro">assert!</span>(report.udp);
         <span class="macro">assert_eq!</span>(
-            report.relay_latency.get(<span class="kw-2">&amp;</span>eu_relayer.url).unwrap(),
+            report.relay_latency.get(<span class="kw-2">&amp;</span>relay_a.url).unwrap(),
             Duration::from_millis(<span class="number">5</span>)
         );
         <span class="macro">assert_eq!</span>(
-            report.relay_v4_latency.get(<span class="kw-2">&amp;</span>eu_relayer.url).unwrap(),
+            report.relay_v4_latency.get(<span class="kw-2">&amp;</span>relay_a.url).unwrap(),
             Duration::from_millis(<span class="number">5</span>)
         );
         <span class="macro">assert!</span>(report.ipv4_can_send);
         <span class="macro">assert!</span>(!report.ipv6_can_send);
 
         <span class="comment">// A STUN IPv6 probe, this one is faster.
-        </span><span class="kw">let </span>probe_report_eu_ipv6 = ProbeReport {
+        </span><span class="kw">let </span>probe_report_a_ipv6 = ProbeReport {
             ipv4_can_send: <span class="bool-val">false</span>,
             ipv6_can_send: <span class="bool-val">true</span>,
             icmpv4: <span class="prelude-val">None</span>,
@@ -2550,29 +2693,30 @@
             latency: <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">4</span>)),
             probe: Probe::StunIpv6 {
                 delay: Duration::ZERO,
-                node: eu_relayer.clone(),
+                node: relay_a.clone(),
             },
             addr: <span class="prelude-val">Some</span>((Ipv6Addr::new(<span class="number">2001</span>, <span class="number">0xdb8</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">1</span>), <span class="number">1234</span>).into()),
         };
-        update_report(<span class="kw-2">&amp;mut </span>report, probe_report_eu_ipv6);
+        update_report(<span class="kw-2">&amp;mut </span>report, probe_report_a_ipv6);
 
         <span class="macro">assert!</span>(report.udp);
         <span class="macro">assert_eq!</span>(
-            report.relay_latency.get(<span class="kw-2">&amp;</span>eu_relayer.url).unwrap(),
+            report.relay_latency.get(<span class="kw-2">&amp;</span>relay_a.url).unwrap(),
             Duration::from_millis(<span class="number">4</span>)
         );
         <span class="macro">assert_eq!</span>(
-            report.relay_v6_latency.get(<span class="kw-2">&amp;</span>eu_relayer.url).unwrap(),
+            report.relay_v6_latency.get(<span class="kw-2">&amp;</span>relay_a.url).unwrap(),
             Duration::from_millis(<span class="number">4</span>)
         );
         <span class="macro">assert!</span>(report.ipv4_can_send);
         <span class="macro">assert!</span>(report.ipv6_can_send);
     }
 
-    <span class="attr">#[test]
-    </span><span class="kw">fn </span>test_update_report_icmp() {
-        <span class="kw">let </span>eu_relayer = Arc::new(default_eu_relay_node());
-        <span class="kw">let </span>na_relayer = Arc::new(default_na_relay_node());
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_update_report_icmp() {
+        <span class="kw">let </span>_logging = iroh_test::logging::setup();
+        <span class="kw">let </span>(_server_a, relay_a) = test_utils::relay().<span class="kw">await</span>;
+        <span class="kw">let </span>(_server_b, relay_b) = test_utils::relay().<span class="kw">await</span>;
 
         <span class="kw">let </span><span class="kw-2">mut </span>report = Report::default();
 
@@ -2585,7 +2729,7 @@
             latency: <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">5</span>)),
             probe: Probe::IcmpV4 {
                 delay: Duration::ZERO,
-                node: eu_relayer.clone(),
+                node: relay_a.clone(),
             },
             addr: <span class="prelude-val">Some</span>((Ipv4Addr::new(<span class="number">203</span>, <span class="number">0</span>, <span class="number">113</span>, <span class="number">1</span>), <span class="number">1234</span>).into()),
         };
@@ -2604,7 +2748,7 @@
             latency: <span class="prelude-val">None</span>,
             probe: Probe::IcmpV4 {
                 delay: Duration::ZERO,
-                node: na_relayer.clone(),
+                node: relay_b.clone(),
             },
             addr: <span class="prelude-val">None</span>,
         };
@@ -2621,7 +2765,7 @@
             latency: <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">5</span>)),
             probe: Probe::StunIpv4 {
                 delay: Duration::ZERO,
-                node: eu_relayer.clone(),
+                node: relay_a.clone(),
             },
             addr: <span class="prelude-val">Some</span>((Ipv4Addr::new(<span class="number">203</span>, <span class="number">0</span>, <span class="number">113</span>, <span class="number">1</span>), <span class="number">1234</span>).into()),
         };
@@ -2679,18 +2823,14 @@
     //
     // TODO: Not sure what about IPv6 pings using sysctl.
     </span><span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_icmpk_probe_eu_relayer() {
+    </span><span class="kw">async fn </span>test_icmpk_probe() {
         <span class="kw">let </span>_logging_guard = iroh_test::logging::setup();
         <span class="kw">let </span>pinger = Pinger::new();
-        <span class="kw">let </span>relay = default_eu_relay_node();
-        <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::default_resolver();
-        <span class="kw">let </span>addr = get_relay_addr(resolver, <span class="kw-2">&amp;</span>relay, ProbeProto::IcmpV4)
-            .<span class="kw">await
-            </span>.map_err(|err| <span class="macro">format!</span>(<span class="string">"{err:#}"</span>))
-            .unwrap();
+        <span class="kw">let </span>(server, node) = test_utils::relay().<span class="kw">await</span>;
+        <span class="kw">let </span>addr = server.stun_addr().expect(<span class="string">"test relay serves stun"</span>);
         <span class="kw">let </span>probe = Probe::IcmpV4 {
             delay: Duration::from_secs(<span class="number">0</span>),
-            node: Arc::new(relay),
+            node,
         };
 
         <span class="comment">// A single ICMP packet might get lost.  Try several and take the first.
@@ -2730,6 +2870,26 @@
         <span class="kw">if let </span><span class="prelude-val">Some</span>(err) = last_err {
             <span class="macro">panic!</span>(<span class="string">"Ping error: {err:#}"</span>);
         }
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_measure_https_latency() -&gt; TestResult {
+        <span class="kw">let </span>_logging_guard = iroh_test::logging::setup();
+        <span class="kw">let </span>(server, relay) = test_utils::relay().<span class="kw">await</span>;
+        <span class="kw">let </span>dns_resolver = <span class="kw">crate</span>::dns::resolver();
+        <span class="macro">tracing::info!</span>(relay_url = <span class="question-mark">?</span>relay.url , <span class="string">"RELAY_URL"</span>);
+        <span class="kw">let </span>(latency, ip) =
+            measure_https_latency(dns_resolver, <span class="kw-2">&amp;</span>relay, server.certificates()).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="macro">assert!</span>(latency &gt; Duration::ZERO);
+
+        <span class="kw">let </span>relay_url_ip = relay
+            .url
+            .host_str()
+            .context(<span class="string">"host"</span>)<span class="question-mark">?
+            </span>.parse::&lt;std::net::IpAddr&gt;()<span class="question-mark">?</span>;
+        <span class="macro">assert_eq!</span>(ip, relay_url_ip);
+        <span class="prelude-val">Ok</span>(())
     }
 }
 </code></pre></div></section></main></body></html>

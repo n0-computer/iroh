@@ -225,7 +225,6 @@
 <a href="#225" id="225">225</a>
 <a href="#226" id="226">226</a>
 <a href="#227" id="227">227</a>
-<a href="#228" id="228">228</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! TLS 1.3 certificates and handshakes handling for libp2p
 //!
 //! This module handles a verification of a client/server certificate chain
@@ -235,17 +234,16 @@
 //! Technologies (UK) Ltd.
 </span><span class="kw">use </span>std::sync::Arc;
 
-<span class="kw">use </span>rustls::pki_types::CertificateDer <span class="kw">as </span>Certificate;
 <span class="kw">use </span>rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+    pki_types::CertificateDer <span class="kw">as </span>Certificate,
     server::danger::{ClientCertVerified, ClientCertVerifier},
     CertificateError, DigitallySignedStruct, DistinguishedName, OtherError, PeerMisbehaved,
     SignatureScheme, SupportedProtocolVersion,
 };
 
-<span class="kw">use </span><span class="kw">crate</span>::key::PublicKey;
-
 <span class="kw">use </span><span class="kw">super</span>::certificate;
+<span class="kw">use </span><span class="kw">crate</span>::key::PublicKey;
 
 <span class="doccomment">/// The protocol versions supported by this verifier.
 ///

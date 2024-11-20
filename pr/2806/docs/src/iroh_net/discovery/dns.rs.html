@@ -85,20 +85,6 @@
 <a href="#85" id="85">85</a>
 <a href="#86" id="86">86</a>
 <a href="#87" id="87">87</a>
-<a href="#88" id="88">88</a>
-<a href="#89" id="89">89</a>
-<a href="#90" id="90">90</a>
-<a href="#91" id="91">91</a>
-<a href="#92" id="92">92</a>
-<a href="#93" id="93">93</a>
-<a href="#94" id="94">94</a>
-<a href="#95" id="95">95</a>
-<a href="#96" id="96">96</a>
-<a href="#97" id="97">97</a>
-<a href="#98" id="98">98</a>
-<a href="#99" id="99">99</a>
-<a href="#100" id="100">100</a>
-<a href="#101" id="101">101</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! DNS node discovery for iroh-net
 
 </span><span class="kw">use </span>anyhow::Result;
@@ -107,6 +93,7 @@
 <span class="kw">use crate</span>::{
     discovery::{Discovery, DiscoveryItem},
     dns::ResolverExt,
+    endpoint::force_staging_infra,
     Endpoint, NodeId,
 };
 
@@ -114,10 +101,6 @@
 </span><span class="kw">pub const </span>N0_DNS_NODE_ORIGIN_PROD: <span class="kw-2">&amp;</span>str = <span class="string">"dns.iroh.link"</span>;
 <span class="doccomment">/// The n0 testing DNS node origin, for testing.
 </span><span class="kw">pub const </span>N0_DNS_NODE_ORIGIN_STAGING: <span class="kw-2">&amp;</span>str = <span class="string">"staging-dns.iroh.link"</span>;
-<span class="doccomment">/// Testing DNS node origin, must run server from [`crate::test_utils::DnsPkarrServer`].
-</span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-#[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = <span class="string">"test-utils"</span>))))]
-</span><span class="kw">pub const </span>TEST_DNS_NODE_ORIGIN: <span class="kw-2">&amp;</span>str = <span class="string">"dns.iroh.test"</span>;
 
 <span class="kw">const </span>DNS_STAGGERING_MS: <span class="kw-2">&amp;</span>[u64] = <span class="kw-2">&amp;</span>[<span class="number">200</span>, <span class="number">300</span>];
 
@@ -158,25 +141,14 @@
     ///
     /// # Usage during tests
     ///
-    /// When `cfg(test)` is enabled or when using the `test-utils` cargo feature the
-    /// [`TEST_DNS_NODE_ORIGIN`] is used.
-    ///
-    /// Note that the `iroh.test` domain is not integrated with the global DNS network and
-    /// thus node discovery is effectively disabled.  To use node discovery in a test use
-    /// the [`crate::test_utils::DnsPkarrServer`] in the test and configure it as a
-    /// custom discovery mechanism.
-    ///
-    /// For testing it is also possible to use the [`N0_DNS_NODE_ORIGIN_STAGING`] domain
-    /// with [`DnsDiscovery::new`].  This would then use a hosted discovery service again,
-    /// but for testing purposes.
+    /// For testing it is possible to use the [`N0_DNS_NODE_ORIGIN_STAGING`] domain
+    /// with [`DnsDiscovery::new`].  This would then use a hosted staging discovery
+    /// service for testing purposes.
     </span><span class="kw">pub fn </span>n0_dns() -&gt; <span class="self">Self </span>{
-        <span class="attr">#[cfg(not(any(test, feature = <span class="string">"test-utils"</span>)))]
-        </span>{
+        <span class="kw">if </span>force_staging_infra() {
+            <span class="self">Self</span>::new(N0_DNS_NODE_ORIGIN_STAGING.to_string())
+        } <span class="kw">else </span>{
             <span class="self">Self</span>::new(N0_DNS_NODE_ORIGIN_PROD.to_string())
-        }
-        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-        </span>{
-            <span class="self">Self</span>::new(TEST_DNS_NODE_ORIGIN.to_string())
         }
     }
 }

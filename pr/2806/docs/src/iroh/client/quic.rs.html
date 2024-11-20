@@ -72,6 +72,7 @@
 <a href="#72" id="72">72</a>
 <a href="#73" id="73">73</a>
 <a href="#74" id="74">74</a>
+<a href="#75" id="75">75</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Type declarations and utility functions for an RPC client to an iroh node running in a separate process.
 
 </span><span class="kw">use </span>std::{
@@ -82,13 +83,11 @@
 };
 
 <span class="kw">use </span>anyhow::{bail, Context};
-<span class="kw">use </span>quic_rpc::transport::{boxed::Connection <span class="kw">as </span>BoxedConnection, quinn::QuinnConnection};
+<span class="kw">use </span>iroh_node_util::rpc::proto::node::StatusRequest;
+<span class="kw">use </span>quic_rpc::transport::{boxed::BoxedConnector, quinn::QuinnConnector};
 
 <span class="kw">use super</span>::{Iroh, RpcClient};
-<span class="kw">use crate</span>::{
-    node::RpcStatus,
-    rpc_protocol::{node::StatusRequest, RpcService},
-};
+<span class="kw">use </span><span class="kw">crate</span>::node::RpcStatus;
 
 <span class="doccomment">/// ALPN used by irohs RPC mechanism.
 </span><span class="comment">// TODO: Change to "/iroh-rpc/1"
@@ -120,11 +119,14 @@
     <span class="kw">let </span>endpoint = create_quinn_client(bind_addr, <span class="macro">vec!</span>[RPC_ALPN.to_vec()], <span class="bool-val">false</span>)<span class="question-mark">?</span>;
 
     <span class="kw">let </span>server_name = <span class="string">"localhost"</span>.to_string();
-    <span class="kw">let </span>connection = QuinnConnection::&lt;RpcService&gt;::new(endpoint, addr, server_name);
-    <span class="kw">let </span>connection = BoxedConnection::new(connection);
+    <span class="kw">let </span>connection = QuinnConnector::new(endpoint, addr, server_name);
+    <span class="kw">let </span>connection = BoxedConnector::new(connection);
     <span class="kw">let </span>client = RpcClient::new(connection);
+    <span class="kw">let </span>node_client = client
+        .clone()
+        .map::&lt;iroh_node_util::rpc::proto::RpcService&gt;();
     <span class="comment">// Do a status request to check if the server is running.
-    </span><span class="kw">let </span>_version = tokio::time::timeout(Duration::from_secs(<span class="number">1</span>), client.rpc(StatusRequest))
+    </span><span class="kw">let </span>_version = tokio::time::timeout(Duration::from_secs(<span class="number">1</span>), node_client.rpc(StatusRequest))
         .<span class="kw">await
         </span>.context(<span class="string">"Iroh node is not running"</span>)<span class="question-mark">??</span>;
     <span class="prelude-val">Ok</span>(client)

@@ -76,6 +76,19 @@
 <a href="#76" id="76">76</a>
 <a href="#77" id="77">77</a>
 <a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
+<a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Metrics library for iroh
 </span><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
@@ -88,7 +101,6 @@
 </span><span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">mod </span>service;
 
-<span class="kw">use </span>core::UsageStatsReport;
 <span class="kw">use </span>std::collections::HashMap;
 
 <span class="doccomment">/// Reexport to make matching versions easier.
@@ -118,22 +130,6 @@
     };
 }
 
-<span class="doccomment">/// Report usage statistics to the configured endpoint.
-</span><span class="attr">#[allow(unused_variables)]
-</span><span class="kw">pub async fn </span>report_usage_stats(report: <span class="kw-2">&amp;</span>UsageStatsReport) {
-    <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-    </span>{
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(core) = core::Core::get() {
-            core.usage_reporter()
-                .report_usage_stats(report)
-                .<span class="kw">await
-                </span>.unwrap_or_else(|e| {
-                    <span class="macro">tracing::error!</span>(<span class="string">"Failed to report usage stats: {}"</span>, e);
-                });
-        }
-    }
-}
-
 <span class="doccomment">/// Parse Prometheus metrics from a string.
 </span><span class="kw">pub fn </span>parse_prometheus_metrics(data: <span class="kw-2">&amp;</span>str) -&gt; anyhow::Result&lt;HashMap&lt;String, f64&gt;&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>metrics = HashMap::new();
@@ -153,5 +149,35 @@
         metrics.insert(metric.to_string(), value.unwrap());
     }
     <span class="prelude-val">Ok</span>(metrics)
+}
+
+<span class="doccomment">/// Configuration for pushing metrics to a remote endpoint.
+</span><span class="attr">#[derive(PartialEq, Eq, Debug, Default, serde::Deserialize, Clone)]
+</span><span class="kw">pub struct </span>PushMetricsConfig {
+    <span class="doccomment">/// The push interval in seconds.
+    </span><span class="kw">pub </span>interval: u64,
+    <span class="doccomment">/// The endpoint url for the push metrics collector.
+    </span><span class="kw">pub </span>endpoint: String,
+    <span class="doccomment">/// The name of the service you're exporting metrics for.
+    ///
+    /// Generally, `metrics_exporter` is good enough for use
+    /// outside of production deployments.
+    </span><span class="kw">pub </span>service_name: String,
+    <span class="doccomment">/// The name of the instance you're exporting metrics for.
+    ///
+    /// This should be device-unique. If not, this will sum up
+    /// metrics from different devices.
+    ///
+    /// E.g. `username-laptop`, `username-phone`, etc.
+    ///
+    /// Another potential scheme with good privacy would be a
+    /// keyed blake3 hash of the secret key. (This gives you
+    /// an identifier that is as unique as a `NodeID`, but
+    /// can't be correlated to `NodeID`s.)
+    </span><span class="kw">pub </span>instance_name: String,
+    <span class="doccomment">/// The username for basic auth for the push metrics collector.
+    </span><span class="kw">pub </span>username: <span class="prelude-ty">Option</span>&lt;String&gt;,
+    <span class="doccomment">/// The password for basic auth for the push metrics collector.
+    </span><span class="kw">pub </span>password: String,
 }
 </code></pre></div></section></main></body></html>

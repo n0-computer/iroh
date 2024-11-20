@@ -443,6 +443,10 @@
 <a href="#443" id="443">443</a>
 <a href="#444" id="444">444</a>
 <a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
@@ -743,7 +747,10 @@
 
     <span class="doccomment">/// Parses a [`pkarr::SignedPacket`].
     </span><span class="kw">pub fn </span>from_pkarr_signed_packet(packet: <span class="kw-2">&amp;</span>pkarr::SignedPacket) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">use </span>pkarr::dns::{<span class="self">self</span>, rdata::RData};
+        <span class="kw">use </span>pkarr::dns::{
+            rdata::RData,
+            {<span class="self">self</span>},
+        };
         <span class="kw">let </span>pubkey = packet.public_key();
         <span class="kw">let </span>pubkey_z32 = pubkey.to_z32();
         <span class="kw">let </span>node_id = NodeId::from(<span class="kw-2">*</span>pubkey.verifying_key());
@@ -855,8 +862,9 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>iroh_base::key::SecretKey;
     <span class="kw">use </span>std::str::FromStr;
+
+    <span class="kw">use </span>iroh_base::key::SecretKey;
 
     <span class="kw">use </span><span class="kw">super</span>::NodeInfo;
 

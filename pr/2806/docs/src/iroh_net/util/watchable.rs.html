@@ -382,35 +382,23 @@
 <a href="#382" id="382">382</a>
 <a href="#383" id="383">383</a>
 <a href="#384" id="384">384</a>
-<a href="#385" id="385">385</a>
-<a href="#386" id="386">386</a>
-<a href="#387" id="387">387</a>
-<a href="#388" id="388">388</a>
-<a href="#389" id="389">389</a>
-<a href="#390" id="390">390</a>
-<a href="#391" id="391">391</a>
-<a href="#392" id="392">392</a>
-<a href="#393" id="393">393</a>
-<a href="#394" id="394">394</a>
-<a href="#395" id="395">395</a>
-<a href="#396" id="396">396</a>
-<a href="#397" id="397">397</a>
-<a href="#398" id="398">398</a>
-<a href="#399" id="399">399</a>
-<a href="#400" id="400">400</a>
-<a href="#401" id="401">401</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Watchable values.
 //!
 //! A [`Watchable`] exists to keep track of a value which may change over time.  It allows
 //! observers to be notified of changes to the value.  The aim is to always be aware of the
 //! **last** value, not to observe every value there has ever been.
 
-</span><span class="kw">use </span>std::collections::VecDeque;
+</span><span class="attr">#[cfg(iroh_loom)]
+</span><span class="kw">use </span>loom::sync;
+<span class="attr">#[cfg(not(iroh_loom))]
+</span><span class="kw">use </span>std::sync;
+
+<span class="kw">use </span>std::collections::VecDeque;
 <span class="kw">use </span>std::future::{<span class="self">self</span>, Future};
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::sync::atomic::{AtomicU64, Ordering};
-<span class="kw">use </span>std::sync::{Arc, RwLock};
+<span class="kw">use </span>std::sync::Arc;
 <span class="kw">use </span>std::task::{<span class="self">self</span>, Poll, Waker};
+<span class="kw">use </span>sync::atomic::{AtomicU64, Ordering};
+<span class="kw">use </span>sync::{Mutex, RwLock};
 
 <span class="kw">use </span>futures_lite::stream::Stream;
 
@@ -425,7 +413,7 @@
     /// value can never be cleared again.
     </span>value: RwLock&lt;<span class="prelude-ty">Option</span>&lt;T&gt;&gt;,
     epoch: AtomicU64,
-    watchers: RwLock&lt;VecDeque&lt;Waker&gt;&gt;,
+    watchers: Mutex&lt;VecDeque&lt;Waker&gt;&gt;,
 }
 
 <span class="kw">impl</span>&lt;T&gt; Default <span class="kw">for </span>Shared&lt;T&gt; {
@@ -447,53 +435,41 @@
     <span class="doccomment">/// Returns a future completing once the value is initialized.
     ///
     /// If the value is already initialised the future will complete immediately.
-    </span><span class="comment">// TODO: maybe writing this as a poll function avoids needing to use Either?
     </span><span class="kw">fn </span>initialized(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = T&gt; + <span class="lifetime">'_ </span>{
-        <span class="kw">let </span>epoch = <span class="self">self</span>.epoch.load(Ordering::Acquire);
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>value) = <span class="kw-2">*</span><span class="self">self</span>.value.read().expect(<span class="string">"poisoned"</span>) {
-            <span class="kw">return </span>Either::Left(future::ready(value.clone()));
-        }
-        Either::Right(future::poll_fn(<span class="kw">move </span>|cx| {
-            <span class="self">self</span>.poll_next(cx, epoch).map(|(<span class="kw">_</span>, t)| t)
-        }))
+        future::poll_fn(<span class="kw">move </span>|cx| <span class="self">self</span>.poll_next(cx, INITIAL_EPOCH).map(|(<span class="kw">_</span>, t)| t))
     }
 
     <span class="kw">fn </span>poll_next(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;, last_epoch: u64) -&gt; Poll&lt;(u64, T)&gt; {
         <span class="kw">let </span>epoch = <span class="self">self</span>.epoch.load(Ordering::Acquire);
-        <span class="comment">// TODO(flub): Pretty sure this can miss a write because the epoch and wakers are
-        //    separate:
-        //    - thread 1 runs poll_next
-        //    - thread 2 runs set
-        //    1. thread 1: load epoch
-        //    2. thread 2: lock value, replace value, unlock value
-        //    3. thread 2: store epoch
-        //    4. thread 2: lock wakers, drain wakers, unlock wakers
-        //    5. thread 1: lock wakers, install waker, unlock wakers
-        //
-        //    I believe the epoch and wakers need to be stored in the same RwLock.
 
-        // TODO(flub): This can be written without expect, but the above should probably be
-        //    fixed first:
-
-        // if last_epoch &lt; epoch {
-        //     if let Some(value) = self.get() {
-        //         // Once initialised our Option is never set back to None, but nevertheless
-        //         // this code is safer without relying on that invariant.
-        //         return Poll::Ready((epoch, value));
-        //     }
-        // }
-        // self.watchers.write().expect("poisoned").push_back(cx.waker().to_owned());
-        // Poll::Pending
-
-        </span><span class="kw">if </span>last_epoch == epoch {
-            <span class="self">self</span>.watchers
-                .write()
-                .unwrap()
-                .push_back(cx.waker().to_owned());
-            Poll::Pending
-        } <span class="kw">else </span>{
-            Poll::Ready((epoch, <span class="self">self</span>.get().expect(<span class="string">"Never setting back to None"</span>)))
+        <span class="kw">if </span>last_epoch &lt; epoch {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = <span class="self">self</span>.get() {
+                <span class="comment">// Once initialised our Option is never set back to None, but nevertheless
+                // this code is safer without relying on that invariant.
+                </span><span class="kw">return </span>Poll::Ready((epoch, value));
+            }
         }
+
+        <span class="self">self</span>.watchers
+            .lock()
+            .expect(<span class="string">"poisoned"</span>)
+            .push_back(cx.waker().to_owned());
+
+        <span class="attr">#[cfg(iroh_loom)]
+        </span>loom::thread::yield_now();
+
+        <span class="comment">// We do another epoch check in case there was a race between
+        // registering a watcher and
+        </span><span class="kw">let </span>epoch = <span class="self">self</span>.epoch.load(Ordering::Acquire);
+        <span class="kw">if </span>last_epoch &lt; epoch {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = <span class="self">self</span>.get() {
+                <span class="comment">// Once initialised our Option is never set back to None, but nevertheless
+                // this code is safer without relying on that invariant.
+                </span><span class="kw">return </span>Poll::Ready((epoch, value));
+            }
+        }
+
+        Poll::Pending
     }
 }
 
@@ -553,7 +529,7 @@
         }
         <span class="kw">let </span>old = std::mem::replace(<span class="kw-2">&amp;mut *</span><span class="self">self</span>.shared.value.write().unwrap(), <span class="prelude-val">Some</span>(value));
         <span class="self">self</span>.shared.epoch.fetch_add(<span class="number">1</span>, Ordering::AcqRel);
-        <span class="kw">for </span>watcher <span class="kw">in </span><span class="self">self</span>.shared.watchers.write().unwrap().drain(..) {
+        <span class="kw">for </span>watcher <span class="kw">in </span><span class="self">self</span>.shared.watchers.lock().unwrap().drain(..) {
             watcher.wake();
         }
         old
@@ -631,44 +607,6 @@
                 Poll::Ready(<span class="prelude-val">Some</span>(value))
             }
         })
-    }
-}
-
-<span class="kw">enum </span>Either&lt;A, B&gt; {
-    Left(A),
-    Right(B),
-}
-
-<span class="kw">impl</span>&lt;A, B&gt; Either&lt;A, B&gt; {
-    <span class="doccomment">/// Convert `Pin&lt;&amp;mut Either&lt;A, B&gt;&gt;` to `Either&lt;Pin&lt;&amp;mut A&gt;, Pin&lt;&amp;mut B&gt;&gt;`,
-    /// pinned projections of the inner variants.
-    </span><span class="kw">fn </span>as_pin_mut(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;) -&gt; Either&lt;Pin&lt;<span class="kw-2">&amp;mut </span>A&gt;, Pin&lt;<span class="kw-2">&amp;mut </span>B&gt;&gt; {
-        <span class="comment">// SAFETY: `get_unchecked_mut` is fine because we don't move anything.
-        // We can use `new_unchecked` because the `inner` parts are guaranteed
-        // to be pinned, as they come from `self` which is pinned, and we never
-        // offer an unpinned `&amp;mut A` or `&amp;mut B` through `Pin&lt;&amp;mut Self&gt;`. We
-        // also don't have an implementation of `Drop`, nor manual `Unpin`.
-        </span><span class="kw">unsafe </span>{
-            <span class="kw">match </span><span class="self">self</span>.get_unchecked_mut() {
-                <span class="self">Self</span>::Left(inner) =&gt; Either::Left(Pin::new_unchecked(inner)),
-                <span class="self">Self</span>::Right(inner) =&gt; Either::Right(Pin::new_unchecked(inner)),
-            }
-        }
-    }
-}
-
-<span class="kw">impl</span>&lt;A, B&gt; Future <span class="kw">for </span>Either&lt;A, B&gt;
-<span class="kw">where
-    </span>A: Future,
-    B: Future&lt;Output = A::Output&gt;,
-{
-    <span class="kw">type </span>Output = A::Output;
-
-    <span class="kw">fn </span>poll(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
-        <span class="kw">match </span><span class="self">self</span>.as_pin_mut() {
-            Either::Left(x) =&gt; x.poll(cx),
-            Either::Right(x) =&gt; x.poll(cx),
-        }
     }
 }
 
@@ -798,6 +736,34 @@
 
         <span class="kw">let </span>poll = futures_lite::future::poll_once(<span class="kw-2">&amp;mut </span>initialized).<span class="kw">await</span>;
         <span class="macro">assert_eq!</span>(poll, <span class="prelude-val">Some</span>(<span class="number">1u8</span>));
+    }
+
+    <span class="attr">#[test]
+    </span><span class="kw">fn </span>test_initialized_always_resolves() {
+        <span class="attr">#[cfg(iroh_loom)]
+        </span><span class="kw">use </span>loom::thread;
+        <span class="attr">#[cfg(not(iroh_loom))]
+        </span><span class="kw">use </span>std::thread;
+
+        <span class="kw">let </span>test_case = || {
+            <span class="kw">let </span>watchable = Watchable::&lt;u8&gt;::new();
+
+            <span class="kw">let </span>watch = watchable.watch();
+            <span class="kw">let </span>thread = thread::spawn(<span class="kw">move </span>|| futures_lite::future::block_on(watch.initialized()));
+
+            watchable.set(<span class="number">42</span>);
+
+            thread::yield_now();
+
+            <span class="kw">let </span>value: u8 = thread.join().unwrap();
+
+            <span class="macro">assert_eq!</span>(value, <span class="number">42</span>);
+        };
+
+        <span class="attr">#[cfg(iroh_loom)]
+        </span>loom::model(test_case);
+        <span class="attr">#[cfg(not(iroh_loom))]
+        </span>test_case();
     }
 }
 </code></pre></div></section></main></body></html>
