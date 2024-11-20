@@ -130,8 +130,8 @@ pub mod staging {
 pub(crate) mod timeouts {
     use std::time::Duration;
 
-    // Timeouts for netcheck
+    // Timeouts for net_report
 
-    /// Maximum duration to wait for a netcheck report.
+    /// Maximum duration to wait for a net_report report.
     pub(crate) const NETCHECK_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
 }

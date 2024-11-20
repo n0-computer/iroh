@@ -12,8 +12,8 @@
 //! The relay server hosts the following services:
 //!
 //! - HTTPS `/relay`: The main URL endpoint to which clients connect and sends traffic over.
-//! - HTTPS `/ping`: Used for netcheck probes.
-//! - HTTPS `/generate_204`: Used for netcheck probes.
+//! - HTTPS `/ping`: Used for net_report probes.
+//! - HTTPS `/generate_204`: Used for net_report probes.
 //! - STUN: UDP port for STUN requests/responses.
 
 use std::{fmt, future::Future, net::SocketAddr, pin::Pin, sync::Arc};

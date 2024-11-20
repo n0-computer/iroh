@@ -1,17 +1,17 @@
-//! Default values used in netcheck.
+//! Default values used in net_report.
 
 /// The default STUN port used by the Relay server.
 ///
 /// The STUN port as defined by [RFC 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
 pub const DEFAULT_STUN_PORT: u16 = 3478;
 
-/// Contains all timeouts that we use in `iroh-netcheck`.
+/// Contains all timeouts that we use in `iroh-net_report`.
 pub(crate) mod timeouts {
     use std::time::Duration;
 
-    // Timeouts for netcheck
+    // Timeouts for net_report
 
-    /// The maximum amount of time netcheck will spend gathering a single report.
+    /// The maximum amount of time net_report will spend gathering a single report.
     pub(crate) const OVERALL_REPORT_TIMEOUT: Duration = Duration::from_secs(5);
 
     /// The total time we wait for all the probes.

@@ -26,14 +26,14 @@ impl Default for Metrics {
             stun_packets_sent_ipv6: Counter::new("Number of IPv6 STUN packets sent"),
             stun_packets_recv_ipv4: Counter::new("Number of IPv4 STUN packets received"),
             stun_packets_recv_ipv6: Counter::new("Number of IPv6 STUN packets received"),
-            reports: Counter::new("Number of reports executed by netcheck, including full reports"),
-            reports_full: Counter::new("Number of full reports executed by netcheck"),
+            reports: Counter::new("Number of reports executed by net_report, including full reports"),
+            reports_full: Counter::new("Number of full reports executed by net_report"),
         }
     }
 }
 
 impl Metric for Metrics {
     fn name() -> &'static str {
-        "netcheck"
+        "net_report"
     }
 }

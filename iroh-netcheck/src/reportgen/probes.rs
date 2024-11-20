@@ -12,7 +12,7 @@ use tokio::time::Duration;
 
 use crate::{RelayMap, RelayNode, RelayUrl, Report};
 
-/// The retransmit interval used when netcheck first runs.
+/// The retransmit interval used when net_report first runs.
 ///
 /// We have no past context to work with, and we want answers relatively quickly, so it's
 /// biased slightly more aggressive than [`DEFAULT_ACTIVE_RETRANSMIT_DELAY`]. A few extra
@@ -36,7 +36,7 @@ const DEFAULT_ACTIVE_RETRANSMIT_DELAY: Duration = Duration::from_millis(200);
 /// time.
 const ACTIVE_RETRANSMIT_EXTRA_DELAY: Duration = Duration::from_millis(50);
 
-/// The number of fastest relays to periodically re-query during incremental netcheck
+/// The number of fastest relays to periodically re-query during incremental net_report
 /// reports. (During a full report, all relay servers are scanned.)
 const NUM_INCREMENTAL_RELAYS: usize = 3;
 
@@ -269,7 +269,7 @@ impl ProbePlan {
         plan
     }
 
-    /// Creates a follow up probe plan using a previous netcheck report.
+    /// Creates a follow up probe plan using a previous net_report report.
     pub(super) fn with_last_report(
         relay_map: &RelayMap,
         if_state: &interfaces::State,

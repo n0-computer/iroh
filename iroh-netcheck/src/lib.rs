@@ -3,7 +3,7 @@
 //! Netcheck is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
 //! etc and reachability to the configured relays.
-// Based on <https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go>
+// Based on <https://github.com/tailscale/tailscale/blob/main/net/net_report/net_report.go>
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -48,7 +48,7 @@ const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 /// default which will never be used.
 const DEFAULT_MAX_LATENCY: Duration = Duration::from_millis(100);
 
-/// A netcheck report.
+/// A net_report report.
 ///
 /// Can be obtained by calling [`Client::get_report`].
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
@@ -159,15 +159,15 @@ impl RelayLatencies {
     }
 }
 
-/// Client to run netchecks.
+/// Client to run net_reports.
 ///
-/// Creating this creates a netcheck actor which runs in the background.  Most of the time
+/// Creating this creates a net_report actor which runs in the background.  Most of the time
 /// it is idle unless [`Client::get_report`] is called, which is the main interface.
 ///
 /// The [`Client`] struct can be cloned and results multiple handles to the running actor.
 /// If all [`Client`]s are dropped the actor stops running.
 ///
-/// While running the netcheck actor expects to be passed all received stun packets using
+/// While running the net_report actor expects to be passed all received stun packets using
 /// `Addr::receive_stun_packet`.
 #[derive(Debug)]
 pub struct Client {
@@ -204,7 +204,7 @@ impl Default for Reports {
 }
 
 impl Client {
-    /// Creates a new netcheck client.
+    /// Creates a new net_report client.
     ///
     /// This starts a connected actor in the background.  Once the client is dropped it will
     /// stop running.
@@ -212,7 +212,7 @@ impl Client {
         let mut actor = Actor::new(port_mapper, dns_resolver)?;
         let addr = actor.addr();
         let task =
-            tokio::spawn(async move { actor.run().await }.instrument(info_span!("netcheck.actor")));
+            tokio::spawn(async move { actor.run().await }.instrument(info_span!("net_report.actor")));
         let drop_guard = AbortOnDropHandle::new(task);
         Ok(Client {
             addr,
@@ -228,7 +228,7 @@ impl Client {
         self.addr.clone()
     }
 
-    /// Runs a netcheck, returning the report.
+    /// Runs a net_report, returning the report.
     ///
     /// It may not be called concurrently with itself, `&mut self` takes care of that.
     ///
@@ -289,9 +289,9 @@ pub(crate) struct Inflight {
 /// Messages to send to the [`Actor`].
 #[derive(Debug)]
 pub(crate) enum Message {
-    /// Run a netcheck.
+    /// Run a net_report.
     ///
-    /// Only one netcheck can be run at a time, trying to run multiple concurrently will
+    /// Only one net_report can be run at a time, trying to run multiple concurrently will
     /// fail.
     RunCheck {
         /// The relay configuration.
@@ -339,15 +339,15 @@ pub struct Addr {
 }
 
 impl Addr {
-    /// Pass a received STUN packet to the netchecker.
+    /// Pass a received STUN packet to the net_reporter.
     ///
     /// Normally the UDP sockets to send STUN messages from are passed in so that STUN
     /// packets are sent from the sockets that carry the real traffic.  However because
     /// these sockets carry real traffic they will also receive non-STUN traffic, thus the
-    /// netcheck actor does not read from the sockets directly.  If you receive a STUN
+    /// net_report actor does not read from the sockets directly.  If you receive a STUN
     /// packet on the socket you should pass it to this method.
     ///
-    /// It is safe to call this even when the netcheck actor does not currently have any
+    /// It is safe to call this even when the net_report actor does not currently have any
     /// in-flight STUN probes.  The actor will simply ignore any stray STUN packets.
     ///
     /// There is an implicit queue here which may drop packets if the actor does not keep up
@@ -365,12 +365,12 @@ impl Addr {
 
     async fn send(&self, msg: Message) -> Result<(), mpsc::error::SendError<Message>> {
         self.sender.send(msg).await.inspect_err(|_| {
-            error!("netcheck actor lost");
+            error!("net_report actor lost");
         })
     }
 }
 
-/// The netcheck actor.
+/// The net_report actor.
 ///
 /// This actor runs for the entire duration there's a [`Client`] connected.
 #[derive(Debug)]
@@ -439,7 +439,7 @@ impl Actor {
     /// It will now run and handle messages.  Once the connected [`Client`] (including all
     /// its clones) is dropped this will terminate.
     async fn run(&mut self) {
-        debug!("netcheck actor starting");
+        debug!("net_report actor starting");
         while let Some(msg) = self.receiver.recv().await {
             trace!(?msg, "handling message");
             match msg {
@@ -503,7 +503,7 @@ impl Actor {
             || now.duration_since(self.reports.last_full) > FULL_REPORT_INTERVAL;
 
         // If the last report had a captive portal and reported no UDP access,
-        // it's possible that we didn't get a useful netcheck due to the
+        // it's possible that we didn't get a useful net_report due to the
         // captive portal blocking us. If so, make this report a full (non-incremental) one.
         if !do_full {
             if let Some(ref last) = self.reports.last {
@@ -694,12 +694,12 @@ impl Actor {
     }
 }
 
-/// State the netcheck actor needs for an in-progress report generation.
+/// State the net_report actor needs for an in-progress report generation.
 #[derive(Debug)]
 struct ReportRun {
     /// The handle of the [`reportgen`] actor, cancels the actor on drop.
     _reportgen: reportgen::Client,
-    /// Drop guard to optionally kill workers started by netcheck to support reportgen.
+    /// Drop guard to optionally kill workers started by net_report to support reportgen.
     _drop_guard: tokio_util::sync::DropGuard,
     /// Where to send the completed report.
     report_tx: oneshot::Sender<Result<Arc<Report>>>,
@@ -1251,9 +1251,9 @@ mod tests {
 
         // Set up an external socket to send STUN requests from, this will be discovered as
         // our public socket address by STUN.  We send back any packets received on this
-        // socket to the netcheck client using Client::receive_stun_packet.  Once we sent
+        // socket to the net_report client using Client::receive_stun_packet.  Once we sent
         // the hairpin STUN request (from a different randomly bound socket) we are sending
-        // it to this socket, which is forwarnding it back to our netcheck client, because
+        // it to this socket, which is forwarnding it back to our net_report client, because
         // this dumb implementation just forwards anything even if it would be garbage.
         // Thus hairpinning detection will declare hairpinning to work.
         let sock = UdpSocket::bind_local(IpFamily::V4, 0)?;
@@ -1270,7 +1270,7 @@ mod tests {
                         info!(
                             addr=?sock.local_addr().unwrap(),
                             %count,
-                            "Forwarding payload to netcheck client",
+                            "Forwarding payload to net_report client",
                         );
                         let payload = buf.split_to(count).freeze();
                         addr.receive_stun_packet(payload, src);
