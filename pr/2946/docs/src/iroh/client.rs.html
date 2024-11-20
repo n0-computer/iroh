@@ -80,57 +80,10 @@
 <a href="#80" id="80">80</a>
 <a href="#81" id="81">81</a>
 <a href="#82" id="82">82</a>
-<a href="#83" id="83">83</a>
-<a href="#84" id="84">84</a>
-<a href="#85" id="85">85</a>
-<a href="#86" id="86">86</a>
-<a href="#87" id="87">87</a>
-<a href="#88" id="88">88</a>
-<a href="#89" id="89">89</a>
-<a href="#90" id="90">90</a>
-<a href="#91" id="91">91</a>
-<a href="#92" id="92">92</a>
-<a href="#93" id="93">93</a>
-<a href="#94" id="94">94</a>
-<a href="#95" id="95">95</a>
-<a href="#96" id="96">96</a>
-<a href="#97" id="97">97</a>
-<a href="#98" id="98">98</a>
-<a href="#99" id="99">99</a>
-<a href="#100" id="100">100</a>
-<a href="#101" id="101">101</a>
-<a href="#102" id="102">102</a>
-<a href="#103" id="103">103</a>
-<a href="#104" id="104">104</a>
-<a href="#105" id="105">105</a>
-<a href="#106" id="106">106</a>
-<a href="#107" id="107">107</a>
-<a href="#108" id="108">108</a>
-<a href="#109" id="109">109</a>
-<a href="#110" id="110">110</a>
-<a href="#111" id="111">111</a>
-<a href="#112" id="112">112</a>
-<a href="#113" id="113">113</a>
-<a href="#114" id="114">114</a>
-<a href="#115" id="115">115</a>
-<a href="#116" id="116">116</a>
-<a href="#117" id="117">117</a>
-<a href="#118" id="118">118</a>
-<a href="#119" id="119">119</a>
-<a href="#120" id="120">120</a>
-<a href="#121" id="121">121</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Client to an Iroh node.
 //!
 //! See the documentation for [`Iroh`] for more information.
-
-</span><span class="kw">use </span>std::collections::BTreeMap;
-
-<span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>futures_lite::{Stream, StreamExt};
-<span class="kw">use </span>ref_cast::RefCast;
-
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::node::{CounterStats, ShutdownRequest, StatsRequest, StatusRequest};
-<span class="attr">#[doc(inline)]
+</span><span class="attr">#[doc(inline)]
 </span><span class="kw">pub use </span><span class="kw">crate</span>::rpc_protocol::RpcService;
 
 <span class="kw">mod </span>quic;
@@ -138,10 +91,9 @@
 <span class="kw">pub use </span>iroh_blobs::rpc::client::{blobs, tags};
 <span class="kw">pub use </span>iroh_docs::rpc::client::{authors, docs, docs::Doc};
 <span class="kw">pub use </span>iroh_gossip::rpc::client <span class="kw">as </span>gossip;
+<span class="kw">pub use </span>iroh_node_util::rpc::client::{net, node};
 
-<span class="kw">pub use </span><span class="self">self</span>::net::NodeStatus;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::quic::{connect_raw <span class="kw">as </span>quic_connect_raw, RPC_ALPN};
-<span class="kw">pub mod </span>net;
 
 <span class="comment">// Keep this type exposed, otherwise every occurrence of `RpcClient` in the API
 // will show up as `RpcClient&lt;RpcService, Connection&lt;RpcService&gt;&gt;` in the docs.
@@ -201,43 +153,13 @@
     }
 
     <span class="doccomment">/// Returns the net client.
-    </span><span class="kw">pub fn </span>net(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>net::Client {
-        net::Client::ref_cast(<span class="kw-2">&amp;</span><span class="self">self</span>.rpc)
+    </span><span class="kw">pub fn </span>net(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; net::Client {
+        net::Client::new(<span class="self">self</span>.rpc.clone().map().boxed())
     }
 
-    <span class="doccomment">/// Shuts down the node.
-    ///
-    /// If `force` is true, the node will be shut down instantly without
-    /// waiting for things to stop gracefully.
-    </span><span class="kw">pub async fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>, force: bool) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="self">self</span>.rpc.rpc(ShutdownRequest { force }).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(())
+    <span class="doccomment">/// Returns the net client.
+    </span><span class="kw">pub fn </span>node(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; node::Client {
+        node::Client::new(<span class="self">self</span>.rpc.clone().map().boxed())
     }
-
-    <span class="doccomment">/// Fetches statistics of the running node.
-    </span><span class="kw">pub async fn </span>stats(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;BTreeMap&lt;String, CounterStats&gt;&gt; {
-        <span class="kw">let </span>res = <span class="self">self</span>.rpc.rpc(StatsRequest {}).<span class="kw">await</span><span class="question-mark">??</span>;
-        <span class="prelude-val">Ok</span>(res.stats)
-    }
-
-    <span class="doccomment">/// Fetches status information about this node.
-    </span><span class="kw">pub async fn </span>status(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;NodeStatus&gt; {
-        <span class="kw">let </span>response = <span class="self">self</span>.rpc.rpc(StatusRequest).<span class="kw">await</span><span class="question-mark">??</span>;
-        <span class="prelude-val">Ok</span>(response)
-    }
-}
-
-<span class="kw">fn </span>flatten&lt;T, E1, E2&gt;(
-    s: <span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Result</span>&lt;T, E1&gt;, E2&gt;&gt;,
-) -&gt; <span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;T&gt;&gt;
-<span class="kw">where
-    </span>E1: std::error::Error + Send + Sync + <span class="lifetime">'static</span>,
-    E2: std::error::Error + Send + Sync + <span class="lifetime">'static</span>,
-{
-    s.map(|res| <span class="kw">match </span>res {
-        <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(res)) =&gt; <span class="prelude-val">Ok</span>(res),
-        <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; <span class="prelude-val">Err</span>(err.into()),
-        <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err.into()),
-    })
 }
 </code></pre></div></section></main></body></html>
