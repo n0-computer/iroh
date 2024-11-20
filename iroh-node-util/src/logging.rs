@@ -1,4 +1,5 @@
-use std::path::Path;
+//! Utilities for logging
+use std::{env, path::Path};
 
 use derive_more::FromStr;
 use serde::{Deserialize, Serialize};
@@ -9,6 +10,19 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Lay
 /// `RUST_LOG` statement used by default in file logging.
 // rustyline is annoying
 pub(crate) const DEFAULT_FILE_RUST_LOG: &str = "rustyline=warn,debug";
+
+/// Parse `<bin>_FILE_RUST_LOG` as [`tracing_subscriber::EnvFilter`]. Returns `None` if not
+/// present.
+pub fn env_file_rust_log(bin: &'static str) -> Option<anyhow::Result<EnvFilter>> {
+    let env_file_rust_log = format!("{}_FILE_RUST_LOG", bin.to_uppercase());
+    match env::var(env_file_rust_log) {
+        Ok(s) => Some(crate::logging::EnvFilter::from_str(&s).map_err(Into::into)),
+        Err(e) => match e {
+            env::VarError::NotPresent => None,
+            e @ env::VarError::NotUnicode(_) => Some(Err(e.into())),
+        },
+    }
+}
 
 /// Initialize logging both in the terminal and file based.
 ///
@@ -21,15 +35,15 @@ pub(crate) const DEFAULT_FILE_RUST_LOG: &str = "rustyline=warn,debug";
 ///   - including line numbers.
 ///   - not using ansi colors.
 /// - create log files in the [`FileLogging::dir`] directory. If not provided, the `logs` dir
-///   inside the given `iroh_data_root` is used.
-/// - rotate files every [`Self::rotation`].
-/// - keep at most [`Self::max_files`] log files.
-/// - use the filtering defined by [`Self::rust_log`]. When not provided, the default
-///   [`DEFAULT_FILE_RUST_LOG`] is used.
+///   inside the given `logs_root` is used.
+/// - rotate files every [`FileLogging::rotation`].
+/// - keep at most [`FileLogging::max_files`] log files.
+/// - use the filtering defined by [`FileLogging::rust_log`]. When not provided, the default
+///   `DEFAULT_FILE_RUST_LOG` is used.
 /// - create log files with the name `iroh-<ROTATION_BASED_NAME>.log` (ex: iroh-2024-02-02.log)
-pub(crate) fn init_terminal_and_file_logging(
+pub fn init_terminal_and_file_logging(
     file_log_config: &FileLogging,
-    logs_dir: &Path,
+    logs_root: &Path,
 ) -> anyhow::Result<non_blocking::WorkerGuard> {
     let terminal_layer = fmt::layer()
         .with_writer(std::io::stderr)
@@ -55,7 +69,7 @@ pub(crate) fn init_terminal_and_file_logging(
                 };
 
                 // prefer the directory set in the config file over the default
-                let logs_path = dir.clone().unwrap_or_else(|| logs_dir.join("logs"));
+                let logs_path = dir.clone().unwrap_or_else(|| logs_root.join("logs"));
 
                 let file_appender = rolling::Builder::new()
                     .rotation(rotation)
@@ -87,7 +101,7 @@ pub(crate) fn init_terminal_and_file_logging(
 /// This will:
 /// - use the default [`fmt::format::Format`].
 /// - log to [`std::io::Stderr`]
-pub(crate) fn init_terminal_logging() -> anyhow::Result<()> {
+pub fn init_terminal_logging() -> anyhow::Result<()> {
     let terminal_layer = fmt::layer()
         .with_writer(std::io::stderr)
         .with_filter(tracing_subscriber::EnvFilter::from_default_env());
@@ -102,15 +116,15 @@ pub(crate) fn init_terminal_logging() -> anyhow::Result<()> {
 // `src/app/docs/reference/config/page.mdx`.  Any changes to this need to be updated there.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct FileLogging {
+pub struct FileLogging {
     /// RUST_LOG directive to filter file logs.
-    pub(crate) rust_log: EnvFilter,
+    pub rust_log: EnvFilter,
     /// Maximum number of files to keep.
-    pub(crate) max_files: usize,
+    pub max_files: usize,
     /// How often should a new log file be produced.
-    pub(crate) rotation: Rotation,
+    pub rotation: Rotation,
     /// Where to store log files.
-    pub(crate) dir: Option<std::path::PathBuf>,
+    pub dir: Option<std::path::PathBuf>,
 }
 
 impl Default for FileLogging {
@@ -129,7 +143,7 @@ impl Default for FileLogging {
     Debug, Clone, PartialEq, Eq, SerializeDisplay, DeserializeFromStr, derive_more::Display,
 )]
 #[display("{_0}")]
-pub(crate) struct EnvFilter(String);
+pub struct EnvFilter(String);
 
 impl FromStr for EnvFilter {
     type Err = <tracing_subscriber::EnvFilter as FromStr>::Err;
@@ -158,7 +172,8 @@ impl EnvFilter {
 /// Akin to [`tracing_appender::rolling::Rotation`].
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum Rotation {
+#[allow(missing_docs)]
+pub enum Rotation {
     #[default]
     Hourly,
     Daily,

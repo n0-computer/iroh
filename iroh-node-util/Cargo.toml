@@ -28,3 +28,18 @@ serde = "1"
 serde-error = "0.1.3"
 futures-lite = "2.5.0"
 tracing = "0.1.40"
+
+derive_more = { version = "1.0.0", features = ["display"], optional = true }
+dirs-next = { version = "2.0.0", optional = true }
+rustyline = { version = "12.0.0", optional = true }
+serde_with = { version = "3.7.0", optional = true }
+tracing-appender = { version = "0.2.3", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+[features]
+logging = ["dep:derive_more", "dep:serde_with", "dep:rustyline", "dep:tracing-appender", "dep:tracing-subscriber"]
+config = ["dep:dirs-next"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "iroh_docsrs"]

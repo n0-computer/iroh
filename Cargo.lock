@@ -2771,7 +2771,6 @@ dependencies = [
  "crossterm",
  "derive_more",
  "dialoguer",
- "dirs-next",
  "duct",
  "futures-buffered",
  "futures-lite 2.5.0",
@@ -2784,6 +2783,7 @@ dependencies = [
  "iroh-docs",
  "iroh-gossip",
  "iroh-metrics",
+ "iroh-node-util",
  "nix 0.27.1",
  "parking_lot",
  "pkarr",
@@ -2798,7 +2798,6 @@ dependencies = [
  "reqwest",
  "rustyline",
  "serde",
- "serde_with",
  "shell-words",
  "shellexpand",
  "strum 0.26.3",
@@ -2810,8 +2809,6 @@ dependencies = [
  "tokio-util",
  "toml",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
  "url",
  "walkdir",
 ]
@@ -3099,17 +3096,23 @@ name = "iroh-node-util"
 version = "0.28.0"
 dependencies = [
  "anyhow",
+ "derive_more",
+ "dirs-next",
  "futures-lite 2.5.0",
  "iroh-net",
  "nested_enum_utils",
  "quic-rpc",
  "quic-rpc-derive",
+ "rustyline",
  "serde",
  "serde-error",
+ "serde_with",
  "strum 0.26.3",
  "tempfile",
  "tokio",
  "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
 ]
 
 [[package]]
