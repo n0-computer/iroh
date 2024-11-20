@@ -217,7 +217,7 @@ pub(crate) struct MagicSock {
     /// UDP IPv6 socket
     pconn6: Option<UdpConn>,
     /// Netcheck client
-    net_checker: net_report::Addr,
+    net_reporter: net_report::Addr,
     /// The state for an active DiscoKey.
     disco_secrets: DiscoSecrets,
 
@@ -716,7 +716,7 @@ impl MagicSock {
                 let packet_is_quic = if stun::is(packet) {
                     trace!(src = %meta.addr, len = %meta.stride, "UDP recv: stun packet");
                     let packet2 = Bytes::copy_from_slice(packet);
-                    self.net_checker.receive_stun_packet(packet2, meta.addr);
+                    self.net_reporter.receive_stun_packet(packet2, meta.addr);
                     false
                 } else if let Some((sender, sealed_box)) = disco::source_and_box(packet) {
                     // Disco?
@@ -1405,7 +1405,7 @@ impl Handle {
         let ipv4_addr = pconn4.local_addr()?;
         let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
-        let net_checker = net_report::Client::new(Some(port_mapper.clone()), dns_resolver.clone())?;
+        let net_reporter = net_report::Client::new(Some(port_mapper.clone()), dns_resolver.clone())?;
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
         let (relay_actor_sender, relay_actor_receiver) = mpsc::channel(256);
@@ -1432,7 +1432,7 @@ impl Handle {
             my_relay: Default::default(),
             pconn4: pconn4.clone(),
             pconn6: pconn6.clone(),
-            net_checker: net_checker.addr(),
+            net_reporter: net_reporter.addr(),
             disco_secrets: DiscoSecrets::default(),
             node_map,
             relay_actor_sender: relay_actor_sender.clone(),
@@ -1483,7 +1483,7 @@ impl Handle {
                     pconn4,
                     pconn6,
                     no_v4_send: false,
-                    net_checker,
+                    net_reporter,
                     network_monitor,
                 };
 
@@ -1731,7 +1731,7 @@ struct Actor {
     no_v4_send: bool,
 
     /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
-    net_checker: net_report::Client,
+    net_reporter: net_report::Client,
 
     network_monitor: netmon::Monitor,
 }
@@ -2207,7 +2207,7 @@ impl Actor {
 
         debug!("requesting net_report report");
         match self
-            .net_checker
+            .net_reporter
             .get_report_channel(relay_map, pconn4, pconn6)
             .await
         {
