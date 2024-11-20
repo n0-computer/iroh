@@ -1,5 +1,4 @@
 //! Define the net subcommands.
-
 use std::{net::SocketAddr, time::Duration};
 
 use anyhow::Result;
@@ -8,17 +7,14 @@ use colored::Colorize;
 use comfy_table::{presets::NOTHING, Cell, Table};
 use futures_lite::{Stream, StreamExt};
 use human_time::ToHumanTimeString;
-use iroh::{
-    client::Iroh,
-    net::{
-        endpoint::{DirectAddrInfo, RemoteInfo},
-        NodeAddr, NodeId, RelayUrl,
-    },
+use iroh_net::{
+    endpoint::{DirectAddrInfo, RemoteInfo},
+    NodeAddr, NodeId, RelayUrl,
 };
 
 /// Commands to manage the iroh network.
 #[derive(Subcommand, Debug, Clone)]
-#[allow(clippy::large_enum_variant)]
+#[allow(clippy::large_enum_variant, missing_docs)]
 pub enum NetCommands {
     /// Get information about the different remote nodes.
     RemoteList,
@@ -38,10 +34,10 @@ pub enum NetCommands {
 
 impl NetCommands {
     /// Runs the net command given the iroh client.
-    pub async fn run(self, iroh: &Iroh) -> Result<()> {
+    pub async fn run(self, client: &crate::rpc::client::net::Client) -> Result<()> {
         match self {
             Self::RemoteList => {
-                let connections = iroh.net().remote_info_iter().await?;
+                let connections = client.remote_info_iter().await?;
                 let timestamp = time::OffsetDateTime::now_utc()
                     .format(&time::format_description::well_known::Rfc2822)
                     .unwrap_or_else(|_| String::from("failed to get current time"));
@@ -54,14 +50,14 @@ impl NetCommands {
                 );
             }
             Self::Remote { node_id } => {
-                let info = iroh.net().remote_info(node_id).await?;
+                let info = client.remote_info(node_id).await?;
                 match info {
                     Some(info) => println!("{}", fmt_info(info)),
                     None => println!("Not Found"),
                 }
             }
             Self::NodeAddr => {
-                let addr = iroh.net().node_addr().await?;
+                let addr = client.node_addr().await?;
                 println!("Node ID: {}", addr.node_id);
                 let relay = addr
                     .info
@@ -83,10 +79,10 @@ impl NetCommands {
                 if let Some(relay) = relay {
                     addr = addr.with_relay_url(relay);
                 }
-                iroh.net().add_node_addr(addr).await?;
+                client.add_node_addr(addr).await?;
             }
             Self::HomeRelay => {
-                let relay = iroh.net().home_relay().await?;
+                let relay = client.home_relay().await?;
                 let relay = relay
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "Not Available".to_string());
