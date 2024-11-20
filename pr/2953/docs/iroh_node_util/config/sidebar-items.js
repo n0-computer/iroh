@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["cache_root","config_root","data_root","env_file_rust_log"]};
+window.SIDEBAR_ITEMS = {"fn":["cache_root","config_root","data_root"]};

@@ -83,36 +83,10 @@
 <a href="#83" id="83">83</a>
 <a href="#84" id="84">84</a>
 <a href="#85" id="85">85</a>
-<a href="#86" id="86">86</a>
-<a href="#87" id="87">87</a>
-<a href="#88" id="88">88</a>
-<a href="#89" id="89">89</a>
-<a href="#90" id="90">90</a>
-<a href="#91" id="91">91</a>
-<a href="#92" id="92">92</a>
-<a href="#93" id="93">93</a>
-<a href="#94" id="94">94</a>
-<a href="#95" id="95">95</a>
-<a href="#96" id="96">96</a>
-<a href="#97" id="97">97</a>
-<a href="#98" id="98">98</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Utilities to get default paths for configuration, data, and cache directories.
-</span><span class="kw">use </span>std::{env, path::PathBuf, str::FromStr};
+</span><span class="kw">use </span>std::{env, path::PathBuf};
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
-
-<span class="doccomment">/// Parse `&lt;bin&gt;_FILE_RUST_LOG` as [`tracing_subscriber::EnvFilter`]. Returns `None` if not
-/// present.
-</span><span class="kw">pub fn </span>env_file_rust_log(bin: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">crate</span>::logging::EnvFilter&gt;&gt; {
-    <span class="kw">let </span>env_file_rust_log = <span class="macro">format!</span>(<span class="string">"{}_FILE_RUST_LOG"</span>, bin.to_uppercase());
-    <span class="kw">match </span>env::var(env_file_rust_log) {
-        <span class="prelude-val">Ok</span>(s) =&gt; <span class="prelude-val">Some</span>(<span class="kw">crate</span>::logging::EnvFilter::from_str(<span class="kw-2">&amp;</span>s).map_err(Into::into)),
-        <span class="prelude-val">Err</span>(e) =&gt; <span class="kw">match </span>e {
-            env::VarError::NotPresent =&gt; <span class="prelude-val">None</span>,
-            e @ env::VarError::NotUnicode(<span class="kw">_</span>) =&gt; <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e.into())),
-        },
-    }
-}
 
 <span class="doccomment">/// Returns the path to the user's config directory for the given binary.
 ///

@@ -177,8 +177,21 @@
 <a href="#177" id="177">177</a>
 <a href="#178" id="178">178</a>
 <a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Utilities for logging
-</span><span class="kw">use </span>std::path::Path;
+</span><span class="kw">use </span>std::{env, path::Path};
 
 <span class="kw">use </span>derive_more::FromStr;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
@@ -189,6 +202,19 @@
 <span class="doccomment">/// `RUST_LOG` statement used by default in file logging.
 </span><span class="comment">// rustyline is annoying
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>DEFAULT_FILE_RUST_LOG: <span class="kw-2">&amp;</span>str = <span class="string">"rustyline=warn,debug"</span>;
+
+<span class="doccomment">/// Parse `&lt;bin&gt;_FILE_RUST_LOG` as [`tracing_subscriber::EnvFilter`]. Returns `None` if not
+/// present.
+</span><span class="kw">pub fn </span>env_file_rust_log(bin: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) -&gt; <span class="prelude-ty">Option</span>&lt;anyhow::Result&lt;EnvFilter&gt;&gt; {
+    <span class="kw">let </span>env_file_rust_log = <span class="macro">format!</span>(<span class="string">"{}_FILE_RUST_LOG"</span>, bin.to_uppercase());
+    <span class="kw">match </span>env::var(env_file_rust_log) {
+        <span class="prelude-val">Ok</span>(s) =&gt; <span class="prelude-val">Some</span>(<span class="kw">crate</span>::logging::EnvFilter::from_str(<span class="kw-2">&amp;</span>s).map_err(Into::into)),
+        <span class="prelude-val">Err</span>(e) =&gt; <span class="kw">match </span>e {
+            env::VarError::NotPresent =&gt; <span class="prelude-val">None</span>,
+            e @ env::VarError::NotUnicode(<span class="kw">_</span>) =&gt; <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e.into())),
+        },
+    }
+}
 
 <span class="doccomment">/// Initialize logging both in the terminal and file based.
 ///
