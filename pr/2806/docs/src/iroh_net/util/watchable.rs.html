@@ -409,7 +409,7 @@
 </span><span class="kw">struct </span>Shared&lt;T&gt; {
     <span class="doccomment">/// The value to be watched.
     ///
-    /// Note that the `Option` is only there to allow initialisation.  Once initialised the
+    /// Note that the `Option` is only there to allow initialisation.  Once initialized the
     /// value can never be cleared again.
     </span>value: RwLock&lt;<span class="prelude-ty">Option</span>&lt;T&gt;&gt;,
     epoch: AtomicU64,
@@ -427,14 +427,14 @@
 }
 
 <span class="kw">impl</span>&lt;T: Clone&gt; Shared&lt;T&gt; {
-    <span class="doccomment">/// Returns the value, initialised or not.
+    <span class="doccomment">/// Returns the value, initialized or not.
     </span><span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
         <span class="self">self</span>.value.read().unwrap().clone()
     }
 
     <span class="doccomment">/// Returns a future completing once the value is initialized.
     ///
-    /// If the value is already initialised the future will complete immediately.
+    /// If the value is already initialized the future will complete immediately.
     </span><span class="kw">fn </span>initialized(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = T&gt; + <span class="lifetime">'_ </span>{
         future::poll_fn(<span class="kw">move </span>|cx| <span class="self">self</span>.poll_next(cx, INITIAL_EPOCH).map(|(<span class="kw">_</span>, t)| t))
     }
@@ -444,7 +444,7 @@
 
         <span class="kw">if </span>last_epoch &lt; epoch {
             <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = <span class="self">self</span>.get() {
-                <span class="comment">// Once initialised our Option is never set back to None, but nevertheless
+                <span class="comment">// Once initialized our Option is never set back to None, but nevertheless
                 // this code is safer without relying on that invariant.
                 </span><span class="kw">return </span>Poll::Ready((epoch, value));
             }
@@ -463,7 +463,7 @@
         </span><span class="kw">let </span>epoch = <span class="self">self</span>.epoch.load(Ordering::Acquire);
         <span class="kw">if </span>last_epoch &lt; epoch {
             <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = <span class="self">self</span>.get() {
-                <span class="comment">// Once initialised our Option is never set back to None, but nevertheless
+                <span class="comment">// Once initialized our Option is never set back to None, but nevertheless
                 // this code is safer without relying on that invariant.
                 </span><span class="kw">return </span>Poll::Ready((epoch, value));
             }
@@ -499,13 +499,13 @@
 }
 
 <span class="kw">impl</span>&lt;T: Clone + Eq&gt; Watchable&lt;T&gt; {
-    <span class="doccomment">/// Creates an uninitialised observable value.
+    <span class="doccomment">/// Creates an uninitialized observable value.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::default()
     }
 
-    <span class="doccomment">/// Creates an initialised observable value.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new_initialised(value: T) -&gt; <span class="self">Self </span>{
+    <span class="doccomment">/// Creates an initialized observable value.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new_initialized(value: T) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>shared = Shared {
             value: RwLock::new(<span class="prelude-val">Some</span>(value)),
             epoch: AtomicU64::new(INITIAL_EPOCH),
@@ -519,7 +519,7 @@
     <span class="doccomment">/// Sets a new value.
     ///
     /// Returns the previous value if it is different from the one set.  If the value was
-    /// uninitialised before, or the previous value is the same as the one being set this
+    /// uninitialized before, or the previous value is the same as the one being set this
     /// returns `None`.
     ///
     /// Watchers are only notified if the value is changed.
@@ -576,7 +576,7 @@
     <span class="doccomment">/// Returns a stream which will yield an items for the most recent value.
     ///
     /// The first item of the stream is the current value, so that this stream can be easily
-    /// used to operate on the most recent value.  If the stream is not yet initialised the
+    /// used to operate on the most recent value.  If the stream is not yet initialized the
     /// first item of the stream will not be readily available.
     ///
     /// Note however that only the last item is stored.  If the stream is not polled when an
@@ -624,7 +624,7 @@
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_watcher() {
         <span class="kw">let </span>cancel = CancellationToken::new();
-        <span class="kw">let </span>watchable = Watchable::new_initialised(<span class="number">17</span>);
+        <span class="kw">let </span>watchable = Watchable::new_initialized(<span class="number">17</span>);
 
         <span class="macro">assert_eq!</span>(watchable.watch().initialized().<span class="kw">await</span>, <span class="number">17</span>);
         <span class="macro">assert_eq!</span>(watchable.watch().stream().next().<span class="kw">await</span>.unwrap(), <span class="number">17</span>);
@@ -730,7 +730,7 @@
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_initialize_already_init() {
-        <span class="kw">let </span>watchable = Watchable::new_initialised(<span class="number">1u8</span>);
+        <span class="kw">let </span>watchable = Watchable::new_initialized(<span class="number">1u8</span>);
 
         <span class="kw">let </span><span class="kw-2">mut </span>initialized = watchable.initialized();
 
