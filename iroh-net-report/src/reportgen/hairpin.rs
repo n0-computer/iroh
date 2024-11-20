@@ -266,7 +266,9 @@ mod tests {
         }
 
         // Cleanup: our dummy net_report actor should finish
-        dummy_net_report.await.expect("error in dummy net_report actor");
+        dummy_net_report
+            .await
+            .expect("error in dummy net_report actor");
     }
 
     #[tokio::test]

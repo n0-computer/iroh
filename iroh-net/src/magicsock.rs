@@ -1405,7 +1405,8 @@ impl Handle {
         let ipv4_addr = pconn4.local_addr()?;
         let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
-        let net_reporter = net_report::Client::new(Some(port_mapper.clone()), dns_resolver.clone())?;
+        let net_reporter =
+            net_report::Client::new(Some(port_mapper.clone()), dns_resolver.clone())?;
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
         let (relay_actor_sender, relay_actor_receiver) = mpsc::channel(256);
@@ -1925,7 +1926,10 @@ impl Actor {
                         self.handle_net_report_report(report).await;
                     }
                     Err(err) => {
-                        warn!("failed to generate net_report report for: {}: {:?}", why, err);
+                        warn!(
+                            "failed to generate net_report report for: {}: {:?}",
+                            why, err
+                        );
                     }
                 }
                 self.finalize_direct_addrs_update(why);

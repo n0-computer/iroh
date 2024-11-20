@@ -211,8 +211,9 @@ impl Client {
     pub fn new(port_mapper: Option<portmapper::Client>, dns_resolver: DnsResolver) -> Result<Self> {
         let mut actor = Actor::new(port_mapper, dns_resolver)?;
         let addr = actor.addr();
-        let task =
-            tokio::spawn(async move { actor.run().await }.instrument(info_span!("net_report.actor")));
+        let task = tokio::spawn(
+            async move { actor.run().await }.instrument(info_span!("net_report.actor")),
+        );
         let drop_guard = AbortOnDropHandle::new(task);
         Ok(Client {
             addr,
