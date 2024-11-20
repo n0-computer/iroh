@@ -678,6 +678,7 @@
 <a href="#678" id="678">678</a>
 <a href="#679" id="679">679</a>
 <a href="#680" id="680">680</a>
+<a href="#681" id="681">681</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     future::Future,
     io::ErrorKind,
@@ -688,7 +689,7 @@
 };
 
 <span class="kw">use </span>anyhow::{ensure, Context, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>tracing::warn;
+<span class="kw">use </span>tracing::{debug, warn};
 
 <span class="kw">use </span><span class="kw">super</span>::IpFamily;
 
@@ -758,6 +759,7 @@
 
     <span class="doccomment">/// Rebind the underlying socket.
     </span><span class="kw">pub fn </span>rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="macro">debug!</span>(<span class="string">"rebinding {}"</span>, <span class="self">self</span>.addr);
         <span class="comment">// Remove old socket
         </span><span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.socket.write().unwrap();
         {
