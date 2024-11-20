@@ -25,7 +25,7 @@ const INITIAL_EPOCH: u64 = 1;
 struct Shared<T> {
     /// The value to be watched.
     ///
-    /// Note that the `Option` is only there to allow initialisation.  Once initialised the
+    /// Note that the `Option` is only there to allow initialisation.  Once initialized the
     /// value can never be cleared again.
     value: RwLock<Option<T>>,
     epoch: AtomicU64,
@@ -43,14 +43,14 @@ impl<T> Default for Shared<T> {
 }
 
 impl<T: Clone> Shared<T> {
-    /// Returns the value, initialised or not.
+    /// Returns the value, initialized or not.
     fn get(&self) -> Option<T> {
         self.value.read().unwrap().clone()
     }
 
     /// Returns a future completing once the value is initialized.
     ///
-    /// If the value is already initialised the future will complete immediately.
+    /// If the value is already initialized the future will complete immediately.
     fn initialized(&self) -> impl Future<Output = T> + '_ {
         future::poll_fn(move |cx| self.poll_next(cx, INITIAL_EPOCH).map(|(_, t)| t))
     }
@@ -60,7 +60,7 @@ impl<T: Clone> Shared<T> {
 
         if last_epoch < epoch {
             if let Some(value) = self.get() {
-                // Once initialised our Option is never set back to None, but nevertheless
+                // Once initialized our Option is never set back to None, but nevertheless
                 // this code is safer without relying on that invariant.
                 return Poll::Ready((epoch, value));
             }
@@ -79,7 +79,7 @@ impl<T: Clone> Shared<T> {
         let epoch = self.epoch.load(Ordering::Acquire);
         if last_epoch < epoch {
             if let Some(value) = self.get() {
-                // Once initialised our Option is never set back to None, but nevertheless
+                // Once initialized our Option is never set back to None, but nevertheless
                 // this code is safer without relying on that invariant.
                 return Poll::Ready((epoch, value));
             }
@@ -115,13 +115,13 @@ impl<T> Clone for Watchable<T> {
 }
 
 impl<T: Clone + Eq> Watchable<T> {
-    /// Creates an uninitialised observable value.
+    /// Creates an uninitialized observable value.
     pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    /// Creates an initialised observable value.
-    pub(crate) fn new_initialised(value: T) -> Self {
+    /// Creates an initialized observable value.
+    pub(crate) fn new_initialized(value: T) -> Self {
         let shared = Shared {
             value: RwLock::new(Some(value)),
             epoch: AtomicU64::new(INITIAL_EPOCH),
@@ -135,7 +135,7 @@ impl<T: Clone + Eq> Watchable<T> {
     /// Sets a new value.
     ///
     /// Returns the previous value if it is different from the one set.  If the value was
-    /// uninitialised before, or the previous value is the same as the one being set this
+    /// uninitialized before, or the previous value is the same as the one being set this
     /// returns `None`.
     ///
     /// Watchers are only notified if the value is changed.
@@ -192,7 +192,7 @@ impl<T: Clone + Eq> Watcher<T> {
     /// Returns a stream which will yield an items for the most recent value.
     ///
     /// The first item of the stream is the current value, so that this stream can be easily
-    /// used to operate on the most recent value.  If the stream is not yet initialised the
+    /// used to operate on the most recent value.  If the stream is not yet initialized the
     /// first item of the stream will not be readily available.
     ///
     /// Note however that only the last item is stored.  If the stream is not polled when an
@@ -240,7 +240,7 @@ mod tests {
     #[tokio::test]
     async fn test_watcher() {
         let cancel = CancellationToken::new();
-        let watchable = Watchable::new_initialised(17);
+        let watchable = Watchable::new_initialized(17);
 
         assert_eq!(watchable.watch().initialized().await, 17);
         assert_eq!(watchable.watch().stream().next().await.unwrap(), 17);
@@ -346,7 +346,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_initialize_already_init() {
-        let watchable = Watchable::new_initialised(1u8);
+        let watchable = Watchable::new_initialized(1u8);
 
         let mut initialized = watchable.initialized();
 
