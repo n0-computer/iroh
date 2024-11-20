@@ -206,7 +206,7 @@ pub struct DiscoveryItem {
     pub addr_info: AddrInfo,
 }
 
-/// A map of discovery services that allows insertion and removal
+/// A map of discovery services that allows insertion and removal.
 #[derive(Debug, Default)]
 #[repr(transparent)]
 pub struct DiscoveryServiceMap {
