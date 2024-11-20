@@ -4,12 +4,17 @@
 //! observers to be notified of changes to the value.  The aim is to always be aware of the
 //! **last** value, not to observe every value there has ever been.
 
+#[cfg(iroh_loom)]
+use loom::sync;
+#[cfg(not(iroh_loom))]
+use std::sync;
+
 use std::collections::VecDeque;
 use std::future::{self, Future};
-use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::task::{self, Poll, Waker};
+use sync::atomic::{AtomicU64, Ordering};
+use sync::{Mutex, RwLock};
 
 use futures_lite::stream::Stream;
 
@@ -24,7 +29,7 @@ struct Shared<T> {
     /// value can never be cleared again.
     value: RwLock<Option<T>>,
     epoch: AtomicU64,
-    watchers: RwLock<VecDeque<Waker>>,
+    watchers: Mutex<VecDeque<Waker>>,
 }
 
 impl<T> Default for Shared<T> {
@@ -46,53 +51,41 @@ impl<T: Clone> Shared<T> {
     /// Returns a future completing once the value is initialized.
     ///
     /// If the value is already initialised the future will complete immediately.
-    // TODO: maybe writing this as a poll function avoids needing to use Either?
     fn initialized(&self) -> impl Future<Output = T> + '_ {
-        let epoch = self.epoch.load(Ordering::Acquire);
-        if let Some(ref value) = *self.value.read().expect("poisoned") {
-            return Either::Left(future::ready(value.clone()));
-        }
-        Either::Right(future::poll_fn(move |cx| {
-            self.poll_next(cx, epoch).map(|(_, t)| t)
-        }))
+        future::poll_fn(move |cx| self.poll_next(cx, INITIAL_EPOCH).map(|(_, t)| t))
     }
 
     fn poll_next(&self, cx: &mut task::Context<'_>, last_epoch: u64) -> Poll<(u64, T)> {
         let epoch = self.epoch.load(Ordering::Acquire);
-        // TODO(flub): Pretty sure this can miss a write because the epoch and wakers are
-        //    separate:
-        //    - thread 1 runs poll_next
-        //    - thread 2 runs set
-        //    1. thread 1: load epoch
-        //    2. thread 2: lock value, replace value, unlock value
-        //    3. thread 2: store epoch
-        //    4. thread 2: lock wakers, drain wakers, unlock wakers
-        //    5. thread 1: lock wakers, install waker, unlock wakers
-        //
-        //    I believe the epoch and wakers need to be stored in the same RwLock.
 
-        // TODO(flub): This can be written without expect, but the above should probably be
-        //    fixed first:
-
-        // if last_epoch < epoch {
-        //     if let Some(value) = self.get() {
-        //         // Once initialised our Option is never set back to None, but nevertheless
-        //         // this code is safer without relying on that invariant.
-        //         return Poll::Ready((epoch, value));
-        //     }
-        // }
-        // self.watchers.write().expect("poisoned").push_back(cx.waker().to_owned());
-        // Poll::Pending
-
-        if last_epoch == epoch {
-            self.watchers
-                .write()
-                .unwrap()
-                .push_back(cx.waker().to_owned());
-            Poll::Pending
-        } else {
-            Poll::Ready((epoch, self.get().expect("Never setting back to None")))
+        if last_epoch < epoch {
+            if let Some(value) = self.get() {
+                // Once initialised our Option is never set back to None, but nevertheless
+                // this code is safer without relying on that invariant.
+                return Poll::Ready((epoch, value));
+            }
         }
+
+        self.watchers
+            .lock()
+            .expect("poisoned")
+            .push_back(cx.waker().to_owned());
+
+        #[cfg(iroh_loom)]
+        loom::thread::yield_now();
+
+        // We do another epoch check in case there was a race between
+        // registering a watcher and
+        let epoch = self.epoch.load(Ordering::Acquire);
+        if last_epoch < epoch {
+            if let Some(value) = self.get() {
+                // Once initialised our Option is never set back to None, but nevertheless
+                // this code is safer without relying on that invariant.
+                return Poll::Ready((epoch, value));
+            }
+        }
+
+        Poll::Pending
     }
 }
 
@@ -152,7 +145,7 @@ impl<T: Clone + Eq> Watchable<T> {
         }
         let old = std::mem::replace(&mut *self.shared.value.write().unwrap(), Some(value));
         self.shared.epoch.fetch_add(1, Ordering::AcqRel);
-        for watcher in self.shared.watchers.write().unwrap().drain(..) {
+        for watcher in self.shared.watchers.lock().unwrap().drain(..) {
             watcher.wake();
         }
         old
@@ -230,44 +223,6 @@ impl<T: Clone + Eq> Watcher<T> {
                 Poll::Ready(Some(value))
             }
         })
-    }
-}
-
-enum Either<A, B> {
-    Left(A),
-    Right(B),
-}
-
-impl<A, B> Either<A, B> {
-    /// Convert `Pin<&mut Either<A, B>>` to `Either<Pin<&mut A>, Pin<&mut B>>`,
-    /// pinned projections of the inner variants.
-    fn as_pin_mut(self: Pin<&mut Self>) -> Either<Pin<&mut A>, Pin<&mut B>> {
-        // SAFETY: `get_unchecked_mut` is fine because we don't move anything.
-        // We can use `new_unchecked` because the `inner` parts are guaranteed
-        // to be pinned, as they come from `self` which is pinned, and we never
-        // offer an unpinned `&mut A` or `&mut B` through `Pin<&mut Self>`. We
-        // also don't have an implementation of `Drop`, nor manual `Unpin`.
-        unsafe {
-            match self.get_unchecked_mut() {
-                Self::Left(inner) => Either::Left(Pin::new_unchecked(inner)),
-                Self::Right(inner) => Either::Right(Pin::new_unchecked(inner)),
-            }
-        }
-    }
-}
-
-impl<A, B> Future for Either<A, B>
-where
-    A: Future,
-    B: Future<Output = A::Output>,
-{
-    type Output = A::Output;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        match self.as_pin_mut() {
-            Either::Left(x) => x.poll(cx),
-            Either::Right(x) => x.poll(cx),
-        }
     }
 }
 
@@ -397,5 +352,33 @@ mod tests {
 
         let poll = futures_lite::future::poll_once(&mut initialized).await;
         assert_eq!(poll, Some(1u8));
+    }
+
+    #[test]
+    fn test_initialized_always_resolves() {
+        #[cfg(iroh_loom)]
+        use loom::thread;
+        #[cfg(not(iroh_loom))]
+        use std::thread;
+
+        let test_case = || {
+            let watchable = Watchable::<u8>::new();
+
+            let watch = watchable.watch();
+            let thread = thread::spawn(move || futures_lite::future::block_on(watch.initialized()));
+
+            watchable.set(42);
+
+            thread::yield_now();
+
+            let value: u8 = thread.join().unwrap();
+
+            assert_eq!(value, 42);
+        };
+
+        #[cfg(iroh_loom)]
+        loom::model(test_case);
+        #[cfg(not(iroh_loom))]
+        test_case();
     }
 }
