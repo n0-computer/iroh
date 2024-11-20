@@ -1,12 +1,12 @@
-use iroh_net::{endpoint::RemoteInfo, key::PublicKey, NodeAddr, NodeId, RelayUrl};
+//! RPC calls to control an iroh-net endpoint.
+#![allow(missing_docs)]
+use iroh_net::{endpoint::RemoteInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
 use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
-use super::RpcService;
-use crate::node::RpcResult;
+use super::{RpcResult, RpcService};
 
-#[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[enum_conversions(super::Request)]
 #[rpc_requests(RpcService)]

@@ -1,0 +1,30 @@
+[package]
+name = "iroh-node-util"
+description = "Utilities to build binaries containing an iroh-net endpoint"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+version = "0.28.0"
+edition = "2021"
+authors = ["n0 team"]
+repository = "https://github.com/n0-computer/iroh"
+keywords = ["quic", "networking", "holepunching", "p2p"]
+
+# Sadly this also needs to be updated in .github/workflows/ci.yml
+rust-version = "1.76"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1"
+tokio = "1"
+iroh-net = { path = "../iroh-net" }
+tempfile = "3"
+strum = "0.26"
+nested_enum_utils = "0.1.0"
+quic-rpc = "0.15.0"
+quic-rpc-derive = "0.15.0"
+serde = "1"
+serde-error = "0.1.3"
+futures-lite = "2.5.0"
+tracing = "0.1.40"

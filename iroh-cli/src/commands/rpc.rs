@@ -101,7 +101,7 @@ impl RpcCommands {
             Self::Tags { command } => command.run(&iroh.tags()).await,
             Self::Gossip { command } => command.run(&iroh.gossip()).await,
             Self::Stats => {
-                let stats = iroh.stats().await?;
+                let stats = iroh.node().stats().await?;
                 for (name, details) in stats.iter() {
                     println!(
                         "{:23} : {:>6}    ({})",
@@ -111,11 +111,11 @@ impl RpcCommands {
                 Ok(())
             }
             Self::Shutdown { force } => {
-                iroh.shutdown(force).await?;
+                iroh.node().shutdown(force).await?;
                 Ok(())
             }
             Self::Status => {
-                let response = iroh.status().await?;
+                let response = iroh.node().status().await?;
                 println!("Listening addresses: {:#?}", response.listen_addrs);
                 println!("Node ID: {}", response.addr.node_id);
                 println!("Version: {}", response.version);
