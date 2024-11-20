@@ -2,6 +2,12 @@
 name = "iroh-netcheck"
 version = "0.1.0"
 edition = "2021"
+readme = "README.md"
+description = "detailed reporting on network conditions"
+license = "MIT OR Apache-2.0"
+authors = ["n0 team"]
+repository = "https://github.com/n0-computer/iroh"
+keywords = ["networking"]
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
 rust-version = "1.76"
