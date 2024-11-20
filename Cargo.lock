@@ -3128,9 +3128,13 @@ name = "iroh-node-util"
 version = "0.28.0"
 dependencies = [
  "anyhow",
+ "clap",
+ "colored",
+ "comfy-table",
  "derive_more",
  "dirs-next",
  "futures-lite 2.5.0",
+ "human-time",
  "iroh-net",
  "nested_enum_utils",
  "quic-rpc",
@@ -3141,6 +3145,7 @@ dependencies = [
  "serde_with",
  "strum 0.26.3",
  "tempfile",
+ "time",
  "tokio",
  "tracing",
  "tracing-appender",
