@@ -7,9 +7,9 @@ use std::{collections::HashMap, time::Duration};
 use anyhow::{bail, Result};
 use bytes::Bytes;
 use iroh_base::key::NodeId;
-use iroh_metrics::{core::UsageStatsReport, inc, inc_by, report_usage_stats};
+use iroh_metrics::{inc, inc_by};
 use time::{Date, OffsetDateTime};
-use tokio::{sync::mpsc, task::JoinSet};
+use tokio::sync::mpsc;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{info, info_span, trace, warn, Instrument};
 
@@ -114,7 +114,6 @@ impl Actor {
     }
 
     async fn run(mut self, done: CancellationToken) -> Result<()> {
-        let mut tasks = JoinSet::new();
         loop {
             tokio::select! {
                 biased;
@@ -126,16 +125,9 @@ impl Actor {
                     self.clients.shutdown().await;
                     return Ok(());
                 }
-                Some(res) = tasks.join_next(), if !tasks.is_empty() => {
-                    if let Err(err) = res {
-                        if err.is_panic() {
-                            panic!("Task panicked: {err:?}");
-                        }
-                    }
-                }
                 msg = self.receiver.recv() => match msg {
                     Some(msg) => {
-                        self.handle_message(msg, &mut tasks).await;
+                        self.handle_message(msg).await;
                     }
                     None => {
                         warn!("unexpected actor error: receiver gone, shutting down actor loop");
@@ -147,7 +139,7 @@ impl Actor {
         }
     }
 
-    async fn handle_message(&mut self, msg: Message, tasks: &mut JoinSet<()>) {
+    async fn handle_message(&mut self, msg: Message) {
         match msg {
             Message::SendPacket { dst, data, src } => {
                 trace!(?src, ?dst, len = data.len(), "send packet");
@@ -198,18 +190,9 @@ impl Actor {
                 );
                 let node_id = client_builder.node_id;
 
-                // build and register client, starting up read & write loops for the client connection
+                // build and register client, starting up read & write loops for the client
+                // connection
                 self.clients.register(client_builder).await;
-                tasks.spawn(async move {
-                    report_usage_stats(&UsageStatsReport::new(
-                        "relay_accepts".to_string(),
-                        "relay_server".to_string(), // TODO: other id?
-                        1,
-                        None, // TODO(arqu): attribute to user id; possibly with the re-introduction of request tokens or other auth
-                        Some(node_id.to_string()),
-                    ))
-                    .await;
-                });
                 let nc = self.client_counter.update(node_id);
                 inc_by!(Metrics, unique_client_keys, nc);
             }
