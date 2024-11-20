@@ -1,7 +1,17 @@
 //! Tool to get information about the current network environment of a node,
 //! and to test connectivity to specific other nodes.
 
-use crate::config::{iroh_data_root, NodeConfig};
+use std::{
+    collections::HashMap,
+    io,
+    net::SocketAddr,
+    num::NonZeroU16,
+    path::PathBuf,
+    str::FromStr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
 use anyhow::Context;
 use clap::Subcommand;
 use console::style;
@@ -13,7 +23,6 @@ use crossterm::{
 use derive_more::Display;
 use futures_lite::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
-use iroh::net::metrics::MagicsockMetrics;
 use iroh::{
     base::ticket::{BlobTicket, Ticket},
     blobs::{
@@ -27,10 +36,10 @@ use iroh::{
         dns::default_resolver,
         endpoint::{self, Connection, ConnectionTypeStream, RecvStream, RemoteInfo, SendStream},
         key::{PublicKey, SecretKey},
-        netcheck, portmapper,
-        relay::{RelayMap, RelayMode, RelayUrl},
+        metrics::MagicsockMetrics,
+        netcheck,
         ticket::NodeTicket,
-        Endpoint, NodeAddr, NodeId,
+        Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl,
     },
     util::{path::IrohPaths, progress::ProgressWriter},
 };
@@ -40,19 +49,11 @@ use postcard::experimental::max_size::MaxSize;
 use rand::Rng;
 use ratatui::{prelude::*, widgets::*};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    io,
-    net::SocketAddr,
-    num::NonZeroU16,
-    path::PathBuf,
-    str::FromStr,
-    sync::Arc,
-    time::{Duration, Instant},
-};
 use tokio::{io::AsyncWriteExt, sync};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::warn;
+
+use crate::config::{iroh_data_root, NodeConfig};
 
 /// Options for the secret key usage.
 #[derive(Debug, Clone, derive_more::Display)]

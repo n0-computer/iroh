@@ -6,27 +6,27 @@
 //!
 //! Based on <https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go>
 
-use std::collections::{BTreeMap, HashMap};
-use std::fmt::{self, Debug};
-use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt::{self, Debug},
+    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
+    sync::Arc,
+};
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
+use hickory_resolver::TokioAsyncResolver as DnsResolver;
 use iroh_metrics::inc;
-use tokio::sync::{self, mpsc, oneshot};
-use tokio::time::{Duration, Instant};
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::AbortOnDropHandle;
+use iroh_relay::protos::stun;
+use netwatch::{IpFamily, UdpSocket};
+use tokio::{
+    sync::{self, mpsc, oneshot},
+    time::{Duration, Instant},
+};
+use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-use crate::dns::DnsResolver;
-use crate::net::{IpFamily, UdpSocket};
-use crate::relay::RelayUrl;
-
-use super::portmapper;
-use super::relay::RelayMap;
-use super::stun;
+use crate::{RelayMap, RelayUrl};
 
 mod metrics;
 mod reportgen;
@@ -770,6 +770,46 @@ pub(crate) fn os_has_ipv6() -> bool {
 }
 
 #[cfg(test)]
+mod test_utils {
+    //! Creates a relay server against which to perform tests
+
+    use std::sync::Arc;
+
+    use iroh_relay::server;
+
+    use crate::RelayNode;
+
+    pub(crate) async fn relay() -> (server::Server, Arc<RelayNode>) {
+        let server = server::Server::spawn(server::testing::server_config())
+            .await
+            .expect("should serve relay");
+        let node_desc = RelayNode {
+            url: server.https_url().expect("should work as relay"),
+            stun_only: false, // the checks above and below guarantee both stun and relay
+            stun_port: server.stun_addr().expect("server should serve stun").port(),
+        };
+
+        (server, Arc::new(node_desc))
+    }
+
+    /// Create a [`crate::RelayMap`] of the given size.
+    ///
+    /// This function uses [`relay`]. Note that the returned map uses internal order that will
+    /// often _not_ match the order of the servers.
+    pub(crate) async fn relay_map(relays: usize) -> (Vec<server::Server>, crate::RelayMap) {
+        let mut servers = Vec::with_capacity(relays);
+        let mut nodes = Vec::with_capacity(relays);
+        for _ in 0..relays {
+            let (relay_server, node) = relay().await;
+            servers.push(relay_server);
+            nodes.push(node);
+        }
+        let map = crate::RelayMap::from_nodes(nodes).expect("unuque urls");
+        (servers, map)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::net::Ipv4Addr;
 
@@ -777,21 +817,148 @@ mod tests {
     use tokio::time;
     use tracing::info;
 
-    use crate::defaults::{staging::EU_RELAY_HOSTNAME, DEFAULT_STUN_PORT};
-    use crate::ping::Pinger;
-    use crate::relay::RelayNode;
-
     use super::*;
+    use crate::ping::Pinger;
+
+    mod stun_utils {
+        //! Utils for testing that expose a simple stun server.
+
+        use std::{net::IpAddr, sync::Arc};
+
+        use anyhow::Result;
+        use tokio::{
+            net,
+            sync::{oneshot, Mutex},
+        };
+        use tracing::{debug, trace};
+
+        use super::*;
+        use crate::{RelayMap, RelayNode, RelayUrl};
+
+        /// A drop guard to clean up test infrastructure.
+        ///
+        /// After dropping the test infrastructure will asynchronously shutdown and release its
+        /// resources.
+        // Nightly sees the sender as dead code currently, but we only rely on Drop of the
+        // sender.
+        #[derive(Debug)]
+        pub struct CleanupDropGuard {
+            _guard: oneshot::Sender<()>,
+        }
+
+        // (read_ipv4, read_ipv6)
+        #[derive(Debug, Default, Clone)]
+        pub struct StunStats(Arc<Mutex<(usize, usize)>>);
+
+        impl StunStats {
+            pub async fn total(&self) -> usize {
+                let s = self.0.lock().await;
+                s.0 + s.1
+            }
+        }
+
+        pub fn relay_map_of(stun: impl Iterator<Item = SocketAddr>) -> RelayMap {
+            relay_map_of_opts(stun.map(|addr| (addr, true)))
+        }
+
+        pub fn relay_map_of_opts(stun: impl Iterator<Item = (SocketAddr, bool)>) -> RelayMap {
+            let nodes = stun.map(|(addr, stun_only)| {
+                let host = addr.ip();
+                let port = addr.port();
+
+                let url: RelayUrl = format!("http://{host}:{port}").parse().unwrap();
+                RelayNode {
+                    url,
+                    stun_port: port,
+                    stun_only,
+                }
+            });
+            RelayMap::from_nodes(nodes).expect("generated invalid nodes")
+        }
+
+        /// Sets up a simple STUN server binding to `0.0.0.0:0`.
+        ///
+        /// See [`serve`] for more details.
+        pub(crate) async fn serve_v4() -> Result<(SocketAddr, StunStats, CleanupDropGuard)> {
+            serve(std::net::Ipv4Addr::UNSPECIFIED.into()).await
+        }
+
+        /// Sets up a simple STUN server.
+        pub(crate) async fn serve(ip: IpAddr) -> Result<(SocketAddr, StunStats, CleanupDropGuard)> {
+            let stats = StunStats::default();
+
+            let pc = net::UdpSocket::bind((ip, 0)).await?;
+            let mut addr = pc.local_addr()?;
+            match addr.ip() {
+                IpAddr::V4(ip) => {
+                    if ip.octets() == [0, 0, 0, 0] {
+                        addr.set_ip("127.0.0.1".parse().unwrap());
+                    }
+                }
+                _ => unreachable!("using ipv4"),
+            }
+
+            println!("STUN listening on {}", addr);
+            let (_guard, r) = oneshot::channel();
+            let stats_c = stats.clone();
+            tokio::task::spawn(async move {
+                run_stun(pc, stats_c, r).await;
+            });
+
+            Ok((addr, stats, CleanupDropGuard { _guard }))
+        }
+
+        async fn run_stun(pc: net::UdpSocket, stats: StunStats, mut done: oneshot::Receiver<()>) {
+            let mut buf = vec![0u8; 64 << 10];
+            loop {
+                trace!("read loop");
+                tokio::select! {
+                    _ = &mut done => {
+                        debug!("shutting down");
+                        break;
+                    }
+                    res = pc.recv_from(&mut buf) => match res {
+                        Ok((n, addr)) => {
+                            trace!("read packet {}bytes from {}", n, addr);
+                            let pkt = &buf[..n];
+                            if !stun::is(pkt) {
+                                debug!("received non STUN pkt");
+                                continue;
+                            }
+                            if let Ok(txid) = stun::parse_binding_request(pkt) {
+                                debug!("received binding request");
+                                let mut s = stats.0.lock().await;
+                                if addr.is_ipv4() {
+                                    s.0 += 1;
+                                } else {
+                                    s.1 += 1;
+                                }
+                                drop(s);
+
+                                let res = stun::response(txid, addr);
+                                if let Err(err) = pc.send_to(&res, addr).await {
+                                    eprintln!("STUN server write failed: {:?}", err);
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            eprintln!("failed to read: {:?}", err);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[tokio::test]
     async fn test_basic() -> Result<()> {
         let _guard = iroh_test::logging::setup();
         let (stun_addr, stun_stats, _cleanup_guard) =
-            stun::tests::serve("127.0.0.1".parse().unwrap()).await?;
+            stun_utils::serve("127.0.0.1".parse().unwrap()).await?;
 
         let resolver = crate::dns::default_resolver();
         let mut client = Client::new(None, resolver.clone())?;
-        let dm = stun::tests::relay_map_of([stun_addr].into_iter());
+        let dm = stun_utils::relay_map_of([stun_addr].into_iter());
 
         // Note that the ProbePlan will change with each iteration.
         for i in 0..5 {
@@ -824,57 +991,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_iroh_computer_stun() -> Result<()> {
-        let _guard = iroh_test::logging::setup();
-
-        let resolver = crate::dns::default_resolver().clone();
-        let mut client = Client::new(None, resolver).context("failed to create netcheck client")?;
-        let url: RelayUrl = format!("https://{}", EU_RELAY_HOSTNAME).parse().unwrap();
-
-        let dm = RelayMap::from_nodes([RelayNode {
-            url: url.clone(),
-            stun_only: true,
-            stun_port: DEFAULT_STUN_PORT,
-        }])
-        .expect("hardcoded");
-
-        for i in 0..10 {
-            println!("starting report {}", i + 1);
-            let now = Instant::now();
-
-            let r = client
-                .get_report(dm.clone(), None, None)
-                .await
-                .context("failed to get netcheck report")?;
-
-            if r.udp {
-                assert_eq!(
-                    r.relay_latency.len(),
-                    1,
-                    "expected 1 key in RelayLatency; got {}",
-                    r.relay_latency.len()
-                );
-                assert!(
-                    r.relay_latency.iter().next().is_some(),
-                    "expected key 1 in RelayLatency; got {:?}",
-                    r.relay_latency
-                );
-                assert!(
-                    r.global_v4.is_some() || r.global_v6.is_some(),
-                    "expected at least one of global_v4 or global_v6"
-                );
-                assert!(r.preferred_relay.is_some());
-            } else {
-                eprintln!("missing UDP, probe not returned by network");
-            }
-
-            println!("report {} done in {:?}", i + 1, now.elapsed());
-        }
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn test_udp_blocked() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
@@ -882,7 +998,7 @@ mod tests {
         // the STUN server being blocked will look like from the client's perspective.
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
         let stun_addr = blackhole.local_addr()?;
-        let dm = stun::tests::relay_map_of_opts([(stun_addr, false)].into_iter());
+        let dm = stun_utils::relay_map_of_opts([(stun_addr, false)].into_iter());
 
         // Now create a client and generate a report.
         let resolver = crate::dns::default_resolver().clone();
@@ -1119,8 +1235,8 @@ mod tests {
         // can easily use to identify the packet.
 
         // Setup STUN server and create relay_map.
-        let (stun_addr, _stun_stats, _done) = stun::tests::serve_v4().await?;
-        let dm = stun::tests::relay_map_of([stun_addr].into_iter());
+        let (stun_addr, _stun_stats, _done) = stun_utils::serve_v4().await?;
+        let dm = stun_utils::relay_map_of([stun_addr].into_iter());
         dbg!(&dm);
 
         let resolver = crate::dns::default_resolver().clone();

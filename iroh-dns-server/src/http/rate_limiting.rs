@@ -1,21 +1,68 @@
 use std::time::Duration;
 
 use governor::{clock::QuantaInstant, middleware::NoOpMiddleware};
+use serde::{Deserialize, Serialize};
 use tower_governor::{
-    governor::GovernorConfigBuilder, key_extractor::PeerIpKeyExtractor, GovernorLayer,
+    governor::GovernorConfigBuilder,
+    key_extractor::{PeerIpKeyExtractor, SmartIpKeyExtractor},
+    GovernorLayer,
 };
+
+/// Config for http server rate limit.
+#[derive(Debug, Deserialize, Default, Serialize, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum RateLimitConfig {
+    /// Disable rate limit.
+    Disabled,
+    /// Enable rate limit based on the connection's peer IP address.
+    ///
+    /// <https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.PeerIpKeyExtractor.html>
+    #[default]
+    Simple,
+    /// Enable rate limit based on headers commonly used by reverse proxies.
+    ///
+    /// Uses headers commonly used by reverse proxies to extract the original IP address,
+    /// falling back to the connection's peer IP address.
+    /// <https://docs.rs/tower_governor/latest/tower_governor/key_extractor/struct.SmartIpKeyExtractor.html>
+    Smart,
+}
+
+impl Default for &RateLimitConfig {
+    fn default() -> Self {
+        &RateLimitConfig::Simple
+    }
+}
 
 /// Create the default rate-limiting layer.
 ///
 /// This spawns a background thread to clean up the rate limiting cache.
-pub fn create() -> GovernorLayer<'static, PeerIpKeyExtractor, NoOpMiddleware<QuantaInstant>> {
+pub fn create(
+    rate_limit_config: &RateLimitConfig,
+) -> Option<GovernorLayer<'static, PeerIpKeyExtractor, NoOpMiddleware<QuantaInstant>>> {
+    let use_smart_extractor = match rate_limit_config {
+        RateLimitConfig::Disabled => {
+            tracing::info!("Rate limiting disabled");
+            return None;
+        }
+        RateLimitConfig::Simple => false,
+        RateLimitConfig::Smart => true,
+    };
+
+    tracing::info!("Rate limiting enabled ({rate_limit_config:?})");
+
     // Configure rate limiting:
     // * allow bursts with up to five requests per IP address
     // * replenish one element every two seconds
-    let governor_conf = GovernorConfigBuilder::default()
-        // .use_headers()
-        .per_second(4)
-        .burst_size(2)
+    let mut governor_conf_builder = GovernorConfigBuilder::default();
+    // governor_conf_builder.use_headers()
+    governor_conf_builder.per_second(4);
+    governor_conf_builder.burst_size(2);
+
+    if use_smart_extractor {
+        governor_conf_builder.key_extractor(SmartIpKeyExtractor);
+    }
+
+    let governor_conf = governor_conf_builder
         .finish()
         .expect("failed to build rate-limiting governor");
 
@@ -34,7 +81,7 @@ pub fn create() -> GovernorLayer<'static, PeerIpKeyExtractor, NoOpMiddleware<Qua
         governor_limiter.retain_recent();
     });
 
-    GovernorLayer {
+    Some(GovernorLayer {
         config: &*governor_conf,
-    }
+    })
 }

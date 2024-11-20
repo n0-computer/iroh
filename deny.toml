@@ -21,6 +21,7 @@ allow = [
       "Unicode-DFS-2016",
       "Zlib",
       "MPL-2.0", # https://fossa.com/blog/open-source-software-licenses-101-mozilla-public-license-2-0/
+      "Unicode-3.0",
 ]
 
 [[licenses.clarify]]
@@ -33,4 +34,12 @@ license-files = [
 [advisories]
 ignore = [
       "RUSTSEC-2024-0370", # unmaintained, no upgrade available
+      "RUSTSEC-2024-0384", # unmaintained, no upgrade available
+]
+
+[sources]
+allow-git = [
+    "https://github.com/n0-computer/iroh-blobs.git",
+    "https://github.com/n0-computer/iroh-gossip.git",
+    "https://github.com/n0-computer/iroh-docs.git",
 ]

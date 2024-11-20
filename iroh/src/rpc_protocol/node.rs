@@ -1,13 +1,11 @@
 use std::collections::BTreeMap;
 
-use iroh_base::rpc::RpcResult;
 use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
-use crate::client::NodeStatus;
-
 use super::RpcService;
+use crate::{client::NodeStatus, node::RpcResult};
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]

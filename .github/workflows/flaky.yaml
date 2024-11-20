@@ -93,6 +93,7 @@ jobs:
         uses: n0-computer/discord-webhook-notify@v1
         if: ${{ env.TESTS_RESULT == 'failure' || env.TESTS_RESULT == 'success' }}
         with:
+          text: "Flaky tests in **${{ github.repository }}**:"
           severity: ${{ env.TESTS_RESULT == 'failure' && 'warn' || 'info' }}
           details: ${{ env.TESTS_RESULT == 'failure' && steps.make_summary.outputs.summary || 'No flaky failures!' }}
           webhookUrl: ${{ secrets.DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL }}

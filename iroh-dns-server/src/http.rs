@@ -30,10 +30,8 @@ mod pkarr;
 mod rate_limiting;
 mod tls;
 
-use crate::state::AppState;
-use crate::{config::Config, metrics::Metrics};
-
-pub use self::tls::CertMode;
+pub use self::{rate_limiting::RateLimitConfig, tls::CertMode};
+use crate::{config::Config, metrics::Metrics, state::AppState};
 
 /// Config for the HTTP server
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -73,13 +71,14 @@ impl HttpServer {
     pub async fn spawn(
         http_config: Option<HttpConfig>,
         https_config: Option<HttpsConfig>,
+        rate_limit_config: RateLimitConfig,
         state: AppState,
     ) -> Result<HttpServer> {
         if http_config.is_none() && https_config.is_none() {
             bail!("Either http or https config is required");
         }
 
-        let app = create_app(state);
+        let app = create_app(state, &rate_limit_config);
 
         let mut tasks = JoinSet::new();
 
@@ -186,7 +185,7 @@ impl HttpServer {
     }
 }
 
-pub(crate) fn create_app(state: AppState) -> Router {
+pub(crate) fn create_app(state: AppState, rate_limit_config: &RateLimitConfig) -> Router {
     // configure cors middleware
     let cors = CorsLayer::new()
         // allow `GET` and `POST` when accessing the resource
@@ -211,7 +210,7 @@ pub(crate) fn create_app(state: AppState) -> Router {
     });
 
     // configure rate limiting middleware
-    let rate_limit = rate_limiting::create();
+    let rate_limit = rate_limiting::create(rate_limit_config);
 
     // configure routes
     //
@@ -220,7 +219,11 @@ pub(crate) fn create_app(state: AppState) -> Router {
         .route("/dns-query", get(doh::get).post(doh::post))
         .route(
             "/pkarr/:key",
-            get(pkarr::get).put(pkarr::put.layer(rate_limit)),
+            if let Some(rate_limit) = rate_limit {
+                get(pkarr::get).put(pkarr::put.layer(rate_limit))
+            } else {
+                get(pkarr::get).put(pkarr::put)
+            },
         )
         .route("/healthcheck", get(|| async { "OK" }))
         .route("/", get(|| async { "Hi!" }))
@@ -234,7 +237,6 @@ pub(crate) fn create_app(state: AppState) -> Router {
 }
 
 /// Record request metrics.
-///
 // TODO:
 // * Request duration would be much better tracked as a histogram.
 // * It would be great to attach labels to the metrics, so that the recorded metrics

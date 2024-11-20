@@ -1,13 +1,14 @@
 //! Define the subcommands to manage the iroh RPC.
 
+use anyhow::Result;
+use clap::Subcommand;
+use iroh::client::Iroh;
+use iroh_docs::cli::ConsoleEnv;
+
 use super::{
     authors::AuthorCommands, blobs::BlobCommands, docs::DocCommands, gossip::GossipCommands,
     net::NetCommands, tags::TagCommands,
 };
-use crate::config::ConsoleEnv;
-use anyhow::Result;
-use clap::Subcommand;
-use iroh::client::Iroh;
 
 /// Commands to manage the iroh RPC.
 #[derive(Subcommand, Debug, Clone)]
@@ -91,13 +92,14 @@ pub enum RpcCommands {
 impl RpcCommands {
     /// Run the RPC command given the iroh client and the console environment.
     pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
+        let node_id = || async move { iroh.net().node_addr().await };
         match self {
             Self::Net { command } => command.run(iroh).await,
-            Self::Blobs { command } => command.run(iroh).await,
-            Self::Docs { command } => command.run(iroh, env).await,
-            Self::Authors { command } => command.run(iroh, env).await,
-            Self::Tags { command } => command.run(iroh).await,
-            Self::Gossip { command } => command.run(iroh).await,
+            Self::Blobs { command } => command.run(&iroh.blobs(), node_id().await?).await,
+            Self::Docs { command } => command.run(&iroh.docs(), &iroh.blobs(), env).await,
+            Self::Authors { command } => command.run(&iroh.authors(), env).await,
+            Self::Tags { command } => command.run(&iroh.tags()).await,
+            Self::Gossip { command } => command.run(&iroh.gossip()).await,
             Self::Stats => {
                 let stats = iroh.stats().await?;
                 for (name, details) in stats.iter() {

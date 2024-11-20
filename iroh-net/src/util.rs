@@ -6,7 +6,6 @@ use std::{
     task::{Context, Poll},
 };
 
-pub(crate) mod chain;
 pub mod watchable;
 
 /// Resolves to pending if the inner is `None`.

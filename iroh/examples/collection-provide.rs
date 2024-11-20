@@ -7,7 +7,7 @@
 //! run this example from the project root:
 //!     $ cargo run --example collection-provide
 use iroh::blobs::{format::collection::Collection, util::SetTagOption, BlobFormat};
-use iroh_base::node_addr::AddrInfoOptions;
+use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -44,14 +44,9 @@ async fn main() -> anyhow::Result<()> {
 
     // create a ticket
     // tickets wrap all details needed to get a collection
-    let ticket = node
-        .blobs()
-        .share(
-            hash,
-            BlobFormat::HashSeq,
-            AddrInfoOptions::RelayAndAddresses,
-        )
-        .await?;
+    let mut addr = node.net().node_addr().await?;
+    addr.apply_options(AddrInfoOptions::RelayAndAddresses);
+    let ticket = BlobTicket::new(addr, hash, BlobFormat::HashSeq)?;
 
     // print some info about the node
     println!("serving hash:    {}", ticket.hash());

@@ -16,31 +16,37 @@
 //!   - Stop if there are no outstanding tasks/futures, or on timeout.
 //! - Sends the completed report to the netcheck actor.
 
-use std::future::Future;
-use std::net::{IpAddr, SocketAddr};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    future::Future,
+    net::{IpAddr, SocketAddr},
+    pin::Pin,
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use iroh_metrics::inc;
+use iroh_relay::{http::RELAY_PROBE_PATH, protos::stun};
+use netwatch::{interfaces, UdpSocket};
 use rand::seq::IteratorRandom;
-use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinSet;
-use tokio::time::{self, Instant};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinSet,
+    time::{self, Instant},
+};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
+use url::Host;
 
 use super::NetcheckMetrics;
-use crate::defaults::DEFAULT_STUN_PORT;
-use crate::dns::{DnsResolver, ResolverExt};
-use crate::net::interfaces;
-use crate::net::UdpSocket;
-use crate::netcheck::{self, Report};
-use crate::ping::{PingError, Pinger};
-use crate::relay::{RelayMap, RelayNode, RelayUrl};
-use crate::util::MaybeFuture;
-use crate::{portmapper, stun};
+use crate::{
+    defaults::DEFAULT_STUN_PORT,
+    dns::{DnsResolver, ResolverExt},
+    netcheck::{self, Report},
+    ping::{PingError, Pinger},
+    util::MaybeFuture,
+    RelayMap, RelayNode, RelayUrl,
+};
 
 mod hairpin;
 mod probes;
@@ -432,7 +438,7 @@ impl Actor {
                 match port_mapper.probe().await {
                     Ok(Ok(res)) => Some(res),
                     Ok(Err(err)) => {
-                        warn!("skipping port mapping: {err:?}");
+                        debug!("skipping port mapping: {err:?}");
                         None
                     }
                     Err(recv_err) => {
@@ -461,6 +467,7 @@ impl Actor {
                 .as_ref()
                 .and_then(|l| l.preferred_relay.clone());
 
+            let dns_resolver = self.dns_resolver.clone();
             let dm = self.relay_map.clone();
             self.outstanding_tasks.captive_task = true;
             MaybeFuture {
@@ -469,7 +476,7 @@ impl Actor {
                     debug!("Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}");
                     let captive_portal_check = tokio::time::timeout(
                         CAPTIVE_PORTAL_TIMEOUT,
-                        check_captive_portal(&dm, preferred_relay)
+                        check_captive_portal(&dns_resolver, &dm, preferred_relay)
                             .instrument(debug_span!("captive-portal")),
                     );
                     match captive_portal_check.await {
@@ -561,31 +568,34 @@ impl Actor {
 
             // Add the probe set to all futures of probe sets.  Handle aborting a probe set
             // if needed, only normal errors means the set continues.
-            probes.spawn(async move {
-                // Hack because ProbeSet is not it's own type yet.
-                let mut probe_proto = None;
-                while let Some(res) = set.join_next().await {
-                    match res {
-                        Ok(Ok(report)) => return Ok(report),
-                        Ok(Err(ProbeError::Error(err, probe))) => {
-                            probe_proto = Some(probe.proto());
-                            warn!(?probe, "probe failed: {:#}", err);
-                            continue;
-                        }
-                        Ok(Err(ProbeError::AbortSet(err, probe))) => {
-                            debug!(?probe, "probe set aborted: {:#}", err);
-                            set.abort_all();
-                            return Err(err);
-                        }
-                        Err(err) => {
-                            warn!("fatal probe set error, aborting: {:#}", err);
-                            continue;
+            probes.spawn(
+                async move {
+                    // Hack because ProbeSet is not it's own type yet.
+                    let mut probe_proto = None;
+                    while let Some(res) = set.join_next().await {
+                        match res {
+                            Ok(Ok(report)) => return Ok(report),
+                            Ok(Err(ProbeError::Error(err, probe))) => {
+                                probe_proto = Some(probe.proto());
+                                warn!(?probe, "probe failed: {:#}", err);
+                                continue;
+                            }
+                            Ok(Err(ProbeError::AbortSet(err, probe))) => {
+                                debug!(?probe, "probe set aborted: {:#}", err);
+                                set.abort_all();
+                                return Err(err);
+                            }
+                            Err(err) => {
+                                warn!("fatal probe set error, aborting: {:#}", err);
+                                continue;
+                            }
                         }
                     }
+                    warn!(?probe_proto, "no successful probes in ProbeSet");
+                    Err(anyhow!("All probes in ProbeSet failed"))
                 }
-                warn!(?probe_proto, "no successful probes in ProbeSet");
-                Err(anyhow!("All probes in ProbeSet failed"))
-            });
+                .instrument(info_span!("probe")),
+            );
         }
         self.outstanding_tasks.probes = true;
 
@@ -735,7 +745,7 @@ async fn run_probe(
         }
         Probe::Https { ref node, .. } => {
             debug!("sending probe HTTPS");
-            match measure_https_latency(node).await {
+            match measure_https_latency(&dns_resolver, node, None).await {
                 Ok((latency, ip)) => {
                     result.latency = Some(latency);
                     // We set these IPv4 and IPv6 but they're not really used
@@ -845,7 +855,11 @@ async fn run_stun_probe(
 /// return a "204 No Content" response and checking if that's what we get.
 ///
 /// The boolean return is whether we think we have a captive portal.
-async fn check_captive_portal(dm: &RelayMap, preferred_relay: Option<RelayUrl>) -> Result<bool> {
+async fn check_captive_portal(
+    dns_resolver: &DnsResolver,
+    dm: &RelayMap,
+    preferred_relay: Option<RelayUrl>,
+) -> Result<bool> {
     // If we have a preferred relay node and we can use it for non-STUN requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
     let preferred_relay = preferred_relay.and_then(|url| match dm.get_node(&url) {
@@ -873,9 +887,22 @@ async fn check_captive_portal(dm: &RelayMap, preferred_relay: Option<RelayUrl>) 
         }
     };
 
-    let client = reqwest::ClientBuilder::new()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()?;
+    let mut builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
+    if let Some(Host::Domain(domain)) = url.host() {
+        // Use our own resolver rather than getaddrinfo
+        //
+        // Be careful, a non-zero port will override the port in the URI.
+        //
+        // Ideally we would try to resolve **both** IPv4 and IPv6 rather than purely race
+        // them.  But our resolver doesn't support that yet.
+        let addrs: Vec<_> = dns_resolver
+            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
+            .await?
+            .map(|ipaddr| SocketAddr::new(ipaddr, 0))
+            .collect();
+        builder = builder.resolve_to_addrs(domain, &addrs);
+    }
+    let client = builder.build()?;
 
     // Note: the set of valid characters in a challenge and the total
     // length is limited; see is_challenge_char in bin/iroh-relay for more
@@ -1015,33 +1042,71 @@ async fn run_icmp_probe(
     Ok(report)
 }
 
+/// Executes an HTTPS probe.
+///
+/// If `certs` is provided they will be added to the trusted root certificates, allowing the
+/// use of self-signed certificates for servers.  Currently this is used for testing.
 #[allow(clippy::unused_async)]
-async fn measure_https_latency(_node: &RelayNode) -> Result<(Duration, IpAddr)> {
-    bail!("not implemented");
-    // TODO:
-    // - needs relayhttp::Client
-    // - measurement hooks to measure server processing time
+async fn measure_https_latency(
+    dns_resolver: &DnsResolver,
+    node: &RelayNode,
+    certs: Option<Vec<rustls::pki_types::CertificateDer<'static>>>,
+) -> Result<(Duration, IpAddr)> {
+    let url = node.url.join(RELAY_PROBE_PATH)?;
 
-    // metricHTTPSend.Add(1)
-    // let ctx, cancel := context.WithTimeout(httpstat.WithHTTPStat(ctx, &result), overallProbeTimeout);
-    // let dc := relayhttp.NewNetcheckClient(c.logf);
-    // let tlsConn, tcpConn, node := dc.DialRegionTLS(ctx, reg)?;
-    // if ta, ok := tlsConn.RemoteAddr().(*net.TCPAddr);
-    // req, err := http.NewRequestWithContext(ctx, "GET", "https://"+node.HostName+"/relay/latency-check", nil);
-    // resp, err := hc.Do(req);
+    // This should also use same connection establishment as relay client itself, which
+    // needs to be more configurable so users can do more crazy things:
+    // https://github.com/n0-computer/iroh/issues/2901
+    let mut builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
+    if let Some(Host::Domain(domain)) = url.host() {
+        // Use our own resolver rather than getaddrinfo
+        //
+        // Be careful, a non-zero port will override the port in the URI.
+        //
+        // The relay Client uses `.lookup_ipv4_ipv6` to connect, so use the same function
+        // but staggered for reliability.  Ideally this tries to resolve **both** IPv4 and
+        // IPv6 though.  But our resolver does not have a function for that yet.
+        let addrs: Vec<_> = dns_resolver
+            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
+            .await?
+            .map(|ipaddr| SocketAddr::new(ipaddr, 0))
+            .collect();
+        builder = builder.resolve_to_addrs(domain, &addrs);
+    }
+    if let Some(certs) = certs {
+        for cert in certs {
+            let cert = reqwest::Certificate::from_der(&cert)?;
+            builder = builder.add_root_certificate(cert);
+        }
+    }
+    let client = builder.build()?;
 
-    // // relays should give us a nominal status code, so anything else is probably
-    // // an access denied by a MITM proxy (or at the very least a signal not to
-    // // trust this latency check).
-    // if resp.StatusCode > 299 {
-    //     return 0, ip, fmt.Errorf("unexpected status code: %d (%s)", resp.StatusCode, resp.Status)
-    // }
-    // _, err = io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<10));
-    // result.End(c.timeNow())
+    let start = Instant::now();
+    let mut response = client.request(reqwest::Method::GET, url).send().await?;
+    let latency = start.elapsed();
+    if response.status().is_success() {
+        // Drain the response body to be nice to the server, up to a limit.
+        const MAX_BODY_SIZE: usize = 8 << 10; // 8 KiB
+        let mut body_size = 0;
+        while let Some(chunk) = response.chunk().await? {
+            body_size += chunk.len();
+            if body_size >= MAX_BODY_SIZE {
+                break;
+            }
+        }
 
-    // // TODO: decide best timing heuristic here.
-    // // Maybe the server should return the tcpinfo_rtt?
-    // return result.ServerProcessing, ip, nil
+        // Only `None` if a different hyper HttpConnector in the request.
+        let remote_ip = response
+            .remote_addr()
+            .context("missing HttpInfo from HttpConnector")?
+            .ip();
+        Ok((latency, remote_ip))
+    } else {
+        Err(anyhow!(
+            "Error response from server: '{}'",
+            response.status().canonical_reason().unwrap_or_default()
+        ))
+    }
 }
 
 /// Updates a netcheck [`Report`] with a new [`ProbeReport`].
@@ -1110,19 +1175,20 @@ fn update_report(report: &mut Report, probe_report: ProbeReport) {
 mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
-    use super::*;
+    use testresult::TestResult;
 
-    use crate::defaults::staging::{default_eu_relay_node, default_na_relay_node};
+    use super::{super::test_utils, *};
 
-    #[test]
-    fn test_update_report_stun_working() {
-        let eu_relayer = Arc::new(default_eu_relay_node());
-        let na_relayer = Arc::new(default_na_relay_node());
+    #[tokio::test]
+    async fn test_update_report_stun_working() {
+        let _logging = iroh_test::logging::setup();
+        let (_server_a, relay_a) = test_utils::relay().await;
+        let (_server_b, relay_b) = test_utils::relay().await;
 
         let mut report = Report::default();
 
-        // A STUN IPv4 probe from the EU relay server.
-        let probe_report_eu = ProbeReport {
+        // A STUN IPv4 probe from the the first relay server.
+        let probe_report_a = ProbeReport {
             ipv4_can_send: true,
             ipv6_can_send: false,
             icmpv4: None,
@@ -1130,49 +1196,49 @@ mod tests {
             latency: Some(Duration::from_millis(5)),
             probe: Probe::StunIpv4 {
                 delay: Duration::ZERO,
-                node: eu_relayer.clone(),
+                node: relay_a.clone(),
             },
             addr: Some((Ipv4Addr::new(203, 0, 113, 1), 1234).into()),
         };
-        update_report(&mut report, probe_report_eu.clone());
+        update_report(&mut report, probe_report_a.clone());
 
         assert!(report.udp);
         assert_eq!(
-            report.relay_latency.get(&eu_relayer.url).unwrap(),
+            report.relay_latency.get(&relay_a.url).unwrap(),
             Duration::from_millis(5)
         );
         assert_eq!(
-            report.relay_v4_latency.get(&eu_relayer.url).unwrap(),
+            report.relay_v4_latency.get(&relay_a.url).unwrap(),
             Duration::from_millis(5)
         );
         assert!(report.ipv4_can_send);
         assert!(!report.ipv6_can_send);
 
         // A second STUN IPv4 probe, same external IP detected but slower.
-        let probe_report_na = ProbeReport {
+        let probe_report_b = ProbeReport {
             latency: Some(Duration::from_millis(8)),
             probe: Probe::StunIpv4 {
                 delay: Duration::ZERO,
-                node: na_relayer.clone(),
+                node: relay_b.clone(),
             },
-            ..probe_report_eu
+            ..probe_report_a
         };
-        update_report(&mut report, probe_report_na);
+        update_report(&mut report, probe_report_b);
 
         assert!(report.udp);
         assert_eq!(
-            report.relay_latency.get(&eu_relayer.url).unwrap(),
+            report.relay_latency.get(&relay_a.url).unwrap(),
             Duration::from_millis(5)
         );
         assert_eq!(
-            report.relay_v4_latency.get(&eu_relayer.url).unwrap(),
+            report.relay_v4_latency.get(&relay_a.url).unwrap(),
             Duration::from_millis(5)
         );
         assert!(report.ipv4_can_send);
         assert!(!report.ipv6_can_send);
 
         // A STUN IPv6 probe, this one is faster.
-        let probe_report_eu_ipv6 = ProbeReport {
+        let probe_report_a_ipv6 = ProbeReport {
             ipv4_can_send: false,
             ipv6_can_send: true,
             icmpv4: None,
@@ -1180,29 +1246,30 @@ mod tests {
             latency: Some(Duration::from_millis(4)),
             probe: Probe::StunIpv6 {
                 delay: Duration::ZERO,
-                node: eu_relayer.clone(),
+                node: relay_a.clone(),
             },
             addr: Some((Ipv6Addr::new(2001, 0xdb8, 0, 0, 0, 0, 0, 1), 1234).into()),
         };
-        update_report(&mut report, probe_report_eu_ipv6);
+        update_report(&mut report, probe_report_a_ipv6);
 
         assert!(report.udp);
         assert_eq!(
-            report.relay_latency.get(&eu_relayer.url).unwrap(),
+            report.relay_latency.get(&relay_a.url).unwrap(),
             Duration::from_millis(4)
         );
         assert_eq!(
-            report.relay_v6_latency.get(&eu_relayer.url).unwrap(),
+            report.relay_v6_latency.get(&relay_a.url).unwrap(),
             Duration::from_millis(4)
         );
         assert!(report.ipv4_can_send);
         assert!(report.ipv6_can_send);
     }
 
-    #[test]
-    fn test_update_report_icmp() {
-        let eu_relayer = Arc::new(default_eu_relay_node());
-        let na_relayer = Arc::new(default_na_relay_node());
+    #[tokio::test]
+    async fn test_update_report_icmp() {
+        let _logging = iroh_test::logging::setup();
+        let (_server_a, relay_a) = test_utils::relay().await;
+        let (_server_b, relay_b) = test_utils::relay().await;
 
         let mut report = Report::default();
 
@@ -1215,7 +1282,7 @@ mod tests {
             latency: Some(Duration::from_millis(5)),
             probe: Probe::IcmpV4 {
                 delay: Duration::ZERO,
-                node: eu_relayer.clone(),
+                node: relay_a.clone(),
             },
             addr: Some((Ipv4Addr::new(203, 0, 113, 1), 1234).into()),
         };
@@ -1234,7 +1301,7 @@ mod tests {
             latency: None,
             probe: Probe::IcmpV4 {
                 delay: Duration::ZERO,
-                node: na_relayer.clone(),
+                node: relay_b.clone(),
             },
             addr: None,
         };
@@ -1251,7 +1318,7 @@ mod tests {
             latency: Some(Duration::from_millis(5)),
             probe: Probe::StunIpv4 {
                 delay: Duration::ZERO,
-                node: eu_relayer.clone(),
+                node: relay_a.clone(),
             },
             addr: Some((Ipv4Addr::new(203, 0, 113, 1), 1234).into()),
         };
@@ -1309,18 +1376,14 @@ mod tests {
     //
     // TODO: Not sure what about IPv6 pings using sysctl.
     #[tokio::test]
-    async fn test_icmpk_probe_eu_relayer() {
+    async fn test_icmpk_probe() {
         let _logging_guard = iroh_test::logging::setup();
         let pinger = Pinger::new();
-        let relay = default_eu_relay_node();
-        let resolver = crate::dns::default_resolver();
-        let addr = get_relay_addr(resolver, &relay, ProbeProto::IcmpV4)
-            .await
-            .map_err(|err| format!("{err:#}"))
-            .unwrap();
+        let (server, node) = test_utils::relay().await;
+        let addr = server.stun_addr().expect("test relay serves stun");
         let probe = Probe::IcmpV4 {
             delay: Duration::from_secs(0),
-            node: Arc::new(relay),
+            node,
         };
 
         // A single ICMP packet might get lost.  Try several and take the first.
@@ -1360,5 +1423,25 @@ mod tests {
         if let Some(err) = last_err {
             panic!("Ping error: {err:#}");
         }
+    }
+
+    #[tokio::test]
+    async fn test_measure_https_latency() -> TestResult {
+        let _logging_guard = iroh_test::logging::setup();
+        let (server, relay) = test_utils::relay().await;
+        let dns_resolver = crate::dns::resolver();
+        tracing::info!(relay_url = ?relay.url , "RELAY_URL");
+        let (latency, ip) =
+            measure_https_latency(dns_resolver, &relay, server.certificates()).await?;
+
+        assert!(latency > Duration::ZERO);
+
+        let relay_url_ip = relay
+            .url
+            .host_str()
+            .context("host")?
+            .parse::<std::net::IpAddr>()?;
+        assert_eq!(ip, relay_url_ip);
+        Ok(())
     }
 }

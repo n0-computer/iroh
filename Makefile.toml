@@ -1,0 +1,28 @@
+# Use cargo-make to run tasks here: https://crates.io/crates/cargo-make
+
+[tasks.format]
+workspace = false
+command = "cargo"
+args = [
+     "fmt",
+     "--all",
+     "--",
+     "--config",
+     "unstable_features=true",
+     "--config",
+     "imports_granularity=Crate,group_imports=StdExternalCrate,reorder_imports=true,format_code_in_doc_comments=true",
+]
+
+[tasks.format-check]
+workspace = false
+command = "cargo"
+args = [
+     "fmt",
+     "--all",
+     "--check",
+     "--",
+     "--config",
+     "unstable_features=true",
+     "--config",
+     "imports_granularity=Crate,group_imports=StdExternalCrate,reorder_imports=true,format_code_in_doc_comments=true",
+]

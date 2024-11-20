@@ -9,12 +9,11 @@ use std::{
 };
 
 use anyhow::{bail, Context as _};
+use netwatch::UdpSocket;
 use quinn::AsyncUdpSocket;
 use quinn_udp::{Transmit, UdpSockRef};
 use tokio::io::Interest;
-use tracing::{debug, trace, warn};
-
-use crate::net::UdpSocket;
+use tracing::{debug, trace};
 
 /// A UDP socket implementing Quinn's [`AsyncUdpSocket`].
 #[derive(Clone, Debug)]
@@ -137,7 +136,7 @@ fn bind(mut addr: SocketAddr) -> anyhow::Result<UdpSocket> {
                 return Ok(pconn);
             }
             Err(err) => {
-                warn!(%addr, "failed to bind: {:#?}", err);
+                debug!(%addr, "failed to bind: {err:#}");
                 continue;
             }
         }
@@ -196,12 +195,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{key, net::IpFamily, tls};
-
-    use super::*;
     use anyhow::Result;
+    use netwatch::IpFamily;
     use tokio::sync::mpsc;
     use tracing::{info_span, Instrument};
+
+    use super::*;
+    use crate::{key, tls};
 
     const ALPN: &[u8] = b"n0/test/1";
 

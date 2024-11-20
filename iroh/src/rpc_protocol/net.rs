@@ -1,10 +1,10 @@
-use iroh_base::rpc::RpcResult;
-use iroh_net::{endpoint::RemoteInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
+use iroh_net::{endpoint::RemoteInfo, key::PublicKey, NodeAddr, NodeId, RelayUrl};
 use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
 use super::RpcService;
+use crate::node::RpcResult;
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
@@ -37,6 +37,7 @@ pub enum Response {
     RemoteInfosIter(RpcResult<RemoteInfosIterResponse>),
     RemoteInfo(RpcResult<RemoteInfoResponse>),
     Watch(WatchResponse),
+    Unit(RpcResult<()>),
 }
 
 /// List network path information about all the remote nodes known by this node.

@@ -7,14 +7,13 @@ use anyhow::Result;
 use bao_tree::{blake3, io::sync::Outboard, ChunkRanges};
 use bytes::Bytes;
 use iroh::node::{self, DocsStorage, Node};
-use rand::RngCore;
-
 use iroh_blobs::{
     hashseq::HashSeq,
     store::{EntryStatus, MapMut, Store},
     util::Tag,
     BlobFormat, HashAndFormat, IROH_BLOCK_SIZE,
 };
+use rand::RngCore;
 
 pub fn create_test_data(size: usize) -> Bytes {
     let mut rand = rand::thread_rng();
@@ -180,24 +179,21 @@ async fn gc_hashseq_impl() -> Result<()> {
 
 #[cfg(feature = "fs-store")]
 mod file {
-    use super::*;
     use std::{io, path::PathBuf};
 
     use bao_tree::{
         io::fsm::{BaoContentItem, ResponseDecoderNext},
         BaoTree,
     };
-
-    use futures_lite::StreamExt;
-    use iroh_io::AsyncSliceReaderExt;
-    use testdir::testdir;
-
     use iroh_blobs::{
-        store::{BaoBatchWriter, ConsistencyCheckProgress, Map, MapEntryMut, ReportLevel},
+        store::{BaoBatchWriter, ConsistencyCheckProgress, MapEntryMut, ReportLevel},
         util::progress::{AsyncChannelProgressSender, ProgressSender as _},
         TempTag,
     };
+    use testdir::testdir;
     use tokio::io::AsyncReadExt;
+
+    use super::*;
 
     fn path(root: PathBuf, suffix: &'static str) -> impl Fn(&iroh_blobs::Hash) -> PathBuf {
         move |hash| root.join(format!("{}.{}", hash.to_hex(), suffix))
@@ -228,45 +224,6 @@ mod file {
             .await?;
         task.await?;
         Ok(max_level)
-    }
-
-    #[tokio::test]
-    async fn redb_doc_import_stress() -> Result<()> {
-        let _ = tracing_subscriber::fmt::try_init();
-        let dir = testdir!();
-        let bao_store = iroh_blobs::store::fs::Store::load(dir.join("store")).await?;
-        let (node, _) = wrap_in_node(bao_store.clone(), Duration::from_secs(10)).await;
-        let client = node.client();
-        let doc = client.docs().create().await?;
-        let author = client.authors().create().await?;
-        let temp_path = dir.join("temp");
-        tokio::fs::create_dir_all(&temp_path).await?;
-        let mut to_import = Vec::new();
-        for i in 0..100 {
-            let data = create_test_data(16 * 1024 * 3 + 1);
-            let path = temp_path.join(format!("file{}", i));
-            tokio::fs::write(&path, &data).await?;
-            let key = Bytes::from(format!("{}", path.display()));
-            to_import.push((key, path, data));
-        }
-        for (key, path, _) in to_import.iter() {
-            let mut progress = doc.import_file(author, key.clone(), path, true).await?;
-            while let Some(msg) = progress.next().await {
-                tracing::info!("import progress {:?}", msg);
-            }
-        }
-        for (i, (key, _, expected)) in to_import.iter().enumerate() {
-            let Some(entry) = doc.get_exact(author, key.clone(), true).await? else {
-                anyhow::bail!("doc entry not found {}", i);
-            };
-            let hash = entry.content_hash();
-            let Some(content) = bao_store.get(&hash).await? else {
-                anyhow::bail!("content not found {} {}", i, &hash.to_hex()[..8]);
-            };
-            let data = content.data_reader().read_to_end().await?;
-            assert_eq!(data, expected);
-        }
-        Ok(())
     }
 
     /// Test gc for sequences of hashes that protect their children from deletion.

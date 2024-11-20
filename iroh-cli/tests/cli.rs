@@ -1,9 +1,11 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-use std::env;
-use std::io::{BufRead, BufReader, Read};
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
+use std::{
+    env,
+    io::{BufRead, BufReader, Read},
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use anyhow::{ensure, Context, Result};
 use bao_tree::blake3;
@@ -152,8 +154,12 @@ fn cli_provide_tree_resume() -> Result<()> {
     {
         // import the files into an ephemeral iroh to use the generated blobs db in tests
         let provider = make_provider_in(&src_iroh_data_dir_pre, Input::Path(src.clone()), false)?;
-        // small synchronization points: allow iroh to be ready for transfer
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        // small synchronization point: allow iroh to be ready for transfer
+        #[cfg(target_os = "windows")]
+        let wait = 10u64;
+        #[cfg(not(target_os = "windows"))]
+        let wait = 5u64;
+        std::thread::sleep(std::time::Duration::from_secs(wait));
         let _ticket = match_provide_output(&provider, count, BlobOrCollection::Collection)?;
     }
 
@@ -234,8 +240,12 @@ fn cli_provide_file_resume() -> Result<()> {
     {
         // import the files into an ephemeral iroh to use the generated blobs db in tests
         let provider = make_provider_in(&src_iroh_data_dir_pre, Input::Path(file.clone()), false)?;
-        // small synchronization points: allow iroh to be ready for transfer
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        // small synchronization point: allow iroh to be ready for transfer
+        #[cfg(target_os = "windows")]
+        let wait = 10u64;
+        #[cfg(not(target_os = "windows"))]
+        let wait = 5u64;
+        std::thread::sleep(std::time::Duration::from_secs(wait));
         let _ticket = match_provide_output(&provider, count, BlobOrCollection::Blob)?;
     }
 
@@ -290,12 +300,13 @@ fn cli_provide_from_stdin_to_stdout() -> Result<()> {
 #[cfg(unix)]
 #[tokio::test]
 async fn cli_provide_persistence() -> anyhow::Result<()> {
+    use std::time::Duration;
+
     use iroh::blobs::store::ReadableStore;
     use nix::{
         sys::signal::{self, Signal},
         unistd::Pid,
     };
-    use std::time::Duration;
 
     let dir = testdir!();
     let iroh_data_dir = dir.join("iroh_data_dir");
@@ -862,7 +873,8 @@ fn match_provide_output<T: Read>(
 ///         (r"hello world!", 1),
 ///         (r"\S*$", 1),
 ///         (r"\d{2}/\d{2}/\d{4}", 3),
-///     ]);
+///     ],
+/// );
 /// ```
 fn assert_matches_line<R: BufRead, I>(reader: R, expressions: I) -> Vec<(usize, Vec<String>)>
 where

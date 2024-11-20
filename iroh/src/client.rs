@@ -14,26 +14,18 @@ pub use crate::rpc_protocol::RpcService;
 
 mod quic;
 
-pub use self::docs::Doc;
+pub use iroh_blobs::rpc::client::{blobs, tags};
+pub use iroh_docs::rpc::client::{authors, docs, docs::Doc};
+pub use iroh_gossip::rpc::client as gossip;
+
 pub use self::net::NodeStatus;
-
 pub(crate) use self::quic::{connect_raw as quic_connect_raw, RPC_ALPN};
-
-pub mod authors;
-pub mod blobs;
-pub mod docs;
-pub mod gossip;
 pub mod net;
-pub mod tags;
-
-/// Iroh rpc connection - boxed so that we can have a concrete type.
-pub(crate) type RpcConnection = quic_rpc::transport::boxed::Connection<RpcService>;
 
 // Keep this type exposed, otherwise every occurrence of `RpcClient` in the API
 // will show up as `RpcClient<RpcService, Connection<RpcService>>` in the docs.
 /// Iroh rpc client - boxed so that we can have a concrete type.
-pub type RpcClient =
-    quic_rpc::RpcClient<RpcService, quic_rpc::transport::boxed::Connection<RpcService>>;
+pub type RpcClient = quic_rpc::RpcClient<RpcService>;
 
 /// An iroh client.
 ///
@@ -63,28 +55,28 @@ impl Iroh {
     }
 
     /// Returns the blobs client.
-    pub fn blobs(&self) -> &blobs::Client {
-        blobs::Client::ref_cast(&self.rpc)
+    pub fn blobs(&self) -> blobs::Client {
+        blobs::Client::new(self.rpc.clone().map().boxed())
     }
 
     /// Returns the docs client.
-    pub fn docs(&self) -> &docs::Client {
-        docs::Client::ref_cast(&self.rpc)
+    pub fn docs(&self) -> iroh_docs::rpc::client::docs::Client {
+        iroh_docs::rpc::client::docs::Client::new(self.rpc.clone().map().boxed())
     }
 
-    /// Returns the authors client.
-    pub fn authors(&self) -> &authors::Client {
-        authors::Client::ref_cast(&self.rpc)
+    /// Returns the docs client.
+    pub fn authors(&self) -> iroh_docs::rpc::client::authors::Client {
+        iroh_docs::rpc::client::authors::Client::new(self.rpc.clone().map().boxed())
     }
 
     /// Returns the tags client.
-    pub fn tags(&self) -> &tags::Client {
-        tags::Client::ref_cast(&self.rpc)
+    pub fn tags(&self) -> tags::Client {
+        tags::Client::new(self.rpc.clone().map().boxed())
     }
 
     /// Returns the gossip client.
-    pub fn gossip(&self) -> &gossip::Client {
-        gossip::Client::ref_cast(&self.rpc)
+    pub fn gossip(&self) -> gossip::Client {
+        gossip::Client::new(self.rpc.clone().map().boxed())
     }
 
     /// Returns the net client.

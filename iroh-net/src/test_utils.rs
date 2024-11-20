@@ -2,16 +2,12 @@
 use std::net::Ipv4Addr;
 
 use anyhow::Result;
-use tokio::sync::oneshot;
-
-use crate::relay::server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig};
-use crate::{
-    key::SecretKey,
-    relay::{RelayMap, RelayNode, RelayUrl},
-};
-
 pub use dns_and_pkarr_servers::DnsPkarrServer;
 pub use dns_server::create_dns_resolver;
+use iroh_relay::server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig};
+use tokio::sync::oneshot;
+
+use crate::{defaults::DEFAULT_STUN_PORT, RelayMap, RelayNode, RelayUrl};
 
 /// A drop guard to clean up test infrastructure.
 ///
@@ -28,53 +24,65 @@ pub struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 /// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
 /// When dropped, the returned [`Server`] does will stop running.
 pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server)> {
-    let secret_key = SecretKey::generate();
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
-    let rustls_cert = rustls::pki_types::CertificateDer::from(cert.serialize_der().unwrap());
-    let private_key =
-        rustls::pki_types::PrivatePkcs8KeyDer::from(cert.get_key_pair().serialize_der());
+    run_relay_server_with(Some(StunConfig {
+        bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+    }))
+    .await
+}
+
+/// Runs a relay server.
+///
+/// `stun` can be set to `None` to disable stun, or set to `Some` `StunConfig`,
+/// to enable stun on a specific socket.
+///
+/// The return value is similar to [`run_relay_server`].
+pub async fn run_relay_server_with(
+    stun: Option<StunConfig>,
+) -> Result<(RelayMap, RelayUrl, Server)> {
+    let cert =
+        rcgen::generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])
+            .expect("valid");
+    let rustls_cert = cert.cert.der();
+    let private_key = rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
     let private_key = rustls::pki_types::PrivateKeyDer::from(private_key);
 
     let config = ServerConfig {
         relay: Some(RelayConfig {
             http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-            secret_key,
             tls: Some(TlsConfig {
                 cert: CertConfig::<(), ()>::Manual {
                     private_key,
-                    certs: vec![rustls_cert],
+                    certs: vec![rustls_cert.clone()],
                 },
                 https_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
             }),
             limits: Default::default(),
         }),
-        stun: Some(StunConfig {
-            bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-        }),
+        stun,
         #[cfg(feature = "metrics")]
         metrics_addr: None,
     };
     let server = Server::spawn(config).await.unwrap();
-    let url: RelayUrl = format!("https://localhost:{}", server.https_addr().unwrap().port())
+    let url: RelayUrl = format!("https://{}", server.https_addr().expect("configured"))
         .parse()
         .unwrap();
     let m = RelayMap::from_nodes([RelayNode {
         url: url.clone(),
         stun_only: false,
-        stun_port: server.stun_addr().unwrap().port(),
+        stun_port: server.stun_addr().map_or(DEFAULT_STUN_PORT, |s| s.port()),
     }])
     .unwrap();
     Ok((m, url, server))
 }
 
 pub(crate) mod dns_and_pkarr_servers {
+    use std::{net::SocketAddr, time::Duration};
+
     use anyhow::Result;
     use iroh_base::key::{NodeId, SecretKey};
-    use std::{net::SocketAddr, time::Duration};
     use url::Url;
 
     use super::{create_dns_resolver, CleanupDropGuard};
-
     use crate::{
         discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
         dns::DnsResolver,
@@ -147,8 +155,10 @@ pub(crate) mod dns_and_pkarr_servers {
 }
 
 pub(crate) mod dns_server {
-    use std::future::Future;
-    use std::net::{Ipv4Addr, SocketAddr};
+    use std::{
+        future::Future,
+        net::{Ipv4Addr, SocketAddr},
+    };
 
     use anyhow::{ensure, Result};
     use futures_lite::future::Boxed as BoxFuture;
@@ -253,8 +263,10 @@ pub(crate) mod dns_server {
 }
 
 pub(crate) mod pkarr_relay {
-    use std::future::IntoFuture;
-    use std::net::{Ipv4Addr, SocketAddr};
+    use std::{
+        future::IntoFuture,
+        net::{Ipv4Addr, SocketAddr},
+    };
 
     use anyhow::Result;
     use axum::{
@@ -268,9 +280,8 @@ pub(crate) mod pkarr_relay {
     use tracing::{debug, error, warn};
     use url::Url;
 
-    use crate::test_utils::pkarr_dns_state::State as AppState;
-
     use super::CleanupDropGuard;
+    use crate::test_utils::pkarr_dns_state::State as AppState;
 
     pub async fn run_pkarr_relay(state: AppState) -> Result<(Url, CleanupDropGuard)> {
         let bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
@@ -327,9 +338,6 @@ pub(crate) mod pkarr_relay {
 }
 
 pub(crate) mod pkarr_dns_state {
-    use anyhow::{bail, Result};
-    use parking_lot::{Mutex, MutexGuard};
-    use pkarr::SignedPacket;
     use std::{
         collections::{hash_map, HashMap},
         future::Future,
@@ -338,9 +346,15 @@ pub(crate) mod pkarr_dns_state {
         time::Duration,
     };
 
-    use crate::dns::node_info::{node_id_from_hickory_name, NodeInfo};
-    use crate::test_utils::dns_server::QueryHandler;
-    use crate::NodeId;
+    use anyhow::{bail, Result};
+    use parking_lot::{Mutex, MutexGuard};
+    use pkarr::SignedPacket;
+
+    use crate::{
+        dns::node_info::{node_id_from_hickory_name, NodeInfo},
+        test_utils::dns_server::QueryHandler,
+        NodeId,
+    };
 
     #[derive(Debug, Clone)]
     pub struct State {

@@ -6,25 +6,23 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use bao_tree::{blake3, ChunkNum, ChunkRanges};
 use bytes::Bytes;
 use futures_lite::FutureExt;
 use iroh::node::{Builder, DocsStorage};
-use iroh_base::node_addr::AddrInfoOptions;
-use iroh_net::{defaults::staging::default_relay_map, key::SecretKey, NodeAddr, NodeId};
-use rand::RngCore;
-
-use bao_tree::{blake3, ChunkNum, ChunkRanges};
+use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
 use iroh_blobs::{
     format::collection::Collection,
     get::{
-        fsm::ConnectedNext,
-        fsm::{self, DecodeError},
+        fsm::{self, ConnectedNext, DecodeError},
         Stats,
     },
     protocol::{GetRequest, RangeSpecSeq},
     store::{MapMut, Store},
-    BlobFormat, Hash,
+    Hash,
 };
+use iroh_net::{defaults::staging::default_relay_map, key::SecretKey, NodeAddr, NodeId};
+use rand::RngCore;
 
 /// Create a new endpoint and dial a peer, returning the connection.
 async fn dial(secret_key: SecretKey, peer: NodeAddr) -> anyhow::Result<quinn::Connection> {
@@ -120,7 +118,10 @@ async fn empty_files() -> Result<()> {
 
 /// Create new get options with the given node id and addresses, using a
 /// randomly generated secret key.
-fn get_options(node_id: NodeId, addrs: Vec<SocketAddr>) -> (SecretKey, NodeAddr) {
+fn get_options(
+    node_id: NodeId,
+    addrs: impl IntoIterator<Item = SocketAddr>,
+) -> (SecretKey, NodeAddr) {
     let relay_map = default_relay_map();
     let peer = iroh_net::NodeAddr::from_parts(
         node_id,
@@ -385,15 +386,11 @@ async fn test_run_ticket() {
     let node = test_node(db).spawn().await.unwrap();
     let _drop_guard = node.cancel_token().drop_guard();
 
-    let ticket = node
-        .blobs()
-        .share(
-            hash,
-            BlobFormat::HashSeq,
-            AddrInfoOptions::RelayAndAddresses,
-        )
-        .await
-        .unwrap();
+    let mut addr = node.net().node_addr().await.unwrap();
+    addr.apply_options(AddrInfoOptions::RelayAndAddresses);
+    let ticket = BlobTicket::new(addr, hash, iroh_blobs::BlobFormat::HashSeq)
+        .expect("ticket creation failed");
+
     tokio::time::timeout(Duration::from_secs(10), async move {
         let request = GetRequest::all(hash);
         run_collection_get_request(SecretKey::generate(), ticket.node_addr().clone(), request).await

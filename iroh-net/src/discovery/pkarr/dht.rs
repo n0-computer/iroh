@@ -10,6 +10,15 @@ use std::{
     time::Duration,
 };
 
+use futures_lite::{stream::Boxed, StreamExt};
+use genawaiter::sync::{Co, Gen};
+use pkarr::{
+    PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
+    RelaySettings, SignedPacket,
+};
+use tokio_util::task::AbortOnDropHandle;
+use url::Url;
+
 use crate::{
     discovery::{
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
@@ -19,15 +28,6 @@ use crate::{
     key::SecretKey,
     AddrInfo, Endpoint, NodeId,
 };
-use futures_lite::{stream::Boxed, StreamExt};
-
-use genawaiter::sync::{Co, Gen};
-use pkarr::{
-    PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
-    RelaySettings, SignedPacket,
-};
-use tokio_util::task::AbortOnDropHandle;
-use url::Url;
 
 /// Republish delay for the DHT.
 ///
@@ -404,15 +404,16 @@ impl Discovery for DhtDiscovery {
 mod tests {
     use std::collections::BTreeSet;
 
-    use super::*;
     use iroh_base::node_addr::RelayUrl;
     use mainline::dht::DhtSettings;
     use testresult::TestResult;
 
+    use super::*;
+
     #[tokio::test]
     #[ignore = "flaky"]
     async fn dht_discovery_smoke() -> TestResult {
-        let _ = tracing_subscriber::fmt::try_init();
+        let _logging_guard = iroh_test::logging::setup();
         let ep = crate::Endpoint::builder().bind().await?;
         let secret = ep.secret_key().clone();
         let testnet = mainline::dht::Testnet::new(2);
@@ -437,19 +438,27 @@ mod tests {
         });
 
         // publish is fire and forget, so we have no way to wait until it is done.
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        let items = discovery
-            .resolve(ep, secret.public())
-            .unwrap()
-            .collect::<Vec<_>>()
-            .await;
-        let mut found_relay_urls = BTreeSet::new();
-        for item in items.into_iter().flatten() {
-            if let Some(url) = item.addr_info.relay_url {
-                found_relay_urls.insert(url);
+        tokio::time::timeout(Duration::from_secs(30), async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                let mut found_relay_urls = BTreeSet::new();
+                let items = discovery
+                    .resolve(ep.clone(), secret.public())
+                    .unwrap()
+                    .collect::<Vec<_>>()
+                    .await;
+                for item in items.into_iter().flatten() {
+                    if let Some(url) = item.addr_info.relay_url {
+                        found_relay_urls.insert(url);
+                    }
+                }
+                if found_relay_urls.contains(&relay_url) {
+                    break;
+                }
             }
-        }
-        assert!(found_relay_urls.contains(&relay_url));
+        })
+        .await
+        .expect("timeout, relay_url not found on DHT");
         Ok(())
     }
 }

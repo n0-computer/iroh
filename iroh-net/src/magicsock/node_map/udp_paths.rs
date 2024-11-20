@@ -5,19 +5,22 @@
 //! the inside and instead only notifies this struct of state changes to each path.
 //!
 //! [`NodeState`]: super::node_state::NodeState
-use std::collections::BTreeMap;
-use std::net::SocketAddr;
-use std::time::{Duration, Instant};
+use std::{
+    collections::BTreeMap,
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 
 use rand::seq::IteratorRandom;
 use tracing::warn;
 
+use super::{
+    best_addr::{self, BestAddr},
+    node_state::PongReply,
+    path_state::PathState,
+    IpPort,
+};
 use crate::disco::SendAddr;
-
-use super::best_addr::{self, BestAddr};
-use super::node_state::PongReply;
-use super::path_state::PathState;
-use super::IpPort;
 
 /// The address on which to send datagrams over UDP.
 ///

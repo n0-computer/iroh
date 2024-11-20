@@ -1,27 +1,25 @@
-use self::{
-    blobs::{BlobAddOptions, BlobSource},
-    rpc::RpcCommands,
-    start::RunType,
-};
-use crate::config::{ConsoleEnv, NodeConfig};
-use anyhow::{ensure, Context, Result};
-use clap::Parser;
-use iroh::client::Iroh;
 use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
 };
 
-pub(crate) mod authors;
-pub(crate) mod blobs;
+use anyhow::{ensure, Context, Result};
+use clap::Parser;
+use iroh::client::Iroh;
+use iroh_blobs::cli::{BlobAddOptions, BlobSource};
+use iroh_docs::cli::ConsoleEnv;
+
+use self::{rpc::RpcCommands, start::RunType};
+use crate::config::NodeConfig;
+
 pub(crate) mod console;
-pub(crate) mod docs;
 pub(crate) mod doctor;
-pub(crate) mod gossip;
 pub(crate) mod net;
 pub(crate) mod rpc;
 pub(crate) mod start;
-pub(crate) mod tags;
+pub(crate) use iroh_blobs::{cli as blobs, cli::tags};
+pub(crate) use iroh_docs::{cli as docs, cli::authors};
+pub(crate) use iroh_gossip::cli as gossip;
 
 /// iroh is a tool for building distributed apps.
 ///
@@ -123,7 +121,8 @@ impl Cli {
                         self.rpc_addr,
                         RunType::SingleCommandNoAbort,
                         |iroh| async move {
-                            let env = ConsoleEnv::for_console(data_dir_owned, &iroh).await?;
+                            let env =
+                                ConsoleEnv::for_console(data_dir_owned, &iroh.authors()).await?;
                             console::run(&iroh, &env).await
                         },
                     )
@@ -135,7 +134,7 @@ impl Cli {
                     } else {
                         Iroh::connect_path(data_dir).await.context("rpc connect")?
                     };
-                    let env = ConsoleEnv::for_console(data_dir_owned, &iroh).await?;
+                    let env = ConsoleEnv::for_console(data_dir_owned, &iroh.authors()).await?;
                     console::run(&iroh, &env).await
                 }
             }
@@ -149,7 +148,7 @@ impl Cli {
                         self.rpc_addr,
                         RunType::SingleCommandAbortable,
                         move |iroh| async move {
-                            let env = ConsoleEnv::for_cli(data_dir_owned, &iroh).await?;
+                            let env = ConsoleEnv::for_cli(data_dir_owned, &iroh.authors()).await?;
                             command.run(&iroh, &env).await
                         },
                     )
@@ -161,7 +160,7 @@ impl Cli {
                     } else {
                         Iroh::connect_path(data_dir).await.context("rpc connect")?
                     };
-                    let env = ConsoleEnv::for_cli(data_dir_owned, &iroh).await?;
+                    let env = ConsoleEnv::for_cli(data_dir_owned, &iroh.authors()).await?;
                     command.run(&iroh, &env).await
                 }
             }
@@ -189,7 +188,10 @@ impl Cli {
                     |client| async move {
                         match add_command {
                             None => Ok(()),
-                            Some(command) => command.run(&client).await,
+                            Some(command) => {
+                                let node_addr = client.net().node_addr().await?;
+                                command.run(&client.blobs(), node_addr).await
+                            }
                         }
                     },
                 )

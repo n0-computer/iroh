@@ -13,16 +13,16 @@ use std::net::SocketAddr;
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
-use iroh_net::{endpoint::RemoteInfo, relay::RelayUrl, NodeAddr, NodeId};
+use iroh_base::node_addr::RelayUrl;
+use iroh_net::{endpoint::RemoteInfo, NodeAddr, NodeId};
 use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 
+use super::{flatten, RpcClient};
 use crate::rpc_protocol::net::{
     AddAddrRequest, AddrRequest, IdRequest, RelayRequest, RemoteInfoRequest, RemoteInfoResponse,
     RemoteInfosIterRequest,
 };
-
-use super::{flatten, RpcClient};
 
 /// Iroh netx Client.
 ///
@@ -40,7 +40,11 @@ use super::{flatten, RpcClient};
 /// # Examples
 /// ```
 /// use std::str::FromStr;
-/// use iroh_base::{key::NodeId, node_addr::{RelayUrl, NodeAddr}};
+///
+/// use iroh_base::{
+///     key::NodeId,
+///     node_addr::{NodeAddr, RelayUrl},
+/// };
 /// use url::Url;
 ///
 /// # async fn run() -> anyhow::Result<()> {
@@ -51,12 +55,13 @@ use super::{flatten, RpcClient};
 /// // Provide your node an address for another node
 /// let relay_url = RelayUrl::from(Url::parse("https://example.com").unwrap());
 /// let addr = NodeAddr::from_parts(
-///   // the node_id
-///   NodeId::from_str("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6").unwrap(),
-///   // the home relay
-///   Some(relay_url),
-///   // the direct addresses
-///   vec!["120.0.0.1:0".parse().unwrap()],
+///     // the node_id
+///     NodeId::from_str("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
+///         .unwrap(),
+///     // the home relay
+///     Some(relay_url),
+///     // the direct addresses
+///     ["120.0.0.1:0".parse().unwrap()],
 /// );
 /// net_client.add_node_addr(addr).await?;
 /// // Shut down the node. Passing `true` will force the shutdown, passing in

@@ -8,9 +8,8 @@ use std::sync::Arc;
 use quinn::crypto::rustls::{NoInitialCipherSuite, QuicClientConfig, QuicServerConfig};
 use tracing::warn;
 
-use crate::key::{PublicKey, SecretKey};
-
 use self::certificate::AlwaysResolvesCert;
+use crate::key::{PublicKey, SecretKey};
 
 pub mod certificate;
 mod verifier;

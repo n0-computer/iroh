@@ -35,49 +35,51 @@
 //! well, without going through [`client`](crate::client::Iroh))
 //!
 //! To shut down the node, call [`Node::shutdown`].
-use std::collections::BTreeSet;
-use std::fmt::Debug;
-use std::marker::PhantomData;
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    collections::BTreeSet,
+    fmt::Debug,
+    marker::PhantomData,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::{anyhow, Result};
 use futures_lite::StreamExt;
-use futures_util::future::MapErr;
-use futures_util::future::Shared;
+use futures_util::future::{MapErr, Shared};
 use iroh_base::key::PublicKey;
-use iroh_blobs::protocol::Closed;
-use iroh_blobs::store::Store as BaoStore;
-use iroh_blobs::util::local_pool::{LocalPool, LocalPoolHandle};
-use iroh_docs::net::DOCS_ALPN;
-use iroh_net::endpoint::{DirectAddrsStream, RemoteInfo};
-use iroh_net::{AddrInfo, Endpoint, NodeAddr};
-use protocol::BlobsProtocol;
-use quic_rpc::transport::ServerEndpoint as _;
-use quic_rpc::RpcServer;
+use iroh_blobs::{
+    net_protocol::Blobs as BlobsProtocol,
+    store::Store as BaoStore,
+    util::local_pool::{LocalPool, LocalPoolHandle},
+};
+use iroh_docs::{engine::Engine, net::DOCS_ALPN};
+use iroh_net::{
+    endpoint::{DirectAddrsStream, RemoteInfo},
+    AddrInfo, Endpoint, NodeAddr,
+};
+use iroh_router::{ProtocolHandler, Router};
+use quic_rpc::{transport::Listener as _, RpcServer};
 use tokio::task::{JoinError, JoinSet};
-use tokio_util::sync::CancellationToken;
-use tokio_util::task::AbortOnDropHandle;
+use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
 use crate::node::nodes_storage::store_node_addrs;
-use crate::node::{docs::DocsEngine, protocol::ProtocolMap};
 
 mod builder;
-mod docs;
 mod nodes_storage;
-mod protocol;
 mod rpc;
 mod rpc_status;
 
-pub use self::builder::{
-    Builder, DiscoveryConfig, DocsStorage, GcPolicy, ProtocolBuilder, StorageConfig,
-    DEFAULT_RPC_ADDR,
+pub(crate) use self::rpc::RpcResult;
+pub use self::{
+    builder::{
+        Builder, DiscoveryConfig, DocsStorage, GcPolicy, ProtocolBuilder, StorageConfig,
+        DEFAULT_RPC_ADDR,
+    },
+    rpc_status::RpcStatus,
 };
-pub use self::rpc_status::RpcStatus;
-pub use protocol::ProtocolHandler;
 
 /// How often to save node data.
 const SAVE_NODES_INTERVAL: Duration = Duration::from_secs(30);
@@ -85,7 +87,7 @@ const SAVE_NODES_INTERVAL: Duration = Duration::from_secs(30);
 /// The quic-rpc server endpoint for the iroh node.
 ///
 /// We use a boxed endpoint here to allow having a concrete type for the server endpoint.
-pub type IrohServerEndpoint = quic_rpc::transport::boxed::ServerEndpoint<
+pub type IrohServerEndpoint = quic_rpc::transport::boxed::BoxedListener<
     crate::rpc_protocol::Request,
     crate::rpc_protocol::Response,
 >;
@@ -110,7 +112,7 @@ pub struct Node<D> {
     // - `AbortOnDropHandle` to make sure that the `task` is cancelled when all `Node`s are dropped
     //   (`Shared` acts like an `Arc` around its inner future).
     task: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
-    protocols: Arc<ProtocolMap>,
+    router: Router,
 }
 
 pub(crate) type JoinErrToStr = Box<dyn Fn(JoinError) -> String + Send + Sync + 'static>;
@@ -202,7 +204,7 @@ impl<D: BaoStore> Node<D> {
     }
 
     /// Get the relay server we are connected to.
-    pub fn home_relay(&self) -> Option<iroh_net::relay::RelayUrl> {
+    pub fn home_relay(&self) -> Option<iroh_net::RelayUrl> {
         self.inner.endpoint.home_relay()
     }
 
@@ -239,7 +241,7 @@ impl<D: BaoStore> Node<D> {
     /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
     /// does not match the passed type.
     pub fn get_protocol<P: ProtocolHandler>(&self, alpn: &[u8]) -> Option<Arc<P>> {
-        self.protocols.get_typed(alpn)
+        self.router.get_protocol(alpn)
     }
 }
 
@@ -267,7 +269,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         self: Arc<Self>,
         external_rpc: IrohServerEndpoint,
         internal_rpc: IrohServerEndpoint,
-        protocols: Arc<ProtocolMap>,
+        router: Router,
         gc_policy: GcPolicy,
         gc_done_callback: Option<Box<dyn Fn() + Send>>,
         nodes_data_path: Option<PathBuf>,
@@ -289,11 +291,11 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
 
         // Spawn a task for the garbage collection.
         if let GcPolicy::Interval(gc_period) = gc_policy {
-            let protocols = protocols.clone();
+            let router = router.clone();
             let handle = local_pool.spawn(move || async move {
-                let docs_engine = protocols.get_typed::<DocsEngine>(DOCS_ALPN);
-                let blobs = protocols
-                    .get_typed::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
+                let docs_engine = router.get_protocol::<Engine<D>>(DOCS_ALPN);
+                let blobs = router
+                    .get_protocol::<BlobsProtocol<D>>(iroh_blobs::protocol::ALPN)
                     .expect("missing blobs");
 
                 blobs
@@ -393,7 +395,7 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 request = external_rpc.accept() => {
                     match request {
                         Ok(accepting) => {
-                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting, protocols.clone());
+                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting, router.clone());
                         }
                         Err(e) => {
                             info!("rpc request error: {:?}", e);
@@ -404,20 +406,12 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                 request = internal_rpc.accept() => {
                     match request {
                         Ok(accepting) => {
-                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting, protocols.clone());
+                            rpc::Handler::spawn_rpc_request(self.clone(), &mut join_set, accepting, router.clone());
                         }
                         Err(e) => {
                             info!("internal rpc request error: {:?}", e);
                         }
                     }
-                },
-                // handle incoming p2p connections.
-                Some(incoming) = self.endpoint.accept() => {
-                    let protocols = protocols.clone();
-                    join_set.spawn(async move {
-                        handle_connection(incoming, protocols).await;
-                        Ok(())
-                    });
                 },
                 // handle task terminations and quit on panics.
                 res = join_set.join_next(), if !join_set.is_empty() => {
@@ -439,11 +433,12 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
                         _ => {}
                     }
                 },
-                else => break,
             }
         }
 
-        self.shutdown(protocols).await;
+        if let Err(err) = router.shutdown().await {
+            tracing::warn!("Error when shutting down router: {:?}", err);
+        };
 
         // Abort remaining tasks.
         join_set.shutdown().await;
@@ -452,48 +447,6 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         // Abort remaining local tasks.
         tracing::info!("Shutting down local pool");
         local_pool.shutdown().await;
-    }
-
-    /// Shutdown the different parts of the node concurrently.
-    async fn shutdown(&self, protocols: Arc<ProtocolMap>) {
-        let error_code = Closed::ProviderTerminating;
-
-        // We ignore all errors during shutdown.
-        let _ = tokio::join!(
-            // Close the endpoint.
-            // Closing the Endpoint is the equivalent of calling Connection::close on all
-            // connections: Operations will immediately fail with ConnectionError::LocallyClosed.
-            // All streams are interrupted, this is not graceful.
-            self.endpoint
-                .clone()
-                .close(error_code.into(), error_code.reason()),
-            // Shutdown protocol handlers.
-            protocols.shutdown(),
-        );
-    }
-}
-
-async fn handle_connection(incoming: iroh_net::endpoint::Incoming, protocols: Arc<ProtocolMap>) {
-    let mut connecting = match incoming.accept() {
-        Ok(conn) => conn,
-        Err(err) => {
-            warn!("Ignoring connection: accepting failed: {err:#}");
-            return;
-        }
-    };
-    let alpn = match connecting.alpn().await {
-        Ok(alpn) => alpn,
-        Err(err) => {
-            warn!("Ignoring connection: invalid handshake: {err:#}");
-            return;
-        }
-    };
-    let Some(handler) = protocols.get(&alpn) else {
-        warn!("Ignoring connection: unsupported ALPN protocol");
-        return;
-    };
-    if let Err(err) = handler.accept(connecting).await {
-        warn!("Handling incoming connection ended with error: {err}");
     }
 }
 
@@ -543,13 +496,12 @@ fn node_address_for_storage(info: RemoteInfo) -> Option<NodeAddr> {
 mod tests {
     use anyhow::{bail, Context};
     use bytes::Bytes;
-    use iroh_base::node_addr::AddrInfoOptions;
+    use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
     use iroh_blobs::{provider::AddProgress, util::SetTagOption, BlobFormat};
-    use iroh_net::{key::SecretKey, relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
-
-    use crate::client::blobs::{AddOutcome, WrapOption};
+    use iroh_net::{key::SecretKey, test_utils::DnsPkarrServer, NodeAddr, RelayMode};
 
     use super::*;
+    use crate::client::blobs::{AddOutcome, WrapOption};
 
     #[tokio::test]
     async fn test_ticket_multiple_addrs() {
@@ -565,11 +517,9 @@ mod tests {
             .hash;
 
         let _drop_guard = node.cancel_token().drop_guard();
-        let ticket = node
-            .blobs()
-            .share(hash, BlobFormat::Raw, AddrInfoOptions::RelayAndAddresses)
-            .await
-            .unwrap();
+        let mut addr = node.net().node_addr().await.unwrap();
+        addr.apply_options(AddrInfoOptions::RelayAndAddresses);
+        let ticket = BlobTicket::new(addr, hash, BlobFormat::Raw).unwrap();
         println!("addrs: {:?}", ticket.node_addr().info);
         assert!(!ticket.node_addr().info.direct_addresses.is_empty());
     }
@@ -737,144 +687,6 @@ mod tests {
                 .as_ref(),
             b"foo"
         );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_default_author_memory() -> Result<()> {
-        let iroh = Node::memory().enable_docs().spawn().await?;
-        let author = iroh.authors().default().await?;
-        assert!(iroh.authors().export(author).await?.is_some());
-        assert!(iroh.authors().delete(author).await.is_err());
-        Ok(())
-    }
-
-    #[cfg(feature = "fs-store")]
-    #[tokio::test]
-    async fn test_default_author_persist() -> Result<()> {
-        use crate::util::path::IrohPaths;
-
-        let _guard = iroh_test::logging::setup();
-
-        let iroh_root_dir = tempfile::TempDir::new().unwrap();
-        let iroh_root = iroh_root_dir.path();
-
-        // check that the default author exists and cannot be deleted.
-        let default_author = {
-            let iroh = Node::persistent(iroh_root)
-                .await
-                .unwrap()
-                .enable_docs()
-                .spawn()
-                .await
-                .unwrap();
-            let author = iroh.authors().default().await.unwrap();
-            assert!(iroh.authors().export(author).await.unwrap().is_some());
-            assert!(iroh.authors().delete(author).await.is_err());
-            iroh.shutdown().await.unwrap();
-            author
-        };
-
-        // check that the default author is persisted across restarts.
-        {
-            let iroh = Node::persistent(iroh_root)
-                .await
-                .unwrap()
-                .enable_docs()
-                .spawn()
-                .await
-                .unwrap();
-            let author = iroh.authors().default().await.unwrap();
-            assert_eq!(author, default_author);
-            assert!(iroh.authors().export(author).await.unwrap().is_some());
-            assert!(iroh.authors().delete(author).await.is_err());
-            iroh.shutdown().await.unwrap();
-        };
-
-        // check that a new default author is created if the default author file is deleted
-        // manually.
-        let default_author = {
-            tokio::fs::remove_file(IrohPaths::DefaultAuthor.with_root(iroh_root))
-                .await
-                .unwrap();
-            let iroh = Node::persistent(iroh_root)
-                .await
-                .unwrap()
-                .enable_docs()
-                .spawn()
-                .await
-                .unwrap();
-            let author = iroh.authors().default().await.unwrap();
-            assert!(author != default_author);
-            assert!(iroh.authors().export(author).await.unwrap().is_some());
-            assert!(iroh.authors().delete(author).await.is_err());
-            iroh.shutdown().await.unwrap();
-            author
-        };
-
-        // check that the node fails to start if the default author is missing from the docs store.
-        {
-            let mut docs_store = iroh_docs::store::fs::Store::persistent(
-                IrohPaths::DocsDatabase.with_root(iroh_root),
-            )
-            .unwrap();
-            docs_store.delete_author(default_author).unwrap();
-            docs_store.flush().unwrap();
-            drop(docs_store);
-            let iroh = Node::persistent(iroh_root)
-                .await
-                .unwrap()
-                .enable_docs()
-                .spawn()
-                .await;
-            assert!(iroh.is_err());
-
-            // somehow the blob store is not shutdown correctly (yet?) on macos.
-            // so we give it some time until we find a proper fix.
-            #[cfg(target_os = "macos")]
-            tokio::time::sleep(Duration::from_secs(1)).await;
-
-            tokio::fs::remove_file(IrohPaths::DefaultAuthor.with_root(iroh_root))
-                .await
-                .unwrap();
-            drop(iroh);
-            let iroh = Node::persistent(iroh_root)
-                .await
-                .unwrap()
-                .enable_docs()
-                .spawn()
-                .await;
-            assert!(iroh.is_ok());
-            iroh.unwrap().shutdown().await.unwrap();
-        }
-
-        // check that the default author can be set manually and is persisted.
-        let default_author = {
-            let iroh = Node::persistent(iroh_root)
-                .await
-                .unwrap()
-                .enable_docs()
-                .spawn()
-                .await
-                .unwrap();
-            let author = iroh.authors().create().await.unwrap();
-            iroh.authors().set_default(author).await.unwrap();
-            assert_eq!(iroh.authors().default().await.unwrap(), author);
-            iroh.shutdown().await.unwrap();
-            author
-        };
-        {
-            let iroh = Node::persistent(iroh_root)
-                .await
-                .unwrap()
-                .enable_docs()
-                .spawn()
-                .await
-                .unwrap();
-            assert_eq!(iroh.authors().default().await.unwrap(), default_author);
-            iroh.shutdown().await.unwrap();
-        }
-
         Ok(())
     }
 }

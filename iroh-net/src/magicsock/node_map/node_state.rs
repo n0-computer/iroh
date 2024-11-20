@@ -1,27 +1,32 @@
-use std::collections::{btree_map::Entry, BTreeSet, HashMap};
-use std::hash::Hash;
-use std::net::{IpAddr, SocketAddr};
-use std::time::{Duration, Instant};
+use std::{
+    collections::{btree_map::Entry, BTreeSet, HashMap},
+    hash::Hash,
+    net::{IpAddr, SocketAddr},
+    time::{Duration, Instant},
+};
 
 use iroh_metrics::inc;
+use iroh_relay::{protos::stun, RelayUrl};
+use netwatch::ip::is_unicast_link_local;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, event, info, instrument, trace, warn, Level};
 use watchable::{Watchable, WatcherStream};
 
-use crate::disco::{self, SendAddr};
-use crate::endpoint::AddrInfo;
-use crate::key::PublicKey;
-use crate::magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL};
-use crate::net::ip::is_unicast_link_local;
-use crate::relay::RelayUrl;
-use crate::util::relay_only_mode;
-use crate::{stun, NodeAddr, NodeId};
-
-use super::best_addr::{self, ClearReason, Source as BestAddrSource};
-use super::path_state::{summarize_node_paths, PathState};
-use super::udp_paths::{NodeUdpPaths, UdpSendAddr};
-use super::{IpPort, Source};
+use super::{
+    best_addr::{self, ClearReason, Source as BestAddrSource},
+    path_state::{summarize_node_paths, PathState},
+    udp_paths::{NodeUdpPaths, UdpSendAddr},
+    IpPort, Source,
+};
+use crate::{
+    disco::{self, SendAddr},
+    endpoint::AddrInfo,
+    key::PublicKey,
+    magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
+    util::relay_only_mode,
+    NodeAddr, NodeId,
+};
 
 /// Number of addresses that are not active that we keep around per node.
 ///
@@ -128,6 +133,10 @@ pub(super) struct NodeState {
     last_call_me_maybe: Option<Instant>,
     /// The type of connection we have to the node, either direct, relay, mixed, or none.
     conn_type: Watchable<ConnectionType>,
+    /// Whether the conn_type was ever observed to be `Direct` at some point.
+    ///
+    /// Used for metric reporting.
+    has_been_direct: bool,
 }
 
 /// Options for creating a new [`NodeState`].
@@ -167,6 +176,7 @@ impl NodeState {
             last_used: options.active.then(Instant::now),
             last_call_me_maybe: None,
             conn_type: Watchable::new(ConnectionType::None),
+            has_been_direct: false,
         }
     }
 
@@ -298,6 +308,10 @@ impl NodeState {
             (None, Some(relay_url)) => ConnectionType::Relay(relay_url),
             (None, None) => ConnectionType::None,
         };
+        if !self.has_been_direct && matches!(&typ, ConnectionType::Direct(_)) {
+            self.has_been_direct = true;
+            inc!(MagicsockMetrics, nodes_contacted_directly);
+        }
         if let Ok(prev_typ) = self.conn_type.update(typ.clone()) {
             // The connection type has changed.
             event!(
@@ -1126,7 +1140,11 @@ impl NodeState {
         have_ipv6: bool,
     ) -> (Option<SocketAddr>, Option<RelayUrl>, Vec<PingAction>) {
         let now = Instant::now();
-        self.last_used.replace(now);
+        let prev = self.last_used.replace(now);
+        if prev.is_none() {
+            // this is the first time we are trying to connect to this node
+            inc!(MagicsockMetrics, nodes_contacted);
+        }
         let (udp_addr, relay_url) = self.addr_for_send(&now, have_ipv6);
         let mut ping_msgs = Vec::new();
 
@@ -1389,16 +1407,16 @@ impl RemoteInfo {
 #[derive(derive_more::Display, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ConnectionType {
     /// Direct UDP connection
-    #[display("direct")]
+    #[display("direct({_0})")]
     Direct(SocketAddr),
     /// Relay connection over relay
-    #[display("relay")]
+    #[display("relay({_0})")]
     Relay(RelayUrl),
     /// Both a UDP and a relay connection are used.
     ///
     /// This is the case if we do have a UDP address, but are missing a recent confirmation that
     /// the address works.
-    #[display("mixed")]
+    #[display("mixed(udp: {_0}, relay: {_1})")]
     Mixed(SocketAddr, RelayUrl),
     /// We have no verified connection to this PublicKey
     #[display("none")]
@@ -1409,12 +1427,13 @@ pub enum ConnectionType {
 mod tests {
     use std::{collections::BTreeMap, net::Ipv4Addr};
 
-    use crate::key::SecretKey;
-    use crate::magicsock::node_map::{NodeMap, NodeMapInner};
-
     use best_addr::BestAddr;
 
     use super::*;
+    use crate::{
+        key::SecretKey,
+        magicsock::node_map::{NodeMap, NodeMapInner},
+    };
 
     #[test]
     fn test_remote_infos() {
@@ -1478,6 +1497,7 @@ mod tests {
                     last_used: Some(now),
                     last_call_me_maybe: None,
                     conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
+                    has_been_direct: true,
                 },
                 ip_port.into(),
             )
@@ -1497,6 +1517,7 @@ mod tests {
                 last_used: Some(now),
                 last_call_me_maybe: None,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
+                has_been_direct: false,
             }
         };
 
@@ -1523,6 +1544,7 @@ mod tests {
                 last_used: Some(now),
                 last_call_me_maybe: None,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
+                has_been_direct: false,
             }
         };
 
@@ -1562,6 +1584,7 @@ mod tests {
                         socket_addr,
                         send_addr.clone(),
                     )),
+                    has_been_direct: false,
                 },
                 socket_addr,
             )
