@@ -1128,7 +1128,7 @@
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"discovery-local-network"</span>)))]
 </span><span class="kw">pub mod </span>local_swarm_discovery;
 <span class="kw">pub mod </span>pkarr;
-<span class="kw">pub mod </span>static_discovery;
+<span class="kw">pub mod </span>static_provider;
 
 <span class="doccomment">/// Node discovery for [`super::Endpoint`].
 ///
@@ -1213,7 +1213,7 @@
     </span><span class="kw">pub </span>addr_info: AddrInfo,
 }
 
-<span class="doccomment">/// A map of discovery services that allows insertion and removal
+<span class="doccomment">/// A map of discovery services that allows insertion and removal.
 </span><span class="attr">#[derive(Debug, Default)]
 #[repr(transparent)]
 </span><span class="kw">pub struct </span>DiscoveryServiceMap {
