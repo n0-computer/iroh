@@ -1,5 +1,5 @@
 //! Utilities for logging
-use std::path::Path;
+use std::{env, path::Path};
 
 use derive_more::FromStr;
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,19 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Lay
 /// `RUST_LOG` statement used by default in file logging.
 // rustyline is annoying
 pub(crate) const DEFAULT_FILE_RUST_LOG: &str = "rustyline=warn,debug";
+
+/// Parse `<bin>_FILE_RUST_LOG` as [`tracing_subscriber::EnvFilter`]. Returns `None` if not
+/// present.
+pub fn env_file_rust_log(bin: &'static str) -> Option<anyhow::Result<EnvFilter>> {
+    let env_file_rust_log = format!("{}_FILE_RUST_LOG", bin.to_uppercase());
+    match env::var(env_file_rust_log) {
+        Ok(s) => Some(crate::logging::EnvFilter::from_str(&s).map_err(Into::into)),
+        Err(e) => match e {
+            env::VarError::NotPresent => None,
+            e @ env::VarError::NotUnicode(_) => Some(Err(e.into())),
+        },
+    }
+}
 
 /// Initialize logging both in the terminal and file based.
 ///

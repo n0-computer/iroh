@@ -1,20 +1,7 @@
 //! Utilities to get default paths for configuration, data, and cache directories.
-use std::{env, path::PathBuf, str::FromStr};
+use std::{env, path::PathBuf};
 
 use anyhow::{anyhow, Result};
-
-/// Parse `<bin>_FILE_RUST_LOG` as [`tracing_subscriber::EnvFilter`]. Returns `None` if not
-/// present.
-pub fn env_file_rust_log(bin: &'static str) -> Option<Result<crate::logging::EnvFilter>> {
-    let env_file_rust_log = format!("{}_FILE_RUST_LOG", bin.to_uppercase());
-    match env::var(env_file_rust_log) {
-        Ok(s) => Some(crate::logging::EnvFilter::from_str(&s).map_err(Into::into)),
-        Err(e) => match e {
-            env::VarError::NotPresent => None,
-            e @ env::VarError::NotUnicode(_) => Some(Err(e.into())),
-        },
-    }
-}
 
 /// Returns the path to the user's config directory for the given binary.
 ///
