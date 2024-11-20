@@ -10,7 +10,6 @@ pub mod core;
 #[cfg(feature = "metrics")]
 mod service;
 
-use core::UsageStatsReport;
 use std::collections::HashMap;
 
 /// Reexport to make matching versions easier.
@@ -38,22 +37,6 @@ macro_rules! set {
     ($m:ty, $f:ident, $n:expr) => {
         <$m as $crate::core::Metric>::with_metric(|m| m.$f.set($n));
     };
-}
-
-/// Report usage statistics to the configured endpoint.
-#[allow(unused_variables)]
-pub async fn report_usage_stats(report: &UsageStatsReport) {
-    #[cfg(feature = "metrics")]
-    {
-        if let Some(core) = core::Core::get() {
-            core.usage_reporter()
-                .report_usage_stats(report)
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::error!("Failed to report usage stats: {}", e);
-                });
-        }
-    }
 }
 
 /// Parse Prometheus metrics from a string.
