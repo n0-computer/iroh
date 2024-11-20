@@ -2783,7 +2783,7 @@ dependencies = [
  "iroh-docs",
  "iroh-gossip",
  "iroh-metrics",
- "iroh-netcheck",
+ "iroh-net-report",
  "nix 0.27.1",
  "parking_lot",
  "pkarr",
@@ -3016,7 +3016,7 @@ dependencies = [
  "iroh-base",
  "iroh-metrics",
  "iroh-net",
- "iroh-netcheck",
+ "iroh-net-report",
  "iroh-quinn",
  "iroh-quinn-proto",
  "iroh-quinn-udp",
@@ -3096,7 +3096,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "iroh-netcheck"
+name = "iroh-net-report"
 version = "0.28.0"
 dependencies = [
  "anyhow",

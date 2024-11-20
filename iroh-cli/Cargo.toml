@@ -45,7 +45,7 @@ iroh-blobs = { version = "0.28.1", features = ["cli"] }
 iroh-docs = { version = "0.28.0", features = ["cli"] }
 iroh-gossip = { version = "0.28.1", features = ["cli"] }
 iroh-metrics = { version = "0.28.0" }
-netcheck = { package = "iroh-netcheck", path = "../iroh-netcheck", version = "0.28" }
+net-report = { package = "iroh-net-report", path = "../iroh-net-report", version = "0.28" }
 parking_lot = "0.12.1"
 pkarr = { version = "2.2.0", default-features = false }
 portable-atomic = "1"

@@ -1,8 +1,8 @@
-# Iroh Netcheck
+# Iroh Net Report
 
-`iroh-netcheck` is a tool for generating detailed reports on network
+`iroh-net-report` is a tool for generating detailed reports on network
 connectivity and configuration on the current host for nodes powered by [iroh].
-`iroh-netcheck` evaluates key aspects of network performance and behavior,
+`iroh-net-report` evaluates key aspects of network performance and behavior,
 including NAT traversal capabilities, protocol availability, and relay server
 latencies. Key features include:
 
