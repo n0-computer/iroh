@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
-use tracing::warn;
+use tracing::{debug, warn};
 
 use super::IpFamily;
 
@@ -78,6 +78,7 @@ impl UdpSocket {
 
     /// Rebind the underlying socket.
     pub fn rebind(&self) -> Result<()> {
+        debug!("rebinding {}", self.addr);
         // Remove old socket
         let mut guard = self.socket.write().unwrap();
         {

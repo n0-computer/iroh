@@ -1860,6 +1860,14 @@ impl Actor {
         debug!("link change detected: major? {}", is_major);
 
         if is_major {
+            if let Err(err) = self.pconn4.rebind() {
+                warn!("failed to rebind socket v4: {:?}", err);
+            }
+            if let Some(ref pconn6) = self.pconn6 {
+                if let Err(err) = pconn6.rebind() {
+                    warn!("failed to rebind socket v4: {:?}", err);
+                }
+            }
             self.msock.dns_resolver.clear_cache();
             self.msock.re_stun("link-change-major");
             self.close_stale_relay_connections().await;
