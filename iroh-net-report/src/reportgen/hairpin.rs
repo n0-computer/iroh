@@ -163,7 +163,7 @@ impl Actor {
 
         socket
             .send_to(
-                b"tailscale net_report; see https://github.com/tailscale/tailscale/issues/188",
+                b"net_report; see https://github.com/tailscale/tailscale/issues/188",
                 documentation_ip,
             )
             .await?;

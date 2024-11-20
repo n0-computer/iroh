@@ -3,7 +3,7 @@
 //! Netcheck is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
 //! etc and reachability to the configured relays.
-// Based on <https://github.com/tailscale/tailscale/blob/main/net/net_report/net_report.go>
+// Based on <https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go>
 
 use std::{
     collections::{BTreeMap, HashMap},
