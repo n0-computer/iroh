@@ -43,6 +43,7 @@ use iroh::{
     util::{path::IrohPaths, progress::ProgressWriter},
 };
 use iroh_metrics::core::Core;
+use iroh_node_util::config::data_root;
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use rand::Rng;
@@ -52,7 +53,7 @@ use tokio::{io::AsyncWriteExt, sync};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::warn;
 
-use crate::config::{iroh_data_root, NodeConfig};
+use crate::config::NodeConfig;
 
 /// Options for the secret key usage.
 #[derive(Debug, Clone, derive_more::Display)]
@@ -1015,7 +1016,7 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
             SecretKey::try_from(&bytes[..])?
         }
         SecretKeyOption::Local => {
-            let path = IrohPaths::SecretKey.with_root(iroh_data_root()?);
+            let path = IrohPaths::SecretKey.with_root(data_root("iroh")?);
             if path.exists() {
                 let bytes = std::fs::read(&path)?;
                 SecretKey::try_from_openssh(bytes)?
@@ -1107,8 +1108,9 @@ fn inspect_ticket(ticket: &str, zbase32: bool) -> anyhow::Result<()> {
 
 /// Runs the doctor commands.
 pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
-    let data_dir = iroh_data_root()?;
-    let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, &data_dir)?;
+    let data_dir = data_root("iroh")?;
+    let _guard =
+        iroh_node_util::logging::init_terminal_and_file_logging(&config.file_logs, &data_dir)?;
     let metrics_fut = super::start::start_metrics_server(config.metrics_addr);
     let cmd_res = match command {
         Commands::Report {

@@ -13,6 +13,7 @@ members = [
   "net-tools/netwatch",
   "net-tools/portmapper",
   "iroh-net-report",
+  "iroh-node-util",
 ]
 resolver = "2"
 

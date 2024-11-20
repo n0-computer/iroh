@@ -128,7 +128,7 @@ impl Cli {
                     )
                     .await
                 } else {
-                    crate::logging::init_terminal_logging()?;
+                    iroh_node_util::logging::init_terminal_logging()?;
                     let iroh = if let Some(addr) = self.rpc_addr {
                         Iroh::connect_addr(addr).await.context("rpc connect")?
                     } else {
@@ -154,7 +154,7 @@ impl Cli {
                     )
                     .await
                 } else {
-                    crate::logging::init_terminal_logging()?;
+                    iroh_node_util::logging::init_terminal_logging()?;
                     let iroh = if let Some(addr) = self.rpc_addr {
                         Iroh::connect_addr(addr).await.context("rpc connect")?
                     } else {

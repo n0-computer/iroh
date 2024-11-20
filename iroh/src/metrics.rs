@@ -4,8 +4,7 @@ use iroh_metrics::{
     core::{Counter, Metric},
     struct_iterable::Iterable,
 };
-
-use crate::rpc_protocol::node::CounterStats;
+use iroh_node_util::rpc::proto::node::CounterStats;
 
 /// Enum of metrics for the module
 #[allow(missing_docs)]

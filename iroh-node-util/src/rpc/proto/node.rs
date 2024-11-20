@@ -1,11 +1,12 @@
+//! RPC calls to control a generic node.
 use std::collections::BTreeMap;
 
 use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};
 
-use super::RpcService;
-use crate::{client::NodeStatus, node::RpcResult};
+use super::{RpcResult, RpcService};
+use crate::rpc::client::net::NodeStatus;
 
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize)]

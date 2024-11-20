@@ -2,10 +2,11 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
+use config::BIN_NAME;
+use iroh_node_util::config::data_root;
 
 mod commands;
 mod config;
-mod logging;
 
 use crate::commands::Cli;
 
@@ -24,7 +25,7 @@ fn main() -> Result<()> {
 }
 
 async fn main_impl() -> Result<()> {
-    let data_dir = config::iroh_data_root()?;
+    let data_dir = data_root(BIN_NAME)?;
     let cli = Cli::parse();
     cli.run(&data_dir).await
 }
