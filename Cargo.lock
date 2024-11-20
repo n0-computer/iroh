@@ -3097,7 +3097,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-netcheck"
-version = "0.1.0"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "bytes",
