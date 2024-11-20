@@ -52,10 +52,10 @@
 <a href="#52" id="52">52</a>
 <a href="#53" id="53">53</a>
 <a href="#54" id="54">54</a>
-</pre></div><pre class="rust"><code><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+</pre></div><pre class="rust"><code><span class="doccomment">//! Utilities for building iroh nodes.
+</span><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![cfg_attr(iroh_docsrs, feature(doc_cfg))]
-</span><span class="doccomment">//! Utilities for building iroh nodes.
-</span><span class="attr">#[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"config"</span>)))]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"config"</span>)))]
 #[cfg(feature = <span class="string">"config"</span>)]
 </span><span class="kw">pub mod </span>config;
 <span class="attr">#[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"logging"</span>)))]
