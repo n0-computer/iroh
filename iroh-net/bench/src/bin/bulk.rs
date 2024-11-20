@@ -36,7 +36,7 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
         iroh_metrics::core::Core::try_init(|reg, metrics| {
             use iroh_metrics::core::Metric;
             metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
-            metrics.insert(iroh_net::metrics::NetcheckMetrics::new(reg));
+            metrics.insert(iroh_net::metrics::NetReportMetrics::new(reg));
             metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
             #[cfg(feature = "local-relay")]
             if opt.with_relay {
@@ -113,8 +113,8 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
             core.get_collector::<iroh_net::metrics::MagicsockMetrics>(),
         );
         collect_and_print(
-            "NetcheckMetrics",
-            core.get_collector::<iroh_net::metrics::NetcheckMetrics>(),
+            "NetReportMetrics",
+            core.get_collector::<iroh_net::metrics::NetReportMetrics>(),
         );
         collect_and_print(
             "PortmapMetrics",

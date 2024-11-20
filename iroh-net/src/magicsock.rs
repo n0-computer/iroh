@@ -216,7 +216,7 @@ pub(crate) struct MagicSock {
     pconn4: UdpConn,
     /// UDP IPv6 socket
     pconn6: Option<UdpConn>,
-    /// Netcheck client
+    /// NetReport client
     net_reporter: net_report::Addr,
     /// The state for an active DiscoKey.
     disco_secrets: DiscoSecrets,
@@ -1700,7 +1700,7 @@ enum ActorMessage {
     Shutdown,
     ReceiveRelay(RelayReadResult),
     EndpointPingExpired(usize, stun_rs::TransactionId),
-    NetcheckReport(Result<Option<Arc<net_report::Report>>>, &'static str),
+    NetReport(Result<Option<Arc<net_report::Report>>>, &'static str),
     NetworkChange,
     #[cfg(test)]
     ForceNetworkChange(bool),
@@ -1920,7 +1920,7 @@ impl Actor {
             ActorMessage::EndpointPingExpired(id, txid) => {
                 self.msock.node_map.notify_ping_timeout(id, txid);
             }
-            ActorMessage::NetcheckReport(report, why) => {
+            ActorMessage::NetReport(report, why) => {
                 match report {
                     Ok(report) => {
                         self.handle_net_report_report(report).await;
@@ -2199,7 +2199,7 @@ impl Actor {
         if self.msock.relay_map.is_empty() {
             debug!("skipping net_report, empty RelayMap");
             self.msg_sender
-                .send(ActorMessage::NetcheckReport(Ok(None), why))
+                .send(ActorMessage::NetReport(Ok(None), why))
                 .await
                 .ok();
             return;
@@ -2226,10 +2226,10 @@ impl Actor {
                         Err(err) => Err(anyhow!("net_report report timeout: {:?}", err)),
                     };
                     msg_sender
-                        .send(ActorMessage::NetcheckReport(report, why))
+                        .send(ActorMessage::NetReport(report, why))
                         .await
                         .ok();
-                    // The receiver of the NetcheckReport message will call
+                    // The receiver of the NetReport message will call
                     // .finalize_direct_addrs_update().
                 });
             }
