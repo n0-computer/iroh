@@ -7,34 +7,34 @@ use hickory_resolver::{IntoName, TokioAsyncResolver};
 use crate::defaults::timeouts::DNS_TIMEOUT;
 
 /// Delay used to perform staggered dns queries.
-const DNS_STAGGERING_MS: &[u64] = &[200, 300];
+pub(crate) const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 
 /// Extension trait to [`TokioAsyncResolver`].
 pub(crate) trait ResolverExt {
-    /// Perform an ipv4 lookup with a timeout.
+    /// Perform an ipv4 lookup.
     fn lookup_ipv4<N: IntoName>(
         &self,
         host: N,
     ) -> impl Future<Output = Result<impl Iterator<Item = IpAddr>>>;
 
-    /// Perform an ipv6 lookup with a timeout.
+    /// Perform an ipv6 lookup.
     fn lookup_ipv6<N: IntoName>(
         &self,
         host: N,
     ) -> impl Future<Output = Result<impl Iterator<Item = IpAddr>>>;
 
-    /// Race an ipv4 and ipv6 lookup with a timeout.
+    /// Race an ipv4 and ipv6.
     fn lookup_ipv4_ipv6<N: IntoName + Clone>(
         &self,
         host: N,
     ) -> impl Future<Output = Result<impl Iterator<Item = IpAddr>>>;
 
-    /// Perform an ipv4 lookup with a timeout in a staggered fashion.
+    /// Perform an ipv4 lookup in a staggered fashion.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
-    /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied to each call individually. The
-    /// result of the first successful call is returned, or a summary of all errors otherwise.
+    /// [`DNS_STAGGERING_MS`] with the first call being done immediately. `[200ms, 300ms]` results
+    /// in calls at T+0ms, T+200ms and T+300ms. The `timeout` is applied to each call individually.
+    /// The result of the first successful call is returned, or a summary of all errors otherwise.
     fn lookup_ipv4_staggered<N: IntoName + Clone>(
         &self,
         host: N,
@@ -43,22 +43,21 @@ pub(crate) trait ResolverExt {
     /// Perform an ipv6 lookup with a timeout in a staggered fashion.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
-    /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied to each call individually. The
-    /// result of the first successful call is returned, or a summary of all errors otherwise.
+    /// [`DNS_STAGGERING_MS`] with the first call being done immediately. `[200ms, 300ms]` results
+    /// in calls at T+0ms, T+200ms and T+300ms. The `timeout` is applied to each call individually.
+    /// The result of the first successful call is returned, or a summary of all errors otherwise.
     fn lookup_ipv6_staggered<N: IntoName + Clone>(
         &self,
         host: N,
     ) -> impl Future<Output = Result<impl Iterator<Item = IpAddr>>>;
 
-    /// Race an ipv4 and ipv6 lookup with a timeout in a staggered fashion.
+    /// Race an ipv4 and ipv6 lookup in a staggered fashion.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
-    /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied as stated in
+    /// [`DNS_STAGGERING_MS`] with the first call being done immediately. `[200ms, 300ms]` results
+    /// in calls at T+0ms, T+200ms and T+300ms. The [`DNS_TIMEOUT`] is applied as stated in
     /// [`Self::lookup_ipv4_ipv6`]. The result of the first successful call is returned, or a
     /// summary of all errors otherwise.
-    // TODO(@divma): adjust docs
     fn lookup_ipv4_ipv6_staggered<N: IntoName + Clone>(
         &self,
         host: N,
@@ -81,6 +80,8 @@ impl ResolverExt for TokioAsyncResolver {
     /// `LookupIpStrategy::Ipv4AndIpv6` will wait for ipv6 resolution timeout, even if it is
     /// not usable on the stack, so we manually query both lookups concurrently and time them out
     /// individually.
+    ///
+    /// See [`ResolverExt::lookup_ipv4_ipv6`].
     async fn lookup_ipv4_ipv6<N: IntoName + Clone>(
         &self,
         host: N,
@@ -97,12 +98,6 @@ impl ResolverExt for TokioAsyncResolver {
         }
     }
 
-    /// Perform an ipv4 lookup with a timeout in a staggered fashion.
-    ///
-    /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
-    /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied to each call individually. The
-    /// result of the first successful call is returned, or a summary of all errors otherwise.
     async fn lookup_ipv4_staggered<N: IntoName + Clone>(
         &self,
         host: N,
@@ -111,12 +106,6 @@ impl ResolverExt for TokioAsyncResolver {
         stagger_call(f, DNS_STAGGERING_MS).await
     }
 
-    /// Perform an ipv6 lookup with a timeout in a staggered fashion.
-    ///
-    /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
-    /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied to each call individually. The
-    /// result of the first successful call is returned, or a summary of all errors otherwise.
     async fn lookup_ipv6_staggered<N: IntoName + Clone>(
         &self,
         host: N,
@@ -125,13 +114,6 @@ impl ResolverExt for TokioAsyncResolver {
         stagger_call(f, DNS_STAGGERING_MS).await
     }
 
-    /// Race an ipv4 and ipv6 lookup with a timeout in a staggered fashion.
-    ///
-    /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
-    /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied as stated in
-    /// [`Self::lookup_ipv4_ipv6`]. The result of the first successful call is returned, or a
-    /// summary of all errors otherwise.
     async fn lookup_ipv4_ipv6_staggered<N: IntoName + Clone>(
         &self,
         host: N,
