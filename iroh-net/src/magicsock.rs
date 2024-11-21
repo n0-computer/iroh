@@ -60,7 +60,7 @@ use self::{
     udp_conn::UdpConn,
 };
 use crate::{
-    defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
+    defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
@@ -2218,7 +2218,7 @@ impl Actor {
             Ok(rx) => {
                 let msg_sender = self.msg_sender.clone();
                 tokio::task::spawn(async move {
-                    let report = time::timeout(NETCHECK_REPORT_TIMEOUT, rx).await;
+                    let report = time::timeout(NET_REPORT_TIMEOUT, rx).await;
                     let report: anyhow::Result<_> = match report {
                         Ok(Ok(Ok(report))) => Ok(Some(report)),
                         Ok(Ok(Err(err))) => Err(err),

@@ -132,6 +132,6 @@ pub(crate) mod timeouts {
 
     // Timeouts for net_report
 
-    /// Maximum duration to wait for a net_report report.
-    pub(crate) const NETCHECK_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
+    /// Maximum duration to wait for a net_report.
+    pub(crate) const NET_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
 }
