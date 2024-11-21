@@ -202,6 +202,8 @@ jobs:
       uses: mozilla-actions/sccache-action@v0.0.6
 
     - uses: msys2/setup-msys2@v2
+      with:
+        release: false
 
     - name: build tests
       run: |
