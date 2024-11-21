@@ -7,7 +7,7 @@ use std::{
     task::Poll,
 };
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use tracing::{debug, warn};
 
 use super::IpFamily;
@@ -82,7 +82,9 @@ impl UdpSocket {
         // Remove old socket
         let mut guard = self.socket.write().unwrap();
         {
-            let socket = guard.take().expect("not yet dropped");
+            let Some(socket) = guard.take() else {
+                bail!("cannot rebind closed socket");
+            };
             drop(socket);
         }
 
@@ -113,13 +115,18 @@ impl UdpSocket {
     }
 
     /// Use the socket
-    pub fn with_socket<F, T>(&self, f: F) -> T
+    pub fn with_socket<F, T>(&self, f: F) -> std::io::Result<T>
     where
         F: FnOnce(&tokio::net::UdpSocket) -> T,
     {
         let guard = self.socket.read().unwrap();
-        let socket = guard.as_ref().expect("missing socket");
-        f(socket)
+        let Some(socket) = guard.as_ref() else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "socket closed",
+            ));
+        };
+        Ok(f(socket))
     }
 
     pub fn try_io<R>(
@@ -128,7 +135,12 @@ impl UdpSocket {
         f: impl FnOnce() -> std::io::Result<R>,
     ) -> std::io::Result<R> {
         let guard = self.socket.read().unwrap();
-        let socket = guard.as_ref().expect("missing socket");
+        let Some(socket) = guard.as_ref() else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "socket closed",
+            ));
+        };
         socket.try_io(interest, f)
     }
 
@@ -173,7 +185,13 @@ impl UdpSocket {
     pub fn connect(&self, addr: SocketAddr) -> std::io::Result<()> {
         let mut guard = self.socket.write().unwrap();
         // dance around to make non async connect work
-        let socket_tokio = guard.take().expect("missing socket");
+        let Some(socket_tokio) = guard.take() else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "socket closed",
+            ));
+        };
+
         let socket_std = socket_tokio.into_std()?;
         socket_std.connect(addr)?;
         let socket_tokio = tokio::net::UdpSocket::from_std(socket_std)?;
@@ -184,28 +202,36 @@ impl UdpSocket {
     /// Returns the local address of this socket.
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
         let guard = self.socket.read().unwrap();
-        let socket = guard.as_ref().expect("missing socket");
+        let Some(socket) = guard.as_ref() else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "socket closed",
+            ));
+        };
+
         socket.local_addr()
     }
 
     /// Closes the socket, and waits for the underlying `libc::close` call to be finished.
-    pub async fn close(self) {
-        let std_sock = self
-            .socket
-            .write()
-            .unwrap()
-            .take()
-            .expect("not yet dropped")
-            .into_std();
-        let res = tokio::runtime::Handle::current()
-            .spawn_blocking(move || {
-                // Calls libc::close, which can block
-                drop(std_sock);
-            })
-            .await;
-        if let Err(err) = res {
-            warn!("failed to close socket: {:?}", err);
+    pub async fn close(&self) {
+        let socket = self.socket.write().unwrap().take();
+        if let Some(sock) = socket {
+            let std_sock = sock.into_std();
+            let res = tokio::runtime::Handle::current()
+                .spawn_blocking(move || {
+                    // Calls libc::close, which can block
+                    drop(std_sock);
+                })
+                .await;
+            if let Err(err) = res {
+                warn!("failed to close socket: {:?}", err);
+            }
         }
+    }
+
+    /// Check if this socket is closed.
+    pub fn is_closed(&self) -> bool {
+        self.socket.read().unwrap().is_none()
     }
 
     /// Handle potential read errors, updating internal state.
@@ -255,7 +281,12 @@ impl UdpSocket {
                 }
             }
             let guard = self.socket.read().unwrap();
-            let socket = guard.as_ref().expect("missing socket");
+            let Some(socket) = guard.as_ref() else {
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "socket closed",
+                )));
+            };
 
             match socket.poll_send_ready(cx) {
                 Poll::Pending => return Poll::Pending,
@@ -302,7 +333,12 @@ impl Future for RecvFut<'_, '_> {
             }
 
             let guard = socket.socket.read().unwrap();
-            let inner_socket = guard.as_ref().expect("missing socket");
+            let Some(inner_socket) = guard.as_ref() else {
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "socket closed",
+                )));
+            };
 
             match inner_socket.poll_recv_ready(cx) {
                 Poll::Pending => return Poll::Pending,
@@ -360,7 +396,12 @@ impl Future for RecvFromFut<'_, '_> {
                 }
             }
             let guard = socket.socket.read().unwrap();
-            let inner_socket = guard.as_ref().expect("missing socket");
+            let Some(inner_socket) = guard.as_ref() else {
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "socket closed",
+                )));
+            };
 
             match inner_socket.poll_recv_ready(cx) {
                 Poll::Pending => return Poll::Pending,
@@ -430,7 +471,12 @@ impl Future for SendFut<'_, '_> {
                 }
             }
             let guard = self.socket.socket.read().unwrap();
-            let socket = guard.as_ref().expect("missing socket");
+            let Some(socket) = guard.as_ref() else {
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "socket closed",
+                )));
+            };
 
             match socket.poll_send_ready(c) {
                 Poll::Pending => return Poll::Pending,
@@ -488,7 +534,12 @@ impl Future for SendToFut<'_, '_> {
             }
 
             let guard = self.socket.socket.read().unwrap();
-            let socket = guard.as_ref().expect("missing socket");
+            let Some(socket) = guard.as_ref() else {
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "socket closed",
+                )));
+            };
 
             match socket.poll_send_ready(cx) {
                 Poll::Pending => return Poll::Pending,

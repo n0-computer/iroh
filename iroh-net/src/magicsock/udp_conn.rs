@@ -30,7 +30,7 @@ impl UdpConn {
         let sock = bind(addr)?;
         let state = sock.with_socket(|socket| {
             quinn_udp::UdpSocketState::new(quinn_udp::UdpSockRef::from(socket))
-        })?;
+        })??;
 
         Ok(Self {
             io: Arc::new(sock),
@@ -45,7 +45,7 @@ impl UdpConn {
         // update socket state
         let new_state = self.io.with_socket(|socket| {
             quinn_udp::UdpSocketState::new(quinn_udp::UdpSockRef::from(socket))
-        })?;
+        })??;
         *self.inner.write().unwrap() = new_state;
         Ok(())
     }
@@ -58,6 +58,11 @@ impl UdpConn {
         Box::pin(IoPoller {
             io: self.io.clone(),
         })
+    }
+
+    /// Closes the socket for good
+    pub async fn close(&self) {
+        self.io.close().await;
     }
 }
 
@@ -90,8 +95,9 @@ impl AsyncUdpSocket for UdpConn {
                 })
             });
             match res {
-                Ok(()) => return Ok(()),
-                Err(err) => {
+                Ok(Ok(())) => return Ok(()),
+                Err(err) => return Err(err), // closed error
+                Ok(Err(err)) => {
                     if err.kind() == std::io::ErrorKind::WouldBlock {
                         continue;
                     }
@@ -129,14 +135,15 @@ impl AsyncUdpSocket for UdpConn {
             }
 
             match self.io.with_socket(|io| io.poll_recv_ready(cx)) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Ok(())) => {}
-                Poll::Ready(Err(err)) => match self.io.handle_read_error(err) {
+                Ok(Poll::Pending) => return Poll::Pending,
+                Ok(Poll::Ready(Ok(()))) => {}
+                Ok(Poll::Ready(Err(err))) => match self.io.handle_read_error(err) {
                     Some(err) => return Poll::Ready(Err(err)),
                     None => {
                         continue;
                     }
                 },
+                Err(err) => return Poll::Ready(Err(err)),
             }
 
             let res = self.io.try_io(Interest::READABLE, || {
@@ -144,7 +151,7 @@ impl AsyncUdpSocket for UdpConn {
                     .with_socket(|io| self.inner.read().unwrap().recv(io.into(), bufs, meta))
             });
             match res {
-                Ok(count) => {
+                Ok(Ok(count)) => {
                     for meta in meta.iter().take(count) {
                         trace!(
                             src = %meta.addr,
@@ -156,7 +163,7 @@ impl AsyncUdpSocket for UdpConn {
                     }
                     return Poll::Ready(Ok(count));
                 }
-                Err(err) => {
+                Ok(Err(err)) => {
                     // ignore spurious wakeups
                     if err.kind() == std::io::ErrorKind::WouldBlock {
                         continue;
@@ -168,6 +175,7 @@ impl AsyncUdpSocket for UdpConn {
                         }
                     }
                 }
+                Err(err) => return Poll::Ready(Err(err)),
             }
         }
     }

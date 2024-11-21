@@ -1514,6 +1514,11 @@ impl Handle {
         }
         self.msock.closing.store(true, Ordering::Relaxed);
         self.msock.actor_sender.send(ActorMessage::Shutdown).await?;
+        self.msock.pconn4.close().await;
+        if let Some(ref conn) = self.msock.pconn6 {
+            conn.close().await;
+        }
+
         self.msock.closed.store(true, Ordering::SeqCst);
         self.msock.direct_addrs.addrs.shutdown();
 
