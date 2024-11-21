@@ -31,7 +31,7 @@ use iroh::{
     },
     docs::{Capability, DocTicket},
     net::{
-        defaults::DEFAULT_STUN_PORT,
+        defaults::{DEFAULT_QUIC_PORT, DEFAULT_STUN_PORT},
         discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
         dns::default_resolver,
         endpoint::{self, Connection, ConnectionTypeStream, RecvStream, RemoteInfo, SendStream},
@@ -44,6 +44,7 @@ use iroh::{
 };
 use iroh_metrics::core::Core;
 use iroh_node_util::config::data_root;
+use net_report::QuicConfig;
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use rand::Rng;
@@ -93,6 +94,12 @@ pub enum Commands {
         /// The port of the STUN server.
         #[clap(long, default_value_t = DEFAULT_STUN_PORT)]
         stun_port: u16,
+        /// The port of the QUIC server for QUIC address discovery.
+        #[clap(long, default_value_t = DEFAULT_QUIC_PORT)]
+        quic_port: u16,
+        /// Our own secret key, in hex. If not specified, the locally configured key will be used.
+        #[clap(long, default_value_t = SecretKeyOption::Local)]
+        secret_key: SecretKeyOption,
     },
     /// Wait for incoming requests from iroh doctor connect.
     Accept {
@@ -344,6 +351,8 @@ async fn send_blocks(
 async fn report(
     stun_host: Option<String>,
     stun_port: u16,
+    quic_port: u16,
+    secret_key: SecretKey,
     config: &NodeConfig,
 ) -> anyhow::Result<()> {
     let port_mapper = portmapper::Client::default();
@@ -354,18 +363,17 @@ async fn report(
         Some(host_name) => {
             let url = host_name.parse()?;
             // creating a relay map from host name and stun port
-            RelayMap::default_from_node(url, stun_port)
+            RelayMap::default_from_node(url, stun_port, quic_port)
         }
         None => config.relay_map()?.unwrap_or_else(RelayMap::empty),
     };
     println!("getting report using relay map {dm:#?}");
 
-    // TODO(ramfox): hmm, should we be implicitly creating a quinn endpoint
-    // internally? that would require some configuration for tls, which seems v
-    // annoying.
-    // thinking we should expect others to create one and pass it in, if they
-    // want to use it. Can be a `doctor report` option `--quic-addr-discovery`
-    let r = client.get_report(dm, None, None, None).await?;
+    let quic_endpoint = create_quic_endpoint(&secret_key)?;
+    println!("made quic endpoint");
+    let r = client
+        .get_report(dm, None, None, Some(quic_endpoint))
+        .await?;
     println!("{r:#?}");
     Ok(())
 }
@@ -654,7 +662,7 @@ async fn passive_side(gui: Gui, connection: Connection) -> anyhow::Result<()> {
 fn configure_local_relay_map() -> RelayMap {
     let stun_port = DEFAULT_STUN_PORT;
     let url = "http://localhost:3340".parse().unwrap();
-    RelayMap::default_from_node(url, stun_port)
+    RelayMap::default_from_node(url, stun_port, iroh::net::defaults::DEFAULT_QUIC_PORT)
 }
 
 /// ALPN protocol address.
@@ -1121,7 +1129,18 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
         Commands::Report {
             stun_host,
             stun_port,
-        } => report(stun_host, stun_port, config).await,
+            quic_port,
+            secret_key,
+        } => {
+            report(
+                stun_host,
+                stun_port,
+                quic_port,
+                create_secret_key(secret_key)?,
+                config,
+            )
+            .await
+        }
         Commands::Connect {
             dial,
             secret_key,
@@ -1255,6 +1274,14 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
         metrics_fut.abort();
     }
     cmd_res
+}
+
+/// Create a quinn Endpoint that has QUIC address discovery enabled.
+fn create_quic_endpoint(secret_key: &SecretKey) -> anyhow::Result<QuicConfig> {
+    let client_config = iroh::net::tls::make_client_config(secret_key, None, vec![], false)?;
+    let client_config = quinn::ClientConfig::new(Arc::new(client_config));
+    let ep = quinn::Endpoint::client(SocketAddr::new("::1".parse()?, 0))?;
+    Ok(QuicConfig { ep, client_config })
 }
 
 /// Runs the [`PlotterApp`].

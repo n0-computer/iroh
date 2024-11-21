@@ -95,6 +95,8 @@ pub async fn run_relay_server_with(
         url: url.clone(),
         stun_only: false,
         stun_port: server.stun_addr().map_or(DEFAULT_STUN_PORT, |s| s.port()),
+        quic_only: false,
+        quic_port: 0,
     }])
     .unwrap();
     Ok((m, url, server))

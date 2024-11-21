@@ -299,8 +299,9 @@ impl ProbePlan {
                 }
             }
             plan.add(https_probes);
-            plan.add(icmp_probes_ipv4);
-            plan.add(icmp_probes_ipv6);
+            // TODO(ramfox): commented out to allow quic probes to finish
+            // plan.add(icmp_probes_ipv4);
+            // plan.add(icmp_probes_ipv6);
         }
         plan
     }
@@ -320,9 +321,9 @@ impl ProbePlan {
         // further relay servers can reuse this delay.
         let mut max_stun_delay: Option<Duration> = None;
 
-        let had_stun_ipv4 = !last_report.relay_v4_latency.is_empty();
-        let had_stun_ipv6 = !last_report.relay_v6_latency.is_empty();
-        let had_both = if_state.have_v6 && had_stun_ipv4 && had_stun_ipv6;
+        let had_ipv4 = !last_report.relay_v4_latency.is_empty();
+        let had_ipv6 = !last_report.relay_v6_latency.is_empty();
+        let had_both = if_state.have_v6 && had_ipv4 && had_ipv6;
         let sorted_relays = sort_relays(relay_map, last_report);
         for (ri, (url, relay_node)) in sorted_relays.into_iter().enumerate() {
             if ri == NUM_INCREMENTAL_RELAYS {
@@ -347,7 +348,7 @@ impl ProbePlan {
                     (do4, do6) = (false, true);
                 }
             }
-            if !is_fastest_two && !had_stun_ipv6 {
+            if !is_fastest_two && !had_ipv6 {
                 do6 = false;
             }
             if Some(url) == last_report.preferred_relay.as_ref() {
@@ -363,6 +364,8 @@ impl ProbePlan {
 
             let mut stun_ipv4_probes = ProbeSet::new(ProbeProto::StunIpv4);
             let mut stun_ipv6_probes = ProbeSet::new(ProbeProto::StunIpv6);
+            let mut quic_ipv4_probes = ProbeSet::new(ProbeProto::QuicAddrIpv4);
+            let mut quic_ipv6_probes = ProbeSet::new(ProbeProto::QuicAddrIpv6);
 
             for attempt in 0..attempts {
                 let delay = (retransmit_delay * attempt as u32)
@@ -374,6 +377,12 @@ impl ProbePlan {
                             node: relay_node.clone(),
                         })
                         .expect("Pushing StunIpv4 Probe to StunIpv4 ProbeSet");
+                    quic_ipv4_probes
+                        .push(Probe::QuicAddrIpv4 {
+                            delay,
+                            node: relay_node.clone(),
+                        })
+                        .expect("adding QuicAddrIpv4 probe to a QuicAddrIpv4 probe set");
                 }
                 if do6 {
                     stun_ipv6_probes
@@ -382,10 +391,18 @@ impl ProbePlan {
                             node: relay_node.clone(),
                         })
                         .expect("Pushing StunIpv6 Probe to StunIpv6 ProbeSet");
+                    quic_ipv6_probes
+                        .push(Probe::QuicAddrIpv6 {
+                            delay,
+                            node: relay_node.clone(),
+                        })
+                        .expect("adding QuicAddrIpv6 probe to a QuicAddrIpv6 probe set");
                 }
             }
             plan.add(stun_ipv4_probes);
             plan.add(stun_ipv6_probes);
+            plan.add(quic_ipv4_probes);
+            plan.add(quic_ipv6_probes);
 
             // The HTTP and ICMP probes only start after the STUN probes have had a chance.
             let mut https_probes = ProbeSet::new(ProbeProto::Https);
@@ -420,8 +437,9 @@ impl ProbePlan {
                 }
             }
             plan.add(https_probes);
-            plan.add(icmp_v4_probes);
-            plan.add(icmp_v6_probes);
+            // TODO(ramfox): commented out to force quic probes to finish
+            // plan.add(icmp_v4_probes);
+            // plan.add(icmp_v6_probes);
         }
         plan
     }

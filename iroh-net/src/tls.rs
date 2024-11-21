@@ -94,3 +94,30 @@ pub fn make_server_config(
     let config = crypto.try_into()?;
     Ok(config)
 }
+
+/// Generate a [`quinn::ClientConfig`] with self-signed certificate for testing
+/// local setups.
+///
+/// Has QUIC address discovery enabled.
+pub fn generate_local_client_config() -> anyhow::Result<quinn::ClientConfig> {
+    let cert = rcgen::generate_simple_self_signed(vec![
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+        "::1".to_string(),
+    ])
+    .expect("valid");
+    let cert = cert.cert.der();
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(cert.clone())?;
+    let config = rustls::ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let config = quinn_proto::crypto::rustls::QuicClientConfig::try_from(config).unwrap();
+    let mut transport = quinn_proto::TransportConfig::default();
+    // enable address discovery
+    transport.receive_observed_address_reports(true);
+
+    let mut client_config = quinn::ClientConfig::new(Arc::new(config));
+    client_config.transport_config(Arc::new(transport));
+    Ok(client_config)
+}

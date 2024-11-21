@@ -74,6 +74,7 @@ impl QuicServer {
 
         let task = tokio::task::spawn(async move {
         let mut set = JoinSet::new();
+        debug!("waiting for connections...");
         loop {
             tokio::select! {
                 biased;
@@ -172,25 +173,71 @@ async fn handle_connection(conn: quinn::Incoming) -> Result<()> {
     Ok(())
 }
 
-/// Client side function to correctly handle QUIC address discovery
-///
-/// Consumes and gracefully closes the connection, even when cancelled early.
-pub async fn get_observed_address_from_conn(
-    conn: quinn::Connection,
-    cancel: CancellationToken,
-) -> Result<SocketAddr> {
-    let mut external_addresses = conn.observed_external_addr();
-    tokio::select! {
-        _ = cancel.cancelled() => {
-            conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-            anyhow::bail!("QUIC address discovery canceled early");
-        },
-        res = external_addresses.wait_for(|addr| addr.is_some()) => {
-            let addr = res?.expect("checked");
-            // gracefully close the connections
-            conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-            Ok(addr)
-        }
+/// Handles the client side of QUIC address discovery.
+pub struct QuicClient {
+    /// A QUIC Endpoint.
+    ep: quinn::Endpoint,
+    /// A client config.
+    client_config: quinn::ClientConfig,
+}
+
+impl QuicClient {
+    /// Create a new QuicClient to handle the client side of QUIC
+    /// address discovery.
+    pub fn new(ep: quinn::Endpoint, mut client_config: quinn::ClientConfig) -> Self {
+        let mut transport = quinn_proto::TransportConfig::default();
+        // enable address discovery
+        transport
+            .send_observed_address_reports(true)
+            .receive_observed_address_reports(true);
+        client_config.transport_config(Arc::new(transport));
+        Self { ep, client_config }
+    }
+
+    /// Client side of QUIC address discovery.
+    ///
+    /// Creates a connection and returns the observered address
+    /// and estimated latency of the connection.
+    ///
+    /// Consumes and gracefully closes the connection.
+    pub async fn get_addr_and_latency(
+        &self,
+        addr: SocketAddr,
+        host: &str,
+    ) -> Result<(SocketAddr, std::time::Duration)> {
+        let conn = self
+            .ep
+            .connect_with(self.client_config.clone(), addr, host)?
+            .await?;
+        let mut external_addresses = conn.observed_external_addr();
+        // TODO(ramfox): I'd like to be able to cancel this so we can close cleanly
+        // if there the task that runs this function gets aborted.
+        // tokio::select! {
+        //     _ = cancel.cancelled() => {
+        //         conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+        //         anyhow::bail!("QUIC address discovery canceled early");
+        //     },
+        //     res = external_addresses.wait_for(|addr| addr.is_some()) => {
+        //         let addr = res?.expect("checked");
+        //         let latency = conn.rtt() / 2;
+        //         // gracefully close the connections
+        //         conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+        //         Ok((addr, latency))
+        //     }
+
+        let res = match external_addresses.wait_for(|addr| addr.is_some()).await {
+            Ok(res) => res,
+            Err(err) => {
+                // attempt to gracefully close the connections
+                conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+                return Err(err.into());
+            }
+        };
+        let addr = res.expect("checked");
+        let latency = conn.rtt() / 2;
+        // gracefully close the connections
+        conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+        Ok((addr, latency))
     }
 }
 
@@ -200,91 +247,46 @@ mod tests {
 
     use super::*;
 
-    /// Create certs and rustls::ServerConfig for local use
-    ///
-    /// The certificate covers the domain "localhost".
-    fn generate_self_signed_localhost_config(
-        cert: rustls::pki_types::CertificateDer<'static>,
-        private_key: rustls::pki_types::PrivateKeyDer<'static>,
-    ) -> Result<(
-        Vec<rustls::pki_types::CertificateDer<'static>>,
-        rustls::ServerConfig,
-    )> {
-        let rustls_certs = vec![cert];
-        let server_config = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()
-        .expect("protocols supported by ring")
-        .with_no_client_auth()
-        .with_single_cert(rustls_certs.clone(), private_key)?;
-        Ok((rustls_certs, server_config))
-    }
-
-    fn generate_certs_and_priv_key() -> (
-        rustls::pki_types::CertificateDer<'static>,
-        rustls::pki_types::PrivateKeyDer<'static>,
-    ) {
-        let cert =
-            rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).expect("valid");
-        let private_key =
-            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.get_key_pair().serialize_der());
-        let private_key = rustls::pki_types::PrivateKeyDer::from(private_key);
-        let cert = rustls::pki_types::CertificateDer::from(cert.serialize_der().unwrap());
-        (cert, private_key)
-    }
-
     /// Generates a [`quinn::ClientConfig`] that has quic address discovery enabled.
     fn generate_quic_addr_disc_client_config(
         cert: rustls::pki_types::CertificateDer<'static>,
     ) -> Result<quinn::ClientConfig> {
         let mut roots = rustls::RootCertStore::empty();
         roots.add(cert)?;
-        let mut config =
+        let config =
             rustls::ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
                 .with_root_certificates(roots)
                 .with_no_client_auth();
-        config.alpn_protocols = vec![ALPN_QUIC_ADDR_DISC.into()];
         let config = quinn_proto::crypto::rustls::QuicClientConfig::try_from(config).unwrap();
-        let mut transport = quinn_proto::TransportConfig::default();
-        // enable address discovery
-        transport
-            .send_observed_address_reports(true)
-            .receive_observed_address_reports(true);
 
-        let mut client_config = quinn::ClientConfig::new(Arc::new(config));
-        client_config.transport_config(Arc::new(transport));
+        let client_config = quinn::ClientConfig::new(Arc::new(config));
         Ok(client_config)
     }
 
     #[tokio::test]
     async fn quic_endpoint_basic() -> anyhow::Result<()> {
-        let localhost: Ipv4Addr = "127.0.0.1".parse()?;
+        let host: Ipv4Addr = "127.0.0.1".parse()?;
         let _guard = iroh_test::logging::setup();
-        let (cert, private_key) = generate_certs_and_priv_key();
-        let client_cert = cert.clone();
 
-        let (_, server_config) = generate_self_signed_localhost_config(cert, private_key)?;
+        let (certs, server_config) = super::super::server::testing::tls_certs_and_config();
 
         let quic_server = QuicServer::spawn(QuicConfig::new(
             server_config,
-            localhost.clone().into(),
+            host.clone().into(),
             Some(0),
         )?)
         .await?;
 
-        let client_config = generate_quic_addr_disc_client_config(client_cert)?;
-        let mut client_endpoint = quinn::Endpoint::client(SocketAddr::new(localhost.into(), 0))?;
-        client_endpoint.set_default_client_config(client_config);
+        let client_config = generate_quic_addr_disc_client_config(certs[0].clone())?;
+        let client_endpoint = quinn::Endpoint::client(SocketAddr::new(host.into(), 0))?;
 
         let client_addr = client_endpoint.local_addr()?;
         println!("{client_addr}");
+        let quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 
-        let conn = client_endpoint
-            .connect(quic_server.bind_addr.clone(), "localhost")?
+        let (addr, _latency) = quic_client
+            .get_addr_and_latency(quic_server.bind_addr.clone(), &host.to_string())
             .await?;
-
-        let addr = get_observed_address_from_conn(conn, CancellationToken::new()).await?;
         // wait until the endpoint delivers the closing message to the server
         client_endpoint.wait_idle().await;
         // shut down the quic server

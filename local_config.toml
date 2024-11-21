@@ -1,0 +1,7 @@
+[[relay_nodes]]
+url = "http://localhost:3340"
+stun_only = false
+stun_port = 1000
+quic_only = false
+quic_port = 7842
+

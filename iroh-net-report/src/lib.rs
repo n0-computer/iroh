@@ -20,6 +20,7 @@ use iroh_base::relay_map::{RelayMap, RelayNode, RelayUrl};
 use iroh_metrics::inc;
 use iroh_relay::protos::stun;
 use netwatch::{IpFamily, UdpSocket};
+pub use reportgen::QuicConfig;
 use tokio::{
     sync::{self, mpsc, oneshot},
     time::{Duration, Instant},
@@ -247,10 +248,10 @@ impl Client {
         dm: RelayMap,
         stun_conn4: Option<Arc<UdpSocket>>,
         stun_conn6: Option<Arc<UdpSocket>>,
-        quic_endpoint: Option<quinn::Endpoint>,
+        quic_config: Option<QuicConfig>,
     ) -> Result<Arc<Report>> {
         let rx = self
-            .get_report_channel(dm, stun_conn4, stun_conn6, quic_endpoint)
+            .get_report_channel(dm, stun_conn4, stun_conn6, quic_config)
             .await?;
         match rx.await {
             Ok(res) => res,
@@ -264,7 +265,7 @@ impl Client {
         dm: RelayMap,
         stun_conn4: Option<Arc<UdpSocket>>,
         stun_conn6: Option<Arc<UdpSocket>>,
-        quic_endpoint: Option<quinn::Endpoint>,
+        quic_config: Option<QuicConfig>,
     ) -> Result<oneshot::Receiver<Result<Arc<Report>>>> {
         // TODO: consider if RelayMap should be made to easily clone?  It seems expensive
         // right now.
@@ -274,7 +275,7 @@ impl Client {
                 relay_map: dm,
                 stun_sock_v4: stun_conn4,
                 stun_sock_v6: stun_conn6,
-                quic_endpoint,
+                quic_config,
                 response_tx: tx,
             })
             .await?;
@@ -314,10 +315,11 @@ pub(crate) enum Message {
         ///
         /// Like `stun_sock_v4` but for IPv6.
         stun_sock_v6: Option<Arc<UdpSocket>>,
-        /// Endpoint to create a QUIC connection, to do QUIC address discovery.
+        /// Endpoint and client configuration to create a QUIC
+        /// connection to do QUIC address discovery.
         ///
         /// If not provided, will not do QUIC address discovery.
-        quic_endpoint: Option<quinn::Endpoint>,
+        quic_config: Option<QuicConfig>,
         /// Channel to receive the response.
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     },
@@ -457,14 +459,14 @@ impl Actor {
                     relay_map,
                     stun_sock_v4,
                     stun_sock_v6,
-                    quic_endpoint,
+                    quic_config,
                     response_tx,
                 } => {
                     self.handle_run_check(
                         relay_map,
                         stun_sock_v4,
                         stun_sock_v6,
-                        quic_endpoint,
+                        quic_config,
                         response_tx,
                     );
                 }
@@ -494,7 +496,7 @@ impl Actor {
         relay_map: RelayMap,
         stun_sock_v4: Option<Arc<UdpSocket>>,
         stun_sock_v6: Option<Arc<UdpSocket>>,
-        quic_endpoint: Option<quinn::Endpoint>,
+        quic_config: Option<QuicConfig>,
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     ) {
         if self.current_report_run.is_some() {
@@ -545,7 +547,7 @@ impl Actor {
             relay_map,
             stun_sock_v4,
             stun_sock_v6,
-            quic_endpoint,
+            quic_config,
             self.dns_resolver.clone(),
         );
 
@@ -813,6 +815,11 @@ mod test_utils {
             url: server.https_url().expect("should work as relay"),
             stun_only: false, // the checks above and below guarantee both stun and relay
             stun_port: server.stun_addr().expect("server should serve stun").port(),
+            quic_only: false,
+            quic_port: server
+                .quic_addr()
+                .expect("server should serve quic address discovery")
+                .port(),
         };
 
         (server, Arc::new(node_desc))
@@ -897,6 +904,8 @@ mod tests {
                     url,
                     stun_port: port,
                     stun_only,
+                    quic_only: false,
+                    quic_port: 0,
                 }
             });
             RelayMap::from_nodes(nodes).expect("generated invalid nodes")

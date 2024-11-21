@@ -159,12 +159,8 @@ impl QuicConfig {
     /// Create a new [`QuicConfig`] from a [`TlsConfig`].
     ///
     /// If `port` is `None`, will use [`crate::default::DEFAULT_QUIC_PORT`]
-    pub fn new(
-        mut server_config: rustls::ServerConfig,
-        ip: IpAddr,
-        port: Option<u16>,
-    ) -> Result<Self> {
-        server_config.alpn_protocols = vec![crate::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
+    pub fn new(server_config: rustls::ServerConfig, ip: IpAddr, port: Option<u16>) -> Result<Self> {
+        // server_config.alpn_protocols = vec![crate::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
         let server_config: QuicServerConfig = QuicServerConfig::try_from(server_config)?;
         Ok(Self {
             bind_addr: SocketAddr::new(ip, port.unwrap_or(crate::defaults::DEFAULT_QUIC_PORT)),
