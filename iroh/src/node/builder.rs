@@ -47,12 +47,6 @@ pub const DEFAULT_BIND_ADDR_V6: SocketAddrV6 =
 
 /// Builder for the [`Node`].
 ///
-/// You must supply a blob store and a document store.
-///
-/// Blob store implementations are available in [`iroh_blobs::store`].
-///
-/// Everything else is optional, with some sensible defaults.
-///
 /// The default **relay servers** are hosted by [number 0] on the `iroh.network` domain.  To
 /// customise this use the [`Builder::relay_mode`] function.
 ///
@@ -121,7 +115,7 @@ pub enum DiscoveryConfig {
     /// cargo feature from [iroh-net] is enabled.  In this case only the Pkarr/DNS service
     /// is used, but on the `iroh.test` domain.  This domain is not integrated with the
     /// global DNS network and thus node discovery is effectively disabled.  To use node
-    /// discovery in a test use the [`iroh_net::test_utils::DnsPkarrServer`] in the test and
+    /// discovery in a test use the `iroh_net::test_utils::DnsPkarrServer` in the test and
     /// configure it here as a custom discovery mechanism ([`DiscoveryConfig::Custom`]).
     ///
     /// [number 0]: https://n0.computer
