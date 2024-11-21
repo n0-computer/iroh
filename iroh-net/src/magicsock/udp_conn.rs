@@ -231,7 +231,7 @@ mod tests {
     #[tokio::test]
     async fn test_rebinding_conn_send_recv_ipv6() -> Result<()> {
         let _guard = iroh_test::logging::setup();
-        if !crate::netcheck::os_has_ipv6() {
+        if !net_report::os_has_ipv6() {
             return Ok(());
         }
         rebinding_conn_send_recv(IpFamily::V6).await

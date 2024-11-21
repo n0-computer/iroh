@@ -6,7 +6,7 @@
 //!   - binds socket
 //!   - sends traffic from it's socket to trick some routers
 //! - When requested performs the hairpin probe.
-//!   - result is sent to netcheck actor addr.
+//!   - result is sent to net_report actor addr.
 //! - Shuts down
 //!
 //! Note it will only perform a single hairpin check before shutting down.  Any further
@@ -21,10 +21,7 @@ use tokio::{sync::oneshot, time::Instant};
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-use crate::{
-    defaults::timeouts::HAIRPIN_CHECK_TIMEOUT,
-    netcheck::{self, reportgen, Inflight},
-};
+use crate::{self as net_report, defaults::timeouts::HAIRPIN_CHECK_TIMEOUT, reportgen, Inflight};
 
 /// Handle to the hairpin actor.
 ///
@@ -36,12 +33,12 @@ pub(super) struct Client {
 }
 
 impl Client {
-    pub(super) fn new(netcheck: netcheck::Addr, reportgen: reportgen::Addr) -> Self {
+    pub(super) fn new(net_report: net_report::Addr, reportgen: reportgen::Addr) -> Self {
         let (addr, msg_rx) = oneshot::channel();
 
         let actor = Actor {
             msg_rx,
-            netcheck,
+            net_report,
             reportgen,
         };
 
@@ -84,7 +81,7 @@ enum Message {
 #[derive(Debug)]
 struct Actor {
     msg_rx: oneshot::Receiver<Message>,
-    netcheck: netcheck::Addr,
+    net_report: net_report::Addr,
     reportgen: reportgen::Addr,
 }
 
@@ -118,11 +115,11 @@ impl Actor {
             s: stun_tx,
         };
         let (msg_response_tx, msg_response_rx) = oneshot::channel();
-        self.netcheck
-            .send(netcheck::Message::InFlightStun(inflight, msg_response_tx))
+        self.net_report
+            .send(net_report::Message::InFlightStun(inflight, msg_response_tx))
             .await
-            .context("netcheck actor gone")?;
-        msg_response_rx.await.context("netcheck actor died")?;
+            .context("net_report actor gone")?;
+        msg_response_rx.await.context("net_report actor died")?;
 
         if let Err(err) = socket.send_to(&stun::request(txn), dst).await {
             warn!(%dst, "failed to send hairpin check");
@@ -132,7 +129,7 @@ impl Actor {
         let now = Instant::now();
         let hairpinning_works = match tokio::time::timeout(HAIRPIN_CHECK_TIMEOUT, stun_rx).await {
             Ok(Ok(_)) => true,
-            Ok(Err(_)) => bail!("netcheck actor dropped stun response channel"),
+            Ok(Err(_)) => bail!("net_report actor dropped stun response channel"),
             Err(_) => false, // Elapsed
         };
         debug!(
@@ -166,7 +163,7 @@ impl Actor {
 
         socket
             .send_to(
-                b"tailscale netcheck; see https://github.com/tailscale/tailscale/issues/188",
+                b"net_report; see https://github.com/tailscale/tailscale/issues/188",
                 documentation_ip,
             )
             .await?;
@@ -201,10 +198,10 @@ mod tests {
     async fn test_hairpin(hairpinning_works: bool) {
         let _guard = iroh_test::logging::setup();
 
-        // Setup fake netcheck and reportstate actors, hairpinning interacts with them.
-        let (netcheck_tx, mut netcheck_rx) = mpsc::channel(32);
-        let netcheck_addr = netcheck::Addr {
-            sender: netcheck_tx,
+        // Setup fake net_report and reportstate actors, hairpinning interacts with them.
+        let (net_report_tx, mut net_report_rx) = mpsc::channel(32);
+        let net_report_addr = net_report::Addr {
+            sender: net_report_tx,
         };
         let (reportstate_tx, mut reportstate_rx) = mpsc::channel(32);
         let reportstate_addr = reportgen::Addr {
@@ -212,7 +209,7 @@ mod tests {
         };
 
         // Create hairpin actor
-        let mut actor = Client::new(netcheck_addr, reportstate_addr);
+        let mut actor = Client::new(net_report_addr, reportstate_addr);
 
         // Hairpinning works by asking the hairpin actor to send a STUN request to our
         // discovered public address.  If the router returns it hairpinning works.  We
@@ -226,12 +223,12 @@ mod tests {
         };
         actor.start_check(ipp_v4);
 
-        // This bit is our dummy netcheck actor: it handles the inflight request and sends
+        // This bit is our dummy net_report actor: it handles the inflight request and sends
         // back the STUN request once it arrives.
-        let dummy_netcheck = tokio::spawn(
+        let dummy_net_report = tokio::spawn(
             async move {
-                let netcheck::Message::InFlightStun(inflight, resp_tx) =
-                    netcheck_rx.recv().await.unwrap()
+                let net_report::Message::InFlightStun(inflight, resp_tx) =
+                    net_report_rx.recv().await.unwrap()
                 else {
                     panic!("Wrong message received");
                 };
@@ -258,7 +255,7 @@ mod tests {
                     tokio::time::sleep(HAIRPIN_CHECK_TIMEOUT * 8).await;
                 }
             }
-            .instrument(info_span!("dummy-netcheck")),
+            .instrument(info_span!("dummy-net_report")),
         );
 
         // Next we expect our dummy reportstate to receive the result.
@@ -268,18 +265,20 @@ mod tests {
             None => panic!("reportstate mpsc has no senders"),
         }
 
-        // Cleanup: our dummy netcheck actor should finish
-        dummy_netcheck.await.expect("error in dummy netcheck actor");
+        // Cleanup: our dummy net_report actor should finish
+        dummy_net_report
+            .await
+            .expect("error in dummy net_report actor");
     }
 
     #[tokio::test]
     async fn test_client_drop() {
         let _guard = iroh_test::logging::setup();
 
-        // Setup fake netcheck and reportstate actors, hairpinning interacts with them.
-        let (netcheck_tx, _netcheck_rx) = mpsc::channel(32);
-        let netcheck_addr = netcheck::Addr {
-            sender: netcheck_tx,
+        // Setup fake net_report and reportstate actors, hairpinning interacts with them.
+        let (net_report_tx, _net_report_rx) = mpsc::channel(32);
+        let net_report_addr = net_report::Addr {
+            sender: net_report_tx,
         };
         let (reportstate_tx, _reportstate_rx) = mpsc::channel(32);
         let reportstate_addr = reportgen::Addr {
@@ -287,7 +286,7 @@ mod tests {
         };
 
         // Create hairpin actor
-        let mut client = Client::new(netcheck_addr, reportstate_addr);
+        let mut client = Client::new(net_report_addr, reportstate_addr);
 
         // Save the addr, drop the client
         let addr = client.addr.take();

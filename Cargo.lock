@@ -2783,6 +2783,7 @@ dependencies = [
  "iroh-docs",
  "iroh-gossip",
  "iroh-metrics",
+ "iroh-net-report",
  "iroh-node-util",
  "nix 0.27.1",
  "parking_lot",
@@ -3013,6 +3014,7 @@ dependencies = [
  "iroh-base",
  "iroh-metrics",
  "iroh-net",
+ "iroh-net-report",
  "iroh-quinn",
  "iroh-quinn-proto",
  "iroh-quinn-udp",
@@ -3089,6 +3091,36 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "iroh-net-report"
+version = "0.28.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "derive_more",
+ "futures-buffered",
+ "futures-lite 2.5.0",
+ "hickory-resolver",
+ "iroh-base",
+ "iroh-metrics",
+ "iroh-relay",
+ "iroh-test",
+ "netwatch",
+ "once_cell",
+ "portmapper",
+ "pretty_assertions",
+ "rand",
+ "reqwest",
+ "rustls",
+ "surge-ping",
+ "testresult",
+ "thiserror 1.0.68",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
 ]
 
 [[package]]

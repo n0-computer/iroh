@@ -3,39 +3,14 @@
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
 use anyhow::{ensure, Result};
-pub use iroh_relay::RelayUrl;
 use serde::{Deserialize, Serialize};
 
-use crate::defaults::DEFAULT_STUN_PORT;
+pub use crate::relay_url::RelayUrl;
 
-/// Configuration of the relay servers for an [`Endpoint`].
+/// The default STUN port used by the Relay server.
 ///
-/// [`Endpoint`]: crate::endpoint::Endpoint
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RelayMode {
-    /// Disable relay servers completely.
-    Disabled,
-    /// Use the default relay map, with production relay servers from n0.
-    ///
-    /// See [`crate::defaults::prod`] for the severs used.
-    Default,
-    /// Use the staging relay servers from n0.
-    Staging,
-    /// Use a custom relay map.
-    Custom(RelayMap),
-}
-
-impl RelayMode {
-    /// Returns the relay map for this mode.
-    pub fn relay_map(&self) -> RelayMap {
-        match self {
-            RelayMode::Disabled => RelayMap::empty(),
-            RelayMode::Default => crate::defaults::prod::default_relay_map(),
-            RelayMode::Staging => crate::defaults::staging::default_relay_map(),
-            RelayMode::Custom(relay_map) => relay_map.clone(),
-        }
-    }
-}
+/// The STUN port as defined by [RFC 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
+const DEFAULT_STUN_PORT: u16 = 3478;
 
 /// Configuration of all the relay servers that can be used.
 #[derive(Debug, Clone, PartialEq, Eq)]

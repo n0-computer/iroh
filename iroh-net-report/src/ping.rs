@@ -90,7 +90,7 @@ impl Pinger {
         let ident = PingIdentifier(rand::random());
         debug!(%addr, %ident, "Creating pinger");
         let mut pinger = client.pinger(addr, ident).await;
-        pinger.timeout(DEFAULT_TIMEOUT); // todo: timeout too large for netcheck
+        pinger.timeout(DEFAULT_TIMEOUT); // todo: timeout too large for net_report
         match pinger.ping(PingSequence(0), data).await? {
             (IcmpPacket::V4(packet), dur) => {
                 debug!(
@@ -157,7 +157,7 @@ mod tests {
         Ok(())
     }
 
-    // See netcheck::reportgen::tests::test_icmp_probe_eu_relay for permissions to ping.
+    // See net_report::reportgen::tests::test_icmp_probe_eu_relay for permissions to ping.
     #[tokio::test]
     async fn test_ping_localhost() {
         let _guard = iroh_test::logging::setup();

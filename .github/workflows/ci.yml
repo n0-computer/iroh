@@ -190,7 +190,7 @@ jobs:
         # uses: obi1kenobi/cargo-semver-checks-action@v2
         uses: n0-computer/cargo-semver-checks-action@feat-baseline
         with:
-          package: iroh, iroh-base, iroh-cli, iroh-dns-server, iroh-metrics, iroh-net, iroh-net-bench, iroh-node-util, iroh-router, netwatch, portmapper, iroh-relay
+          package: iroh, iroh-base, iroh-cli, iroh-dns-server, iroh-metrics, iroh-net, iroh-net-bench, iroh-node-util, iroh-router, netwatch, portmapper, iroh-relay, iroh-net-report
           baseline-rev: ${{ env.HEAD_COMMIT_SHA }}
           use-cache: false
 

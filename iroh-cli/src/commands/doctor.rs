@@ -37,7 +37,6 @@ use iroh::{
         endpoint::{self, Connection, ConnectionTypeStream, RecvStream, RemoteInfo, SendStream},
         key::{PublicKey, SecretKey},
         metrics::MagicsockMetrics,
-        netcheck,
         ticket::NodeTicket,
         Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl,
     },
@@ -349,7 +348,7 @@ async fn report(
 ) -> anyhow::Result<()> {
     let port_mapper = portmapper::Client::default();
     let dns_resolver = default_resolver().clone();
-    let mut client = netcheck::Client::new(Some(port_mapper), dns_resolver)?;
+    let mut client = net_report::Client::new(Some(port_mapper), dns_resolver)?;
 
     let dm = match stun_host {
         Some(host_name) => {

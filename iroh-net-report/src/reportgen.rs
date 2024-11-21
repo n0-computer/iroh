@@ -1,4 +1,4 @@
-//! The reportgen actor is responsible for generating a single netcheck report.
+//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -14,17 +14,20 @@
 //! - Loops driving the futures and handling actor messages:
 //!   - Disables futures as they are completed or aborted.
 //!   - Stop if there are no outstanding tasks/futures, or on timeout.
-//! - Sends the completed report to the netcheck actor.
+//! - Sends the completed report to the net_report actor.
 
 use std::{
     future::Future,
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::Arc,
+    task::{Context, Poll},
     time::Duration,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
+use hickory_resolver::TokioAsyncResolver as DnsResolver;
+#[cfg(feature = "metrics")]
 use iroh_metrics::inc;
 use iroh_relay::{http::RELAY_PROBE_PATH, protos::stun};
 use netwatch::{interfaces, UdpSocket};
@@ -38,14 +41,14 @@ use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
 use url::Host;
 
-use super::NetcheckMetrics;
+#[cfg(feature = "metrics")]
+use crate::Metrics;
 use crate::{
+    self as net_report,
     defaults::DEFAULT_STUN_PORT,
-    dns::{DnsResolver, ResolverExt},
-    netcheck::{self, Report},
+    dns::ResolverExt,
     ping::{PingError, Pinger},
-    util::MaybeFuture,
-    RelayMap, RelayNode, RelayUrl,
+    RelayMap, RelayNode, RelayUrl, Report,
 };
 
 mod hairpin;
@@ -54,16 +57,12 @@ mod probes;
 use probes::{Probe, ProbePlan, ProbeProto};
 
 use crate::defaults::timeouts::{
-    CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, DNS_TIMEOUT, OVERALL_REPORT_TIMEOUT,
-    PROBES_TIMEOUT,
+    CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, OVERALL_REPORT_TIMEOUT, PROBES_TIMEOUT,
 };
 
 const ENOUGH_NODES: usize = 3;
 
-/// Delay used to perform staggered dns queries.
-const DNS_STAGGERING_MS: &[u64] = &[200, 300];
-
-/// Holds the state for a single invocation of [`netcheck::Client::get_report`].
+/// Holds the state for a single invocation of [`net_report::Client::get_report`].
 ///
 /// Dropping this will cancel the actor and stop the report generation.
 #[derive(Debug)]
@@ -78,7 +77,7 @@ impl Client {
     /// The actor starts running immediately and only generates a single report, after which
     /// it shuts down.  Dropping this handle will abort the actor.
     pub(super) fn new(
-        netcheck: netcheck::Addr,
+        net_report: net_report::Addr,
         last_report: Option<Arc<Report>>,
         port_mapper: Option<portmapper::Client>,
         relay_map: RelayMap,
@@ -93,14 +92,14 @@ impl Client {
         let mut actor = Actor {
             msg_tx,
             msg_rx,
-            netcheck: netcheck.clone(),
+            net_report: net_report.clone(),
             last_report,
             port_mapper,
             relay_map,
             stun_sock4,
             stun_sock6,
             report: Report::default(),
-            hairpin_actor: hairpin::Client::new(netcheck, addr),
+            hairpin_actor: hairpin::Client::new(net_report, addr),
             outstanding_tasks: OutstandingTasks::default(),
             dns_resolver,
         };
@@ -158,8 +157,8 @@ struct Actor {
     msg_tx: mpsc::Sender<Message>,
     /// The receiver of the message channel.
     msg_rx: mpsc::Receiver<Message>,
-    /// The address of the netcheck actor.
-    netcheck: super::Addr,
+    /// The address of the net_report actor.
+    net_report: super::Addr,
 
     // Provided state
     /// The previous report, if it exists.
@@ -197,8 +196,8 @@ impl Actor {
         match self.run_inner().await {
             Ok(_) => debug!("reportgen actor finished"),
             Err(err) => {
-                self.netcheck
-                    .send(netcheck::Message::ReportAborted { err })
+                self.net_report
+                    .send(net_report::Message::ReportAborted { err })
                     .await
                     .ok();
             }
@@ -216,7 +215,7 @@ impl Actor {
     ///   - Drives all the above futures.
     ///   - Receives actor messages (sent by those futures).
     ///   - Updates the report, cancels unneeded futures.
-    /// - Sends the report to the netcheck actor.
+    /// - Sends the report to the net_report actor.
     async fn run_inner(&mut self) -> Result<()> {
         debug!(
             port_mapper = %self.port_mapper.is_some(),
@@ -308,9 +307,9 @@ impl Actor {
             drop(probes);
         }
 
-        debug!("Sending report to netcheck actor");
-        self.netcheck
-            .send(netcheck::Message::ReportReady {
+        debug!("Sending report to net_report actor");
+        self.net_report
+            .send(net_report::Message::ReportReady {
                 report: Box::new(self.report.clone()),
             })
             .await?;
@@ -547,7 +546,7 @@ impl Actor {
                 let stun_sock6 = self.stun_sock6.clone();
                 let relay_node = probe.node().clone();
                 let probe = probe.clone();
-                let netcheck = self.netcheck.clone();
+                let net_report = self.net_report.clone();
                 let pinger = pinger.clone();
                 let dns_resolver = self.dns_resolver.clone();
 
@@ -558,7 +557,7 @@ impl Actor {
                         stun_sock6,
                         relay_node,
                         probe.clone(),
-                        netcheck,
+                        net_report,
                         pinger,
                         dns_resolver,
                     )
@@ -679,7 +678,7 @@ async fn run_probe(
     stun_sock6: Option<Arc<UdpSocket>>,
     relay_node: Arc<RelayNode>,
     probe: Probe,
-    netcheck: netcheck::Addr,
+    net_report: net_report::Addr,
     pinger: Pinger,
     dns_resolver: DnsResolver,
 ) -> Result<ProbeReport, ProbeError> {
@@ -730,7 +729,7 @@ async fn run_probe(
             };
             match maybe_sock {
                 Some(sock) => {
-                    result = run_stun_probe(sock, relay_addr, netcheck, probe).await?;
+                    result = run_stun_probe(sock, relay_addr, net_report, probe).await?;
                 }
                 None => {
                     return Err(ProbeError::AbortSet(
@@ -773,7 +772,7 @@ async fn run_probe(
 async fn run_stun_probe(
     sock: &Arc<UdpSocket>,
     relay_addr: SocketAddr,
-    netcheck: netcheck::Addr,
+    net_report: net_report::Addr,
     probe: Probe,
 ) -> Result<ProbeReport, ProbeError> {
     match probe.proto() {
@@ -784,12 +783,12 @@ async fn run_stun_probe(
     let txid = stun::TransactionId::default();
     let req = stun::request(txid);
 
-    // Setup netcheck to give us back the incoming STUN response.
+    // Setup net_report to give us back the incoming STUN response.
     let (stun_tx, stun_rx) = oneshot::channel();
     let (inflight_ready_tx, inflight_ready_rx) = oneshot::channel();
-    netcheck
-        .send(netcheck::Message::InFlightStun(
-            netcheck::Inflight {
+    net_report
+        .send(net_report::Message::InFlightStun(
+            net_report::Inflight {
                 txn: txid,
                 start: Instant::now(),
                 s: stun_tx,
@@ -810,10 +809,12 @@ async fn run_stun_probe(
 
             if matches!(probe, Probe::StunIpv4 { .. }) {
                 result.ipv4_can_send = true;
-                inc!(NetcheckMetrics, stun_packets_sent_ipv4);
+                #[cfg(feature = "metrics")]
+                inc!(Metrics, stun_packets_sent_ipv4);
             } else {
                 result.ipv6_can_send = true;
-                inc!(NetcheckMetrics, stun_packets_sent_ipv6);
+                #[cfg(feature = "metrics")]
+                inc!(Metrics, stun_packets_sent_ipv6);
             }
             let (delay, addr) = stun_rx
                 .await
@@ -896,7 +897,7 @@ async fn check_captive_portal(
         // Ideally we would try to resolve **both** IPv4 and IPv6 rather than purely race
         // them.  But our resolver doesn't support that yet.
         let addrs: Vec<_> = dns_resolver
-            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
+            .lookup_ipv4_ipv6_staggered(domain)
             .await?
             .map(|ipaddr| SocketAddr::new(ipaddr, 0))
             .collect();
@@ -959,10 +960,7 @@ async fn get_relay_addr(
         ProbeProto::StunIpv4 | ProbeProto::IcmpV4 => match relay_node.url.host() {
             Some(url::Host::Domain(hostname)) => {
                 debug!(?proto, %hostname, "Performing DNS A lookup for relay addr");
-                match dns_resolver
-                    .lookup_ipv4_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
-                    .await
-                {
+                match dns_resolver.lookup_ipv4_staggered(hostname).await {
                     Ok(mut addrs) => addrs
                         .next()
                         .map(|ip| ip.to_canonical())
@@ -979,10 +977,7 @@ async fn get_relay_addr(
         ProbeProto::StunIpv6 | ProbeProto::IcmpV6 => match relay_node.url.host() {
             Some(url::Host::Domain(hostname)) => {
                 debug!(?proto, %hostname, "Performing DNS AAAA lookup for relay addr");
-                match dns_resolver
-                    .lookup_ipv6_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
-                    .await
-                {
+                match dns_resolver.lookup_ipv6_staggered(hostname).await {
                     Ok(mut addrs) => addrs
                         .next()
                         .map(|ip| ip.to_canonical())
@@ -1067,7 +1062,7 @@ async fn measure_https_latency(
         // but staggered for reliability.  Ideally this tries to resolve **both** IPv4 and
         // IPv6 though.  But our resolver does not have a function for that yet.
         let addrs: Vec<_> = dns_resolver
-            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
+            .lookup_ipv4_ipv6_staggered(domain)
             .await?
             .map(|ipaddr| SocketAddr::new(ipaddr, 0))
             .collect();
@@ -1109,7 +1104,7 @@ async fn measure_https_latency(
     }
 }
 
-/// Updates a netcheck [`Report`] with a new [`ProbeReport`].
+/// Updates a net_report [`Report`] with a new [`ProbeReport`].
 fn update_report(report: &mut Report, probe_report: ProbeReport) {
     let relay_node = probe_report.probe.node();
     if let Some(latency) = probe_report.latency {
@@ -1169,6 +1164,31 @@ fn update_report(report: &mut Report, probe_report: ProbeReport) {
         .icmpv6
         .map(|val| val || probe_report.icmpv6.unwrap_or_default())
         .or(probe_report.icmpv6);
+}
+
+/// Resolves to pending if the inner is `None`.
+#[derive(Debug)]
+pub(crate) struct MaybeFuture<T> {
+    /// Future to be polled.
+    pub inner: Option<T>,
+}
+
+// NOTE: explicit implementation to bypass derive unnecessary bounds
+impl<T> Default for MaybeFuture<T> {
+    fn default() -> Self {
+        MaybeFuture { inner: None }
+    }
+}
+
+impl<T: Future + Unpin> Future for MaybeFuture<T> {
+    type Output = T::Output;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.inner {
+            Some(ref mut t) => Pin::new(t).poll(cx),
+            None => Poll::Pending,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1338,11 +1358,11 @@ mod tests {
     //
     // Build the test binary:
     //
-    //    cargo nextest run -p iroh_net netcheck::reportgen::tests --no-run
+    //    cargo nextest run -p iroh_net net_report::reportgen::tests --no-run
     //
     // Find out the test binary location:
     //
-    //    cargo nextest list --message-format json -p iroh-net netcheck::reportgen::tests \
+    //    cargo nextest list --message-format json -p iroh-net net_report::reportgen::tests \
     //       | jq '."rust-suites"."iroh-net"."binary-path"' | tr -d \"
     //
     // Set the CAP_NET_RAW permission, note that nextest runs each test in a child process
@@ -1352,7 +1372,7 @@ mod tests {
     //
     // Finally run the test:
     //
-    //    cargo nextest run -p iroh_net netcheck::reportgen::tests
+    //    cargo nextest run -p iroh_net net_report::reportgen::tests
     //
     // This allows the pinger to create a SOCK_RAW socket for IPPROTO_ICMP.
     //
@@ -1429,7 +1449,7 @@ mod tests {
     async fn test_measure_https_latency() -> TestResult {
         let _logging_guard = iroh_test::logging::setup();
         let (server, relay) = test_utils::relay().await;
-        let dns_resolver = crate::dns::resolver();
+        let dns_resolver = crate::dns::tests::resolver();
         tracing::info!(relay_url = ?relay.url , "RELAY_URL");
         let (latency, ip) =
             measure_https_latency(dns_resolver, &relay, server.certificates()).await?;

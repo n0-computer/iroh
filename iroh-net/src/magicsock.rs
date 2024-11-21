@@ -60,13 +60,13 @@ use self::{
     udp_conn::UdpConn,
 };
 use crate::{
-    defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
+    defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
     endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
-    netcheck, AddrInfo, RelayMap, RelayUrl,
+    AddrInfo, RelayMap, RelayUrl,
 };
 
 mod metrics;
@@ -203,7 +203,7 @@ pub(crate) struct MagicSock {
     closing: AtomicBool,
     /// Close was called.
     closed: AtomicBool,
-    /// If the last netcheck report, reports IPv6 to be available.
+    /// If the last net_report report, reports IPv6 to be available.
     ipv6_reported: Arc<AtomicBool>,
 
     /// None (or zero nodes) means relay is disabled.
@@ -216,8 +216,8 @@ pub(crate) struct MagicSock {
     pconn4: UdpConn,
     /// UDP IPv6 socket
     pconn6: Option<UdpConn>,
-    /// Netcheck client
-    net_checker: netcheck::Addr,
+    /// NetReport client
+    net_reporter: net_report::Addr,
     /// The state for an active DiscoKey.
     disco_secrets: DiscoSecrets,
 
@@ -716,7 +716,7 @@ impl MagicSock {
                 let packet_is_quic = if stun::is(packet) {
                     trace!(src = %meta.addr, len = %meta.stride, "UDP recv: stun packet");
                     let packet2 = Bytes::copy_from_slice(packet);
-                    self.net_checker.receive_stun_packet(packet2, meta.addr);
+                    self.net_reporter.receive_stun_packet(packet2, meta.addr);
                     false
                 } else if let Some((sender, sealed_box)) = disco::source_and_box(packet) {
                     // Disco?
@@ -1217,7 +1217,7 @@ impl MagicSock {
     /// Sends the call-me-maybe DISCO message, queuing if addresses are too stale.
     ///
     /// To send the call-me-maybe message, we need to know our current direct addresses.  If
-    /// this information is too stale, the call-me-maybe is queued while a netcheck run is
+    /// this information is too stale, the call-me-maybe is queued while a net_report run is
     /// scheduled.  Once this run finishes, the call-me-maybe will be sent.
     fn send_or_queue_call_me_maybe(&self, url: &RelayUrl, dst_node: NodeId) {
         match self.direct_addrs.fresh_enough() {
@@ -1305,7 +1305,7 @@ impl DiscoMessageSource {
     }
 }
 
-/// Manages currently running direct addr discovery, aka netcheck runs.
+/// Manages currently running direct addr discovery, aka net_report runs.
 ///
 /// Invariants:
 /// - only one direct addr update must be running at a time
@@ -1405,7 +1405,8 @@ impl Handle {
         let ipv4_addr = pconn4.local_addr()?;
         let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
-        let net_checker = netcheck::Client::new(Some(port_mapper.clone()), dns_resolver.clone())?;
+        let net_reporter =
+            net_report::Client::new(Some(port_mapper.clone()), dns_resolver.clone())?;
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
         let (relay_actor_sender, relay_actor_receiver) = mpsc::channel(256);
@@ -1432,7 +1433,7 @@ impl Handle {
             my_relay: Default::default(),
             pconn4: pconn4.clone(),
             pconn6: pconn6.clone(),
-            net_checker: net_checker.addr(),
+            net_reporter: net_reporter.addr(),
             disco_secrets: DiscoSecrets::default(),
             node_map,
             relay_actor_sender: relay_actor_sender.clone(),
@@ -1483,7 +1484,7 @@ impl Handle {
                     pconn4,
                     pconn6,
                     no_v4_send: false,
-                    net_checker,
+                    net_reporter,
                     network_monitor,
                 };
 
@@ -1699,7 +1700,7 @@ enum ActorMessage {
     Shutdown,
     ReceiveRelay(RelayReadResult),
     EndpointPingExpired(usize, stun_rs::TransactionId),
-    NetcheckReport(Result<Option<Arc<netcheck::Report>>>, &'static str),
+    NetReport(Result<Option<Arc<net_report::Report>>>, &'static str),
     NetworkChange,
     #[cfg(test)]
     ForceNetworkChange(bool),
@@ -1731,7 +1732,7 @@ struct Actor {
     no_v4_send: bool,
 
     /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
-    net_checker: netcheck::Client,
+    net_reporter: net_report::Client,
 
     network_monitor: netmon::Monitor,
 }
@@ -1919,13 +1920,16 @@ impl Actor {
             ActorMessage::EndpointPingExpired(id, txid) => {
                 self.msock.node_map.notify_ping_timeout(id, txid);
             }
-            ActorMessage::NetcheckReport(report, why) => {
+            ActorMessage::NetReport(report, why) => {
                 match report {
                     Ok(report) => {
-                        self.handle_netcheck_report(report).await;
+                        self.handle_net_report_report(report).await;
                     }
                     Err(err) => {
-                        warn!("failed to generate netcheck report for: {}: {:?}", why, err);
+                        warn!(
+                            "failed to generate net_report report for: {}: {:?}",
+                            why, err
+                        );
                     }
                 }
                 self.finalize_direct_addrs_update(why);
@@ -1997,7 +2001,7 @@ impl Actor {
 
     /// Refreshes knowledge about our direct addresses.
     ///
-    /// In other words, this triggers a netcheck run.
+    /// In other words, this triggers a net_report run.
     ///
     /// Note that invoking this is managed by the [`DirectAddrUpdateState`] and this should
     /// never be invoked directly.  Some day this will be refactored to not allow this easy
@@ -2017,9 +2021,9 @@ impl Actor {
     /// direct addresses from:
     ///
     /// - The portmapper.
-    /// - A netcheck report.
+    /// - A net_report report.
     /// - The local interfaces IP addresses.
-    fn update_direct_addresses(&mut self, netcheck_report: Option<Arc<netcheck::Report>>) {
+    fn update_direct_addresses(&mut self, net_report_report: Option<Arc<net_report::Report>>) {
         let portmap_watcher = self.port_mapper.watch_external_address();
 
         // We only want to have one DirectAddr for each SocketAddr we have.  So we store
@@ -2036,9 +2040,9 @@ impl Actor {
             self.set_net_info_have_port_map();
         }
 
-        // Next add STUN addresses from the netcheck report.
-        if let Some(netcheck_report) = netcheck_report {
-            if let Some(global_v4) = netcheck_report.global_v4 {
+        // Next add STUN addresses from the net_report report.
+        if let Some(net_report_report) = net_report_report {
+            if let Some(global_v4) = net_report_report.global_v4 {
                 addrs
                     .entry(global_v4.into())
                     .or_insert(DirectAddrType::Stun);
@@ -2048,7 +2052,7 @@ impl Actor {
                 // port mapping on their router to the same explicit
                 // port that we are running with. Worst case it's an invalid candidate mapping.
                 let port = self.msock.port.load(Ordering::Relaxed);
-                if netcheck_report
+                if net_report_report
                     .mapping_varies_by_dest_ip
                     .unwrap_or_default()
                     && port != 0
@@ -2060,7 +2064,7 @@ impl Actor {
                         .or_insert(DirectAddrType::Stun4LocalPort);
                 }
             }
-            if let Some(global_v6) = netcheck_report.global_v6 {
+            if let Some(global_v6) = net_report_report.global_v6 {
                 addrs
                     .entry(global_v6.into())
                     .or_insert(DirectAddrType::Stun);
@@ -2185,7 +2189,7 @@ impl Actor {
         self.net_info_last = Some(ni);
     }
 
-    /// Calls netcheck.
+    /// Calls net_report.
     ///
     /// Note that invoking this is managed by [`DirectAddrUpdateState`] via
     /// [`Actor::refresh_direct_addrs`] and this should never be invoked directly.  Some day
@@ -2193,9 +2197,9 @@ impl Actor {
     #[instrument(level = "debug", skip_all)]
     async fn update_net_info(&mut self, why: &'static str) {
         if self.msock.relay_map.is_empty() {
-            debug!("skipping netcheck, empty RelayMap");
+            debug!("skipping net_report, empty RelayMap");
             self.msg_sender
-                .send(ActorMessage::NetcheckReport(Ok(None), why))
+                .send(ActorMessage::NetReport(Ok(None), why))
                 .await
                 .ok();
             return;
@@ -2205,38 +2209,38 @@ impl Actor {
         let pconn4 = Some(self.pconn4.as_socket());
         let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
 
-        debug!("requesting netcheck report");
+        debug!("requesting net_report report");
         match self
-            .net_checker
+            .net_reporter
             .get_report_channel(relay_map, pconn4, pconn6)
             .await
         {
             Ok(rx) => {
                 let msg_sender = self.msg_sender.clone();
                 tokio::task::spawn(async move {
-                    let report = time::timeout(NETCHECK_REPORT_TIMEOUT, rx).await;
+                    let report = time::timeout(NET_REPORT_TIMEOUT, rx).await;
                     let report: anyhow::Result<_> = match report {
                         Ok(Ok(Ok(report))) => Ok(Some(report)),
                         Ok(Ok(Err(err))) => Err(err),
-                        Ok(Err(_)) => Err(anyhow!("netcheck report not received")),
-                        Err(err) => Err(anyhow!("netcheck report timeout: {:?}", err)),
+                        Ok(Err(_)) => Err(anyhow!("net_report report not received")),
+                        Err(err) => Err(anyhow!("net_report report timeout: {:?}", err)),
                     };
                     msg_sender
-                        .send(ActorMessage::NetcheckReport(report, why))
+                        .send(ActorMessage::NetReport(report, why))
                         .await
                         .ok();
-                    // The receiver of the NetcheckReport message will call
+                    // The receiver of the NetReport message will call
                     // .finalize_direct_addrs_update().
                 });
             }
             Err(err) => {
-                warn!("unable to start netcheck generation: {:?}", err);
+                warn!("unable to start net_report generation: {:?}", err);
                 self.finalize_direct_addrs_update(why);
             }
         }
     }
 
-    async fn handle_netcheck_report(&mut self, report: Option<Arc<netcheck::Report>>) {
+    async fn handle_net_report_report(&mut self, report: Option<Arc<net_report::Report>>) {
         if let Some(ref report) = report {
             self.msock
                 .ipv6_reported
@@ -2311,7 +2315,7 @@ impl Actor {
         true
     }
 
-    /// Returns a deterministic relay node to connect to. This is only used if netcheck
+    /// Returns a deterministic relay node to connect to. This is only used if net_report
     /// couldn't find the nearest one, for instance, if UDP is blocked and thus STUN
     /// latency checks aren't working.
     ///
