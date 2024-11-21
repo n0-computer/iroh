@@ -325,7 +325,7 @@ mod tests {
         let cancel = CancellationToken::new();
         let watchable = Watchable::new_initialized(17);
 
-        assert_eq!(watchable.watch().initialized().await, 17);
+        assert_eq!(watchable.watch().initialized().await.unwrap(), 17);
         assert_eq!(watchable.watch().stream().next().await.unwrap(), 17);
 
         let start = Instant::now();
@@ -447,14 +447,14 @@ mod tests {
         let test_case = || {
             let watchable = Watchable::<u8>::new();
 
-            let watch = watchable.watch();
+            let mut watch = watchable.watch();
             let thread = thread::spawn(move || futures_lite::future::block_on(watch.initialized()));
 
             watchable.set(42);
 
             thread::yield_now();
 
-            let value: u8 = thread.join().unwrap();
+            let value: u8 = thread.join().unwrap().unwrap();
 
             assert_eq!(value, 42);
         };
