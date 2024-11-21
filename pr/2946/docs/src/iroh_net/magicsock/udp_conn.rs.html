@@ -331,6 +331,14 @@
 <a href="#331" id="331">331</a>
 <a href="#332" id="332">332</a>
 <a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     fmt::Debug,
     io,
@@ -363,7 +371,7 @@
         <span class="kw">let </span>sock = bind(addr)<span class="question-mark">?</span>;
         <span class="kw">let </span>state = sock.with_socket(|socket| {
             quinn_udp::UdpSocketState::new(quinn_udp::UdpSockRef::from(socket))
-        })<span class="question-mark">?</span>;
+        })<span class="question-mark">??</span>;
 
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             io: Arc::new(sock),
@@ -378,7 +386,7 @@
         <span class="comment">// update socket state
         </span><span class="kw">let </span>new_state = <span class="self">self</span>.io.with_socket(|socket| {
             quinn_udp::UdpSocketState::new(quinn_udp::UdpSockRef::from(socket))
-        })<span class="question-mark">?</span>;
+        })<span class="question-mark">??</span>;
         <span class="kw-2">*</span><span class="self">self</span>.inner.write().unwrap() = new_state;
         <span class="prelude-val">Ok</span>(())
     }
@@ -391,6 +399,11 @@
         Box::pin(IoPoller {
             io: <span class="self">self</span>.io.clone(),
         })
+    }
+
+    <span class="doccomment">/// Closes the socket for good
+    </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+        <span class="self">self</span>.io.close().<span class="kw">await</span>;
     }
 }
 
@@ -423,8 +436,9 @@
                 })
             });
             <span class="kw">match </span>res {
-                <span class="prelude-val">Ok</span>(()) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
-                <span class="prelude-val">Err</span>(err) =&gt; {
+                <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(())) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
+                <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(err), <span class="comment">// closed error
+                </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
                     <span class="kw">if </span>err.kind() == std::io::ErrorKind::WouldBlock {
                         <span class="kw">continue</span>;
                     }
@@ -462,14 +476,15 @@
             }
 
             <span class="kw">match </span><span class="self">self</span>.io.with_socket(|io| io.poll_recv_ready(cx)) {
-                Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
-                Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; {}
-                Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; <span class="kw">match </span><span class="self">self</span>.io.handle_read_error(err) {
+                <span class="prelude-val">Ok</span>(Poll::Pending) =&gt; <span class="kw">return </span>Poll::Pending,
+                <span class="prelude-val">Ok</span>(Poll::Ready(<span class="prelude-val">Ok</span>(()))) =&gt; {}
+                <span class="prelude-val">Ok</span>(Poll::Ready(<span class="prelude-val">Err</span>(err))) =&gt; <span class="kw">match </span><span class="self">self</span>.io.handle_read_error(err) {
                     <span class="prelude-val">Some</span>(err) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err)),
                     <span class="prelude-val">None </span>=&gt; {
                         <span class="kw">continue</span>;
                     }
                 },
+                <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err)),
             }
 
             <span class="kw">let </span>res = <span class="self">self</span>.io.try_io(Interest::READABLE, || {
@@ -477,7 +492,7 @@
                     .with_socket(|io| <span class="self">self</span>.inner.read().unwrap().recv(io.into(), bufs, meta))
             });
             <span class="kw">match </span>res {
-                <span class="prelude-val">Ok</span>(count) =&gt; {
+                <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(count)) =&gt; {
                     <span class="kw">for </span>meta <span class="kw">in </span>meta.iter().take(count) {
                         <span class="macro">trace!</span>(
                             src = %meta.addr,
@@ -489,7 +504,7 @@
                     }
                     <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(count));
                 }
-                <span class="prelude-val">Err</span>(err) =&gt; {
+                <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
                     <span class="comment">// ignore spurious wakeups
                     </span><span class="kw">if </span>err.kind() == std::io::ErrorKind::WouldBlock {
                         <span class="kw">continue</span>;
@@ -501,6 +516,7 @@
                         }
                     }
                 }
+                <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err)),
             }
         }
     }

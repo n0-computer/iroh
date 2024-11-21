@@ -3902,6 +3902,11 @@
 <a href="#3902" id="3902">3902</a>
 <a href="#3903" id="3903">3903</a>
 <a href="#3904" id="3904">3904</a>
+<a href="#3905" id="3905">3905</a>
+<a href="#3906" id="3906">3906</a>
+<a href="#3907" id="3907">3907</a>
+<a href="#3908" id="3908">3908</a>
+<a href="#3909" id="3909">3909</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -5417,6 +5422,11 @@
         }
         <span class="self">self</span>.msock.closing.store(<span class="bool-val">true</span>, Ordering::Relaxed);
         <span class="self">self</span>.msock.actor_sender.send(ActorMessage::Shutdown).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.msock.pconn4.close().<span class="kw">await</span>;
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>conn) = <span class="self">self</span>.msock.pconn6 {
+            conn.close().<span class="kw">await</span>;
+        }
+
         <span class="self">self</span>.msock.closed.store(<span class="bool-val">true</span>, Ordering::SeqCst);
         <span class="self">self</span>.msock.direct_addrs.addrs.shutdown();
 

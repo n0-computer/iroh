@@ -679,6 +679,57 @@
 <a href="#679" id="679">679</a>
 <a href="#680" id="680">680</a>
 <a href="#681" id="681">681</a>
+<a href="#682" id="682">682</a>
+<a href="#683" id="683">683</a>
+<a href="#684" id="684">684</a>
+<a href="#685" id="685">685</a>
+<a href="#686" id="686">686</a>
+<a href="#687" id="687">687</a>
+<a href="#688" id="688">688</a>
+<a href="#689" id="689">689</a>
+<a href="#690" id="690">690</a>
+<a href="#691" id="691">691</a>
+<a href="#692" id="692">692</a>
+<a href="#693" id="693">693</a>
+<a href="#694" id="694">694</a>
+<a href="#695" id="695">695</a>
+<a href="#696" id="696">696</a>
+<a href="#697" id="697">697</a>
+<a href="#698" id="698">698</a>
+<a href="#699" id="699">699</a>
+<a href="#700" id="700">700</a>
+<a href="#701" id="701">701</a>
+<a href="#702" id="702">702</a>
+<a href="#703" id="703">703</a>
+<a href="#704" id="704">704</a>
+<a href="#705" id="705">705</a>
+<a href="#706" id="706">706</a>
+<a href="#707" id="707">707</a>
+<a href="#708" id="708">708</a>
+<a href="#709" id="709">709</a>
+<a href="#710" id="710">710</a>
+<a href="#711" id="711">711</a>
+<a href="#712" id="712">712</a>
+<a href="#713" id="713">713</a>
+<a href="#714" id="714">714</a>
+<a href="#715" id="715">715</a>
+<a href="#716" id="716">716</a>
+<a href="#717" id="717">717</a>
+<a href="#718" id="718">718</a>
+<a href="#719" id="719">719</a>
+<a href="#720" id="720">720</a>
+<a href="#721" id="721">721</a>
+<a href="#722" id="722">722</a>
+<a href="#723" id="723">723</a>
+<a href="#724" id="724">724</a>
+<a href="#725" id="725">725</a>
+<a href="#726" id="726">726</a>
+<a href="#727" id="727">727</a>
+<a href="#728" id="728">728</a>
+<a href="#729" id="729">729</a>
+<a href="#730" id="730">730</a>
+<a href="#731" id="731">731</a>
+<a href="#732" id="732">732</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     future::Future,
     io::ErrorKind,
@@ -688,7 +739,7 @@
     task::Poll,
 };
 
-<span class="kw">use </span>anyhow::{ensure, Context, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>anyhow::{bail, ensure, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>tracing::{debug, warn};
 
 <span class="kw">use </span><span class="kw">super</span>::IpFamily;
@@ -763,7 +814,9 @@
         <span class="comment">// Remove old socket
         </span><span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.socket.write().unwrap();
         {
-            <span class="kw">let </span>socket = guard.take().expect(<span class="string">"not yet dropped"</span>);
+            <span class="kw">let </span><span class="prelude-val">Some</span>(socket) = guard.take() <span class="kw">else </span>{
+                <span class="macro">bail!</span>(<span class="string">"cannot rebind closed socket"</span>);
+            };
             drop(socket);
         }
 
@@ -794,13 +847,18 @@
     }
 
     <span class="doccomment">/// Use the socket
-    </span><span class="kw">pub fn </span>with_socket&lt;F, T&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, f: F) -&gt; T
+    </span><span class="kw">pub fn </span>with_socket&lt;F, T&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, f: F) -&gt; std::io::Result&lt;T&gt;
     <span class="kw">where
         </span>F: FnOnce(<span class="kw-2">&amp;</span>tokio::net::UdpSocket) -&gt; T,
     {
         <span class="kw">let </span>guard = <span class="self">self</span>.socket.read().unwrap();
-        <span class="kw">let </span>socket = guard.as_ref().expect(<span class="string">"missing socket"</span>);
-        f(socket)
+        <span class="kw">let </span><span class="prelude-val">Some</span>(socket) = guard.as_ref() <span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                <span class="string">"socket closed"</span>,
+            ));
+        };
+        <span class="prelude-val">Ok</span>(f(socket))
     }
 
     <span class="kw">pub fn </span>try_io&lt;R&gt;(
@@ -809,7 +867,12 @@
         f: <span class="kw">impl </span>FnOnce() -&gt; std::io::Result&lt;R&gt;,
     ) -&gt; std::io::Result&lt;R&gt; {
         <span class="kw">let </span>guard = <span class="self">self</span>.socket.read().unwrap();
-        <span class="kw">let </span>socket = guard.as_ref().expect(<span class="string">"missing socket"</span>);
+        <span class="kw">let </span><span class="prelude-val">Some</span>(socket) = guard.as_ref() <span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                <span class="string">"socket closed"</span>,
+            ));
+        };
         socket.try_io(interest, f)
     }
 
@@ -854,7 +917,13 @@
     </span><span class="kw">pub fn </span>connect(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: SocketAddr) -&gt; std::io::Result&lt;()&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.socket.write().unwrap();
         <span class="comment">// dance around to make non async connect work
-        </span><span class="kw">let </span>socket_tokio = guard.take().expect(<span class="string">"missing socket"</span>);
+        </span><span class="kw">let </span><span class="prelude-val">Some</span>(socket_tokio) = guard.take() <span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                <span class="string">"socket closed"</span>,
+            ));
+        };
+
         <span class="kw">let </span>socket_std = socket_tokio.into_std()<span class="question-mark">?</span>;
         socket_std.connect(addr)<span class="question-mark">?</span>;
         <span class="kw">let </span>socket_tokio = tokio::net::UdpSocket::from_std(socket_std)<span class="question-mark">?</span>;
@@ -865,28 +934,36 @@
     <span class="doccomment">/// Returns the local address of this socket.
     </span><span class="kw">pub fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;SocketAddr&gt; {
         <span class="kw">let </span>guard = <span class="self">self</span>.socket.read().unwrap();
-        <span class="kw">let </span>socket = guard.as_ref().expect(<span class="string">"missing socket"</span>);
+        <span class="kw">let </span><span class="prelude-val">Some</span>(socket) = guard.as_ref() <span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                <span class="string">"socket closed"</span>,
+            ));
+        };
+
         socket.local_addr()
     }
 
     <span class="doccomment">/// Closes the socket, and waits for the underlying `libc::close` call to be finished.
-    </span><span class="kw">pub async fn </span>close(<span class="self">self</span>) {
-        <span class="kw">let </span>std_sock = <span class="self">self
-            </span>.socket
-            .write()
-            .unwrap()
-            .take()
-            .expect(<span class="string">"not yet dropped"</span>)
-            .into_std();
-        <span class="kw">let </span>res = tokio::runtime::Handle::current()
-            .spawn_blocking(<span class="kw">move </span>|| {
-                <span class="comment">// Calls libc::close, which can block
-                </span>drop(std_sock);
-            })
-            .<span class="kw">await</span>;
-        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
-            <span class="macro">warn!</span>(<span class="string">"failed to close socket: {:?}"</span>, err);
+    </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+        <span class="kw">let </span>socket = <span class="self">self</span>.socket.write().unwrap().take();
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(sock) = socket {
+            <span class="kw">let </span>std_sock = sock.into_std();
+            <span class="kw">let </span>res = tokio::runtime::Handle::current()
+                .spawn_blocking(<span class="kw">move </span>|| {
+                    <span class="comment">// Calls libc::close, which can block
+                    </span>drop(std_sock);
+                })
+                .<span class="kw">await</span>;
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
+                <span class="macro">warn!</span>(<span class="string">"failed to close socket: {:?}"</span>, err);
+            }
         }
+    }
+
+    <span class="doccomment">/// Check if this socket is closed.
+    </span><span class="kw">pub fn </span>is_closed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="self">self</span>.socket.read().unwrap().is_none()
     }
 
     <span class="doccomment">/// Handle potential read errors, updating internal state.
@@ -936,7 +1013,12 @@
                 }
             }
             <span class="kw">let </span>guard = <span class="self">self</span>.socket.read().unwrap();
-            <span class="kw">let </span>socket = guard.as_ref().expect(<span class="string">"missing socket"</span>);
+            <span class="kw">let </span><span class="prelude-val">Some</span>(socket) = guard.as_ref() <span class="kw">else </span>{
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    <span class="string">"socket closed"</span>,
+                )));
+            };
 
             <span class="kw">match </span>socket.poll_send_ready(cx) {
                 Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
@@ -983,7 +1065,12 @@
             }
 
             <span class="kw">let </span>guard = socket.socket.read().unwrap();
-            <span class="kw">let </span>inner_socket = guard.as_ref().expect(<span class="string">"missing socket"</span>);
+            <span class="kw">let </span><span class="prelude-val">Some</span>(inner_socket) = guard.as_ref() <span class="kw">else </span>{
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    <span class="string">"socket closed"</span>,
+                )));
+            };
 
             <span class="kw">match </span>inner_socket.poll_recv_ready(cx) {
                 Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
@@ -1041,7 +1128,12 @@
                 }
             }
             <span class="kw">let </span>guard = socket.socket.read().unwrap();
-            <span class="kw">let </span>inner_socket = guard.as_ref().expect(<span class="string">"missing socket"</span>);
+            <span class="kw">let </span><span class="prelude-val">Some</span>(inner_socket) = guard.as_ref() <span class="kw">else </span>{
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    <span class="string">"socket closed"</span>,
+                )));
+            };
 
             <span class="kw">match </span>inner_socket.poll_recv_ready(cx) {
                 Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
@@ -1111,7 +1203,12 @@
                 }
             }
             <span class="kw">let </span>guard = <span class="self">self</span>.socket.socket.read().unwrap();
-            <span class="kw">let </span>socket = guard.as_ref().expect(<span class="string">"missing socket"</span>);
+            <span class="kw">let </span><span class="prelude-val">Some</span>(socket) = guard.as_ref() <span class="kw">else </span>{
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    <span class="string">"socket closed"</span>,
+                )));
+            };
 
             <span class="kw">match </span>socket.poll_send_ready(c) {
                 Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
@@ -1169,7 +1266,12 @@
             }
 
             <span class="kw">let </span>guard = <span class="self">self</span>.socket.socket.read().unwrap();
-            <span class="kw">let </span>socket = guard.as_ref().expect(<span class="string">"missing socket"</span>);
+            <span class="kw">let </span><span class="prelude-val">Some</span>(socket) = guard.as_ref() <span class="kw">else </span>{
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    <span class="string">"socket closed"</span>,
+                )));
+            };
 
             <span class="kw">match </span>socket.poll_send_ready(cx) {
                 Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
