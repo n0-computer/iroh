@@ -2,7 +2,7 @@ use anyhow::{Context,Result};
 use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use futures_lite::StreamExt;
-use iroh_net::{key::SecretKey, ticket::NodeTicket, Endpoint, NodeAddr, RelayMode};
+use iroh_net::{key::SecretKey, ticket::NodeTicket, Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl};
 use std::time::{Duration, Instant};
 use tracing::info;
 use std::str::FromStr;
@@ -22,10 +22,14 @@ enum Commands {
     Provide {
         #[clap(long, default_value = "1G", value_parser = parse_byte_size)]
         size: u64,
+        #[clap(long)]
+        relay_url: Option<String>,
     },
     Fetch {
         #[arg(long)]
         ticket: String,
+        #[clap(long)]
+        relay_url: Option<String>,
     },
 }
 
@@ -35,19 +39,27 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Provide { size } => provide(size.clone()).await?,
-        Commands::Fetch { ticket } => fetch(&ticket).await?,
+        Commands::Provide { size, relay_url } => provide(size.clone(), relay_url.clone()).await?,
+        Commands::Fetch { ticket , relay_url} => fetch(&ticket, relay_url.clone()).await?,
     }
 
     Ok(())
 }
 
-async fn provide(size: u64) -> anyhow::Result<()> {
+async fn provide(size: u64, relay_url: Option<String>) -> anyhow::Result<()> {
     let secret_key = SecretKey::generate();
+    let relay_mode = match relay_url {
+        Some(relay_url) => {
+            let relay_url = RelayUrl::from_str(&relay_url)?;
+            let relay_map = RelayMap::from_url(relay_url);
+            RelayMode::Custom(relay_map)
+        }
+        None => RelayMode::Default,
+    };
     let endpoint = Endpoint::builder()
         .secret_key(secret_key)
         .alpns(vec![TRANSFER_ALPN.to_vec()])
-        .relay_mode(RelayMode::Default)
+        .relay_mode(relay_mode)
         .bind()
         .await?;
 
@@ -135,13 +147,21 @@ async fn provide(size: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn fetch(ticket: &str) -> anyhow::Result<()> {
+async fn fetch(ticket: &str, relay_url: Option<String>) -> anyhow::Result<()> {
     let ticket: NodeTicket = ticket.parse()?;
     let secret_key = SecretKey::generate();
+    let relay_mode = match relay_url {
+        Some(relay_url) => {
+            let relay_url = RelayUrl::from_str(&relay_url)?;
+            let relay_map = RelayMap::from_url(relay_url);
+            RelayMode::Custom(relay_map)
+        }
+        None => RelayMode::Default,
+    };
     let endpoint = Endpoint::builder()
         .secret_key(secret_key)
         .alpns(vec![TRANSFER_ALPN.to_vec()])
-        .relay_mode(RelayMode::Default)
+        .relay_mode(relay_mode)
         .bind()
         .await?;
 
