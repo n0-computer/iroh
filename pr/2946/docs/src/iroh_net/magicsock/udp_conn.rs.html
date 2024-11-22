@@ -334,6 +334,16 @@
 <a href="#334" id="334">334</a>
 <a href="#335" id="335">335</a>
 <a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
+<a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     fmt::Debug,
     io,
@@ -425,10 +435,9 @@
                     <span class="self">self</span>.inner.read().unwrap().send(sock_ref, transmit)
                 })
             });
-            <span class="kw">match </span>res {
-                <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(())) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
-                <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(err), <span class="comment">// closed error
-                </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
+            <span class="kw">match </span>flatten(res) {
+                <span class="prelude-val">Ok</span>(()) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
+                <span class="prelude-val">Err</span>(err) =&gt; {
                     <span class="kw">if </span>err.kind() == std::io::ErrorKind::WouldBlock {
                         <span class="kw">continue</span>;
                     }
@@ -481,8 +490,9 @@
                 <span class="self">self</span>.io
                     .with_socket(|io| <span class="self">self</span>.inner.read().unwrap().recv(io.into(), bufs, meta))
             });
-            <span class="kw">match </span>res {
-                <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(count)) =&gt; {
+
+            <span class="kw">match </span>flatten(res) {
+                <span class="prelude-val">Ok</span>(count) =&gt; {
                     <span class="kw">for </span>meta <span class="kw">in </span>meta.iter().take(count) {
                         <span class="macro">trace!</span>(
                             src = %meta.addr,
@@ -494,7 +504,7 @@
                     }
                     <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(count));
                 }
-                <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
+                <span class="prelude-val">Err</span>(err) =&gt; {
                     <span class="comment">// ignore spurious wakeups
                     </span><span class="kw">if </span>err.kind() == std::io::ErrorKind::WouldBlock {
                         <span class="kw">continue</span>;
@@ -506,7 +516,6 @@
                         }
                     }
                 }
-                <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err)),
             }
         }
     }
@@ -563,6 +572,17 @@
 
     <span class="comment">// Failed to bind, including on port 0 (!).
     </span><span class="macro">bail!</span>(<span class="string">"failed to bind any ports on {:?} (tried {:?})"</span>, addr, ports);
+}
+
+<span class="doccomment">/// Flatten a result
+</span><span class="kw">fn </span>flatten&lt;T, E&gt;(
+    result: std::result::Result&lt;std::result::Result&lt;T, E&gt;, E&gt;,
+) -&gt; std::result::Result&lt;T, E&gt; {
+    <span class="kw">match </span>result {
+        <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(res)) =&gt; <span class="prelude-val">Ok</span>(res),
+        <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; <span class="prelude-val">Err</span>(err),
+        <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err),
+    }
 }
 
 <span class="doccomment">/// Poller for when the socket is writable.

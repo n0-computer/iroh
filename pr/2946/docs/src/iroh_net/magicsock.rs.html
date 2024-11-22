@@ -3903,9 +3903,6 @@
 <a href="#3903" id="3903">3903</a>
 <a href="#3904" id="3904">3904</a>
 <a href="#3905" id="3905">3905</a>
-<a href="#3906" id="3906">3906</a>
-<a href="#3907" id="3907">3907</a>
-<a href="#3908" id="3908">3908</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -5768,13 +5765,10 @@
         <span class="macro">debug!</span>(<span class="string">"link change detected: major? {}"</span>, is_major);
 
         <span class="kw">if </span>is_major {
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.pconn4.rebind() {
-                <span class="macro">warn!</span>(<span class="string">"failed to rebind socket v4: {:?}"</span>, err);
-            }
+            <span class="comment">// Only mark them as broken to trigger a rebind when used again
+            </span><span class="self">self</span>.pconn4.mark_broken();
             <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>pconn6) = <span class="self">self</span>.pconn6 {
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = pconn6.rebind() {
-                    <span class="macro">warn!</span>(<span class="string">"failed to rebind socket v4: {:?}"</span>, err);
-                }
+                pconn6.mark_broken();
             }
             <span class="self">self</span>.msock.dns_resolver.clear_cache();
             <span class="self">self</span>.msock.re_stun(<span class="string">"link-change-major"</span>);
