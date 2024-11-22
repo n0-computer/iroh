@@ -33,5 +33,9 @@ default = []
 examples = ["dep:clap", "dep:tracing-subscriber"]
 
 [[example]]
-name = "custom-protocol"
+name = "search"
+required-features = ["examples"]
+
+[[example]]
+name = "echo"
 required-features = ["examples"]

@@ -1,8 +1,8 @@
-//! Example for adding a custom protocol.
+//! Example for adding a protocol.
 //!
-//! We are building a very simple custom protocol here.
+//! We are building a very simple protocol here.
 //!
-//! Our custom protocol allows querying the text stored on the other node.
+//! Our protocol allows querying the text stored on the other node.
 //!
 //! The example is contrived - we only use memory nodes, and our database is a hashmap in a mutex,
 //! and our queries just match if the query string appears as-is.
@@ -11,16 +11,16 @@
 //!
 //! In one terminal, run
 //!
-//!     cargo run --example custom-protocol --features=examples  -- listen "hello-world" "foo-bar" "hello-moon"
+//!     cargo run --example search --features=examples  -- listen "hello-world" "foo-bar" "hello-moon"
 //!
 //! This spawns an iroh endpoint with three blobs. It will print the node's node id.
 //!
 //! In another terminal, run
 //!
-//!     cargo run --example custom-protocol --features=examples  -- query <node-id> hello
+//!     cargo run --example search --features=examples  -- query <node-id> hello
 //!
 //! Replace <node-id> with the node id from above. This will connect to the listening node with our
-//! custom protocol and query for the string `hello`. The listening node will return a number of how many
+//! protocol and query for the string `hello`. The listening node will return a number of how many
 //! strings match the query.
 //!
 //! For this example, this will print:
@@ -64,7 +64,7 @@ pub enum Command {
     },
 }
 
-/// Each custom protocol is identified by its ALPN string.
+/// Each protocol is identified by its ALPN string.
 ///
 /// The ALPN, or application-layer protocol negotiation, is exchanged in the connection handshake,
 /// and the connection is aborted unless both nodes pass the same bytestring.
@@ -78,7 +78,7 @@ async fn main() -> Result<()> {
     // Build an endpoint
     let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
-    // Build our custom protocol handler. The `builder` exposes access to various subsystems in the
+    // Build our protocol handler. The `builder` exposes access to various subsystems in the
     // iroh node. In our case, we need a blobs client and the endpoint.
     let proto = BlobSearch::new(endpoint.clone());
 
@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
         }
         Command::Query { node_id, query } => {
             // Query the remote node.
-            // This will send the query over our custom protocol, read hashes on the reply stream,
+            // This will send the query over our protocol, read hashes on the reply stream,
             // and download each hash over iroh-blobs.
             let num_matches = proto.query_remote(node_id, &query).await?;
 
