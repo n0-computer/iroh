@@ -89,10 +89,9 @@ impl AsyncUdpSocket for UdpConn {
                     self.inner.read().unwrap().send(sock_ref, transmit)
                 })
             });
-            match res {
-                Ok(Ok(())) => return Ok(()),
-                Err(err) => return Err(err), // closed error
-                Ok(Err(err)) => {
+            match flatten(res) {
+                Ok(()) => return Ok(()),
+                Err(err) => {
                     if err.kind() == std::io::ErrorKind::WouldBlock {
                         continue;
                     }
@@ -145,8 +144,9 @@ impl AsyncUdpSocket for UdpConn {
                 self.io
                     .with_socket(|io| self.inner.read().unwrap().recv(io.into(), bufs, meta))
             });
-            match res {
-                Ok(Ok(count)) => {
+
+            match flatten(res) {
+                Ok(count) => {
                     for meta in meta.iter().take(count) {
                         trace!(
                             src = %meta.addr,
@@ -158,7 +158,7 @@ impl AsyncUdpSocket for UdpConn {
                     }
                     return Poll::Ready(Ok(count));
                 }
-                Ok(Err(err)) => {
+                Err(err) => {
                     // ignore spurious wakeups
                     if err.kind() == std::io::ErrorKind::WouldBlock {
                         continue;
@@ -170,7 +170,6 @@ impl AsyncUdpSocket for UdpConn {
                         }
                     }
                 }
-                Err(err) => return Poll::Ready(Err(err)),
             }
         }
     }
@@ -227,6 +226,17 @@ fn bind(mut addr: SocketAddr) -> anyhow::Result<UdpSocket> {
 
     // Failed to bind, including on port 0 (!).
     bail!("failed to bind any ports on {:?} (tried {:?})", addr, ports);
+}
+
+/// Flatten a result
+fn flatten<T, E>(
+    result: std::result::Result<std::result::Result<T, E>, E>,
+) -> std::result::Result<T, E> {
+    match result {
+        Ok(Ok(res)) => Ok(res),
+        Ok(Err(err)) => Err(err),
+        Err(err) => Err(err),
+    }
 }
 
 /// Poller for when the socket is writable.
