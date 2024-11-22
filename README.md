@@ -28,21 +28,25 @@ less net work for networks
 
 ## What is iroh?
 
-Iroh gives you an API for dialing by public key. You say “connect to that phone”, iroh will find & maintain the fastest connection for you, regardless of where it is.
+Iroh gives you an API for dialing by public key.
+You say “connect to that phone”, iroh will find & maintain the fastest connection for you, regardless of where it is.
 
 ### Hole-punching
 
-The fastest route a direct connection. If necessary, iroh tries to hole-punch. Should this fail, it can fall back to an open ecosystem of public relay servers. To ensure these connections are as fast as possible, we [continuously measure iroh][iroh-perf].
+The fastest route is a direct connection, so if necessary, iroh tries to hole-punch.
+Should this fail, it can fall back to an open ecosystem of public relay servers.
+To ensure these connections are as fast as possible, we [continuously measure iroh][iroh-perf].
 
 ### Built on [QUIC]
 
-Iroh uses [quinn] to establish [QUIC] connections between nodes. This way you get authenticated encryption, concurrent streams with stream prioirities and a datagram transport out of the box.
+Iroh uses [quinn] to establish [QUIC] connections between nodes.
+This way you get authenticated encryption, concurrent streams with stream prioirities and a datagram transport out of the box.
 
 ## Compose Protocols
 
-Use preexisting protocols built on iroh instead of writing your own:
+Use pre-existing protocols built on iroh instead of writing your own:
 - [iroh-blobs] for [BLAKE3]-based content-addressed blob transfer scaling from kilobytes to terrabytes
-- [iroh-gossip] for establishing publish-subscribe overlay networks that scale requiring only connections than your average phone can handle
+- [iroh-gossip] for establishing publish-subscribe overlay networks that scale, requiring only resources that your average phone can handle
 - [iroh-docs] for an eventually-consistent key-value store of [iroh-blobs] blobs
 - [iroh-willow] for an (in-construction) implementation of the [willow protocol]
 
@@ -72,7 +76,7 @@ send.finish()?;
 let response = recv.read_to_end(1000).await?;
 assert_eq!(&response, b"Hello, world!");
 
-// Close the endpoint (and all its connections) in one:
+// Close the endpoint and all its connections in one:
 endpoint.close(0u32.into(), b"bye!").await?;
 ```
 
@@ -118,6 +122,7 @@ If you want to use iroh from other languages, make sure to check out [iroh-ffi],
 ### Links
 
 - [Introducing Iroh (video)][iroh-yt-video]
+- [Iroh Documentation][docs]
 - [Iroh Examples]
 - [Iroh Experiments]
 
@@ -167,3 +172,4 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 [Iroh Experiments]: https://github.com/n0-computer/iroh-experiments
 [echo-rs]: /iroh-router/examples/echo.rs
 [iroh-perf]: https://perf.iroh.computer
+[docs]: https://iroh.computer/docs
