@@ -22,6 +22,7 @@ use crossterm::{
 };
 use derive_more::Display;
 use futures_lite::StreamExt;
+use futures_util::Stream;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     base::ticket::{BlobTicket, Ticket},
@@ -34,7 +35,7 @@ use iroh::{
         defaults::DEFAULT_STUN_PORT,
         discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
         dns::default_resolver,
-        endpoint::{self, Connection, ConnectionTypeStream, RecvStream, RemoteInfo, SendStream},
+        endpoint::{self, Connection, ConnectionType, RecvStream, RemoteInfo, SendStream},
         key::{PublicKey, SecretKey},
         metrics::MagicsockMetrics,
         netcheck,
@@ -711,10 +712,10 @@ async fn connect(
     let conn = endpoint.connect(node_addr, &DR_RELAY_ALPN).await;
     match conn {
         Ok(connection) => {
-            let maybe_stream = endpoint.conn_type_stream(node_id);
+            let maybe_watcher = endpoint.conn_type(node_id);
             let gui = Gui::new(endpoint, node_id);
-            if let Ok(stream) = maybe_stream {
-                log_connection_changes(gui.mp.clone(), node_id, stream);
+            if let Ok(watcher) = maybe_watcher {
+                log_connection_changes(gui.mp.clone(), node_id, watcher.stream());
             }
 
             if let Err(cause) = passive_side(gui, connection).await {
@@ -799,8 +800,12 @@ async fn accept(
                         println!("Accepted connection from {}", remote_peer_id);
                         let t0 = Instant::now();
                         let gui = Gui::new(endpoint.clone(), remote_peer_id);
-                        if let Ok(stream) = endpoint.conn_type_stream(remote_peer_id) {
-                            log_connection_changes(gui.mp.clone(), remote_peer_id, stream);
+                        if let Ok(watcher) = endpoint.conn_type(remote_peer_id) {
+                            log_connection_changes(
+                                gui.mp.clone(),
+                                remote_peer_id,
+                                watcher.stream(),
+                            );
                         }
                         let res = active_side(connection, &config, Some(&gui)).await;
                         gui.clear();
@@ -827,7 +832,11 @@ async fn accept(
 }
 
 /// Logs the connection changes to the multiprogress.
-fn log_connection_changes(pb: MultiProgress, node_id: NodeId, mut stream: ConnectionTypeStream) {
+fn log_connection_changes(
+    pb: MultiProgress,
+    node_id: NodeId,
+    mut stream: impl Stream<Item = ConnectionType> + Unpin + Send + 'static,
+) {
     tokio::spawn(async move {
         let start = Instant::now();
         while let Some(conn_type) = stream.next().await {

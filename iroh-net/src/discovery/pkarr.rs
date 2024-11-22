@@ -55,13 +55,13 @@ use tokio::{
 };
 use tracing::{debug, error_span, info, warn, Instrument};
 use url::Url;
-use watchable::{Watchable, Watcher};
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
     dns::node_info::NodeInfo,
     endpoint::force_staging_infra,
     key::SecretKey,
+    util::watchable::{Error, Watchable, Watcher},
     AddrInfo, Endpoint, NodeId,
 };
 
@@ -118,7 +118,7 @@ pub const DEFAULT_REPUBLISH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrPublisher {
     node_id: NodeId,
-    watchable: Watchable<Option<NodeInfo>>,
+    watchable: Watchable<NodeInfo>,
     join_handle: Arc<JoinHandle<()>>,
 }
 
@@ -153,7 +153,7 @@ impl PkarrPublisher {
         debug!("creating pkarr publisher that publishes to {pkarr_relay}");
         let node_id = secret_key.public();
         let pkarr_client = PkarrRelayClient::new(pkarr_relay);
-        let watchable = Watchable::default();
+        let watchable = Watchable::new();
         let service = PublisherService {
             ttl,
             watcher: watchable.watch(),
@@ -203,7 +203,7 @@ impl PkarrPublisher {
             (None, info.direct_addresses.clone())
         };
         let info = NodeInfo::new(self.node_id, relay_url, direct_addresses);
-        self.watchable.update(Some(info)).ok();
+        self.watchable.set(info);
     }
 }
 
@@ -229,18 +229,21 @@ struct PublisherService {
     secret_key: SecretKey,
     #[debug("PkarrClient")]
     pkarr_client: PkarrRelayClient,
-    watcher: Watcher<Option<NodeInfo>>,
+    watcher: Watcher<NodeInfo>,
     ttl: u32,
     republish_interval: Duration,
 }
 
 impl PublisherService {
-    async fn run(self) {
+    async fn run(mut self) {
         let mut failed_attempts = 0;
         let republish = tokio::time::sleep(Duration::MAX);
         tokio::pin!(republish);
         loop {
-            if let Some(info) = self.watcher.get() {
+            let Ok(info) = self.watcher.get() else {
+                break; // disconnected
+            };
+            if let Some(info) = info {
                 if let Err(err) = self.publish_current(info).await {
                     failed_attempts += 1;
                     // Retry after increasing timeout
@@ -263,9 +266,9 @@ impl PublisherService {
             }
             // Wait until either the retry/republish timeout is reached, or the node info changed.
             tokio::select! {
-                res = self.watcher.watch_async() => match res {
-                    Ok(()) => debug!("Publish node info to pkarr (info changed)"),
-                    Err(_disconnected) => break,
+                res = self.watcher.updated() => match res {
+                    Ok(_) => debug!("Publish node info to pkarr (info changed)"),
+                    Err(Error::WatchableClosed) => break,
                 },
                 _ = &mut republish => debug!("Publish node info to pkarr (interval elapsed)"),
             }

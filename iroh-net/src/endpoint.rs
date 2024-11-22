@@ -36,7 +36,9 @@ use crate::{
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
     magicsock::{self, Handle, QuicMappedAddr},
-    tls, NodeId, RelayMode, RelayUrl,
+    tls,
+    util::watchable::Watcher,
+    NodeId, RelayMode, RelayUrl,
 };
 
 mod rtt_actor;
@@ -62,8 +64,8 @@ pub use quinn_proto::{
 
 use self::rtt_actor::RttMessage;
 pub use super::magicsock::{
-    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
-    DirectAddrsStream, RemoteInfo, Source,
+    ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType, DirectAddrsStream,
+    RemoteInfo, Source,
 };
 
 /// The delay to fall back to discovery when direct addresses fail.
@@ -671,7 +673,7 @@ impl Endpoint {
 
         let rtt_msg = RttMessage::NewConnection {
             connection: connection.weak_handle(),
-            conn_type_changes: self.conn_type_stream(node_id)?,
+            conn_type_changes: self.conn_type(node_id)?.stream(),
             node_id,
         };
         if let Err(err) = self.rtt_actor.msg_tx.send(rtt_msg).await {
@@ -813,7 +815,7 @@ impl Endpoint {
     /// servers are configured with [`Builder::relay_mode`] this stream will never yield an
     /// item.
     pub fn watch_home_relay(&self) -> impl Stream<Item = RelayUrl> {
-        self.msock.watch_home_relay()
+        self.msock.home_relay().stream().filter_map(|r| r)
     }
 
     /// Returns the direct addresses of this [`Endpoint`].
@@ -915,8 +917,8 @@ impl Endpoint {
     /// # Errors
     ///
     /// Will error if we do not have any address information for the given `node_id`.
-    pub fn conn_type_stream(&self, node_id: NodeId) -> Result<ConnectionTypeStream> {
-        self.msock.conn_type_stream(node_id)
+    pub fn conn_type(&self, node_id: NodeId) -> Result<Watcher<ConnectionType>> {
+        self.msock.conn_type(node_id)
     }
 
     /// Returns the DNS resolver used in this [`Endpoint`].
@@ -1304,13 +1306,13 @@ fn try_send_rtt_msg(conn: &Connection, magic_ep: &Endpoint) {
         warn!(?conn, "failed to get remote node id");
         return;
     };
-    let Ok(conn_type_changes) = magic_ep.conn_type_stream(peer_id) else {
-        warn!(?conn, "failed to create conn_type_stream");
+    let Ok(conn_type_changes) = magic_ep.conn_type(peer_id) else {
+        warn!(?conn, "failed to create conn_type stream");
         return;
     };
     let rtt_msg = RttMessage::NewConnection {
         connection: conn.weak_handle(),
-        conn_type_changes,
+        conn_type_changes: conn_type_changes.stream(),
         node_id: peer_id,
     };
     if let Err(err) = magic_ep.rtt_actor.msg_tx.try_send(rtt_msg) {
@@ -1807,7 +1809,7 @@ mod tests {
             .unwrap();
 
         async fn handle_direct_conn(ep: &Endpoint, node_id: PublicKey) -> Result<()> {
-            let mut stream = ep.conn_type_stream(node_id)?;
+            let mut stream = ep.conn_type(node_id)?.stream();
             let src = ep.node_id().fmt_short();
             let dst = node_id.fmt_short();
             while let Some(conn_type) = stream.next().await {

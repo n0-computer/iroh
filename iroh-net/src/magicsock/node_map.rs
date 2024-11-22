@@ -26,6 +26,7 @@ use super::{
 use crate::{
     disco::{CallMeMaybe, Pong, SendAddr},
     key::PublicKey,
+    util::watchable::{Watcher, WatcherStream},
     NodeAddr,
 };
 
@@ -269,8 +270,8 @@ impl NodeMap {
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
-    pub(super) fn conn_type_stream(&self, node_id: NodeId) -> anyhow::Result<ConnectionTypeStream> {
-        self.inner.lock().conn_type_stream(node_id)
+    pub(super) fn conn_type(&self, node_id: NodeId) -> anyhow::Result<Watcher<ConnectionType>> {
+        self.inner.lock().conn_type(node_id)
     }
 
     /// Get the [`RemoteInfo`]s for the node identified by [`NodeId`].
@@ -430,12 +431,9 @@ impl NodeMapInner {
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
-    fn conn_type_stream(&self, node_id: NodeId) -> anyhow::Result<ConnectionTypeStream> {
+    fn conn_type(&self, node_id: NodeId) -> anyhow::Result<Watcher<ConnectionType>> {
         match self.get(NodeStateKey::NodeId(node_id)) {
-            Some(ep) => Ok(ConnectionTypeStream {
-                initial: Some(ep.conn_type()),
-                inner: ep.conn_type_stream(),
-            }),
+            Some(ep) => Ok(ep.conn_type()),
             None => anyhow::bail!("No endpoint for {node_id:?} found"),
         }
     }
@@ -587,25 +585,6 @@ impl NodeMapInner {
 
             self.by_quic_mapped_addr.remove(ep.quic_mapped_addr());
         }
-    }
-}
-
-/// Stream returning `ConnectionTypes`
-#[derive(Debug)]
-pub struct ConnectionTypeStream {
-    initial: Option<ConnectionType>,
-    inner: watchable::WatcherStream<ConnectionType>,
-}
-
-impl Stream for ConnectionTypeStream {
-    type Item = ConnectionType;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = &mut *self;
-        if let Some(initial_conn_type) = this.initial.take() {
-            return Poll::Ready(Some(initial_conn_type));
-        }
-        Pin::new(&mut this.inner).poll_next(cx)
     }
 }
 

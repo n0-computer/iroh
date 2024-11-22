@@ -6,12 +6,12 @@
 
 #[cfg(iroh_loom)]
 use loom::sync;
-use std::pin::Pin;
 #[cfg(not(iroh_loom))]
 use std::sync;
 
 use std::collections::VecDeque;
 use std::future::{self, Future};
+use std::pin::Pin;
 use std::sync::{Arc, Weak};
 use std::task::{self, Poll, Waker};
 use sync::{Mutex, RwLock};
@@ -19,6 +19,7 @@ use sync::{Mutex, RwLock};
 use futures_lite::stream::Stream;
 
 const INITIAL_EPOCH: u64 = 1;
+const PRE_INITIAL_EPOCH: u64 = 0;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -67,7 +68,7 @@ impl<T: Clone> Shared<T> {
     ///
     /// If the value is already initialized the future will complete immediately.
     fn initialized(&self) -> impl Future<Output = T> + '_ {
-        future::poll_fn(|cx| self.poll_next(cx, INITIAL_EPOCH).map(|(_, t)| t))
+        future::poll_fn(|cx| self.poll_next(cx, PRE_INITIAL_EPOCH).map(|(_, t)| t))
     }
 
     fn updated(&self) -> impl Future<Output = T> + '_ {
@@ -227,13 +228,13 @@ impl<T: Clone + Eq> Watcher<T> {
     }
 
     /// Returns a future completing once the value is initialized.
-    pub fn initialized(&mut self) -> WatchNextFut<'_, T> {
-        self.epoch = INITIAL_EPOCH;
+    pub fn initialized(&mut self) -> WatchNextFut<T> {
+        self.epoch = PRE_INITIAL_EPOCH;
         WatchNextFut { watcher: self }
     }
 
     /// Returns a future completing once a new value is set.
-    pub(crate) fn updated(&mut self) -> WatchNextFut<'_, T> {
+    pub(crate) fn updated(&mut self) -> WatchNextFut<T> {
         WatchNextFut { watcher: self }
     }
 
@@ -245,10 +246,10 @@ impl<T: Clone + Eq> Watcher<T> {
     ///
     /// Note however that only the last item is stored.  If the stream is not polled when an
     /// item is available it can be replaced with another item by the time it is polled.
-    pub fn stream(mut self) -> impl Stream<Item = T> {
+    pub fn stream(mut self) -> WatcherStream<T> {
         debug_assert!(self.epoch > 0);
         self.epoch -= 1;
-        WatchNextStream { watcher: self }
+        WatcherStream { watcher: self }
     }
 
     /// Returns a stream which will yield an item for changes to the watched value.
@@ -258,8 +259,8 @@ impl<T: Clone + Eq> Watcher<T> {
     ///
     /// Note however that only the last item is stored.  If the stream is not polled when an
     /// item is available it can be replaced with another item by the time it is polled.
-    pub fn stream_updates_only(self) -> impl Stream<Item = T> {
-        WatchNextStream { watcher: self }
+    pub fn stream_updates_only(self) -> WatcherStream<T> {
+        WatcherStream { watcher: self }
     }
 }
 
@@ -276,7 +277,7 @@ impl<'a, T: Clone + Eq> Future for WatchNextFut<'a, T> {
         let Some(shared) = self.watcher.shared.upgrade() else {
             return Poll::Ready(Err(Error::WatchableClosed));
         };
-        match shared.poll_next(cx, INITIAL_EPOCH) {
+        match shared.poll_next(cx, self.watcher.epoch) {
             Poll::Pending => Poll::Pending,
             Poll::Ready((current_epoch, value)) => {
                 self.watcher.epoch = current_epoch;
@@ -288,11 +289,11 @@ impl<'a, T: Clone + Eq> Future for WatchNextFut<'a, T> {
 
 #[derive(Debug, Clone)]
 #[repr(transparent)]
-pub struct WatchNextStream<T> {
+pub struct WatcherStream<T> {
     watcher: Watcher<T>,
 }
 
-impl<T: Clone + Eq> Stream for WatchNextStream<T> {
+impl<T: Clone + Eq> Stream for WatcherStream<T> {
     type Item = T;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {

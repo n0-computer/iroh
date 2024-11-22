@@ -52,10 +52,10 @@ use tokio::{
 };
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
-use watchable::Watchable;
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
+    util::watchable::Watchable,
     AddrInfo, Endpoint, NodeId,
 };
 
@@ -79,7 +79,7 @@ pub struct LocalSwarmDiscovery {
     handle: AbortOnDropHandle<()>,
     sender: mpsc::Sender<Message>,
     /// When `local_addrs` changes, we re-publish our [`AddrInfo`]
-    local_addrs: Watchable<Option<AddrInfo>>,
+    local_addrs: Watchable<AddrInfo>,
 }
 
 #[derive(Debug)]
@@ -152,8 +152,8 @@ impl LocalSwarmDiscovery {
             &rt,
         )?;
 
-        let local_addrs: Watchable<Option<AddrInfo>> = Watchable::new(None);
-        let addrs_change = local_addrs.watch();
+        let local_addrs: Watchable<AddrInfo> = Watchable::new();
+        let mut addrs_change = local_addrs.watch();
         let discovery_fut = async move {
             let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
             let mut subscribers = Subscribers::new();
@@ -169,7 +169,7 @@ impl LocalSwarmDiscovery {
                     msg = recv.recv() => {
                         msg
                     }
-                    Ok(Some(addrs))= addrs_change.next_value_async() => {
+                    Ok(addrs) = addrs_change.updated() => {
                         tracing::trace!(?addrs, "LocalSwarmDiscovery address changed");
                         discovery.remove_all();
                         let addrs =
@@ -378,7 +378,7 @@ impl Discovery for LocalSwarmDiscovery {
     }
 
     fn publish(&self, info: &AddrInfo) {
-        self.local_addrs.replace(Some(info.clone()));
+        self.local_addrs.set(info.clone());
     }
 
     fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {

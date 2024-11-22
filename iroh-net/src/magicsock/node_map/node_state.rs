@@ -11,7 +11,6 @@ use netwatch::ip::is_unicast_link_local;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, event, info, instrument, trace, warn, Level};
-use watchable::{Watchable, WatcherStream};
 
 use super::{
     best_addr::{self, ClearReason, Source as BestAddrSource},
@@ -24,7 +23,10 @@ use crate::{
     endpoint::AddrInfo,
     key::PublicKey,
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
-    util::relay_only_mode,
+    util::{
+        relay_only_mode,
+        watchable::{Watchable, Watcher},
+    },
     NodeAddr, NodeId,
 };
 
@@ -175,7 +177,7 @@ impl NodeState {
             sent_pings: HashMap::new(),
             last_used: options.active.then(Instant::now),
             last_call_me_maybe: None,
-            conn_type: Watchable::new(ConnectionType::None),
+            conn_type: Watchable::new(),
             has_been_direct: false,
         }
     }
@@ -192,17 +194,13 @@ impl NodeState {
         self.id
     }
 
-    pub(super) fn conn_type(&self) -> ConnectionType {
-        self.conn_type.get()
-    }
-
-    pub(super) fn conn_type_stream(&self) -> WatcherStream<ConnectionType> {
-        self.conn_type.watch().into_stream()
+    pub(super) fn conn_type(&self) -> Watcher<ConnectionType> {
+        self.conn_type.watch()
     }
 
     /// Returns info about this node.
     pub(super) fn info(&self, now: Instant) -> RemoteInfo {
-        let conn_type = self.conn_type.get();
+        let conn_type = self.conn_type.get().unwrap_or_default();
         let latency = match conn_type {
             ConnectionType::Direct(addr) => self
                 .udp_paths
@@ -312,7 +310,7 @@ impl NodeState {
             self.has_been_direct = true;
             inc!(MagicsockMetrics, nodes_contacted_directly);
         }
-        if let Ok(prev_typ) = self.conn_type.update(typ.clone()) {
+        if let Some(prev_typ) = self.conn_type.set(typ.clone()) {
             // The connection type has changed.
             event!(
                 target: "events.net.conn_type.changed",
@@ -1404,7 +1402,7 @@ impl RemoteInfo {
 }
 
 /// The type of connection we have to the endpoint.
-#[derive(derive_more::Display, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(derive_more::Display, Default, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ConnectionType {
     /// Direct UDP connection
     #[display("direct({_0})")]
@@ -1419,6 +1417,7 @@ pub enum ConnectionType {
     #[display("mixed(udp: {_0}, relay: {_1})")]
     Mixed(SocketAddr, RelayUrl),
     /// We have no verified connection to this PublicKey
+    #[default]
     #[display("none")]
     None,
 }
@@ -1496,7 +1495,7 @@ mod tests {
                     sent_pings: HashMap::new(),
                     last_used: Some(now),
                     last_call_me_maybe: None,
-                    conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
+                    conn_type: Watchable::new_initialized(ConnectionType::Direct(ip_port.into())),
                     has_been_direct: true,
                 },
                 ip_port.into(),
@@ -1516,7 +1515,7 @@ mod tests {
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
                 last_call_me_maybe: None,
-                conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
+                conn_type: Watchable::new_initialized(ConnectionType::Relay(send_addr.clone())),
                 has_been_direct: false,
             }
         };
@@ -1543,7 +1542,7 @@ mod tests {
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
                 last_call_me_maybe: None,
-                conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
+                conn_type: Watchable::new_initialized(ConnectionType::Relay(send_addr.clone())),
                 has_been_direct: false,
             }
         };
@@ -1580,7 +1579,7 @@ mod tests {
                     sent_pings: HashMap::new(),
                     last_used: Some(now),
                     last_call_me_maybe: None,
-                    conn_type: Watchable::new(ConnectionType::Mixed(
+                    conn_type: Watchable::new_initialized(ConnectionType::Mixed(
                         socket_addr,
                         send_addr.clone(),
                     )),

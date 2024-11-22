@@ -51,7 +51,6 @@ use tracing::{
     Instrument, Level, Span,
 };
 use url::Url;
-use watchable::Watchable;
 
 use self::{
     metrics::Metrics as MagicsockMetrics,
@@ -66,7 +65,9 @@ use crate::{
     dns::DnsResolver,
     endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
-    netcheck, AddrInfo, RelayMap, RelayUrl,
+    netcheck,
+    util::watchable::{Watchable, Watcher, WatcherStream},
+    AddrInfo, RelayMap, RelayUrl,
 };
 
 mod metrics;
@@ -80,7 +81,7 @@ pub use node_map::Source;
 pub(super) use self::timer::Timer;
 pub use self::{
     metrics::Metrics,
-    node_map::{ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, RemoteInfo},
+    node_map::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo},
 };
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
@@ -255,7 +256,7 @@ impl MagicSock {
     ///
     /// If `None`, then we are not connected to any relay nodes.
     pub(crate) fn my_relay(&self) -> Option<RelayUrl> {
-        self.my_relay.get()
+        self.my_relay.get().flatten()
     }
 
     /// Get the current proxy configuration.
@@ -267,7 +268,7 @@ impl MagicSock {
     ///
     /// If we are not connected to any relay nodes, set this to `None`.
     fn set_my_relay(&self, my_relay: Option<RelayUrl>) -> Option<RelayUrl> {
-        self.my_relay.replace(my_relay)
+        self.my_relay.set(my_relay).flatten()
     }
 
     fn is_closing(&self) -> bool {
@@ -326,14 +327,8 @@ impl MagicSock {
     ///
     /// Note that this can be used to wait for the initial home relay to be known. If the home
     /// relay is known at this point, it will be the first item in the stream.
-    pub(crate) fn watch_home_relay(&self) -> impl Stream<Item = RelayUrl> {
-        let current = futures_lite::stream::iter(self.my_relay());
-        let changes = self
-            .my_relay
-            .watch()
-            .into_stream()
-            .filter_map(|maybe_relay| maybe_relay);
-        current.chain(changes)
+    pub(crate) fn home_relay(&self) -> Watcher<Option<RelayUrl>> {
+        self.my_relay.watch()
     }
 
     /// Returns a stream that reports the [`ConnectionType`] we have to the
@@ -349,8 +344,8 @@ impl MagicSock {
     ///
     /// Will return an error if there is no address information known about the
     /// given `node_id`.
-    pub(crate) fn conn_type_stream(&self, node_id: NodeId) -> Result<ConnectionTypeStream> {
-        self.node_map.conn_type_stream(node_id)
+    pub(crate) fn conn_type(&self, node_id: NodeId) -> Result<Watcher<ConnectionType>> {
+        self.node_map.conn_type(node_id)
     }
 
     /// Returns the socket address which can be used by the QUIC layer to dial this node.
@@ -1515,7 +1510,6 @@ impl Handle {
         self.msock.closing.store(true, Ordering::Relaxed);
         self.msock.actor_sender.send(ActorMessage::Shutdown).await?;
         self.msock.closed.store(true, Ordering::SeqCst);
-        self.msock.direct_addrs.addrs.shutdown();
 
         let mut tasks = self.actor_tasks.lock().await;
 
@@ -2459,7 +2453,7 @@ impl DiscoveredDirectAddrs {
     /// Updates the direct addresses, returns `true` if they changed, `false` if not.
     fn update(&self, addrs: BTreeSet<DirectAddr>) -> bool {
         *self.updated_at.write().unwrap() = Some(Instant::now());
-        let updated = self.addrs.update(addrs).is_ok();
+        let updated = self.addrs.set(addrs).is_some();
         if updated {
             event!(
                 target: "events.net.direct_addrs",
@@ -2471,7 +2465,12 @@ impl DiscoveredDirectAddrs {
     }
 
     fn sockaddrs(&self) -> BTreeSet<SocketAddr> {
-        self.addrs.read().iter().map(|da| da.addr).collect()
+        self.addrs
+            .get()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|da| da.addr)
+            .collect()
     }
 
     /// Whether the direct addr information is considered "fresh".
@@ -2497,14 +2496,23 @@ impl DiscoveredDirectAddrs {
     }
 
     fn to_call_me_maybe_message(&self) -> disco::CallMeMaybe {
-        let my_numbers = self.addrs.read().iter().map(|da| da.addr).collect();
+        let my_numbers = self
+            .addrs
+            .get()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|da| da.addr)
+            .collect();
         disco::CallMeMaybe { my_numbers }
     }
 
     fn updates_stream(&self) -> DirectAddrsStream {
+        fn non_empty(set: &BTreeSet<DirectAddr>) -> bool {
+            !set.is_empty()
+        }
+
         DirectAddrsStream {
-            initial: Some(self.addrs.get()),
-            inner: self.addrs.watch().into_stream(),
+            inner: self.addrs.watch().stream().filter(non_empty),
         }
     }
 }
@@ -2512,40 +2520,17 @@ impl DiscoveredDirectAddrs {
 /// Stream returning local endpoints as they change.
 #[derive(Debug)]
 pub struct DirectAddrsStream {
-    initial: Option<BTreeSet<DirectAddr>>,
-    inner: watchable::WatcherStream<BTreeSet<DirectAddr>>,
+    inner: futures_lite::stream::Filter<
+        WatcherStream<BTreeSet<DirectAddr>>,
+        fn(&BTreeSet<DirectAddr>) -> bool,
+    >,
 }
 
 impl Stream for DirectAddrsStream {
     type Item = BTreeSet<DirectAddr>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = &mut *self;
-        if let Some(addrs) = this.initial.take() {
-            if !addrs.is_empty() {
-                return Poll::Ready(Some(addrs));
-            }
-        }
-        loop {
-            match Pin::new(&mut this.inner).poll_next(cx) {
-                Poll::Pending => break Poll::Pending,
-                Poll::Ready(Some(addrs)) => {
-                    if addrs.is_empty() {
-                        // When we start up we might initially have empty direct addrs as
-                        // the magic socket has not yet figured this out.  Later on this set
-                        // should never be empty.  However even if it was the magicsock
-                        // would be in a state not very usable so skipping those events is
-                        // probably fine.
-                        // To make sure we install the right waker we loop rather than
-                        // returning Poll::Pending immediately here.
-                        continue;
-                    } else {
-                        break Poll::Ready(Some(addrs));
-                    }
-                }
-                Poll::Ready(None) => break Poll::Ready(None),
-            }
-        }
+        Pin::new(&mut self.as_mut().inner).poll_next(cx)
     }
 }
 
@@ -3599,7 +3584,7 @@ mod tests {
             ..Default::default()
         };
         let msock = MagicSock::spawn(ops).await.unwrap();
-        let mut relay_stream = msock.watch_home_relay();
+        let mut relay_stream = msock.home_relay().stream().filter_map(|r| r);
 
         // no relay, nothing to report
         assert_eq!(
@@ -3614,7 +3599,7 @@ mod tests {
 
         // drop the stream and query it again, the result should be immediately available
 
-        let mut relay_stream = msock.watch_home_relay();
+        let mut relay_stream = msock.home_relay().stream().filter_map(|r| r);
         assert_eq!(
             futures_lite::future::poll_once(relay_stream.next()).await,
             Some(Some(url))
