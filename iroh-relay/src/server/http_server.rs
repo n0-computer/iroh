@@ -270,7 +270,20 @@ impl ServerBuilder {
     }
 }
 
+/// The hyper Service that serves the actual relay endpoints.
+#[derive(Clone, Debug)]
+struct RelayService(Arc<Inner>);
+
+#[derive(Debug)]
+struct Inner {
+    handlers: Handlers,
+    headers: HeaderMap,
+    server_channel: mpsc::Sender<Message>,
+    write_timeout: Duration,
+}
+
 impl RelayService {
+    /// Upgrades the HTTP connection to the relay protocol, runs relay client.
     fn call_client_conn(
         &self,
         mut req: Request<Incoming>,
@@ -325,7 +338,7 @@ impl RelayService {
                     None
                 };
 
-                debug!("upgrading protocol: {:?}", protocol);
+                debug!(?protocol, "upgrading connection");
 
                 // Setup a future that will eventually receive the upgraded
                 // connection and talk a new protocol, and spawn the future
@@ -338,19 +351,18 @@ impl RelayService {
                     async move {
                         match hyper::upgrade::on(&mut req).await {
                             Ok(upgraded) => {
-                                if let Err(e) =
+                                if let Err(err) =
                                     this.0.relay_connection_handler(protocol, upgraded).await
                                 {
                                     warn!(
-                                        "upgrade to \"{}\": io error: {:?}",
-                                        e,
-                                        protocol.upgrade_header()
+                                        ?protocol,
+                                        "error accepting upgraded connection: {err:#}",
                                     );
                                 } else {
-                                    debug!("upgrade to \"{}\" success", protocol.upgrade_header());
+                                    debug!(?protocol, "upgraded connection completed");
                                 };
                             }
-                            Err(e) => warn!("upgrade error: {:?}", e),
+                            Err(err) => warn!("upgrade error: {err:#}"),
                         }
                     }
                     .instrument(debug_span!("handler")),
@@ -383,39 +395,26 @@ impl Service<Request<Incoming>> for RelayService {
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn call(&self, req: Request<Incoming>) -> Self::Future {
-        // if the request hits the relay endpoint
-        // or /derp for backwards compat
+        // Create a client if the request hits the relay endpoint.
         if matches!(
             (req.method(), req.uri().path()),
             (&hyper::Method::GET, LEGACY_RELAY_PATH | RELAY_PATH)
         ) {
             let this = self.clone();
-            // otherwise handle the relay connection as normal
             return Box::pin(async move { this.call_client_conn(req).await.map_err(Into::into) });
         }
+        // Otherwise handle the relay connection as normal.
 
-        // check all other possible endpoints
+        // Check all other possible endpoints.
         let uri = req.uri().clone();
         if let Some(res) = self.0.handlers.get(&(req.method().clone(), uri.path())) {
             let f = res(req, self.0.default_response());
             return Box::pin(async move { f });
         }
-        // otherwise return 404
+        // Otherwise return 404
         let res = self.0.not_found_fn(req, self.0.default_response());
         Box::pin(async move { res })
     }
-}
-
-/// The hyper Service that servers the actual relay endpoints
-#[derive(Clone, Debug)]
-struct RelayService(Arc<Inner>);
-
-#[derive(Debug)]
-struct Inner {
-    handlers: Handlers,
-    headers: HeaderMap,
-    server_channel: mpsc::Sender<Message>,
-    write_timeout: Duration,
 }
 
 impl Inner {
@@ -441,6 +440,10 @@ impl Inner {
     }
 
     /// The server HTTP handler to do HTTP upgrades.
+    ///
+    /// This handler runs while doing the connection upgrade handshake.  Once the connection
+    /// is upgraded it sends the stream to the relay server which takes it over.  After
+    /// having sent off the connection this handler returns.
     async fn relay_connection_handler(&self, protocol: Protocol, upgraded: Upgraded) -> Result<()> {
         debug!(?protocol, "relay_connection upgraded");
         let (io, read_buf) = downcast_upgrade(upgraded)?;

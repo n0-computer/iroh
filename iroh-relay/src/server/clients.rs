@@ -63,8 +63,8 @@ impl Clients {
         conn_num
     }
 
+    /// Builds the client handler and starts the read & write loops for the connection.
     pub async fn register(&mut self, client_config: ClientConnConfig) {
-        // this builds the client handler & starts the read & write loops to that client connection
         let key = client_config.node_id;
         trace!("registering client: {:?}", key);
         let conn_num = self.next_conn_num();

@@ -1,16 +1,16 @@
 //! The server-side representation of an ongoing client relaying connection.
 
-use std::time::Duration;
+use std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use futures_lite::StreamExt;
-use futures_util::SinkExt;
+use futures_sink::Sink;
+use futures_util::{SinkExt, Stream, StreamExt};
 use iroh_base::key::NodeId;
 use iroh_metrics::{inc, inc_by};
 use tokio::sync::mpsc;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::{info, trace, warn, Instrument};
+use tracing::{error, info, instrument, trace, warn, Instrument};
 
 use crate::{
     protos::{
@@ -69,6 +69,13 @@ impl ClientConn {
             server_channel,
         } = config;
 
+        // TODO make the values configurable
+        let bytes_per_second = NonZeroU32::new(1 << 12).expect("nonzero"); // 4 KiB / s
+        let burst_bytes = NonZeroU32::new(1 << 22).expect("nonzero"); // 4 MiB
+        let quota = governor::Quota::per_second(bytes_per_second).allow_burst(burst_bytes);
+        let rate_limiter = governor::RateLimiter::direct(quota);
+        let stream = RateLimitedRelayedStream::new(io, rate_limiter);
+
         let done = CancellationToken::new();
         let client_id = (key, conn_num);
         let (send_queue_s, send_queue_r) = mpsc::channel(channel_capacity);
@@ -77,7 +84,7 @@ impl ClientConn {
         let (peer_gone_s, peer_gone_r) = mpsc::channel(channel_capacity);
 
         let actor = Actor {
-            stream: io,
+            stream,
             timeout: write_timeout,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -162,7 +169,7 @@ impl ClientConn {
 #[derive(Debug)]
 struct Actor {
     /// IO Stream to talk to the client
-    stream: RelayedStream,
+    stream: RateLimitedRelayedStream,
     /// Maximum time we wait to complete a write to the client
     timeout: Duration,
     /// Packets queued to send to the client
@@ -317,10 +324,153 @@ impl Actor {
     }
 }
 
+/// Rate limiter for reading from a [`RelayedStream`].
+///
+/// The writes to the sink are not rate limited.
+///
+/// This potentially buffers one frame if the rate limiter does not allows this frame.
+/// While the frame is buffered the undernlying stream is no longer polled.
+#[derive(derive_more::Debug)]
+struct RateLimitedRelayedStream {
+    inner: RelayedStream,
+    limiter: Arc<governor::DefaultDirectRateLimiter>,
+    #[debug("Option<Pin<Box<dyn Future<Output = ()>>>>")]
+    delay: Option<Pin<Box<dyn Future<Output = ()> + Send + Sync>>>,
+    buf: Option<anyhow::Result<Frame>>,
+}
+
+impl RateLimitedRelayedStream {
+    fn new(inner: RelayedStream, limiter: governor::DefaultDirectRateLimiter) -> Self {
+        Self {
+            inner,
+            limiter: Arc::new(limiter),
+            delay: None,
+            buf: None,
+        }
+    }
+}
+
+impl Stream for RateLimitedRelayedStream {
+    type Item = anyhow::Result<Frame>;
+
+    #[instrument(name = "rate_limited_relayed_stream", skip_all)]
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        loop {
+            // If we have a delay installed, we need to await it.
+            if let Some(ref mut wait_fut) = self.delay {
+                tokio::pin!(wait_fut);
+                match wait_fut.poll(cx) {
+                    Poll::Ready(_) => {
+                        self.delay.take();
+                        continue;
+                    }
+                    Poll::Pending => return Poll::Pending,
+                }
+            }
+            // If we have an item buffered, check if we can yield it.
+            if let Some(ref item) = self.buf {
+                match item {
+                    Err(_) => {
+                        // Yielding errors is not rate-limited.
+                        match self.buf.take() {
+                            Some(item) => return Poll::Ready(Some(item)),
+                            None => continue, // unreachable
+                        }
+                    }
+                    Ok(frame) => {
+                        // First we need to know how many bytes this frame consumes.
+                        let Ok(frame_len) = TryInto::<u32>::try_into(frame.len_with_header())
+                            .and_then(|len| TryInto::<NonZeroU32>::try_into(len))
+                        else {
+                            error!("frame len not NonZeroU32, is MAX_FRAME_SIZE too large?");
+                            // Let this frame through anyway so to not completely break.
+                            match self.buf.take() {
+                                Some(item) => return Poll::Ready(Some(item)),
+                                None => continue, // unreachable
+                            }
+                        };
+
+                        // Now check the rate limiter.
+                        match self.limiter.check_n(frame_len) {
+                            Ok(Ok(_)) => {
+                                // Item not rate-limited, yield it.
+                                match self.buf.take() {
+                                    Some(frame) => return Poll::Ready(Some(frame)),
+                                    None => continue, // unreachable
+                                }
+                            }
+                            Ok(Err(_until)) => {
+                                // Item is rate-limited, install a delay future.
+                                let limiter = self.limiter.clone();
+                                let fut = async move {
+                                    limiter.until_n_ready(frame_len).await.ok();
+                                };
+                                self.delay = Some(Box::pin(fut));
+                                continue;
+                            }
+                            Err(_insufficient_capacity) => {
+                                error!("frame larger than bucket capacity, accepting frame");
+                                // Let this frame through since this is misconfigured.
+                                match self.buf.take() {
+                                    Some(item) => return Poll::Ready(Some(item)),
+                                    None => continue, // unreachable
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // If we have neither a delay future or a buffered item, poll for a new item.
+            match Pin::new(&mut self.inner).poll_next(cx) {
+                Poll::Ready(Some(item)) => {
+                    self.buf = Some(item);
+                    continue;
+                }
+                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
+}
+
+impl Sink<Frame> for RateLimitedRelayedStream {
+    type Error = std::io::Error;
+
+    fn poll_ready(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::result::Result<(), Self::Error>> {
+        Pin::new(&mut self.inner).poll_ready(cx)
+    }
+
+    fn start_send(mut self: Pin<&mut Self>, item: Frame) -> std::result::Result<(), Self::Error> {
+        Pin::new(&mut self.inner).start_send(item)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::result::Result<(), Self::Error>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_close(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::result::Result<(), Self::Error>> {
+        Pin::new(&mut self.inner).poll_close(cx)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use anyhow::bail;
+    use bytes::Bytes;
     use iroh_base::key::SecretKey;
+    use testresult::TestResult;
     use tokio_util::codec::Framed;
 
     use super::*;
@@ -340,9 +490,12 @@ mod tests {
         let (io, io_rw) = tokio::io::duplex(1024);
         let mut io_rw = Framed::new(io_rw, DerpCodec);
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
+        let quota = governor::Quota::per_second(NonZeroU32::MAX);
+        let limiter = governor::RateLimiter::direct(quota);
+        let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec));
 
         let actor = Actor {
-            stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
+            stream: RateLimitedRelayedStream::new(stream, limiter),
             timeout: Duration::from_secs(1),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -479,10 +632,13 @@ mod tests {
         let (io, io_rw) = tokio::io::duplex(1024);
         let mut io_rw = Framed::new(io_rw, DerpCodec);
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
+        let quota = governor::Quota::per_second(NonZeroU32::MAX);
+        let limiter = governor::RateLimiter::direct(quota);
+        let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec));
 
         println!("-- create client conn");
         let actor = Actor {
-            stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
+            stream: RateLimitedRelayedStream::new(stream, limiter),
             timeout: Duration::from_secs(1),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -539,6 +695,69 @@ mod tests {
         } else {
             bail!("expected task to finish in `UnexpectedEof` error, got `Ok(())`");
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit() -> TestResult {
+        let _logging = iroh_test::logging::setup();
+        let (_send_queue_s, send_queue_r) = mpsc::channel(10);
+        let (_disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
+        let (_peer_gone_s, peer_gone_r) = mpsc::channel(10);
+
+        let key = SecretKey::generate().public();
+        let (io, io_rw) = tokio::io::duplex(1024);
+        let mut io_rw = Framed::new(io_rw, DerpCodec);
+        let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
+
+        // We are only allowed to send 32 bytes per minute
+        const LIMIT: u32 = 50;
+        let quota = governor::Quota::per_minute(NonZeroU32::try_from(LIMIT)?);
+        let limiter = governor::RateLimiter::direct(quota);
+        let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec));
+
+        println!("-- create client conn");
+        let actor = Actor {
+            stream: RateLimitedRelayedStream::new(stream, limiter),
+            timeout: Duration::from_secs(1),
+            send_queue: send_queue_r,
+            disco_send_queue: disco_send_queue_r,
+            node_gone: peer_gone_r,
+            key,
+            server_channel: server_channel_s,
+            preferred: true,
+        };
+
+        let done = CancellationToken::new();
+        let io_done = done.clone();
+
+        info!("-- run client conn");
+        let handle = tokio::task::spawn(async move { actor.run(io_done).await });
+        let _handle = AbortOnDropHandle::new(handle);
+
+        // Prepare a packet to send.
+        let data = Bytes::from_static(b"hello world!");
+        let target = SecretKey::generate().public();
+
+        // Assert the frame * 2 is over our limit.
+        let frame = Frame::SendPacket {
+            dst_key: target,
+            packet: data.clone(),
+        };
+        let frame_len = frame.len_with_header();
+        assert!(frame_len * 2 > LIMIT as usize);
+        info!("-- send packet with {frame_len} bytes");
+
+        // Send a packet, it should arrive.
+        conn::send_packet(&mut io_rw, &None, target, data.clone()).await?;
+        let msg = server_channel_r.recv().await.context("actor died?")?;
+        assert!(matches!(msg, actor::Message::SendPacket { .. }));
+
+        // Send another packet, it should not arrive
+        conn::send_packet(&mut io_rw, &None, target, data).await?;
+        let ret = tokio::time::timeout(Duration::from_secs(1), server_channel_r.recv()).await;
+        assert!(ret.is_err());
 
         Ok(())
     }

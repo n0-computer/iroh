@@ -3249,6 +3249,7 @@ dependencies = [
  "smallvec",
  "socket2",
  "stun-rs",
+ "testresult",
  "thiserror 1.0.68",
  "time",
  "tokio",
