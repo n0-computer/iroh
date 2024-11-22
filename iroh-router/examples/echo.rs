@@ -5,7 +5,6 @@
 //! ## Usage
 //!
 //!     cargo run --example echo --features=examples
-//!
 
 use std::sync::Arc;
 
