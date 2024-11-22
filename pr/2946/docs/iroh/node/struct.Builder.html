@@ -48,7 +48,7 @@ configured relay node.  If an invalid <a href="../net/enum.RelayMode.html" title
 when the <code>test-utils</code> cargo feature <a href="../net/enum.RelayMode.html#variant.Staging" title="variant iroh::net::RelayMode::Staging"><code>RelayMode::Staging</code></a> is the default.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.node_discovery" class="method"><a class="src rightside" href="../../src/iroh/node/builder.rs.html#459-462">source</a><h4 class="code-header">pub fn <a href="#method.node_discovery" class="fn">node_discovery</a>(self, config: <a class="enum" href="enum.DiscoveryConfig.html" title="enum iroh::node::DiscoveryConfig">DiscoveryConfig</a>) -&gt; Self</h4></section></summary><div class="docblock"><p>Sets the node discovery mechanism.</p>
 <p>Node discovery enables connecting to other peers by only the <a href="../net/type.NodeId.html" title="type iroh::net::NodeId"><code>NodeId</code></a>.  This
-usually works by the nodes publishing their <a href="../net/struct.RelayUrl.html" title="struct iroh::net::RelayUrl"><code>RelayUrl</code></a> and/or their direct
+usually works by the nodes publishing their <a href="../net/relay/struct.RelayUrl.html" title="struct iroh::net::relay::RelayUrl"><code>RelayUrl</code></a> and/or their direct
 addresses to some publicly available service.</p>
 <p>See <a href="enum.DiscoveryConfig.html#method.default" title="associated function iroh::node::DiscoveryConfig::default"><code>DiscoveryConfig::default</code></a> for the defaults, note that the defaults change
 when using <code>cfg(test)</code>.</p>

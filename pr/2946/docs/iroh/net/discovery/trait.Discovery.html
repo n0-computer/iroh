@@ -15,7 +15,7 @@ This enables connecting to other nodes with only knowing the <a href="../type.No
 <a href="trait.Discovery.html" title="trait iroh::net::discovery::Discovery"><code>Discovery</code></a> system to look up the actual addressing information.  It is common for
 implementations to require each node to publish their own information before it can be
 looked up by other nodes.</p>
-<p>The published addressing information can include both a <a href="../struct.RelayUrl.html" title="struct iroh::net::RelayUrl"><code>RelayUrl</code></a> and/or direct
+<p>The published addressing information can include both a <a href="../relay/struct.RelayUrl.html" title="struct iroh::net::relay::RelayUrl"><code>RelayUrl</code></a> and/or direct
 addresses.</p>
 <p>To allow for discovery, the <a href="../struct.Endpoint.html" title="struct iroh::net::Endpoint"><code>super::Endpoint</code></a> will call <code>publish</code> whenever
 discovery information changes. If a discovery mechanism requires a periodic

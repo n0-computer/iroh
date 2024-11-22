@@ -188,7 +188,7 @@
         metrics.insert(<span class="kw">crate</span>::metrics::Metrics::new(reg));
         metrics.insert(iroh_docs::metrics::Metrics::new(reg));
         metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
-        metrics.insert(iroh_net::metrics::NetcheckMetrics::new(reg));
+        metrics.insert(iroh_net::metrics::NetReportMetrics::new(reg));
         metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
     })
 }
@@ -209,7 +209,7 @@
         <span class="kw-2">&amp;mut </span>map,
     );
     collect(
-        core.get_collector::&lt;iroh_net::metrics::NetcheckMetrics&gt;(),
+        core.get_collector::&lt;iroh_net::metrics::NetReportMetrics&gt;(),
         <span class="kw-2">&amp;mut </span>map,
     );
     collect(
