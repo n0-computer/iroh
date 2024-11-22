@@ -582,21 +582,21 @@ impl Actor {
                             Ok(Ok(report)) => return Ok(report),
                             Ok(Err(ProbeError::Error(err, probe))) => {
                                 probe_proto = Some(probe.proto());
-                                error!(?probe, "probe failed: {:#}", err);
+                                warn!(?probe, "probe failed: {:#}", err);
                                 continue;
                             }
                             Ok(Err(ProbeError::AbortSet(err, probe))) => {
-                                error!(?probe, "probe set aborted: {:#}", err);
+                                debug!(?probe, "probe set aborted: {:#}", err);
                                 set.abort_all();
                                 return Err(err);
                             }
                             Err(err) => {
-                                error!("fatal probe set error, aborting: {:#}", err);
+                                warn!("fatal probe set error, aborting: {:#}", err);
                                 continue;
                             }
                         }
                     }
-                    error!(?probe_proto, "no successful probes in ProbeSet");
+                    warn!(?probe_proto, "no successful probes in ProbeSet");
                     Err(anyhow!("All probes in ProbeSet failed"))
                 }
                 .instrument(info_span!("probe")),
@@ -808,15 +808,24 @@ async fn run_quic_addr_probe(
     relay_addr: SocketAddr,
     probe: Probe,
 ) -> Result<ProbeReport, ProbeError> {
+    match probe.proto() {
+        ProbeProto::QuicAddrIpv4 => debug_assert!(relay_addr.is_ipv4()),
+        ProbeProto::QuicAddrIpv6 => debug_assert!(relay_addr.is_ipv6()),
+        _ => debug_assert!(false, "wrong probe"),
+    }
     // TODO(ramfox): what to put here if no host is given?
     let host = url.host_str().unwrap_or("localhost");
-    error!("IN QUIC ADDR PROBE SENDING TO {relay_addr:?} {host}");
     let quic_client = iroh_relay::quic::QuicClient::new(quic_config.ep, quic_config.client_config);
     let (addr, latency) = quic_client
         .get_addr_and_latency(relay_addr, host)
         .await
         .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
-    let mut result = ProbeReport::new(probe);
+    let mut result = ProbeReport::new(probe.clone());
+    if matches!(probe, Probe::QuicAddrIpv4 { .. }) {
+        result.ipv4_can_send = true;
+    } else {
+        result.ipv6_can_send = true;
+    }
     result.addr = Some(addr);
     result.latency = Some(latency);
     Ok(result)
@@ -1190,7 +1199,10 @@ fn update_report(report: &mut Report, probe_report: ProbeReport) {
 
         if matches!(
             probe_report.probe.proto(),
-            ProbeProto::StunIpv4 | ProbeProto::StunIpv6
+            ProbeProto::StunIpv4
+                | ProbeProto::StunIpv6
+                | ProbeProto::QuicAddrIpv4
+                | ProbeProto::QuicAddrIpv6
         ) {
             report.udp = true;
 

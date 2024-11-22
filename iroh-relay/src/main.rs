@@ -4,7 +4,7 @@
 //! [`iroh_net::relay::server`].
 
 use std::{
-    net::{Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
 };
 
@@ -461,6 +461,7 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
             let cert = rcgen::generate_simple_self_signed(vec![
                 "localhost".to_string(),
                 "127.0.0.1".to_string(),
+                "::1".to_string(),
             ])
             .expect("valid");
             let rustls_cert = cert.cert.der();
@@ -480,7 +481,7 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
                 .expect("valid");
             quic_config = Some(QuicConfig::new(
                 server_config,
-                Ipv6Addr::LOCALHOST.into(),
+                Ipv6Addr::UNSPECIFIED.into(),
                 cfg.quic_bind_port,
             )?);
         } else {

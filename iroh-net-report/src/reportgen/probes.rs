@@ -299,9 +299,8 @@ impl ProbePlan {
                 }
             }
             plan.add(https_probes);
-            // TODO(ramfox): commented out to allow quic probes to finish
-            // plan.add(icmp_probes_ipv4);
-            // plan.add(icmp_probes_ipv6);
+            plan.add(icmp_probes_ipv4);
+            plan.add(icmp_probes_ipv6);
         }
         plan
     }
@@ -437,9 +436,8 @@ impl ProbePlan {
                 }
             }
             plan.add(https_probes);
-            // TODO(ramfox): commented out to force quic probes to finish
-            // plan.add(icmp_v4_probes);
-            // plan.add(icmp_v6_probes);
+            plan.add(icmp_v4_probes);
+            plan.add(icmp_v6_probes);
         }
         plan
     }

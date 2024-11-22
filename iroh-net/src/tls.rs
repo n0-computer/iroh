@@ -62,6 +62,18 @@ pub fn make_client_config(
     Ok(config)
 }
 
+/// Generate a TLS [`QuicClientConfig`] that contains webpki root certifiates
+pub fn make_client_config_pki() -> Result<QuicClientConfig, CreateConfigError> {
+    let root_store = rustls::RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.into(),
+    };
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+    let quic_client_config = QuicClientConfig::try_from(config)?;
+    Ok(quic_client_config)
+}
+
 /// Create a TLS server configuration.
 ///
 /// If *keylog* is `true` this will enable logging of the pre-master key to the file in the

@@ -174,6 +174,7 @@ async fn handle_connection(conn: quinn::Incoming) -> Result<()> {
 }
 
 /// Handles the client side of QUIC address discovery.
+#[derive(Debug)]
 pub struct QuicClient {
     /// A QUIC Endpoint.
     ep: quinn::Endpoint,
@@ -202,13 +203,13 @@ impl QuicClient {
     /// Consumes and gracefully closes the connection.
     pub async fn get_addr_and_latency(
         &self,
-        addr: SocketAddr,
+        server_addr: SocketAddr,
         host: &str,
     ) -> Result<(SocketAddr, std::time::Duration)> {
-        let conn = self
+        let connecting = self
             .ep
-            .connect_with(self.client_config.clone(), addr, host)?
-            .await?;
+            .connect_with(self.client_config.clone(), server_addr, host);
+        let conn = connecting?.await?;
         let mut external_addresses = conn.observed_external_addr();
         // TODO(ramfox): I'd like to be able to cancel this so we can close cleanly
         // if there the task that runs this function gets aborted.
@@ -233,11 +234,18 @@ impl QuicClient {
                 return Err(err.into());
             }
         };
-        let addr = res.expect("checked");
+        let mut observed_addr = res.expect("checked");
+        // if we've sent an to an ipv4 address, but
+        // received an observed address that is ivp6
+        // then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
+        if server_addr.is_ipv4() && observed_addr.is_ipv6() {
+            observed_addr =
+                SocketAddr::new(observed_addr.ip().to_canonical(), observed_addr.port());
+        }
         let latency = conn.rtt() / 2;
         // gracefully close the connections
         conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-        Ok((addr, latency))
+        Ok((observed_addr, latency))
     }
 }
 

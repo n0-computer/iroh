@@ -2799,6 +2799,7 @@ dependencies = [
  "iroh-net-report",
  "iroh-node-util",
  "iroh-quinn",
+ "iroh-relay",
  "nix 0.27.1",
  "parking_lot",
  "pkarr",

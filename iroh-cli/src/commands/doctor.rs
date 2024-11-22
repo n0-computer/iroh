@@ -4,7 +4,7 @@
 use std::{
     collections::HashMap,
     io,
-    net::SocketAddr,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     num::NonZeroU16,
     path::PathBuf,
     str::FromStr,
@@ -97,9 +97,11 @@ pub enum Commands {
         /// The port of the QUIC server for QUIC address discovery.
         #[clap(long, default_value_t = DEFAULT_QUIC_PORT)]
         quic_port: u16,
-        /// Our own secret key, in hex. If not specified, the locally configured key will be used.
-        #[clap(long, default_value_t = SecretKeyOption::Local)]
-        secret_key: SecretKeyOption,
+        /// When true, will allow initiating QUIC connections without verifying the server
+        ///
+        /// Default is false. When false, will use [webpki TLS server root certificates](https://docs.rs/webpki-roots/0.26.7/webpki_roots/).
+        #[clap(long, default_value_t = false)]
+        dangerous_certs: bool,
     },
     /// Wait for incoming requests from iroh doctor connect.
     Accept {
@@ -352,7 +354,7 @@ async fn report(
     stun_host: Option<String>,
     stun_port: u16,
     quic_port: u16,
-    secret_key: SecretKey,
+    dangerous_certs: bool,
     config: &NodeConfig,
 ) -> anyhow::Result<()> {
     let port_mapper = portmapper::Client::default();
@@ -369,8 +371,7 @@ async fn report(
     };
     println!("getting report using relay map {dm:#?}");
 
-    let quic_endpoint = create_quic_endpoint(&secret_key)?;
-    println!("made quic endpoint");
+    let quic_endpoint = create_quic_endpoint(dangerous_certs)?;
     let r = client
         .get_report(dm, None, None, Some(quic_endpoint))
         .await?;
@@ -1130,17 +1131,8 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             stun_host,
             stun_port,
             quic_port,
-            secret_key,
-        } => {
-            report(
-                stun_host,
-                stun_port,
-                quic_port,
-                create_secret_key(secret_key)?,
-                config,
-            )
-            .await
-        }
+            dangerous_certs,
+        } => report(stun_host, stun_port, quic_port, dangerous_certs, config).await,
         Commands::Connect {
             dial,
             secret_key,
@@ -1277,10 +1269,13 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
 }
 
 /// Create a quinn Endpoint that has QUIC address discovery enabled.
-fn create_quic_endpoint(secret_key: &SecretKey) -> anyhow::Result<QuicConfig> {
-    let client_config = iroh::net::tls::make_client_config(secret_key, None, vec![], false)?;
+fn create_quic_endpoint(dangerous_certs: bool) -> anyhow::Result<QuicConfig> {
+    let client_config = match dangerous_certs {
+        true => iroh_relay::client::make_dangerous_client_config(),
+        false => iroh::net::tls::make_client_config_pki()?,
+    };
     let client_config = quinn::ClientConfig::new(Arc::new(client_config));
-    let ep = quinn::Endpoint::client(SocketAddr::new("::1".parse()?, 0))?;
+    let ep = quinn::Endpoint::client(SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0))?;
     Ok(QuicConfig { ep, client_config })
 }
 
