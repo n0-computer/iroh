@@ -59,11 +59,6 @@ impl UdpConn {
             io: self.io.clone(),
         })
     }
-
-    /// Closes the socket for good
-    pub async fn close(&self) {
-        self.io.close().await;
-    }
 }
 
 impl AsyncUdpSocket for UdpConn {
