@@ -4,20 +4,20 @@ use std::{
     net::SocketAddr,
     pin::Pin,
     sync::{atomic::AtomicBool, RwLock},
-    task::Poll,
+    task::{Context, Poll},
 };
 
-use anyhow::{bail, ensure, Context, Result};
-use tracing::{debug, warn};
+use anyhow::{bail, ensure, Context as _, Result};
+use quinn_udp::Transmit;
+use tokio::io::Interest;
+use tracing::{debug, trace, warn};
 
 use super::IpFamily;
 
-/// Wrapper around a tokio UDP socket that handles the fact that
-/// on drop `libc::close` can block for UDP sockets.
+/// Wrapper around a tokio UDP socket.
 #[derive(Debug)]
 pub struct UdpSocket {
-    // TODO: can we drop the Arc and use lifetimes in the futures?
-    socket: RwLock<Option<tokio::net::UdpSocket>>,
+    socket: RwLock<Option<(tokio::net::UdpSocket, quinn_udp::UdpSocketState)>>,
     /// The addr we are binding to.
     addr: SocketAddr,
     /// Set to true, when an error occurred, that means we need to rebind the socket.
@@ -71,7 +71,7 @@ impl UdpSocket {
     }
 
     /// Marks this socket as needing a rebind
-    pub fn mark_broken(&self) {
+    fn mark_broken(&self) {
         self.is_broken
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
@@ -105,7 +105,7 @@ impl UdpSocket {
         let mut addr = addr.into();
         let socket = inner_bind(addr)?;
         // update to use selected port
-        addr.set_port(socket.local_addr()?.port());
+        addr.set_port(socket.0.local_addr()?.port());
 
         Ok(UdpSocket {
             socket: RwLock::new(Some(socket)),
@@ -117,35 +117,17 @@ impl UdpSocket {
     /// Use the socket
     pub fn with_socket<F, T>(&self, f: F) -> std::io::Result<T>
     where
-        F: FnOnce(&tokio::net::UdpSocket) -> T,
+        F: FnOnce(&tokio::net::UdpSocket, &quinn_udp::UdpSocketState) -> T,
     {
         let guard = self.socket.read().unwrap();
-        let Some(socket) = guard.as_ref() else {
+        let Some((socket, state)) = guard.as_ref() else {
+            warn!("socket closed");
             return Err(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
                 "socket closed",
             ));
         };
-        Ok(f(socket))
-    }
-
-    pub fn try_io<R>(
-        &self,
-        interest: tokio::io::Interest,
-        f: impl FnOnce() -> std::io::Result<R>,
-    ) -> std::io::Result<R> {
-        let guard = self.socket.read().unwrap();
-        let Some(socket) = guard.as_ref() else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "socket closed",
-            ));
-        };
-        socket.try_io(interest, f)
-    }
-
-    pub fn writable(&self) -> WritableFut<'_> {
-        WritableFut { socket: self }
+        Ok(f(socket, state))
     }
 
     /// TODO
@@ -183,9 +165,11 @@ impl UdpSocket {
 
     /// TODO
     pub fn connect(&self, addr: SocketAddr) -> std::io::Result<()> {
+        tracing::info!("connectnig to {}", addr);
         let mut guard = self.socket.write().unwrap();
         // dance around to make non async connect work
-        let Some(socket_tokio) = guard.take() else {
+        let Some((socket_tokio, state)) = guard.take() else {
+            warn!("socket closed");
             return Err(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
                 "socket closed",
@@ -195,14 +179,15 @@ impl UdpSocket {
         let socket_std = socket_tokio.into_std()?;
         socket_std.connect(addr)?;
         let socket_tokio = tokio::net::UdpSocket::from_std(socket_std)?;
-        guard.replace(socket_tokio);
+        guard.replace((socket_tokio, state));
         Ok(())
     }
 
     /// Returns the local address of this socket.
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
         let guard = self.socket.read().unwrap();
-        let Some(socket) = guard.as_ref() else {
+        let Some((socket, _)) = guard.as_ref() else {
+            warn!("socket closed");
             return Err(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
                 "socket closed",
@@ -215,7 +200,7 @@ impl UdpSocket {
     /// Closes the socket, and waits for the underlying `libc::close` call to be finished.
     pub async fn close(&self) {
         let socket = self.socket.write().unwrap().take();
-        if let Some(sock) = socket {
+        if let Some((sock, _)) = socket {
             let std_sock = sock.into_std();
             let res = tokio::runtime::Handle::current()
                 .spawn_blocking(move || {
@@ -281,7 +266,8 @@ impl UdpSocket {
                 }
             }
             let guard = self.socket.read().unwrap();
-            let Some(socket) = guard.as_ref() else {
+            let Some((socket, _state)) = guard.as_ref() else {
+                warn!("socket closed");
                 return Poll::Ready(Err(std::io::Error::new(
                     std::io::ErrorKind::BrokenPipe,
                     "socket closed",
@@ -299,6 +285,160 @@ impl UdpSocket {
                 }
             }
         }
+    }
+
+    /// Send a quinn based `Transmit`.
+    pub fn try_send_quinn(&self, transmit: &Transmit<'_>) -> std::io::Result<()> {
+        loop {
+            // check if the socket needs a rebind
+            if self.is_broken() {
+                match self.rebind() {
+                    Ok(()) => {
+                        // all good
+                    }
+                    Err(err) => {
+                        warn!("failed to rebind socket: {:?}", err);
+                        // TODO: improve error
+                        let err =
+                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
+                        return Err(err);
+                    }
+                }
+            }
+            let guard = self.socket.read().unwrap();
+            let Some((socket, state)) = guard.as_ref() else {
+                warn!("socket closed");
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "socket closed",
+                ));
+            };
+
+            let res = socket.try_io(Interest::WRITABLE, || state.send(socket.into(), transmit));
+
+            match res {
+                Ok(()) => return Ok(()),
+                Err(err) => match self.handle_write_error(err) {
+                    Some(err) => return Err(err),
+                    None => {
+                        continue;
+                    }
+                },
+            }
+        }
+    }
+
+    /// quinn based `poll_recv`
+    pub fn poll_recv_quinn(
+        &self,
+        cx: &mut Context,
+        bufs: &mut [std::io::IoSliceMut<'_>],
+        meta: &mut [quinn_udp::RecvMeta],
+    ) -> Poll<std::io::Result<usize>> {
+        loop {
+            // check if the socket needs a rebind
+            if self.is_broken() {
+                match self.rebind() {
+                    Ok(()) => {
+                        // all good
+                    }
+                    Err(err) => {
+                        warn!("failed to rebind socket: {:?}", err);
+                        // TODO: improve error
+                        let err =
+                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
+                        return Poll::Ready(Err(err));
+                    }
+                }
+            }
+            let guard = self.socket.read().unwrap();
+            let Some((socket, state)) = guard.as_ref() else {
+                warn!("socket closed");
+                return Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "socket closed",
+                )));
+            };
+
+            match socket.poll_recv_ready(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(())) => {
+                    // We are ready to read, continue
+                }
+                Poll::Ready(Err(err)) => match self.handle_read_error(err) {
+                    Some(err) => return Poll::Ready(Err(err)),
+                    None => {
+                        continue;
+                    }
+                },
+            }
+
+            match state.recv(socket.into(), bufs, meta) {
+                Ok(count) => {
+                    for meta in meta.iter().take(count) {
+                        trace!(
+                            src = %meta.addr,
+                            len = meta.len,
+                            count = meta.len / meta.stride,
+                            dst = %meta.dst_ip.map(|x| x.to_string()).unwrap_or_default(),
+                            "UDP recv"
+                        );
+                    }
+                    return Poll::Ready(Ok(count));
+                }
+                Err(err) => {
+                    // ignore spurious wakeups
+                    if err.kind() == std::io::ErrorKind::WouldBlock {
+                        continue;
+                    }
+                    match self.handle_read_error(err) {
+                        Some(err) => return Poll::Ready(Err(err)),
+                        None => {
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// TODO
+    pub fn may_fragment(&self) -> std::io::Result<bool> {
+        let guard = self.socket.read().unwrap();
+        let Some((_, state)) = guard.as_ref() else {
+            warn!("socket closed");
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "socket closed",
+            ));
+        };
+        Ok(state.may_fragment())
+    }
+
+    /// TODO
+    pub fn max_transmit_segments(&self) -> std::io::Result<usize> {
+        let guard = self.socket.read().unwrap();
+        let Some((_, state)) = guard.as_ref() else {
+            warn!("socket closed");
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "socket closed",
+            ));
+        };
+        Ok(state.max_gso_segments())
+    }
+
+    /// TODO
+    pub fn max_receive_segments(&self) -> std::io::Result<usize> {
+        let guard = self.socket.read().unwrap();
+        let Some((_, state)) = guard.as_ref() else {
+            warn!("socket closed");
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "socket closed",
+            ));
+        };
+        Ok(state.gro_segments())
     }
 }
 
@@ -333,7 +473,8 @@ impl Future for RecvFut<'_, '_> {
             }
 
             let guard = socket.socket.read().unwrap();
-            let Some(inner_socket) = guard.as_ref() else {
+            let Some((inner_socket, _)) = guard.as_ref() else {
+                warn!("socket closed");
                 return Poll::Ready(Err(std::io::Error::new(
                     std::io::ErrorKind::BrokenPipe,
                     "socket closed",
@@ -396,7 +537,8 @@ impl Future for RecvFromFut<'_, '_> {
                 }
             }
             let guard = socket.socket.read().unwrap();
-            let Some(inner_socket) = guard.as_ref() else {
+            let Some((inner_socket, _)) = guard.as_ref() else {
+                warn!("socket closed");
                 return Poll::Ready(Err(std::io::Error::new(
                     std::io::ErrorKind::BrokenPipe,
                     "socket closed",
@@ -471,7 +613,8 @@ impl Future for SendFut<'_, '_> {
                 }
             }
             let guard = self.socket.socket.read().unwrap();
-            let Some(socket) = guard.as_ref() else {
+            let Some((socket, _)) = guard.as_ref() else {
+                warn!("socket closed");
                 return Poll::Ready(Err(std::io::Error::new(
                     std::io::ErrorKind::BrokenPipe,
                     "socket closed",
@@ -534,7 +677,8 @@ impl Future for SendToFut<'_, '_> {
             }
 
             let guard = self.socket.socket.read().unwrap();
-            let Some(socket) = guard.as_ref() else {
+            let Some((socket, _)) = guard.as_ref() else {
+                warn!("socket closed");
                 return Poll::Ready(Err(std::io::Error::new(
                     std::io::ErrorKind::BrokenPipe,
                     "socket closed",
@@ -568,7 +712,7 @@ impl Future for SendToFut<'_, '_> {
     }
 }
 
-fn inner_bind(addr: SocketAddr) -> Result<tokio::net::UdpSocket> {
+fn inner_bind(addr: SocketAddr) -> Result<(tokio::net::UdpSocket, quinn_udp::UdpSocketState)> {
     let network = IpFamily::from(addr.ip());
     let socket = socket2::Socket::new(
         network.into(),
@@ -605,6 +749,8 @@ fn inner_bind(addr: SocketAddr) -> Result<tokio::net::UdpSocket> {
 
     // Convert into tokio UdpSocket
     let socket = tokio::net::UdpSocket::from_std(socket).context("conversion to tokio")?;
+    let socket_ref = quinn_udp::UdpSockRef::from(&socket);
+    let socket_state = quinn_udp::UdpSocketState::new(socket_ref)?;
 
     if addr.port() != 0 {
         let local_addr = socket.local_addr().context("local addr")?;
@@ -617,14 +763,15 @@ fn inner_bind(addr: SocketAddr) -> Result<tokio::net::UdpSocket> {
         );
     }
 
-    Ok(socket)
+    Ok((socket, socket_state))
 }
 
 impl Drop for UdpSocket {
     fn drop(&mut self) {
+        debug!("dropping UdpSocket");
         // Only spawn_blocking if we are inside a tokio runtime, otherwise we just drop.
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            if let Some(socket) = self.socket.write().unwrap().take() {
+            if let Some((socket, _)) = self.socket.write().unwrap().take() {
                 // this will be empty if `close` was called before
                 let std_sock = socket.into_std();
                 handle.spawn_blocking(move || {
