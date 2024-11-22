@@ -1,3 +1,12 @@
+//! Very basic example to showcase how to use iroh's APIs.
+//!
+//! This example implements a simple protocol that echos any data sent to it in the first stream.
+//!
+//! ## Usage
+//!
+//!     cargo run --example echo --features=examples
+//!
+
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -24,7 +33,6 @@ async fn main() -> Result<()> {
 }
 
 async fn connect_side(addr: NodeAddr) -> Result<()> {
-    // The client also needs an Endpoint
     let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
     // Open a connection to the accepting node
@@ -50,12 +58,9 @@ async fn connect_side(addr: NodeAddr) -> Result<()> {
 }
 
 async fn accept_side() -> Result<Router> {
-    // Build an endpoint
     let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
-    // Build our custom protocol handler. The `builder` exposes access to various subsystems in the
-    // iroh node. In our case, we need a blobs client and the endpoint.
-    // Add our protocol, identified by our ALPN, to the node, and spawn the node.
+    // Build our protocol handler and add our protocol, identified by its ALPN, and spawn the node.
     let router = Router::builder(endpoint)
         .accept(ALPN.to_vec(), Arc::new(Echo))
         .spawn()

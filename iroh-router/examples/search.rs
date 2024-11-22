@@ -1,4 +1,4 @@
-//! Example for adding a protocol.
+//! Example protocol for running search on a remote node.
 //!
 //! We are building a very simple protocol here.
 //!
