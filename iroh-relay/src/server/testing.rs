@@ -17,7 +17,7 @@ pub fn stun_config() -> StunConfig {
 /// Creates a [`rustls::ServerConfig`] and certificates suitable for testing.
 ///
 /// - Uses a self signed certificate valid for the `"localhost"` and `"127.0.0.1"` domains.
-#[cfg(feature = "dangerous-certs")]
+#[cfg(any(feature = "dangerous-certs", feature = "test-utils"))]
 pub fn self_signed_tls_certs_and_config() -> (
     Vec<rustls::pki_types::CertificateDer<'static>>,
     rustls::ServerConfig,

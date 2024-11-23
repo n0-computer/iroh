@@ -62,7 +62,7 @@ pub fn make_client_config(
     Ok(config)
 }
 
-/// Generate a TLS [`QuicClientConfig`] that contains webpki root certifiates
+/// Generate a TLS [`QuicClientConfig`] that contains webpki root certificates
 pub fn make_client_config_pki() -> Result<QuicClientConfig, CreateConfigError> {
     let root_store = rustls::RootCertStore {
         roots: webpki_roots::TLS_SERVER_ROOTS.into(),

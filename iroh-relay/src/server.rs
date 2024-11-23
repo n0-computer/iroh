@@ -161,7 +161,7 @@ impl std::fmt::Debug for QuicConfig {
 impl QuicConfig {
     /// Create a new [`QuicConfig`] from a [`TlsConfig`].
     ///
-    /// If `port` is `None`, will use [`crate::default::DEFAULT_QUIC_PORT`]
+    /// If `port` is `None`, will use [`crate::defaults::DEFAULT_QUIC_PORT`]
     pub fn new(server_config: rustls::ServerConfig, ip: IpAddr, port: Option<u16>) -> Result<Self> {
         // server_config.alpn_protocols = vec![crate::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
         let server_config: QuicServerConfig = QuicServerConfig::try_from(server_config)?;
@@ -301,11 +301,11 @@ impl Server {
         let quic_server = match config.quic {
             Some(quic_config) => {
                 debug!("Starting QUIC server {}", quic_config.bind_addr);
-                Some(QuicServer::spawn(quic_config).await?)
+                Some(QuicServer::spawn(quic_config)?)
             }
             None => None,
         };
-        let quic_addr = quic_server.as_ref().map(|srv| srv.bind_addr().clone());
+        let quic_addr = quic_server.as_ref().map(|srv| *srv.bind_addr());
         let quic_handle = quic_server.as_ref().map(|srv| srv.handle());
 
         let (relay_server, http_addr) = match config.relay {

@@ -54,10 +54,10 @@ impl QuicServer {
     /// for QUIC connections for address discovery
     ///
     /// # Panics
-    /// If there is a panic during a connection, it will be propigated
+    /// If there is a panic during a connection, it will be propagated
     /// up here. Any other errors in a connection will be logged as a
     ///  warning.
-    pub(crate) async fn spawn(quic_config: QuicConfig) -> Result<Self> {
+    pub(crate) fn spawn(quic_config: QuicConfig) -> Result<Self> {
         let mut server_config =
             quinn::ServerConfig::with_crypto(Arc::new(quic_config.server_config));
         let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
@@ -73,45 +73,45 @@ impl QuicServer {
         let cancel_accept_loop = cancel.clone();
 
         let task = tokio::task::spawn(async move {
-        let mut set = JoinSet::new();
-        debug!("waiting for connections...");
-        loop {
-            tokio::select! {
-                biased;
-                _ = cancel_accept_loop.cancelled() => {
-                    break;
-                }
-                Some(res) = set.join_next(), if !set.is_empty() => {
-                    if let Err(err) = res {
-                        if err.is_panic() {
-                            panic!("task panicked: {:#?}", err);
-                        }
-                        warn!("connection failed: {err}");
-                    }
-                }
-                res = endpoint.accept() => match res {
-                    Some(conn) => {
-                         debug!("accepting connection from {:?}", conn.remote_address())       ;
-                         set.spawn(async move {
-                             let remote_addr = conn.remote_address();
-                             let res = handle_connection(conn).await;
-                             if let Err(ref err) = res {
-                                 warn!(remote_address = ?remote_addr, "error handling connection {err:?}")
-                             }
-                             res
-                         });
-                    }
-                    None => {
-                        debug!("endpoint closed");
+            let mut set = JoinSet::new();
+            debug!("waiting for connections...");
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = cancel_accept_loop.cancelled() => {
                         break;
+                    }
+                    Some(res) = set.join_next(), if !set.is_empty() => {
+                        if let Err(err) = res {
+                            if err.is_panic() {
+                                panic!("task panicked: {:#?}", err);
+                            }
+                            warn!("connection failed: {err}");
+                        }
+                    }
+                    res = endpoint.accept() => match res {
+                        Some(conn) => {
+                             debug!("accepting connection from {:?}", conn.remote_address())       ;
+                             set.spawn(async move {
+                                 let remote_addr = conn.remote_address();
+                                 let res = handle_connection(conn).await;
+                                 if let Err(ref err) = res {
+                                     warn!(remote_address = ?remote_addr, "error handling connection {err:?}")
+                                 }
+                                 res
+                             });
+                        }
+                        None => {
+                            debug!("endpoint closed");
+                            break;
+                        }
                     }
                 }
             }
-        }
-        endpoint
-            .close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-        endpoint.wait_idle().await;
-        debug!("quic endpoint has been shutdown.");
+            endpoint
+                .close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+            endpoint.wait_idle().await;
+            debug!("quic endpoint has been shutdown.");
         }.instrument(info_span!("quic-endpoint")),);
         Ok(Self {
             bind_addr,
@@ -127,7 +127,7 @@ impl QuicServer {
     }
 }
 
-/// A handle for the [`QuicServer`].
+/// A handle for the Server side of QUIC address discovery.
 ///
 /// This does not allow access to the task but can communicate with it.
 #[derive(Debug, Clone)]
@@ -197,7 +197,7 @@ impl QuicClient {
 
     /// Client side of QUIC address discovery.
     ///
-    /// Creates a connection and returns the observered address
+    /// Creates a connection and returns the observed address
     /// and estimated latency of the connection.
     ///
     /// Consumes and gracefully closes the connection.
@@ -283,8 +283,7 @@ mod tests {
             server_config,
             host.clone().into(),
             Some(0),
-        )?)
-        .await?;
+        )?)?;
 
         let client_config = generate_quic_addr_disc_client_config(certs[0].clone())?;
         let client_endpoint = quinn::Endpoint::client(SocketAddr::new(host.into(), 0))?;
