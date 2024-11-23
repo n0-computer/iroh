@@ -172,6 +172,8 @@ mod tests {
           url = "https://example.org."
           stun_only = false
           stun_port = 123
+          quic_only = false
+          quic_port = 456
         "#;
         let config = NodeConfig::load_toml(source).unwrap();
 
@@ -179,6 +181,8 @@ mod tests {
             url: Url::parse("https://example.org./").unwrap().into(),
             stun_only: false,
             stun_port: 123,
+            quic_only: false,
+            quic_port: 456,
         };
         assert_eq!(config.relay_nodes, vec![expected]);
     }

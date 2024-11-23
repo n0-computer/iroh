@@ -1,6 +1,6 @@
 //! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
-//!
-//! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
+
+//!//! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
 //! more details on how iroh-net connections work.
 //!
@@ -529,13 +529,15 @@ impl Endpoint {
         )?;
         trace!("created quinn endpoint");
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
-        Ok(Self {
-            msock,
-            endpoint,
+        let ep = Self {
+            msock: msock.clone(),
+            endpoint: endpoint.clone(),
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
             cancel_token: CancellationToken::new(),
             static_config: Arc::new(static_config),
-        })
+        };
+        msock.set_quic_endpoint(Some(endpoint));
+        Ok(ep)
     }
 
     /// Sets the list of accepted ALPN protocols.
@@ -1426,7 +1428,7 @@ mod tests {
     use tracing::{error_span, info, info_span, Instrument};
 
     use super::*;
-    use crate::test_utils::{run_relay_server, run_relay_server_with};
+    use crate::test_utils::{run_relay_server_with, run_relay_server_with_stun};
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
@@ -1467,7 +1469,7 @@ mod tests {
     #[tokio::test]
     async fn endpoint_connect_close() {
         let _guard = iroh_test::logging::setup();
-        let (relay_map, relay_url, _guard) = run_relay_server().await.unwrap();
+        let (relay_map, relay_url, _guard) = run_relay_server_with_stun().await.unwrap();
         let server_secret_key = SecretKey::generate();
         let server_peer_id = server_secret_key.public();
 
@@ -1620,7 +1622,7 @@ mod tests {
         let n_chunks_per_client = 2;
         let chunk_size = 10;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let (relay_map, relay_url, _relay_guard) = run_relay_server().await.unwrap();
+        let (relay_map, relay_url, _relay_guard) = run_relay_server_with_stun().await.unwrap();
         let server_secret_key = SecretKey::generate_with_rng(&mut rng);
         let server_node_id = server_secret_key.public();
 
@@ -1813,7 +1815,7 @@ mod tests {
     async fn endpoint_conn_type_stream() {
         const TIMEOUT: Duration = std::time::Duration::from_secs(15);
         let _logging_guard = iroh_test::logging::setup();
-        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await.unwrap();
+        let (relay_map, _relay_url, _relay_guard) = run_relay_server_with_stun().await.unwrap();
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let ep1_secret_key = SecretKey::generate_with_rng(&mut rng);
         let ep2_secret_key = SecretKey::generate_with_rng(&mut rng);
@@ -1896,7 +1898,7 @@ mod tests {
     #[tokio::test]
     async fn test_direct_addresses_no_stun_relay() {
         let _guard = iroh_test::logging::setup();
-        let (relay_map, _, _guard) = run_relay_server_with(None).await.unwrap();
+        let (relay_map, _, _guard) = run_relay_server_with(None, false).await.unwrap();
 
         let ep = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])

@@ -45,7 +45,7 @@ use url::Host;
 use crate::Metrics;
 use crate::{
     self as net_report,
-    defaults::DEFAULT_STUN_PORT,
+    defaults::{DEFAULT_QUIC_PORT, DEFAULT_STUN_PORT},
     dns::ResolverExt,
     ping::{PingError, Pinger},
     RelayMap, RelayNode, RelayUrl, Report,
@@ -83,6 +83,7 @@ impl Client {
         relay_map: RelayMap,
         stun_sock4: Option<Arc<UdpSocket>>,
         stun_sock6: Option<Arc<UdpSocket>>,
+        quic_addr_disc: Option<QuicAddressDiscovery>,
         dns_resolver: DnsResolver,
     ) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(32);
@@ -98,6 +99,7 @@ impl Client {
             relay_map,
             stun_sock4,
             stun_sock6,
+            quic_addr_disc,
             report: Report::default(),
             hairpin_actor: hairpin::Client::new(net_report, addr),
             outstanding_tasks: OutstandingTasks::default(),
@@ -171,6 +173,8 @@ struct Actor {
     stun_sock4: Option<Arc<UdpSocket>>,
     /// Socket so send IPv6 STUN requests from.
     stun_sock6: Option<Arc<UdpSocket>>,
+    /// QUIC configuration to do QUIC address Discovery
+    quic_addr_disc: Option<QuicAddressDiscovery>,
 
     // Internal state.
     /// The report being built.
@@ -544,6 +548,7 @@ impl Actor {
                 let reportstate = self.addr();
                 let stun_sock4 = self.stun_sock4.clone();
                 let stun_sock6 = self.stun_sock6.clone();
+                let quic_addr_disc = self.quic_addr_disc.clone();
                 let relay_node = probe.node().clone();
                 let probe = probe.clone();
                 let net_report = self.net_report.clone();
@@ -555,6 +560,7 @@ impl Actor {
                         reportstate,
                         stun_sock4,
                         stun_sock6,
+                        quic_addr_disc,
                         relay_node,
                         probe.clone(),
                         net_report,
@@ -668,6 +674,15 @@ enum ProbeError {
     Error(anyhow::Error, Probe),
 }
 
+/// Pieces needed to do QUIC address discovery.
+#[derive(Debug, Clone)]
+pub struct QuicAddressDiscovery {
+    /// A QUIC Endpoint
+    pub ep: quinn::Endpoint,
+    /// A client config.
+    pub client_config: quinn::ClientConfig,
+}
+
 /// Executes a particular [`Probe`], including using a delayed start if needed.
 ///
 /// If *stun_sock4* and *stun_sock6* are `None` the STUN probes are disabled.
@@ -676,6 +691,7 @@ async fn run_probe(
     reportstate: Addr,
     stun_sock4: Option<Arc<UdpSocket>>,
     stun_sock6: Option<Arc<UdpSocket>>,
+    quic_addr_disc: Option<QuicAddressDiscovery>,
     relay_node: Arc<RelayNode>,
     probe: Probe,
     net_report: net_report::Addr,
@@ -762,9 +778,57 @@ async fn run_probe(
                 }
             }
         }
+        Probe::QuicAddrIpv4 { ref node, .. } | Probe::QuicAddrIpv6 { ref node, .. } => {
+            debug!("sending QUIC address discovery prob");
+            let url = node.url.clone();
+            match quic_addr_disc {
+                Some(quic_addr_disc) => {
+                    result = run_quic_probe(quic_addr_disc, url, relay_addr, probe).await?
+                }
+                None => {
+                    return Err(ProbeError::AbortSet(
+                        anyhow!("No QUIC endpoint for {}, aborting probeset", probe.proto()),
+                        probe.clone(),
+                    ));
+                }
+            }
+        }
     }
 
     trace!("probe successful");
+    Ok(result)
+}
+
+/// Run a QUIC address discovery probe.
+// TODO(ramfox): if this probe is aborted, then the connection will never be
+// properly, possibly causing errors on the server.
+async fn run_quic_probe(
+    quic_addr_disc: QuicAddressDiscovery,
+    url: RelayUrl,
+    relay_addr: SocketAddr,
+    probe: Probe,
+) -> Result<ProbeReport, ProbeError> {
+    match probe.proto() {
+        ProbeProto::QuicAddrIpv4 => debug_assert!(relay_addr.is_ipv4()),
+        ProbeProto::QuicAddrIpv6 => debug_assert!(relay_addr.is_ipv6()),
+        _ => debug_assert!(false, "wrong probe"),
+    }
+    // TODO(ramfox): what to put here if no host is given?
+    let host = url.host_str().unwrap_or("localhost");
+    let quic_client =
+        iroh_relay::quic::QuicClient::new(quic_addr_disc.ep, quic_addr_disc.client_config);
+    let (addr, latency) = quic_client
+        .get_addr_and_latency(relay_addr, host)
+        .await
+        .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
+    let mut result = ProbeReport::new(probe.clone());
+    if matches!(probe, Probe::QuicAddrIpv4 { .. }) {
+        result.ipv4_can_send = true;
+    } else {
+        result.ipv6_can_send = true;
+    }
+    result.addr = Some(addr);
+    result.latency = Some(latency);
     Ok(result)
 }
 
@@ -936,6 +1000,25 @@ async fn check_captive_portal(
     Ok(has_captive)
 }
 
+fn get_port(relay_node: &RelayNode, proto: &ProbeProto) -> u16 {
+    match proto {
+        ProbeProto::QuicAddrIpv4 | ProbeProto::QuicAddrIpv6 => {
+            if relay_node.quic_port == 0 {
+                DEFAULT_QUIC_PORT
+            } else {
+                relay_node.quic_port
+            }
+        }
+        _ => {
+            if relay_node.stun_port == 0 {
+                DEFAULT_STUN_PORT
+            } else {
+                relay_node.stun_port
+            }
+        }
+    }
+}
+
 /// Returns the IP address to use to communicate to this relay node.
 ///
 /// *proto* specifies the protocol of the probe.  Depending on the protocol we may return
@@ -946,50 +1029,53 @@ async fn get_relay_addr(
     relay_node: &RelayNode,
     proto: ProbeProto,
 ) -> Result<SocketAddr> {
-    let port = if relay_node.stun_port == 0 {
-        DEFAULT_STUN_PORT
-    } else {
-        relay_node.stun_port
-    };
-
+    let port = get_port(relay_node, &proto);
     if relay_node.stun_only && !matches!(proto, ProbeProto::StunIpv4 | ProbeProto::StunIpv6) {
         bail!("Relay node not suitable for non-STUN probes");
     }
+    if relay_node.quic_only && !matches!(proto, ProbeProto::QuicAddrIpv4 | ProbeProto::QuicAddrIpv6)
+    {
+        bail!("Relay node not suitable for non-QUIC address discovery probes");
+    }
 
     match proto {
-        ProbeProto::StunIpv4 | ProbeProto::IcmpV4 => match relay_node.url.host() {
-            Some(url::Host::Domain(hostname)) => {
-                debug!(?proto, %hostname, "Performing DNS A lookup for relay addr");
-                match dns_resolver.lookup_ipv4_staggered(hostname).await {
-                    Ok(mut addrs) => addrs
-                        .next()
-                        .map(|ip| ip.to_canonical())
-                        .map(|addr| SocketAddr::new(addr, port))
-                        .ok_or(anyhow!("No suitable relay addr found")),
-                    Err(err) => Err(err.context("No suitable relay addr found")),
+        ProbeProto::StunIpv4 | ProbeProto::IcmpV4 | ProbeProto::QuicAddrIpv4 => {
+            match relay_node.url.host() {
+                Some(url::Host::Domain(hostname)) => {
+                    debug!(?proto, %hostname, "Performing DNS A lookup for relay addr");
+                    match dns_resolver.lookup_ipv4_staggered(hostname).await {
+                        Ok(mut addrs) => addrs
+                            .next()
+                            .map(|ip| ip.to_canonical())
+                            .map(|addr| SocketAddr::new(addr, port))
+                            .ok_or(anyhow!("No suitable relay addr found")),
+                        Err(err) => Err(err.context("No suitable relay addr found")),
+                    }
                 }
+                Some(url::Host::Ipv4(addr)) => Ok(SocketAddr::new(addr.into(), port)),
+                Some(url::Host::Ipv6(_addr)) => Err(anyhow!("No suitable relay addr found")),
+                None => Err(anyhow!("No valid hostname in RelayUrl")),
             }
-            Some(url::Host::Ipv4(addr)) => Ok(SocketAddr::new(addr.into(), port)),
-            Some(url::Host::Ipv6(_addr)) => Err(anyhow!("No suitable relay addr found")),
-            None => Err(anyhow!("No valid hostname in RelayUrl")),
-        },
+        }
 
-        ProbeProto::StunIpv6 | ProbeProto::IcmpV6 => match relay_node.url.host() {
-            Some(url::Host::Domain(hostname)) => {
-                debug!(?proto, %hostname, "Performing DNS AAAA lookup for relay addr");
-                match dns_resolver.lookup_ipv6_staggered(hostname).await {
-                    Ok(mut addrs) => addrs
-                        .next()
-                        .map(|ip| ip.to_canonical())
-                        .map(|addr| SocketAddr::new(addr, port))
-                        .ok_or(anyhow!("No suitable relay addr found")),
-                    Err(err) => Err(err.context("No suitable relay addr found")),
+        ProbeProto::StunIpv6 | ProbeProto::IcmpV6 | ProbeProto::QuicAddrIpv6 => {
+            match relay_node.url.host() {
+                Some(url::Host::Domain(hostname)) => {
+                    debug!(?proto, %hostname, "Performing DNS AAAA lookup for relay addr");
+                    match dns_resolver.lookup_ipv6_staggered(hostname).await {
+                        Ok(mut addrs) => addrs
+                            .next()
+                            .map(|ip| ip.to_canonical())
+                            .map(|addr| SocketAddr::new(addr, port))
+                            .ok_or(anyhow!("No suitable relay addr found")),
+                        Err(err) => Err(err.context("No suitable relay addr found")),
+                    }
                 }
+                Some(url::Host::Ipv4(_addr)) => Err(anyhow!("No suitable relay addr found")),
+                Some(url::Host::Ipv6(addr)) => Ok(SocketAddr::new(addr.into(), port)),
+                None => Err(anyhow!("No valid hostname in RelayUrl")),
             }
-            Some(url::Host::Ipv4(_addr)) => Err(anyhow!("No suitable relay addr found")),
-            Some(url::Host::Ipv6(addr)) => Ok(SocketAddr::new(addr.into(), port)),
-            None => Err(anyhow!("No valid hostname in RelayUrl")),
-        },
+        }
 
         ProbeProto::Https => Err(anyhow!("Not implemented")),
     }
@@ -1114,7 +1200,10 @@ fn update_report(report: &mut Report, probe_report: ProbeReport) {
 
         if matches!(
             probe_report.probe.proto(),
-            ProbeProto::StunIpv4 | ProbeProto::StunIpv6
+            ProbeProto::StunIpv4
+                | ProbeProto::StunIpv6
+                | ProbeProto::QuicAddrIpv4
+                | ProbeProto::QuicAddrIpv6
         ) {
             report.udp = true;
 
@@ -1462,6 +1551,46 @@ mod tests {
             .context("host")?
             .parse::<std::net::IpAddr>()?;
         assert_eq!(ip, relay_url_ip);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_quic_probe() -> TestResult {
+        let _logging_guard = iroh_test::logging::setup();
+        let (server, relay) = test_utils::relay().await;
+        let client_config = iroh_relay::client::make_dangerous_client_config();
+        let client_config = quinn::ClientConfig::new(Arc::new(client_config));
+        let ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))?;
+        let client_addr = ep.local_addr()?;
+        let quic_addr_disc = QuicAddressDiscovery {
+            ep: ep.clone(),
+            client_config,
+        };
+        let url = relay.url.clone();
+        let port = server.quic_addr().unwrap().port();
+        let probe = Probe::QuicAddrIpv4 {
+            delay: Duration::from_secs(0),
+            node: relay.clone(),
+        };
+        let probe = match run_quic_probe(
+            quic_addr_disc,
+            url,
+            (Ipv4Addr::LOCALHOST, port).into(),
+            probe,
+        )
+        .await
+        {
+            Ok(probe) => probe,
+            Err(e) => match e {
+                ProbeError::AbortSet(err, _) | ProbeError::Error(err, _) => {
+                    return Err(err.into());
+                }
+            },
+        };
+        assert!(probe.ipv4_can_send);
+        assert_eq!(probe.addr.unwrap(), client_addr);
+        ep.wait_idle().await;
+        server.shutdown().await?;
         Ok(())
     }
 }
