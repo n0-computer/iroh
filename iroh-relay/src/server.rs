@@ -53,8 +53,11 @@ mod clients;
 mod http_server;
 mod metrics;
 pub(crate) mod streams;
-#[cfg(feature = "test-utils")]
+#[cfg(any(feature = "test-utils", feature = "dangerous-certs"))]
 pub mod testing;
+
+#[cfg(feature = "dangerous-certs")]
+pub use self::testing::self_signed_tls_certs_and_config;
 
 pub use self::{
     metrics::{Metrics, StunMetrics},
@@ -229,7 +232,7 @@ pub struct Server {
     /// If the Relay server is not using TLS then it is served from the
     /// [`Server::http_addr`].
     https_addr: Option<SocketAddr>,
-    /// The addres of the QUIC server, if configured.
+    /// The address of the QUIC server, if configured.
     quic_addr: Option<SocketAddr>,
     /// Handle to the relay server.
     relay_handle: Option<http_server::ServerHandle>,

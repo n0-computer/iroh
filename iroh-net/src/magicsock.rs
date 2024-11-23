@@ -2222,10 +2222,10 @@ impl Actor {
         let pconn4 = Some(self.pconn4.as_socket());
         let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
         let quic_endpoint = self.msock.quic_endpoint.read().expect("poisoned").clone();
-        let quic_config = match quic_endpoint {
+        let quic_addr_disc = match quic_endpoint {
             Some(ep) => {
                 match crate::tls::make_client_config(&self.msock.secret_key, None, vec![], false) {
-                    Ok(client_config) => Some(net_report::QuicConfig {
+                    Ok(client_config) => Some(net_report::QuicAddressDiscovery {
                         ep,
                         client_config: quinn::ClientConfig::new(Arc::new(client_config)),
                     }),
@@ -2241,7 +2241,7 @@ impl Actor {
         debug!("requesting net_report report");
         match self
             .net_reporter
-            .get_report_channel(relay_map, pconn4, pconn6, quic_config)
+            .get_report_channel(relay_map, pconn4, pconn6, quic_addr_disc)
             .await
         {
             Ok(rx) => {

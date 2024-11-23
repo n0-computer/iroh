@@ -276,7 +276,8 @@ mod tests {
         let host: Ipv4Addr = "127.0.0.1".parse()?;
         let _guard = iroh_test::logging::setup();
 
-        let (certs, server_config) = super::super::server::testing::tls_certs_and_config();
+        let (certs, server_config) =
+            super::super::server::testing::self_signed_tls_certs_and_config();
 
         let quic_server = QuicServer::spawn(QuicConfig::new(
             server_config,

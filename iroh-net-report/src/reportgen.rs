@@ -83,7 +83,7 @@ impl Client {
         relay_map: RelayMap,
         stun_sock4: Option<Arc<UdpSocket>>,
         stun_sock6: Option<Arc<UdpSocket>>,
-        quic_config: Option<QuicConfig>,
+        quic_addr_disc: Option<QuicAddressDiscovery>,
         dns_resolver: DnsResolver,
     ) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(32);
@@ -99,7 +99,7 @@ impl Client {
             relay_map,
             stun_sock4,
             stun_sock6,
-            quic_config,
+            quic_addr_disc,
             report: Report::default(),
             hairpin_actor: hairpin::Client::new(net_report, addr),
             outstanding_tasks: OutstandingTasks::default(),
@@ -174,7 +174,7 @@ struct Actor {
     /// Socket so send IPv6 STUN requests from.
     stun_sock6: Option<Arc<UdpSocket>>,
     /// QUIC configuration to do QUIC address Discovery
-    quic_config: Option<QuicConfig>,
+    quic_addr_disc: Option<QuicAddressDiscovery>,
 
     // Internal state.
     /// The report being built.
@@ -548,7 +548,7 @@ impl Actor {
                 let reportstate = self.addr();
                 let stun_sock4 = self.stun_sock4.clone();
                 let stun_sock6 = self.stun_sock6.clone();
-                let quic_config = self.quic_config.clone();
+                let quic_addr_disc = self.quic_addr_disc.clone();
                 let relay_node = probe.node().clone();
                 let probe = probe.clone();
                 let net_report = self.net_report.clone();
@@ -560,7 +560,7 @@ impl Actor {
                         reportstate,
                         stun_sock4,
                         stun_sock6,
-                        quic_config,
+                        quic_addr_disc,
                         relay_node,
                         probe.clone(),
                         net_report,
@@ -676,7 +676,7 @@ enum ProbeError {
 
 /// Pieces needed to do QUIC address discovery.
 #[derive(Debug, Clone)]
-pub struct QuicConfig {
+pub struct QuicAddressDiscovery {
     /// A QUIC Endpoint
     pub ep: quinn::Endpoint,
     /// A client config.
@@ -691,7 +691,7 @@ async fn run_probe(
     reportstate: Addr,
     stun_sock4: Option<Arc<UdpSocket>>,
     stun_sock6: Option<Arc<UdpSocket>>,
-    quic_config: Option<QuicConfig>,
+    quic_addr_disc: Option<QuicAddressDiscovery>,
     relay_node: Arc<RelayNode>,
     probe: Probe,
     net_report: net_report::Addr,
@@ -781,9 +781,9 @@ async fn run_probe(
         Probe::QuicAddrIpv4 { ref node, .. } | Probe::QuicAddrIpv6 { ref node, .. } => {
             debug!("sending QUIC address discovery prob");
             let url = node.url.clone();
-            match quic_config {
-                Some(quic_config) => {
-                    result = run_quic_addr_probe(quic_config, url, relay_addr, probe).await?
+            match quic_addr_disc {
+                Some(quic_addr_disc) => {
+                    result = run_quic_probe(quic_addr_disc, url, relay_addr, probe).await?
                 }
                 None => {
                     return Err(ProbeError::AbortSet(
@@ -801,9 +801,9 @@ async fn run_probe(
 
 /// Run a QUIC address discovery probe.
 // TODO(ramfox): if this probe is aborted, then the connection will never be
-// properly, causing errors on the server.
-async fn run_quic_addr_probe(
-    quic_config: QuicConfig,
+// properly, possibly causing errors on the server.
+async fn run_quic_probe(
+    quic_addr_disc: QuicAddressDiscovery,
     url: RelayUrl,
     relay_addr: SocketAddr,
     probe: Probe,
@@ -815,7 +815,8 @@ async fn run_quic_addr_probe(
     }
     // TODO(ramfox): what to put here if no host is given?
     let host = url.host_str().unwrap_or("localhost");
-    let quic_client = iroh_relay::quic::QuicClient::new(quic_config.ep, quic_config.client_config);
+    let quic_client =
+        iroh_relay::quic::QuicClient::new(quic_addr_disc.ep, quic_addr_disc.client_config);
     let (addr, latency) = quic_client
         .get_addr_and_latency(relay_addr, host)
         .await
@@ -1550,6 +1551,46 @@ mod tests {
             .context("host")?
             .parse::<std::net::IpAddr>()?;
         assert_eq!(ip, relay_url_ip);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_quic_probe() -> TestResult {
+        let _logging_guard = iroh_test::logging::setup();
+        let (server, relay) = test_utils::relay().await;
+        let client_config = iroh_relay::client::make_dangerous_client_config();
+        let client_config = quinn::ClientConfig::new(Arc::new(client_config));
+        let ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))?;
+        let client_addr = ep.local_addr()?;
+        let quic_addr_disc = QuicAddressDiscovery {
+            ep: ep.clone(),
+            client_config,
+        };
+        let url = relay.url.clone();
+        let port = server.quic_addr().unwrap().port();
+        let probe = Probe::QuicAddrIpv4 {
+            delay: Duration::from_secs(0),
+            node: relay.clone(),
+        };
+        let probe = match run_quic_probe(
+            quic_addr_disc,
+            url,
+            (Ipv4Addr::LOCALHOST, port).into(),
+            probe,
+        )
+        .await
+        {
+            Ok(probe) => probe,
+            Err(e) => match e {
+                ProbeError::AbortSet(err, _) | ProbeError::Error(err, _) => {
+                    return Err(err.into());
+                }
+            },
+        };
+        assert!(probe.ipv4_can_send);
+        assert_eq!(probe.addr.unwrap(), client_addr);
+        ep.wait_idle().await;
+        server.shutdown().await?;
         Ok(())
     }
 }

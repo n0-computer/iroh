@@ -62,7 +62,7 @@ pub async fn run_relay_server_with(
     stun: Option<StunConfig>,
     quic: bool,
 ) -> Result<(RelayMap, RelayUrl, Server)> {
-    let (certs, server_config) = iroh_relay::server::testing::tls_certs_and_config();
+    let (certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
     let quic = if quic {
         Some(QuicConfig::new(
             server_config.clone(),

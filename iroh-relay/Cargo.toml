@@ -131,11 +131,12 @@ server = [
 ]
 metrics = ["iroh-metrics/metrics", "server"]
 test-utils = []
+dangerous-certs = []
 
 [[bin]]
 name = "iroh-relay"
 path = "src/main.rs"
-required-features = ["server"]
+required-features = ["server", "dangerous-certs"]
 
 [package.metadata.docs.rs]
 all-features = true

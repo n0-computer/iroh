@@ -4,7 +4,7 @@
 use std::{
     collections::HashMap,
     io,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{Ipv6Addr, SocketAddr},
     num::NonZeroU16,
     path::PathBuf,
     str::FromStr,
@@ -44,7 +44,7 @@ use iroh::{
 };
 use iroh_metrics::core::Core;
 use iroh_node_util::config::data_root;
-use net_report::QuicConfig;
+use net_report::QuicAddressDiscovery;
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use rand::Rng;
@@ -1269,14 +1269,14 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
 }
 
 /// Create a quinn Endpoint that has QUIC address discovery enabled.
-fn create_quic_endpoint(dangerous_certs: bool) -> anyhow::Result<QuicConfig> {
+fn create_quic_endpoint(dangerous_certs: bool) -> anyhow::Result<QuicAddressDiscovery> {
     let client_config = match dangerous_certs {
         true => iroh_relay::client::make_dangerous_client_config(),
         false => iroh::net::tls::make_client_config_pki()?,
     };
     let client_config = quinn::ClientConfig::new(Arc::new(client_config));
     let ep = quinn::Endpoint::client(SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0))?;
-    Ok(QuicConfig { ep, client_config })
+    Ok(QuicAddressDiscovery { ep, client_config })
 }
 
 /// Runs the [`PlotterApp`].

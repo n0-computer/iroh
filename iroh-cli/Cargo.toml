@@ -43,7 +43,7 @@ iroh = { version = "0.28.1", path = "../iroh", features = ["metrics"] }
 iroh-blobs = { version = "0.28.1", features = ["cli"] }
 iroh-docs = { version = "0.28.0", features = ["cli"] }
 iroh-gossip = { version = "0.28.1", features = ["cli"] }
-iroh-relay = { version = "0.28.0", path = "../iroh-relay", features = ["test-utils"]}
+iroh-relay = { version = "0.28.0", path = "../iroh-relay", features = ["dangerous-certs"]}
 iroh-metrics = { version = "0.28.0" }
 net-report = { package = "iroh-net-report", path = "../iroh-net-report", version = "0.28" }
 iroh-node-util = { path = "../iroh-node-util", features = ["config", "logging", "cli"] }

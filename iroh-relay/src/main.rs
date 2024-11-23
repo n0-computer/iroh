@@ -4,7 +4,7 @@
 //! [`iroh_net::relay::server`].
 
 use std::{
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
 };
 
@@ -458,27 +458,7 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
                 cfg.quic_bind_port,
             )?);
         } else if cfg.enable_quic_local_cert {
-            let cert = rcgen::generate_simple_self_signed(vec![
-                "localhost".to_string(),
-                "127.0.0.1".to_string(),
-                "::1".to_string(),
-            ])
-            .expect("valid");
-            let rustls_cert = cert.cert.der();
-            let private_key =
-                rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
-            let private_key = rustls::pki_types::PrivateKeyDer::from(private_key);
-            let certs = vec![rustls_cert.clone()];
-            let server_config = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
-                rustls::crypto::ring::default_provider(),
-            ))
-            .with_safe_default_protocol_versions()
-            .expect("protocols supported by ring")
-            .with_no_client_auth();
-
-            let server_config = server_config
-                .with_single_cert(certs.clone(), private_key)
-                .expect("valid");
+            let (_, server_config) = iroh_relay::server::self_signed_tls_certs_and_config();
             quic_config = Some(QuicConfig::new(
                 server_config,
                 Ipv6Addr::UNSPECIFIED.into(),

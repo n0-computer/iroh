@@ -377,7 +377,7 @@ impl ClientBuilder {
     }
 }
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(any(test, feature = "test-utils", feature = "dangerous-certs"))]
 /// Creates a client config that trusts relay servers without verification
 ///
 /// Should be used for testing local relay setups only.
