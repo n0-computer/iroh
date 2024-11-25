@@ -1,17 +1,22 @@
-use anyhow::{Context,Result};
+use std::{
+    str::FromStr,
+    time::{Duration, Instant},
+};
+
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use futures_lite::StreamExt;
-use iroh_net::{key::SecretKey, ticket::NodeTicket, Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl};
-use std::time::{Duration, Instant};
+use iroh_net::{
+    key::SecretKey, ticket::NodeTicket, Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl,
+};
 use tracing::info;
-use std::str::FromStr;
 
 // Transfer ALPN that we are using to communicate over the `Endpoint`
 const TRANSFER_ALPN: &[u8] = b"n0/iroh/transfer/example/0";
 
 #[derive(Parser, Debug)]
-#[command(name = "provide_fetch")]
+#[command(name = "transfer")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -26,7 +31,7 @@ enum Commands {
         relay_url: Option<String>,
     },
     Fetch {
-        #[arg(long)]
+        #[arg(index = 1)]
         ticket: String,
         #[clap(long)]
         relay_url: Option<String>,
@@ -39,8 +44,8 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Provide { size, relay_url } => provide(size.clone(), relay_url.clone()).await?,
-        Commands::Fetch { ticket , relay_url} => fetch(&ticket, relay_url.clone()).await?,
+        Commands::Provide { size, relay_url } => provide(*size, relay_url.clone()).await?,
+        Commands::Fetch { ticket, relay_url } => fetch(ticket, relay_url.clone()).await?,
     }
 
     Ok(())
@@ -74,7 +79,6 @@ async fn provide(size: u64, relay_url: Option<String>) -> anyhow::Result<()> {
         println!("\t{}", local_endpoint.addr)
     }
 
-
     let relay_url = endpoint
         .home_relay()
         .expect("should be connected to a relay server");
@@ -84,10 +88,7 @@ async fn provide(size: u64, relay_url: Option<String>) -> anyhow::Result<()> {
         .await
         .context("no endpoints")?
         .into_iter()
-        .map(|endpoint| {
-            let addr = endpoint.addr;
-            addr
-        })
+        .map(|endpoint| endpoint.addr)
         .collect::<Vec<_>>();
 
     let node_addr = NodeAddr::from_parts(node_id, Some(relay_url), local_addrs);
@@ -183,10 +184,12 @@ async fn fetch(ticket: &str, relay_url: Option<String>) -> anyhow::Result<()> {
         .home_relay()
         .expect("should be connected to a relay server, try calling `endpoint.local_endpoints()` or `endpoint.connect()` first, to ensure the endpoint has actually attempted a connection before checking for the connected relay server");
     println!("node relay server url: {relay_url}\n");
-    
+
     // Attempt to connect, over the given ALPN.
     // Returns a Quinn connection.
-    let conn = endpoint.connect(ticket.node_addr().clone(), TRANSFER_ALPN).await?;
+    let conn = endpoint
+        .connect(ticket.node_addr().clone(), TRANSFER_ALPN)
+        .await?;
     info!("connected");
 
     // Use the Quinn API to send and recv content.
@@ -205,8 +208,16 @@ async fn fetch(ticket: &str, relay_url: Option<String>) -> anyhow::Result<()> {
     endpoint.close(0u8.into(), b"bye").await?;
 
     let duration = start.elapsed();
-    println!("Received {} B in {:?}/{:?} in {} chunks", len, dur, duration, chnk);
-    println!("Transferred {} B in {} seconds, {} B/s", len, duration.as_secs_f64(), len as f64 / duration.as_secs_f64());
+    println!(
+        "Received {} B in {:?}/{:?} in {} chunks",
+        len, dur, duration, chnk
+    );
+    println!(
+        "Transferred {} B in {} seconds, {} B/s",
+        len,
+        duration.as_secs_f64(),
+        len as f64 / duration.as_secs_f64()
+    );
 
     Ok(())
 }
@@ -259,8 +270,11 @@ async fn drain_stream(
     Ok((read, ttfb, num_chunks))
 }
 
-async fn send_data_on_stream(stream: &mut iroh_net::endpoint::SendStream, stream_size: u64) -> Result<()> {
-    const DATA: &[u8] = &[0xAB; 7*1024 * 1024];
+async fn send_data_on_stream(
+    stream: &mut iroh_net::endpoint::SendStream,
+    stream_size: u64,
+) -> Result<()> {
+    const DATA: &[u8] = &[0xAB; 7 * 1024 * 1024];
     let bytes_data = Bytes::from_static(DATA);
 
     let full_chunks = stream_size / (DATA.len() as u64);
