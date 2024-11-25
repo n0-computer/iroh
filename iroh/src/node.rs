@@ -114,14 +114,6 @@ struct NodeInner {
     client: crate::client::Iroh,
 }
 
-/// In memory node.
-#[deprecated]
-pub type MemNode = Node;
-
-/// Persistent node.
-#[deprecated]
-pub type FsNode = Node;
-
 impl Node {
     /// Returns a new builder for the [`Node`], by default configured to run in memory.
     ///
