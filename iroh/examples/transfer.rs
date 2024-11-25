@@ -112,7 +112,7 @@ async fn provide(size: u64, relay_url: Option<String>) -> anyhow::Result<()> {
         let node_id = iroh_net::endpoint::get_remote_node_id(&conn)?;
         info!(
             "new connection from {node_id} with ALPN {} (coming from {})",
-            String::from_utf8_lossy(&TRANSFER_ALPN),
+            String::from_utf8_lossy(TRANSFER_ALPN),
             conn.remote_address()
         );
 
