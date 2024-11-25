@@ -3098,6 +3098,45 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn test_regression_network_change_rebind_wakes_connection_driver(
+    ) -> testresult::TestResult {
+        iroh_test::logging::setup();
+        let m1 = MagicStack::new(RelayMode::Disabled).await?;
+        let m2 = MagicStack::new(RelayMode::Disabled).await?;
+
+        println!("Net change");
+        m1.endpoint.magic_sock().force_network_change(true).await;
+        tokio::time::sleep(Duration::from_secs(1)).await; // wait for socket rebinding
+
+        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
+
+        let _handle = AbortOnDropHandle::new(tokio::spawn({
+            let endpoint = m2.endpoint.clone();
+            async move {
+                while let Some(incoming) = endpoint.accept().await {
+                    println!("Incoming first conn!");
+                    let conn = incoming.await?;
+                    conn.closed().await;
+                }
+
+                testresult::TestResult::Ok(())
+            }
+        }));
+
+        println!("first conn!");
+        let conn = m1
+            .endpoint
+            .connect(m2.endpoint.node_addr().await?, ALPN)
+            .await?;
+        println!("Closing first conn");
+        conn.close(0u32.into(), b"bye lolz");
+        conn.closed().await;
+        println!("Closed first conn");
+
+        Ok(())
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_network_change() -> Result<()> {
         time::timeout(
