@@ -1,10 +1,8 @@
 //! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
-use std::net::SocketAddr;
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Result;
-
 use quinn::{ApplicationClose, VarInt};
 use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};

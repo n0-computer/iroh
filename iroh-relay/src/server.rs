@@ -60,7 +60,6 @@ pub mod testing;
 
 #[cfg(feature = "dangerous-certs")]
 pub use self::testing::self_signed_tls_certs_and_config;
-
 pub use self::{
     metrics::{Metrics, StunMetrics},
     streams::MaybeTlsStream as MaybeTlsStreamServer,
