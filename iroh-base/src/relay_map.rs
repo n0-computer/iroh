@@ -141,7 +141,7 @@ pub struct RelayNode {
 }
 
 fn quic_port() -> u16 {
-    0
+    DEFAULT_QUIC_PORT
 }
 
 impl fmt::Display for RelayNode {
