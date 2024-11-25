@@ -363,8 +363,7 @@ impl Stream for RateLimitedRelayedStream {
         loop {
             // If we have a delay installed, we need to await it.
             if let Some(ref mut wait_fut) = self.delay {
-                tokio::pin!(wait_fut);
-                match wait_fut.poll(cx) {
+                match Pin::new(wait_fut).poll(cx) {
                     Poll::Ready(_) => {
                         self.delay.take();
                         continue;
