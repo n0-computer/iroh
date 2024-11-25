@@ -9,24 +9,12 @@ pub enum IrohPaths {
     /// Path to the node's secret key for the [`iroh_net::key::PublicKey`].
     #[strum(serialize = "keypair")]
     SecretKey,
-    /// Path to the node's [file based blob store](iroh_blobs::store::fs::Store).
-    #[strum(serialize = "blobs")]
-    BaoStoreDir,
-    /// Path to the [iroh-docs document database](iroh_docs::store::fs::Store)
-    #[strum(serialize = "docs.redb")]
-    DocsDatabase,
-    /// Path to the console state
-    #[strum(serialize = "console")]
-    Console,
     #[strum(serialize = "peers.postcard")]
     /// Path to store known peer data.
     PeerData,
     #[strum(serialize = "rpc.lock")]
     /// Path to RPC lock file, containing the RPC port if running.
     RpcLock,
-    /// Path to the [`iroh_docs::AuthorId`] of the node's default author
-    #[strum(serialize = "default-author")]
-    DefaultAuthor,
 }
 
 impl AsRef<Path> for IrohPaths {
