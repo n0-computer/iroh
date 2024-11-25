@@ -5035,9 +5035,9 @@
                     <span class="prelude-val">Err</span>(err) <span class="kw">if </span>err.kind() == io::ErrorKind::WouldBlock =&gt; {
                         <span class="comment">// This is the socket .try_send_disco_message_udp used.
                         </span><span class="kw">let </span>sock = <span class="self">self</span>.conn_for_addr(dst)<span class="question-mark">?</span>;
-                        <span class="kw">let </span><span class="kw-2">mut </span>poller = sock.create_io_poller();
-                        <span class="kw">match </span>poller.as_mut().poll_writable(cx)<span class="question-mark">? </span>{
-                            Poll::Ready(()) =&gt; <span class="kw">continue</span>,
+                        <span class="kw">match </span>sock.as_socket_ref().poll_writable(cx) {
+                            Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; <span class="kw">continue</span>,
+                            Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err)),
                             Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
                         }
                     }
