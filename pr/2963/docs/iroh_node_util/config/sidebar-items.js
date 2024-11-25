@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["cache_root","config_root","data_root"]};
