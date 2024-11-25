@@ -1894,7 +1894,7 @@ mod tests {
     #[tokio::test]
     async fn test_direct_addresses_no_stun_relay() {
         let _guard = iroh_test::logging::setup();
-        let (relay_map, _, _guard) = run_relay_server_with(None).await.unwrap();
+        let (relay_map, _, _guard) = run_relay_server_with(None, false).await.unwrap();
 
         let ep = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])

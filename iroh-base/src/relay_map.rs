@@ -134,7 +134,12 @@ pub struct RelayNode {
     /// The QUIC endpoint port of the relay server.
     ///
     /// Setting this to `0` means the default QUIC port is used.
+    #[serde(default = "quic_port")]
     pub quic_port: u16,
+}
+
+fn quic_port() -> u16 {
+    0
 }
 
 impl fmt::Display for RelayNode {

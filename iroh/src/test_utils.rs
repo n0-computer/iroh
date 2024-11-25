@@ -4,6 +4,7 @@ use std::net::Ipv4Addr;
 use anyhow::Result;
 pub use dns_and_pkarr_servers::DnsPkarrServer;
 pub use dns_server::create_dns_resolver;
+use iroh_base::relay_map::DEFAULT_QUIC_PORT;
 use iroh_relay::server::{
     CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig,
 };
@@ -67,7 +68,7 @@ pub async fn run_relay_server_with(
         Some(QuicConfig::new(
             server_config.clone(),
             "127.0.0.1".parse()?,
-            None,
+            Some(0),
         )?)
     } else {
         None
@@ -95,7 +96,7 @@ pub async fn run_relay_server_with(
         url: url.clone(),
         stun_only: false,
         stun_port: server.stun_addr().map_or(DEFAULT_STUN_PORT, |s| s.port()),
-        quic_port: 0,
+        quic_port: server.quic_addr().map_or(DEFAULT_QUIC_PORT, |s| s.port()),
     }])
     .unwrap();
     Ok((m, url, server))

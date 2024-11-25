@@ -279,11 +279,7 @@ mod tests {
         let (certs, server_config) =
             super::super::server::testing::self_signed_tls_certs_and_config();
 
-        let quic_server = QuicServer::spawn(QuicConfig::new(
-            server_config,
-            host.clone().into(),
-            Some(0),
-        )?)?;
+        let quic_server = QuicServer::spawn(QuicConfig::new(server_config, host.into(), Some(0))?)?;
 
         let client_config = generate_quic_addr_disc_client_config(certs[0].clone())?;
         let client_endpoint = quinn::Endpoint::client(SocketAddr::new(host.into(), 0))?;
@@ -293,7 +289,7 @@ mod tests {
         let quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 
         let (addr, _latency) = quic_client
-            .get_addr_and_latency(quic_server.bind_addr.clone(), &host.to_string())
+            .get_addr_and_latency(quic_server.bind_addr, &host.to_string())
             .await?;
         // wait until the endpoint delivers the closing message to the server
         client_endpoint.wait_idle().await;

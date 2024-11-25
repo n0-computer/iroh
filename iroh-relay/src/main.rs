@@ -283,9 +283,8 @@ struct TlsConfig {
 
 impl TlsConfig {
     fn https_bind_addr(&self, cfg: &Config) -> SocketAddr {
-        self.https_bind_addr.unwrap_or_else(|| {
-            SocketAddr::new(cfg.http_bind_addr().ip().clone(), DEFAULT_HTTPS_PORT)
-        })
+        self.https_bind_addr
+            .unwrap_or_else(|| SocketAddr::new(cfg.http_bind_addr().ip(), DEFAULT_HTTPS_PORT))
     }
 
     fn cert_dir(&self) -> PathBuf {
@@ -443,7 +442,7 @@ async fn maybe_load_tls(
         }
     };
     Ok(Some(relay::TlsConfig {
-        https_bind_addr: tls.https_bind_addr(&cfg),
+        https_bind_addr: tls.https_bind_addr(cfg),
         cert: cert_config,
         server_config,
     }))
@@ -458,7 +457,7 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
         if let Some(ref tls) = relay_tls {
             quic_config = Some(QuicConfig::new(
                 tls.server_config.clone(),
-                tls.https_bind_addr.ip().clone(),
+                tls.https_bind_addr.ip(),
                 cfg.quic_bind_port,
             )?);
         } else if cfg.enable_quic_local_cert {

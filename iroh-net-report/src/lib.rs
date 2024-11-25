@@ -795,6 +795,10 @@ mod test_utils {
             url: server.https_url().expect("should work as relay"),
             stun_only: false, // the checks above and below guarantee both stun and relay
             stun_port: server.stun_addr().expect("server should serve stun").port(),
+            quic_port: server
+                .quic_addr()
+                .expect("server should server_stun")
+                .port(),
         };
 
         (server, Arc::new(node_desc))
@@ -879,6 +883,7 @@ mod tests {
                     url,
                     stun_port: port,
                     stun_only,
+                    quic_port: 0,
                 }
             });
             RelayMap::from_nodes(nodes).expect("generated invalid nodes")
