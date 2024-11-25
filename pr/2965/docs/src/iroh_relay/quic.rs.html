@@ -298,6 +298,7 @@
 <a href="#298" id="298">298</a>
 <a href="#299" id="299">299</a>
 <a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
@@ -314,12 +315,13 @@
 
 <span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>server {
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">pub use </span><span class="kw">crate</span>::server::QuicConfig;
     <span class="kw">use </span>quinn::ApplicationClose;
     <span class="kw">use </span>tokio::task::JoinSet;
     <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
     <span class="kw">use </span>tracing::{debug, info, info_span, warn, Instrument};
+
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">pub use </span><span class="kw">crate</span>::server::QuicConfig;
 
     <span class="kw">pub struct </span>QuicServer {
         bind_addr: SocketAddr,

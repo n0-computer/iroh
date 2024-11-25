@@ -147,6 +147,8 @@
 <a href="#147" id="147">147</a>
 <a href="#148" id="148">148</a>
 <a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! based on tailscale/tailcfg/derpmap.go
 
 </span><span class="kw">use </span>std::{collections::BTreeMap, fmt, sync::Arc};
@@ -216,7 +218,9 @@
     ///
     /// Allows to set a custom STUN port and different IP addresses for IPv4 and IPv6.
     /// If IP addresses are provided, no DNS lookup will be performed.
-    </span><span class="kw">pub fn </span>default_from_node(url: RelayUrl, stun_port: u16, quic_port: u16) -&gt; <span class="self">Self </span>{
+    ///
+    /// Sets the port to the default [`DEFAULT_QUIC_PORT`].
+    </span><span class="kw">pub fn </span>default_from_node(url: RelayUrl, stun_port: u16) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>nodes = BTreeMap::new();
         nodes.insert(
             url.clone(),
@@ -224,7 +228,7 @@
                 url,
                 stun_only: <span class="bool-val">false</span>,
                 stun_port,
-                quic_port,
+                quic_port: DEFAULT_QUIC_PORT,
             }
             .into(),
         );
@@ -241,7 +245,7 @@
     /// resolved from the URL's host name via DNS.
     /// relay nodes are specified at &lt;../../docs/relay_nodes.md&gt;
     </span><span class="kw">pub fn </span>from_url(url: RelayUrl) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::default_from_node(url, DEFAULT_STUN_PORT, DEFAULT_QUIC_PORT)
+        <span class="self">Self</span>::default_from_node(url, DEFAULT_STUN_PORT)
     }
 
     <span class="doccomment">/// Constructs the [`RelayMap`] from an iterator of [`RelayNode`]s.
