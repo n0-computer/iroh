@@ -297,15 +297,13 @@
 <a href="#297" id="297">297</a>
 <a href="#298" id="298">298</a>
 <a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
 
 <span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>quinn::{ApplicationClose, VarInt};
-<span class="kw">use </span>tokio::task::JoinSet;
-<span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-<span class="kw">use </span>tracing::{debug, info, info_span, warn, Instrument};
+<span class="kw">use </span>quinn::VarInt;
 
 <span class="doccomment">/// ALPN for our quic addr discovery
 </span><span class="kw">pub const </span>ALPN_QUIC_ADDR_DISC: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"quic"</span>;
@@ -318,6 +316,10 @@
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>server {
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">pub use </span><span class="kw">crate</span>::server::QuicConfig;
+    <span class="kw">use </span>quinn::ApplicationClose;
+    <span class="kw">use </span>tokio::task::JoinSet;
+    <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+    <span class="kw">use </span>tracing::{debug, info, info_span, warn, Instrument};
 
     <span class="kw">pub struct </span>QuicServer {
         bind_addr: SocketAddr,
