@@ -123,22 +123,6 @@ impl UdpSocket {
         })
     }
 
-    /// Use the socket
-    pub fn with_socket<F, T>(&self, f: F) -> std::io::Result<T>
-    where
-        F: FnOnce(&tokio::net::UdpSocket, &quinn_udp::UdpSocketState) -> T,
-    {
-        let guard = self.socket.read().unwrap();
-        let Some((socket, state)) = guard.as_ref() else {
-            warn!("socket closed");
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                "socket closed",
-            ));
-        };
-        Ok(f(socket, state))
-    }
-
     /// TODO
     pub fn recv<'a, 'b>(&'b self, buffer: &'a mut [u8]) -> RecvFut<'a, 'b> {
         RecvFut {
@@ -231,7 +215,7 @@ impl UdpSocket {
     /// Handle potential read errors, updating internal state.
     ///
     /// Returns `Some(error)` if the error is fatal otherwise `None.
-    pub fn handle_read_error(&self, error: std::io::Error) -> Option<std::io::Error> {
+    fn handle_read_error(&self, error: std::io::Error) -> Option<std::io::Error> {
         match error.kind() {
             std::io::ErrorKind::NotConnected => {
                 // This indicates the underlying socket is broken, and we should attempt to rebind it
@@ -245,7 +229,7 @@ impl UdpSocket {
     /// Handle potential write errors, updating internal state.
     ///
     /// Returns `Some(error)` if the error is fatal otherwise `None.
-    pub fn handle_write_error(&self, error: std::io::Error) -> Option<std::io::Error> {
+    fn handle_write_error(&self, error: std::io::Error) -> Option<std::io::Error> {
         match error.kind() {
             std::io::ErrorKind::BrokenPipe => {
                 // This indicates the underlying socket is broken, and we should attempt to rebind it
@@ -590,20 +574,6 @@ impl Future for RecvFromFut<'_, '_> {
                 }
             }
         }
-    }
-}
-
-/// Writable future
-#[derive(Debug)]
-pub struct WritableFut<'a> {
-    socket: &'a UdpSocket,
-}
-
-impl Future for WritableFut<'_> {
-    type Output = std::io::Result<()>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        self.socket.poll_writable(cx)
     }
 }
 

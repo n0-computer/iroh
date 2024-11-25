@@ -24,6 +24,10 @@ impl UdpConn {
         self.io.clone()
     }
 
+    pub(super) fn as_socket_ref(&self) -> &UdpSocket {
+        &self.io
+    }
+
     pub(super) fn bind(addr: SocketAddr) -> anyhow::Result<Self> {
         let sock = bind(addr)?;
 

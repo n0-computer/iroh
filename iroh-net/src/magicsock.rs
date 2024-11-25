@@ -1088,9 +1088,9 @@ impl MagicSock {
                     Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                         // This is the socket .try_send_disco_message_udp used.
                         let sock = self.conn_for_addr(dst)?;
-                        let mut poller = sock.create_io_poller();
-                        match poller.as_mut().poll_writable(cx)? {
-                            Poll::Ready(()) => continue,
+                        match sock.as_socket_ref().poll_writable(cx) {
+                            Poll::Ready(Ok(())) => continue,
+                            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
                             Poll::Pending => return Poll::Pending,
                         }
                     }
