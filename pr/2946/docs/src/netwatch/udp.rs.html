@@ -878,13 +878,23 @@
 <a href="#878" id="878">878</a>
 <a href="#879" id="879">879</a>
 <a href="#880" id="880">880</a>
+<a href="#881" id="881">881</a>
+<a href="#882" id="882">882</a>
+<a href="#883" id="883">883</a>
+<a href="#884" id="884">884</a>
+<a href="#885" id="885">885</a>
+<a href="#886" id="886">886</a>
+<a href="#887" id="887">887</a>
+<a href="#888" id="888">888</a>
+<a href="#889" id="889">889</a>
+<a href="#890" id="890">890</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     future::Future,
     io::ErrorKind,
     net::SocketAddr,
     pin::Pin,
-    sync::{atomic::AtomicBool, RwLock},
-    task::{Context, Poll},
+    sync::{atomic::AtomicBool, Mutex, RwLock},
+    task::{Context, Poll, Waker},
 };
 
 <span class="kw">use </span>anyhow::{bail, ensure, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
@@ -898,6 +908,7 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>UdpSocket {
     socket: RwLock&lt;<span class="prelude-ty">Option</span>&lt;(tokio::net::UdpSocket, quinn_udp::UdpSocketState)&gt;&gt;,
+    recv_waker: Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;,
     <span class="doccomment">/// The addr we are binding to.
     </span>addr: SocketAddr,
     <span class="doccomment">/// Set to true, when an error occurred, that means we need to rebind the socket.
@@ -978,6 +989,11 @@
         </span><span class="self">self</span>.is_broken
             .store(<span class="bool-val">false</span>, std::sync::atomic::Ordering::SeqCst);
 
+        <span class="comment">// wakup
+        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(waker) = <span class="self">self</span>.recv_waker.lock().unwrap().take() {
+            waker.wake();
+        }
+
         <span class="prelude-val">Ok</span>(())
     }
 
@@ -989,6 +1005,7 @@
 
         <span class="prelude-val">Ok</span>(UdpSocket {
             socket: RwLock::new(<span class="prelude-val">Some</span>(socket)),
+            recv_waker: Mutex::new(<span class="prelude-val">None</span>),
             addr,
             is_broken: AtomicBool::new(<span class="bool-val">false</span>),
         })
@@ -1241,7 +1258,10 @@
             };
 
             <span class="kw">match </span>socket.poll_recv_ready(cx) {
-                Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
+                Poll::Pending =&gt; {
+                    <span class="self">self</span>.recv_waker.lock().unwrap().replace(cx.waker().clone());
+                    <span class="kw">return </span>Poll::Pending;
+                }
                 Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; {
                     <span class="comment">// We are ready to read, continue
                 </span>}
