@@ -1,0 +1,35 @@
+### Base image for iroh-relay and iroh-dns-server
+FROM alpine:latest AS base
+RUN apk update && apk add ca-certificates && update-ca-certificates
+
+### Target image
+FROM base AS iroh-relay
+ARG TARGETPLATFORM
+
+COPY bins/${TARGETPLATFORM}/iroh-relay /iroh-relay
+
+RUN chmod +x /iroh-relay
+
+WORKDIR /
+
+# expose the default ports
+# http, https, stun, metrics
+EXPOSE  80 443 3478/udp 9090
+ENTRYPOINT ["/iroh-relay"]
+CMD [""]
+
+### Target image
+FROM base AS iroh-dns-server
+ARG TARGETPLATFORM
+
+COPY bins/${TARGETPLATFORM}/iroh-dns-server /iroh-dns-server
+
+RUN chmod +x /iroh-dns-server
+
+WORKDIR /
+
+# expose the default ports
+# dns, metrics
+EXPOSE 53/udp 9090
+ENTRYPOINT ["/iroh-dns-server"]
+CMD [""]
