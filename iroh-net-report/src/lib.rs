@@ -793,7 +793,7 @@ mod test_utils {
             .await
             .expect("should serve relay");
         let quic = Some(QuicConfig {
-            port: server.quic_addr().expect("server sould run quic").port(),
+            port: server.quic_addr().expect("server should run quic").port(),
         });
         let node_desc = RelayNode {
             url: server.https_url().expect("should work as relay"),
