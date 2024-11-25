@@ -16,13 +16,7 @@
 //! - HTTPS `/generate_204`: Used for net_report probes.
 //! - STUN: UDP port for STUN requests/responses.
 
-use std::{
-    fmt::{self, Display},
-    future::Future,
-    net::SocketAddr,
-    pin::Pin,
-    sync::Arc,
-};
+use std::{fmt, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 
 use anyhow::{anyhow, bail, Context, Result};
 use futures_lite::StreamExt;
@@ -85,10 +79,7 @@ fn body_empty() -> BytesBody {
 /// Be aware the generic parameters are for when using the Let's Encrypt TLS configuration.
 /// If not used dummy ones need to be provided, e.g. `ServerConfig::<(), ()>::default()`.
 #[derive(Debug, Default)]
-pub struct ServerConfig<
-    EC: fmt::Debug + derive_more::Display,
-    EA: fmt::Debug + derive_more::Display = EC,
-> {
+pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     /// Configuration for the Relay server, disabled if `None`.
     pub relay: Option<RelayConfig<EC, EA>>,
     /// Configuration for the STUN server, disabled if `None`.
@@ -104,10 +95,7 @@ pub struct ServerConfig<
 /// This includes the HTTP services hosted by the Relay server, the Relay `/relay` HTTP
 /// endpoint is only one of the services served.
 #[derive(Debug)]
-pub struct RelayConfig<
-    EC: fmt::Debug + derive_more::Display,
-    EA: fmt::Debug + derive_more::Display = EC,
-> {
+pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     /// The socket address on which the Relay HTTP server should bind.
     ///
     /// Normally you'd choose port `80`.  The bind address for the HTTPS server is
@@ -138,10 +126,7 @@ pub struct StunConfig {
 ///
 /// Normally the Relay server accepts connections on both HTTPS and HTTP.
 #[derive(Debug)]
-pub struct TlsConfig<
-    EC: fmt::Debug + derive_more::Display,
-    EA: fmt::Debug + derive_more::Display = EC,
-> {
+pub struct TlsConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     /// The socket address on which to serve the HTTPS server.
     ///
     /// Since the captive portal probe has to run over plain text HTTP and TLS is used for
@@ -212,8 +197,8 @@ impl Server {
     /// Starts the server.
     pub async fn spawn<EC, EA>(config: ServerConfig<EC, EA>) -> Result<Self>
     where
-        EC: fmt::Debug + derive_more::Display + 'static,
-        EA: fmt::Debug + derive_more::Display + 'static,
+        EC: fmt::Debug + 'static,
+        EA: fmt::Debug + 'static,
     {
         let mut tasks = JoinSet::new();
 
@@ -712,7 +697,6 @@ mod tests {
     use std::{net::Ipv4Addr, time::Duration};
 
     use bytes::Bytes;
-    use derive_more::derive::Display;
     use http::header::UPGRADE;
     use iroh_base::{key::SecretKey, node_addr::RelayUrl};
 
@@ -723,7 +707,7 @@ mod tests {
     };
 
     async fn spawn_local_relay() -> Result<Server> {
-        #[derive(Debug, Display)]
+        #[derive(Debug)]
         struct Stub;
 
         Server::spawn(ServerConfig::<Stub, Stub> {
@@ -740,7 +724,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_services() {
-        #[derive(Default, Debug, Display)]
+        #[derive(Default, Debug)]
         struct Stub;
 
         let _guard = iroh_test::logging::setup();
@@ -756,7 +740,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_conflicting_bind() {
-        #[derive(Debug, Display)]
+        #[derive(Debug)]
         struct Stub;
 
         let _guard = iroh_test::logging::setup();
@@ -1031,7 +1015,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stun() {
-        #[derive(Debug, Display)]
+        #[derive(Debug)]
         struct Stub;
 
         let _guard = iroh_test::logging::setup();
