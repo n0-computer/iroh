@@ -246,13 +246,13 @@ jobs:
       # TODO: We have a bunch of platform-dependent code so should
       #    probably run this job on the full platform matrix
       - name: clippy check (all features)
-        run: cargo clippy --workspace --all-features --all-targets --bins --tests --benches
+        run: cargo clippy --workspace --all-features --all-targets --bins --tests --benches --examples
 
       - name: clippy check (no features)
-        run: cargo clippy --workspace --no-default-features --lib --bins --tests
+        run: cargo clippy --workspace --no-default-features --lib --bins --tests --examples
 
       - name: clippy check (default features)
-        run: cargo clippy --workspace --all-targets
+        run: cargo clippy --workspace --all-targets --examples
 
   msrv:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"

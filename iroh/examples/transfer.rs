@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use futures_lite::StreamExt;
+use indicatif::HumanBytes;
 use iroh_net::{
     key::SecretKey, ticket::NodeTicket, Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl,
 };
@@ -213,10 +214,10 @@ async fn fetch(ticket: &str, relay_url: Option<String>) -> anyhow::Result<()> {
         len, dur, duration, chnk
     );
     println!(
-        "Transferred {} B in {} seconds, {} B/s",
-        len,
+        "Transferred {} in {:.4}, {}/s",
+        HumanBytes(len as u64),
         duration.as_secs_f64(),
-        len as f64 / duration.as_secs_f64()
+        HumanBytes((len as f64 / duration.as_secs_f64()) as u64)
     );
 
     Ok(())
@@ -274,7 +275,7 @@ async fn send_data_on_stream(
     stream: &mut iroh_net::endpoint::SendStream,
     stream_size: u64,
 ) -> Result<()> {
-    const DATA: &[u8] = &[0xAB; 7 * 1024 * 1024];
+    const DATA: &[u8] = &[0xAB; 1024 * 1024];
     let bytes_data = Bytes::from_static(DATA);
 
     let full_chunks = stream_size / (DATA.len() as u64);
@@ -303,24 +304,7 @@ async fn send_data_on_stream(
     Ok(())
 }
 
-fn parse_byte_size(s: &str) -> Result<u64, std::num::ParseIntError> {
-    let s = s.trim();
-
-    let multiplier = match s.chars().last() {
-        Some('T') => 1024 * 1024 * 1024 * 1024,
-        Some('G') => 1024 * 1024 * 1024,
-        Some('M') => 1024 * 1024,
-        Some('k') => 1024,
-        _ => 1,
-    };
-
-    let s = if multiplier != 1 {
-        &s[..s.len() - 1]
-    } else {
-        s
-    };
-
-    let base: u64 = u64::from_str(s)?;
-
-    Ok(base * multiplier)
+fn parse_byte_size(s: &str) -> Result<u64> {
+    let cfg = parse_size::Config::new().with_binary();
+    cfg.parse_size(s).map_err(Into::into)
 }

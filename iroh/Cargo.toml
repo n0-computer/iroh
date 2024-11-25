@@ -62,6 +62,7 @@ ref-cast = "1.0.23"
 # Examples
 clap = { version = "4", features = ["derive"], optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
+parse-size = { version = "1.1.0", optional = true }
 
 # Documentation tests
 url = { version = "2.5.0", features = ["serde"] }
@@ -74,7 +75,7 @@ test = []
 discovery-pkarr-dht = ["iroh-net/discovery-pkarr-dht"]
 test-utils = ["iroh-net/test-utils"]
 
-examples = ["dep:clap", "dep:indicatif"]
+examples = ["dep:clap", "dep:indicatif", "dep:parse-size"]
 
 [dev-dependencies]
 anyhow = { version = "1" }
@@ -100,4 +101,8 @@ rustdoc-args = ["--cfg", "iroh_docsrs"]
 
 [[example]]
 name = "rpc"
+required-features = ["examples"]
+
+[[example]]
+name = "transfer"
 required-features = ["examples"]
