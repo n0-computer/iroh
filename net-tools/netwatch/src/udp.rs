@@ -3,11 +3,12 @@ use std::{
     io::ErrorKind,
     net::SocketAddr,
     pin::Pin,
-    sync::{atomic::AtomicBool, Mutex, RwLock},
-    task::{Context, Poll, Waker},
+    sync::{atomic::AtomicBool, RwLock},
+    task::{Context, Poll},
 };
 
 use anyhow::{bail, ensure, Context as _, Result};
+use atomic_waker::AtomicWaker;
 use quinn_udp::Transmit;
 use tokio::io::Interest;
 use tracing::{debug, trace, warn};
@@ -18,7 +19,8 @@ use super::IpFamily;
 #[derive(Debug)]
 pub struct UdpSocket {
     socket: RwLock<Option<(tokio::net::UdpSocket, quinn_udp::UdpSocketState)>>,
-    recv_waker: Mutex<Option<Waker>>,
+    recv_waker: AtomicWaker,
+    send_waker: AtomicWaker,
     /// The addr we are binding to.
     addr: SocketAddr,
     /// Set to true, when an error occurred, that means we need to rebind the socket.
@@ -99,10 +101,9 @@ impl UdpSocket {
         self.is_broken
             .store(false, std::sync::atomic::Ordering::SeqCst);
 
-        // wakup
-        if let Some(waker) = self.recv_waker.lock().unwrap().take() {
-            waker.wake();
-        }
+        // wakeup
+        self.recv_waker.wake();
+        self.send_waker.wake();
 
         Ok(())
     }
@@ -115,7 +116,8 @@ impl UdpSocket {
 
         Ok(UdpSocket {
             socket: RwLock::new(Some(socket)),
-            recv_waker: Mutex::new(None),
+            recv_waker: AtomicWaker::default(),
+            send_waker: AtomicWaker::default(),
             addr,
             is_broken: AtomicBool::new(false),
         })
@@ -282,7 +284,10 @@ impl UdpSocket {
             };
 
             match socket.poll_send_ready(cx) {
-                Poll::Pending => return Poll::Pending,
+                Poll::Pending => {
+                    self.send_waker.register(cx.waker());
+                    return Poll::Pending;
+                }
                 Poll::Ready(Ok(())) => return Poll::Ready(Ok(())),
                 Poll::Ready(Err(err)) => {
                     if let Some(err) = self.handle_write_error(err) {
@@ -369,7 +374,7 @@ impl UdpSocket {
 
             match socket.poll_recv_ready(cx) {
                 Poll::Pending => {
-                    self.recv_waker.lock().unwrap().replace(cx.waker().clone());
+                    self.recv_waker.register(cx.waker());
                     return Poll::Pending;
                 }
                 Poll::Ready(Ok(())) => {
@@ -493,7 +498,10 @@ impl Future for RecvFut<'_, '_> {
             };
 
             match inner_socket.poll_recv_ready(cx) {
-                Poll::Pending => return Poll::Pending,
+                Poll::Pending => {
+                    self.socket.recv_waker.register(cx.waker());
+                    return Poll::Pending;
+                }
                 Poll::Ready(Ok(())) => {
                     let res = inner_socket.try_recv(buffer);
                     if let Err(err) = res {
@@ -557,7 +565,10 @@ impl Future for RecvFromFut<'_, '_> {
             };
 
             match inner_socket.poll_recv_ready(cx) {
-                Poll::Pending => return Poll::Pending,
+                Poll::Pending => {
+                    self.socket.recv_waker.register(cx.waker());
+                    return Poll::Pending;
+                }
                 Poll::Ready(Ok(())) => {
                     let res = inner_socket.try_recv_from(buffer);
                     if let Err(err) = res {
@@ -606,7 +617,7 @@ pub struct SendFut<'a, 'b> {
 impl Future for SendFut<'_, '_> {
     type Output = std::io::Result<usize>;
 
-    fn poll(self: Pin<&mut Self>, c: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         loop {
             // check if the socket needs a rebind
             if self.socket.is_broken() {
@@ -632,8 +643,11 @@ impl Future for SendFut<'_, '_> {
                 )));
             };
 
-            match socket.poll_send_ready(c) {
-                Poll::Pending => return Poll::Pending,
+            match socket.poll_send_ready(cx) {
+                Poll::Pending => {
+                    self.socket.send_waker.register(cx.waker());
+                    return Poll::Pending;
+                }
                 Poll::Ready(Ok(())) => {
                     let res = socket.try_send(self.buffer);
                     if let Err(err) = res {
@@ -697,7 +711,10 @@ impl Future for SendToFut<'_, '_> {
             };
 
             match socket.poll_send_ready(cx) {
-                Poll::Pending => return Poll::Pending,
+                Poll::Pending => {
+                    self.socket.send_waker.register(cx.waker());
+                    return Poll::Pending;
+                }
                 Poll::Ready(Ok(())) => {
                     let res = socket.try_send_to(self.buffer, self.to);
                     if let Err(err) = res {

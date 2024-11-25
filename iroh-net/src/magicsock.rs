@@ -3101,7 +3101,7 @@ mod tests {
     #[tokio::test]
     async fn test_regression_network_change_rebind_wakes_connection_driver(
     ) -> testresult::TestResult {
-        iroh_test::logging::setup();
+        let _ = iroh_test::logging::setup();
         let m1 = MagicStack::new(RelayMode::Disabled).await?;
         let m2 = MagicStack::new(RelayMode::Disabled).await?;
 

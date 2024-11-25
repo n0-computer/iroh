@@ -14,6 +14,7 @@ workspace = true
 
 [dependencies]
 anyhow = { version = "1" }
+atomic-waker = "1.1.2"
 bytes = "1.7"
 futures-lite = "2.3"
 futures-sink = "0.3.25"
