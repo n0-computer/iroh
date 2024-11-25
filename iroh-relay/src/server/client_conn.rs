@@ -703,62 +703,60 @@ mod tests {
     #[tokio::test]
     async fn test_rate_limit() -> TestResult {
         let _logging = iroh_test::logging::setup();
-        let (_send_queue_s, send_queue_r) = mpsc::channel(10);
-        let (_disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
-        let (_peer_gone_s, peer_gone_r) = mpsc::channel(10);
 
-        let key = SecretKey::generate().public();
-        let (io, io_rw) = tokio::io::duplex(1024);
-        let mut io_rw = Framed::new(io_rw, DerpCodec);
-        let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
-
-        // We are only allowed to send 32 bytes per minute
         const LIMIT: u32 = 50;
-        let quota = governor::Quota::per_minute(NonZeroU32::try_from(LIMIT)?);
+        const MAX_FRAMES: u32 = 100;
+
+        // Rate limiter allowing LIMIT bytes/s
+        let quota = governor::Quota::per_second(NonZeroU32::try_from(LIMIT)?);
         let limiter = governor::RateLimiter::direct(quota);
-        let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec));
 
-        println!("-- create client conn");
-        let actor = Actor {
-            stream: RateLimitedRelayedStream::new(stream, limiter),
-            timeout: Duration::from_secs(1),
-            send_queue: send_queue_r,
-            disco_send_queue: disco_send_queue_r,
-            node_gone: peer_gone_r,
-            key,
-            server_channel: server_channel_s,
-            preferred: true,
-        };
+        // Build the rate limited stream.
+        let (io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) as _);
+        let mut frame_writer = Framed::new(io_write, DerpCodec);
+        let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io_read), DerpCodec));
+        let mut stream = RateLimitedRelayedStream::new(stream, limiter);
 
-        let done = CancellationToken::new();
-        let io_done = done.clone();
-
-        info!("-- run client conn");
-        let handle = tokio::task::spawn(async move { actor.run(io_done).await });
-        let _handle = AbortOnDropHandle::new(handle);
-
-        // Prepare a packet to send.
-        let data = Bytes::from_static(b"hello world!");
+        // Prepare a packet to send, assert its size.
+        let data = Bytes::from_static(b"hello world!!");
         let target = SecretKey::generate().public();
-
-        // Assert the frame * 2 is over our limit.
         let frame = Frame::SendPacket {
             dst_key: target,
             packet: data.clone(),
         };
         let frame_len = frame.len_with_header();
-        assert!(frame_len * 2 > LIMIT as usize);
-        info!("-- send packet with {frame_len} bytes");
+        assert_eq!(frame_len, LIMIT as usize);
 
         // Send a packet, it should arrive.
-        conn::send_packet(&mut io_rw, &None, target, data.clone()).await?;
-        let msg = server_channel_r.recv().await.context("actor died?")?;
-        assert!(matches!(msg, actor::Message::SendPacket { .. }));
+        info!("-- send packet");
+        frame_writer.send(frame.clone()).await?;
+        frame_writer.flush().await?;
+        let recv_frame = tokio::time::timeout(Duration::from_millis(500), stream.next())
+            .await
+            .expect("timeout")
+            .expect("option")
+            .expect("ok");
+        assert_eq!(recv_frame, frame);
 
-        // Send another packet, it should not arrive
-        conn::send_packet(&mut io_rw, &None, target, data).await?;
-        let ret = tokio::time::timeout(Duration::from_secs(1), server_channel_r.recv()).await;
-        assert!(ret.is_err());
+        // Next packet does not arrive.
+        info!("-- send packet");
+        frame_writer.send(frame.clone()).await?;
+        frame_writer.flush().await?;
+        let res = tokio::time::timeout(Duration::from_millis(100), stream.next()).await;
+        assert!(res.is_err(), "expecting a timeout");
+        info!("-- timeout happened");
+
+        // Wait long enough.
+        info!("-- sleep");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        // Packet arrives.
+        let recv_frame = tokio::time::timeout(Duration::from_millis(500), stream.next())
+            .await
+            .expect("timeout")
+            .expect("option")
+            .expect("ok");
+        assert_eq!(recv_frame, frame);
 
         Ok(())
     }
