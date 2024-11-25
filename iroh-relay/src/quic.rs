@@ -14,12 +14,13 @@ pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 
 #[cfg(feature = "server")]
 pub(crate) mod server {
-    use super::*;
-    pub use crate::server::QuicConfig;
     use quinn::ApplicationClose;
     use tokio::task::JoinSet;
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
     use tracing::{debug, info, info_span, warn, Instrument};
+
+    use super::*;
+    pub use crate::server::QuicConfig;
 
     pub struct QuicServer {
         bind_addr: SocketAddr,
