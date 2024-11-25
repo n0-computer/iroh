@@ -205,19 +205,9 @@ async fn fetch(ticket: &str, relay_url: Option<String>) -> anyhow::Result<()> {
 
     // We received the last message: close all connections and allow for the close
     // message to be sent.
-    endpoint.close(0u8.into(), b"bye").await?;
-
-    // Ensure the client has closed the connection
-    let res = tokio::time::timeout(Duration::from_secs(3), async move {
-        let closed = conn.closed().await;
-        if !matches!(closed, quinn::ConnectionError::LocallyClosed) {
-            println!("node disconnected with an error: {closed:#}");
-        }
-    })
-    .await;
-    if res.is_err() {
-        println!("node did not disconnect within 3 seconds");
-    }
+    tokio::time::timeout(Duration::from_secs(3), async move {
+        endpoint.close(0u8.into(), b"bye").await?;
+    })??;
 
     let duration = start.elapsed();
     println!(
