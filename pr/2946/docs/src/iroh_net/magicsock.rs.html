@@ -7048,7 +7048,7 @@
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_regression_network_change_rebind_wakes_connection_driver(
     ) -&gt; testresult::TestResult {
-        iroh_test::logging::setup();
+        <span class="kw">let _ </span>= iroh_test::logging::setup();
         <span class="kw">let </span>m1 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>m2 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span><span class="question-mark">?</span>;
 
