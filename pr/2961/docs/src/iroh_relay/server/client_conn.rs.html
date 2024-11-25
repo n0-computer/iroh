@@ -761,8 +761,6 @@
 <a href="#761" id="761">761</a>
 <a href="#762" id="762">762</a>
 <a href="#763" id="763">763</a>
-<a href="#764" id="764">764</a>
-<a href="#765" id="765">765</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
@@ -1468,62 +1466,60 @@
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_rate_limit() -&gt; TestResult {
         <span class="kw">let </span>_logging = iroh_test::logging::setup();
-        <span class="kw">let </span>(_send_queue_s, send_queue_r) = mpsc::channel(<span class="number">10</span>);
-        <span class="kw">let </span>(_disco_send_queue_s, disco_send_queue_r) = mpsc::channel(<span class="number">10</span>);
-        <span class="kw">let </span>(_peer_gone_s, peer_gone_r) = mpsc::channel(<span class="number">10</span>);
 
-        <span class="kw">let </span>key = SecretKey::generate().public();
-        <span class="kw">let </span>(io, io_rw) = tokio::io::duplex(<span class="number">1024</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>io_rw = Framed::new(io_rw, DerpCodec);
-        <span class="kw">let </span>(server_channel_s, <span class="kw-2">mut </span>server_channel_r) = mpsc::channel(<span class="number">10</span>);
+        <span class="kw">const </span>LIMIT: u32 = <span class="number">50</span>;
+        <span class="kw">const </span>MAX_FRAMES: u32 = <span class="number">100</span>;
 
-        <span class="comment">// We are only allowed to send 32 bytes per minute
-        </span><span class="kw">const </span>LIMIT: u32 = <span class="number">50</span>;
-        <span class="kw">let </span>quota = governor::Quota::per_minute(NonZeroU32::try_from(LIMIT)<span class="question-mark">?</span>);
+        <span class="comment">// Rate limiter allowing LIMIT bytes/s
+        </span><span class="kw">let </span>quota = governor::Quota::per_second(NonZeroU32::try_from(LIMIT)<span class="question-mark">?</span>);
         <span class="kw">let </span>limiter = governor::RateLimiter::direct(quota);
-        <span class="kw">let </span>stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec));
 
-        <span class="macro">println!</span>(<span class="string">"-- create client conn"</span>);
-        <span class="kw">let </span>actor = Actor {
-            stream: RateLimitedRelayedStream::new(stream, limiter),
-            timeout: Duration::from_secs(<span class="number">1</span>),
-            send_queue: send_queue_r,
-            disco_send_queue: disco_send_queue_r,
-            node_gone: peer_gone_r,
-            key,
-            server_channel: server_channel_s,
-            preferred: <span class="bool-val">true</span>,
-        };
+        <span class="comment">// Build the rate limited stream.
+        </span><span class="kw">let </span>(io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) <span class="kw">as _</span>);
+        <span class="kw">let </span><span class="kw-2">mut </span>frame_writer = Framed::new(io_write, DerpCodec);
+        <span class="kw">let </span>stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io_read), DerpCodec));
+        <span class="kw">let </span><span class="kw-2">mut </span>stream = RateLimitedRelayedStream::new(stream, limiter);
 
-        <span class="kw">let </span>done = CancellationToken::new();
-        <span class="kw">let </span>io_done = done.clone();
-
-        <span class="macro">info!</span>(<span class="string">"-- run client conn"</span>);
-        <span class="kw">let </span>handle = tokio::task::spawn(<span class="kw">async move </span>{ actor.run(io_done).<span class="kw">await </span>});
-        <span class="kw">let </span>_handle = AbortOnDropHandle::new(handle);
-
-        <span class="comment">// Prepare a packet to send.
-        </span><span class="kw">let </span>data = Bytes::from_static(<span class="string">b"hello world!"</span>);
+        <span class="comment">// Prepare a packet to send, assert its size.
+        </span><span class="kw">let </span>data = Bytes::from_static(<span class="string">b"hello world!!"</span>);
         <span class="kw">let </span>target = SecretKey::generate().public();
-
-        <span class="comment">// Assert the frame * 2 is over our limit.
-        </span><span class="kw">let </span>frame = Frame::SendPacket {
+        <span class="kw">let </span>frame = Frame::SendPacket {
             dst_key: target,
             packet: data.clone(),
         };
         <span class="kw">let </span>frame_len = frame.len_with_header();
-        <span class="macro">assert!</span>(frame_len * <span class="number">2 </span>&gt; LIMIT <span class="kw">as </span>usize);
-        <span class="macro">info!</span>(<span class="string">"-- send packet with {frame_len} bytes"</span>);
+        <span class="macro">assert_eq!</span>(frame_len, LIMIT <span class="kw">as </span>usize);
 
         <span class="comment">// Send a packet, it should arrive.
-        </span>conn::send_packet(<span class="kw-2">&amp;mut </span>io_rw, <span class="kw-2">&amp;</span><span class="prelude-val">None</span>, target, data.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>msg = server_channel_r.recv().<span class="kw">await</span>.context(<span class="string">"actor died?"</span>)<span class="question-mark">?</span>;
-        <span class="macro">assert!</span>(<span class="macro">matches!</span>(msg, actor::Message::SendPacket { .. }));
+        </span><span class="macro">info!</span>(<span class="string">"-- send packet"</span>);
+        frame_writer.send(frame.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+        frame_writer.flush().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>recv_frame = tokio::time::timeout(Duration::from_millis(<span class="number">500</span>), stream.next())
+            .<span class="kw">await
+            </span>.expect(<span class="string">"timeout"</span>)
+            .expect(<span class="string">"option"</span>)
+            .expect(<span class="string">"ok"</span>);
+        <span class="macro">assert_eq!</span>(recv_frame, frame);
 
-        <span class="comment">// Send another packet, it should not arrive
-        </span>conn::send_packet(<span class="kw-2">&amp;mut </span>io_rw, <span class="kw-2">&amp;</span><span class="prelude-val">None</span>, target, data).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>ret = tokio::time::timeout(Duration::from_secs(<span class="number">1</span>), server_channel_r.recv()).<span class="kw">await</span>;
-        <span class="macro">assert!</span>(ret.is_err());
+        <span class="comment">// Next packet does not arrive.
+        </span><span class="macro">info!</span>(<span class="string">"-- send packet"</span>);
+        frame_writer.send(frame.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+        frame_writer.flush().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_millis(<span class="number">100</span>), stream.next()).<span class="kw">await</span>;
+        <span class="macro">assert!</span>(res.is_err(), <span class="string">"expecting a timeout"</span>);
+        <span class="macro">info!</span>(<span class="string">"-- timeout happened"</span>);
+
+        <span class="comment">// Wait long enough.
+        </span><span class="macro">info!</span>(<span class="string">"-- sleep"</span>);
+        tokio::time::sleep(Duration::from_secs(<span class="number">1</span>)).<span class="kw">await</span>;
+
+        <span class="comment">// Packet arrives.
+        </span><span class="kw">let </span>recv_frame = tokio::time::timeout(Duration::from_millis(<span class="number">500</span>), stream.next())
+            .<span class="kw">await
+            </span>.expect(<span class="string">"timeout"</span>)
+            .expect(<span class="string">"option"</span>)
+            .expect(<span class="string">"ok"</span>);
+        <span class="macro">assert_eq!</span>(recv_frame, frame);
 
         <span class="prelude-val">Ok</span>(())
     }
