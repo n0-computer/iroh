@@ -2090,7 +2090,7 @@
             .<span class="kw">await
             </span>.expect(<span class="string">"should serve relay"</span>);
         <span class="kw">let </span>quic = <span class="prelude-val">Some</span>(QuicConfig {
-            port: server.quic_addr().expect(<span class="string">"server sould run quic"</span>).port(),
+            port: server.quic_addr().expect(<span class="string">"server should run quic"</span>).port(),
         });
         <span class="kw">let </span>node_desc = RelayNode {
             url: server.https_url().expect(<span class="string">"should work as relay"</span>),
