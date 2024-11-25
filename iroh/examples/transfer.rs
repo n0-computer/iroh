@@ -99,7 +99,7 @@ async fn provide(size: u64, relay_url: Option<String>) -> anyhow::Result<()> {
 
     // accept incoming connections, returns a normal QUIC connection
     while let Some(incoming) = endpoint.accept().await {
-        let mut connecting = match incoming.accept() {
+        let connecting = match incoming.accept() {
             Ok(connecting) => connecting,
             Err(err) => {
                 tracing::warn!("incoming connection failed: {err:#}");
@@ -108,12 +108,11 @@ async fn provide(size: u64, relay_url: Option<String>) -> anyhow::Result<()> {
                 continue;
             }
         };
-        let alpn = connecting.alpn().await?;
         let conn = connecting.await?;
         let node_id = iroh_net::endpoint::get_remote_node_id(&conn)?;
         info!(
             "new connection from {node_id} with ALPN {} (coming from {})",
-            String::from_utf8_lossy(&alpn),
+            String::from_utf8_lossy(&TRANSFER_ALPN),
             conn.remote_address()
         );
 
@@ -199,21 +198,33 @@ async fn fetch(ticket: &str, relay_url: Option<String>) -> anyhow::Result<()> {
     let message = format!("{me} is saying 'hello!'");
     send.write_all(message.as_bytes()).await?;
 
-    // Call `finish` to close the send side of the connection gracefully.
+    // Call `finish` to signal no more data will be sent on this stream.
     send.finish()?;
 
-    let (len, ttfb, chnk) = drain_stream(&mut recv, false).await?;
+    let (len, time_to_first_byte, chnk) = drain_stream(&mut recv, false).await?;
 
     // We received the last message: close all connections and allow for the close
     // message to be sent.
     endpoint.close(0u8.into(), b"bye").await?;
 
+    // Ensure the client has closed the connection
+    let res = tokio::time::timeout(Duration::from_secs(3), async move {
+        let closed = conn.closed().await;
+        if !matches!(closed, quinn::ConnectionError::LocallyClosed) {
+            println!("node disconnected with an error: {closed:#}");
+        }
+    })
+    .await;
+    if res.is_err() {
+        println!("node did not disconnect within 3 seconds");
+    }
+
     let duration = start.elapsed();
     println!(
-        "Received {} B in {:.4}s with ttfb {}s in {} chunks",
+        "Received {} in {:.4}s with time to first byte {}s in {} chunks",
         HumanBytes(len as u64),
         duration.as_secs_f64(),
-        ttfb.as_secs_f64(),
+        time_to_first_byte.as_secs_f64(),
         chnk
     );
     println!(
@@ -234,14 +245,14 @@ async fn drain_stream(
 
     let download_start = Instant::now();
     let mut first_byte = true;
-    let mut ttfb = download_start.elapsed();
+    let mut time_to_first_byte = download_start.elapsed();
 
     let mut num_chunks: u64 = 0;
 
     if read_unordered {
         while let Some(chunk) = stream.read_chunk(usize::MAX, false).await? {
             if first_byte {
-                ttfb = download_start.elapsed();
+                time_to_first_byte = download_start.elapsed();
                 first_byte = false;
             }
             read += chunk.bytes.len();
@@ -263,7 +274,7 @@ async fn drain_stream(
 
         while let Some(n) = stream.read_chunks(&mut bufs[..]).await? {
             if first_byte {
-                ttfb = download_start.elapsed();
+                time_to_first_byte = download_start.elapsed();
                 first_byte = false;
             }
             read += bufs.iter().take(n).map(|buf| buf.len()).sum::<usize>();
@@ -271,7 +282,7 @@ async fn drain_stream(
         }
     }
 
-    Ok((read, ttfb, num_chunks))
+    Ok((read, time_to_first_byte, num_chunks))
 }
 
 async fn send_data_on_stream(
