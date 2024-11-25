@@ -211,7 +211,10 @@ async fn fetch(ticket: &str, relay_url: Option<String>) -> anyhow::Result<()> {
     let duration = start.elapsed();
     println!(
         "Received {} B in {:.4}s with ttfb {}s in {} chunks",
-        HumanBytes(len as u64), duration.as_secs_f64(), ttfb.as_secs_f64(), chnk
+        HumanBytes(len as u64),
+        duration.as_secs_f64(),
+        ttfb.as_secs_f64(),
+        chnk
     );
     println!(
         "Transferred {} in {:.4}, {}/s",
@@ -306,5 +309,5 @@ async fn send_data_on_stream(
 
 fn parse_byte_size(s: &str) -> Result<u64> {
     let cfg = parse_size::Config::new().with_binary();
-    cfg.parse_size(s).map_err(Into::into)
+    cfg.parse_size(s).map_err(|e| anyhow::anyhow!(e))
 }

@@ -62,7 +62,7 @@ ref-cast = "1.0.23"
 # Examples
 clap = { version = "4", features = ["derive"], optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
-parse-size = { version = "1.1.0", optional = true }
+parse-size = { version = "=1.0.0", optional = true } # pinned version to avoid bumping msrv to 1.81
 
 # Documentation tests
 url = { version = "2.5.0", features = ["serde"] }
