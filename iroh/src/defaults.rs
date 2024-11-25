@@ -1,5 +1,6 @@
 //! Default values used in [`iroh`][`crate`]
 
+use iroh_base::relay_map::QuicConfig;
 /// The default QUIC port used by the Relay server to accept QUIC connections
 /// for QUIC address discovery
 ///
@@ -25,6 +26,8 @@ pub const DEFAULT_METRICS_PORT: u16 = 9090;
 
 /// Production configuration.
 pub mod prod {
+    use iroh_base::relay_map::QuicConfig;
+
     use super::*;
 
     /// Hostname of the default NA relay.
@@ -54,7 +57,7 @@ pub mod prod {
             url: url.into(),
             stun_only: false,
             stun_port: DEFAULT_STUN_PORT,
-            quic_port: DEFAULT_QUIC_PORT,
+            quic: Some(QuicConfig::default()),
         }
     }
 
@@ -68,7 +71,7 @@ pub mod prod {
             url: url.into(),
             stun_only: false,
             stun_port: DEFAULT_STUN_PORT,
-            quic_port: DEFAULT_QUIC_PORT,
+            quic: Some(QuicConfig::default()),
         }
     }
 
@@ -82,7 +85,7 @@ pub mod prod {
             url: url.into(),
             stun_only: false,
             stun_port: DEFAULT_STUN_PORT,
-            quic_port: DEFAULT_QUIC_PORT,
+            quic: Some(QuicConfig::default()),
         }
     }
 }
@@ -116,7 +119,7 @@ pub mod staging {
             url: url.into(),
             stun_only: false,
             stun_port: DEFAULT_STUN_PORT,
-            quic_port: DEFAULT_QUIC_PORT,
+            quic: Some(QuicConfig::default()),
         }
     }
 
@@ -130,7 +133,7 @@ pub mod staging {
             url: url.into(),
             stun_only: false,
             stun_port: DEFAULT_STUN_PORT,
-            quic_port: DEFAULT_QUIC_PORT,
+            quic: Some(QuicConfig::default()),
         }
     }
 }

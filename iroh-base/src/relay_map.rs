@@ -77,7 +77,7 @@ impl RelayMap {
                 url,
                 stun_only: false,
                 stun_port,
-                quic_port: DEFAULT_QUIC_PORT,
+                quic: Some(QuicConfig::default()),
             }
             .into(),
         );
@@ -133,15 +133,31 @@ pub struct RelayNode {
     ///
     /// Setting this to `0` means the default STUN port is used.
     pub stun_port: u16,
-    /// The QUIC endpoint port of the relay server.
+    /// Configuration to speak to the QUIC endpoint on the relay server.
     ///
-    /// Setting this to `0` means the default QUIC port is used.
-    #[serde(default = "quic_port")]
-    pub quic_port: u16,
+    /// When `None`, we will not attempt to do QUIC address discovery
+    /// with this relay server.
+    #[serde(default = "quic_config")]
+    pub quic: Option<QuicConfig>,
 }
 
-fn quic_port() -> u16 {
-    DEFAULT_QUIC_PORT
+fn quic_config() -> Option<QuicConfig> {
+    Some(QuicConfig::default())
+}
+
+/// Configuration for speaking to the QUIC endpoint on the relay
+/// server to do QUIC address discovery.
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq, PartialOrd, Ord)]
+pub struct QuicConfig {
+    pub port: u16,
+}
+
+impl Default for QuicConfig {
+    fn default() -> Self {
+        Self {
+            port: DEFAULT_QUIC_PORT,
+        }
+    }
 }
 
 impl fmt::Display for RelayNode {
