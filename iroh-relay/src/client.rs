@@ -377,6 +377,30 @@ impl ClientBuilder {
     }
 }
 
+#[cfg(any(test, feature = "test-utils", feature = "dangerous-certs"))]
+/// Creates a client config that trusts relay servers without verification
+///
+/// Should be used for testing local relay setups only.
+pub fn make_dangerous_client_config() -> quinn::crypto::rustls::QuicClientConfig {
+    let roots = rustls::RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+    let mut config = rustls::client::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_protocol_versions(&[&rustls::version::TLS13])
+    .expect("protocols supported by ring")
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    warn!(
+        "Insecure config: SSL certificates from relay servers will be trusted without verification"
+    );
+    config
+        .dangerous()
+        .set_certificate_verifier(Arc::new(NoCertVerifier));
+    quinn::crypto::rustls::QuicClientConfig::try_from(config).expect("Using tls1.3")
+}
+
 impl ClientReceiver {
     /// Reads a message from the server.
     pub async fn recv(&mut self) -> Option<Result<ReceivedMessage, ClientError>> {
@@ -1113,7 +1137,7 @@ impl DnsExt for DnsResolver {
 #[cfg(any(test, feature = "test-utils"))]
 #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
 #[derive(Debug)]
-struct NoCertVerifier;
+pub(crate) struct NoCertVerifier;
 
 #[cfg(any(test, feature = "test-utils"))]
 impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {

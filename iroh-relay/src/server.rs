@@ -16,9 +16,17 @@
 //! - HTTPS `/generate_204`: Used for net_report probes.
 //! - STUN: UDP port for STUN requests/responses.
 
-use std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync::Arc};
+use std::{
+    fmt,
+    future::Future,
+    net::{IpAddr, SocketAddr},
+    num::NonZeroU32,
+    pin::Pin,
+    sync::Arc,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
+use derive_more::Debug;
 use futures_lite::StreamExt;
 use http::{
     response::Builder as ResponseBuilder, HeaderMap, Method, Request, Response, StatusCode,
@@ -27,6 +35,7 @@ use hyper::body::Incoming;
 #[cfg(feature = "test-utils")]
 use iroh_base::node_addr::RelayUrl;
 use iroh_metrics::inc;
+use quinn::crypto::rustls::QuicServerConfig;
 use tokio::{
     net::{TcpListener, UdpSocket},
     task::JoinSet,
@@ -34,7 +43,11 @@ use tokio::{
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
-use crate::{http::RELAY_PROBE_PATH, protos};
+use crate::{
+    http::RELAY_PROBE_PATH,
+    protos,
+    quic::{QuicServer, ServerHandle as QuicServerHandle},
+};
 
 pub(crate) mod actor;
 pub(crate) mod client_conn;
@@ -42,8 +55,11 @@ mod clients;
 mod http_server;
 mod metrics;
 pub(crate) mod streams;
-#[cfg(feature = "test-utils")]
+#[cfg(any(feature = "test-utils", feature = "dangerous-certs"))]
 pub mod testing;
+
+#[cfg(feature = "dangerous-certs")]
+pub use self::testing::self_signed_tls_certs_and_config;
 
 pub use self::{
     metrics::{Metrics, StunMetrics},
@@ -84,6 +100,8 @@ pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     pub relay: Option<RelayConfig<EC, EA>>,
     /// Configuration for the STUN server, disabled if `None`.
     pub stun: Option<StunConfig>,
+    /// Configuration for the QUIC server, disabled if `None`.
+    pub quic: Option<QuicConfig>,
     /// Socket to serve metrics on.
     #[cfg(feature = "metrics")]
     #[cfg_attr(iroh_docsrs, doc(cfg(feature = "metrics")))]
@@ -122,6 +140,33 @@ pub struct StunConfig {
     pub bind_addr: SocketAddr,
 }
 
+/// Configuration for the QUIC server.
+// TODO(ramfox): limits? Limiting connections or accepted # of connections from a single IP? from a single node ID?
+#[derive(Debug)]
+pub struct QuicConfig {
+    /// The socket address on which the QUIC server should bind.
+    ///
+    /// Normally you'd chose port `7842`, see [`crate::defaults::DEFAULT_QUIC_PORT`].
+    pub bind_addr: SocketAddr,
+    /// The TLS server configuration for the QUIC server.
+    #[debug(skip)]
+    pub server_config: QuicServerConfig,
+}
+
+impl QuicConfig {
+    /// Create a new [`QuicConfig`] from a [`TlsConfig`].
+    ///
+    /// If `port` is `None`, will use [`crate::defaults::DEFAULT_QUIC_PORT`]
+    pub fn new(server_config: rustls::ServerConfig, ip: IpAddr, port: Option<u16>) -> Result<Self> {
+        // server_config.alpn_protocols = vec![crate::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
+        let server_config: QuicServerConfig = QuicServerConfig::try_from(server_config)?;
+        Ok(Self {
+            bind_addr: SocketAddr::new(ip, port.unwrap_or(crate::defaults::DEFAULT_QUIC_PORT)),
+            server_config,
+        })
+    }
+}
+
 /// TLS configuration for Relay server.
 ///
 /// Normally the Relay server accepts connections on both HTTPS and HTTP.
@@ -137,6 +182,8 @@ pub struct TlsConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     pub https_bind_addr: SocketAddr,
     /// Mode for getting a cert.
     pub cert: CertConfig<EC, EA>,
+    /// The server configuration.
+    pub server_config: rustls::ServerConfig,
 }
 
 /// Rate limits.
@@ -165,14 +212,12 @@ pub struct ClientConnRateLimit {
 pub enum CertConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     /// Use Let's Encrypt.
     LetsEncrypt {
-        /// Configuration for Let's Encrypt certificates.
+        /// State for Let's Encrypt certificates.
         #[debug("AcmeConfig")]
-        config: tokio_rustls_acme::AcmeConfig<EC, EA>,
+        state: tokio_rustls_acme::AcmeState<EC, EA>,
     },
     /// Use a static TLS key and certificate chain.
     Manual {
-        /// The TLS private key.
-        private_key: rustls::pki_types::PrivateKeyDer<'static>,
         /// The TLS certificate chain.
         certs: Vec<rustls::pki_types::CertificateDer<'static>>,
     },
@@ -194,8 +239,12 @@ pub struct Server {
     /// If the Relay server is not using TLS then it is served from the
     /// [`Server::http_addr`].
     https_addr: Option<SocketAddr>,
+    /// The address of the QUIC server, if configured.
+    quic_addr: Option<SocketAddr>,
     /// Handle to the relay server.
     relay_handle: Option<http_server::ServerHandle>,
+    /// Handle to the quic server.
+    quic_handle: Option<QuicServerHandle>,
     /// The main task running the server.
     supervisor: AbortOnDropHandle<Result<()>>,
     /// The certificate for the server.
@@ -255,6 +304,17 @@ impl Server {
                 CertConfig::Manual { ref certs, .. } => Some(certs.clone()),
             })
         });
+
+        let quic_server = match config.quic {
+            Some(quic_config) => {
+                debug!("Starting QUIC server {}", quic_config.bind_addr);
+                Some(QuicServer::spawn(quic_config)?)
+            }
+            None => None,
+        };
+        let quic_addr = quic_server.as_ref().map(|srv| *srv.bind_addr());
+        let quic_handle = quic_server.as_ref().map(|srv| srv.handle());
+
         let (relay_server, http_addr) = match config.relay {
             Some(relay_config) => {
                 debug!("Starting Relay server");
@@ -277,17 +337,8 @@ impl Server {
                 }
                 let http_addr = match relay_config.tls {
                     Some(tls_config) => {
-                        let server_config = rustls::ServerConfig::builder_with_provider(Arc::new(
-                            rustls::crypto::ring::default_provider(),
-                        ))
-                        .with_safe_default_protocol_versions()
-                        .expect("protocols supported by ring")
-                        .with_no_client_auth();
                         let server_tls_config = match tls_config.cert {
-                            CertConfig::LetsEncrypt { config } => {
-                                let mut state = config.state();
-                                let server_config =
-                                    server_config.with_cert_resolver(state.resolver());
+                            CertConfig::LetsEncrypt { mut state } => {
                                 let acceptor =
                                     http_server::TlsAcceptor::LetsEncrypt(state.acceptor());
                                 tasks.spawn(
@@ -303,14 +354,12 @@ impl Server {
                                     .instrument(info_span!("acme")),
                                 );
                                 Some(http_server::TlsConfig {
-                                    config: Arc::new(server_config),
+                                    config: Arc::new(tls_config.server_config),
                                     acceptor,
                                 })
                             }
-                            CertConfig::Manual { private_key, certs } => {
-                                let server_config =
-                                    server_config.with_single_cert(certs, private_key)?;
-                                let server_config = Arc::new(server_config);
+                            CertConfig::Manual { .. } => {
+                                let server_config = Arc::new(tls_config.server_config);
                                 let acceptor =
                                     tokio_rustls::TlsAcceptor::from(server_config.clone());
                                 let acceptor = http_server::TlsAcceptor::Manual(acceptor);
@@ -354,12 +403,15 @@ impl Server {
         // relay_server is serving HTTP, including the /generate_204 service.
         let relay_addr = relay_server.as_ref().map(|srv| srv.addr());
         let relay_handle = relay_server.as_ref().map(|srv| srv.handle());
-        let task = tokio::spawn(relay_supervisor(tasks, relay_server));
+        let task = tokio::spawn(relay_supervisor(tasks, relay_server, quic_server));
+
         Ok(Self {
             http_addr: http_addr.or(relay_addr),
             stun_addr,
             https_addr: http_addr.and(relay_addr),
+            quic_addr,
             relay_handle,
+            quic_handle,
             supervisor: AbortOnDropHandle::new(task),
             certificates,
         })
@@ -369,9 +421,12 @@ impl Server {
     ///
     /// Returns once all server tasks have stopped.
     pub async fn shutdown(self) -> Result<()> {
-        // Only the Relay server needs shutting down, the supervisor will abort the tasks in
+        // Only the Relay server and QUIC server need shutting down, the supervisor will abort the tasks in
         // the JoinSet when the server terminates.
         if let Some(handle) = self.relay_handle {
+            handle.shutdown();
+        }
+        if let Some(handle) = self.quic_handle {
             handle.shutdown();
         }
         self.supervisor.await?
@@ -393,6 +448,11 @@ impl Server {
     /// The socket address the HTTP server is listening on.
     pub fn http_addr(&self) -> Option<SocketAddr> {
         self.http_addr
+    }
+
+    /// The socket address the QUIC server is listening on.
+    pub fn quic_addr(&self) -> Option<SocketAddr> {
+        self.quic_addr
     }
 
     /// The socket address the STUN server is listening on.
@@ -438,17 +498,48 @@ impl Server {
 async fn relay_supervisor(
     mut tasks: JoinSet<Result<()>>,
     mut relay_http_server: Option<http_server::Server>,
+    mut quic_server: Option<crate::quic::QuicServer>,
 ) -> Result<()> {
-    let res = match (relay_http_server.as_mut(), tasks.len()) {
-        (None, 0) => Ok(Err(anyhow!("Nothing to supervise"))),
-        (None, _) => tasks.join_next().await.expect("checked"),
-        (Some(relay), 0) => relay.task_handle().await.map(anyhow::Ok),
-        (Some(relay), _) => {
+    let res = match (
+        relay_http_server.as_mut(),
+        quic_server.as_mut(),
+        tasks.len(),
+    ) {
+        (None, None, 0) => Ok(Err(anyhow!("Nothing to supervise"))),
+        (None, None, _) => tasks.join_next().await.expect("checked"),
+        (None, Some(quic_ep), 0) => quic_ep.task_handle().await.map(anyhow::Ok),
+        (None, Some(quic_ep), _) => {
+            tokio::select! {
+                biased;
+
+                ret = tasks.join_next() => ret.expect("checked"),
+                ret = quic_ep.task_handle() => ret.map(anyhow::Ok),
+            }
+        }
+        (Some(relay), None, 0) => relay.task_handle().await.map(anyhow::Ok),
+        (Some(relay), Some(quic_ep), 0) => {
+            tokio::select! {
+                biased;
+
+                ret = relay.task_handle() => ret.map(anyhow::Ok),
+                ret = quic_ep.task_handle() => ret.map(anyhow::Ok),
+            }
+        }
+        (Some(relay), None, _) => {
             tokio::select! {
                 biased;
 
                 ret = tasks.join_next() => ret.expect("checked"),
                 ret = relay.task_handle() => ret.map(anyhow::Ok),
+            }
+        }
+        (Some(relay), Some(quic_ep), _) => {
+            tokio::select! {
+                biased;
+
+                ret = tasks.join_next() => ret.expect("checked"),
+                ret = relay.task_handle() => ret.map(anyhow::Ok),
+                ret = quic_ep.task_handle() => ret.map(anyhow::Ok),
             }
         }
     };
@@ -474,6 +565,11 @@ async fn relay_supervisor(
     // Ensure the HTTP server terminated, there is no harm in calling this after it is
     // already shut down.
     if let Some(server) = relay_http_server {
+        server.shutdown();
+    }
+
+    // Ensure the QUIC server is closed
+    if let Some(server) = quic_server {
         server.shutdown();
     }
 
@@ -728,6 +824,7 @@ mod tests {
                 tls: None,
                 limits: Default::default(),
             }),
+            quic: None,
             stun: None,
             metrics_addr: None,
         })
@@ -757,6 +854,7 @@ mod tests {
                 limits: Default::default(),
             }),
             stun: None,
+            quic: None,
             metrics_addr: Some((Ipv4Addr::LOCALHOST, 1234).into()),
         })
         .await
@@ -1027,6 +1125,7 @@ mod tests {
             stun: Some(StunConfig {
                 bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
             }),
+            quic: None,
             metrics_addr: None,
         })
         .await

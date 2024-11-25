@@ -12,7 +12,7 @@ use anyhow::{bail, Context as _, Result};
 use clap::Parser;
 use iroh_relay::{
     defaults::{DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_STUN_PORT},
-    server::{self as relay, ClientConnRateLimit},
+    server::{self as relay, ClientConnRateLimit, QuicConfig},
 };
 use serde::{Deserialize, Serialize};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
@@ -132,6 +132,27 @@ struct Config {
     ///
     /// Defaults to using the `http_bind_addr` with the port set to [`DEFAULT_STUN_PORT`].
     stun_bind_addr: Option<SocketAddr>,
+    /// Whether to allow QUIC connections for QUIC address discovery
+    ///
+    /// Defaults to `true`
+    #[serde(default = "cfg_defaults::enable_quic_addr_discovery")]
+    enable_quic_addr_discovery: bool,
+    /// Whether to use self-signed local certificates for the QUIC server.
+    ///
+    /// Only considered when `enable_quic_addr_discovery` is `true` and should
+    /// only be used when the relay is run locally in dev mode.
+    ///
+    /// Will ignore any other tls certificates passed to the relay server.
+    ///
+    /// Binds the QUIC server to "127.0.0.1".
+    enable_quic_local_cert: bool,
+    /// The port to bind the QUIC server on.
+    ///
+    /// The socket address will use the ip address from the tls config.
+    ///
+    /// If `None`, then the [`DEFAULT_QUIC_PORT`] will be used. If 0,
+    /// then the socket will bind to a random unused port.
+    quic_bind_port: Option<u16>,
     /// Rate limiting configuration.
     ///
     /// Disabled if not present.
@@ -173,6 +194,9 @@ impl Default for Config {
             tls: None,
             enable_stun: true,
             stun_bind_addr: None,
+            enable_quic_addr_discovery: true,
+            enable_quic_local_cert: false,
+            quic_bind_port: None,
             limits: None,
             enable_metrics: true,
             metrics_bind_addr: None,
@@ -190,6 +214,10 @@ mod cfg_defaults {
     }
 
     pub(crate) fn enable_stun() -> bool {
+        true
+    }
+
+    pub(crate) fn enable_quic_addr_discovery() -> bool {
         true
     }
 
@@ -255,8 +283,9 @@ struct TlsConfig {
 
 impl TlsConfig {
     fn https_bind_addr(&self, cfg: &Config) -> SocketAddr {
-        self.https_bind_addr
-            .unwrap_or_else(|| SocketAddr::new(cfg.http_bind_addr().ip(), DEFAULT_HTTPS_PORT))
+        self.https_bind_addr.unwrap_or_else(|| {
+            SocketAddr::new(cfg.http_bind_addr().ip().clone(), DEFAULT_HTTPS_PORT)
+        })
     }
 
     fn cert_dir(&self) -> PathBuf {
@@ -351,6 +380,7 @@ async fn main() -> Result<()> {
         if cfg.http_bind_addr.is_none() {
             cfg.http_bind_addr = Some((Ipv6Addr::UNSPECIFIED, DEV_MODE_HTTP_PORT).into());
         }
+        cfg.enable_quic_local_cert = true;
     }
     let relay_config = build_relay_config(cfg).await?;
     debug!("{relay_config:#?}");
@@ -366,45 +396,81 @@ async fn main() -> Result<()> {
     relay.shutdown().await
 }
 
+async fn maybe_load_tls(
+    cfg: &Config,
+) -> Result<Option<relay::TlsConfig<std::io::Error, std::io::Error>>> {
+    if cfg.tls.is_none() {
+        return Ok(None);
+    }
+    let tls = cfg.tls.as_ref().expect("checked");
+    let server_config = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .expect("protocols supported by ring")
+    .with_no_client_auth();
+    let (cert_config, server_config) = match tls.cert_mode {
+        CertMode::Manual => {
+            let cert_path = tls.cert_path();
+            let key_path = tls.key_path();
+            // Could probably just do this blocking, we're only starting up.
+            let (private_key, certs) = tokio::task::spawn_blocking(move || {
+                let key = load_secret_key(key_path)?;
+                let certs = load_certs(cert_path)?;
+                anyhow::Ok((key, certs))
+            })
+            .await??;
+            let server_config = server_config.with_single_cert(certs.clone(), private_key)?;
+            (relay::CertConfig::Manual { certs }, server_config)
+        }
+        CertMode::LetsEncrypt => {
+            let hostname = tls
+                .hostname
+                .clone()
+                .context("LetsEncrypt needs a hostname")?;
+            let contact = tls
+                .contact
+                .clone()
+                .context("LetsEncrypt needs a contact email")?;
+            let config = AcmeConfig::new(vec![hostname.clone()])
+                .contact([format!("mailto:{}", contact)])
+                .cache_option(Some(DirCache::new(tls.cert_dir())))
+                .directory_lets_encrypt(tls.prod_tls);
+            let state = config.state();
+            let resolver = state.resolver().clone();
+            let server_config = server_config.with_cert_resolver(resolver);
+            (relay::CertConfig::LetsEncrypt { state }, server_config)
+        }
+    };
+    Ok(Some(relay::TlsConfig {
+        https_bind_addr: tls.https_bind_addr(&cfg),
+        cert: cert_config,
+        server_config,
+    }))
+}
+
 /// Convert the TOML-loaded config to the [`relay::RelayConfig`] format.
 async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::Error>> {
-    let tls = match cfg.tls {
-        Some(ref tls) => {
-            let cert_config = match tls.cert_mode {
-                CertMode::Manual => {
-                    let cert_path = tls.cert_path();
-                    let key_path = tls.key_path();
-                    // Could probably just do this blocking, we're only starting up.
-                    let (private_key, certs) = tokio::task::spawn_blocking(move || {
-                        let key = load_secret_key(key_path)?;
-                        let certs = load_certs(cert_path)?;
-                        anyhow::Ok((key, certs))
-                    })
-                    .await??;
-                    relay::CertConfig::Manual { private_key, certs }
-                }
-                CertMode::LetsEncrypt => {
-                    let hostname = tls
-                        .hostname
-                        .clone()
-                        .context("LetsEncrypt needs a hostname")?;
-                    let contact = tls
-                        .contact
-                        .clone()
-                        .context("LetsEncrypt needs a contact email")?;
-                    let config = AcmeConfig::new(vec![hostname.clone()])
-                        .contact([format!("mailto:{}", contact)])
-                        .cache_option(Some(DirCache::new(tls.cert_dir())))
-                        .directory_lets_encrypt(tls.prod_tls);
-                    relay::CertConfig::LetsEncrypt { config }
-                }
-            };
-            Some(relay::TlsConfig {
-                https_bind_addr: tls.https_bind_addr(&cfg),
-                cert: cert_config,
-            })
+    let relay_tls = maybe_load_tls(&cfg).await?;
+
+    let mut quic_config = None;
+    if cfg.enable_quic_addr_discovery {
+        if let Some(ref tls) = relay_tls {
+            quic_config = Some(QuicConfig::new(
+                tls.server_config.clone(),
+                tls.https_bind_addr.ip().clone(),
+                cfg.quic_bind_port,
+            )?);
+        } else if cfg.enable_quic_local_cert {
+            let (_, server_config) = iroh_relay::server::self_signed_tls_certs_and_config();
+            quic_config = Some(QuicConfig::new(
+                server_config,
+                Ipv6Addr::UNSPECIFIED.into(),
+                cfg.quic_bind_port,
+            )?);
+        } else {
+            bail!("Must have a valid TLS configuration to enable a QUIC server for QUIC address discovery")
         }
-        None => None,
     };
     let limits = match cfg.limits {
         Some(ref limits) => {
@@ -438,9 +504,10 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
         }
         None => Default::default(),
     };
+
     let relay_config = relay::RelayConfig {
         http_bind_addr: cfg.http_bind_addr(),
-        tls,
+        tls: relay_tls,
         limits,
     };
     let stun_config = relay::StunConfig {
@@ -449,6 +516,7 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
     Ok(relay::ServerConfig {
         relay: Some(relay_config),
         stun: Some(stun_config).filter(|_| cfg.enable_stun),
+        quic: quic_config,
         #[cfg(feature = "metrics")]
         metrics_addr: Some(cfg.metrics_bind_addr()).filter(|_| cfg.enable_metrics),
     })

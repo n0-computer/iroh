@@ -50,6 +50,8 @@ postcard = { version = "1", default-features = false, features = [
     "use-std",
     "experimental-derive",
 ] }
+quinn = { package = "iroh-quinn", version = "0.12.0" }
+quinn-proto = { package = "iroh-quinn-proto", version = "0.12.0" }
 rand = "0.8"
 rcgen = { version = "0.13", optional = true }
 regex = { version = "1.7.1", optional = true }
@@ -126,11 +128,12 @@ server = [
 ]
 metrics = ["iroh-metrics/metrics", "server"]
 test-utils = []
+dangerous-certs = []
 
 [[bin]]
 name = "iroh-relay"
 path = "src/main.rs"
-required-features = ["server"]
+required-features = ["server", "dangerous-certs"]
 
 [package.metadata.docs.rs]
 all-features = true
