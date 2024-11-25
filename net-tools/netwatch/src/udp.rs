@@ -28,7 +28,7 @@ pub struct UdpSocket {
 }
 
 /// UDP socket read/write buffer size (7MB). The value of 7MB is chosen as it
-/// is the ma supported by a default configuration of macOS. Some platforms will silently clamp the value.
+/// is the max supported by a default configuration of macOS. Some platforms will silently clamp the value.
 const SOCKET_BUFFER_SIZE: usize = 7 << 20;
 impl UdpSocket {
     /// Bind only Ipv4 on any interface.
