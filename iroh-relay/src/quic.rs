@@ -17,12 +17,14 @@ pub const QUIC_ADDR_DISC_CLOSE_CODE: VarInt = VarInt::from_u32(0);
 /// Endpoint close reason
 pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 
+#[cfg(feature = "server")]
 pub(crate) struct QuicServer {
     bind_addr: SocketAddr,
     cancel: CancellationToken,
     handle: AbortOnDropHandle<()>,
 }
 
+#[cfg(feature = "server")]
 impl QuicServer {
     /// Returns a handle for this server.
     ///
@@ -144,16 +146,6 @@ impl ServerHandle {
 
 async fn handle_connection(conn: quinn::Incoming) -> Result<()> {
     let connection = conn.await?;
-    // let span = info_span!(
-    //     "connection",
-    //     remote = %connection.remote_address(),
-    //     protocol = %connection
-    //         .handshake_data()
-    //         .unwrap()
-    //         .downcast::<quinn::crypto::rustls::HandshakeData>().unwrap()
-    //         .protocol
-    //         .map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned())
-    // );
     info!("established");
     // wait for the client to close the connection
     let connection_err = connection.closed().await;
