@@ -234,7 +234,7 @@
         </span>iroh_metrics::core::Core::try_init(|reg, metrics| {
             <span class="kw">use </span>iroh_metrics::core::Metric;
             metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
-            metrics.insert(iroh_net::metrics::NetcheckMetrics::new(reg));
+            metrics.insert(iroh_net::metrics::NetReportMetrics::new(reg));
             metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
             <span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
             </span><span class="kw">if </span>opt.with_relay {
@@ -311,8 +311,8 @@
             core.get_collector::&lt;iroh_net::metrics::MagicsockMetrics&gt;(),
         );
         collect_and_print(
-            <span class="string">"NetcheckMetrics"</span>,
-            core.get_collector::&lt;iroh_net::metrics::NetcheckMetrics&gt;(),
+            <span class="string">"NetReportMetrics"</span>,
+            core.get_collector::&lt;iroh_net::metrics::NetReportMetrics&gt;(),
         );
         collect_and_print(
             <span class="string">"PortmapMetrics"</span>,
