@@ -323,6 +323,10 @@ impl Config {
         }
     }
 
+    fn from_str(config: &str) -> Result<Self> {
+        toml::from_str(config).context("config must be valid toml")
+    }
+
     async fn read_from_file(path: impl AsRef<Path>) -> Result<Self> {
         if !path.as_ref().is_file() {
             bail!("config-path must be a file");
@@ -330,9 +334,7 @@ impl Config {
         let config_ser = tokio::fs::read_to_string(&path)
             .await
             .context("unable to read config")?;
-        let config: Self = toml::from_str(&config_ser).context("config file must be valid toml")?;
-
-        Ok(config)
+        Self::from_str(&config_ser)
     }
 }
 
@@ -493,5 +495,35 @@ mod metrics {
         fn name() -> &'static str {
             "stun"
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use testresult::TestResult;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_rate_limit_config() -> TestResult {
+        let config = "
+            [limits.client.rx]
+            bytes_per_second = 400
+            max_burst_bytes = 800
+        ";
+        let config = Config::from_str(config)?;
+        let relay_config = build_relay_config(config).await?;
+
+        let relay = relay_config.relay.expect("no relay config");
+        assert_eq!(
+            relay.limits.client_rx.bytes_per_second,
+            NonZeroU32::try_from(400).unwrap()
+        );
+        assert_eq!(
+            relay.limits.client_rx.max_burst_bytes,
+            NonZeroU32::try_from(800).unwrap()
+        );
+
+        Ok(())
     }
 }
