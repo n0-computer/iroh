@@ -307,6 +307,10 @@
 <a href="#307" id="307">307</a>
 <a href="#308" id="308">308</a>
 <a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
 </span><span class="comment">// Based on tailscale/derp/derp_server.go
 
@@ -544,7 +548,10 @@
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{
         protos::relay::{recv_frame, DerpCodec, Frame, FrameType},
-        server::streams::{MaybeTlsStream, RelayedStream},
+        server::{
+            streams::{MaybeTlsStream, RelayedStream},
+            ClientConnRateLimit,
+        },
     };
 
     <span class="kw">fn </span>test_client_builder(key: NodeId) -&gt; (ClientConnConfig, FramedRead&lt;DuplexStream, DerpCodec&gt;) {
@@ -556,6 +563,7 @@
                 stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
                 write_timeout: Duration::from_secs(<span class="number">1</span>),
                 channel_capacity: <span class="number">10</span>,
+                rate_limit: ClientConnRateLimit::MAX,
                 server_channel,
             },
             FramedRead::new(test_io, DerpCodec),

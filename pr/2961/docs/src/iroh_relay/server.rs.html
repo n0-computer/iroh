@@ -1035,6 +1035,39 @@
 <a href="#1035" id="1035">1035</a>
 <a href="#1036" id="1036">1036</a>
 <a href="#1037" id="1037">1037</a>
+<a href="#1038" id="1038">1038</a>
+<a href="#1039" id="1039">1039</a>
+<a href="#1040" id="1040">1040</a>
+<a href="#1041" id="1041">1041</a>
+<a href="#1042" id="1042">1042</a>
+<a href="#1043" id="1043">1043</a>
+<a href="#1044" id="1044">1044</a>
+<a href="#1045" id="1045">1045</a>
+<a href="#1046" id="1046">1046</a>
+<a href="#1047" id="1047">1047</a>
+<a href="#1048" id="1048">1048</a>
+<a href="#1049" id="1049">1049</a>
+<a href="#1050" id="1050">1050</a>
+<a href="#1051" id="1051">1051</a>
+<a href="#1052" id="1052">1052</a>
+<a href="#1053" id="1053">1053</a>
+<a href="#1054" id="1054">1054</a>
+<a href="#1055" id="1055">1055</a>
+<a href="#1056" id="1056">1056</a>
+<a href="#1057" id="1057">1057</a>
+<a href="#1058" id="1058">1058</a>
+<a href="#1059" id="1059">1059</a>
+<a href="#1060" id="1060">1060</a>
+<a href="#1061" id="1061">1061</a>
+<a href="#1062" id="1062">1062</a>
+<a href="#1063" id="1063">1063</a>
+<a href="#1064" id="1064">1064</a>
+<a href="#1065" id="1065">1065</a>
+<a href="#1066" id="1066">1066</a>
+<a href="#1067" id="1067">1067</a>
+<a href="#1068" id="1068">1068</a>
+<a href="#1069" id="1069">1069</a>
+<a href="#1070" id="1070">1070</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
@@ -1053,7 +1086,7 @@
 //! - HTTPS `/generate_204`: Used for net_report probes.
 //! - STUN: UDP port for STUN requests/responses.
 
-</span><span class="kw">use </span>std::{fmt, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
+</span><span class="kw">use </span>std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync::Arc};
 
 <span class="kw">use </span>anyhow::{anyhow, bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::StreamExt;
@@ -1177,12 +1210,44 @@
 }
 
 <span class="doccomment">/// Rate limits.
+</span><span class="comment">// TODO: accept_conn_limit and accept_conn_burst are not currently implemented.
 </span><span class="attr">#[derive(Debug, Default)]
 </span><span class="kw">pub struct </span>Limits {
     <span class="doccomment">/// Rate limit for accepting new connection. Unlimited if not set.
     </span><span class="kw">pub </span>accept_conn_limit: <span class="prelude-ty">Option</span>&lt;f64&gt;,
     <span class="doccomment">/// Burst limit for accepting new connection. Unlimited if not set.
     </span><span class="kw">pub </span>accept_conn_burst: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+    <span class="doccomment">/// Rate limits for incoming traffic from a client connection.
+    </span><span class="kw">pub </span>client_rx: ClientConnRateLimit,
+}
+
+<span class="doccomment">/// Per-client rate limit configuration.
+</span><span class="attr">#[derive(Debug, Copy, Clone)]
+</span><span class="kw">pub struct </span>ClientConnRateLimit {
+    <span class="doccomment">/// Max number of bytes per second to read from the client connection.
+    ///
+    /// Defaults to 4KiB/s.
+    </span><span class="kw">pub </span>bytes_per_second: NonZeroU32,
+    <span class="doccomment">/// Max number of bytes to read in a single burst.
+    ///
+    /// Defaults to 16 MiB.
+    </span><span class="kw">pub </span>max_burst_bytes: NonZeroU32,
+}
+
+<span class="kw">impl </span>ClientConnRateLimit {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const </span>MAX: ClientConnRateLimit = ClientConnRateLimit {
+        bytes_per_second: NonZeroU32::MAX,
+        max_burst_bytes: NonZeroU32::MAX,
+    };
+}
+
+<span class="kw">impl </span>Default <span class="kw">for </span>ClientConnRateLimit {
+    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            bytes_per_second: NonZeroU32::try_from(<span class="number">1024 </span>* <span class="number">4</span>).expect(<span class="string">"nonzero"</span>),
+            max_burst_bytes: NonZeroU32::try_from(<span class="number">1024 </span>* <span class="number">1024 </span>* <span class="number">16</span>).expect(<span class="string">"nonzero"</span>),
+        }
+    }
 }
 
 <span class="doccomment">/// TLS certificate configuration.
@@ -1292,6 +1357,7 @@
                     <span class="prelude-val">None </span>=&gt; relay_config.http_bind_addr,
                 };
                 <span class="kw">let </span><span class="kw-2">mut </span>builder = http_server::ServerBuilder::new(relay_bind_addr)
+                    .client_rx_ratelimit(relay_config.limits.client_rx)
                     .headers(headers)
                     .request_handler(Method::GET, <span class="string">"/"</span>, Box::new(root_handler))
                     .request_handler(Method::GET, <span class="string">"/index.html"</span>, Box::new(root_handler))

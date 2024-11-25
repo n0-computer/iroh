@@ -762,6 +762,8 @@
 <a href="#762" id="762">762</a>
 <a href="#763" id="763">763</a>
 <a href="#764" id="764">764</a>
+<a href="#765" id="765">765</a>
+<a href="#766" id="766">766</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
@@ -785,6 +787,7 @@
         actor::{<span class="self">self</span>, Packet},
         metrics::Metrics,
         streams::RelayedStream,
+        ClientConnRateLimit,
     },
 };
 
@@ -795,6 +798,7 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) stream: RelayedStream,
     <span class="kw">pub</span>(<span class="kw">super</span>) write_timeout: Duration,
     <span class="kw">pub</span>(<span class="kw">super</span>) channel_capacity: usize,
+    <span class="kw">pub</span>(<span class="kw">super</span>) rate_limit: ClientConnRateLimit,
     <span class="kw">pub</span>(<span class="kw">super</span>) server_channel: mpsc::Sender&lt;actor::Message&gt;,
 }
 
@@ -830,14 +834,14 @@
             stream: io,
             write_timeout,
             channel_capacity,
+            rate_limit: rate_limit_config,
             server_channel,
         } = config;
 
-        <span class="comment">// TODO make the values configurable
-        </span><span class="kw">let </span>bytes_per_second = NonZeroU32::new(<span class="number">1 </span>&lt;&lt; <span class="number">12</span>).expect(<span class="string">"nonzero"</span>); <span class="comment">// 4 KiB / s
-        </span><span class="kw">let </span>burst_bytes = NonZeroU32::new(<span class="number">1 </span>&lt;&lt; <span class="number">22</span>).expect(<span class="string">"nonzero"</span>); <span class="comment">// 4 MiB
-        </span><span class="kw">let </span>quota = governor::Quota::per_second(bytes_per_second).allow_burst(burst_bytes);
-        <span class="kw">let </span>rate_limiter = governor::RateLimiter::direct(quota);
+        <span class="kw">let </span>quota = governor::Quota::per_second(rate_limit_config.bytes_per_second)
+            .allow_burst(rate_limit_config.max_burst_bytes);
+        <span class="comment">// TODO: Allow creating this with mocked time for tests?
+        </span><span class="kw">let </span>rate_limiter = governor::RateLimiter::direct(quota);
         <span class="kw">let </span>stream = RateLimitedRelayedStream::new(io, rate_limiter);
 
         <span class="kw">let </span>done = CancellationToken::new();
@@ -1147,7 +1151,7 @@
                     <span class="prelude-val">Ok</span>(frame) =&gt; {
                         <span class="comment">// First we need to know how many bytes this frame consumes.
                         </span><span class="kw">let </span><span class="prelude-val">Ok</span>(frame_len) = TryInto::&lt;u32&gt;::try_into(frame.len_with_header())
-                            .and_then(|len| TryInto::&lt;NonZeroU32&gt;::try_into(len))
+                            .and_then(TryInto::&lt;NonZeroU32&gt;::try_into)
                         <span class="kw">else </span>{
                             <span class="macro">error!</span>(<span class="string">"frame len not NonZeroU32, is MAX_FRAME_SIZE too large?"</span>);
                             <span class="comment">// Let this frame through anyway so to not completely break.

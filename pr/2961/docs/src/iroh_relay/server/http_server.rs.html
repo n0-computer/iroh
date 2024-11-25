@@ -1074,6 +1074,29 @@
 <a href="#1074" id="1074">1074</a>
 <a href="#1075" id="1075">1075</a>
 <a href="#1076" id="1076">1076</a>
+<a href="#1077" id="1077">1077</a>
+<a href="#1078" id="1078">1078</a>
+<a href="#1079" id="1079">1079</a>
+<a href="#1080" id="1080">1080</a>
+<a href="#1081" id="1081">1081</a>
+<a href="#1082" id="1082">1082</a>
+<a href="#1083" id="1083">1083</a>
+<a href="#1084" id="1084">1084</a>
+<a href="#1085" id="1085">1085</a>
+<a href="#1086" id="1086">1086</a>
+<a href="#1087" id="1087">1087</a>
+<a href="#1088" id="1088">1088</a>
+<a href="#1089" id="1089">1089</a>
+<a href="#1090" id="1090">1090</a>
+<a href="#1091" id="1091">1091</a>
+<a href="#1092" id="1092">1092</a>
+<a href="#1093" id="1093">1093</a>
+<a href="#1094" id="1094">1094</a>
+<a href="#1095" id="1095">1095</a>
+<a href="#1096" id="1096">1096</a>
+<a href="#1097" id="1097">1097</a>
+<a href="#1098" id="1098">1098</a>
+<a href="#1099" id="1099">1099</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
@@ -1109,6 +1132,7 @@
         client_conn::ClientConnConfig,
         metrics::Metrics,
         streams::{MaybeTlsStream, RelayedStream},
+        ClientConnRateLimit,
     },
 };
 
@@ -1149,7 +1173,7 @@
 ///
 /// Created using [`ServerBuilder::spawn`].
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>Server {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Server {
     addr: SocketAddr,
     http_server_task: AbortOnDropHandle&lt;()&gt;,
     cancel_server_loop: CancellationToken,
@@ -1160,14 +1184,14 @@
     ///
     /// The server runs in the background as several async tasks.  This allows controlling
     /// the server, in particular it allows gracefully shutting down the server.
-    </span><span class="kw">pub fn </span>handle(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ServerHandle {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>handle(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ServerHandle {
         ServerHandle {
             cancel_token: <span class="self">self</span>.cancel_server_loop.clone(),
         }
     }
 
     <span class="doccomment">/// Closes the underlying relay server and the HTTP(S) server tasks.
-    </span><span class="kw">pub fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="self">self</span>.cancel_server_loop.cancel();
     }
 
@@ -1176,12 +1200,12 @@
     /// This is the root of all the tasks for the server.  Aborting it will abort all the
     /// other tasks for the server.  Awaiting it will complete when all the server tasks are
     /// completed.
-    </span><span class="kw">pub fn </span>task_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>AbortOnDropHandle&lt;()&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>task_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>AbortOnDropHandle&lt;()&gt; {
         <span class="kw-2">&amp;mut </span><span class="self">self</span>.http_server_task
     }
 
     <span class="doccomment">/// Returns the local address of this server.
-    </span><span class="kw">pub fn </span>addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
         <span class="self">self</span>.addr
     }
 }
@@ -1190,24 +1214,24 @@
 ///
 /// This does not allow access to the task but can communicate with it.
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>ServerHandle {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ServerHandle {
     cancel_token: CancellationToken,
 }
 
 <span class="kw">impl </span>ServerHandle {
     <span class="doccomment">/// Gracefully shut down the server.
-    </span><span class="kw">pub fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="self">self</span>.cancel_token.cancel()
     }
 }
 
 <span class="doccomment">/// Configuration to use for the TLS connection
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>TlsConfig {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>TlsConfig {
     <span class="doccomment">/// The server config
-    </span><span class="kw">pub </span>config: Arc&lt;rustls::ServerConfig&gt;,
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) config: Arc&lt;rustls::ServerConfig&gt;,
     <span class="doccomment">/// The kind
-    </span><span class="kw">pub </span>acceptor: TlsAcceptor,
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) acceptor: TlsAcceptor,
 }
 
 <span class="doccomment">/// Builder for the Relay HTTP Server.
@@ -1215,7 +1239,7 @@
 /// Defaults to handling relay requests on the "/relay" (and "/derp" for backwards compatibility) endpoint.
 /// Other HTTP endpoints can be added using [`ServerBuilder::request_handler`].
 </span><span class="attr">#[derive(derive_more::Debug)]
-</span><span class="kw">pub struct </span>ServerBuilder {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ServerBuilder {
     <span class="doccomment">/// The ip + port combination for this server.
     </span>addr: SocketAddr,
     <span class="doccomment">/// Optional tls configuration/TlsAcceptor combination.
@@ -1229,27 +1253,42 @@
     </span>handlers: Handlers,
     <span class="doccomment">/// Headers to use for HTTP responses.
     </span>headers: HeaderMap,
+    <span class="doccomment">/// Rate-limiting configuration for an individual client connection.
+    ///
+    /// Rate-limiting is enforced on received traffic from individual clients.  This
+    /// configuration applies to a single client connection.
+    </span>client_rx_ratelimit: ClientConnRateLimit,
 }
 
 <span class="kw">impl </span>ServerBuilder {
     <span class="doccomment">/// Creates a new [ServerBuilder].
-    </span><span class="kw">pub fn </span>new(addr: SocketAddr) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(addr: SocketAddr) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             addr,
             tls_config: <span class="prelude-val">None</span>,
             handlers: Default::default(),
             headers: HeaderMap::new(),
+            client_rx_ratelimit: ClientConnRateLimit::MAX,
         }
     }
 
     <span class="doccomment">/// Serves all requests content using TLS.
-    </span><span class="kw">pub fn </span>tls_config(<span class="kw-2">mut </span><span class="self">self</span>, config: <span class="prelude-ty">Option</span>&lt;TlsConfig&gt;) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>tls_config(<span class="kw-2">mut </span><span class="self">self</span>, config: <span class="prelude-ty">Option</span>&lt;TlsConfig&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.tls_config = config;
         <span class="self">self
     </span>}
 
+    <span class="doccomment">/// Sets the per-client rate-limit configuration for incoming data.
+    ///
+    /// On each client connection the incoming data is rate-limited.  By default
+    /// [`RateLimitConfig::MAX`] is enforced.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>client_rx_ratelimit(<span class="kw-2">mut </span><span class="self">self</span>, config: ClientConnRateLimit) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.client_rx_ratelimit = config;
+        <span class="self">self
+    </span>}
+
     <span class="doccomment">/// Adds a custom handler for a specific Method &amp; URI.
-    </span><span class="kw">pub fn </span>request_handler(
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>request_handler(
         <span class="kw-2">mut </span><span class="self">self</span>,
         method: Method,
         uri_path: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
@@ -1260,7 +1299,7 @@
     </span>}
 
     <span class="doccomment">/// Adds HTTP headers to responses.
-    </span><span class="kw">pub fn </span>headers(<span class="kw-2">mut </span><span class="self">self</span>, headers: HeaderMap) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>headers(<span class="kw-2">mut </span><span class="self">self</span>, headers: HeaderMap) -&gt; <span class="self">Self </span>{
         <span class="kw">for </span>(k, v) <span class="kw">in </span>headers.iter() {
             <span class="self">self</span>.headers.insert(k.clone(), v.clone());
         }
@@ -1268,13 +1307,14 @@
     </span>}
 
     <span class="doccomment">/// Builds and spawns an HTTP(S) Relay Server.
-    </span><span class="kw">pub async fn </span>spawn(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Server&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>spawn(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Server&gt; {
         <span class="kw">let </span>server_task = ServerActorTask::spawn();
         <span class="kw">let </span>service = RelayService::new(
             <span class="self">self</span>.handlers,
             <span class="self">self</span>.headers,
             server_task.server_channel.clone(),
             server_task.write_timeout,
+            <span class="self">self</span>.client_rx_ratelimit,
         );
 
         <span class="kw">let </span>addr = <span class="self">self</span>.addr;
@@ -1356,6 +1396,7 @@
     headers: HeaderMap,
     server_channel: mpsc::Sender&lt;Message&gt;,
     write_timeout: Duration,
+    rate_limit: ClientConnRateLimit,
 }
 
 <span class="kw">impl </span>RelayService {
@@ -1573,6 +1614,7 @@
             stream: io,
             write_timeout: <span class="self">self</span>.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
+            rate_limit: <span class="self">self</span>.rate_limit,
             server_channel: <span class="self">self</span>.server_channel.clone(),
         };
         <span class="macro">trace!</span>(<span class="string">"accept: create client"</span>);
@@ -1588,7 +1630,7 @@
 
 <span class="doccomment">/// TLS Certificate Authority acceptor.
 </span><span class="attr">#[derive(Clone, derive_more::Debug)]
-</span><span class="kw">pub enum </span>TlsAcceptor {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>TlsAcceptor {
     <span class="doccomment">/// Uses Let's Encrypt as the Certificate Authority. This is used in production.
     </span>LetsEncrypt(<span class="attr">#[debug(<span class="string">"tokio_rustls_acme::AcmeAcceptor"</span>)] </span>AcmeAcceptor),
     <span class="doccomment">/// Manually added tls acceptor. Generally used for tests or for when we've passed in
@@ -1602,12 +1644,14 @@
         headers: HeaderMap,
         server_channel: mpsc::Sender&lt;Message&gt;,
         write_timeout: Duration,
+        rate_limit: ClientConnRateLimit,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>(Arc::new(Inner {
             handlers,
             headers,
             server_channel,
             write_timeout,
+            rate_limit,
         }))
     }
 
@@ -1969,6 +2013,7 @@
             Default::default(),
             server_task.server_channel.clone(),
             server_task.write_timeout,
+            ClientConnRateLimit::MAX,
         );
 
         <span class="comment">// create client a and connect it to the server
@@ -2048,6 +2093,7 @@
             Default::default(),
             server_task.server_channel.clone(),
             server_task.write_timeout,
+            ClientConnRateLimit::MAX,
         );
 
         <span class="comment">// create client a and connect it to the server
