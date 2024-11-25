@@ -3,8 +3,8 @@ use std::{
     io::ErrorKind,
     net::SocketAddr,
     pin::Pin,
-    sync::{atomic::AtomicBool, RwLock},
-    task::{Context, Poll},
+    sync::{atomic::AtomicBool, Mutex, RwLock},
+    task::{Context, Poll, Waker},
 };
 
 use anyhow::{bail, ensure, Context as _, Result};
@@ -18,6 +18,7 @@ use super::IpFamily;
 #[derive(Debug)]
 pub struct UdpSocket {
     socket: RwLock<Option<(tokio::net::UdpSocket, quinn_udp::UdpSocketState)>>,
+    recv_waker: Mutex<Option<Waker>>,
     /// The addr we are binding to.
     addr: SocketAddr,
     /// Set to true, when an error occurred, that means we need to rebind the socket.
@@ -98,6 +99,11 @@ impl UdpSocket {
         self.is_broken
             .store(false, std::sync::atomic::Ordering::SeqCst);
 
+        // wakup
+        if let Some(waker) = self.recv_waker.lock().unwrap().take() {
+            waker.wake();
+        }
+
         Ok(())
     }
 
@@ -109,6 +115,7 @@ impl UdpSocket {
 
         Ok(UdpSocket {
             socket: RwLock::new(Some(socket)),
+            recv_waker: Mutex::new(None),
             addr,
             is_broken: AtomicBool::new(false),
         })
@@ -361,7 +368,10 @@ impl UdpSocket {
             };
 
             match socket.poll_recv_ready(cx) {
-                Poll::Pending => return Poll::Pending,
+                Poll::Pending => {
+                    self.recv_waker.lock().unwrap().replace(cx.waker().clone());
+                    return Poll::Pending;
+                }
                 Poll::Ready(Ok(())) => {
                     // We are ready to read, continue
                 }
