@@ -292,14 +292,6 @@
 <a href="#292" id="292">292</a>
 <a href="#293" id="293">293</a>
 <a href="#294" id="294">294</a>
-<a href="#295" id="295">295</a>
-<a href="#296" id="296">296</a>
-<a href="#297" id="297">297</a>
-<a href="#298" id="298">298</a>
-<a href="#299" id="299">299</a>
-<a href="#300" id="300">300</a>
-<a href="#301" id="301">301</a>
-<a href="#302" id="302">302</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
@@ -319,13 +311,15 @@
 <span class="doccomment">/// Endpoint close reason
 </span><span class="kw">pub const </span>QUIC_ADDR_DISC_CLOSE_REASON: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"finished"</span>;
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>QuicServer {
+<span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>QuicServer {
     bind_addr: SocketAddr,
     cancel: CancellationToken,
     handle: AbortOnDropHandle&lt;()&gt;,
 }
 
-<span class="kw">impl </span>QuicServer {
+<span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
+</span><span class="kw">impl </span>QuicServer {
     <span class="doccomment">/// Returns a handle for this server.
     ///
     /// The server runs in the background as several async tasks.  This allows controlling
@@ -446,17 +440,7 @@
 
 <span class="kw">async fn </span>handle_connection(conn: quinn::Incoming) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
     <span class="kw">let </span>connection = conn.<span class="kw">await</span><span class="question-mark">?</span>;
-    <span class="comment">// let span = info_span!(
-    //     "connection",
-    //     remote = %connection.remote_address(),
-    //     protocol = %connection
-    //         .handshake_data()
-    //         .unwrap()
-    //         .downcast::&lt;quinn::crypto::rustls::HandshakeData&gt;().unwrap()
-    //         .protocol
-    //         .map_or_else(|| "&lt;none&gt;".into(), |x| String::from_utf8_lossy(&amp;x).into_owned())
-    // );
-    </span><span class="macro">info!</span>(<span class="string">"established"</span>);
+    <span class="macro">info!</span>(<span class="string">"established"</span>);
     <span class="comment">// wait for the client to close the connection
     </span><span class="kw">let </span>connection_err = connection.closed().<span class="kw">await</span>;
     <span class="kw">match </span>connection_err {

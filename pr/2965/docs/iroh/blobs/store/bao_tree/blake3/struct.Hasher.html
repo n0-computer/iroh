@@ -124,14 +124,14 @@ and <a href="./trait.QueueableCommand.html">queue</a> for those old Windows vers
 <li>The terminal will <code>flush</code> automatically if the buffer is full.</li>
 <li>Each line is flushed in case of <code>stdout</code>, because it is line buffered.</li>
 </ul>
-<h5 id="arguments-2"><a class="doc-anchor" href="#arguments-2">§</a>Arguments</h5>
+<h5 id="arguments-1"><a class="doc-anchor" href="#arguments-1">§</a>Arguments</h5>
 <ul>
 <li>
 <p><a href="./trait.Command.html">Command</a></p>
 <p>The command that you want to queue for later execution.</p>
 </li>
 </ul>
-<h5 id="examples-2"><a class="doc-anchor" href="#examples-2">§</a>Examples</h5>
+<h5 id="examples-1"><a class="doc-anchor" href="#examples-1">§</a>Examples</h5>
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>std::io::{<span class="self">self</span>, Write};
 <span class="kw">use </span>crossterm::{QueueableCommand, style::Print};
 
@@ -155,7 +155,7 @@ and <a href="./trait.QueueableCommand.html">queue</a> for those old Windows vers
     // foo 2
 </span>}</code></pre></div>
 <p>Have a look over at the <a href="./index.html#command-api">Command API</a> for more details.</p>
-<h5 id="notes-2"><a class="doc-anchor" href="#notes-2">§</a>Notes</h5>
+<h5 id="notes-1"><a class="doc-anchor" href="#notes-1">§</a>Notes</h5>
 <ul>
 <li>In the case of UNIX and Windows 10, ANSI codes are written to the given ‘writer’.</li>
 <li>In case of Windows versions lower than 10, a direct WinAPI call will be made.
@@ -171,14 +171,14 @@ and <a href="./trait.QueueableCommand.html">queue</a> for those old Windows vers
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;T, <a class="struct" href="https://doc.rust-lang.org/nightly/std/io/error/struct.Error.html" title="struct std::io::error::Error">Error</a>&gt;</h4></section></summary><div class="docblock"><p>Performs a set of actions within a synchronous update.</p>
 <p>Updates will be suspended in the terminal, the function will be executed against self,
 updates will be resumed, and a flush will be performed.</p>
-<h5 id="arguments-1"><a class="doc-anchor" href="#arguments-1">§</a>Arguments</h5>
+<h5 id="arguments-2"><a class="doc-anchor" href="#arguments-2">§</a>Arguments</h5>
 <ul>
 <li>
 <p>Function</p>
 <p>A function that performs the operations that must execute in a synchronized update.</p>
 </li>
 </ul>
-<h5 id="examples-1"><a class="doc-anchor" href="#examples-1">§</a>Examples</h5>
+<h5 id="examples-2"><a class="doc-anchor" href="#examples-2">§</a>Examples</h5>
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>std::io;
 <span class="kw">use </span>crossterm::{ExecutableCommand, SynchronizedUpdate, style::Print};
 
@@ -201,7 +201,7 @@ updates will be resumed, and a flush will be performed.</p>
     // foo 1
     // foo 2
 </span>}</code></pre></div>
-<h5 id="notes-1"><a class="doc-anchor" href="#notes-1">§</a>Notes</h5>
+<h5 id="notes-2"><a class="doc-anchor" href="#notes-2">§</a>Notes</h5>
 <p>This command is performed only using ANSI codes, and will do nothing on terminals that do not support ANSI
 codes, or this specific extension.</p>
 <p>When rendering the screen of the terminal, the Emulator usually iterates through each visible grid cell and
