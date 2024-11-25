@@ -46,7 +46,7 @@ use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument
 use crate::{
     http::RELAY_PROBE_PATH,
     protos,
-    quic::{QuicServer, ServerHandle as QuicServerHandle},
+    quic::server::{QuicServer, ServerHandle as QuicServerHandle},
 };
 
 pub(crate) mod actor;
@@ -497,7 +497,7 @@ impl Server {
 async fn relay_supervisor(
     mut tasks: JoinSet<Result<()>>,
     mut relay_http_server: Option<http_server::Server>,
-    mut quic_server: Option<crate::quic::QuicServer>,
+    mut quic_server: Option<QuicServer>,
 ) -> Result<()> {
     let res = match (
         relay_http_server.as_mut(),
