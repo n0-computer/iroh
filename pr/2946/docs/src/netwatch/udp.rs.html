@@ -877,6 +877,7 @@
 <a href="#877" id="877">877</a>
 <a href="#878" id="878">878</a>
 <a href="#879" id="879">879</a>
+<a href="#880" id="880">880</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     future::Future,
     io::ErrorKind,
@@ -1252,7 +1253,8 @@
                 },
             }
 
-            <span class="kw">match </span>state.recv(socket.into(), bufs, meta) {
+            <span class="kw">let </span>res = socket.try_io(Interest::READABLE, || state.recv(socket.into(), bufs, meta));
+            <span class="kw">match </span>res {
                 <span class="prelude-val">Ok</span>(count) =&gt; {
                     <span class="kw">for </span>meta <span class="kw">in </span>meta.iter().take(count) {
                         <span class="macro">trace!</span>(
