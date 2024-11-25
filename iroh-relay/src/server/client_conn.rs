@@ -21,6 +21,7 @@ use crate::{
         actor::{self, Packet},
         metrics::Metrics,
         streams::RelayedStream,
+        ClientConnRateLimit,
     },
 };
 
@@ -31,6 +32,7 @@ pub(super) struct ClientConnConfig {
     pub(super) stream: RelayedStream,
     pub(super) write_timeout: Duration,
     pub(super) channel_capacity: usize,
+    pub(super) rate_limit: ClientConnRateLimit,
     pub(super) server_channel: mpsc::Sender<actor::Message>,
 }
 
@@ -66,13 +68,13 @@ impl ClientConn {
             stream: io,
             write_timeout,
             channel_capacity,
+            rate_limit: rate_limit_config,
             server_channel,
         } = config;
 
-        // TODO make the values configurable
-        let bytes_per_second = NonZeroU32::new(1 << 12).expect("nonzero"); // 4 KiB / s
-        let burst_bytes = NonZeroU32::new(1 << 22).expect("nonzero"); // 4 MiB
-        let quota = governor::Quota::per_second(bytes_per_second).allow_burst(burst_bytes);
+        let quota = governor::Quota::per_second(rate_limit_config.bytes_per_second)
+            .allow_burst(rate_limit_config.max_burst_bytes);
+        // TODO: Allow creating this with mocked time for tests?
         let rate_limiter = governor::RateLimiter::direct(quota);
         let stream = RateLimitedRelayedStream::new(io, rate_limiter);
 
@@ -383,7 +385,7 @@ impl Stream for RateLimitedRelayedStream {
                     Ok(frame) => {
                         // First we need to know how many bytes this frame consumes.
                         let Ok(frame_len) = TryInto::<u32>::try_into(frame.len_with_header())
-                            .and_then(|len| TryInto::<NonZeroU32>::try_into(len))
+                            .and_then(TryInto::<NonZeroU32>::try_into)
                         else {
                             error!("frame len not NonZeroU32, is MAX_FRAME_SIZE too large?");
                             // Let this frame through anyway so to not completely break.

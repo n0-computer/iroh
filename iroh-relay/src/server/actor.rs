@@ -254,6 +254,7 @@ mod tests {
         server::{
             client_conn::ClientConnConfig,
             streams::{MaybeTlsStream, RelayedStream},
+            ClientConnRateLimit,
         },
     };
 
@@ -268,6 +269,7 @@ mod tests {
                 stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
+                rate_limit: ClientConnRateLimit::MAX,
                 server_channel,
             },
             Framed::new(test_io, DerpCodec),

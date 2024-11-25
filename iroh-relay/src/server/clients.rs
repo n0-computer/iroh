@@ -235,7 +235,10 @@ mod tests {
     use super::*;
     use crate::{
         protos::relay::{recv_frame, DerpCodec, Frame, FrameType},
-        server::streams::{MaybeTlsStream, RelayedStream},
+        server::{
+            streams::{MaybeTlsStream, RelayedStream},
+            ClientConnRateLimit,
+        },
     };
 
     fn test_client_builder(key: NodeId) -> (ClientConnConfig, FramedRead<DuplexStream, DerpCodec>) {
@@ -247,6 +250,7 @@ mod tests {
                 stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
+                rate_limit: ClientConnRateLimit::MAX,
                 server_channel,
             },
             FramedRead::new(test_io, DerpCodec),

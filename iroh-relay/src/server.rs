@@ -16,7 +16,7 @@
 //! - HTTPS `/generate_204`: Used for net_report probes.
 //! - STUN: UDP port for STUN requests/responses.
 
-use std::{fmt, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
+use std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync::Arc};
 
 use anyhow::{anyhow, bail, Context, Result};
 use futures_lite::StreamExt;
@@ -140,12 +140,44 @@ pub struct TlsConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
 }
 
 /// Rate limits.
+// TODO: accept_conn_limit and accept_conn_burst are not currently implemented.
 #[derive(Debug, Default)]
 pub struct Limits {
     /// Rate limit for accepting new connection. Unlimited if not set.
     pub accept_conn_limit: Option<f64>,
     /// Burst limit for accepting new connection. Unlimited if not set.
     pub accept_conn_burst: Option<usize>,
+    /// Rate limits for incoming traffic from a client connection.
+    pub client_rx: ClientConnRateLimit,
+}
+
+/// Per-client rate limit configuration.
+#[derive(Debug, Copy, Clone)]
+pub struct ClientConnRateLimit {
+    /// Max number of bytes per second to read from the client connection.
+    ///
+    /// Defaults to 4KiB/s.
+    pub bytes_per_second: NonZeroU32,
+    /// Max number of bytes to read in a single burst.
+    ///
+    /// Defaults to 16 MiB.
+    pub max_burst_bytes: NonZeroU32,
+}
+
+impl ClientConnRateLimit {
+    pub(super) const MAX: ClientConnRateLimit = ClientConnRateLimit {
+        bytes_per_second: NonZeroU32::MAX,
+        max_burst_bytes: NonZeroU32::MAX,
+    };
+}
+
+impl Default for ClientConnRateLimit {
+    fn default() -> Self {
+        Self {
+            bytes_per_second: NonZeroU32::try_from(1024 * 4).expect("nonzero"),
+            max_burst_bytes: NonZeroU32::try_from(1024 * 1024 * 16).expect("nonzero"),
+        }
+    }
 }
 
 /// TLS certificate configuration.
@@ -255,6 +287,7 @@ impl Server {
                     None => relay_config.http_bind_addr,
                 };
                 let mut builder = http_server::ServerBuilder::new(relay_bind_addr)
+                    .client_rx_ratelimit(relay_config.limits.client_rx)
                     .headers(headers)
                     .request_handler(Method::GET, "/", Box::new(root_handler))
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))

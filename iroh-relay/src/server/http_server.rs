@@ -33,6 +33,7 @@ use crate::{
         client_conn::ClientConnConfig,
         metrics::Metrics,
         streams::{MaybeTlsStream, RelayedStream},
+        ClientConnRateLimit,
     },
 };
 
@@ -73,7 +74,7 @@ fn downcast_upgrade(upgraded: Upgraded) -> Result<(MaybeTlsStream, Bytes)> {
 ///
 /// Created using [`ServerBuilder::spawn`].
 #[derive(Debug)]
-pub struct Server {
+pub(super) struct Server {
     addr: SocketAddr,
     http_server_task: AbortOnDropHandle<()>,
     cancel_server_loop: CancellationToken,
@@ -84,14 +85,14 @@ impl Server {
     ///
     /// The server runs in the background as several async tasks.  This allows controlling
     /// the server, in particular it allows gracefully shutting down the server.
-    pub fn handle(&self) -> ServerHandle {
+    pub(super) fn handle(&self) -> ServerHandle {
         ServerHandle {
             cancel_token: self.cancel_server_loop.clone(),
         }
     }
 
     /// Closes the underlying relay server and the HTTP(S) server tasks.
-    pub fn shutdown(&self) {
+    pub(super) fn shutdown(&self) {
         self.cancel_server_loop.cancel();
     }
 
@@ -100,12 +101,12 @@ impl Server {
     /// This is the root of all the tasks for the server.  Aborting it will abort all the
     /// other tasks for the server.  Awaiting it will complete when all the server tasks are
     /// completed.
-    pub fn task_handle(&mut self) -> &mut AbortOnDropHandle<()> {
+    pub(super) fn task_handle(&mut self) -> &mut AbortOnDropHandle<()> {
         &mut self.http_server_task
     }
 
     /// Returns the local address of this server.
-    pub fn addr(&self) -> SocketAddr {
+    pub(super) fn addr(&self) -> SocketAddr {
         self.addr
     }
 }
@@ -114,24 +115,24 @@ impl Server {
 ///
 /// This does not allow access to the task but can communicate with it.
 #[derive(Debug, Clone)]
-pub struct ServerHandle {
+pub(super) struct ServerHandle {
     cancel_token: CancellationToken,
 }
 
 impl ServerHandle {
     /// Gracefully shut down the server.
-    pub fn shutdown(&self) {
+    pub(super) fn shutdown(&self) {
         self.cancel_token.cancel()
     }
 }
 
 /// Configuration to use for the TLS connection
 #[derive(Debug, Clone)]
-pub struct TlsConfig {
+pub(super) struct TlsConfig {
     /// The server config
-    pub config: Arc<rustls::ServerConfig>,
+    pub(super) config: Arc<rustls::ServerConfig>,
     /// The kind
-    pub acceptor: TlsAcceptor,
+    pub(super) acceptor: TlsAcceptor,
 }
 
 /// Builder for the Relay HTTP Server.
@@ -139,7 +140,7 @@ pub struct TlsConfig {
 /// Defaults to handling relay requests on the "/relay" (and "/derp" for backwards compatibility) endpoint.
 /// Other HTTP endpoints can be added using [`ServerBuilder::request_handler`].
 #[derive(derive_more::Debug)]
-pub struct ServerBuilder {
+pub(super) struct ServerBuilder {
     /// The ip + port combination for this server.
     addr: SocketAddr,
     /// Optional tls configuration/TlsAcceptor combination.
@@ -153,27 +154,42 @@ pub struct ServerBuilder {
     handlers: Handlers,
     /// Headers to use for HTTP responses.
     headers: HeaderMap,
+    /// Rate-limiting configuration for an individual client connection.
+    ///
+    /// Rate-limiting is enforced on received traffic from individual clients.  This
+    /// configuration applies to a single client connection.
+    client_rx_ratelimit: ClientConnRateLimit,
 }
 
 impl ServerBuilder {
     /// Creates a new [ServerBuilder].
-    pub fn new(addr: SocketAddr) -> Self {
+    pub(super) fn new(addr: SocketAddr) -> Self {
         Self {
             addr,
             tls_config: None,
             handlers: Default::default(),
             headers: HeaderMap::new(),
+            client_rx_ratelimit: ClientConnRateLimit::MAX,
         }
     }
 
     /// Serves all requests content using TLS.
-    pub fn tls_config(mut self, config: Option<TlsConfig>) -> Self {
+    pub(super) fn tls_config(mut self, config: Option<TlsConfig>) -> Self {
         self.tls_config = config;
         self
     }
 
+    /// Sets the per-client rate-limit configuration for incoming data.
+    ///
+    /// On each client connection the incoming data is rate-limited.  By default
+    /// [`RateLimitConfig::MAX`] is enforced.
+    pub(super) fn client_rx_ratelimit(mut self, config: ClientConnRateLimit) -> Self {
+        self.client_rx_ratelimit = config;
+        self
+    }
+
     /// Adds a custom handler for a specific Method & URI.
-    pub fn request_handler(
+    pub(super) fn request_handler(
         mut self,
         method: Method,
         uri_path: &'static str,
@@ -184,7 +200,7 @@ impl ServerBuilder {
     }
 
     /// Adds HTTP headers to responses.
-    pub fn headers(mut self, headers: HeaderMap) -> Self {
+    pub(super) fn headers(mut self, headers: HeaderMap) -> Self {
         for (k, v) in headers.iter() {
             self.headers.insert(k.clone(), v.clone());
         }
@@ -192,13 +208,14 @@ impl ServerBuilder {
     }
 
     /// Builds and spawns an HTTP(S) Relay Server.
-    pub async fn spawn(self) -> Result<Server> {
+    pub(super) async fn spawn(self) -> Result<Server> {
         let server_task = ServerActorTask::spawn();
         let service = RelayService::new(
             self.handlers,
             self.headers,
             server_task.server_channel.clone(),
             server_task.write_timeout,
+            self.client_rx_ratelimit,
         );
 
         let addr = self.addr;
@@ -280,6 +297,7 @@ struct Inner {
     headers: HeaderMap,
     server_channel: mpsc::Sender<Message>,
     write_timeout: Duration,
+    rate_limit: ClientConnRateLimit,
 }
 
 impl RelayService {
@@ -497,6 +515,7 @@ impl Inner {
             stream: io,
             write_timeout: self.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
+            rate_limit: self.rate_limit,
             server_channel: self.server_channel.clone(),
         };
         trace!("accept: create client");
@@ -512,7 +531,7 @@ impl Inner {
 
 /// TLS Certificate Authority acceptor.
 #[derive(Clone, derive_more::Debug)]
-pub enum TlsAcceptor {
+pub(super) enum TlsAcceptor {
     /// Uses Let's Encrypt as the Certificate Authority. This is used in production.
     LetsEncrypt(#[debug("tokio_rustls_acme::AcmeAcceptor")] AcmeAcceptor),
     /// Manually added tls acceptor. Generally used for tests or for when we've passed in
@@ -526,12 +545,14 @@ impl RelayService {
         headers: HeaderMap,
         server_channel: mpsc::Sender<Message>,
         write_timeout: Duration,
+        rate_limit: ClientConnRateLimit,
     ) -> Self {
         Self(Arc::new(Inner {
             handlers,
             headers,
             server_channel,
             write_timeout,
+            rate_limit,
         }))
     }
 
@@ -893,6 +914,7 @@ mod tests {
             Default::default(),
             server_task.server_channel.clone(),
             server_task.write_timeout,
+            ClientConnRateLimit::MAX,
         );
 
         // create client a and connect it to the server
@@ -972,6 +994,7 @@ mod tests {
             Default::default(),
             server_task.server_channel.clone(),
             server_task.write_timeout,
+            ClientConnRateLimit::MAX,
         );
 
         // create client a and connect it to the server
