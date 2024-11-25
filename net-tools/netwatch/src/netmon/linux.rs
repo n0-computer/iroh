@@ -84,7 +84,7 @@ impl RouteMonitor {
                         RouteNetlinkMessage::NewAddress(msg) => {
                             trace!("NEWADDR: {:?}", msg);
                             let addrs = addr_cache.entry(msg.header.index).or_default();
-                            if let Some(addr) = get_nla!(msg, address::Nla::Address) {
+                            if let Some(addr) = get_nla!(msg, address::AddressAttribute::Address) {
                                 if addrs.contains(addr) {
                                     // already cached
                                     continue;
@@ -97,7 +97,7 @@ impl RouteMonitor {
                         RouteNetlinkMessage::DelAddress(msg) => {
                             trace!("DELADDR: {:?}", msg);
                             let addrs = addr_cache.entry(msg.header.index).or_default();
-                            if let Some(addr) = get_nla!(msg, address::Nla::Address) {
+                            if let Some(addr) = get_nla!(msg, address::AddressAttribute::Address) {
                                 addrs.remove(addr);
                             }
                             sender.send(NetworkMessage::Change).await.ok();
@@ -106,7 +106,7 @@ impl RouteMonitor {
                             trace!("ROUTE:: {:?}", msg);
 
                             // Ignore the following messages
-                            let table = get_nla!(msg, route::Nla::Table)
+                            let table = get_nla!(msg, route::nlas::Nla::Table)
                                 .copied()
                                 .unwrap_or_default();
                             if let Some(dst) = get_nla!(msg, route::Nla::Destination) {
