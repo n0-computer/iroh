@@ -67,7 +67,9 @@ impl RelayMap {
     ///
     /// Allows to set a custom STUN port and different IP addresses for IPv4 and IPv6.
     /// If IP addresses are provided, no DNS lookup will be performed.
-    pub fn default_from_node(url: RelayUrl, stun_port: u16, quic_port: u16) -> Self {
+    ///
+    /// Sets the port to the default [`DEFAULT_QUIC_PORT`].
+    pub fn default_from_node(url: RelayUrl, stun_port: u16) -> Self {
         let mut nodes = BTreeMap::new();
         nodes.insert(
             url.clone(),
@@ -75,7 +77,7 @@ impl RelayMap {
                 url,
                 stun_only: false,
                 stun_port,
-                quic_port,
+                quic_port: DEFAULT_QUIC_PORT,
             }
             .into(),
         );
@@ -92,7 +94,7 @@ impl RelayMap {
     /// resolved from the URL's host name via DNS.
     /// relay nodes are specified at <../../docs/relay_nodes.md>
     pub fn from_url(url: RelayUrl) -> Self {
-        Self::default_from_node(url, DEFAULT_STUN_PORT, DEFAULT_QUIC_PORT)
+        Self::default_from_node(url, DEFAULT_STUN_PORT)
     }
 
     /// Constructs the [`RelayMap`] from an iterator of [`RelayNode`]s.
