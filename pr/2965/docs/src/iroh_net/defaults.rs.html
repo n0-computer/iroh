@@ -144,9 +144,13 @@
 <a href="#144" id="144">144</a>
 <a href="#145" id="145">145</a>
 <a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Default values used in [`iroh-net`][`crate`]
 
-/// The default QUIC port used by the Relay server to accept QUIC connections
+</span><span class="kw">use </span>iroh_base::relay_map::QuicConfig;
+<span class="doccomment">/// The default QUIC port used by the Relay server to accept QUIC connections
 /// for QUIC address discovery
 ///
 /// The port is "QUIC" typed on a phone keypad.
@@ -171,6 +175,8 @@
 
 <span class="doccomment">/// Production configuration.
 </span><span class="kw">pub mod </span>prod {
+    <span class="kw">use </span>iroh_base::relay_map::QuicConfig;
+
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="doccomment">/// Hostname of the default NA relay.
@@ -200,7 +206,7 @@
             url: url.into(),
             stun_only: <span class="bool-val">false</span>,
             stun_port: DEFAULT_STUN_PORT,
-            quic_port: DEFAULT_QUIC_PORT,
+            quic: <span class="prelude-val">Some</span>(QuicConfig::default()),
         }
     }
 
@@ -214,7 +220,7 @@
             url: url.into(),
             stun_only: <span class="bool-val">false</span>,
             stun_port: DEFAULT_STUN_PORT,
-            quic_port: DEFAULT_QUIC_PORT,
+            quic: <span class="prelude-val">Some</span>(QuicConfig::default()),
         }
     }
 
@@ -228,7 +234,7 @@
             url: url.into(),
             stun_only: <span class="bool-val">false</span>,
             stun_port: DEFAULT_STUN_PORT,
-            quic_port: DEFAULT_QUIC_PORT,
+            quic: <span class="prelude-val">Some</span>(QuicConfig::default()),
         }
     }
 }
@@ -262,7 +268,7 @@
             url: url.into(),
             stun_only: <span class="bool-val">false</span>,
             stun_port: DEFAULT_STUN_PORT,
-            quic_port: DEFAULT_QUIC_PORT,
+            quic: <span class="prelude-val">Some</span>(QuicConfig::default()),
         }
     }
 
@@ -276,7 +282,7 @@
             url: url.into(),
             stun_only: <span class="bool-val">false</span>,
             stun_port: DEFAULT_STUN_PORT,
-            quic_port: DEFAULT_QUIC_PORT,
+            quic: <span class="prelude-val">Some</span>(QuicConfig::default()),
         }
     }
 }

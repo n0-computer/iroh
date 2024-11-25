@@ -79,53 +79,17 @@
 <a href="#79" id="79">79</a>
 <a href="#80" id="80">80</a>
 <a href="#81" id="81">81</a>
-<a href="#82" id="82">82</a>
-<a href="#83" id="83">83</a>
-<a href="#84" id="84">84</a>
-<a href="#85" id="85">85</a>
-<a href="#86" id="86">86</a>
-<a href="#87" id="87">87</a>
-<a href="#88" id="88">88</a>
-<a href="#89" id="89">89</a>
-<a href="#90" id="90">90</a>
-<a href="#91" id="91">91</a>
-<a href="#92" id="92">92</a>
-<a href="#93" id="93">93</a>
-<a href="#94" id="94">94</a>
-<a href="#95" id="95">95</a>
-<a href="#96" id="96">96</a>
-<a href="#97" id="97">97</a>
-<a href="#98" id="98">98</a>
-<a href="#99" id="99">99</a>
-<a href="#100" id="100">100</a>
-<a href="#101" id="101">101</a>
-<a href="#102" id="102">102</a>
-<a href="#103" id="103">103</a>
-<a href="#104" id="104">104</a>
-<a href="#105" id="105">105</a>
-<a href="#106" id="106">106</a>
-<a href="#107" id="107">107</a>
-<a href="#108" id="108">108</a>
-<a href="#109" id="109">109</a>
-<a href="#110" id="110">110</a>
-<a href="#111" id="111">111</a>
-<a href="#112" id="112">112</a>
-<a href="#113" id="113">113</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Send data over the internet.
 //!
 //! # Getting started
 //!
 //! ## Example
 //!
-//! Create a new node and add some data to the blobs store. This data will be
-//! available over the network.
+//! Create a new node.
 //!
 //! ```rust
 //! # async fn run() -&gt; anyhow::Result&lt;()&gt; {
-//! let node = iroh::node::Node::memory().spawn().await?;
-//! let client = node.client();
-//! let hash = client.blobs().add_bytes(b"some data".to_vec()).await?.hash;
-//! println!("hash: {}", hash);
+//! let _node = iroh::node::Node::memory().spawn().await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -158,14 +122,6 @@
 //! The client provides access to various subsystems:
 //! - [net](crate::client::net):
 //!   information and control of the iroh network
-//! - [blobs](crate::client::blobs):
-//!   manage and share content-addressed blobs of data
-//! - [tags](crate::client::tags):
-//!   tags to tell iroh what data is important
-//! - [gossip](crate::client::gossip):
-//!   exchange data with other nodes via a gossip protocol
-//! - [docs](crate::client::docs):
-//!   interact with documents and document authors
 //!
 //! The subsystem clients can be obtained cheaply from the main iroh client.
 //! They are also cheaply cloneable and can be shared across threads.
@@ -173,42 +129,22 @@
 //! So if you have code that only needs to interact with one subsystem, pass
 //! it just the subsystem client.
 //!
-//! ## Remote nodes
-//!
-//! To obtain a client to a remote node, you can use
-//! [connect](crate::client::Iroh::connect_path) to connect to a node running on
-//! the same machine, using the given data directory, or
-//! [connect_addr](crate::client::Iroh::connect_addr) to connect to a node at a
-//! known address.
-//!
-//! **Important**: the protocol to a remote node is not stable and will
-//! frequently change. So the client and server must be running the same version of iroh.
 //!
 //! ## Reexports
 //!
 //! The iroh crate re-exports the following crates:
 //! - [iroh_base] as [`base`]
-//! - [iroh_blobs] as [`blobs`]
-//! - [iroh_docs] as [`docs`]
-//! - [iroh_gossip] as [`gossip`]
 //! - [iroh_net] as [`net`]
 //!
 //! ## Feature Flags
 //!
 //! - `metrics`: Enable metrics collection. Enabled by default.
-//! - `fs-store`: Enables the disk based storage backend for `iroh-blobs`. Enabled by default.
 </span><span class="attr">#![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
 </span><span class="comment">// re-export the iroh crates
 </span><span class="attr">#[doc(inline)]
 </span><span class="kw">pub use </span>iroh_base <span class="kw">as </span>base;
-<span class="attr">#[doc(inline)]
-</span><span class="kw">pub use </span>iroh_blobs <span class="kw">as </span>blobs;
-<span class="attr">#[doc(inline)]
-</span><span class="kw">pub use </span>iroh_docs <span class="kw">as </span>docs;
-<span class="attr">#[doc(inline)]
-</span><span class="kw">pub use </span>iroh_gossip <span class="kw">as </span>gossip;
 <span class="attr">#[doc(inline)]
 </span><span class="kw">pub use </span>iroh_net <span class="kw">as </span>net;
 <span class="attr">#[doc(inline)]

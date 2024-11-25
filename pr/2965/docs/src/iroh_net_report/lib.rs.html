@@ -1294,6 +1294,7 @@
 <a href="#1294" id="1294">1294</a>
 <a href="#1295" id="1295">1295</a>
 <a href="#1296" id="1296">1296</a>
+<a href="#1297" id="1297">1297</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
@@ -2079,6 +2080,7 @@
 
     </span><span class="kw">use </span>std::sync::Arc;
 
+    <span class="kw">use </span>iroh_base::relay_map::QuicConfig;
     <span class="kw">use </span>iroh_relay::server;
 
     <span class="kw">use </span><span class="kw">crate</span>::RelayNode;
@@ -2087,14 +2089,14 @@
         <span class="kw">let </span>server = server::Server::spawn(server::testing::server_config())
             .<span class="kw">await
             </span>.expect(<span class="string">"should serve relay"</span>);
+        <span class="kw">let </span>quic = <span class="prelude-val">Some</span>(QuicConfig {
+            port: server.quic_addr().expect(<span class="string">"server sould run quic"</span>).port(),
+        });
         <span class="kw">let </span>node_desc = RelayNode {
             url: server.https_url().expect(<span class="string">"should work as relay"</span>),
             stun_only: <span class="bool-val">false</span>, <span class="comment">// the checks above and below guarantee both stun and relay
             </span>stun_port: server.stun_addr().expect(<span class="string">"server should serve stun"</span>).port(),
-            quic_port: server
-                .quic_addr()
-                .expect(<span class="string">"server should server_stun"</span>)
-                .port(),
+            quic,
         };
 
         (server, Arc::new(node_desc))
@@ -2179,7 +2181,7 @@
                     url,
                     stun_port: port,
                     stun_only,
-                    quic_port: <span class="number">0</span>,
+                    quic: <span class="prelude-val">None</span>,
                 }
             });
             RelayMap::from_nodes(nodes).expect(<span class="string">"generated invalid nodes"</span>)

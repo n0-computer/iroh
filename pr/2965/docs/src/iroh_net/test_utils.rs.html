@@ -484,6 +484,9 @@
 <a href="#484" id="484">484</a>
 <a href="#485" id="485">485</a>
 <a href="#486" id="486">486</a>
+<a href="#487" id="487">487</a>
+<a href="#488" id="488">488</a>
+<a href="#489" id="489">489</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
@@ -578,11 +581,14 @@
     <span class="kw">let </span>url: RelayUrl = <span class="macro">format!</span>(<span class="string">"https://{}"</span>, server.https_addr().expect(<span class="string">"configured"</span>))
         .parse()
         .unwrap();
+    <span class="kw">let </span>quic = <span class="prelude-val">Some</span>(iroh_base::relay_map::QuicConfig {
+        port: server.quic_addr().map_or(DEFAULT_QUIC_PORT, |s| s.port()),
+    });
     <span class="kw">let </span>m = RelayMap::from_nodes([RelayNode {
         url: url.clone(),
         stun_only: <span class="bool-val">false</span>,
         stun_port: server.stun_addr().map_or(DEFAULT_STUN_PORT, |s| s.port()),
-        quic_port: server.quic_addr().map_or(DEFAULT_QUIC_PORT, |s| s.port()),
+        quic,
     }])
     .unwrap();
     <span class="prelude-val">Ok</span>((m, url, server))
