@@ -295,6 +295,8 @@
 <a href="#295" id="295">295</a>
 <a href="#296" id="296">296</a>
 <a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
@@ -544,8 +546,10 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::{net::Ipv4Addr, sync::Arc};
 
-    <span class="kw">use </span><span class="kw">super</span>::server::{QuicConfig, QuicServer};
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use super</span>::{
+        server::{QuicConfig, QuicServer},
+        <span class="kw-2">*</span>,
+    };
 
     <span class="doccomment">/// Generates a [`quinn::ClientConfig`] that has quic address discovery enabled.
     </span><span class="kw">fn </span>generate_quic_addr_disc_client_config(
