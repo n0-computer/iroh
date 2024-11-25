@@ -292,6 +292,9 @@
 <a href="#292" id="292">292</a>
 <a href="#293" id="293">293</a>
 <a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
@@ -302,8 +305,6 @@
 <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, info, info_span, warn, Instrument};
 
-<span class="kw">use </span><span class="kw">crate</span>::server::QuicConfig;
-
 <span class="doccomment">/// ALPN for our quic addr discovery
 </span><span class="kw">pub const </span>ALPN_QUIC_ADDR_DISC: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"quic"</span>;
 <span class="doccomment">/// Endpoint close error code
@@ -312,63 +313,66 @@
 </span><span class="kw">pub const </span>QUIC_ADDR_DISC_CLOSE_REASON: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"finished"</span>;
 
 <span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>QuicServer {
-    bind_addr: SocketAddr,
-    cancel: CancellationToken,
-    handle: AbortOnDropHandle&lt;()&gt;,
-}
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>server {
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">pub use </span><span class="kw">crate</span>::server::QuicConfig;
 
-<span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
-</span><span class="kw">impl </span>QuicServer {
-    <span class="doccomment">/// Returns a handle for this server.
-    ///
-    /// The server runs in the background as several async tasks.  This allows controlling
-    /// the server, in particular it allows gracefully shutting down the server.
-    </span><span class="kw">pub fn </span>handle(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ServerHandle {
-        ServerHandle {
-            cancel_token: <span class="self">self</span>.cancel.clone(),
+    <span class="kw">pub struct </span>QuicServer {
+        bind_addr: SocketAddr,
+        cancel: CancellationToken,
+        handle: AbortOnDropHandle&lt;()&gt;,
+    }
+
+    <span class="kw">impl </span>QuicServer {
+        <span class="doccomment">/// Returns a handle for this server.
+        ///
+        /// The server runs in the background as several async tasks.  This allows controlling
+        /// the server, in particular it allows gracefully shutting down the server.
+        </span><span class="kw">pub fn </span>handle(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ServerHandle {
+            ServerHandle {
+                cancel_token: <span class="self">self</span>.cancel.clone(),
+            }
         }
-    }
 
-    <span class="doccomment">/// Returns the [`AbortOnDropHandle`] for the supervisor task managing the endpoint.
-    ///
-    /// This is the root of all the tasks for the QUIC address discovery service.  Aborting it will abort all the
-    /// other tasks for the service.  Awaiting it will complete when all the service tasks are
-    /// completed.[]
-    </span><span class="kw">pub fn </span>task_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>AbortOnDropHandle&lt;()&gt; {
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>.handle
-    }
+        <span class="doccomment">/// Returns the [`AbortOnDropHandle`] for the supervisor task managing the endpoint.
+        ///
+        /// This is the root of all the tasks for the QUIC address discovery service.  Aborting it will abort all the
+        /// other tasks for the service.  Awaiting it will complete when all the service tasks are
+        /// completed.[]
+        </span><span class="kw">pub fn </span>task_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>AbortOnDropHandle&lt;()&gt; {
+            <span class="kw-2">&amp;mut </span><span class="self">self</span>.handle
+        }
 
-    <span class="doccomment">/// Returns the socket address for this QUIC server.
-    </span><span class="kw">pub fn </span>bind_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>SocketAddr {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.bind_addr
-    }
+        <span class="doccomment">/// Returns the socket address for this QUIC server.
+        </span><span class="kw">pub fn </span>bind_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>SocketAddr {
+            <span class="kw-2">&amp;</span><span class="self">self</span>.bind_addr
+        }
 
-    <span class="doccomment">/// Spawns a QUIC server that creates and QUIC endpoint and listens
-    /// for QUIC connections for address discovery
-    ///
-    /// # Panics
-    /// If there is a panic during a connection, it will be propagated
-    /// up here. Any other errors in a connection will be logged as a
-    ///  warning.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>spawn(quic_config: QuicConfig) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>server_config =
-            quinn::ServerConfig::with_crypto(Arc::new(quic_config.server_config));
-        <span class="kw">let </span>transport_config = Arc::get_mut(<span class="kw-2">&amp;mut </span>server_config.transport).unwrap();
-        transport_config
-            .max_concurrent_uni_streams(<span class="number">0_u8</span>.into())
-            <span class="comment">// enable sending quic address discovery frames
-            </span>.send_observed_address_reports(<span class="bool-val">true</span>);
+        <span class="doccomment">/// Spawns a QUIC server that creates and QUIC endpoint and listens
+        /// for QUIC connections for address discovery
+        ///
+        /// # Panics
+        /// If there is a panic during a connection, it will be propagated
+        /// up here. Any other errors in a connection will be logged as a
+        ///  warning.
+        </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>spawn(quic_config: QuicConfig) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+            <span class="kw">let </span><span class="kw-2">mut </span>server_config =
+                quinn::ServerConfig::with_crypto(Arc::new(quic_config.server_config));
+            <span class="kw">let </span>transport_config = Arc::get_mut(<span class="kw-2">&amp;mut </span>server_config.transport).unwrap();
+            transport_config
+                .max_concurrent_uni_streams(<span class="number">0_u8</span>.into())
+                <span class="comment">// enable sending quic address discovery frames
+                </span>.send_observed_address_reports(<span class="bool-val">true</span>);
 
-        <span class="kw">let </span>endpoint = quinn::Endpoint::server(server_config, quic_config.bind_addr)<span class="question-mark">?</span>;
-        <span class="kw">let </span>bind_addr = endpoint.local_addr()<span class="question-mark">?</span>;
+            <span class="kw">let </span>endpoint = quinn::Endpoint::server(server_config, quic_config.bind_addr)<span class="question-mark">?</span>;
+            <span class="kw">let </span>bind_addr = endpoint.local_addr()<span class="question-mark">?</span>;
 
-        <span class="macro">info!</span>(<span class="string">"QUIC server bound on {bind_addr:?}"</span>);
+            <span class="macro">info!</span>(<span class="string">"QUIC server bound on {bind_addr:?}"</span>);
 
-        <span class="kw">let </span>cancel = CancellationToken::new();
-        <span class="kw">let </span>cancel_accept_loop = cancel.clone();
+            <span class="kw">let </span>cancel = CancellationToken::new();
+            <span class="kw">let </span>cancel_accept_loop = cancel.clone();
 
-        <span class="kw">let </span>task = tokio::task::spawn(<span class="kw">async move </span>{
+            <span class="kw">let </span>task = tokio::task::spawn(<span class="kw">async move </span>{
             <span class="kw">let </span><span class="kw-2">mut </span>set = JoinSet::new();
             <span class="macro">debug!</span>(<span class="string">"waiting for connections..."</span>);
             <span class="kw">loop </span>{
@@ -409,54 +413,55 @@
             endpoint.wait_idle().<span class="kw">await</span>;
             <span class="macro">debug!</span>(<span class="string">"quic endpoint has been shutdown."</span>);
         }.instrument(<span class="macro">info_span!</span>(<span class="string">"quic-endpoint"</span>)),);
-        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-            bind_addr,
-            cancel,
-            handle: AbortOnDropHandle::new(task),
-        })
-    }
-
-    <span class="doccomment">/// Closes the underlying QUIC endpoint and the tasks running the
-    /// QUIC connections.
-    </span><span class="kw">pub fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="self">self</span>.cancel.cancel();
-    }
-}
-
-<span class="doccomment">/// A handle for the Server side of QUIC address discovery.
-///
-/// This does not allow access to the task but can communicate with it.
-</span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>ServerHandle {
-    cancel_token: CancellationToken,
-}
-
-<span class="kw">impl </span>ServerHandle {
-    <span class="doccomment">/// Gracefully shut down the quic endpoint.
-    </span><span class="kw">pub fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="self">self</span>.cancel_token.cancel()
-    }
-}
-
-<span class="kw">async fn </span>handle_connection(conn: quinn::Incoming) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-    <span class="kw">let </span>connection = conn.<span class="kw">await</span><span class="question-mark">?</span>;
-    <span class="macro">info!</span>(<span class="string">"established"</span>);
-    <span class="comment">// wait for the client to close the connection
-    </span><span class="kw">let </span>connection_err = connection.closed().<span class="kw">await</span>;
-    <span class="kw">match </span>connection_err {
-        quinn::ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. })
-            <span class="kw">if </span>error_code == QUIC_ADDR_DISC_CLOSE_CODE =&gt;
-        {
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+            <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+                bind_addr,
+                cancel,
+                handle: AbortOnDropHandle::new(task),
+            })
         }
-        <span class="kw">_ </span>=&gt; {
-            <span class="macro">warn!</span>(
-                <span class="string">"{} - error closing connection {connection_err:?}"</span>,
-                connection.remote_address()
-            );
+
+        <span class="doccomment">/// Closes the underlying QUIC endpoint and the tasks running the
+        /// QUIC connections.
+        </span><span class="kw">pub fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+            <span class="self">self</span>.cancel.cancel();
         }
     }
-    <span class="prelude-val">Ok</span>(())
+
+    <span class="doccomment">/// A handle for the Server side of QUIC address discovery.
+    ///
+    /// This does not allow access to the task but can communicate with it.
+    </span><span class="attr">#[derive(Debug, Clone)]
+    </span><span class="kw">pub struct </span>ServerHandle {
+        cancel_token: CancellationToken,
+    }
+
+    <span class="kw">impl </span>ServerHandle {
+        <span class="doccomment">/// Gracefully shut down the quic endpoint.
+        </span><span class="kw">pub fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+            <span class="self">self</span>.cancel_token.cancel()
+        }
+    }
+
+    <span class="kw">async fn </span>handle_connection(conn: quinn::Incoming) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">let </span>connection = conn.<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">info!</span>(<span class="string">"established"</span>);
+        <span class="comment">// wait for the client to close the connection
+        </span><span class="kw">let </span>connection_err = connection.closed().<span class="kw">await</span>;
+        <span class="kw">match </span>connection_err {
+            quinn::ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. })
+                <span class="kw">if </span>error_code == QUIC_ADDR_DISC_CLOSE_CODE =&gt;
+            {
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+            }
+            <span class="kw">_ </span>=&gt; {
+                <span class="macro">warn!</span>(
+                    <span class="string">"{} - error closing connection {connection_err:?}"</span>,
+                    connection.remote_address()
+                );
+            }
+        }
+        <span class="prelude-val">Ok</span>(())
+    }
 }
 
 <span class="doccomment">/// Handles the client side of QUIC address discovery.
@@ -539,6 +544,7 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::{net::Ipv4Addr, sync::Arc};
 
+    <span class="kw">use </span><span class="kw">super</span>::server::{QuicConfig, QuicServer};
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="doccomment">/// Generates a [`quinn::ClientConfig`] that has quic address discovery enabled.
@@ -575,7 +581,7 @@
         <span class="kw">let </span>quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 
         <span class="kw">let </span>(addr, _latency) = quic_client
-            .get_addr_and_latency(quic_server.bind_addr, <span class="kw-2">&amp;</span>host.to_string())
+            .get_addr_and_latency(<span class="kw-2">*</span>quic_server.bind_addr(), <span class="kw-2">&amp;</span>host.to_string())
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="comment">// wait until the endpoint delivers the closing message to the server
         </span>client_endpoint.wait_idle().<span class="kw">await</span>;

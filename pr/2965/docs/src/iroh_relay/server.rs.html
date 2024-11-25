@@ -1179,7 +1179,7 @@
 <span class="kw">use crate</span>::{
     http::RELAY_PROBE_PATH,
     protos,
-    quic::{QuicServer, ServerHandle <span class="kw">as </span>QuicServerHandle},
+    quic::server::{QuicServer, ServerHandle <span class="kw">as </span>QuicServerHandle},
 };
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>actor;
@@ -1615,7 +1615,7 @@
 </span><span class="kw">async fn </span>relay_supervisor(
     <span class="kw-2">mut </span>tasks: JoinSet&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
     <span class="kw-2">mut </span>relay_http_server: <span class="prelude-ty">Option</span>&lt;http_server::Server&gt;,
-    <span class="kw-2">mut </span>quic_server: <span class="prelude-ty">Option</span>&lt;<span class="kw">crate</span>::quic::QuicServer&gt;,
+    <span class="kw-2">mut </span>quic_server: <span class="prelude-ty">Option</span>&lt;QuicServer&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
     <span class="kw">let </span>res = <span class="kw">match </span>(
         relay_http_server.as_mut(),
