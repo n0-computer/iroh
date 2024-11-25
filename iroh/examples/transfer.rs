@@ -202,7 +202,7 @@ async fn fetch(ticket: &str, relay_url: Option<String>) -> anyhow::Result<()> {
     // Call `finish` to close the send side of the connection gracefully.
     send.finish()?;
 
-    let (len, dur, chnk) = drain_stream(&mut recv, false).await?;
+    let (len, ttfb, chnk) = drain_stream(&mut recv, false).await?;
 
     // We received the last message: close all connections and allow for the close
     // message to be sent.
@@ -210,8 +210,8 @@ async fn fetch(ticket: &str, relay_url: Option<String>) -> anyhow::Result<()> {
 
     let duration = start.elapsed();
     println!(
-        "Received {} B in {:?}/{:?} in {} chunks",
-        len, dur, duration, chnk
+        "Received {} B in {:.4}s with ttfb {}s in {} chunks",
+        HumanBytes(len as u64), duration.as_secs_f64(), ttfb.as_secs_f64(), chnk
     );
     println!(
         "Transferred {} in {:.4}, {}/s",
