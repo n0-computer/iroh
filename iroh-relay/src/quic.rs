@@ -3,10 +3,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Result;
-use quinn::{ApplicationClose, VarInt};
-use tokio::task::JoinSet;
-use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::{debug, info, info_span, warn, Instrument};
+use quinn::VarInt;
 
 /// ALPN for our quic addr discovery
 pub const ALPN_QUIC_ADDR_DISC: &[u8] = b"quic";
@@ -19,6 +16,10 @@ pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 pub(crate) mod server {
     use super::*;
     pub use crate::server::QuicConfig;
+    use quinn::ApplicationClose;
+    use tokio::task::JoinSet;
+    use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+    use tracing::{debug, info, info_span, warn, Instrument};
 
     pub struct QuicServer {
         bind_addr: SocketAddr,
@@ -247,8 +248,10 @@ impl QuicClient {
 mod tests {
     use std::{net::Ipv4Addr, sync::Arc};
 
-    use super::server::{QuicConfig, QuicServer};
-    use super::*;
+    use super::{
+        server::{QuicConfig, QuicServer},
+        *,
+    };
 
     /// Generates a [`quinn::ClientConfig`] that has quic address discovery enabled.
     fn generate_quic_addr_disc_client_config(
