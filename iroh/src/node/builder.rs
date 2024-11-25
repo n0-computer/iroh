@@ -791,14 +791,14 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     /// let handler = MyProtocol { client };
     ///
     /// let node = unspawned_node
-    ///     .accept(MY_ALPN.to_vec(), Arc::new(handler))
+    ///     .accept(MY_ALPN, Arc::new(handler))
     ///     .spawn()
     ///     .await?;
     /// # node.shutdown().await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn accept(mut self, alpn: Vec<u8>, handler: Arc<dyn ProtocolHandler>) -> Self {
+    pub fn accept(mut self, alpn: impl AsRef<[u8]>, handler: Arc<dyn ProtocolHandler>) -> Self {
         self.router = self.router.accept(alpn, handler);
         self
     }
@@ -846,14 +846,14 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
             downloader,
             self.endpoint().clone(),
         );
-        self = self.accept(iroh_blobs::protocol::ALPN.to_vec(), Arc::new(blobs_proto));
+        self = self.accept(iroh_blobs::protocol::ALPN, Arc::new(blobs_proto));
 
         // Register gossip.
-        self = self.accept(GOSSIP_ALPN.to_vec(), Arc::new(gossip));
+        self = self.accept(GOSSIP_ALPN, Arc::new(gossip));
 
         // Register docs, if enabled.
         if let Some(docs) = docs {
-            self = self.accept(DOCS_ALPN.to_vec(), Arc::new(docs));
+            self = self.accept(DOCS_ALPN, Arc::new(docs));
         }
 
         self

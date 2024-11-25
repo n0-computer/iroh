@@ -70,8 +70,8 @@ impl RouterBuilder {
         }
     }
 
-    pub fn accept(mut self, alpn: Vec<u8>, handler: Arc<dyn ProtocolHandler>) -> Self {
-        self.protocols.insert(alpn, handler);
+    pub fn accept(mut self, alpn: impl AsRef<[u8]>, handler: Arc<dyn ProtocolHandler>) -> Self {
+        self.protocols.insert(alpn.as_ref().to_vec(), handler);
         self
     }
 
