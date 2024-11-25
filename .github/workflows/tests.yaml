@@ -23,7 +23,7 @@ env:
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
   SCCACHE_CACHE_SIZE: "50G"
-  CRATES_LIST: "iroh,iroh-node-util,iroh-metrics,iroh-net,iroh-net-bench,iroh-test,netwatch,portmapper,iroh-relay,iroh-net-report"
+  CRATES_LIST: "iroh,iroh-node-util,iroh-metrics,iroh-net,iroh-net-bench,iroh-test,iroh-dns-server,iroh-router,netwatch,portmapper,iroh-relay,iroh-net-report"
   IROH_FORCE_STAGING_RELAYS: "1"
 
 jobs:
@@ -197,9 +197,9 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.6
 
-    - uses: msys2/setup-msys2@v2
-      with:
-        release: false
+      - uses: msys2/setup-msys2@v2
+        with:
+          release: false
 
       - name: build tests
         run: |
