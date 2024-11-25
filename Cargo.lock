@@ -3329,6 +3329,7 @@ dependencies = [
  "futures-lite 2.5.0",
  "futures-sink",
  "futures-util",
+ "iroh-quinn-udp",
  "libc",
  "netdev",
  "netlink-packet-core",

@@ -373,7 +373,8 @@ impl UdpSocket {
                 },
             }
 
-            match state.recv(socket.into(), bufs, meta) {
+            let res = socket.try_io(Interest::READABLE, || state.recv(socket.into(), bufs, meta));
+            match res {
                 Ok(count) => {
                     for meta in meta.iter().take(count) {
                         trace!(
