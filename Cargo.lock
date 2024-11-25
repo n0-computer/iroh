@@ -2499,6 +2499,7 @@ dependencies = [
  "nested_enum_utils",
  "num_cpus",
  "parking_lot",
+ "parse-size",
  "postcard",
  "proptest",
  "quic-rpc",
@@ -3685,6 +3686,12 @@ dependencies = [
  "smallvec",
  "windows-targets 0.52.6",
 ]
+
+[[package]]
+name = "parse-size"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "944553dd59c802559559161f9816429058b869003836120e262e8caec061b7ae"
 
 [[package]]
 name = "paste"

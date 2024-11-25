@@ -246,13 +246,13 @@ jobs:
       # TODO: We have a bunch of platform-dependent code so should
       #    probably run this job on the full platform matrix
       - name: clippy check (all features)
-        run: cargo clippy --workspace --all-features --all-targets --bins --tests --benches
+        run: cargo clippy --workspace --all-features --all-targets --lib --bins --tests --benches --examples
 
       - name: clippy check (no features)
-        run: cargo clippy --workspace --no-default-features --lib --bins --tests
+        run: cargo clippy --workspace --no-default-features --all-targets --lib --bins --tests --benches --examples
 
       - name: clippy check (default features)
-        run: cargo clippy --workspace --all-targets
+        run: cargo clippy --workspace --all-targets --lib --bins --tests --benches --examples
 
   msrv:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
@@ -295,7 +295,7 @@ jobs:
       branch: ${{ github.ref }}
       max_workers: 4
       netsim_branch: "main"
-      sim_paths: "sims/iroh/iroh.json,sims/integration"
+      sim_paths: "sims/iroh_v2/iroh.json,sims/integration_v2"
       pr_number: ${{ github.event.pull_request.number || '' }}
 
   codespell:
