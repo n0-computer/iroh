@@ -913,12 +913,6 @@
 <a href="#913" id="913">913</a>
 <a href="#914" id="914">914</a>
 <a href="#915" id="915">915</a>
-<a href="#916" id="916">916</a>
-<a href="#917" id="917">917</a>
-<a href="#918" id="918">918</a>
-<a href="#919" id="919">919</a>
-<a href="#920" id="920">920</a>
-<a href="#921" id="921">921</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     future::Future,
     io::ErrorKind,
@@ -1080,9 +1074,8 @@
     <span class="doccomment">/// TODO
     </span><span class="kw">pub fn </span>connect(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: SocketAddr) -&gt; std::io::Result&lt;()&gt; {
         <span class="macro">tracing::info!</span>(<span class="string">"connectnig to {}"</span>, addr);
-        <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.socket.write().unwrap();
-        <span class="comment">// dance around to make non async connect work
-        </span><span class="kw">let </span><span class="prelude-val">Some</span>((socket_tokio, state)) = guard.take() <span class="kw">else </span>{
+        <span class="kw">let </span>guard = <span class="self">self</span>.socket.read().unwrap();
+        <span class="kw">let </span><span class="prelude-val">Some</span>((socket_tokio, _state)) = guard.as_ref() <span class="kw">else </span>{
             <span class="macro">warn!</span>(<span class="string">"socket closed"</span>);
             <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
@@ -1090,13 +1083,8 @@
             ));
         };
 
-        <span class="kw">let </span>socket_std = socket_tokio.into_std()<span class="question-mark">?</span>;
-        socket_std.connect(addr)<span class="question-mark">?</span>;
-        <span class="kw">let </span>socket_tokio = tokio::net::UdpSocket::from_std(socket_std)<span class="question-mark">?</span>;
-        guard.replace((socket_tokio, state));
-
-        drop(guard);
-        <span class="self">self</span>.wake_all();
+        <span class="kw">let </span>sock_ref = socket2::SockRef::from(<span class="kw-2">&amp;</span>socket_tokio);
+        sock_ref.connect(<span class="kw-2">&amp;</span>socket2::SockAddr::from(addr))<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(())
     }
