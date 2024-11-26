@@ -1,6 +1,6 @@
 var srcIndex = new Map(JSON.parse('[\
 ["bulk",["",[],["bulk.rs"]]],\
-["iroh",["",[["client",[],["quic.rs"]],["node",[],["builder.rs","nodes_storage.rs","rpc.rs","rpc_status.rs"]],["util",[],["fs.rs","path.rs","progress.rs"]]],["client.rs","lib.rs","metrics.rs","node.rs","rpc_protocol.rs","util.rs"]]],\
+["iroh",["",[["client",[],["quic.rs"]],["node",[],["builder.rs","nodes_storage.rs","rpc.rs","rpc_status.rs"]],["util",[],["fs.rs","path.rs"]]],["client.rs","lib.rs","metrics.rs","node.rs","rpc_protocol.rs","util.rs"]]],\
 ["iroh_base",["",[["key",[],["encryption.rs"]],["ticket",[],["blob.rs","node.rs"]]],["base32.rs","hash.rs","key.rs","lib.rs","node_addr.rs","relay_map.rs","relay_url.rs","ticket.rs"]]],\
 ["iroh_dns_server",["",[["dns",[],["node_authority.rs"]],["http",[["doh",[],["extract.rs","response.rs"]]],["doh.rs","error.rs","pkarr.rs","rate_limiting.rs","tls.rs"]],["store",[],["signed_packets.rs"]]],["config.rs","dns.rs","http.rs","lib.rs","metrics.rs","server.rs","state.rs","store.rs","util.rs"]]],\
 ["iroh_metrics",["",[],["core.rs","lib.rs","metrics.rs","service.rs"]]],\

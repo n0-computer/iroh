@@ -57,29 +57,6 @@
 <a href="#57" id="57">57</a>
 <a href="#58" id="58">58</a>
 <a href="#59" id="59">59</a>
-<a href="#60" id="60">60</a>
-<a href="#61" id="61">61</a>
-<a href="#62" id="62">62</a>
-<a href="#63" id="63">63</a>
-<a href="#64" id="64">64</a>
-<a href="#65" id="65">65</a>
-<a href="#66" id="66">66</a>
-<a href="#67" id="67">67</a>
-<a href="#68" id="68">68</a>
-<a href="#69" id="69">69</a>
-<a href="#70" id="70">70</a>
-<a href="#71" id="71">71</a>
-<a href="#72" id="72">72</a>
-<a href="#73" id="73">73</a>
-<a href="#74" id="74">74</a>
-<a href="#75" id="75">75</a>
-<a href="#76" id="76">76</a>
-<a href="#77" id="77">77</a>
-<a href="#78" id="78">78</a>
-<a href="#79" id="79">79</a>
-<a href="#80" id="80">80</a>
-<a href="#81" id="81">81</a>
-<a href="#82" id="82">82</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Client to an Iroh node.
 //!
 //! See the documentation for [`Iroh`] for more information.
@@ -88,9 +65,6 @@
 
 <span class="kw">mod </span>quic;
 
-<span class="kw">pub use </span>iroh_blobs::rpc::client::{blobs, tags};
-<span class="kw">pub use </span>iroh_docs::rpc::client::{authors, docs, docs::Doc};
-<span class="kw">pub use </span>iroh_gossip::rpc::client <span class="kw">as </span>gossip;
 <span class="kw">pub use </span>iroh_node_util::rpc::client::{net, node};
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::quic::{connect_raw <span class="kw">as </span>quic_connect_raw, RPC_ALPN};
@@ -127,29 +101,9 @@
         <span class="self">Self </span>{ rpc }
     }
 
-    <span class="doccomment">/// Returns the blobs client.
-    </span><span class="kw">pub fn </span>blobs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; blobs::Client {
-        blobs::Client::new(<span class="self">self</span>.rpc.clone().map().boxed())
-    }
-
-    <span class="doccomment">/// Returns the docs client.
-    </span><span class="kw">pub fn </span>docs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; iroh_docs::rpc::client::docs::Client {
-        iroh_docs::rpc::client::docs::Client::new(<span class="self">self</span>.rpc.clone().map().boxed())
-    }
-
-    <span class="doccomment">/// Returns the docs client.
-    </span><span class="kw">pub fn </span>authors(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; iroh_docs::rpc::client::authors::Client {
-        iroh_docs::rpc::client::authors::Client::new(<span class="self">self</span>.rpc.clone().map().boxed())
-    }
-
-    <span class="doccomment">/// Returns the tags client.
-    </span><span class="kw">pub fn </span>tags(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; tags::Client {
-        tags::Client::new(<span class="self">self</span>.rpc.clone().map().boxed())
-    }
-
-    <span class="doccomment">/// Returns the gossip client.
-    </span><span class="kw">pub fn </span>gossip(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; gossip::Client {
-        gossip::Client::new(<span class="self">self</span>.rpc.clone().map().boxed())
+    <span class="doccomment">/// Returns the actual [`RpcClient`].
+    </span><span class="kw">pub fn </span>client(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RpcClient {
+        <span class="self">self</span>.rpc.clone()
     }
 
     <span class="doccomment">/// Returns the net client.

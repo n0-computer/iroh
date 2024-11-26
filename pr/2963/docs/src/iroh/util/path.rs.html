@@ -52,18 +52,6 @@
 <a href="#52" id="52">52</a>
 <a href="#53" id="53">53</a>
 <a href="#54" id="54">54</a>
-<a href="#55" id="55">55</a>
-<a href="#56" id="56">56</a>
-<a href="#57" id="57">57</a>
-<a href="#58" id="58">58</a>
-<a href="#59" id="59">59</a>
-<a href="#60" id="60">60</a>
-<a href="#61" id="61">61</a>
-<a href="#62" id="62">62</a>
-<a href="#63" id="63">63</a>
-<a href="#64" id="64">64</a>
-<a href="#65" id="65">65</a>
-<a href="#66" id="66">66</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Configuration paths for iroh.
 
 </span><span class="kw">use </span>std::path::{Path, PathBuf};
@@ -75,24 +63,12 @@
     <span class="doccomment">/// Path to the node's secret key for the [`iroh_net::key::PublicKey`].
     </span><span class="attr">#[strum(serialize = <span class="string">"keypair"</span>)]
     </span>SecretKey,
-    <span class="doccomment">/// Path to the node's [file based blob store](iroh_blobs::store::fs::Store).
-    </span><span class="attr">#[strum(serialize = <span class="string">"blobs"</span>)]
-    </span>BaoStoreDir,
-    <span class="doccomment">/// Path to the [iroh-docs document database](iroh_docs::store::fs::Store)
-    </span><span class="attr">#[strum(serialize = <span class="string">"docs.redb"</span>)]
-    </span>DocsDatabase,
-    <span class="doccomment">/// Path to the console state
-    </span><span class="attr">#[strum(serialize = <span class="string">"console"</span>)]
-    </span>Console,
     <span class="attr">#[strum(serialize = <span class="string">"peers.postcard"</span>)]
     </span><span class="doccomment">/// Path to store known peer data.
     </span>PeerData,
     <span class="attr">#[strum(serialize = <span class="string">"rpc.lock"</span>)]
     </span><span class="doccomment">/// Path to RPC lock file, containing the RPC port if running.
     </span>RpcLock,
-    <span class="doccomment">/// Path to the [`iroh_docs::AuthorId`] of the node's default author
-    </span><span class="attr">#[strum(serialize = <span class="string">"default-author"</span>)]
-    </span>DefaultAuthor,
 }
 
 <span class="kw">impl </span>AsRef&lt;Path&gt; <span class="kw">for </span>IrohPaths {
