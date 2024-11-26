@@ -159,9 +159,8 @@ impl UdpSocket {
     /// TODO
     pub fn connect(&self, addr: SocketAddr) -> std::io::Result<()> {
         tracing::info!("connectnig to {}", addr);
-        let mut guard = self.socket.write().unwrap();
-        // dance around to make non async connect work
-        let Some((socket_tokio, state)) = guard.take() else {
+        let guard = self.socket.read().unwrap();
+        let Some((socket_tokio, _state)) = guard.as_ref() else {
             warn!("socket closed");
             return Err(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
@@ -169,13 +168,8 @@ impl UdpSocket {
             ));
         };
 
-        let socket_std = socket_tokio.into_std()?;
-        socket_std.connect(addr)?;
-        let socket_tokio = tokio::net::UdpSocket::from_std(socket_std)?;
-        guard.replace((socket_tokio, state));
-
-        drop(guard);
-        self.wake_all();
+        let sock_ref = socket2::SockRef::from(&socket_tokio);
+        sock_ref.connect(&socket2::SockAddr::from(addr))?;
 
         Ok(())
     }
