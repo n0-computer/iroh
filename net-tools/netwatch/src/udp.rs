@@ -130,7 +130,6 @@ impl UdpSocket {
     /// The function must be called with valid byte array `buf` of sufficient
     /// size to hold the message bytes. If a message is too long to fit in the
     /// supplied buffer, excess bytes may be discarded.
-    ///
     pub fn recv_from<'a, 'b>(&'b self, buffer: &'a mut [u8]) -> RecvFromFut<'a, 'b> {
         RecvFromFut {
             socket: self,
