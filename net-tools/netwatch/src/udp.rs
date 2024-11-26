@@ -701,18 +701,16 @@ impl SocketState {
         let socket_state = quinn_udp::UdpSocketState::new(socket_ref)?;
 
         let local_addr = socket.local_addr()?;
-        if addr.port() != 0 {
-            if local_addr.port() != addr.port() {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!(
-                        "wrong port bound: {:?}: wanted: {} got {}",
-                        network,
-                        addr.port(),
-                        local_addr.port(),
-                    ),
-                ));
-            }
+        if addr.port() != 0 && local_addr.port() != addr.port() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "wrong port bound: {:?}: wanted: {} got {}",
+                    network,
+                    addr.port(),
+                    local_addr.port(),
+                ),
+            ));
         }
 
         Ok(Self::Connected {
