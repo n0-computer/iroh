@@ -68,13 +68,13 @@ impl UdpSocket {
 
     /// Is the socket broken and needs a rebind?
     pub fn is_broken(&self) -> bool {
-        self.is_broken.load(std::sync::atomic::Ordering::SeqCst)
+        self.is_broken.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Marks this socket as needing a rebind
     fn mark_broken(&self) {
         self.is_broken
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 
     /// Rebind the underlying socket.
@@ -85,7 +85,7 @@ impl UdpSocket {
 
             // Clear errors
             self.is_broken
-                .store(false, std::sync::atomic::Ordering::SeqCst);
+                .store(false, std::sync::atomic::Ordering::Release);
 
             drop(guard);
         }
