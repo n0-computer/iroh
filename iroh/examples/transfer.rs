@@ -9,7 +9,8 @@ use clap::{Parser, Subcommand};
 use futures_lite::StreamExt;
 use indicatif::HumanBytes;
 use iroh_net::{
-    key::SecretKey, ticket::NodeTicket, Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl,
+    endpoint::ConnectionError, key::SecretKey, ticket::NodeTicket, Endpoint, NodeAddr, RelayMap,
+    RelayMode, RelayUrl,
 };
 use tracing::info;
 
@@ -132,7 +133,7 @@ async fn provide(size: u64, relay_url: Option<String>) -> anyhow::Result<()> {
             // it received this message.
             let res = tokio::time::timeout(Duration::from_secs(3), async move {
                 let closed = conn.closed().await;
-                if !matches!(closed, quinn::ConnectionError::ApplicationClosed(_)) {
+                if !matches!(closed, ConnectionError::ApplicationClosed(_)) {
                     println!("node {node_id} disconnected with an error: {closed:#}");
                 }
             })
