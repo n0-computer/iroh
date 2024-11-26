@@ -284,8 +284,8 @@
         }
     }
 
-    <span class="kw">pub fn </span>accept(<span class="kw-2">mut </span><span class="self">self</span>, alpn: Vec&lt;u8&gt;, handler: Arc&lt;<span class="kw">dyn </span>ProtocolHandler&gt;) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.protocols.insert(alpn, handler);
+    <span class="kw">pub fn </span>accept(<span class="kw-2">mut </span><span class="self">self</span>, alpn: <span class="kw">impl </span>AsRef&lt;[u8]&gt;, handler: Arc&lt;<span class="kw">dyn </span>ProtocolHandler&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.protocols.insert(alpn.as_ref().to_vec(), handler);
         <span class="self">self
     </span>}
 
