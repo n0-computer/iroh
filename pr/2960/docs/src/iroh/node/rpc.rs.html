@@ -90,72 +90,9 @@
 <a href="#90" id="90">90</a>
 <a href="#91" id="91">91</a>
 <a href="#92" id="92">92</a>
-<a href="#93" id="93">93</a>
-<a href="#94" id="94">94</a>
-<a href="#95" id="95">95</a>
-<a href="#96" id="96">96</a>
-<a href="#97" id="97">97</a>
-<a href="#98" id="98">98</a>
-<a href="#99" id="99">99</a>
-<a href="#100" id="100">100</a>
-<a href="#101" id="101">101</a>
-<a href="#102" id="102">102</a>
-<a href="#103" id="103">103</a>
-<a href="#104" id="104">104</a>
-<a href="#105" id="105">105</a>
-<a href="#106" id="106">106</a>
-<a href="#107" id="107">107</a>
-<a href="#108" id="108">108</a>
-<a href="#109" id="109">109</a>
-<a href="#110" id="110">110</a>
-<a href="#111" id="111">111</a>
-<a href="#112" id="112">112</a>
-<a href="#113" id="113">113</a>
-<a href="#114" id="114">114</a>
-<a href="#115" id="115">115</a>
-<a href="#116" id="116">116</a>
-<a href="#117" id="117">117</a>
-<a href="#118" id="118">118</a>
-<a href="#119" id="119">119</a>
-<a href="#120" id="120">120</a>
-<a href="#121" id="121">121</a>
-<a href="#122" id="122">122</a>
-<a href="#123" id="123">123</a>
-<a href="#124" id="124">124</a>
-<a href="#125" id="125">125</a>
-<a href="#126" id="126">126</a>
-<a href="#127" id="127">127</a>
-<a href="#128" id="128">128</a>
-<a href="#129" id="129">129</a>
-<a href="#130" id="130">130</a>
-<a href="#131" id="131">131</a>
-<a href="#132" id="132">132</a>
-<a href="#133" id="133">133</a>
-<a href="#134" id="134">134</a>
-<a href="#135" id="135">135</a>
-<a href="#136" id="136">136</a>
-<a href="#137" id="137">137</a>
-<a href="#138" id="138">138</a>
-<a href="#139" id="139">139</a>
-<a href="#140" id="140">140</a>
-<a href="#141" id="141">141</a>
-<a href="#142" id="142">142</a>
-<a href="#143" id="143">143</a>
-<a href="#144" id="144">144</a>
-<a href="#145" id="145">145</a>
-<a href="#146" id="146">146</a>
-<a href="#147" id="147">147</a>
-<a href="#148" id="148">148</a>
-<a href="#149" id="149">149</a>
-<a href="#150" id="150">150</a>
-<a href="#151" id="151">151</a>
-<a href="#152" id="152">152</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{collections::BTreeMap, fmt::Debug, sync::Arc};
 
 <span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>iroh_blobs::{net_protocol::Blobs <span class="kw">as </span>BlobsProtocol, store::Store <span class="kw">as </span>BaoStore};
-<span class="kw">use </span>iroh_docs::net::DOCS_ALPN;
-<span class="kw">use </span>iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 <span class="kw">use </span>iroh_node_util::rpc::proto::node::CounterStats;
 <span class="kw">use </span>iroh_router::Router;
 <span class="kw">use </span>quic_rpc::server::{RpcChannel, RpcServerError};
@@ -169,18 +106,21 @@
 };
 
 <span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Handler&lt;D&gt; {
-    <span class="kw">pub</span>(<span class="kw">crate</span>) inner: Arc&lt;NodeInner&lt;D&gt;&gt;,
-    <span class="kw">pub</span>(<span class="kw">crate</span>) router: Router,
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Handler {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) inner: Arc&lt;NodeInner&gt;,
+    <span class="kw">pub</span>(<span class="kw">crate</span>) _router: Router,
 }
 
-<span class="kw">impl</span>&lt;D&gt; Handler&lt;D&gt; {
-    <span class="kw">pub fn </span>new(inner: Arc&lt;NodeInner&lt;D&gt;&gt;, router: Router) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{ inner, router }
+<span class="kw">impl </span>Handler {
+    <span class="kw">pub fn </span>new(inner: Arc&lt;NodeInner&gt;, router: Router) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            inner,
+            _router: router,
+        }
     }
 }
 
-<span class="kw">impl</span>&lt;D: BaoStore&gt; iroh_node_util::rpc::server::AbstractNode <span class="kw">for </span>NodeInner&lt;D&gt; {
+<span class="kw">impl </span>iroh_node_util::rpc::server::AbstractNode <span class="kw">for </span>NodeInner {
     <span class="kw">fn </span>endpoint(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>iroh_net::Endpoint {
         <span class="kw-2">&amp;</span><span class="self">self</span>.endpoint
     }
@@ -202,15 +142,9 @@
     }
 }
 
-<span class="kw">impl</span>&lt;D: BaoStore&gt; Handler&lt;D&gt; {
-    <span class="kw">fn </span>blobs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Arc&lt;BlobsProtocol&lt;D&gt;&gt; {
-        <span class="self">self</span>.router
-            .get_protocol::&lt;BlobsProtocol&lt;D&gt;&gt;(iroh_blobs::protocol::ALPN)
-            .expect(<span class="string">"missing blobs"</span>)
-    }
-
+<span class="kw">impl </span>Handler {
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>spawn_rpc_request(
-        inner: Arc&lt;NodeInner&lt;D&gt;&gt;,
+        inner: Arc&lt;NodeInner&gt;,
         join_set: <span class="kw-2">&amp;mut </span>JoinSet&lt;anyhow::Result&lt;()&gt;&gt;,
         accepting: quic_rpc::server::Accepting&lt;RpcService, IrohServerEndpoint&gt;,
         router: Router,
@@ -236,57 +170,6 @@
             </span>.map_err(|e| e.errors_into())
     }
 
-    <span class="kw">async fn </span>handle_blobs_request(
-        <span class="self">self</span>,
-        msg: iroh_blobs::rpc::proto::Request,
-        chan: RpcChannel&lt;iroh_blobs::rpc::proto::RpcService&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), RpcServerError&lt;IrohServerEndpoint&gt;&gt; {
-        <span class="self">self</span>.blobs()
-            .handle_rpc_request(msg, chan)
-            .<span class="kw">await
-            </span>.map_err(|e| e.errors_into())
-    }
-
-    <span class="kw">async fn </span>handle_gossip_request(
-        <span class="self">self</span>,
-        msg: iroh_gossip::RpcRequest,
-        chan: RpcChannel&lt;RpcService, IrohServerEndpoint&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), RpcServerError&lt;IrohServerEndpoint&gt;&gt; {
-        <span class="kw">let </span>gossip = <span class="self">self
-            </span>.router
-            .get_protocol::&lt;Gossip&gt;(GOSSIP_ALPN)
-            .expect(<span class="string">"missing gossip"</span>);
-        <span class="kw">let </span>chan = chan.map::&lt;iroh_gossip::RpcService&gt;();
-        gossip
-            .as_ref()
-            .clone()
-            .handle_rpc_request(msg, chan)
-            .<span class="kw">await
-            </span>.map_err(|e| e.errors_into())
-    }
-
-    <span class="kw">async fn </span>handle_docs_request(
-        <span class="self">self</span>,
-        msg: iroh_docs::rpc::proto::Request,
-        chan: RpcChannel&lt;RpcService, IrohServerEndpoint&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), RpcServerError&lt;IrohServerEndpoint&gt;&gt; {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(docs) = <span class="self">self
-            </span>.router
-            .get_protocol::&lt;iroh_docs::engine::Engine&lt;D&gt;&gt;(DOCS_ALPN)
-        {
-            <span class="kw">let </span>chan = chan.map::&lt;iroh_docs::rpc::proto::RpcService&gt;();
-            docs.as_ref()
-                .clone()
-                .handle_rpc_request(msg, chan)
-                .<span class="kw">await
-                </span>.map_err(|e| e.errors_into())
-        } <span class="kw">else </span>{
-            <span class="prelude-val">Err</span>(RpcServerError::SendError(<span class="macro">anyhow::anyhow!</span>(
-                <span class="string">"Docs is not enabled"
-            </span>)))
-        }
-    }
-
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>handle_rpc_request(
         <span class="self">self</span>,
         msg: Request,
@@ -296,9 +179,6 @@
         <span class="macro">debug!</span>(<span class="string">"handling rpc request: {msg}"</span>);
         <span class="kw">match </span>msg {
             Node(msg) =&gt; <span class="self">self</span>.handle_node_request(msg, chan).<span class="kw">await</span>,
-            BlobsAndTags(msg) =&gt; <span class="self">self</span>.handle_blobs_request(msg, chan.map().boxed()).<span class="kw">await</span>,
-            Docs(msg) =&gt; <span class="self">self</span>.handle_docs_request(msg, chan).<span class="kw">await</span>,
-            Gossip(msg) =&gt; <span class="self">self</span>.handle_gossip_request(msg, chan).<span class="kw">await</span>,
         }
     }
 }
