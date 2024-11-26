@@ -90,7 +90,7 @@ impl RouteMonitor {
                                     // already cached
                                     continue;
                                 } else {
-                                    addrs.insert(addr.clone());
+                                    addrs.insert(*addr);
                                     sender.send(NetworkMessage::Change).await.ok();
                                 }
                             }
