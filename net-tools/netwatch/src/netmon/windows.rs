@@ -108,7 +108,10 @@ impl CallbackHandler {
                 &mut handle,
             );
             if r.is_err() {
-                return Err(anyhow::anyhow!("NotifyUnicastIpAddressChange failed: {:?}", r));
+                return Err(anyhow::anyhow!(
+                    "NotifyUnicastIpAddressChange failed: {:?}",
+                    r
+                ));
             }
         }
 
@@ -122,9 +125,14 @@ impl CallbackHandler {
         handle: UnicastCallbackHandle,
     ) -> Result<()> {
         trace!("unregistering unicast callback");
-        if self.unicast_callbacks.remove(&(handle.0 .0 as isize)).is_some() {
+        if self
+            .unicast_callbacks
+            .remove(&(handle.0 .0 as isize))
+            .is_some()
+        {
             unsafe {
-                let r = windows::Win32::NetworkManagement::IpHelper::CancelMibChangeNotify2(handle.0);
+                let r =
+                    windows::Win32::NetworkManagement::IpHelper::CancelMibChangeNotify2(handle.0);
                 if r.is_err() {
                     return Err(anyhow::anyhow!("CancelMibChangeNotify2 failed: {:?}", r));
                 }
@@ -158,9 +166,14 @@ impl CallbackHandler {
 
     fn unregister_route_change_callback(&mut self, handle: RouteCallbackHandle) -> Result<()> {
         trace!("unregistering route callback");
-        if self.route_callbacks.remove(&(handle.0 .0 as isize)).is_some() {
+        if self
+            .route_callbacks
+            .remove(&(handle.0 .0 as isize))
+            .is_some()
+        {
             unsafe {
-                let r = windows::Win32::NetworkManagement::IpHelper::CancelMibChangeNotify2(handle.0);
+                let r =
+                    windows::Win32::NetworkManagement::IpHelper::CancelMibChangeNotify2(handle.0);
                 if r.is_err() {
                     return Err(anyhow::anyhow!("CancelMibChangeNotify2 failed: {:?}", r));
                 }
