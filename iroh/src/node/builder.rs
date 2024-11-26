@@ -17,7 +17,7 @@ use iroh_net::{
     endpoint::{force_staging_infra, TransportConfig},
     Endpoint, RelayMode,
 };
-use iroh_router::{ProtocolHandler, RouterBuilder};
+use iroh_router::{Protocol, RouterBuilder};
 use quic_rpc::transport::{boxed::BoxableListener, quinn::QuinnListener};
 use tokio::task::JoinError;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -586,8 +586,8 @@ impl ProtocolBuilder {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn accept(mut self, alpn: impl AsRef<[u8]>, handler: Arc<dyn ProtocolHandler>) -> Self {
-        self.router = self.router.accept(alpn, handler);
+    pub fn accept(mut self, alpn: impl AsRef<[u8]>, protocol: &impl Protocol) -> Self {
+        self.router = self.router.accept(alpn, protocol);
         self
     }
 
@@ -608,7 +608,7 @@ impl ProtocolBuilder {
     ///
     /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
     /// does not match the passed type.
-    pub fn get_protocol<P: ProtocolHandler>(&self, alpn: &[u8]) -> Option<Arc<P>> {
+    pub fn get_protocol<P: Protocol>(&self, alpn: &[u8]) -> Option<P> {
         self.router.get_protocol::<P>(alpn)
     }
 

@@ -10,7 +10,7 @@ use tokio::task::{JoinError, JoinSet};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, warn};
 
-use crate::{ProtocolHandler, ProtocolMap};
+use crate::{Protocol, ProtocolHandler, ProtocolMap};
 
 #[derive(Clone, Debug)]
 pub struct Router {
@@ -37,7 +37,7 @@ impl Router {
     ///
     /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
     /// does not match the passed type.
-    pub fn get_protocol<P: ProtocolHandler>(&self, alpn: &[u8]) -> Option<Arc<P>> {
+    pub fn get_protocol<P: Protocol>(&self, alpn: &[u8]) -> Option<P> {
         self.protocols.get_typed(alpn)
     }
 
@@ -70,8 +70,9 @@ impl RouterBuilder {
         }
     }
 
-    pub fn accept(mut self, alpn: impl AsRef<[u8]>, handler: Arc<dyn ProtocolHandler>) -> Self {
-        self.protocols.insert(alpn.as_ref().to_vec(), handler);
+    pub fn accept(mut self, alpn: impl AsRef<[u8]>, protocol: &impl Protocol) -> Self {
+        self.protocols
+            .insert(alpn.as_ref().to_vec(), protocol.protocol_handler().clone());
         self
     }
 
@@ -84,8 +85,9 @@ impl RouterBuilder {
     ///
     /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
     /// does not match the passed type.
-    pub fn get_protocol<P: ProtocolHandler>(&self, alpn: &[u8]) -> Option<Arc<P>> {
-        self.protocols.get_typed(alpn)
+    pub fn get_protocol<P: Protocol>(&self, alpn: &[u8]) -> Option<P> {
+        let handler = self.protocols.get(alpn)?;
+        P::from_protocol_handler(handler)
     }
 
     pub async fn spawn(self) -> Result<Router> {

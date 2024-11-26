@@ -52,7 +52,7 @@ use iroh_net::{
     endpoint::{DirectAddrsStream, RemoteInfo},
     AddrInfo, Endpoint, NodeAddr,
 };
-use iroh_router::{ProtocolHandler, Router};
+use iroh_router::{Protocol, ProtocolHandler, Router};
 use quic_rpc::{transport::Listener as _, RpcServer};
 use tokio::task::{JoinError, JoinSet};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -210,7 +210,7 @@ impl Node {
     ///
     /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
     /// does not match the passed type.
-    pub fn get_protocol<P: ProtocolHandler>(&self, alpn: &[u8]) -> Option<Arc<P>> {
+    pub fn get_protocol<P: Protocol>(&self, alpn: &[u8]) -> Option<P> {
         self.router.get_protocol(alpn)
     }
 }
