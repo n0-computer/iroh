@@ -908,8 +908,6 @@
 <a href="#908" id="908">908</a>
 <a href="#909" id="909">909</a>
 <a href="#910" id="910">910</a>
-<a href="#911" id="911">911</a>
-<a href="#912" id="912">912</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     future::Future,
     io,
@@ -1613,18 +1611,16 @@
         <span class="kw">let </span>socket_state = quinn_udp::UdpSocketState::new(socket_ref)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>local_addr = socket.local_addr()<span class="question-mark">?</span>;
-        <span class="kw">if </span>addr.port() != <span class="number">0 </span>{
-            <span class="kw">if </span>local_addr.port() != addr.port() {
-                <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(
-                    io::ErrorKind::Other,
-                    <span class="macro">format!</span>(
-                        <span class="string">"wrong port bound: {:?}: wanted: {} got {}"</span>,
-                        network,
-                        addr.port(),
-                        local_addr.port(),
-                    ),
-                ));
-            }
+        <span class="kw">if </span>addr.port() != <span class="number">0 </span>&amp;&amp; local_addr.port() != addr.port() {
+            <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(
+                io::ErrorKind::Other,
+                <span class="macro">format!</span>(
+                    <span class="string">"wrong port bound: {:?}: wanted: {} got {}"</span>,
+                    network,
+                    addr.port(),
+                    local_addr.port(),
+                ),
+            ));
         }
 
         <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Connected {
