@@ -917,9 +917,6 @@
 <a href="#917" id="917">917</a>
 <a href="#918" id="918">918</a>
 <a href="#919" id="919">919</a>
-<a href="#920" id="920">920</a>
-<a href="#921" id="921">921</a>
-<a href="#922" id="922">922</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     future::Future,
     io::ErrorKind,
@@ -1731,19 +1728,16 @@
 <span class="kw">impl </span>Drop <span class="kw">for </span>UdpSocket {
     <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="macro">trace!</span>(<span class="string">"dropping UdpSocket"</span>);
-        <span class="kw">match </span><span class="self">self</span>.socket.write().unwrap().close() {
-            <span class="prelude-val">Some</span>((socket, <span class="kw">_</span>)) =&gt; {
-                <span class="kw">if let </span><span class="prelude-val">Ok</span>(handle) = tokio::runtime::Handle::try_current() {
-                    <span class="comment">// No wakeup after dropping write lock here, since we're getting dropped.
-                    // this will be empty if `close` was called before
-                    </span><span class="kw">let </span>std_sock = socket.into_std();
-                    handle.spawn_blocking(<span class="kw">move </span>|| {
-                        <span class="comment">// Calls libc::close, which can block
-                        </span>drop(std_sock);
-                    });
-                }
+        <span class="kw">if let </span><span class="prelude-val">Some</span>((socket, <span class="kw">_</span>)) = <span class="self">self</span>.socket.write().unwrap().close() {
+            <span class="kw">if let </span><span class="prelude-val">Ok</span>(handle) = tokio::runtime::Handle::try_current() {
+                <span class="comment">// No wakeup after dropping write lock here, since we're getting dropped.
+                // this will be empty if `close` was called before
+                </span><span class="kw">let </span>std_sock = socket.into_std();
+                handle.spawn_blocking(<span class="kw">move </span>|| {
+                    <span class="comment">// Calls libc::close, which can block
+                    </span>drop(std_sock);
+                });
             }
-            <span class="prelude-val">None </span>=&gt; {}
         }
     }
 }
