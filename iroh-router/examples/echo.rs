@@ -61,7 +61,7 @@ async fn accept_side() -> Result<Router> {
 
     // Build our protocol handler and add our protocol, identified by its ALPN, and spawn the node.
     let router = Router::builder(endpoint)
-        .accept(ALPN.to_vec(), Arc::new(Echo))
+        .accept(ALPN, Arc::new(Echo))
         .spawn()
         .await?;
 
