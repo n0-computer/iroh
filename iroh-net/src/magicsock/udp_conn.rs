@@ -72,11 +72,11 @@ impl AsyncUdpSocket for UdpConn {
     }
 
     fn max_transmit_segments(&self) -> usize {
-        self.io.max_transmit_segments().unwrap_or_default()
+        self.io.max_gso_segments().unwrap_or_default()
     }
 
     fn max_receive_segments(&self) -> usize {
-        self.io.max_receive_segments().unwrap_or_default()
+        self.io.gro_segments().unwrap_or_default()
     }
 }
 
