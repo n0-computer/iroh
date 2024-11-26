@@ -361,12 +361,20 @@ impl Stream for RateLimitedRelayedStream {
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
         loop {
+            trace!("loop tick");
             // If we have a delay installed, we need to await it.
             if let Some(ref mut wait_fut) = self.delay {
+                trace!("polling delay future");
                 match Pin::new(wait_fut).poll(cx) {
                     Poll::Ready(_) => {
+                        trace!("delay future ready");
                         self.delay.take();
-                        continue;
+                        // This future has already consumed the quota from the rate-limiter.
+                        // So we must yield the buffered item right away.
+                        match self.buf.take() {
+                            Some(item) => return Poll::Ready(Some(item)),
+                            None => continue, // unreachable
+                        }
                     }
                     Poll::Pending => return Poll::Pending,
                 }
@@ -375,6 +383,7 @@ impl Stream for RateLimitedRelayedStream {
             if let Some(ref item) = self.buf {
                 match item {
                     Err(_) => {
+                        trace!("error items are always yielded");
                         // Yielding errors is not rate-limited.
                         match self.buf.take() {
                             Some(item) => return Poll::Ready(Some(item)),
@@ -393,11 +402,13 @@ impl Stream for RateLimitedRelayedStream {
                                 None => continue, // unreachable
                             }
                         };
+                        trace!("checking frame of size {frame_len}");
 
                         // Now check the rate limiter.
                         match self.limiter.check_n(frame_len) {
                             Ok(Ok(_)) => {
                                 // Item not rate-limited, yield it.
+                                trace!("frame can be yielded");
                                 match self.buf.take() {
                                     Some(frame) => return Poll::Ready(Some(frame)),
                                     None => continue, // unreachable
@@ -405,6 +416,7 @@ impl Stream for RateLimitedRelayedStream {
                             }
                             Ok(Err(_until)) => {
                                 // Item is rate-limited, install a delay future.
+                                trace!("frame is rate-limited, delay for {frame_len}");
                                 let limiter = self.limiter.clone();
                                 let fut = async move {
                                     limiter.until_n_ready(frame_len).await.ok();
@@ -425,8 +437,10 @@ impl Stream for RateLimitedRelayedStream {
                 }
             }
             // If we have neither a delay future or a buffered item, poll for a new item.
+            trace!("polling inner");
             match Pin::new(&mut self.inner).poll_next(cx) {
                 Poll::Ready(Some(item)) => {
+                    trace!("inner yielded item");
                     self.buf = Some(item);
                     continue;
                 }
@@ -717,7 +731,7 @@ mod tests {
         let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io_read), DerpCodec));
         let mut stream = RateLimitedRelayedStream::new(stream, limiter);
 
-        // Prepare a packet to send, assert its size.
+        // Prepare a frame to send, assert its size.
         let data = Bytes::from_static(b"hello world!!");
         let target = SecretKey::generate().public();
         let frame = Frame::SendPacket {
@@ -727,7 +741,7 @@ mod tests {
         let frame_len = frame.len_with_header();
         assert_eq!(frame_len, LIMIT as usize);
 
-        // Send a packet, it should arrive.
+        // Send a frame, it should arrive.
         info!("-- send packet");
         frame_writer.send(frame.clone()).await?;
         frame_writer.flush().await?;
@@ -738,7 +752,7 @@ mod tests {
             .expect("ok");
         assert_eq!(recv_frame, frame);
 
-        // Next packet does not arrive.
+        // Next frame does not arrive.
         info!("-- send packet");
         frame_writer.send(frame.clone()).await?;
         frame_writer.flush().await?;
@@ -750,7 +764,7 @@ mod tests {
         info!("-- sleep");
         tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // Packet arrives.
+        // Frame arrives.
         let recv_frame = tokio::time::timeout(Duration::from_millis(500), stream.next())
             .await
             .expect("timeout")
