@@ -579,14 +579,14 @@ impl ProtocolBuilder {
     /// let handler = MyProtocol { client };
     ///
     /// let node = unspawned_node
-    ///     .accept(MY_ALPN.to_vec(), Arc::new(handler))
+    ///     .accept(MY_ALPN, Arc::new(handler))
     ///     .spawn()
     ///     .await?;
     /// # node.shutdown().await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn accept(mut self, alpn: Vec<u8>, handler: Arc<dyn ProtocolHandler>) -> Self {
+    pub fn accept(mut self, alpn: impl AsRef<[u8]>, handler: Arc<dyn ProtocolHandler>) -> Self {
         self.router = self.router.accept(alpn, handler);
         self
     }
