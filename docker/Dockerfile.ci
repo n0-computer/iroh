@@ -2,23 +2,6 @@
 FROM alpine:latest AS base
 RUN apk update && apk add ca-certificates && update-ca-certificates
 
-
-### Target image
-FROM base AS iroh
-ARG TARGETPLATFORM
-
-COPY bins/${TARGETPLATFORM}/iroh /iroh
-
-RUN chmod +x /iroh
-
-WORKDIR /
-
-# expose the default ports
-# rpc, nat-pmp, metrics, iroh_node_ipv4, iroh_node_ipv6
-EXPOSE 4919/udp 5351 9090 11204/udp 11205/udp
-ENTRYPOINT ["/iroh"]
-CMD ["start"]
-
 ### Target image
 FROM base AS iroh-relay
 ARG TARGETPLATFORM
