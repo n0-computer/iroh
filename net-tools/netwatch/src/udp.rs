@@ -1,13 +1,12 @@
 use std::{
     future::Future,
-    io::ErrorKind,
+    io,
     net::SocketAddr,
     pin::Pin,
     sync::{atomic::AtomicBool, RwLock, RwLockReadGuard, TryLockError},
     task::{Context, Poll},
 };
 
-use anyhow::{bail, ensure, Context as _, Result};
 use atomic_waker::AtomicWaker;
 use quinn_udp::Transmit;
 use tokio::io::Interest;
@@ -30,39 +29,39 @@ pub struct UdpSocket {
 const SOCKET_BUFFER_SIZE: usize = 7 << 20;
 impl UdpSocket {
     /// Bind only Ipv4 on any interface.
-    pub fn bind_v4(port: u16) -> Result<Self> {
+    pub fn bind_v4(port: u16) -> io::Result<Self> {
         Self::bind(IpFamily::V4, port)
     }
 
     /// Bind only Ipv6 on any interface.
-    pub fn bind_v6(port: u16) -> Result<Self> {
+    pub fn bind_v6(port: u16) -> io::Result<Self> {
         Self::bind(IpFamily::V6, port)
     }
 
     /// Bind only Ipv4 on localhost.
-    pub fn bind_local_v4(port: u16) -> Result<Self> {
+    pub fn bind_local_v4(port: u16) -> io::Result<Self> {
         Self::bind_local(IpFamily::V4, port)
     }
 
     /// Bind only Ipv6 on localhost.
-    pub fn bind_local_v6(port: u16) -> Result<Self> {
+    pub fn bind_local_v6(port: u16) -> io::Result<Self> {
         Self::bind_local(IpFamily::V6, port)
     }
 
     /// Bind to the given port only on localhost.
-    pub fn bind_local(network: IpFamily, port: u16) -> Result<Self> {
+    pub fn bind_local(network: IpFamily, port: u16) -> io::Result<Self> {
         let addr = SocketAddr::new(network.local_addr(), port);
-        Self::bind_raw(addr).with_context(|| format!("{addr:?}"))
+        Self::bind_raw(addr)
     }
 
     /// Bind to the given port and listen on all interfaces.
-    pub fn bind(network: IpFamily, port: u16) -> Result<Self> {
+    pub fn bind(network: IpFamily, port: u16) -> io::Result<Self> {
         let addr = SocketAddr::new(network.unspecified_addr(), port);
-        Self::bind_raw(addr).with_context(|| format!("{addr:?}"))
+        Self::bind_raw(addr)
     }
 
     /// Bind to any provided [`SocketAddr`].
-    pub fn bind_full(addr: impl Into<SocketAddr>) -> Result<Self> {
+    pub fn bind_full(addr: impl Into<SocketAddr>) -> io::Result<Self> {
         Self::bind_raw(addr)
     }
 
@@ -78,7 +77,7 @@ impl UdpSocket {
     }
 
     /// Rebind the underlying socket.
-    pub fn rebind(&self) -> Result<()> {
+    pub fn rebind(&self) -> io::Result<()> {
         {
             let mut guard = self.socket.write().unwrap();
             guard.rebind()?;
@@ -96,7 +95,7 @@ impl UdpSocket {
         Ok(())
     }
 
-    fn bind_raw(addr: impl Into<SocketAddr>) -> Result<Self> {
+    fn bind_raw(addr: impl Into<SocketAddr>) -> io::Result<Self> {
         let socket = SocketState::bind(addr.into())?;
 
         Ok(UdpSocket {
@@ -171,7 +170,7 @@ impl UdpSocket {
     /// Connects the UDP socket setting the default destination for send() and
     /// limiting packets that are read via `recv` from the address specified in
     /// `addr`.
-    pub fn connect(&self, addr: SocketAddr) -> std::io::Result<()> {
+    pub fn connect(&self, addr: SocketAddr) -> io::Result<()> {
         tracing::info!("connectnig to {}", addr);
         let guard = self.socket.read().unwrap();
         let (socket_tokio, _state) = guard.try_get_connected()?;
@@ -183,7 +182,7 @@ impl UdpSocket {
     }
 
     /// Returns the local address of this socket.
-    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
         let guard = self.socket.read().unwrap();
         let (socket, _state) = guard.try_get_connected()?;
 
@@ -216,9 +215,9 @@ impl UdpSocket {
     /// Handle potential read errors, updating internal state.
     ///
     /// Returns `Some(error)` if the error is fatal otherwise `None.
-    fn handle_read_error(&self, error: std::io::Error) -> Option<std::io::Error> {
+    fn handle_read_error(&self, error: io::Error) -> Option<io::Error> {
         match error.kind() {
-            std::io::ErrorKind::NotConnected => {
+            io::ErrorKind::NotConnected => {
                 // This indicates the underlying socket is broken, and we should attempt to rebind it
                 self.mark_broken();
                 None
@@ -230,9 +229,9 @@ impl UdpSocket {
     /// Handle potential write errors, updating internal state.
     ///
     /// Returns `Some(error)` if the error is fatal otherwise `None.
-    fn handle_write_error(&self, error: std::io::Error) -> Option<std::io::Error> {
+    fn handle_write_error(&self, error: io::Error) -> Option<io::Error> {
         match error.kind() {
-            std::io::ErrorKind::BrokenPipe => {
+            io::ErrorKind::BrokenPipe => {
                 // This indicates the underlying socket is broken, and we should attempt to rebind it
                 self.mark_broken();
                 None
@@ -279,25 +278,15 @@ impl UdpSocket {
     /// Checks if the socket needs a rebind, and if so does it.
     ///
     /// Returns an error if the rebind is needed, but failed.
-    fn maybe_rebind(&self) -> std::io::Result<()> {
+    fn maybe_rebind(&self) -> io::Result<()> {
         if self.is_broken() {
-            match self.rebind() {
-                Ok(()) => {
-                    // all good
-                }
-                Err(err) => {
-                    warn!("failed to rebind socket: {:?}", err);
-                    // TODO: improve error
-                    let err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
-                    return Err(err);
-                }
-            }
+            self.rebind()?;
         }
         Ok(())
     }
 
     /// Poll for writable
-    pub fn poll_writable(&self, cx: &mut std::task::Context<'_>) -> Poll<std::io::Result<()>> {
+    pub fn poll_writable(&self, cx: &mut std::task::Context<'_>) -> Poll<io::Result<()>> {
         loop {
             if let Err(err) = self.maybe_rebind() {
                 return Poll::Ready(Err(err));
@@ -323,7 +312,7 @@ impl UdpSocket {
     }
 
     /// Send a quinn based `Transmit`.
-    pub fn try_send_quinn(&self, transmit: &Transmit<'_>) -> std::io::Result<()> {
+    pub fn try_send_quinn(&self, transmit: &Transmit<'_>) -> io::Result<()> {
         loop {
             self.maybe_rebind()?;
 
@@ -333,7 +322,7 @@ impl UdpSocket {
                     panic!("lock poisoned: {:?}", e);
                 }
                 Err(TryLockError::WouldBlock) => {
-                    return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, ""));
+                    return Err(io::Error::new(io::ErrorKind::WouldBlock, ""));
                 }
             };
             let (socket, state) = guard.try_get_connected()?;
@@ -356,9 +345,9 @@ impl UdpSocket {
     pub fn poll_recv_quinn(
         &self,
         cx: &mut Context,
-        bufs: &mut [std::io::IoSliceMut<'_>],
+        bufs: &mut [io::IoSliceMut<'_>],
         meta: &mut [quinn_udp::RecvMeta],
-    ) -> Poll<std::io::Result<usize>> {
+    ) -> Poll<io::Result<usize>> {
         loop {
             if let Err(err) = self.maybe_rebind() {
                 return Poll::Ready(Err(err));
@@ -399,7 +388,7 @@ impl UdpSocket {
                 }
                 Err(err) => {
                     // ignore spurious wakeups
-                    if err.kind() == std::io::ErrorKind::WouldBlock {
+                    if err.kind() == io::ErrorKind::WouldBlock {
                         continue;
                     }
                     match self.handle_read_error(err) {
@@ -449,7 +438,7 @@ pub struct RecvFut<'a, 'b> {
 }
 
 impl Future for RecvFut<'_, '_> {
-    type Output = std::io::Result<usize>;
+    type Output = io::Result<usize>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let Self { socket, buffer } = &mut *self;
@@ -470,7 +459,7 @@ impl Future for RecvFut<'_, '_> {
                 Poll::Ready(Ok(())) => {
                     let res = inner_socket.try_recv(buffer);
                     if let Err(err) = res {
-                        if err.kind() == ErrorKind::WouldBlock {
+                        if err.kind() == io::ErrorKind::WouldBlock {
                             continue;
                         }
                         if let Some(err) = socket.handle_read_error(err) {
@@ -499,7 +488,7 @@ pub struct RecvFromFut<'a, 'b> {
 }
 
 impl Future for RecvFromFut<'_, '_> {
-    type Output = std::io::Result<(usize, SocketAddr)>;
+    type Output = io::Result<(usize, SocketAddr)>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let Self { socket, buffer } = &mut *self;
@@ -520,7 +509,7 @@ impl Future for RecvFromFut<'_, '_> {
                 Poll::Ready(Ok(())) => {
                     let res = inner_socket.try_recv_from(buffer);
                     if let Err(err) = res {
-                        if err.kind() == ErrorKind::WouldBlock {
+                        if err.kind() == io::ErrorKind::WouldBlock {
                             continue;
                         }
                         if let Some(err) = socket.handle_read_error(err) {
@@ -549,7 +538,7 @@ pub struct SendFut<'a, 'b> {
 }
 
 impl Future for SendFut<'_, '_> {
-    type Output = std::io::Result<usize>;
+    type Output = io::Result<usize>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         loop {
@@ -569,7 +558,7 @@ impl Future for SendFut<'_, '_> {
                 Poll::Ready(Ok(())) => {
                     let res = socket.try_send(self.buffer);
                     if let Err(err) = res {
-                        if err.kind() == ErrorKind::WouldBlock {
+                        if err.kind() == io::ErrorKind::WouldBlock {
                             continue;
                         }
                         if let Some(err) = self.socket.handle_write_error(err) {
@@ -599,7 +588,7 @@ pub struct SendToFut<'a, 'b> {
 }
 
 impl Future for SendToFut<'_, '_> {
-    type Output = std::io::Result<usize>;
+    type Output = io::Result<usize>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         loop {
@@ -619,7 +608,7 @@ impl Future for SendToFut<'_, '_> {
                 Poll::Ready(Ok(())) => {
                     let res = socket.try_send_to(self.buffer, self.to);
                     if let Err(err) = res {
-                        if err.kind() == ErrorKind::WouldBlock {
+                        if err.kind() == io::ErrorKind::WouldBlock {
                             continue;
                         }
 
@@ -659,7 +648,7 @@ enum SocketState {
 impl SocketState {
     fn try_get_connected(
         &self,
-    ) -> std::io::Result<(&tokio::net::UdpSocket, &quinn_udp::UdpSocketState)> {
+    ) -> io::Result<(&tokio::net::UdpSocket, &quinn_udp::UdpSocketState)> {
         match self {
             Self::Connected {
                 socket,
@@ -668,22 +657,18 @@ impl SocketState {
             } => Ok((socket, state)),
             Self::Closed { .. } => {
                 warn!("socket closed");
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "socket closed",
-                ))
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "socket closed"))
             }
         }
     }
 
-    fn bind(addr: SocketAddr) -> Result<Self> {
+    fn bind(addr: SocketAddr) -> io::Result<Self> {
         let network = IpFamily::from(addr.ip());
         let socket = socket2::Socket::new(
             network.into(),
             socket2::Type::DGRAM,
             Some(socket2::Protocol::UDP),
-        )
-        .context("socket create")?;
+        )?;
 
         if let Err(err) = socket.set_recv_buffer_size(SOCKET_BUFFER_SIZE) {
             debug!(
@@ -699,32 +684,36 @@ impl SocketState {
         }
         if network == IpFamily::V6 {
             // Avoid dualstack
-            socket.set_only_v6(true).context("only IPv6")?;
+            socket.set_only_v6(true)?;
         }
 
         // Binding must happen before calling quinn, otherwise `local_addr`
         // is not yet available on all OSes.
-        socket.bind(&addr.into()).context("binding")?;
+        socket.bind(&addr.into())?;
 
         // Ensure nonblocking
-        socket.set_nonblocking(true).context("nonblocking: true")?;
+        socket.set_nonblocking(true)?;
 
         let socket: std::net::UdpSocket = socket.into();
 
         // Convert into tokio UdpSocket
-        let socket = tokio::net::UdpSocket::from_std(socket).context("conversion to tokio")?;
+        let socket = tokio::net::UdpSocket::from_std(socket)?;
         let socket_ref = quinn_udp::UdpSockRef::from(&socket);
         let socket_state = quinn_udp::UdpSocketState::new(socket_ref)?;
 
-        let local_addr = socket.local_addr().context("local addr")?;
+        let local_addr = socket.local_addr()?;
         if addr.port() != 0 {
-            ensure!(
-                local_addr.port() == addr.port(),
-                "wrong port bound: {:?}: wanted: {} got {}",
-                network,
-                addr.port(),
-                local_addr.port(),
-            );
+            if local_addr.port() != addr.port() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!(
+                        "wrong port bound: {:?}: wanted: {} got {}",
+                        network,
+                        addr.port(),
+                        local_addr.port(),
+                    ),
+                ));
+            }
         }
 
         Ok(Self::Connected {
@@ -734,7 +723,7 @@ impl SocketState {
         })
     }
 
-    fn rebind(&mut self) -> Result<()> {
+    fn rebind(&mut self) -> io::Result<()> {
         let (addr, closed_state) = match self {
             Self::Connected { state, addr, .. } => {
                 let s = SocketState::Closed {
@@ -745,7 +734,10 @@ impl SocketState {
                 (*addr, s)
             }
             Self::Closed { .. } => {
-                bail!("socket is closed and cannot be rebound");
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "socket is closed and cannot be rebound",
+                ));
             }
         };
         debug!("rebinding {}", addr);
@@ -826,6 +818,8 @@ impl Drop for UdpSocket {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use anyhow::Context;
 
     #[tokio::test]
     async fn test_reconnect() -> anyhow::Result<()> {
