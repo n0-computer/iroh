@@ -910,7 +910,6 @@
 <a href="#910" id="910">910</a>
 <a href="#911" id="911">911</a>
 <a href="#912" id="912">912</a>
-<a href="#913" id="913">913</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     future::Future,
     io,
@@ -1043,7 +1042,6 @@
     /// The function must be called with valid byte array `buf` of sufficient
     /// size to hold the message bytes. If a message is too long to fit in the
     /// supplied buffer, excess bytes may be discarded.
-    ///
     </span><span class="kw">pub fn </span>recv_from&lt;<span class="lifetime">'a</span>, <span class="lifetime">'b</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'b </span><span class="self">self</span>, buffer: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>[u8]) -&gt; RecvFromFut&lt;<span class="lifetime">'a</span>, <span class="lifetime">'b</span>&gt; {
         RecvFromFut {
             socket: <span class="self">self</span>,
