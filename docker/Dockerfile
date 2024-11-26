@@ -27,25 +27,6 @@ COPY . .
 RUN cargo build --release --all-features
 
 ### Target image
-FROM alpine:latest AS iroh
-
-RUN apk update && apk add ca-certificates && update-ca-certificates
-
-# Copy our build, changing owndership to distroless-provided "nonroot" user,
-# (65532:65532)
-COPY --from=rust_builder /iroh/target/release/iroh /iroh
-
-RUN chmod +x /iroh
-
-WORKDIR /
-
-# expose the default ports
-# rpc, nat-pmp, metrics, iroh_node_ipv4, iroh_node_ipv6
-EXPOSE 4919/udp 5351 9090 11204/udp 11205/udp
-ENTRYPOINT ["/iroh"]
-CMD ["start"]
-
-### Target image
 FROM alpine:latest AS iroh-relay
 
 RUN apk update && apk add ca-certificates && update-ca-certificates
