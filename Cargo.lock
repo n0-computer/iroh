@@ -2726,7 +2726,7 @@ dependencies = [
  "libc",
  "netdev",
  "netlink-packet-core",
- "netlink-packet-route 0.21.0",
+ "netlink-packet-route 0.19.0",
  "netlink-sys",
  "netwatch",
  "num_enum",
@@ -3318,21 +3318,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "netlink-packet-route"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "483325d4bfef65699214858f097d504eb812c38ce7077d165f301ec406c3066e"
-dependencies = [
- "anyhow",
- "bitflags 2.6.0",
- "byteorder",
- "libc",
- "log",
- "netlink-packet-core",
- "netlink-packet-utils",
-]
-
-[[package]]
 name = "netlink-packet-utils"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3387,7 +3372,7 @@ dependencies = [
  "libc",
  "netdev",
  "netlink-packet-core",
- "netlink-packet-route 0.21.0",
+ "netlink-packet-route 0.19.0",
  "netlink-sys",
  "once_cell",
  "rtnetlink",
@@ -5944,9 +5929,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-core"
-version = "0.1.32"
+version = "0.1.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c06d3da6113f116aaee68e4d601191614c9053067f9ab7f6edbcb161237daa54"
+checksum = "e672c95779cf947c5311f83787af4fa8fffd12fb27e4993211a84bdfd9610f9c"
 dependencies = [
  "once_cell",
  "valuable",
@@ -6659,9 +6644,9 @@ dependencies = [
 
 [[package]]
 name = "wmi"
-version = "0.14.0"
+version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fbdda506bdee26ba617bd814538b690e14f59e8185345344cff113a8be21c005"
+checksum = "70df482bbec7017ce4132154233642de658000b24b805345572036782a66ad55"
 dependencies = [
  "chrono",
  "futures",

@@ -44,7 +44,7 @@ const fn nl_mgrp(group: u32) -> u32 {
 }
 macro_rules! get_nla {
     ($msg:expr, $nla:path) => {
-        $msg.nlas.iter().find_map(|nla| match nla {
+        $msg.attributes.iter().find_map(|nla| match nla {
             $nla(n) => Some(n),
             _ => None,
         })
@@ -69,7 +69,8 @@ impl RouteMonitor {
         let conn_handle = tokio::task::spawn(conn);
 
         let handle = tokio::task::spawn(async move {
-            let mut addr_cache: HashMap<u32, HashSet<Vec<u8>>> = HashMap::new();
+            // let mut addr_cache: HashMap<u32, HashSet<Vec<u8>>> = HashMap::new();
+            let mut addr_cache: HashMap<u32, HashSet<IpAddr>> = HashMap::new();
 
             while let Some((message, _)) = messages.next().await {
                 match message.payload {
@@ -106,25 +107,28 @@ impl RouteMonitor {
                             trace!("ROUTE:: {:?}", msg);
 
                             // Ignore the following messages
-                            let table = get_nla!(msg, route::nlas::Nla::Table)
+                            let table = get_nla!(msg, route::RouteAttribute::Table)
                                 .copied()
                                 .unwrap_or_default();
-                            if let Some(dst) = get_nla!(msg, route::Nla::Destination) {
-                                let dst_addr = match dst.len() {
-                                    4 => TryInto::<[u8; 4]>::try_into(&dst[..])
-                                        .ok()
-                                        .map(IpAddr::from),
-                                    16 => TryInto::<[u8; 16]>::try_into(&dst[..])
-                                        .ok()
-                                        .map(IpAddr::from),
-                                    _ => None,
-                                };
-                                if let Some(dst_addr) = dst_addr {
-                                    if (table == 255 || table == 254)
-                                        && (dst_addr.is_multicast() || is_link_local(dst_addr))
-                                    {
-                                        continue;
+                            if let Some(dst) = get_nla!(msg, route::RouteAttribute::Destination) {
+                                match dst {
+                                    route::RouteAddress::Inet(addr) => {
+                                        if (table == 255 || table == 254)
+                                            && (addr.is_multicast()
+                                                || is_link_local(IpAddr::V4(*addr)))
+                                        {
+                                            continue;
+                                        }
                                     }
+                                    route::RouteAddress::Inet6(addr) => {
+                                        if (table == 255 || table == 254)
+                                            && (addr.is_multicast()
+                                                || is_link_local(IpAddr::V6(*addr)))
+                                        {
+                                            continue;
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
                             sender.send(NetworkMessage::Change).await.ok();

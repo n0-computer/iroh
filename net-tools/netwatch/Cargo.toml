@@ -43,9 +43,9 @@ tracing = "0.1"
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"
-netlink-packet-route = "0.21.0"
-netlink-sys = "0.8.5"
-rtnetlink = "0.14"
+netlink-packet-route = "0.19.0" # 0.21.0 is blocked on rtnetlink bumping its dependency
+netlink-sys = "0.8.6"
+rtnetlink = "0.14.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 wmi = "0.14"
