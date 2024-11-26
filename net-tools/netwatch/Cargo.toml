@@ -45,7 +45,7 @@ tracing = "0.1"
 netlink-packet-core = "0.7.0"
 netlink-packet-route = "0.19.0" # 0.21.0 is blocked on rtnetlink bumping its dependency
 netlink-sys = "0.8.6"
-rtnetlink = "=0.14.0" # 0.14.1 produces compile errors on android
+rtnetlink = "0.14.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 wmi = "0.14"
