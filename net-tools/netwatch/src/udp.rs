@@ -3,7 +3,7 @@ use std::{
     io::ErrorKind,
     net::SocketAddr,
     pin::Pin,
-    sync::{atomic::AtomicBool, RwLock},
+    sync::{atomic::AtomicBool, RwLock, RwLockReadGuard, TryLockError},
     task::{Context, Poll},
 };
 
@@ -101,9 +101,9 @@ impl UdpSocket {
         self.is_broken
             .store(false, std::sync::atomic::Ordering::SeqCst);
 
+        drop(guard);
         // wakeup
-        self.recv_waker.wake();
-        self.send_waker.wake();
+        self.wake_all();
 
         Ok(())
     }
@@ -173,6 +173,10 @@ impl UdpSocket {
         socket_std.connect(addr)?;
         let socket_tokio = tokio::net::UdpSocket::from_std(socket_std)?;
         guard.replace((socket_tokio, state));
+
+        drop(guard);
+        self.wake_all();
+
         Ok(())
     }
 
@@ -193,6 +197,7 @@ impl UdpSocket {
     /// Closes the socket, and waits for the underlying `libc::close` call to be finished.
     pub async fn close(&self) {
         let socket = self.socket.write().unwrap().take();
+        self.wake_all();
         if let Some((sock, _)) = socket {
             let std_sock = sock.into_std();
             let res = tokio::runtime::Handle::current()
@@ -240,6 +245,41 @@ impl UdpSocket {
         }
     }
 
+    /// Try to get a read lock for the sockets, but don't block for trying to acquire it.
+    fn poll_read_socket(
+        &self,
+        waker: &AtomicWaker,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<RwLockReadGuard<'_, Option<(tokio::net::UdpSocket, quinn_udp::UdpSocketState)>>> {
+        let guard = match self.socket.try_read() {
+            Ok(guard) => guard,
+            Err(TryLockError::Poisoned(e)) => panic!("socket lock poisoned: {e}"),
+            Err(TryLockError::WouldBlock) => {
+                waker.register(cx.waker());
+
+                match self.socket.try_read() {
+                    Ok(guard) => {
+                        // we're actually fine, no need to cause a spurious wakeup
+                        waker.take();
+                        guard
+                    }
+                    Err(TryLockError::Poisoned(e)) => panic!("socket lock poisoned: {e}"),
+                    Err(TryLockError::WouldBlock) => {
+                        // Ok fine, we registered our waker, the lock is really closed,
+                        // we can return pending.
+                        return Poll::Pending;
+                    }
+                }
+            }
+        };
+        Poll::Ready(guard)
+    }
+
+    fn wake_all(&self) {
+        self.recv_waker.wake();
+        self.send_waker.wake();
+    }
+
     /// Poll for writable
     pub fn poll_writable(&self, cx: &mut std::task::Context<'_>) -> Poll<std::io::Result<()>> {
         loop {
@@ -258,7 +298,8 @@ impl UdpSocket {
                     }
                 }
             }
-            let guard = self.socket.read().unwrap();
+
+            let guard = futures_lite::ready!(self.poll_read_socket(&self.send_waker, cx));
             let Some((socket, _state)) = guard.as_ref() else {
                 warn!("socket closed");
                 return Poll::Ready(Err(std::io::Error::new(
@@ -347,7 +388,7 @@ impl UdpSocket {
                     }
                 }
             }
-            let guard = self.socket.read().unwrap();
+            let guard = futures_lite::ready!(self.poll_read_socket(&self.recv_waker, cx));
             let Some((socket, state)) = guard.as_ref() else {
                 warn!("socket closed");
                 return Poll::Ready(Err(std::io::Error::new(
@@ -472,7 +513,7 @@ impl Future for RecvFut<'_, '_> {
                 }
             }
 
-            let guard = socket.socket.read().unwrap();
+            let guard = futures_lite::ready!(socket.poll_read_socket(&socket.recv_waker, cx));
             let Some((inner_socket, _)) = guard.as_ref() else {
                 warn!("socket closed");
                 return Poll::Ready(Err(std::io::Error::new(
@@ -539,7 +580,7 @@ impl Future for RecvFromFut<'_, '_> {
                     }
                 }
             }
-            let guard = socket.socket.read().unwrap();
+            let guard = futures_lite::ready!(socket.poll_read_socket(&socket.recv_waker, cx));
             let Some((inner_socket, _)) = guard.as_ref() else {
                 warn!("socket closed");
                 return Poll::Ready(Err(std::io::Error::new(
@@ -604,7 +645,8 @@ impl Future for SendFut<'_, '_> {
                     }
                 }
             }
-            let guard = self.socket.socket.read().unwrap();
+            let guard =
+                futures_lite::ready!(self.socket.poll_read_socket(&self.socket.send_waker, cx));
             let Some((socket, _)) = guard.as_ref() else {
                 warn!("socket closed");
                 return Poll::Ready(Err(std::io::Error::new(
@@ -671,7 +713,8 @@ impl Future for SendToFut<'_, '_> {
                 }
             }
 
-            let guard = self.socket.socket.read().unwrap();
+            let guard =
+                futures_lite::ready!(self.socket.poll_read_socket(&self.socket.send_waker, cx));
             let Some((socket, _)) = guard.as_ref() else {
                 warn!("socket closed");
                 return Poll::Ready(Err(std::io::Error::new(
@@ -769,6 +812,7 @@ impl Drop for UdpSocket {
         debug!("dropping UdpSocket");
         // Only spawn_blocking if we are inside a tokio runtime, otherwise we just drop.
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            // No wakeup after dropping write lock here, since we're getting dropped.
             if let Some((socket, _)) = self.socket.write().unwrap().take() {
                 // this will be empty if `close` was called before
                 let std_sock = socket.into_std();
