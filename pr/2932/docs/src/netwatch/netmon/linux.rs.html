@@ -262,7 +262,7 @@
                                     <span class="comment">// already cached
                                     </span><span class="kw">continue</span>;
                                 } <span class="kw">else </span>{
-                                    addrs.insert(addr.clone());
+                                    addrs.insert(<span class="kw-2">*</span>addr);
                                     sender.send(NetworkMessage::Change).<span class="kw">await</span>.ok();
                                 }
                             }
