@@ -874,6 +874,52 @@
 <a href="#874" id="874">874</a>
 <a href="#875" id="875">875</a>
 <a href="#876" id="876">876</a>
+<a href="#877" id="877">877</a>
+<a href="#878" id="878">878</a>
+<a href="#879" id="879">879</a>
+<a href="#880" id="880">880</a>
+<a href="#881" id="881">881</a>
+<a href="#882" id="882">882</a>
+<a href="#883" id="883">883</a>
+<a href="#884" id="884">884</a>
+<a href="#885" id="885">885</a>
+<a href="#886" id="886">886</a>
+<a href="#887" id="887">887</a>
+<a href="#888" id="888">888</a>
+<a href="#889" id="889">889</a>
+<a href="#890" id="890">890</a>
+<a href="#891" id="891">891</a>
+<a href="#892" id="892">892</a>
+<a href="#893" id="893">893</a>
+<a href="#894" id="894">894</a>
+<a href="#895" id="895">895</a>
+<a href="#896" id="896">896</a>
+<a href="#897" id="897">897</a>
+<a href="#898" id="898">898</a>
+<a href="#899" id="899">899</a>
+<a href="#900" id="900">900</a>
+<a href="#901" id="901">901</a>
+<a href="#902" id="902">902</a>
+<a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a>
+<a href="#906" id="906">906</a>
+<a href="#907" id="907">907</a>
+<a href="#908" id="908">908</a>
+<a href="#909" id="909">909</a>
+<a href="#910" id="910">910</a>
+<a href="#911" id="911">911</a>
+<a href="#912" id="912">912</a>
+<a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
+<a href="#916" id="916">916</a>
+<a href="#917" id="917">917</a>
+<a href="#918" id="918">918</a>
+<a href="#919" id="919">919</a>
+<a href="#920" id="920">920</a>
+<a href="#921" id="921">921</a>
+<a href="#922" id="922">922</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     future::Future,
     io::ErrorKind,
@@ -1292,10 +1338,9 @@
     <span class="doccomment">/// Whether transmitted datagrams might get fragmented by the IP layer
     ///
     /// Returns `false` on targets which employ e.g. the `IPV6_DONTFRAG` socket option.
-    </span><span class="kw">pub fn </span>may_fragment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;bool&gt; {
+    </span><span class="kw">pub fn </span>may_fragment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="kw">let </span>guard = <span class="self">self</span>.socket.read().unwrap();
-        <span class="kw">let </span>(<span class="kw">_</span>, state) = guard.try_get_connected()<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(state.may_fragment())
+        guard.may_fragment()
     }
 
     <span class="doccomment">/// The maximum amount of segments which can be transmitted if a platform
@@ -1303,20 +1348,18 @@
     ///
     /// This is 1 if the platform doesn't support GSO. Subject to change if errors are detected
     /// while using GSO.
-    </span><span class="kw">pub fn </span>max_gso_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;usize&gt; {
+    </span><span class="kw">pub fn </span>max_gso_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="kw">let </span>guard = <span class="self">self</span>.socket.read().unwrap();
-        <span class="kw">let </span>(<span class="kw">_</span>, state) = guard.try_get_connected()<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(state.max_gso_segments())
+        guard.max_gso_segments()
     }
 
     <span class="doccomment">/// The number of segments to read when GRO is enabled. Used as a factor to
     /// compute the receive buffer size.
     ///
     /// Returns 1 if the platform doesn't support GRO.
-    </span><span class="kw">pub fn </span>gro_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;usize&gt; {
+    </span><span class="kw">pub fn </span>gro_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="kw">let </span>guard = <span class="self">self</span>.socket.read().unwrap();
-        <span class="kw">let </span>(<span class="kw">_</span>, state) = guard.try_get_connected()<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(state.gro_segments())
+        guard.gro_segments()
     }
 }
 
@@ -1528,7 +1571,11 @@
         <span class="doccomment">/// The addr we are binding to.
         </span>addr: SocketAddr,
     },
-    Closed,
+    Closed {
+        last_max_gso_segments: usize,
+        last_gro_segments: usize,
+        last_may_fragment: bool,
+    },
 }
 
 <span class="kw">impl </span>SocketState {
@@ -1541,7 +1588,7 @@
                 state,
                 addr: <span class="kw">_</span>,
             } =&gt; <span class="prelude-val">Ok</span>((socket, state)),
-            <span class="self">Self</span>::Closed =&gt; {
+            <span class="self">Self</span>::Closed { .. } =&gt; {
                 <span class="macro">warn!</span>(<span class="string">"socket closed"</span>);
                 <span class="prelude-val">Err</span>(std::io::Error::new(
                     std::io::ErrorKind::BrokenPipe,
@@ -1610,28 +1657,73 @@
     }
 
     <span class="kw">fn </span>rebind(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>addr = <span class="kw">match </span><span class="self">self </span>{
-            <span class="self">Self</span>::Connected { addr, .. } =&gt; <span class="kw-2">*</span>addr,
-            <span class="self">Self</span>::Closed =&gt; {
+        <span class="kw">let </span>(addr, closed_state) = <span class="kw">match </span><span class="self">self </span>{
+            <span class="self">Self</span>::Connected { state, addr, .. } =&gt; {
+                <span class="kw">let </span>s = SocketState::Closed {
+                    last_max_gso_segments: state.max_gso_segments(),
+                    last_gro_segments: state.gro_segments(),
+                    last_may_fragment: state.may_fragment(),
+                };
+                (<span class="kw-2">*</span>addr, s)
+            }
+            <span class="self">Self</span>::Closed { .. } =&gt; {
                 <span class="macro">bail!</span>(<span class="string">"socket is closed and cannot be rebound"</span>);
             }
         };
         <span class="macro">debug!</span>(<span class="string">"rebinding {}"</span>, addr);
 
-        <span class="kw-2">*</span><span class="self">self </span>= SocketState::Closed;
+        <span class="kw-2">*</span><span class="self">self </span>= closed_state;
         <span class="kw-2">*</span><span class="self">self </span>= <span class="self">Self</span>::bind(addr)<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(())
     }
 
     <span class="kw">fn </span>is_closed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="macro">matches!</span>(<span class="self">self</span>, <span class="self">Self</span>::Closed)
+        <span class="macro">matches!</span>(<span class="self">self</span>, <span class="self">Self</span>::Closed { .. })
     }
 
     <span class="kw">fn </span>close(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;(tokio::net::UdpSocket, quinn_udp::UdpSocketState)&gt; {
-        <span class="kw">match </span>std::mem::replace(<span class="self">self</span>, SocketState::Closed) {
-            <span class="self">Self</span>::Connected { socket, state, .. } =&gt; <span class="prelude-val">Some</span>((socket, state)),
-            <span class="self">Self</span>::Closed =&gt; <span class="prelude-val">None</span>,
+        <span class="kw">match </span><span class="self">self </span>{
+            <span class="self">Self</span>::Connected { state, .. } =&gt; {
+                <span class="kw">let </span>s = SocketState::Closed {
+                    last_max_gso_segments: state.max_gso_segments(),
+                    last_gro_segments: state.gro_segments(),
+                    last_may_fragment: state.may_fragment(),
+                };
+                <span class="kw">let </span><span class="self">Self</span>::Connected { socket, state, .. } = std::mem::replace(<span class="self">self</span>, s) <span class="kw">else </span>{
+                    <span class="macro">unreachable!</span>(<span class="string">"just checked"</span>);
+                };
+                <span class="prelude-val">Some</span>((socket, state))
+            }
+            <span class="self">Self</span>::Closed { .. } =&gt; <span class="prelude-val">None</span>,
+        }
+    }
+
+    <span class="kw">fn </span>may_fragment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="kw">match </span><span class="self">self </span>{
+            <span class="self">Self</span>::Connected { state, .. } =&gt; state.may_fragment(),
+            <span class="self">Self</span>::Closed {
+                last_may_fragment, ..
+            } =&gt; <span class="kw-2">*</span>last_may_fragment,
+        }
+    }
+
+    <span class="kw">fn </span>max_gso_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+        <span class="kw">match </span><span class="self">self </span>{
+            <span class="self">Self</span>::Connected { state, .. } =&gt; state.max_gso_segments(),
+            <span class="self">Self</span>::Closed {
+                last_max_gso_segments,
+                ..
+            } =&gt; <span class="kw-2">*</span>last_max_gso_segments,
+        }
+    }
+
+    <span class="kw">fn </span>gro_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+        <span class="kw">match </span><span class="self">self </span>{
+            <span class="self">Self</span>::Connected { state, .. } =&gt; state.gro_segments(),
+            <span class="self">Self</span>::Closed {
+                last_gro_segments, ..
+            } =&gt; <span class="kw-2">*</span>last_gro_segments,
         }
     }
 }
