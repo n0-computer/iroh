@@ -1884,6 +1884,34 @@
 <a href="#1884" id="1884">1884</a>
 <a href="#1885" id="1885">1885</a>
 <a href="#1886" id="1886">1886</a>
+<a href="#1887" id="1887">1887</a>
+<a href="#1888" id="1888">1888</a>
+<a href="#1889" id="1889">1889</a>
+<a href="#1890" id="1890">1890</a>
+<a href="#1891" id="1891">1891</a>
+<a href="#1892" id="1892">1892</a>
+<a href="#1893" id="1893">1893</a>
+<a href="#1894" id="1894">1894</a>
+<a href="#1895" id="1895">1895</a>
+<a href="#1896" id="1896">1896</a>
+<a href="#1897" id="1897">1897</a>
+<a href="#1898" id="1898">1898</a>
+<a href="#1899" id="1899">1899</a>
+<a href="#1900" id="1900">1900</a>
+<a href="#1901" id="1901">1901</a>
+<a href="#1902" id="1902">1902</a>
+<a href="#1903" id="1903">1903</a>
+<a href="#1904" id="1904">1904</a>
+<a href="#1905" id="1905">1905</a>
+<a href="#1906" id="1906">1906</a>
+<a href="#1907" id="1907">1907</a>
+<a href="#1908" id="1908">1908</a>
+<a href="#1909" id="1909">1909</a>
+<a href="#1910" id="1910">1910</a>
+<a href="#1911" id="1911">1911</a>
+<a href="#1912" id="1912">1912</a>
+<a href="#1913" id="1913">1913</a>
+<a href="#1914" id="1914">1914</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -1910,6 +1938,7 @@
 <span class="kw">use </span>anyhow::{anyhow, bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>derive_more::Debug;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
+<span class="kw">use </span>iroh_base::relay_map::RelayMap;
 <span class="kw">use </span>pin_project::pin_project;
 <span class="kw">use </span>tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 <span class="kw">use </span>tracing::{debug, instrument, trace, warn};
@@ -1922,7 +1951,7 @@
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
     magicsock::{<span class="self">self</span>, Handle, QuicMappedAddr},
-    tls, NodeId, RelayMode, RelayUrl,
+    tls, NodeId, RelayUrl,
 };
 
 <span class="kw">mod </span>rtt_actor;
@@ -3242,6 +3271,33 @@
 
     <span class="prelude-val">None
 </span>}
+
+<span class="doccomment">/// Configuration of the relay servers for an [`Endpoint`].
+</span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
+</span><span class="kw">pub enum </span>RelayMode {
+    <span class="doccomment">/// Disable relay servers completely.
+    </span>Disabled,
+    <span class="doccomment">/// Use the default relay map, with production relay servers from n0.
+    ///
+    /// See [`crate::defaults::prod`] for the severs used.
+    </span>Default,
+    <span class="doccomment">/// Use the staging relay servers from n0.
+    </span>Staging,
+    <span class="doccomment">/// Use a custom relay map.
+    </span>Custom(RelayMap),
+}
+
+<span class="kw">impl </span>RelayMode {
+    <span class="doccomment">/// Returns the relay map for this mode.
+    </span><span class="kw">pub fn </span>relay_map(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RelayMap {
+        <span class="kw">match </span><span class="self">self </span>{
+            RelayMode::Disabled =&gt; RelayMap::empty(),
+            RelayMode::Default =&gt; <span class="kw">crate</span>::defaults::prod::default_relay_map(),
+            RelayMode::Staging =&gt; <span class="kw">crate</span>::defaults::staging::default_relay_map(),
+            RelayMode::Custom(relay_map) =&gt; relay_map.clone(),
+        }
+    }
+}
 
 <span class="doccomment">/// Environment variable to force the use of staging relays.
 </span><span class="attr">#[cfg_attr(iroh_docsrs, doc(cfg(not(test))))]

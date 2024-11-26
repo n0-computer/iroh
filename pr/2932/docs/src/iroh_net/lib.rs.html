@@ -500,18 +500,18 @@
 <span class="kw">pub mod </span>endpoint;
 <span class="kw">mod </span>magicsock;
 <span class="kw">pub mod </span>metrics;
-<span class="kw">pub mod </span>netcheck;
-<span class="kw">pub mod </span>ping;
-<span class="kw">mod </span>relay_map;
 <span class="kw">pub mod </span>ticket;
 <span class="kw">pub mod </span>tls;
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>util;
 
-<span class="kw">pub use </span>endpoint::{AddrInfo, Endpoint, NodeAddr};
-<span class="kw">pub use </span>iroh_base::{key, key::NodeId};
+<span class="kw">pub use </span>endpoint::{AddrInfo, Endpoint, NodeAddr, RelayMode};
+<span class="kw">pub use </span>iroh_base::{
+    key,
+    key::NodeId,
+    relay_map::{RelayMap, RelayNode, RelayUrl},
+};
 <span class="kw">pub use </span>iroh_relay <span class="kw">as </span>relay;
-<span class="kw">pub use </span>relay_map::{RelayMap, RelayMode, RelayNode, RelayUrl};
 
 <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = <span class="string">"test-utils"</span>))))]

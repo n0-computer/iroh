@@ -110,20 +110,13 @@
 <a href="#110" id="110">110</a>
 <a href="#111" id="111">111</a>
 <a href="#112" id="112">112</a>
-<a href="#113" id="113">113</a>
-<a href="#114" id="114">114</a>
-<a href="#115" id="115">115</a>
-<a href="#116" id="116">116</a>
-<a href="#117" id="117">117</a>
-<a href="#118" id="118">118</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::BTreeMap;
 
 <span class="kw">use </span>iroh_metrics::{
     core::{Counter, Metric},
     struct_iterable::Iterable,
 };
-
-<span class="kw">use </span><span class="kw">crate</span>::rpc_protocol::node::CounterStats;
+<span class="kw">use </span>iroh_node_util::rpc::proto::node::CounterStats;
 
 <span class="doccomment">/// Enum of metrics for the module
 </span><span class="attr">#[allow(missing_docs)]
@@ -188,9 +181,8 @@
 </span><span class="kw">pub fn </span>try_init_metrics_collection() -&gt; std::io::Result&lt;()&gt; {
     iroh_metrics::core::Core::try_init(|reg, metrics| {
         metrics.insert(<span class="kw">crate</span>::metrics::Metrics::new(reg));
-        metrics.insert(iroh_docs::metrics::Metrics::new(reg));
         metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
-        metrics.insert(iroh_net::metrics::NetcheckMetrics::new(reg));
+        metrics.insert(iroh_net::metrics::NetReportMetrics::new(reg));
         metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
     })
 }
@@ -203,15 +195,11 @@
     <span class="kw">let </span>core =
         iroh_metrics::core::Core::get().ok_or_else(|| <span class="macro">anyhow::anyhow!</span>(<span class="string">"metrics are disabled"</span>))<span class="question-mark">?</span>;
     collect(
-        core.get_collector::&lt;iroh_docs::metrics::Metrics&gt;(),
-        <span class="kw-2">&amp;mut </span>map,
-    );
-    collect(
         core.get_collector::&lt;iroh_net::metrics::MagicsockMetrics&gt;(),
         <span class="kw-2">&amp;mut </span>map,
     );
     collect(
-        core.get_collector::&lt;iroh_net::metrics::NetcheckMetrics&gt;(),
+        core.get_collector::&lt;iroh_net::metrics::NetReportMetrics&gt;(),
         <span class="kw-2">&amp;mut </span>map,
     );
     collect(

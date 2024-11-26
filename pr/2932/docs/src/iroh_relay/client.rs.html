@@ -1212,6 +1212,7 @@
 <a href="#1212" id="1212">1212</a>
 <a href="#1213" id="1213">1213</a>
 <a href="#1214" id="1214">1214</a>
+<a href="#1215" id="1215">1215</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
@@ -1720,7 +1721,13 @@
                     }
                     msg_sender.send(res).<span class="kw">await</span>.ok();
                 }
-                <span class="prelude-val">Some</span>(msg) = inbox.recv() =&gt; {
+                msg = inbox.recv() =&gt; {
+                    <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
+                        <span class="comment">// Shutting down
+                        </span><span class="self">self</span>.close().<span class="kw">await</span>;
+                        <span class="kw">break</span>;
+                    };
+
                     <span class="kw">match </span>msg {
                         ActorMessage::Connect(s) =&gt; {
                             <span class="kw">let </span>res = <span class="self">self</span>.connect(<span class="string">"actor msg"</span>).<span class="kw">await</span>.map(|(client, <span class="kw">_</span>)| (client));
@@ -1759,11 +1766,6 @@
                             s.send(<span class="prelude-val">Ok</span>(res)).ok();
                         },
                     }
-                }
-                <span class="kw">else </span>=&gt; {
-                    <span class="comment">// Shutting down
-                    </span><span class="self">self</span>.close().<span class="kw">await</span>;
-                    <span class="kw">break</span>;
                 }
             }
         }

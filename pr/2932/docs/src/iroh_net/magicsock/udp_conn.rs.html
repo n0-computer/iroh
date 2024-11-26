@@ -519,7 +519,7 @@
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_rebinding_conn_send_recv_ipv6() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
-        <span class="kw">if </span>!<span class="kw">crate</span>::netcheck::os_has_ipv6() {
+        <span class="kw">if </span>!net_report::os_has_ipv6() {
             <span class="kw">return </span><span class="prelude-val">Ok</span>(());
         }
         rebinding_conn_send_recv(IpFamily::V6).<span class="kw">await

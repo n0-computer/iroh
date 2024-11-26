@@ -458,6 +458,8 @@
 <a href="#458" id="458">458</a>
 <a href="#459" id="459">459</a>
 <a href="#460" id="460">460</a>
+<a href="#461" id="461">461</a>
+<a href="#462" id="462">462</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
@@ -499,21 +501,23 @@
 </span><span class="kw">pub async fn </span>run_relay_server_with(
     stun: <span class="prelude-ty">Option</span>&lt;StunConfig&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server)&gt; {
+    <span class="attr">#[derive(Default, Debug, derive_more::Display)]
+    </span><span class="kw">struct </span>Stub;
+
     <span class="kw">let </span>cert =
         rcgen::generate_simple_self_signed(<span class="macro">vec!</span>[<span class="string">"localhost"</span>.to_string(), <span class="string">"127.0.0.1"</span>.to_string()])
             .expect(<span class="string">"valid"</span>);
-    <span class="kw">let </span>rustls_cert = rustls::pki_types::CertificateDer::from(cert.serialize_der().unwrap());
-    <span class="kw">let </span>private_key =
-        rustls::pki_types::PrivatePkcs8KeyDer::from(cert.get_key_pair().serialize_der());
+    <span class="kw">let </span>rustls_cert = cert.cert.der();
+    <span class="kw">let </span>private_key = rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
     <span class="kw">let </span>private_key = rustls::pki_types::PrivateKeyDer::from(private_key);
 
     <span class="kw">let </span>config = ServerConfig {
         relay: <span class="prelude-val">Some</span>(RelayConfig {
             http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
             tls: <span class="prelude-val">Some</span>(TlsConfig {
-                cert: CertConfig::&lt;(), ()&gt;::Manual {
+                cert: CertConfig::&lt;Stub, Stub&gt;::Manual {
                     private_key,
-                    certs: <span class="macro">vec!</span>[rustls_cert],
+                    certs: <span class="macro">vec!</span>[rustls_cert.clone()],
                 },
                 https_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
             }),

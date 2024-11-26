@@ -174,7 +174,7 @@
 <span class="kw">use </span>futures_lite::Stream;
 <span class="kw">use </span>futures_sink::Sink;
 <span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
-<span class="kw">use </span>tokio_tungstenite::WebSocketStream;
+<span class="kw">use </span>tokio_tungstenite::{tungstenite, WebSocketStream};
 <span class="kw">use </span>tokio_util::codec::Framed;
 
 <span class="kw">use </span><span class="kw">crate</span>::protos::relay::{DerpCodec, Frame};

@@ -442,8 +442,6 @@
 <a href="#442" id="442">442</a>
 <a href="#443" id="443">443</a>
 <a href="#444" id="444">444</a>
-<a href="#445" id="445">445</a>
-<a href="#446" id="446">446</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! X.509 certificate handling.
 //!
 //! This module handles generation, signing, and verification of certificates.
@@ -537,24 +535,22 @@
     // Endpoints MAY generate a new key and certificate
     // for every connection attempt, or they MAY reuse the same key
     // and certificate for multiple connections.
-    </span><span class="kw">let </span>certificate_keypair = rcgen::KeyPair::generate(P2P_SIGNATURE_ALGORITHM)<span class="question-mark">?</span>;
+    </span><span class="kw">let </span>certificate_keypair = rcgen::KeyPair::generate_for(P2P_SIGNATURE_ALGORITHM)<span class="question-mark">?</span>;
     <span class="kw">let </span>rustls_key =
         rustls::pki_types::PrivateKeyDer::try_from(certificate_keypair.serialize_der()).unwrap();
     <span class="kw">let </span>certificate = {
-        <span class="kw">let </span><span class="kw-2">mut </span>params = rcgen::CertificateParams::new(<span class="macro">vec!</span>[]);
+        <span class="kw">let </span><span class="kw-2">mut </span>params = rcgen::CertificateParams::default();
         params.distinguished_name = rcgen::DistinguishedName::new();
         params.custom_extensions.push(make_libp2p_extension(
             identity_secret_key,
             <span class="kw-2">&amp;</span>certificate_keypair,
         )<span class="question-mark">?</span>);
-        params.alg = P2P_SIGNATURE_ALGORITHM;
-        params.key_pair = <span class="prelude-val">Some</span>(certificate_keypair);
-        rcgen::Certificate::from_params(params)<span class="question-mark">?
-    </span>};
+        params
+            .self_signed(<span class="kw-2">&amp;</span>certificate_keypair)
+            .expect(<span class="string">"self signed certificate to be generated"</span>)
+    };
 
-    <span class="kw">let </span>rustls_certificate = rustls::pki_types::CertificateDer::from(certificate.serialize_der()<span class="question-mark">?</span>);
-
-    <span class="prelude-val">Ok</span>((rustls_certificate, rustls_key))
+    <span class="prelude-val">Ok</span>((certificate.der().clone(), rustls_key))
 }
 
 <span class="doccomment">/// Attempts to parse the provided bytes as a [`P2pCertificate`].

@@ -3876,6 +3876,37 @@
 <a href="#3876" id="3876">3876</a>
 <a href="#3877" id="3877">3877</a>
 <a href="#3878" id="3878">3878</a>
+<a href="#3879" id="3879">3879</a>
+<a href="#3880" id="3880">3880</a>
+<a href="#3881" id="3881">3881</a>
+<a href="#3882" id="3882">3882</a>
+<a href="#3883" id="3883">3883</a>
+<a href="#3884" id="3884">3884</a>
+<a href="#3885" id="3885">3885</a>
+<a href="#3886" id="3886">3886</a>
+<a href="#3887" id="3887">3887</a>
+<a href="#3888" id="3888">3888</a>
+<a href="#3889" id="3889">3889</a>
+<a href="#3890" id="3890">3890</a>
+<a href="#3891" id="3891">3891</a>
+<a href="#3892" id="3892">3892</a>
+<a href="#3893" id="3893">3893</a>
+<a href="#3894" id="3894">3894</a>
+<a href="#3895" id="3895">3895</a>
+<a href="#3896" id="3896">3896</a>
+<a href="#3897" id="3897">3897</a>
+<a href="#3898" id="3898">3898</a>
+<a href="#3899" id="3899">3899</a>
+<a href="#3900" id="3900">3900</a>
+<a href="#3901" id="3901">3901</a>
+<a href="#3902" id="3902">3902</a>
+<a href="#3903" id="3903">3903</a>
+<a href="#3904" id="3904">3904</a>
+<a href="#3905" id="3905">3905</a>
+<a href="#3906" id="3906">3906</a>
+<a href="#3907" id="3907">3907</a>
+<a href="#3908" id="3908">3908</a>
+<a href="#3909" id="3909">3909</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -3938,13 +3969,13 @@
     udp_conn::UdpConn,
 };
 <span class="kw">use crate</span>::{
-    defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
+    defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{<span class="self">self</span>, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
     endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
-    netcheck, AddrInfo, RelayMap, RelayUrl,
+    AddrInfo, RelayMap, RelayUrl,
 };
 
 <span class="kw">mod </span>metrics;
@@ -4081,7 +4112,7 @@
     </span>closing: AtomicBool,
     <span class="doccomment">/// Close was called.
     </span>closed: AtomicBool,
-    <span class="doccomment">/// If the last netcheck report, reports IPv6 to be available.
+    <span class="doccomment">/// If the last net_report report, reports IPv6 to be available.
     </span>ipv6_reported: Arc&lt;AtomicBool&gt;,
 
     <span class="doccomment">/// None (or zero nodes) means relay is disabled.
@@ -4094,8 +4125,8 @@
     </span>pconn4: UdpConn,
     <span class="doccomment">/// UDP IPv6 socket
     </span>pconn6: <span class="prelude-ty">Option</span>&lt;UdpConn&gt;,
-    <span class="doccomment">/// Netcheck client
-    </span>net_checker: netcheck::Addr,
+    <span class="doccomment">/// NetReport client
+    </span>net_reporter: net_report::Addr,
     <span class="doccomment">/// The state for an active DiscoKey.
     </span>disco_secrets: DiscoSecrets,
 
@@ -4594,7 +4625,7 @@
                 <span class="kw">let </span>packet_is_quic = <span class="kw">if </span>stun::is(packet) {
                     <span class="macro">trace!</span>(src = %meta.addr, len = %meta.stride, <span class="string">"UDP recv: stun packet"</span>);
                     <span class="kw">let </span>packet2 = Bytes::copy_from_slice(packet);
-                    <span class="self">self</span>.net_checker.receive_stun_packet(packet2, meta.addr);
+                    <span class="self">self</span>.net_reporter.receive_stun_packet(packet2, meta.addr);
                     <span class="bool-val">false
                 </span>} <span class="kw">else if let </span><span class="prelude-val">Some</span>((sender, sealed_box)) = disco::source_and_box(packet) {
                     <span class="comment">// Disco?
@@ -5095,7 +5126,7 @@
     <span class="doccomment">/// Sends the call-me-maybe DISCO message, queuing if addresses are too stale.
     ///
     /// To send the call-me-maybe message, we need to know our current direct addresses.  If
-    /// this information is too stale, the call-me-maybe is queued while a netcheck run is
+    /// this information is too stale, the call-me-maybe is queued while a net_report run is
     /// scheduled.  Once this run finishes, the call-me-maybe will be sent.
     </span><span class="kw">fn </span>send_or_queue_call_me_maybe(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, dst_node: NodeId) {
         <span class="kw">match </span><span class="self">self</span>.direct_addrs.fresh_enough() {
@@ -5183,7 +5214,7 @@
     }
 }
 
-<span class="doccomment">/// Manages currently running direct addr discovery, aka netcheck runs.
+<span class="doccomment">/// Manages currently running direct addr discovery, aka net_report runs.
 ///
 /// Invariants:
 /// - only one direct addr update must be running at a time
@@ -5283,7 +5314,8 @@
         <span class="kw">let </span>ipv4_addr = pconn4.local_addr()<span class="question-mark">?</span>;
         <span class="kw">let </span>ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
-        <span class="kw">let </span>net_checker = netcheck::Client::new(<span class="prelude-val">Some</span>(port_mapper.clone()), dns_resolver.clone())<span class="question-mark">?</span>;
+        <span class="kw">let </span>net_reporter =
+            net_report::Client::new(<span class="prelude-val">Some</span>(port_mapper.clone()), dns_resolver.clone())<span class="question-mark">?</span>;
 
         <span class="kw">let </span>(actor_sender, actor_receiver) = mpsc::channel(<span class="number">256</span>);
         <span class="kw">let </span>(relay_actor_sender, relay_actor_receiver) = mpsc::channel(<span class="number">256</span>);
@@ -5310,7 +5342,7 @@
             my_relay: Default::default(),
             pconn4: pconn4.clone(),
             pconn6: pconn6.clone(),
-            net_checker: net_checker.addr(),
+            net_reporter: net_reporter.addr(),
             disco_secrets: DiscoSecrets::default(),
             node_map,
             relay_actor_sender: relay_actor_sender.clone(),
@@ -5361,7 +5393,7 @@
                     pconn4,
                     pconn6,
                     no_v4_send: <span class="bool-val">false</span>,
-                    net_checker,
+                    net_reporter,
                     network_monitor,
                 };
 
@@ -5577,7 +5609,7 @@
     Shutdown,
     ReceiveRelay(RelayReadResult),
     EndpointPingExpired(usize, stun_rs::TransactionId),
-    NetcheckReport(<span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;netcheck::Report&gt;&gt;&gt;, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str),
+    NetReport(<span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;net_report::Report&gt;&gt;&gt;, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str),
     NetworkChange,
     <span class="attr">#[cfg(test)]
     </span>ForceNetworkChange(bool),
@@ -5609,7 +5641,7 @@
     </span>no_v4_send: bool,
 
     <span class="doccomment">/// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
-    </span>net_checker: netcheck::Client,
+    </span>net_reporter: net_report::Client,
 
     network_monitor: netmon::Monitor,
 }
@@ -5645,10 +5677,22 @@
                 discovery_events = events;
             }
         }
+
+        <span class="kw">let </span><span class="kw-2">mut </span>receiver_closed = <span class="bool-val">false</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>portmap_watcher_closed = <span class="bool-val">false</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>link_change_closed = <span class="bool-val">false</span>;
         <span class="kw">loop </span>{
             <span class="macro">inc!</span>(Metrics, actor_tick_main);
             <span class="macro">tokio::select!</span> {
-                <span class="prelude-val">Some</span>(msg) = <span class="self">self</span>.msg_receiver.recv() =&gt; {
+                msg = <span class="self">self</span>.msg_receiver.recv(), <span class="kw">if </span>!receiver_closed =&gt; {
+                    <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
+                        <span class="macro">trace!</span>(<span class="string">"tick: magicsock receiver closed"</span>);
+                        <span class="macro">inc!</span>(Metrics, actor_tick_other);
+
+                        receiver_closed = <span class="bool-val">true</span>;
+                        <span class="kw">continue</span>;
+                    };
+
                     <span class="macro">trace!</span>(<span class="question-mark">?</span>msg, <span class="string">"tick: msg"</span>);
                     <span class="macro">inc!</span>(Metrics, actor_tick_msg);
                     <span class="kw">if </span><span class="self">self</span>.handle_actor_message(msg).<span class="kw">await </span>{
@@ -5660,7 +5704,15 @@
                     <span class="macro">inc!</span>(Metrics, actor_tick_re_stun);
                     <span class="self">self</span>.msock.re_stun(<span class="string">"periodic"</span>);
                 }
-                <span class="prelude-val">Ok</span>(()) = portmap_watcher.changed() =&gt; {
+                change = portmap_watcher.changed(), <span class="kw">if </span>!portmap_watcher_closed =&gt; {
+                    <span class="kw">if </span>change.is_err() {
+                        <span class="macro">trace!</span>(<span class="string">"tick: portmap watcher closed"</span>);
+                        <span class="macro">inc!</span>(Metrics, actor_tick_other);
+
+                        portmap_watcher_closed = <span class="bool-val">true</span>;
+                        <span class="kw">continue</span>;
+                    }
+
                     <span class="macro">trace!</span>(<span class="string">"tick: portmap changed"</span>);
                     <span class="macro">inc!</span>(Metrics, actor_tick_portmap_changed);
                     <span class="kw">let </span>new_external_address = <span class="kw-2">*</span>portmap_watcher.borrow();
@@ -5687,21 +5739,28 @@
                         <span class="self">self</span>.refresh_direct_addrs(reason).<span class="kw">await</span>;
                     }
                 }
-                <span class="prelude-val">Some</span>(is_major) = link_change_r.recv() =&gt; {
+                is_major = link_change_r.recv(), <span class="kw">if </span>!link_change_closed =&gt; {
+                    <span class="kw">let </span><span class="prelude-val">Some</span>(is_major) = is_major <span class="kw">else </span>{
+                        <span class="macro">trace!</span>(<span class="string">"tick: link change receiver closed"</span>);
+                        <span class="macro">inc!</span>(Metrics, actor_tick_other);
+
+                        link_change_closed = <span class="bool-val">true</span>;
+                        <span class="kw">continue</span>;
+                    };
+
                     <span class="macro">trace!</span>(<span class="string">"tick: link change {}"</span>, is_major);
                     <span class="macro">inc!</span>(Metrics, actor_link_change);
                     <span class="self">self</span>.handle_network_change(is_major).<span class="kw">await</span>;
                 }
-                <span class="prelude-val">Some</span>(discovery_item) = discovery_events.next() =&gt; {
+                <span class="comment">// Even if `discovery_events` yields `None`, it could begin to yield
+                // `Some` again in the future, so we don't want to disable this branch
+                // forever like we do with the other branches that yield `Option`s
+                </span><span class="prelude-val">Some</span>(discovery_item) = discovery_events.next() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: discovery event, address discovered: {discovery_item:?}"</span>);
                     <span class="kw">let </span>node_addr = NodeAddr {node_id: discovery_item.node_id, info: discovery_item.addr_info};
                     <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.msock.add_node_addr(node_addr.clone(), Source::Discovery { name: discovery_item.provenance.into() }) {
                         <span class="macro">warn!</span>(<span class="question-mark">?</span>node_addr, <span class="string">"unable to add discovered node address to the node map: {e:?}"</span>);
                     }
-                }
-                <span class="kw">else </span>=&gt; {
-                    <span class="macro">trace!</span>(<span class="string">"tick: other"</span>);
-                    <span class="macro">inc!</span>(Metrics, actor_tick_other);
                 }
             }
         }
@@ -5770,13 +5829,16 @@
             ActorMessage::EndpointPingExpired(id, txid) =&gt; {
                 <span class="self">self</span>.msock.node_map.notify_ping_timeout(id, txid);
             }
-            ActorMessage::NetcheckReport(report, why) =&gt; {
+            ActorMessage::NetReport(report, why) =&gt; {
                 <span class="kw">match </span>report {
                     <span class="prelude-val">Ok</span>(report) =&gt; {
-                        <span class="self">self</span>.handle_netcheck_report(report).<span class="kw">await</span>;
+                        <span class="self">self</span>.handle_net_report_report(report).<span class="kw">await</span>;
                     }
                     <span class="prelude-val">Err</span>(err) =&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"failed to generate netcheck report for: {}: {:?}"</span>, why, err);
+                        <span class="macro">warn!</span>(
+                            <span class="string">"failed to generate net_report report for: {}: {:?}"</span>,
+                            why, err
+                        );
                     }
                 }
                 <span class="self">self</span>.finalize_direct_addrs_update(why);
@@ -5848,7 +5910,7 @@
 
     <span class="doccomment">/// Refreshes knowledge about our direct addresses.
     ///
-    /// In other words, this triggers a netcheck run.
+    /// In other words, this triggers a net_report run.
     ///
     /// Note that invoking this is managed by the [`DirectAddrUpdateState`] and this should
     /// never be invoked directly.  Some day this will be refactored to not allow this easy
@@ -5868,9 +5930,9 @@
     /// direct addresses from:
     ///
     /// - The portmapper.
-    /// - A netcheck report.
+    /// - A net_report report.
     /// - The local interfaces IP addresses.
-    </span><span class="kw">fn </span>update_direct_addresses(<span class="kw-2">&amp;mut </span><span class="self">self</span>, netcheck_report: <span class="prelude-ty">Option</span>&lt;Arc&lt;netcheck::Report&gt;&gt;) {
+    </span><span class="kw">fn </span>update_direct_addresses(<span class="kw-2">&amp;mut </span><span class="self">self</span>, net_report_report: <span class="prelude-ty">Option</span>&lt;Arc&lt;net_report::Report&gt;&gt;) {
         <span class="kw">let </span>portmap_watcher = <span class="self">self</span>.port_mapper.watch_external_address();
 
         <span class="comment">// We only want to have one DirectAddr for each SocketAddr we have.  So we store
@@ -5887,9 +5949,9 @@
             <span class="self">self</span>.set_net_info_have_port_map();
         }
 
-        <span class="comment">// Next add STUN addresses from the netcheck report.
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(netcheck_report) = netcheck_report {
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(global_v4) = netcheck_report.global_v4 {
+        <span class="comment">// Next add STUN addresses from the net_report report.
+        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(net_report_report) = net_report_report {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(global_v4) = net_report_report.global_v4 {
                 addrs
                     .entry(global_v4.into())
                     .or_insert(DirectAddrType::Stun);
@@ -5899,7 +5961,7 @@
                 // port mapping on their router to the same explicit
                 // port that we are running with. Worst case it's an invalid candidate mapping.
                 </span><span class="kw">let </span>port = <span class="self">self</span>.msock.port.load(Ordering::Relaxed);
-                <span class="kw">if </span>netcheck_report
+                <span class="kw">if </span>net_report_report
                     .mapping_varies_by_dest_ip
                     .unwrap_or_default()
                     &amp;&amp; port != <span class="number">0
@@ -5911,7 +5973,7 @@
                         .or_insert(DirectAddrType::Stun4LocalPort);
                 }
             }
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(global_v6) = netcheck_report.global_v6 {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(global_v6) = net_report_report.global_v6 {
                 addrs
                     .entry(global_v6.into())
                     .or_insert(DirectAddrType::Stun);
@@ -6036,7 +6098,7 @@
         <span class="self">self</span>.net_info_last = <span class="prelude-val">Some</span>(ni);
     }
 
-    <span class="doccomment">/// Calls netcheck.
+    <span class="doccomment">/// Calls net_report.
     ///
     /// Note that invoking this is managed by [`DirectAddrUpdateState`] via
     /// [`Actor::refresh_direct_addrs`] and this should never be invoked directly.  Some day
@@ -6044,9 +6106,9 @@
     </span><span class="attr">#[instrument(level = <span class="string">"debug"</span>, skip_all)]
     </span><span class="kw">async fn </span>update_net_info(<span class="kw-2">&amp;mut </span><span class="self">self</span>, why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) {
         <span class="kw">if </span><span class="self">self</span>.msock.relay_map.is_empty() {
-            <span class="macro">debug!</span>(<span class="string">"skipping netcheck, empty RelayMap"</span>);
+            <span class="macro">debug!</span>(<span class="string">"skipping net_report, empty RelayMap"</span>);
             <span class="self">self</span>.msg_sender
-                .send(ActorMessage::NetcheckReport(<span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>), why))
+                .send(ActorMessage::NetReport(<span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>), why))
                 .<span class="kw">await
                 </span>.ok();
             <span class="kw">return</span>;
@@ -6056,38 +6118,38 @@
         <span class="kw">let </span>pconn4 = <span class="prelude-val">Some</span>(<span class="self">self</span>.pconn4.as_socket());
         <span class="kw">let </span>pconn6 = <span class="self">self</span>.pconn6.as_ref().map(|p| p.as_socket());
 
-        <span class="macro">debug!</span>(<span class="string">"requesting netcheck report"</span>);
+        <span class="macro">debug!</span>(<span class="string">"requesting net_report report"</span>);
         <span class="kw">match </span><span class="self">self
-            </span>.net_checker
+            </span>.net_reporter
             .get_report_channel(relay_map, pconn4, pconn6)
             .<span class="kw">await
         </span>{
             <span class="prelude-val">Ok</span>(rx) =&gt; {
                 <span class="kw">let </span>msg_sender = <span class="self">self</span>.msg_sender.clone();
                 tokio::task::spawn(<span class="kw">async move </span>{
-                    <span class="kw">let </span>report = time::timeout(NETCHECK_REPORT_TIMEOUT, rx).<span class="kw">await</span>;
+                    <span class="kw">let </span>report = time::timeout(NET_REPORT_TIMEOUT, rx).<span class="kw">await</span>;
                     <span class="kw">let </span>report: anyhow::Result&lt;<span class="kw">_</span>&gt; = <span class="kw">match </span>report {
                         <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(report))) =&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(report)),
                         <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err))) =&gt; <span class="prelude-val">Err</span>(err),
-                        <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="kw">_</span>)) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"netcheck report not received"</span>)),
-                        <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"netcheck report timeout: {:?}"</span>, err)),
+                        <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="kw">_</span>)) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"net_report report not received"</span>)),
+                        <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"net_report report timeout: {:?}"</span>, err)),
                     };
                     msg_sender
-                        .send(ActorMessage::NetcheckReport(report, why))
+                        .send(ActorMessage::NetReport(report, why))
                         .<span class="kw">await
                         </span>.ok();
-                    <span class="comment">// The receiver of the NetcheckReport message will call
+                    <span class="comment">// The receiver of the NetReport message will call
                     // .finalize_direct_addrs_update().
                 </span>});
             }
             <span class="prelude-val">Err</span>(err) =&gt; {
-                <span class="macro">warn!</span>(<span class="string">"unable to start netcheck generation: {:?}"</span>, err);
+                <span class="macro">warn!</span>(<span class="string">"unable to start net_report generation: {:?}"</span>, err);
                 <span class="self">self</span>.finalize_direct_addrs_update(why);
             }
         }
     }
 
-    <span class="kw">async fn </span>handle_netcheck_report(<span class="kw-2">&amp;mut </span><span class="self">self</span>, report: <span class="prelude-ty">Option</span>&lt;Arc&lt;netcheck::Report&gt;&gt;) {
+    <span class="kw">async fn </span>handle_net_report_report(<span class="kw-2">&amp;mut </span><span class="self">self</span>, report: <span class="prelude-ty">Option</span>&lt;Arc&lt;net_report::Report&gt;&gt;) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>report) = report {
             <span class="self">self</span>.msock
                 .ipv6_reported
@@ -6162,7 +6224,7 @@
         <span class="bool-val">true
     </span>}
 
-    <span class="doccomment">/// Returns a deterministic relay node to connect to. This is only used if netcheck
+    <span class="doccomment">/// Returns a deterministic relay node to connect to. This is only used if net_report
     /// couldn't find the nearest one, for instance, if UDP is blocked and thus STUN
     /// latency checks aren't working.
     ///
