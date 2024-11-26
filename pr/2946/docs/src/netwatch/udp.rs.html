@@ -990,13 +990,13 @@
 
     <span class="doccomment">/// Is the socket broken and needs a rebind?
     </span><span class="kw">pub fn </span>is_broken(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.is_broken.load(std::sync::atomic::Ordering::SeqCst)
+        <span class="self">self</span>.is_broken.load(std::sync::atomic::Ordering::Acquire)
     }
 
     <span class="doccomment">/// Marks this socket as needing a rebind
     </span><span class="kw">fn </span>mark_broken(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="self">self</span>.is_broken
-            .store(<span class="bool-val">true</span>, std::sync::atomic::Ordering::SeqCst);
+            .store(<span class="bool-val">true</span>, std::sync::atomic::Ordering::Release);
     }
 
     <span class="doccomment">/// Rebind the underlying socket.
@@ -1007,7 +1007,7 @@
 
             <span class="comment">// Clear errors
             </span><span class="self">self</span>.is_broken
-                .store(<span class="bool-val">false</span>, std::sync::atomic::Ordering::SeqCst);
+                .store(<span class="bool-val">false</span>, std::sync::atomic::Ordering::Release);
 
             drop(guard);
         }
