@@ -39,9 +39,6 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server)> {
 pub async fn run_relay_server_with(
     stun: Option<StunConfig>,
 ) -> Result<(RelayMap, RelayUrl, Server)> {
-    #[derive(Default, Debug, derive_more::Display)]
-    struct Stub;
-
     let cert =
         rcgen::generate_simple_self_signed(vec!["localhost".to_string(), "127.0.0.1".to_string()])
             .expect("valid");
@@ -53,7 +50,7 @@ pub async fn run_relay_server_with(
         relay: Some(RelayConfig {
             http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
             tls: Some(TlsConfig {
-                cert: CertConfig::<Stub, Stub>::Manual {
+                cert: CertConfig::<(), ()>::Manual {
                     private_key,
                     certs: vec![rustls_cert.clone()],
                 },

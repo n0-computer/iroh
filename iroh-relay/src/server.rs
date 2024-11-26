@@ -707,11 +707,8 @@ mod tests {
     };
 
     async fn spawn_local_relay() -> Result<Server> {
-        #[derive(Debug)]
-        struct Stub;
-
-        Server::spawn(ServerConfig::<Stub, Stub> {
-            relay: Some(RelayConfig::<Stub, Stub> {
+        Server::spawn(ServerConfig::<(), ()> {
+            relay: Some(RelayConfig::<(), ()> {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
                 tls: None,
                 limits: Default::default(),
@@ -724,11 +721,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_services() {
-        #[derive(Default, Debug)]
-        struct Stub;
-
         let _guard = iroh_test::logging::setup();
-        let mut server = Server::spawn(ServerConfig::<Stub, Stub>::default())
+        let mut server = Server::spawn(ServerConfig::<(), ()>::default())
             .await
             .unwrap();
         let res = tokio::time::timeout(Duration::from_secs(5), server.task_handle())
@@ -740,11 +734,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_conflicting_bind() {
-        #[derive(Debug)]
-        struct Stub;
-
         let _guard = iroh_test::logging::setup();
-        let mut server = Server::spawn(ServerConfig::<Stub, Stub> {
+        let mut server = Server::spawn(ServerConfig::<(), ()> {
             relay: Some(RelayConfig {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 1234).into(),
                 tls: None,
@@ -1015,11 +1006,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_stun() {
-        #[derive(Debug)]
-        struct Stub;
-
         let _guard = iroh_test::logging::setup();
-        let server = Server::spawn(ServerConfig::<Stub, Stub> {
+        let server = Server::spawn(ServerConfig::<(), ()> {
             relay: None,
             stun: Some(StunConfig {
                 bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
