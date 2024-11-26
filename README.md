@@ -39,8 +39,8 @@ To ensure these connections are as fast as possible, we [continuously measure ir
 
 ### Built on [QUIC]
 
-Iroh uses [quinn] to establish [QUIC] connections between nodes.
-This way you get authenticated encryption, concurrent streams with stream prioirities and a datagram transport out of the box.
+Iroh uses [Quinn] to establish [QUIC] connections between nodes.
+This way you get authenticated encryption, concurrent streams with stream prioirities, a datagram transport and avoid head-of-line-blocking out of the box.
 
 ## Compose Protocols
 
@@ -76,7 +76,7 @@ send.finish()?;
 let response = recv.read_to_end(1000).await?;
 assert_eq!(&response, b"Hello, world!");
 
-// Close the endpoint and all its connections in one:
+// Close the endpoint and all its connections
 endpoint.close(0u32.into(), b"bye!").await?;
 ```
 
@@ -137,6 +137,8 @@ This repository contains a workspace of crates:
 - `iroh-metrics`: Helper library for adding metrics support to crates.
 - `iroh-test`: Test utilities.
 - `iroh-dns-server`: DNS server implementation powering the `n0_discovery` for NodeIds, running at dns.iroh.link.
+- `iroh-net-report`: Analyzes your host's networking ability & NAT.
+- `net-tools/*`: Networking utility crates
 
 The main entry point for anyone interested in the inner workings should be `iroh-net`.
 
@@ -159,7 +161,7 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 
 [QUIC]: https://en.wikipedia.org/wiki/QUIC
 [BLAKE3]: https://github.com/BLAKE3-team/BLAKE3
-[quinn]: https://github.com/quinn-rs/quinn
+[Quinn]: https://github.com/quinn-rs/quinn
 [iroh-blobs]: https://github.com/n0-computer/iroh-blobs
 [iroh-gossip]: https://github.com/n0-computer/iroh-gossip
 [iroh-docs]: https://github.com/n0-computer/iroh-docs
