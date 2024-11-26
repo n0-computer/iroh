@@ -816,9 +816,9 @@ impl Drop for UdpSocket {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use anyhow::Context;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_reconnect() -> anyhow::Result<()> {
