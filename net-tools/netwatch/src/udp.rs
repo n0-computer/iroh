@@ -809,19 +809,16 @@ impl SocketState {
 impl Drop for UdpSocket {
     fn drop(&mut self) {
         trace!("dropping UdpSocket");
-        match self.socket.write().unwrap().close() {
-            Some((socket, _)) => {
-                if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                    // No wakeup after dropping write lock here, since we're getting dropped.
-                    // this will be empty if `close` was called before
-                    let std_sock = socket.into_std();
-                    handle.spawn_blocking(move || {
-                        // Calls libc::close, which can block
-                        drop(std_sock);
-                    });
-                }
+        if let Some((socket, _)) = self.socket.write().unwrap().close() {
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                // No wakeup after dropping write lock here, since we're getting dropped.
+                // this will be empty if `close` was called before
+                let std_sock = socket.into_std();
+                handle.spawn_blocking(move || {
+                    // Calls libc::close, which can block
+                    drop(std_sock);
+                });
             }
-            None => {}
         }
     }
 }
