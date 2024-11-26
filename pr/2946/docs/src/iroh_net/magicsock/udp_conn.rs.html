@@ -296,11 +296,11 @@
     }
 
     <span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.io.max_transmit_segments().unwrap_or_default()
+        <span class="self">self</span>.io.max_gso_segments().unwrap_or_default()
     }
 
     <span class="kw">fn </span>max_receive_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.io.max_receive_segments().unwrap_or_default()
+        <span class="self">self</span>.io.gro_segments().unwrap_or_default()
     }
 }
 

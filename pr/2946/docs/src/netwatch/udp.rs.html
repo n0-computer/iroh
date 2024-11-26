@@ -874,45 +874,6 @@
 <a href="#874" id="874">874</a>
 <a href="#875" id="875">875</a>
 <a href="#876" id="876">876</a>
-<a href="#877" id="877">877</a>
-<a href="#878" id="878">878</a>
-<a href="#879" id="879">879</a>
-<a href="#880" id="880">880</a>
-<a href="#881" id="881">881</a>
-<a href="#882" id="882">882</a>
-<a href="#883" id="883">883</a>
-<a href="#884" id="884">884</a>
-<a href="#885" id="885">885</a>
-<a href="#886" id="886">886</a>
-<a href="#887" id="887">887</a>
-<a href="#888" id="888">888</a>
-<a href="#889" id="889">889</a>
-<a href="#890" id="890">890</a>
-<a href="#891" id="891">891</a>
-<a href="#892" id="892">892</a>
-<a href="#893" id="893">893</a>
-<a href="#894" id="894">894</a>
-<a href="#895" id="895">895</a>
-<a href="#896" id="896">896</a>
-<a href="#897" id="897">897</a>
-<a href="#898" id="898">898</a>
-<a href="#899" id="899">899</a>
-<a href="#900" id="900">900</a>
-<a href="#901" id="901">901</a>
-<a href="#902" id="902">902</a>
-<a href="#903" id="903">903</a>
-<a href="#904" id="904">904</a>
-<a href="#905" id="905">905</a>
-<a href="#906" id="906">906</a>
-<a href="#907" id="907">907</a>
-<a href="#908" id="908">908</a>
-<a href="#909" id="909">909</a>
-<a href="#910" id="910">910</a>
-<a href="#911" id="911">911</a>
-<a href="#912" id="912">912</a>
-<a href="#913" id="913">913</a>
-<a href="#914" id="914">914</a>
-<a href="#915" id="915">915</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     future::Future,
     io::ErrorKind,
@@ -933,11 +894,9 @@
 <span class="doccomment">/// Wrapper around a tokio UDP socket.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>UdpSocket {
-    socket: RwLock&lt;<span class="prelude-ty">Option</span>&lt;(tokio::net::UdpSocket, quinn_udp::UdpSocketState)&gt;&gt;,
+    socket: RwLock&lt;SocketState&gt;,
     recv_waker: AtomicWaker,
     send_waker: AtomicWaker,
-    <span class="doccomment">/// The addr we are binding to.
-    </span>addr: SocketAddr,
     <span class="doccomment">/// Set to true, when an error occurred, that means we need to rebind the socket.
     </span>is_broken: AtomicBool,
 }
@@ -996,27 +955,17 @@
 
     <span class="doccomment">/// Rebind the underlying socket.
     </span><span class="kw">pub fn </span>rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="macro">debug!</span>(<span class="string">"rebinding {}"</span>, <span class="self">self</span>.addr);
-        <span class="comment">// Remove old socket
-        </span><span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.socket.write().unwrap();
         {
-            <span class="kw">let </span><span class="prelude-val">Some</span>(socket) = guard.take() <span class="kw">else </span>{
-                <span class="macro">bail!</span>(<span class="string">"cannot rebind closed socket"</span>);
-            };
-            drop(socket);
+            <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.socket.write().unwrap();
+            guard.rebind()<span class="question-mark">?</span>;
+
+            <span class="comment">// Clear errors
+            </span><span class="self">self</span>.is_broken
+                .store(<span class="bool-val">false</span>, std::sync::atomic::Ordering::SeqCst);
+
+            drop(guard);
         }
 
-        <span class="comment">// Prepare new socket
-        </span><span class="kw">let </span>new_socket = inner_bind(<span class="self">self</span>.addr)<span class="question-mark">?</span>;
-
-        <span class="comment">// Insert new socket
-        </span>guard.replace(new_socket);
-
-        <span class="comment">// Clear errors
-        </span><span class="self">self</span>.is_broken
-            .store(<span class="bool-val">false</span>, std::sync::atomic::Ordering::SeqCst);
-
-        drop(guard);
         <span class="comment">// wakeup
         </span><span class="self">self</span>.wake_all();
 
@@ -1024,21 +973,27 @@
     }
 
     <span class="kw">fn </span>bind_raw(addr: <span class="kw">impl </span>Into&lt;SocketAddr&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>addr = addr.into();
-        <span class="kw">let </span>socket = inner_bind(addr)<span class="question-mark">?</span>;
-        <span class="comment">// update to use selected port
-        </span>addr.set_port(socket.<span class="number">0</span>.local_addr()<span class="question-mark">?</span>.port());
+        <span class="kw">let </span>socket = SocketState::bind(addr.into())<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(UdpSocket {
-            socket: RwLock::new(<span class="prelude-val">Some</span>(socket)),
+            socket: RwLock::new(socket),
             recv_waker: AtomicWaker::default(),
             send_waker: AtomicWaker::default(),
-            addr,
             is_broken: AtomicBool::new(<span class="bool-val">false</span>),
         })
     }
 
-    <span class="doccomment">/// TODO
+    <span class="doccomment">/// Receives a single datagram message on the socket from the remote address
+    /// to which it is connected. On success, returns the number of bytes read.
+    ///
+    /// The function must be called with valid byte array `buf` of sufficient
+    /// size to hold the message bytes. If a message is too long to fit in the
+    /// supplied buffer, excess bytes may be discarded.
+    ///
+    /// The [`connect`] method will connect this socket to a remote address.
+    /// This method will fail if the socket is not connected.
+    ///
+    /// [`connect`]: method@Self::connect
     </span><span class="kw">pub fn </span>recv&lt;<span class="lifetime">'a</span>, <span class="lifetime">'b</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'b </span><span class="self">self</span>, buffer: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>[u8]) -&gt; RecvFut&lt;<span class="lifetime">'a</span>, <span class="lifetime">'b</span>&gt; {
         RecvFut {
             socket: <span class="self">self</span>,
@@ -1046,7 +1001,13 @@
         }
     }
 
-    <span class="doccomment">/// TODO
+    <span class="doccomment">/// Receives a single datagram message on the socket. On success, returns
+    /// the number of bytes read and the origin.
+    ///
+    /// The function must be called with valid byte array `buf` of sufficient
+    /// size to hold the message bytes. If a message is too long to fit in the
+    /// supplied buffer, excess bytes may be discarded.
+    ///
     </span><span class="kw">pub fn </span>recv_from&lt;<span class="lifetime">'a</span>, <span class="lifetime">'b</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'b </span><span class="self">self</span>, buffer: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>[u8]) -&gt; RecvFromFut&lt;<span class="lifetime">'a</span>, <span class="lifetime">'b</span>&gt; {
         RecvFromFut {
             socket: <span class="self">self</span>,
@@ -1054,7 +1015,18 @@
         }
     }
 
-    <span class="doccomment">/// TODO
+    <span class="doccomment">/// Sends data on the socket to the remote address that the socket is
+    /// connected to.
+    ///
+    /// The [`connect`] method will connect this socket to a remote address.
+    /// This method will fail if the socket is not connected.
+    ///
+    /// [`connect`]: method@Self::connect
+    ///
+    /// # Return
+    ///
+    /// On success, the number of bytes sent is returned, otherwise, the
+    /// encountered error is returned.
     </span><span class="kw">pub fn </span>send&lt;<span class="lifetime">'a</span>, <span class="lifetime">'b</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'b </span><span class="self">self</span>, buffer: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8]) -&gt; SendFut&lt;<span class="lifetime">'a</span>, <span class="lifetime">'b</span>&gt; {
         SendFut {
             socket: <span class="self">self</span>,
@@ -1062,7 +1034,8 @@
         }
     }
 
-    <span class="doccomment">/// TODO
+    <span class="doccomment">/// Sends data on the socket to the given address. On success, returns the
+    /// number of bytes written.
     </span><span class="kw">pub fn </span>send_to&lt;<span class="lifetime">'a</span>, <span class="lifetime">'b</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'b </span><span class="self">self</span>, buffer: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8], to: SocketAddr) -&gt; SendToFut&lt;<span class="lifetime">'a</span>, <span class="lifetime">'b</span>&gt; {
         SendToFut {
             socket: <span class="self">self</span>,
@@ -1071,17 +1044,13 @@
         }
     }
 
-    <span class="doccomment">/// TODO
+    <span class="doccomment">/// Connects the UDP socket setting the default destination for send() and
+    /// limiting packets that are read via `recv` from the address specified in
+    /// `addr`.
     </span><span class="kw">pub fn </span>connect(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: SocketAddr) -&gt; std::io::Result&lt;()&gt; {
         <span class="macro">tracing::info!</span>(<span class="string">"connectnig to {}"</span>, addr);
         <span class="kw">let </span>guard = <span class="self">self</span>.socket.read().unwrap();
-        <span class="kw">let </span><span class="prelude-val">Some</span>((socket_tokio, _state)) = guard.as_ref() <span class="kw">else </span>{
-            <span class="macro">warn!</span>(<span class="string">"socket closed"</span>);
-            <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                <span class="string">"socket closed"</span>,
-            ));
-        };
+        <span class="kw">let </span>(socket_tokio, _state) = guard.try_get_connected()<span class="question-mark">?</span>;
 
         <span class="kw">let </span>sock_ref = socket2::SockRef::from(<span class="kw-2">&amp;</span>socket_tokio);
         sock_ref.connect(<span class="kw-2">&amp;</span>socket2::SockAddr::from(addr))<span class="question-mark">?</span>;
@@ -1092,20 +1061,14 @@
     <span class="doccomment">/// Returns the local address of this socket.
     </span><span class="kw">pub fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;SocketAddr&gt; {
         <span class="kw">let </span>guard = <span class="self">self</span>.socket.read().unwrap();
-        <span class="kw">let </span><span class="prelude-val">Some</span>((socket, <span class="kw">_</span>)) = guard.as_ref() <span class="kw">else </span>{
-            <span class="macro">warn!</span>(<span class="string">"socket closed"</span>);
-            <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                <span class="string">"socket closed"</span>,
-            ));
-        };
+        <span class="kw">let </span>(socket, _state) = guard.try_get_connected()<span class="question-mark">?</span>;
 
         socket.local_addr()
     }
 
     <span class="doccomment">/// Closes the socket, and waits for the underlying `libc::close` call to be finished.
     </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="kw">let </span>socket = <span class="self">self</span>.socket.write().unwrap().take();
+        <span class="kw">let </span>socket = <span class="self">self</span>.socket.write().unwrap().close();
         <span class="self">self</span>.wake_all();
         <span class="kw">if let </span><span class="prelude-val">Some</span>((sock, <span class="kw">_</span>)) = socket {
             <span class="kw">let </span>std_sock = sock.into_std();
@@ -1123,7 +1086,7 @@
 
     <span class="doccomment">/// Check if this socket is closed.
     </span><span class="kw">pub fn </span>is_closed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.socket.read().unwrap().is_none()
+        <span class="self">self</span>.socket.read().unwrap().is_closed()
     }
 
     <span class="doccomment">/// Handle potential read errors, updating internal state.
@@ -1159,7 +1122,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         waker: <span class="kw-2">&amp;</span>AtomicWaker,
         cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;,
-    ) -&gt; Poll&lt;RwLockReadGuard&lt;<span class="lifetime">'_</span>, <span class="prelude-ty">Option</span>&lt;(tokio::net::UdpSocket, quinn_udp::UdpSocketState)&gt;&gt;&gt; {
+    ) -&gt; Poll&lt;RwLockReadGuard&lt;<span class="lifetime">'_</span>, SocketState&gt;&gt; {
         <span class="kw">let </span>guard = <span class="kw">match </span><span class="self">self</span>.socket.try_read() {
             <span class="prelude-val">Ok</span>(guard) =&gt; guard,
             <span class="prelude-val">Err</span>(TryLockError::Poisoned(e)) =&gt; <span class="macro">panic!</span>(<span class="string">"socket lock poisoned: {e}"</span>),
@@ -1189,33 +1152,35 @@
         <span class="self">self</span>.send_waker.wake();
     }
 
+    <span class="doccomment">/// Checks if the socket needs a rebind, and if so does it.
+    ///
+    /// Returns an error if the rebind is needed, but failed.
+    </span><span class="kw">fn </span>maybe_rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;()&gt; {
+        <span class="kw">if </span><span class="self">self</span>.is_broken() {
+            <span class="kw">match </span><span class="self">self</span>.rebind() {
+                <span class="prelude-val">Ok</span>(()) =&gt; {
+                    <span class="comment">// all good
+                </span>}
+                <span class="prelude-val">Err</span>(err) =&gt; {
+                    <span class="macro">warn!</span>(<span class="string">"failed to rebind socket: {:?}"</span>, err);
+                    <span class="comment">// TODO: improve error
+                    </span><span class="kw">let </span>err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(err);
+                }
+            }
+        }
+        <span class="prelude-val">Ok</span>(())
+    }
+
     <span class="doccomment">/// Poll for writable
     </span><span class="kw">pub fn </span>poll_writable(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;std::io::Result&lt;()&gt;&gt; {
         <span class="kw">loop </span>{
-            <span class="comment">// check if the socket needs a rebind
-            </span><span class="kw">if </span><span class="self">self</span>.is_broken() {
-                <span class="kw">match </span><span class="self">self</span>.rebind() {
-                    <span class="prelude-val">Ok</span>(()) =&gt; {
-                        <span class="comment">// all good
-                    </span>}
-                    <span class="prelude-val">Err</span>(err) =&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"failed to rebind socket: {:?}"</span>, err);
-                        <span class="comment">// TODO: improve error
-                        </span><span class="kw">let </span>err =
-                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
-                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
-                    }
-                }
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.maybe_rebind() {
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
             }
 
             <span class="kw">let </span>guard = <span class="macro">futures_lite::ready!</span>(<span class="self">self</span>.poll_read_socket(<span class="kw-2">&amp;</span><span class="self">self</span>.send_waker, cx));
-            <span class="kw">let </span><span class="prelude-val">Some</span>((socket, _state)) = guard.as_ref() <span class="kw">else </span>{
-                <span class="macro">warn!</span>(<span class="string">"socket closed"</span>);
-                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    <span class="string">"socket closed"</span>,
-                )));
-            };
+            <span class="kw">let </span>(socket, _state) = guard.try_get_connected()<span class="question-mark">?</span>;
 
             <span class="kw">match </span>socket.poll_send_ready(cx) {
                 Poll::Pending =&gt; {
@@ -1236,29 +1201,18 @@
     <span class="doccomment">/// Send a quinn based `Transmit`.
     </span><span class="kw">pub fn </span>try_send_quinn(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;) -&gt; std::io::Result&lt;()&gt; {
         <span class="kw">loop </span>{
-            <span class="comment">// check if the socket needs a rebind
-            </span><span class="kw">if </span><span class="self">self</span>.is_broken() {
-                <span class="kw">match </span><span class="self">self</span>.rebind() {
-                    <span class="prelude-val">Ok</span>(()) =&gt; {
-                        <span class="comment">// all good
-                    </span>}
-                    <span class="prelude-val">Err</span>(err) =&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"failed to rebind socket: {:?}"</span>, err);
-                        <span class="comment">// TODO: improve error
-                        </span><span class="kw">let </span>err =
-                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
-                        <span class="kw">return </span><span class="prelude-val">Err</span>(err);
-                    }
+            <span class="self">self</span>.maybe_rebind()<span class="question-mark">?</span>;
+
+            <span class="kw">let </span>guard = <span class="kw">match </span><span class="self">self</span>.socket.try_read() {
+                <span class="prelude-val">Ok</span>(guard) =&gt; guard,
+                <span class="prelude-val">Err</span>(TryLockError::Poisoned(e)) =&gt; {
+                    <span class="macro">panic!</span>(<span class="string">"lock poisoned: {:?}"</span>, e);
                 }
-            }
-            <span class="kw">let </span>guard = <span class="self">self</span>.socket.read().unwrap();
-            <span class="kw">let </span><span class="prelude-val">Some</span>((socket, state)) = guard.as_ref() <span class="kw">else </span>{
-                <span class="macro">warn!</span>(<span class="string">"socket closed"</span>);
-                <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    <span class="string">"socket closed"</span>,
-                ));
+                <span class="prelude-val">Err</span>(TryLockError::WouldBlock) =&gt; {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::new(std::io::ErrorKind::WouldBlock, <span class="string">""</span>));
+                }
             };
+            <span class="kw">let </span>(socket, state) = guard.try_get_connected()<span class="question-mark">?</span>;
 
             <span class="kw">let </span>res = socket.try_io(Interest::WRITABLE, || state.send(socket.into(), transmit));
 
@@ -1282,29 +1236,12 @@
         meta: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
     ) -&gt; Poll&lt;std::io::Result&lt;usize&gt;&gt; {
         <span class="kw">loop </span>{
-            <span class="comment">// check if the socket needs a rebind
-            </span><span class="kw">if </span><span class="self">self</span>.is_broken() {
-                <span class="kw">match </span><span class="self">self</span>.rebind() {
-                    <span class="prelude-val">Ok</span>(()) =&gt; {
-                        <span class="comment">// all good
-                    </span>}
-                    <span class="prelude-val">Err</span>(err) =&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"failed to rebind socket: {:?}"</span>, err);
-                        <span class="comment">// TODO: improve error
-                        </span><span class="kw">let </span>err =
-                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
-                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
-                    }
-                }
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.maybe_rebind() {
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
             }
+
             <span class="kw">let </span>guard = <span class="macro">futures_lite::ready!</span>(<span class="self">self</span>.poll_read_socket(<span class="kw-2">&amp;</span><span class="self">self</span>.recv_waker, cx));
-            <span class="kw">let </span><span class="prelude-val">Some</span>((socket, state)) = guard.as_ref() <span class="kw">else </span>{
-                <span class="macro">warn!</span>(<span class="string">"socket closed"</span>);
-                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    <span class="string">"socket closed"</span>,
-                )));
-            };
+            <span class="kw">let </span>(socket, state) = guard.try_get_connected()<span class="question-mark">?</span>;
 
             <span class="kw">match </span>socket.poll_recv_ready(cx) {
                 Poll::Pending =&gt; {
@@ -1352,42 +1289,33 @@
         }
     }
 
-    <span class="doccomment">/// TODO
+    <span class="doccomment">/// Whether transmitted datagrams might get fragmented by the IP layer
+    ///
+    /// Returns `false` on targets which employ e.g. the `IPV6_DONTFRAG` socket option.
     </span><span class="kw">pub fn </span>may_fragment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;bool&gt; {
         <span class="kw">let </span>guard = <span class="self">self</span>.socket.read().unwrap();
-        <span class="kw">let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, state)) = guard.as_ref() <span class="kw">else </span>{
-            <span class="macro">warn!</span>(<span class="string">"socket closed"</span>);
-            <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                <span class="string">"socket closed"</span>,
-            ));
-        };
+        <span class="kw">let </span>(<span class="kw">_</span>, state) = guard.try_get_connected()<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(state.may_fragment())
     }
 
-    <span class="doccomment">/// TODO
-    </span><span class="kw">pub fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;usize&gt; {
+    <span class="doccomment">/// The maximum amount of segments which can be transmitted if a platform
+    /// supports Generic Send Offload (GSO).
+    ///
+    /// This is 1 if the platform doesn't support GSO. Subject to change if errors are detected
+    /// while using GSO.
+    </span><span class="kw">pub fn </span>max_gso_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;usize&gt; {
         <span class="kw">let </span>guard = <span class="self">self</span>.socket.read().unwrap();
-        <span class="kw">let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, state)) = guard.as_ref() <span class="kw">else </span>{
-            <span class="macro">warn!</span>(<span class="string">"socket closed"</span>);
-            <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                <span class="string">"socket closed"</span>,
-            ));
-        };
+        <span class="kw">let </span>(<span class="kw">_</span>, state) = guard.try_get_connected()<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(state.max_gso_segments())
     }
 
-    <span class="doccomment">/// TODO
-    </span><span class="kw">pub fn </span>max_receive_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;usize&gt; {
+    <span class="doccomment">/// The number of segments to read when GRO is enabled. Used as a factor to
+    /// compute the receive buffer size.
+    ///
+    /// Returns 1 if the platform doesn't support GRO.
+    </span><span class="kw">pub fn </span>gro_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;usize&gt; {
         <span class="kw">let </span>guard = <span class="self">self</span>.socket.read().unwrap();
-        <span class="kw">let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, state)) = guard.as_ref() <span class="kw">else </span>{
-            <span class="macro">warn!</span>(<span class="string">"socket closed"</span>);
-            <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                <span class="string">"socket closed"</span>,
-            ));
-        };
+        <span class="kw">let </span>(<span class="kw">_</span>, state) = guard.try_get_connected()<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(state.gro_segments())
     }
 }
@@ -1406,30 +1334,12 @@
         <span class="kw">let </span><span class="self">Self </span>{ socket, buffer } = <span class="kw-2">&amp;mut *</span><span class="self">self</span>;
 
         <span class="kw">loop </span>{
-            <span class="comment">// check if the socket needs a rebind
-            </span><span class="kw">if </span>socket.is_broken() {
-                <span class="kw">match </span>socket.rebind() {
-                    <span class="prelude-val">Ok</span>(()) =&gt; {
-                        <span class="comment">// all good
-                    </span>}
-                    <span class="prelude-val">Err</span>(err) =&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"failed to rebind socket: {:?}"</span>, err);
-                        <span class="comment">// TODO: improve error
-                        </span><span class="kw">let </span>err =
-                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
-                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
-                    }
-                }
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = socket.maybe_rebind() {
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
             }
 
             <span class="kw">let </span>guard = <span class="macro">futures_lite::ready!</span>(socket.poll_read_socket(<span class="kw-2">&amp;</span>socket.recv_waker, cx));
-            <span class="kw">let </span><span class="prelude-val">Some</span>((inner_socket, <span class="kw">_</span>)) = guard.as_ref() <span class="kw">else </span>{
-                <span class="macro">warn!</span>(<span class="string">"socket closed"</span>);
-                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    <span class="string">"socket closed"</span>,
-                )));
-            };
+            <span class="kw">let </span>(inner_socket, _state) = guard.try_get_connected()<span class="question-mark">?</span>;
 
             <span class="kw">match </span>inner_socket.poll_recv_ready(cx) {
                 Poll::Pending =&gt; {
@@ -1474,29 +1384,12 @@
         <span class="kw">let </span><span class="self">Self </span>{ socket, buffer } = <span class="kw-2">&amp;mut *</span><span class="self">self</span>;
 
         <span class="kw">loop </span>{
-            <span class="comment">// check if the socket needs a rebind
-            </span><span class="kw">if </span>socket.is_broken() {
-                <span class="kw">match </span>socket.rebind() {
-                    <span class="prelude-val">Ok</span>(()) =&gt; {
-                        <span class="comment">// all good
-                    </span>}
-                    <span class="prelude-val">Err</span>(err) =&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"failed to rebind socket: {:?}"</span>, err);
-                        <span class="comment">// TODO: improve error
-                        </span><span class="kw">let </span>err =
-                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
-                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
-                    }
-                }
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = socket.maybe_rebind() {
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
             }
+
             <span class="kw">let </span>guard = <span class="macro">futures_lite::ready!</span>(socket.poll_read_socket(<span class="kw-2">&amp;</span>socket.recv_waker, cx));
-            <span class="kw">let </span><span class="prelude-val">Some</span>((inner_socket, <span class="kw">_</span>)) = guard.as_ref() <span class="kw">else </span>{
-                <span class="macro">warn!</span>(<span class="string">"socket closed"</span>);
-                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    <span class="string">"socket closed"</span>,
-                )));
-            };
+            <span class="kw">let </span>(inner_socket, _state) = guard.try_get_connected()<span class="question-mark">?</span>;
 
             <span class="kw">match </span>inner_socket.poll_recv_ready(cx) {
                 Poll::Pending =&gt; {
@@ -1539,30 +1432,13 @@
 
     <span class="kw">fn </span>poll(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
         <span class="kw">loop </span>{
-            <span class="comment">// check if the socket needs a rebind
-            </span><span class="kw">if </span><span class="self">self</span>.socket.is_broken() {
-                <span class="kw">match </span><span class="self">self</span>.socket.rebind() {
-                    <span class="prelude-val">Ok</span>(()) =&gt; {
-                        <span class="comment">// all good
-                    </span>}
-                    <span class="prelude-val">Err</span>(err) =&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"failed to rebind socket: {:?}"</span>, err);
-                        <span class="comment">// TODO: improve error
-                        </span><span class="kw">let </span>err =
-                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
-                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
-                    }
-                }
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.socket.maybe_rebind() {
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
             }
+
             <span class="kw">let </span>guard =
                 <span class="macro">futures_lite::ready!</span>(<span class="self">self</span>.socket.poll_read_socket(<span class="kw-2">&amp;</span><span class="self">self</span>.socket.send_waker, cx));
-            <span class="kw">let </span><span class="prelude-val">Some</span>((socket, <span class="kw">_</span>)) = guard.as_ref() <span class="kw">else </span>{
-                <span class="macro">warn!</span>(<span class="string">"socket closed"</span>);
-                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    <span class="string">"socket closed"</span>,
-                )));
-            };
+            <span class="kw">let </span>(socket, _state) = guard.try_get_connected()<span class="question-mark">?</span>;
 
             <span class="kw">match </span>socket.poll_send_ready(cx) {
                 Poll::Pending =&gt; {
@@ -1606,31 +1482,13 @@
 
     <span class="kw">fn </span>poll(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
         <span class="kw">loop </span>{
-            <span class="comment">// check if the socket needs a rebind
-            </span><span class="kw">if </span><span class="self">self</span>.socket.is_broken() {
-                <span class="kw">match </span><span class="self">self</span>.socket.rebind() {
-                    <span class="prelude-val">Ok</span>(()) =&gt; {
-                        <span class="comment">// all good
-                    </span>}
-                    <span class="prelude-val">Err</span>(err) =&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"failed to rebind socket: {:?}"</span>, err);
-                        <span class="comment">// TODO: improve error
-                        </span><span class="kw">let </span>err =
-                            std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
-                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
-                    }
-                }
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.socket.maybe_rebind() {
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
             }
 
             <span class="kw">let </span>guard =
                 <span class="macro">futures_lite::ready!</span>(<span class="self">self</span>.socket.poll_read_socket(<span class="kw-2">&amp;</span><span class="self">self</span>.socket.send_waker, cx));
-            <span class="kw">let </span><span class="prelude-val">Some</span>((socket, <span class="kw">_</span>)) = guard.as_ref() <span class="kw">else </span>{
-                <span class="macro">warn!</span>(<span class="string">"socket closed"</span>);
-                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    <span class="string">"socket closed"</span>,
-                )));
-            };
+            <span class="kw">let </span>(socket, _state) = guard.try_get_connected()<span class="question-mark">?</span>;
 
             <span class="kw">match </span>socket.poll_send_ready(cx) {
                 Poll::Pending =&gt; {
@@ -1662,74 +1520,138 @@
     }
 }
 
-<span class="kw">fn </span>inner_bind(addr: SocketAddr) -&gt; <span class="prelude-ty">Result</span>&lt;(tokio::net::UdpSocket, quinn_udp::UdpSocketState)&gt; {
-    <span class="kw">let </span>network = IpFamily::from(addr.ip());
-    <span class="kw">let </span>socket = socket2::Socket::new(
-        network.into(),
-        socket2::Type::DGRAM,
-        <span class="prelude-val">Some</span>(socket2::Protocol::UDP),
-    )
-    .context(<span class="string">"socket create"</span>)<span class="question-mark">?</span>;
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">enum </span>SocketState {
+    Connected {
+        socket: tokio::net::UdpSocket,
+        state: quinn_udp::UdpSocketState,
+        <span class="doccomment">/// The addr we are binding to.
+        </span>addr: SocketAddr,
+    },
+    Closed,
+}
 
-    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = socket.set_recv_buffer_size(SOCKET_BUFFER_SIZE) {
-        <span class="macro">warn!</span>(
-            <span class="string">"failed to set recv_buffer_size to {}: {:?}"</span>,
-            SOCKET_BUFFER_SIZE, err
-        );
+<span class="kw">impl </span>SocketState {
+    <span class="kw">fn </span>try_get_connected(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+    ) -&gt; std::io::Result&lt;(<span class="kw-2">&amp;</span>tokio::net::UdpSocket, <span class="kw-2">&amp;</span>quinn_udp::UdpSocketState)&gt; {
+        <span class="kw">match </span><span class="self">self </span>{
+            <span class="self">Self</span>::Connected {
+                socket,
+                state,
+                addr: <span class="kw">_</span>,
+            } =&gt; <span class="prelude-val">Ok</span>((socket, state)),
+            <span class="self">Self</span>::Closed =&gt; {
+                <span class="macro">warn!</span>(<span class="string">"socket closed"</span>);
+                <span class="prelude-val">Err</span>(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    <span class="string">"socket closed"</span>,
+                ))
+            }
+        }
     }
-    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = socket.set_send_buffer_size(SOCKET_BUFFER_SIZE) {
-        <span class="macro">warn!</span>(
-            <span class="string">"failed to set send_buffer_size to {}: {:?}"</span>,
-            SOCKET_BUFFER_SIZE, err
-        );
-    }
-    <span class="kw">if </span>network == IpFamily::V6 {
-        <span class="comment">// Avoid dualstack
-        </span>socket.set_only_v6(<span class="bool-val">true</span>).context(<span class="string">"only IPv6"</span>)<span class="question-mark">?</span>;
-    }
 
-    <span class="comment">// Binding must happen before calling quinn, otherwise `local_addr`
-    // is not yet available on all OSes.
-    </span>socket.bind(<span class="kw-2">&amp;</span>addr.into()).context(<span class="string">"binding"</span>)<span class="question-mark">?</span>;
+    <span class="kw">fn </span>bind(addr: SocketAddr) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">let </span>network = IpFamily::from(addr.ip());
+        <span class="kw">let </span>socket = socket2::Socket::new(
+            network.into(),
+            socket2::Type::DGRAM,
+            <span class="prelude-val">Some</span>(socket2::Protocol::UDP),
+        )
+        .context(<span class="string">"socket create"</span>)<span class="question-mark">?</span>;
 
-    <span class="comment">// Ensure nonblocking
-    </span>socket.set_nonblocking(<span class="bool-val">true</span>).context(<span class="string">"nonblocking: true"</span>)<span class="question-mark">?</span>;
+        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = socket.set_recv_buffer_size(SOCKET_BUFFER_SIZE) {
+            <span class="macro">warn!</span>(
+                <span class="string">"failed to set recv_buffer_size to {}: {:?}"</span>,
+                SOCKET_BUFFER_SIZE, err
+            );
+        }
+        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = socket.set_send_buffer_size(SOCKET_BUFFER_SIZE) {
+            <span class="macro">warn!</span>(
+                <span class="string">"failed to set send_buffer_size to {}: {:?}"</span>,
+                SOCKET_BUFFER_SIZE, err
+            );
+        }
+        <span class="kw">if </span>network == IpFamily::V6 {
+            <span class="comment">// Avoid dualstack
+            </span>socket.set_only_v6(<span class="bool-val">true</span>).context(<span class="string">"only IPv6"</span>)<span class="question-mark">?</span>;
+        }
 
-    <span class="kw">let </span>socket: std::net::UdpSocket = socket.into();
+        <span class="comment">// Binding must happen before calling quinn, otherwise `local_addr`
+        // is not yet available on all OSes.
+        </span>socket.bind(<span class="kw-2">&amp;</span>addr.into()).context(<span class="string">"binding"</span>)<span class="question-mark">?</span>;
 
-    <span class="comment">// Convert into tokio UdpSocket
-    </span><span class="kw">let </span>socket = tokio::net::UdpSocket::from_std(socket).context(<span class="string">"conversion to tokio"</span>)<span class="question-mark">?</span>;
-    <span class="kw">let </span>socket_ref = quinn_udp::UdpSockRef::from(<span class="kw-2">&amp;</span>socket);
-    <span class="kw">let </span>socket_state = quinn_udp::UdpSocketState::new(socket_ref)<span class="question-mark">?</span>;
+        <span class="comment">// Ensure nonblocking
+        </span>socket.set_nonblocking(<span class="bool-val">true</span>).context(<span class="string">"nonblocking: true"</span>)<span class="question-mark">?</span>;
 
-    <span class="kw">if </span>addr.port() != <span class="number">0 </span>{
+        <span class="kw">let </span>socket: std::net::UdpSocket = socket.into();
+
+        <span class="comment">// Convert into tokio UdpSocket
+        </span><span class="kw">let </span>socket = tokio::net::UdpSocket::from_std(socket).context(<span class="string">"conversion to tokio"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>socket_ref = quinn_udp::UdpSockRef::from(<span class="kw-2">&amp;</span>socket);
+        <span class="kw">let </span>socket_state = quinn_udp::UdpSocketState::new(socket_ref)<span class="question-mark">?</span>;
+
         <span class="kw">let </span>local_addr = socket.local_addr().context(<span class="string">"local addr"</span>)<span class="question-mark">?</span>;
-        <span class="macro">ensure!</span>(
-            local_addr.port() == addr.port(),
-            <span class="string">"wrong port bound: {:?}: wanted: {} got {}"</span>,
-            network,
-            addr.port(),
-            local_addr.port(),
-        );
+        <span class="kw">if </span>addr.port() != <span class="number">0 </span>{
+            <span class="macro">ensure!</span>(
+                local_addr.port() == addr.port(),
+                <span class="string">"wrong port bound: {:?}: wanted: {} got {}"</span>,
+                network,
+                addr.port(),
+                local_addr.port(),
+            );
+        }
+
+        <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Connected {
+            socket,
+            state: socket_state,
+            addr: local_addr,
+        })
     }
 
-    <span class="prelude-val">Ok</span>((socket, socket_state))
+    <span class="kw">fn </span>rebind(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">let </span>addr = <span class="kw">match </span><span class="self">self </span>{
+            <span class="self">Self</span>::Connected { addr, .. } =&gt; <span class="kw-2">*</span>addr,
+            <span class="self">Self</span>::Closed =&gt; {
+                <span class="macro">bail!</span>(<span class="string">"socket is closed and cannot be rebound"</span>);
+            }
+        };
+        <span class="macro">debug!</span>(<span class="string">"rebinding {}"</span>, addr);
+
+        <span class="kw-2">*</span><span class="self">self </span>= SocketState::Closed;
+        <span class="kw-2">*</span><span class="self">self </span>= <span class="self">Self</span>::bind(addr)<span class="question-mark">?</span>;
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="kw">fn </span>is_closed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="macro">matches!</span>(<span class="self">self</span>, <span class="self">Self</span>::Closed)
+    }
+
+    <span class="kw">fn </span>close(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;(tokio::net::UdpSocket, quinn_udp::UdpSocketState)&gt; {
+        <span class="kw">match </span>std::mem::replace(<span class="self">self</span>, SocketState::Closed) {
+            <span class="self">Self</span>::Connected { socket, state, .. } =&gt; <span class="prelude-val">Some</span>((socket, state)),
+            <span class="self">Self</span>::Closed =&gt; <span class="prelude-val">None</span>,
+        }
+    }
 }
 
 <span class="kw">impl </span>Drop <span class="kw">for </span>UdpSocket {
     <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="macro">debug!</span>(<span class="string">"dropping UdpSocket"</span>);
-        <span class="comment">// Only spawn_blocking if we are inside a tokio runtime, otherwise we just drop.
-        </span><span class="kw">if let </span><span class="prelude-val">Ok</span>(handle) = tokio::runtime::Handle::try_current() {
-            <span class="comment">// No wakeup after dropping write lock here, since we're getting dropped.
-            </span><span class="kw">if let </span><span class="prelude-val">Some</span>((socket, <span class="kw">_</span>)) = <span class="self">self</span>.socket.write().unwrap().take() {
-                <span class="comment">// this will be empty if `close` was called before
-                </span><span class="kw">let </span>std_sock = socket.into_std();
-                handle.spawn_blocking(<span class="kw">move </span>|| {
-                    <span class="comment">// Calls libc::close, which can block
-                    </span>drop(std_sock);
-                });
+        <span class="macro">trace!</span>(<span class="string">"dropping UdpSocket"</span>);
+        <span class="kw">match </span><span class="self">self</span>.socket.write().unwrap().close() {
+            <span class="prelude-val">Some</span>((socket, <span class="kw">_</span>)) =&gt; {
+                <span class="kw">if let </span><span class="prelude-val">Ok</span>(handle) = tokio::runtime::Handle::try_current() {
+                    <span class="comment">// No wakeup after dropping write lock here, since we're getting dropped.
+                    // this will be empty if `close` was called before
+                    </span><span class="kw">let </span>std_sock = socket.into_std();
+                    handle.spawn_blocking(<span class="kw">move </span>|| {
+                        <span class="comment">// Calls libc::close, which can block
+                        </span>drop(std_sock);
+                    });
+                }
             }
+            <span class="prelude-val">None </span>=&gt; {}
         }
     }
 }
