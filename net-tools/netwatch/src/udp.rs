@@ -685,13 +685,13 @@ impl SocketState {
         .context("socket create")?;
 
         if let Err(err) = socket.set_recv_buffer_size(SOCKET_BUFFER_SIZE) {
-            warn!(
+            debug!(
                 "failed to set recv_buffer_size to {}: {:?}",
                 SOCKET_BUFFER_SIZE, err
             );
         }
         if let Err(err) = socket.set_send_buffer_size(SOCKET_BUFFER_SIZE) {
-            warn!(
+            debug!(
                 "failed to set send_buffer_size to {}: {:?}",
                 SOCKET_BUFFER_SIZE, err
             );
