@@ -911,22 +911,15 @@
 <a href="#911" id="911">911</a>
 <a href="#912" id="912">912</a>
 <a href="#913" id="913">913</a>
-<a href="#914" id="914">914</a>
-<a href="#915" id="915">915</a>
-<a href="#916" id="916">916</a>
-<a href="#917" id="917">917</a>
-<a href="#918" id="918">918</a>
-<a href="#919" id="919">919</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     future::Future,
-    io::ErrorKind,
+    io,
     net::SocketAddr,
     pin::Pin,
     sync::{atomic::AtomicBool, RwLock, RwLockReadGuard, TryLockError},
     task::{Context, Poll},
 };
 
-<span class="kw">use </span>anyhow::{bail, ensure, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>atomic_waker::AtomicWaker;
 <span class="kw">use </span>quinn_udp::Transmit;
 <span class="kw">use </span>tokio::io::Interest;
@@ -949,39 +942,39 @@
 </span><span class="kw">const </span>SOCKET_BUFFER_SIZE: usize = <span class="number">7 </span>&lt;&lt; <span class="number">20</span>;
 <span class="kw">impl </span>UdpSocket {
     <span class="doccomment">/// Bind only Ipv4 on any interface.
-    </span><span class="kw">pub fn </span>bind_v4(port: u16) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub fn </span>bind_v4(port: u16) -&gt; io::Result&lt;<span class="self">Self</span>&gt; {
         <span class="self">Self</span>::bind(IpFamily::V4, port)
     }
 
     <span class="doccomment">/// Bind only Ipv6 on any interface.
-    </span><span class="kw">pub fn </span>bind_v6(port: u16) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub fn </span>bind_v6(port: u16) -&gt; io::Result&lt;<span class="self">Self</span>&gt; {
         <span class="self">Self</span>::bind(IpFamily::V6, port)
     }
 
     <span class="doccomment">/// Bind only Ipv4 on localhost.
-    </span><span class="kw">pub fn </span>bind_local_v4(port: u16) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub fn </span>bind_local_v4(port: u16) -&gt; io::Result&lt;<span class="self">Self</span>&gt; {
         <span class="self">Self</span>::bind_local(IpFamily::V4, port)
     }
 
     <span class="doccomment">/// Bind only Ipv6 on localhost.
-    </span><span class="kw">pub fn </span>bind_local_v6(port: u16) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub fn </span>bind_local_v6(port: u16) -&gt; io::Result&lt;<span class="self">Self</span>&gt; {
         <span class="self">Self</span>::bind_local(IpFamily::V6, port)
     }
 
     <span class="doccomment">/// Bind to the given port only on localhost.
-    </span><span class="kw">pub fn </span>bind_local(network: IpFamily, port: u16) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub fn </span>bind_local(network: IpFamily, port: u16) -&gt; io::Result&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>addr = SocketAddr::new(network.local_addr(), port);
-        <span class="self">Self</span>::bind_raw(addr).with_context(|| <span class="macro">format!</span>(<span class="string">"{addr:?}"</span>))
+        <span class="self">Self</span>::bind_raw(addr)
     }
 
     <span class="doccomment">/// Bind to the given port and listen on all interfaces.
-    </span><span class="kw">pub fn </span>bind(network: IpFamily, port: u16) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub fn </span>bind(network: IpFamily, port: u16) -&gt; io::Result&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>addr = SocketAddr::new(network.unspecified_addr(), port);
-        <span class="self">Self</span>::bind_raw(addr).with_context(|| <span class="macro">format!</span>(<span class="string">"{addr:?}"</span>))
+        <span class="self">Self</span>::bind_raw(addr)
     }
 
     <span class="doccomment">/// Bind to any provided [`SocketAddr`].
-    </span><span class="kw">pub fn </span>bind_full(addr: <span class="kw">impl </span>Into&lt;SocketAddr&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub fn </span>bind_full(addr: <span class="kw">impl </span>Into&lt;SocketAddr&gt;) -&gt; io::Result&lt;<span class="self">Self</span>&gt; {
         <span class="self">Self</span>::bind_raw(addr)
     }
 
@@ -997,7 +990,7 @@
     }
 
     <span class="doccomment">/// Rebind the underlying socket.
-    </span><span class="kw">pub fn </span>rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">pub fn </span>rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
         {
             <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.socket.write().unwrap();
             guard.rebind()<span class="question-mark">?</span>;
@@ -1015,7 +1008,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>bind_raw(addr: <span class="kw">impl </span>Into&lt;SocketAddr&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    <span class="kw">fn </span>bind_raw(addr: <span class="kw">impl </span>Into&lt;SocketAddr&gt;) -&gt; io::Result&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>socket = SocketState::bind(addr.into())<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(UdpSocket {
@@ -1090,7 +1083,7 @@
     <span class="doccomment">/// Connects the UDP socket setting the default destination for send() and
     /// limiting packets that are read via `recv` from the address specified in
     /// `addr`.
-    </span><span class="kw">pub fn </span>connect(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: SocketAddr) -&gt; std::io::Result&lt;()&gt; {
+    </span><span class="kw">pub fn </span>connect(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: SocketAddr) -&gt; io::Result&lt;()&gt; {
         <span class="macro">tracing::info!</span>(<span class="string">"connectnig to {}"</span>, addr);
         <span class="kw">let </span>guard = <span class="self">self</span>.socket.read().unwrap();
         <span class="kw">let </span>(socket_tokio, _state) = guard.try_get_connected()<span class="question-mark">?</span>;
@@ -1102,7 +1095,7 @@
     }
 
     <span class="doccomment">/// Returns the local address of this socket.
-    </span><span class="kw">pub fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;SocketAddr&gt; {
+    </span><span class="kw">pub fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;SocketAddr&gt; {
         <span class="kw">let </span>guard = <span class="self">self</span>.socket.read().unwrap();
         <span class="kw">let </span>(socket, _state) = guard.try_get_connected()<span class="question-mark">?</span>;
 
@@ -1135,9 +1128,9 @@
     <span class="doccomment">/// Handle potential read errors, updating internal state.
     ///
     /// Returns `Some(error)` if the error is fatal otherwise `None.
-    </span><span class="kw">fn </span>handle_read_error(<span class="kw-2">&amp;</span><span class="self">self</span>, error: std::io::Error) -&gt; <span class="prelude-ty">Option</span>&lt;std::io::Error&gt; {
+    </span><span class="kw">fn </span>handle_read_error(<span class="kw-2">&amp;</span><span class="self">self</span>, error: io::Error) -&gt; <span class="prelude-ty">Option</span>&lt;io::Error&gt; {
         <span class="kw">match </span>error.kind() {
-            std::io::ErrorKind::NotConnected =&gt; {
+            io::ErrorKind::NotConnected =&gt; {
                 <span class="comment">// This indicates the underlying socket is broken, and we should attempt to rebind it
                 </span><span class="self">self</span>.mark_broken();
                 <span class="prelude-val">None
@@ -1149,9 +1142,9 @@
     <span class="doccomment">/// Handle potential write errors, updating internal state.
     ///
     /// Returns `Some(error)` if the error is fatal otherwise `None.
-    </span><span class="kw">fn </span>handle_write_error(<span class="kw-2">&amp;</span><span class="self">self</span>, error: std::io::Error) -&gt; <span class="prelude-ty">Option</span>&lt;std::io::Error&gt; {
+    </span><span class="kw">fn </span>handle_write_error(<span class="kw-2">&amp;</span><span class="self">self</span>, error: io::Error) -&gt; <span class="prelude-ty">Option</span>&lt;io::Error&gt; {
         <span class="kw">match </span>error.kind() {
-            std::io::ErrorKind::BrokenPipe =&gt; {
+            io::ErrorKind::BrokenPipe =&gt; {
                 <span class="comment">// This indicates the underlying socket is broken, and we should attempt to rebind it
                 </span><span class="self">self</span>.mark_broken();
                 <span class="prelude-val">None
@@ -1198,25 +1191,15 @@
     <span class="doccomment">/// Checks if the socket needs a rebind, and if so does it.
     ///
     /// Returns an error if the rebind is needed, but failed.
-    </span><span class="kw">fn </span>maybe_rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;()&gt; {
+    </span><span class="kw">fn </span>maybe_rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
         <span class="kw">if </span><span class="self">self</span>.is_broken() {
-            <span class="kw">match </span><span class="self">self</span>.rebind() {
-                <span class="prelude-val">Ok</span>(()) =&gt; {
-                    <span class="comment">// all good
-                </span>}
-                <span class="prelude-val">Err</span>(err) =&gt; {
-                    <span class="macro">warn!</span>(<span class="string">"failed to rebind socket: {:?}"</span>, err);
-                    <span class="comment">// TODO: improve error
-                    </span><span class="kw">let </span>err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, err.to_string());
-                    <span class="kw">return </span><span class="prelude-val">Err</span>(err);
-                }
-            }
+            <span class="self">self</span>.rebind()<span class="question-mark">?</span>;
         }
         <span class="prelude-val">Ok</span>(())
     }
 
     <span class="doccomment">/// Poll for writable
-    </span><span class="kw">pub fn </span>poll_writable(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;std::io::Result&lt;()&gt;&gt; {
+    </span><span class="kw">pub fn </span>poll_writable(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
         <span class="kw">loop </span>{
             <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.maybe_rebind() {
                 <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
@@ -1242,7 +1225,7 @@
     }
 
     <span class="doccomment">/// Send a quinn based `Transmit`.
-    </span><span class="kw">pub fn </span>try_send_quinn(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;) -&gt; std::io::Result&lt;()&gt; {
+    </span><span class="kw">pub fn </span>try_send_quinn(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;) -&gt; io::Result&lt;()&gt; {
         <span class="kw">loop </span>{
             <span class="self">self</span>.maybe_rebind()<span class="question-mark">?</span>;
 
@@ -1252,7 +1235,7 @@
                     <span class="macro">panic!</span>(<span class="string">"lock poisoned: {:?}"</span>, e);
                 }
                 <span class="prelude-val">Err</span>(TryLockError::WouldBlock) =&gt; {
-                    <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::new(std::io::ErrorKind::WouldBlock, <span class="string">""</span>));
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::WouldBlock, <span class="string">""</span>));
                 }
             };
             <span class="kw">let </span>(socket, state) = guard.try_get_connected()<span class="question-mark">?</span>;
@@ -1275,9 +1258,9 @@
     </span><span class="kw">pub fn </span>poll_recv_quinn(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         cx: <span class="kw-2">&amp;mut </span>Context,
-        bufs: <span class="kw-2">&amp;mut </span>[std::io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
+        bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
         meta: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
-    ) -&gt; Poll&lt;std::io::Result&lt;usize&gt;&gt; {
+    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
         <span class="kw">loop </span>{
             <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.maybe_rebind() {
                 <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err));
@@ -1318,7 +1301,7 @@
                 }
                 <span class="prelude-val">Err</span>(err) =&gt; {
                     <span class="comment">// ignore spurious wakeups
-                    </span><span class="kw">if </span>err.kind() == std::io::ErrorKind::WouldBlock {
+                    </span><span class="kw">if </span>err.kind() == io::ErrorKind::WouldBlock {
                         <span class="kw">continue</span>;
                     }
                     <span class="kw">match </span><span class="self">self</span>.handle_read_error(err) {
@@ -1368,7 +1351,7 @@
 }
 
 <span class="kw">impl </span>Future <span class="kw">for </span>RecvFut&lt;<span class="lifetime">'_</span>, <span class="lifetime">'_</span>&gt; {
-    <span class="kw">type </span>Output = std::io::Result&lt;usize&gt;;
+    <span class="kw">type </span>Output = io::Result&lt;usize&gt;;
 
     <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
         <span class="kw">let </span><span class="self">Self </span>{ socket, buffer } = <span class="kw-2">&amp;mut *</span><span class="self">self</span>;
@@ -1389,7 +1372,7 @@
                 Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; {
                     <span class="kw">let </span>res = inner_socket.try_recv(buffer);
                     <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
-                        <span class="kw">if </span>err.kind() == ErrorKind::WouldBlock {
+                        <span class="kw">if </span>err.kind() == io::ErrorKind::WouldBlock {
                             <span class="kw">continue</span>;
                         }
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(err) = socket.handle_read_error(err) {
@@ -1418,7 +1401,7 @@
 }
 
 <span class="kw">impl </span>Future <span class="kw">for </span>RecvFromFut&lt;<span class="lifetime">'_</span>, <span class="lifetime">'_</span>&gt; {
-    <span class="kw">type </span>Output = std::io::Result&lt;(usize, SocketAddr)&gt;;
+    <span class="kw">type </span>Output = io::Result&lt;(usize, SocketAddr)&gt;;
 
     <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
         <span class="kw">let </span><span class="self">Self </span>{ socket, buffer } = <span class="kw-2">&amp;mut *</span><span class="self">self</span>;
@@ -1439,7 +1422,7 @@
                 Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; {
                     <span class="kw">let </span>res = inner_socket.try_recv_from(buffer);
                     <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
-                        <span class="kw">if </span>err.kind() == ErrorKind::WouldBlock {
+                        <span class="kw">if </span>err.kind() == io::ErrorKind::WouldBlock {
                             <span class="kw">continue</span>;
                         }
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(err) = socket.handle_read_error(err) {
@@ -1468,7 +1451,7 @@
 }
 
 <span class="kw">impl </span>Future <span class="kw">for </span>SendFut&lt;<span class="lifetime">'_</span>, <span class="lifetime">'_</span>&gt; {
-    <span class="kw">type </span>Output = std::io::Result&lt;usize&gt;;
+    <span class="kw">type </span>Output = io::Result&lt;usize&gt;;
 
     <span class="kw">fn </span>poll(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
         <span class="kw">loop </span>{
@@ -1488,7 +1471,7 @@
                 Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; {
                     <span class="kw">let </span>res = socket.try_send(<span class="self">self</span>.buffer);
                     <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
-                        <span class="kw">if </span>err.kind() == ErrorKind::WouldBlock {
+                        <span class="kw">if </span>err.kind() == io::ErrorKind::WouldBlock {
                             <span class="kw">continue</span>;
                         }
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(err) = <span class="self">self</span>.socket.handle_write_error(err) {
@@ -1518,7 +1501,7 @@
 }
 
 <span class="kw">impl </span>Future <span class="kw">for </span>SendToFut&lt;<span class="lifetime">'_</span>, <span class="lifetime">'_</span>&gt; {
-    <span class="kw">type </span>Output = std::io::Result&lt;usize&gt;;
+    <span class="kw">type </span>Output = io::Result&lt;usize&gt;;
 
     <span class="kw">fn </span>poll(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
         <span class="kw">loop </span>{
@@ -1538,7 +1521,7 @@
                 Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; {
                     <span class="kw">let </span>res = socket.try_send_to(<span class="self">self</span>.buffer, <span class="self">self</span>.to);
                     <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
-                        <span class="kw">if </span>err.kind() == ErrorKind::WouldBlock {
+                        <span class="kw">if </span>err.kind() == io::ErrorKind::WouldBlock {
                             <span class="kw">continue</span>;
                         }
 
@@ -1578,7 +1561,7 @@
 <span class="kw">impl </span>SocketState {
     <span class="kw">fn </span>try_get_connected(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-    ) -&gt; std::io::Result&lt;(<span class="kw-2">&amp;</span>tokio::net::UdpSocket, <span class="kw-2">&amp;</span>quinn_udp::UdpSocketState)&gt; {
+    ) -&gt; io::Result&lt;(<span class="kw-2">&amp;</span>tokio::net::UdpSocket, <span class="kw-2">&amp;</span>quinn_udp::UdpSocketState)&gt; {
         <span class="kw">match </span><span class="self">self </span>{
             <span class="self">Self</span>::Connected {
                 socket,
@@ -1587,22 +1570,18 @@
             } =&gt; <span class="prelude-val">Ok</span>((socket, state)),
             <span class="self">Self</span>::Closed { .. } =&gt; {
                 <span class="macro">warn!</span>(<span class="string">"socket closed"</span>);
-                <span class="prelude-val">Err</span>(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    <span class="string">"socket closed"</span>,
-                ))
+                <span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::BrokenPipe, <span class="string">"socket closed"</span>))
             }
         }
     }
 
-    <span class="kw">fn </span>bind(addr: SocketAddr) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    <span class="kw">fn </span>bind(addr: SocketAddr) -&gt; io::Result&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>network = IpFamily::from(addr.ip());
         <span class="kw">let </span>socket = socket2::Socket::new(
             network.into(),
             socket2::Type::DGRAM,
             <span class="prelude-val">Some</span>(socket2::Protocol::UDP),
-        )
-        .context(<span class="string">"socket create"</span>)<span class="question-mark">?</span>;
+        )<span class="question-mark">?</span>;
 
         <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = socket.set_recv_buffer_size(SOCKET_BUFFER_SIZE) {
             <span class="macro">debug!</span>(
@@ -1618,32 +1597,36 @@
         }
         <span class="kw">if </span>network == IpFamily::V6 {
             <span class="comment">// Avoid dualstack
-            </span>socket.set_only_v6(<span class="bool-val">true</span>).context(<span class="string">"only IPv6"</span>)<span class="question-mark">?</span>;
+            </span>socket.set_only_v6(<span class="bool-val">true</span>)<span class="question-mark">?</span>;
         }
 
         <span class="comment">// Binding must happen before calling quinn, otherwise `local_addr`
         // is not yet available on all OSes.
-        </span>socket.bind(<span class="kw-2">&amp;</span>addr.into()).context(<span class="string">"binding"</span>)<span class="question-mark">?</span>;
+        </span>socket.bind(<span class="kw-2">&amp;</span>addr.into())<span class="question-mark">?</span>;
 
         <span class="comment">// Ensure nonblocking
-        </span>socket.set_nonblocking(<span class="bool-val">true</span>).context(<span class="string">"nonblocking: true"</span>)<span class="question-mark">?</span>;
+        </span>socket.set_nonblocking(<span class="bool-val">true</span>)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>socket: std::net::UdpSocket = socket.into();
 
         <span class="comment">// Convert into tokio UdpSocket
-        </span><span class="kw">let </span>socket = tokio::net::UdpSocket::from_std(socket).context(<span class="string">"conversion to tokio"</span>)<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>socket = tokio::net::UdpSocket::from_std(socket)<span class="question-mark">?</span>;
         <span class="kw">let </span>socket_ref = quinn_udp::UdpSockRef::from(<span class="kw-2">&amp;</span>socket);
         <span class="kw">let </span>socket_state = quinn_udp::UdpSocketState::new(socket_ref)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>local_addr = socket.local_addr().context(<span class="string">"local addr"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>local_addr = socket.local_addr()<span class="question-mark">?</span>;
         <span class="kw">if </span>addr.port() != <span class="number">0 </span>{
-            <span class="macro">ensure!</span>(
-                local_addr.port() == addr.port(),
-                <span class="string">"wrong port bound: {:?}: wanted: {} got {}"</span>,
-                network,
-                addr.port(),
-                local_addr.port(),
-            );
+            <span class="kw">if </span>local_addr.port() != addr.port() {
+                <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(
+                    io::ErrorKind::Other,
+                    <span class="macro">format!</span>(
+                        <span class="string">"wrong port bound: {:?}: wanted: {} got {}"</span>,
+                        network,
+                        addr.port(),
+                        local_addr.port(),
+                    ),
+                ));
+            }
         }
 
         <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Connected {
@@ -1653,7 +1636,7 @@
         })
     }
 
-    <span class="kw">fn </span>rebind(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">fn </span>rebind(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
         <span class="kw">let </span>(addr, closed_state) = <span class="kw">match </span><span class="self">self </span>{
             <span class="self">Self</span>::Connected { state, addr, .. } =&gt; {
                 <span class="kw">let </span>s = SocketState::Closed {
@@ -1664,7 +1647,10 @@
                 (<span class="kw-2">*</span>addr, s)
             }
             <span class="self">Self</span>::Closed { .. } =&gt; {
-                <span class="macro">bail!</span>(<span class="string">"socket is closed and cannot be rebound"</span>);
+                <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(
+                    io::ErrorKind::Other,
+                    <span class="string">"socket is closed and cannot be rebound"</span>,
+                ));
             }
         };
         <span class="macro">debug!</span>(<span class="string">"rebinding {}"</span>, addr);
@@ -1745,6 +1731,8 @@
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+
+    <span class="kw">use </span>anyhow::Context;
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_reconnect() -&gt; anyhow::Result&lt;()&gt; {
