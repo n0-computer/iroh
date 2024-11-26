@@ -51,7 +51,7 @@ impl Mapping {
     ) -> anyhow::Result<Self> {
         // create the socket and send the request
         let socket = UdpSocket::bind_full((local_ip, 0))?;
-        socket.connect((gateway, protocol::SERVER_PORT)).await?;
+        socket.connect((gateway, protocol::SERVER_PORT).into())?;
 
         let req = Request::Mapping {
             proto: MapProtocol::Udp,
@@ -124,7 +124,7 @@ impl Mapping {
 
         // create the socket and send the request
         let socket = UdpSocket::bind_full((local_ip, 0))?;
-        socket.connect((gateway, protocol::SERVER_PORT)).await?;
+        socket.connect((gateway, protocol::SERVER_PORT).into())?;
 
         let req = Request::Mapping {
             proto: MapProtocol::Udp,
@@ -167,7 +167,7 @@ async fn probe_available_fallible(
 ) -> anyhow::Result<Response> {
     // create the socket and send the request
     let socket = UdpSocket::bind_full((local_ip, 0))?;
-    socket.connect((gateway, protocol::SERVER_PORT)).await?;
+    socket.connect((gateway, protocol::SERVER_PORT).into())?;
     let req = Request::ExternalAddress;
     socket.send(&req.encode()).await?;
 

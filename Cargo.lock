@@ -3324,11 +3324,13 @@ name = "netwatch"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "atomic-waker",
  "bytes",
  "derive_more",
  "futures-lite 2.5.0",
  "futures-sink",
  "futures-util",
+ "iroh-quinn-udp",
  "libc",
  "netdev",
  "netlink-packet-core",
