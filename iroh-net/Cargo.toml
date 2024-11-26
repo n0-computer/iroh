@@ -125,11 +125,17 @@ swarm-discovery = { version = "0.2.1", optional = true }
 # dht_discovery
 genawaiter = { version = "0.99", features = ["futures03"], optional = true }
 
-[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+[target.'cfg(all(target_os = "linux", not(target_os = "android")))'.dependencies]
 netlink-packet-core = "0.7.0"
-netlink-packet-route = "0.19.0" # 0.20/21 is blocked on rtnetlink bumping its dependency
+netlink-packet-route = "0.21"
 netlink-sys = "0.8.6"
-rtnetlink = "0.14.1"
+rtnetlink = "=0.14.1" # pinned because of https://github.com/rust-netlink/rtnetlink/issues/83
+
+[target.'cfg(target_os = "android")'.dependencies]
+netlink-packet-core = "0.7.0"
+netlink-packet-route = "0.19" # 0.20/21 is blocked on rtnetlink bumping its dependency
+netlink-sys = "0.8.6"
+rtnetlink = "=0.13.1" # pinned because of https://github.com/rust-netlink/rtnetlink/issues/83
 
 [target.'cfg(target_os = "windows")'.dependencies]
 wmi = "0.14"

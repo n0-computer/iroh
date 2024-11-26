@@ -2727,6 +2727,7 @@ dependencies = [
  "netdev",
  "netlink-packet-core",
  "netlink-packet-route 0.19.0",
+ "netlink-packet-route 0.21.0",
  "netlink-sys",
  "netwatch",
  "num_enum",
@@ -2743,7 +2744,8 @@ dependencies = [
  "regex",
  "reqwest",
  "ring",
- "rtnetlink",
+ "rtnetlink 0.13.1",
+ "rtnetlink 0.14.1",
  "rustls",
  "rustls-webpki",
  "serde",
@@ -3318,6 +3320,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "netlink-packet-route"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "483325d4bfef65699214858f097d504eb812c38ce7077d165f301ec406c3066e"
+dependencies = [
+ "anyhow",
+ "bitflags 2.6.0",
+ "byteorder",
+ "libc",
+ "log",
+ "netlink-packet-core",
+ "netlink-packet-utils",
+]
+
+[[package]]
 name = "netlink-packet-utils"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3375,7 +3392,8 @@ dependencies = [
  "netlink-packet-route 0.19.0",
  "netlink-sys",
  "once_cell",
- "rtnetlink",
+ "rtnetlink 0.13.1",
+ "rtnetlink 0.14.1",
  "serde",
  "socket2",
  "thiserror 2.0.3",
@@ -4631,9 +4649,9 @@ dependencies = [
 
 [[package]]
 name = "rsa"
-version = "0.9.6"
+version = "0.9.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d0e5124fcb30e76a7e79bfee683a2746db83784b86289f6251b54b7950a0dfc"
+checksum = "47c75d7c5c6b673e58bf54d8544a9f432e3a925b0e80f7cd3602ab5c50c55519"
 dependencies = [
  "const-oid",
  "digest",
@@ -4648,6 +4666,24 @@ dependencies = [
  "spki",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "rtnetlink"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a552eb82d19f38c3beed3f786bd23aa434ceb9ac43ab44419ca6d67a7e186c0"
+dependencies = [
+ "futures",
+ "log",
+ "netlink-packet-core",
+ "netlink-packet-route 0.17.1",
+ "netlink-packet-utils",
+ "netlink-proto",
+ "netlink-sys",
+ "nix 0.26.4",
+ "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]
