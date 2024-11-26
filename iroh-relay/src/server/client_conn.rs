@@ -4,6 +4,7 @@ use std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use futures_lite::FutureExt;
 use futures_sink::Sink;
 use futures_util::{SinkExt, Stream, StreamExt};
 use iroh_base::key::NodeId;
@@ -332,13 +333,21 @@ impl Actor {
 ///
 /// This potentially buffers one frame if the rate limiter does not allows this frame.
 /// While the frame is buffered the undernlying stream is no longer polled.
-#[derive(derive_more::Debug)]
+#[derive(Debug)]
 struct RateLimitedRelayedStream {
     inner: RelayedStream,
     limiter: Arc<governor::DefaultDirectRateLimiter>,
-    #[debug("Option<Pin<Box<dyn Future<Output = ()>>>>")]
-    delay: Option<Pin<Box<dyn Future<Output = ()> + Send + Sync>>>,
-    buf: Option<anyhow::Result<Frame>>,
+    state: State,
+}
+
+#[derive(derive_more::Debug)]
+enum State {
+    #[debug("Blocked")]
+    Blocked {
+        delay: Pin<Box<dyn Future<Output = ()> + Send + Sync>>,
+        item: anyhow::Result<Frame>,
+    },
+    Ready,
 }
 
 impl RateLimitedRelayedStream {
@@ -346,8 +355,7 @@ impl RateLimitedRelayedStream {
         Self {
             inner,
             limiter: Arc::new(limiter),
-            delay: None,
-            buf: None,
+            state: State::Ready,
         }
     }
 }
@@ -361,91 +369,66 @@ impl Stream for RateLimitedRelayedStream {
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
         loop {
-            trace!("loop tick");
-            // If we have a delay installed, we need to await it.
-            if let Some(ref mut wait_fut) = self.delay {
-                trace!("polling delay future");
-                match Pin::new(wait_fut).poll(cx) {
-                    Poll::Ready(_) => {
-                        trace!("delay future ready");
-                        self.delay.take();
-                        // This future has already consumed the quota from the rate-limiter.
-                        // So we must yield the buffered item right away.
-                        match self.buf.take() {
-                            Some(item) => return Poll::Ready(Some(item)),
-                            None => continue, // unreachable
-                        }
-                    }
-                    Poll::Pending => return Poll::Pending,
-                }
-            }
-            // If we have an item buffered, check if we can yield it.
-            if let Some(ref item) = self.buf {
-                match item {
-                    Err(_) => {
-                        trace!("error items are always yielded");
-                        // Yielding errors is not rate-limited.
-                        match self.buf.take() {
-                            Some(item) => return Poll::Ready(Some(item)),
-                            None => continue, // unreachable
-                        }
-                    }
-                    Ok(frame) => {
-                        // First we need to know how many bytes this frame consumes.
-                        let Ok(frame_len) = TryInto::<u32>::try_into(frame.len_with_header())
-                            .and_then(TryInto::<NonZeroU32>::try_into)
-                        else {
-                            error!("frame len not NonZeroU32, is MAX_FRAME_SIZE too large?");
-                            // Let this frame through anyway so to not completely break.
-                            match self.buf.take() {
-                                Some(item) => return Poll::Ready(Some(item)),
-                                None => continue, // unreachable
-                            }
-                        };
-                        trace!("checking frame of size {frame_len}");
+            match &mut self.state {
+                State::Ready => {
+                    // Poll inner for a new item.
+                    match Pin::new(&mut self.inner).poll_next(cx) {
+                        Poll::Ready(Some(item)) => {
+                            match &item {
+                                Ok(frame) => {
+                                    // How many bytes does this frame consume?
+                                    let Ok(frame_len) =
+                                        TryInto::<u32>::try_into(frame.len_with_header())
+                                            .and_then(TryInto::<NonZeroU32>::try_into)
+                                    else {
+                                        error!("frame len not NonZeroU32, is MAX_FRAME_SIZE too large?");
+                                        // Let this frame through so to not completely break.
+                                        return Poll::Ready(Some(item));
+                                    };
 
-                        // Now check the rate limiter.
-                        match self.limiter.check_n(frame_len) {
-                            Ok(Ok(_)) => {
-                                // Item not rate-limited, yield it.
-                                trace!("frame can be yielded");
-                                match self.buf.take() {
-                                    Some(frame) => return Poll::Ready(Some(frame)),
-                                    None => continue, // unreachable
+                                    match self.limiter.check_n(frame_len) {
+                                        Ok(Ok(_)) => return Poll::Ready(Some(item)),
+                                        Ok(Err(_)) => {
+                                            // Item is rate-limited.
+                                            let limiter = self.limiter.clone();
+                                            let delay = Box::pin(async move {
+                                                limiter.until_n_ready(frame_len).await.ok();
+                                            });
+                                            self.state = State::Blocked { delay, item };
+                                            continue;
+                                        }
+                                        Err(_insufficient_capacity) => {
+                                            error!("frame larger than bucket capacity");
+                                            // Let this frame through so to not completely break.
+                                            return Poll::Ready(Some(item));
+                                        }
+                                    }
                                 }
-                            }
-                            Ok(Err(_until)) => {
-                                // Item is rate-limited, install a delay future.
-                                trace!("frame is rate-limited, delay for {frame_len}");
-                                let limiter = self.limiter.clone();
-                                let fut = async move {
-                                    limiter.until_n_ready(frame_len).await.ok();
-                                };
-                                self.delay = Some(Box::pin(fut));
-                                continue;
-                            }
-                            Err(_insufficient_capacity) => {
-                                error!("frame larger than bucket capacity, accepting frame");
-                                // Let this frame through since this is misconfigured.
-                                match self.buf.take() {
-                                    Some(item) => return Poll::Ready(Some(item)),
-                                    None => continue, // unreachable
+                                Err(_) => {
+                                    // Yielding errors is not rate-limited.
+                                    return Poll::Ready(Some(item));
                                 }
                             }
                         }
+                        Poll::Ready(None) => return Poll::Ready(None),
+                        Poll::Pending => return Poll::Pending,
                     }
                 }
-            }
-            // If we have neither a delay future or a buffered item, poll for a new item.
-            trace!("polling inner");
-            match Pin::new(&mut self.inner).poll_next(cx) {
-                Poll::Ready(Some(item)) => {
-                    trace!("inner yielded item");
-                    self.buf = Some(item);
-                    continue;
+                State::Blocked { delay, .. } => {
+                    match delay.poll(cx) {
+                        Poll::Ready(_) => {
+                            match std::mem::replace(&mut self.state, State::Ready) {
+                                State::Ready => continue, // unreachable
+                                State::Blocked { item, .. } => {
+                                    // Yield the item directly, rate-limit has already been
+                                    // accounted for by awaiting the future.
+                                    return Poll::Ready(Some(item));
+                                }
+                            }
+                        }
+                        Poll::Pending => return Poll::Pending,
+                    }
                 }
-                Poll::Ready(None) => return Poll::Ready(None),
-                Poll::Pending => return Poll::Pending,
             }
         }
     }
