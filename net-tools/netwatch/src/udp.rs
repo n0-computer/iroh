@@ -416,10 +416,9 @@ impl UdpSocket {
     /// Whether transmitted datagrams might get fragmented by the IP layer
     ///
     /// Returns `false` on targets which employ e.g. the `IPV6_DONTFRAG` socket option.
-    pub fn may_fragment(&self) -> std::io::Result<bool> {
+    pub fn may_fragment(&self) -> bool {
         let guard = self.socket.read().unwrap();
-        let (_, state) = guard.try_get_connected()?;
-        Ok(state.may_fragment())
+        guard.may_fragment()
     }
 
     /// The maximum amount of segments which can be transmitted if a platform
@@ -427,20 +426,18 @@ impl UdpSocket {
     ///
     /// This is 1 if the platform doesn't support GSO. Subject to change if errors are detected
     /// while using GSO.
-    pub fn max_gso_segments(&self) -> std::io::Result<usize> {
+    pub fn max_gso_segments(&self) -> usize {
         let guard = self.socket.read().unwrap();
-        let (_, state) = guard.try_get_connected()?;
-        Ok(state.max_gso_segments())
+        guard.max_gso_segments()
     }
 
     /// The number of segments to read when GRO is enabled. Used as a factor to
     /// compute the receive buffer size.
     ///
     /// Returns 1 if the platform doesn't support GRO.
-    pub fn gro_segments(&self) -> std::io::Result<usize> {
+    pub fn gro_segments(&self) -> usize {
         let guard = self.socket.read().unwrap();
-        let (_, state) = guard.try_get_connected()?;
-        Ok(state.gro_segments())
+        guard.gro_segments()
     }
 }
 
@@ -652,7 +649,11 @@ enum SocketState {
         /// The addr we are binding to.
         addr: SocketAddr,
     },
-    Closed,
+    Closed {
+        last_max_gso_segments: usize,
+        last_gro_segments: usize,
+        last_may_fragment: bool,
+    },
 }
 
 impl SocketState {
@@ -665,7 +666,7 @@ impl SocketState {
                 state,
                 addr: _,
             } => Ok((socket, state)),
-            Self::Closed => {
+            Self::Closed { .. } => {
                 warn!("socket closed");
                 Err(std::io::Error::new(
                     std::io::ErrorKind::BrokenPipe,
@@ -734,28 +735,73 @@ impl SocketState {
     }
 
     fn rebind(&mut self) -> Result<()> {
-        let addr = match self {
-            Self::Connected { addr, .. } => *addr,
-            Self::Closed => {
+        let (addr, closed_state) = match self {
+            Self::Connected { state, addr, .. } => {
+                let s = SocketState::Closed {
+                    last_max_gso_segments: state.max_gso_segments(),
+                    last_gro_segments: state.gro_segments(),
+                    last_may_fragment: state.may_fragment(),
+                };
+                (*addr, s)
+            }
+            Self::Closed { .. } => {
                 bail!("socket is closed and cannot be rebound");
             }
         };
         debug!("rebinding {}", addr);
 
-        *self = SocketState::Closed;
+        *self = closed_state;
         *self = Self::bind(addr)?;
 
         Ok(())
     }
 
     fn is_closed(&self) -> bool {
-        matches!(self, Self::Closed)
+        matches!(self, Self::Closed { .. })
     }
 
     fn close(&mut self) -> Option<(tokio::net::UdpSocket, quinn_udp::UdpSocketState)> {
-        match std::mem::replace(self, SocketState::Closed) {
-            Self::Connected { socket, state, .. } => Some((socket, state)),
-            Self::Closed => None,
+        match self {
+            Self::Connected { state, .. } => {
+                let s = SocketState::Closed {
+                    last_max_gso_segments: state.max_gso_segments(),
+                    last_gro_segments: state.gro_segments(),
+                    last_may_fragment: state.may_fragment(),
+                };
+                let Self::Connected { socket, state, .. } = std::mem::replace(self, s) else {
+                    unreachable!("just checked");
+                };
+                Some((socket, state))
+            }
+            Self::Closed { .. } => None,
+        }
+    }
+
+    fn may_fragment(&self) -> bool {
+        match self {
+            Self::Connected { state, .. } => state.may_fragment(),
+            Self::Closed {
+                last_may_fragment, ..
+            } => *last_may_fragment,
+        }
+    }
+
+    fn max_gso_segments(&self) -> usize {
+        match self {
+            Self::Connected { state, .. } => state.max_gso_segments(),
+            Self::Closed {
+                last_max_gso_segments,
+                ..
+            } => *last_max_gso_segments,
+        }
+    }
+
+    fn gro_segments(&self) -> usize {
+        match self {
+            Self::Connected { state, .. } => state.gro_segments(),
+            Self::Closed {
+                last_gro_segments, ..
+            } => *last_gro_segments,
         }
     }
 }
