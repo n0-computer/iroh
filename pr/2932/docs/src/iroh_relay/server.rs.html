@@ -1035,18 +1035,6 @@
 <a href="#1035" id="1035">1035</a>
 <a href="#1036" id="1036">1036</a>
 <a href="#1037" id="1037">1037</a>
-<a href="#1038" id="1038">1038</a>
-<a href="#1039" id="1039">1039</a>
-<a href="#1040" id="1040">1040</a>
-<a href="#1041" id="1041">1041</a>
-<a href="#1042" id="1042">1042</a>
-<a href="#1043" id="1043">1043</a>
-<a href="#1044" id="1044">1044</a>
-<a href="#1045" id="1045">1045</a>
-<a href="#1046" id="1046">1046</a>
-<a href="#1047" id="1047">1047</a>
-<a href="#1048" id="1048">1048</a>
-<a href="#1049" id="1049">1049</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
@@ -1756,11 +1744,8 @@
     };
 
     <span class="kw">async fn </span>spawn_local_relay() -&gt; <span class="prelude-ty">Result</span>&lt;Server&gt; {
-        <span class="attr">#[derive(Debug)]
-        </span><span class="kw">struct </span>Stub;
-
-        Server::spawn(ServerConfig::&lt;Stub, Stub&gt; {
-            relay: <span class="prelude-val">Some</span>(RelayConfig::&lt;Stub, Stub&gt; {
+        Server::spawn(ServerConfig::&lt;(), ()&gt; {
+            relay: <span class="prelude-val">Some</span>(RelayConfig::&lt;(), ()&gt; {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
                 tls: <span class="prelude-val">None</span>,
                 limits: Default::default(),
@@ -1773,11 +1758,8 @@
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_no_services() {
-        <span class="attr">#[derive(Default, Debug)]
-        </span><span class="kw">struct </span>Stub;
-
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
-        <span class="kw">let </span><span class="kw-2">mut </span>server = Server::spawn(ServerConfig::&lt;Stub, Stub&gt;::default())
+        <span class="kw">let </span><span class="kw-2">mut </span>server = Server::spawn(ServerConfig::&lt;(), ()&gt;::default())
             .<span class="kw">await
             </span>.unwrap();
         <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), server.task_handle())
@@ -1789,11 +1771,8 @@
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_conflicting_bind() {
-        <span class="attr">#[derive(Debug)]
-        </span><span class="kw">struct </span>Stub;
-
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
-        <span class="kw">let </span><span class="kw-2">mut </span>server = Server::spawn(ServerConfig::&lt;Stub, Stub&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>server = Server::spawn(ServerConfig::&lt;(), ()&gt; {
             relay: <span class="prelude-val">Some</span>(RelayConfig {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">1234</span>).into(),
                 tls: <span class="prelude-val">None</span>,
@@ -2064,11 +2043,8 @@
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_stun() {
-        <span class="attr">#[derive(Debug)]
-        </span><span class="kw">struct </span>Stub;
-
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
-        <span class="kw">let </span>server = Server::spawn(ServerConfig::&lt;Stub, Stub&gt; {
+        <span class="kw">let </span>server = Server::spawn(ServerConfig::&lt;(), ()&gt; {
             relay: <span class="prelude-val">None</span>,
             stun: <span class="prelude-val">Some</span>(StunConfig {
                 bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),

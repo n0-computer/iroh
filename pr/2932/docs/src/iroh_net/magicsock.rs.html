@@ -3907,6 +3907,44 @@
 <a href="#3907" id="3907">3907</a>
 <a href="#3908" id="3908">3908</a>
 <a href="#3909" id="3909">3909</a>
+<a href="#3910" id="3910">3910</a>
+<a href="#3911" id="3911">3911</a>
+<a href="#3912" id="3912">3912</a>
+<a href="#3913" id="3913">3913</a>
+<a href="#3914" id="3914">3914</a>
+<a href="#3915" id="3915">3915</a>
+<a href="#3916" id="3916">3916</a>
+<a href="#3917" id="3917">3917</a>
+<a href="#3918" id="3918">3918</a>
+<a href="#3919" id="3919">3919</a>
+<a href="#3920" id="3920">3920</a>
+<a href="#3921" id="3921">3921</a>
+<a href="#3922" id="3922">3922</a>
+<a href="#3923" id="3923">3923</a>
+<a href="#3924" id="3924">3924</a>
+<a href="#3925" id="3925">3925</a>
+<a href="#3926" id="3926">3926</a>
+<a href="#3927" id="3927">3927</a>
+<a href="#3928" id="3928">3928</a>
+<a href="#3929" id="3929">3929</a>
+<a href="#3930" id="3930">3930</a>
+<a href="#3931" id="3931">3931</a>
+<a href="#3932" id="3932">3932</a>
+<a href="#3933" id="3933">3933</a>
+<a href="#3934" id="3934">3934</a>
+<a href="#3935" id="3935">3935</a>
+<a href="#3936" id="3936">3936</a>
+<a href="#3937" id="3937">3937</a>
+<a href="#3938" id="3938">3938</a>
+<a href="#3939" id="3939">3939</a>
+<a href="#3940" id="3940">3940</a>
+<a href="#3941" id="3941">3941</a>
+<a href="#3942" id="3942">3942</a>
+<a href="#3943" id="3943">3943</a>
+<a href="#3944" id="3944">3944</a>
+<a href="#3945" id="3945">3945</a>
+<a href="#3946" id="3946">3946</a>
+<a href="#3947" id="3947">3947</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -3945,7 +3983,7 @@
 <span class="kw">use </span>iroh_base::key::NodeId;
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>iroh_relay::protos::stun;
-<span class="kw">use </span>netwatch::{interfaces, ip::LocalAddresses, netmon};
+<span class="kw">use </span>netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 <span class="kw">use </span>quinn::AsyncUdpSocket;
 <span class="kw">use </span>rand::{seq::SliceRandom, Rng, SeedableRng};
 <span class="kw">use </span>smallvec::{smallvec, SmallVec};
@@ -4350,11 +4388,8 @@
         // Right now however we have one single poller behaving the same for each
         // connection.  It checks all paths and returns Poll::Ready as soon as any path is
         // ready.
-        </span><span class="kw">let </span>ipv4_poller = Arc::new(<span class="self">self</span>.pconn4.clone()).create_io_poller();
-        <span class="kw">let </span>ipv6_poller = <span class="self">self
-            </span>.pconn6
-            .as_ref()
-            .map(|sock| Arc::new(sock.clone()).create_io_poller());
+        </span><span class="kw">let </span>ipv4_poller = <span class="self">self</span>.pconn4.create_io_poller();
+        <span class="kw">let </span>ipv6_poller = <span class="self">self</span>.pconn6.as_ref().map(|sock| sock.create_io_poller());
         <span class="kw">let </span>relay_sender = <span class="self">self</span>.relay_actor_sender.clone();
         Box::pin(IoPoller {
             ipv4_poller,
@@ -5000,10 +5035,9 @@
                     <span class="prelude-val">Err</span>(err) <span class="kw">if </span>err.kind() == io::ErrorKind::WouldBlock =&gt; {
                         <span class="comment">// This is the socket .try_send_disco_message_udp used.
                         </span><span class="kw">let </span>sock = <span class="self">self</span>.conn_for_addr(dst)<span class="question-mark">?</span>;
-                        <span class="kw">let </span>sock = Arc::new(sock.clone());
-                        <span class="kw">let </span><span class="kw-2">mut </span>poller = sock.create_io_poller();
-                        <span class="kw">match </span>poller.as_mut().poll_writable(cx)<span class="question-mark">? </span>{
-                            Poll::Ready(()) =&gt; <span class="kw">continue</span>,
+                        <span class="kw">match </span>sock.as_socket_ref().poll_writable(cx) {
+                            Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; <span class="kw">continue</span>,
+                            Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err)),
                             Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
                         }
                     }
@@ -5317,6 +5351,9 @@
         <span class="kw">let </span>net_reporter =
             net_report::Client::new(<span class="prelude-val">Some</span>(port_mapper.clone()), dns_resolver.clone())<span class="question-mark">?</span>;
 
+        <span class="kw">let </span>pconn4_sock = pconn4.as_socket();
+        <span class="kw">let </span>pconn6_sock = pconn6.as_ref().map(|p| p.as_socket());
+
         <span class="kw">let </span>(actor_sender, actor_receiver) = mpsc::channel(<span class="number">256</span>);
         <span class="kw">let </span>(relay_actor_sender, relay_actor_receiver) = mpsc::channel(<span class="number">256</span>);
         <span class="kw">let </span>(udp_disco_sender, <span class="kw-2">mut </span>udp_disco_receiver) = mpsc::channel(<span class="number">256</span>);
@@ -5340,9 +5377,9 @@
             ipv6_reported: Arc::new(AtomicBool::new(<span class="bool-val">false</span>)),
             relay_map,
             my_relay: Default::default(),
-            pconn4: pconn4.clone(),
-            pconn6: pconn6.clone(),
             net_reporter: net_reporter.addr(),
+            pconn4,
+            pconn6,
             disco_secrets: DiscoSecrets::default(),
             node_map,
             relay_actor_sender: relay_actor_sender.clone(),
@@ -5390,8 +5427,8 @@
                     periodic_re_stun_timer: new_re_stun_timer(<span class="bool-val">false</span>),
                     net_info_last: <span class="prelude-val">None</span>,
                     port_mapper,
-                    pconn4,
-                    pconn6,
+                    pconn4: pconn4_sock,
+                    pconn6: pconn6_sock,
                     no_v4_send: <span class="bool-val">false</span>,
                     net_reporter,
                     network_monitor,
@@ -5629,8 +5666,8 @@
     </span>net_info_last: <span class="prelude-ty">Option</span>&lt;NetInfo&gt;,
 
     <span class="comment">// The underlying UDP sockets used to send/rcv packets.
-    </span>pconn4: UdpConn,
-    pconn6: <span class="prelude-ty">Option</span>&lt;UdpConn&gt;,
+    </span>pconn4: Arc&lt;UdpSocket&gt;,
+    pconn6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
 
     <span class="doccomment">/// The NAT-PMP/PCP/UPnP prober/client, for requesting port mappings from NAT devices.
     </span>port_mapper: portmapper::Client,
@@ -5770,6 +5807,14 @@
         <span class="macro">debug!</span>(<span class="string">"link change detected: major? {}"</span>, is_major);
 
         <span class="kw">if </span>is_major {
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.pconn4.rebind() {
+                <span class="macro">warn!</span>(<span class="string">"failed to rebind Udp IPv4 socket: {:?}"</span>, err);
+            };
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>pconn6) = <span class="self">self</span>.pconn6 {
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = pconn6.rebind() {
+                    <span class="macro">warn!</span>(<span class="string">"failed to rebind Udp IPv6 socket: {:?}"</span>, err);
+                };
+            }
             <span class="self">self</span>.msock.dns_resolver.clear_cache();
             <span class="self">self</span>.msock.re_stun(<span class="string">"link-change-major"</span>);
             <span class="self">self</span>.close_stale_relay_connections().<span class="kw">await</span>;
@@ -5801,14 +5846,6 @@
                 <span class="self">self</span>.msock.node_map.notify_shutdown();
                 <span class="self">self</span>.port_mapper.deactivate();
                 <span class="self">self</span>.relay_actor_cancel_token.cancel();
-
-                <span class="comment">// Ignore errors from pconnN
-                // They will frequently have been closed already by a call to connBind.Close.
-                </span><span class="macro">debug!</span>(<span class="string">"stopping connections"</span>);
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>conn) = <span class="self">self</span>.pconn6 {
-                    conn.close().<span class="kw">await</span>.ok();
-                }
-                <span class="self">self</span>.pconn4.close().<span class="kw">await</span>.ok();
 
                 <span class="macro">debug!</span>(<span class="string">"shutdown complete"</span>);
                 <span class="kw">return </span><span class="bool-val">true</span>;
@@ -6115,8 +6152,8 @@
         }
 
         <span class="kw">let </span>relay_map = <span class="self">self</span>.msock.relay_map.clone();
-        <span class="kw">let </span>pconn4 = <span class="prelude-val">Some</span>(<span class="self">self</span>.pconn4.as_socket());
-        <span class="kw">let </span>pconn6 = <span class="self">self</span>.pconn6.as_ref().map(|p| p.as_socket());
+        <span class="kw">let </span>pconn4 = <span class="prelude-val">Some</span>(<span class="self">self</span>.pconn4.clone());
+        <span class="kw">let </span>pconn6 = <span class="self">self</span>.pconn6.clone();
 
         <span class="macro">debug!</span>(<span class="string">"requesting net_report report"</span>);
         <span class="kw">match </span><span class="self">self
@@ -7004,6 +7041,45 @@
             run_roundtrip(m1.clone(), m2.clone(), <span class="kw-2">&amp;</span>data).<span class="kw">await</span>;
             run_roundtrip(m2.clone(), m1.clone(), <span class="kw-2">&amp;</span>data).<span class="kw">await</span>;
         }
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_regression_network_change_rebind_wakes_connection_driver(
+    ) -&gt; testresult::TestResult {
+        <span class="kw">let _ </span>= iroh_test::logging::setup();
+        <span class="kw">let </span>m1 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>m2 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="macro">println!</span>(<span class="string">"Net change"</span>);
+        m1.endpoint.magic_sock().force_network_change(<span class="bool-val">true</span>).<span class="kw">await</span>;
+        tokio::time::sleep(Duration::from_secs(<span class="number">1</span>)).<span class="kw">await</span>; <span class="comment">// wait for socket rebinding
+
+        </span><span class="kw">let </span>_guard = mesh_stacks(<span class="macro">vec!</span>[m1.clone(), m2.clone()]).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>_handle = AbortOnDropHandle::new(tokio::spawn({
+            <span class="kw">let </span>endpoint = m2.endpoint.clone();
+            <span class="kw">async move </span>{
+                <span class="kw">while let </span><span class="prelude-val">Some</span>(incoming) = endpoint.accept().<span class="kw">await </span>{
+                    <span class="macro">println!</span>(<span class="string">"Incoming first conn!"</span>);
+                    <span class="kw">let </span>conn = incoming.<span class="kw">await</span><span class="question-mark">?</span>;
+                    conn.closed().<span class="kw">await</span>;
+                }
+
+                testresult::TestResult::Ok(())
+            }
+        }));
+
+        <span class="macro">println!</span>(<span class="string">"first conn!"</span>);
+        <span class="kw">let </span>conn = m1
+            .endpoint
+            .connect(m2.endpoint.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, ALPN)
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">println!</span>(<span class="string">"Closing first conn"</span>);
+        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"bye lolz"</span>);
+        conn.closed().<span class="kw">await</span>;
+        <span class="macro">println!</span>(<span class="string">"Closed first conn"</span>);
 
         <span class="prelude-val">Ok</span>(())
     }
