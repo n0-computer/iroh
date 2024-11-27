@@ -785,6 +785,7 @@
 <a href="#785" id="785">785</a>
 <a href="#786" id="786">786</a>
 <a href="#787" id="787">787</a>
+<a href="#788" id="788">788</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
@@ -1175,10 +1176,11 @@
         <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
         cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;,
     ) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
-        <span class="kw">let </span><span class="prelude-val">Some</span>(limiter) = <span class="self">self</span>.limiter.clone() <span class="kw">else </span>{
+        <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>limiter) = <span class="self">self</span>.limiter <span class="kw">else </span>{
             <span class="comment">// If there is no rate-limiter directly poll the inner.
             </span><span class="kw">return </span>Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner).poll_next(cx);
         };
+        <span class="kw">let </span>limiter = limiter.clone();
         <span class="kw">loop </span>{
             <span class="kw">match </span><span class="kw-2">&amp;mut </span><span class="self">self</span>.state {
                 State::Ready =&gt; {
