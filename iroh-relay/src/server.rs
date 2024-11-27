@@ -148,33 +148,16 @@ pub struct Limits {
     /// Burst limit for accepting new connection. Unlimited if not set.
     pub accept_conn_burst: Option<usize>,
     /// Rate limits for incoming traffic from a client connection.
-    pub client_rx: ClientConnRateLimit,
+    pub client_rx: Option<ClientConnRateLimit>,
 }
 
 /// Per-client rate limit configuration.
 #[derive(Debug, Copy, Clone)]
 pub struct ClientConnRateLimit {
     /// Max number of bytes per second to read from the client connection.
-    ///
-    /// Defaults to [`NonZeroU32::MAX`], effectively unlimited.
     pub bytes_per_second: NonZeroU32,
     /// Max number of bytes to read in a single burst.
-    ///
-    /// Defaults to [`NonZeroU32::MAX`], effectively unlimited.
-    pub max_burst_bytes: NonZeroU32,
-}
-
-impl ClientConnRateLimit {
-    pub(super) const MAX: ClientConnRateLimit = ClientConnRateLimit {
-        bytes_per_second: NonZeroU32::MAX,
-        max_burst_bytes: NonZeroU32::MAX,
-    };
-}
-
-impl Default for ClientConnRateLimit {
-    fn default() -> Self {
-        Self::MAX
-    }
+    pub max_burst_bytes: Option<NonZeroU32>,
 }
 
 /// TLS certificate configuration.
@@ -284,12 +267,14 @@ impl Server {
                     None => relay_config.http_bind_addr,
                 };
                 let mut builder = http_server::ServerBuilder::new(relay_bind_addr)
-                    .client_rx_ratelimit(relay_config.limits.client_rx)
                     .headers(headers)
                     .request_handler(Method::GET, "/", Box::new(root_handler))
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
                     .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
                     .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler));
+                if let Some(cfg) = relay_config.limits.client_rx {
+                    builder = builder.client_rx_ratelimit(cfg);
+                }
                 let http_addr = match relay_config.tls {
                     Some(tls_config) => {
                         let server_config = rustls::ServerConfig::builder_with_provider(Arc::new(

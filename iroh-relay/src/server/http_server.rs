@@ -160,7 +160,7 @@ pub(super) struct ServerBuilder {
     ///
     /// Rate-limiting is enforced on received traffic from individual clients.  This
     /// configuration applies to a single client connection.
-    client_rx_ratelimit: ClientConnRateLimit,
+    client_rx_ratelimit: Option<ClientConnRateLimit>,
 }
 
 impl ServerBuilder {
@@ -171,7 +171,7 @@ impl ServerBuilder {
             tls_config: None,
             handlers: Default::default(),
             headers: HeaderMap::new(),
-            client_rx_ratelimit: ClientConnRateLimit::MAX,
+            client_rx_ratelimit: None,
         }
     }
 
@@ -184,9 +184,9 @@ impl ServerBuilder {
     /// Sets the per-client rate-limit configuration for incoming data.
     ///
     /// On each client connection the incoming data is rate-limited.  By default
-    /// [`ClientConnRateLimit::MAX`] is enforced.
+    /// no rate limit is enforced.
     pub(super) fn client_rx_ratelimit(mut self, config: ClientConnRateLimit) -> Self {
-        self.client_rx_ratelimit = config;
+        self.client_rx_ratelimit = Some(config);
         self
     }
 
@@ -299,7 +299,7 @@ struct Inner {
     headers: HeaderMap,
     server_channel: mpsc::Sender<Message>,
     write_timeout: Duration,
-    rate_limit: ClientConnRateLimit,
+    rate_limit: Option<ClientConnRateLimit>,
 }
 
 impl RelayService {
@@ -547,7 +547,7 @@ impl RelayService {
         headers: HeaderMap,
         server_channel: mpsc::Sender<Message>,
         write_timeout: Duration,
-        rate_limit: ClientConnRateLimit,
+        rate_limit: Option<ClientConnRateLimit>,
     ) -> Self {
         Self(Arc::new(Inner {
             handlers,
@@ -916,7 +916,7 @@ mod tests {
             Default::default(),
             server_task.server_channel.clone(),
             server_task.write_timeout,
-            ClientConnRateLimit::MAX,
+            None,
         );
 
         // create client a and connect it to the server
@@ -996,7 +996,7 @@ mod tests {
             Default::default(),
             server_task.server_channel.clone(),
             server_task.write_timeout,
-            ClientConnRateLimit::MAX,
+            None,
         );
 
         // create client a and connect it to the server

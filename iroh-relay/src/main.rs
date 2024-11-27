@@ -5,7 +5,6 @@
 
 use std::{
     net::{Ipv6Addr, SocketAddr},
-    num::NonZeroU32,
     path::{Path, PathBuf},
 };
 
@@ -411,20 +410,25 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
         Some(ref limits) => {
             let client_rx = match &limits.client {
                 Some(PerClientRateLimitConfig { rx: Some(rx) }) => {
-                    let mut cfg = ClientConnRateLimit::default();
-                    if let Some(bps) = rx.bytes_per_second {
-                        let v = NonZeroU32::try_from(bps)
-                            .context("bytes_per_second must be non-zero u32")?;
-                        cfg.bytes_per_second = v;
+                    if rx.bytes_per_second.is_none() && rx.max_burst_bytes.is_some() {
+                        bail!("bytes_per_seconds must be specified to enable the rate-limiter");
                     }
-                    if let Some(burst) = rx.max_burst_bytes {
-                        let v = NonZeroU32::try_from(burst)
-                            .context("max_burst_bytes must be non-zero u32")?;
-                        cfg.max_burst_bytes = v;
+                    match rx.bytes_per_second {
+                        Some(bps) => Some(ClientConnRateLimit {
+                            bytes_per_second: bps
+                                .try_into()
+                                .context("bytes_per_second must be non-zero u32")?,
+                            max_burst_bytes: rx
+                                .max_burst_bytes
+                                .map(|v| {
+                                    v.try_into().context("max_burst_bytes must be non-zero u32")
+                                })
+                                .transpose()?,
+                        }),
+                        None => None,
                     }
-                    cfg
                 }
-                Some(PerClientRateLimitConfig { rx: None }) | None => Default::default(),
+                Some(PerClientRateLimitConfig { rx: None }) | None => None,
             };
             relay::Limits {
                 accept_conn_limit: limits.accept_conn_limit,
@@ -500,6 +504,8 @@ mod metrics {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU32;
+
     use testresult::TestResult;
 
     use super::*;
@@ -516,12 +522,12 @@ mod tests {
 
         let relay = relay_config.relay.expect("no relay config");
         assert_eq!(
-            relay.limits.client_rx.bytes_per_second,
+            relay.limits.client_rx.expect("ratelimit").bytes_per_second,
             NonZeroU32::try_from(400).unwrap()
         );
         assert_eq!(
-            relay.limits.client_rx.max_burst_bytes,
-            NonZeroU32::try_from(800).unwrap()
+            relay.limits.client_rx.expect("ratelimit").max_burst_bytes,
+            Some(NonZeroU32::try_from(800).unwrap())
         );
 
         Ok(())
@@ -533,8 +539,7 @@ mod tests {
         let relay_config = build_relay_config(config).await?;
 
         let relay = relay_config.relay.expect("no relay config");
-        assert_eq!(relay.limits.client_rx.bytes_per_second, NonZeroU32::MAX);
-        assert_eq!(relay.limits.client_rx.max_burst_bytes, NonZeroU32::MAX);
+        assert!(relay.limits.client_rx.is_none());
 
         Ok(())
     }

@@ -33,7 +33,7 @@ pub(super) struct ClientConnConfig {
     pub(super) stream: RelayedStream,
     pub(super) write_timeout: Duration,
     pub(super) channel_capacity: usize,
-    pub(super) rate_limit: ClientConnRateLimit,
+    pub(super) rate_limit: Option<ClientConnRateLimit>,
     pub(super) server_channel: mpsc::Sender<actor::Message>,
 }
 
@@ -69,13 +69,17 @@ impl ClientConn {
             stream: io,
             write_timeout,
             channel_capacity,
-            rate_limit: rate_limit_config,
+            rate_limit,
             server_channel,
         } = config;
 
-        let quota = governor::Quota::per_second(rate_limit_config.bytes_per_second)
-            .allow_burst(rate_limit_config.max_burst_bytes);
-        let rate_limiter = governor::RateLimiter::direct(quota);
+        let rate_limiter = rate_limit.map(|cfg| {
+            let mut quota = governor::Quota::per_second(cfg.bytes_per_second);
+            if let Some(max_burst) = cfg.max_burst_bytes {
+                quota = quota.allow_burst(max_burst);
+            }
+            governor::RateLimiter::direct(quota)
+        });
         let stream = RateLimitedRelayedStream::new(io, rate_limiter);
 
         let done = CancellationToken::new();
@@ -335,7 +339,7 @@ impl Actor {
 #[derive(Debug)]
 struct RateLimitedRelayedStream {
     inner: RelayedStream,
-    limiter: Arc<governor::DefaultDirectRateLimiter>,
+    limiter: Option<Arc<governor::DefaultDirectRateLimiter>>,
     state: State,
     /// Keeps track if this stream was ever rate-limited.
     limited_once: bool,
@@ -354,10 +358,10 @@ enum State {
 }
 
 impl RateLimitedRelayedStream {
-    fn new(inner: RelayedStream, limiter: governor::DefaultDirectRateLimiter) -> Self {
+    fn new(inner: RelayedStream, limiter: Option<governor::DefaultDirectRateLimiter>) -> Self {
         Self {
             inner,
-            limiter: Arc::new(limiter),
+            limiter: limiter.map(Arc::new),
             state: State::Ready,
             limited_once: false,
         }
@@ -384,6 +388,10 @@ impl Stream for RateLimitedRelayedStream {
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
+        let Some(limiter) = self.limiter.clone() else {
+            // If there is no rate-limiter directly poll the inner.
+            return Pin::new(&mut self.inner).poll_next(cx);
+        };
         loop {
             match &mut self.state {
                 State::Ready => {
@@ -402,14 +410,16 @@ impl Stream for RateLimitedRelayedStream {
                                         return Poll::Ready(Some(item));
                                     };
 
-                                    match self.limiter.check_n(frame_len) {
+                                    match limiter.check_n(frame_len) {
                                         Ok(Ok(_)) => return Poll::Ready(Some(item)),
                                         Ok(Err(_)) => {
                                             // Item is rate-limited.
                                             self.record_rate_limited();
-                                            let limiter = self.limiter.clone();
-                                            let delay = Box::pin(async move {
-                                                limiter.until_n_ready(frame_len).await.ok();
+                                            let delay = Box::pin({
+                                                let limiter = limiter.clone();
+                                                async move {
+                                                    limiter.until_n_ready(frame_len).await.ok();
+                                                }
                                             });
                                             self.state = State::Blocked { delay, item };
                                             continue;
@@ -509,12 +519,10 @@ mod tests {
         let (io, io_rw) = tokio::io::duplex(1024);
         let mut io_rw = Framed::new(io_rw, DerpCodec);
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
-        let quota = governor::Quota::per_second(NonZeroU32::MAX);
-        let limiter = governor::RateLimiter::direct(quota);
         let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec));
 
         let actor = Actor {
-            stream: RateLimitedRelayedStream::new(stream, limiter),
+            stream: RateLimitedRelayedStream::new(stream, None),
             timeout: Duration::from_secs(1),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -651,13 +659,11 @@ mod tests {
         let (io, io_rw) = tokio::io::duplex(1024);
         let mut io_rw = Framed::new(io_rw, DerpCodec);
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
-        let quota = governor::Quota::per_second(NonZeroU32::MAX);
-        let limiter = governor::RateLimiter::direct(quota);
         let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec));
 
         println!("-- create client conn");
         let actor = Actor {
-            stream: RateLimitedRelayedStream::new(stream, limiter),
+            stream: RateLimitedRelayedStream::new(stream, None),
             timeout: Duration::from_secs(1),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -733,7 +739,7 @@ mod tests {
         let (io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) as _);
         let mut frame_writer = Framed::new(io_write, DerpCodec);
         let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io_read), DerpCodec));
-        let mut stream = RateLimitedRelayedStream::new(stream, limiter);
+        let mut stream = RateLimitedRelayedStream::new(stream, Some(limiter));
 
         // Prepare a frame to send, assert its size.
         let data = Bytes::from_static(b"hello world!!");
