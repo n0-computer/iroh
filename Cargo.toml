@@ -1,6 +1,5 @@
 [workspace]
 members = [
-  "iroh",
   "iroh-base",
   "iroh-dns-server",
   "iroh-metrics",
@@ -8,7 +7,6 @@ members = [
   "iroh-test",
   "iroh-net/bench",
   "iroh-relay",
-  "iroh-router",
   "net-tools/netwatch",
   "net-tools/portmapper",
   "iroh-net-report",
@@ -54,4 +52,3 @@ iroh-base = { path = "./iroh-base" }
 iroh-net = { path = "./iroh-net" }
 iroh-metrics = { path = "./iroh-metrics" }
 iroh-test = { path = "./iroh-test" }
-iroh-router = { path = "./iroh-router" }

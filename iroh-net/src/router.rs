@@ -1,3 +1,4 @@
+//! TODO(matheus23) docs
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -5,13 +6,16 @@ use futures_util::{
     future::{MapErr, Shared},
     FutureExt, TryFutureExt,
 };
-use iroh_net::Endpoint;
 use tokio::task::{JoinError, JoinSet};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, warn};
 
-use crate::{ProtocolHandler, ProtocolMap};
+use crate::{
+    protocol::{ProtocolHandler, ProtocolMap},
+    Endpoint,
+};
 
+/// TODO(matheus23): docs
 #[derive(Clone, Debug)]
 pub struct Router {
     endpoint: Endpoint,
@@ -29,6 +33,7 @@ pub struct Router {
 type JoinErrToStr = Box<dyn Fn(JoinError) -> String + Send + Sync + 'static>;
 
 impl Router {
+    /// TODO(matheus23): docs
     pub fn builder(endpoint: Endpoint) -> RouterBuilder {
         RouterBuilder::new(endpoint)
     }
@@ -41,10 +46,12 @@ impl Router {
         self.protocols.get_typed(alpn)
     }
 
+    /// TODO(matheus23): docs
     pub fn endpoint(&self) -> &Endpoint {
         &self.endpoint
     }
 
+    /// TODO(matheus23): docs
     pub async fn shutdown(self) -> Result<()> {
         // Trigger shutdown of the main run task by activating the cancel token.
         self.cancel_token.cancel();
@@ -56,6 +63,7 @@ impl Router {
     }
 }
 
+/// TODO(matheus23): docs
 #[derive(Debug)]
 pub struct RouterBuilder {
     endpoint: Endpoint,
@@ -63,6 +71,7 @@ pub struct RouterBuilder {
 }
 
 impl RouterBuilder {
+    /// TODO(matheus23): docs
     pub fn new(endpoint: Endpoint) -> Self {
         Self {
             endpoint,
@@ -70,6 +79,7 @@ impl RouterBuilder {
         }
     }
 
+    /// TODO(matheus23): docs
     pub fn accept(mut self, alpn: impl AsRef<[u8]>, handler: Arc<dyn ProtocolHandler>) -> Self {
         self.protocols.insert(alpn.as_ref().to_vec(), handler);
         self
@@ -88,6 +98,7 @@ impl RouterBuilder {
         self.protocols.get_typed(alpn)
     }
 
+    /// TODO(matheus23): docs
     pub async fn spawn(self) -> Result<Router> {
         // Update the endpoint with our alpns.
         let alpns = self
@@ -187,7 +198,7 @@ async fn shutdown(endpoint: &Endpoint, protocols: Arc<ProtocolMap>) {
     );
 }
 
-async fn handle_connection(incoming: iroh_net::endpoint::Incoming, protocols: Arc<ProtocolMap>) {
+async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<ProtocolMap>) {
     let mut connecting = match incoming.accept() {
         Ok(conn) => conn,
         Err(err) => {

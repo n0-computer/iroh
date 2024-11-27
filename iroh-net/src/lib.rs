@@ -241,6 +241,8 @@ pub mod dns;
 pub mod endpoint;
 mod magicsock;
 pub mod metrics;
+pub mod protocol;
+pub mod router;
 pub mod ticket;
 pub mod tls;
 

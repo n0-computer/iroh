@@ -1,9 +1,11 @@
+//! TODO(matheus23) docs
 use std::{any::Any, collections::BTreeMap, sync::Arc};
 
 use anyhow::Result;
 use futures_buffered::join_all;
 use futures_lite::future::Boxed as BoxedFuture;
-use iroh_net::endpoint::Connecting;
+
+use crate::endpoint::Connecting;
 
 /// Handler for incoming connections.
 ///
@@ -30,6 +32,7 @@ pub trait ProtocolHandler: Send + Sync + IntoArcAny + std::fmt::Debug + 'static 
 ///
 /// This trait has a blanket implementation so there is no need to implement this yourself.
 pub trait IntoArcAny {
+    /// TODO(matheus23): docs
     fn into_arc_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
 }
 

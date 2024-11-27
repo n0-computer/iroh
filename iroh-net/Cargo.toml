@@ -21,7 +21,6 @@ axum = { version = "0.7", optional = true }
 backoff = "0.4.0"
 base64 = "0.22.1"
 bytes = "1.7"
-clap = { version = "4", features = ["derive"], optional = true }
 der = { version = "0.7", features = ["alloc", "derive"] }
 derive_more = { version = "1.0.0", features = [
     "debug",
@@ -102,9 +101,6 @@ tokio-tungstenite = "0.24"
 tokio-tungstenite-wasm = "0.3"
 tokio-util = { version = "0.7", features = ["io-util", "io", "codec", "rt"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = [
-    "env-filter",
-], optional = true }
 url = { version = "2.5", features = ["serde"] }
 watchable = "1.1.2"
 webpki = { package = "rustls-webpki", version = "0.102" }
@@ -122,6 +118,14 @@ swarm-discovery = { version = "0.2.1", optional = true }
 
 # dht_discovery
 genawaiter = { version = "0.99", features = ["futures03"], optional = true }
+
+# Examples
+clap = { version = "4", features = ["derive"], optional = true }
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+], optional = true }
+indicatif = { version = "0.17", features = ["tokio"], optional = true }
+parse-size = { version = "=1.0.0", optional = true } # pinned version to avoid bumping msrv to 1.81
 
 [target.'cfg(all(target_os = "linux", not(target_os = "android")))'.dependencies]
 netlink-packet-core = "0.7.0"
@@ -178,6 +182,12 @@ metrics = ["iroh-metrics/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 discovery-local-network = ["dep:swarm-discovery"]
 discovery-pkarr-dht = ["pkarr/dht", "dep:genawaiter"]
+examples = [
+    "dep:clap",
+    "dep:tracing-subscriber",
+    "dep:indicatif",
+    "dep:parse-size",
+]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -202,3 +212,15 @@ required-features = ["discovery-pkarr-dht"]
 [[example]]
 name = "locally-discovered-nodes"
 required-features = ["discovery-local-network"]
+
+[[example]]
+name = "search"
+required-features = ["examples"]
+
+[[example]]
+name = "echo"
+required-features = ["examples"]
+
+[[example]]
+name = "transfer"
+required-features = ["examples"]
