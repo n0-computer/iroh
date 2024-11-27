@@ -73,14 +73,17 @@ impl ClientConn {
             server_channel,
         } = config;
 
-        let rate_limiter = rate_limit.map(|cfg| {
-            let mut quota = governor::Quota::per_second(cfg.bytes_per_second);
-            if let Some(max_burst) = cfg.max_burst_bytes {
-                quota = quota.allow_burst(max_burst);
+        let stream = match rate_limit {
+            Some(cfg) => {
+                let mut quota = governor::Quota::per_second(cfg.bytes_per_second);
+                if let Some(max_burst) = cfg.max_burst_bytes {
+                    quota = quota.allow_burst(max_burst);
+                }
+                let limiter = governor::RateLimiter::direct(quota);
+                RateLimitedRelayedStream::new(io, limiter)
             }
-            governor::RateLimiter::direct(quota)
-        });
-        let stream = RateLimitedRelayedStream::new(io, rate_limiter);
+            None => RateLimitedRelayedStream::unlimited(io),
+        };
 
         let done = CancellationToken::new();
         let client_id = (key, conn_num);
@@ -358,10 +361,19 @@ enum State {
 }
 
 impl RateLimitedRelayedStream {
-    fn new(inner: RelayedStream, limiter: Option<governor::DefaultDirectRateLimiter>) -> Self {
+    fn new(inner: RelayedStream, limiter: governor::DefaultDirectRateLimiter) -> Self {
         Self {
             inner,
-            limiter: limiter.map(Arc::new),
+            limiter: Some(Arc::new(limiter)),
+            state: State::Ready,
+            limited_once: false,
+        }
+    }
+
+    fn unlimited(inner: RelayedStream) -> Self {
+        Self {
+            inner,
+            limiter: None,
             state: State::Ready,
             limited_once: false,
         }
@@ -523,7 +535,7 @@ mod tests {
         let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec));
 
         let actor = Actor {
-            stream: RateLimitedRelayedStream::new(stream, None),
+            stream: RateLimitedRelayedStream::unlimited(stream),
             timeout: Duration::from_secs(1),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -664,7 +676,7 @@ mod tests {
 
         println!("-- create client conn");
         let actor = Actor {
-            stream: RateLimitedRelayedStream::new(stream, None),
+            stream: RateLimitedRelayedStream::unlimited(stream),
             timeout: Duration::from_secs(1),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -740,7 +752,7 @@ mod tests {
         let (io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) as _);
         let mut frame_writer = Framed::new(io_write, DerpCodec);
         let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io_read), DerpCodec));
-        let mut stream = RateLimitedRelayedStream::new(stream, Some(limiter));
+        let mut stream = RateLimitedRelayedStream::new(stream, limiter);
 
         // Prepare a frame to send, assert its size.
         let data = Bytes::from_static(b"hello world!!");
