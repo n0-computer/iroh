@@ -522,9 +522,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.1.31"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2e7962b54006dcfcc61cb72735f4d89bb97061dd6a7ed882ec6b8ee53714c6f"
+checksum = "fd9de9f2205d5ef3fd67e685b0df337994ddd4495e2a28d185500d0e1edfea47"
 dependencies = [
  "shlex",
 ]
@@ -2512,7 +2512,6 @@ dependencies = [
  "async-channel",
  "bao-tree",
  "bytes",
- "cc",
  "clap",
  "derive_more",
  "futures-buffered",
@@ -2564,7 +2563,6 @@ version = "0.28.0"
 dependencies = [
  "aead",
  "anyhow",
- "cc",
  "crypto_box",
  "data-encoding",
  "derive_more",
@@ -2691,7 +2689,6 @@ dependencies = [
  "backoff",
  "base64",
  "bytes",
- "cc",
  "clap",
  "criterion",
  "crypto_box",
