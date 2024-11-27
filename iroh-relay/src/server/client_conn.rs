@@ -415,7 +415,11 @@ impl Stream for RateLimitedRelayedStream {
                                             continue;
                                         }
                                         Err(_insufficient_capacity) => {
-                                            error!("frame larger than bucket capacity");
+                                            error!(
+                                                "frame larger than bucket capacity: \
+                                                 configuration error: \
+                                                 max_burst_bytes < MAX_FRAME_SIZE?"
+                                            );
                                             // Let this frame through so to not completely break.
                                             return Poll::Ready(Some(item));
                                         }
