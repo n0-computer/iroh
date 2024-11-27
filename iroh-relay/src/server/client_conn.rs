@@ -439,7 +439,7 @@ impl Stream for RateLimitedRelayedStream {
                     match delay.poll(cx) {
                         Poll::Ready(_) => {
                             match std::mem::replace(&mut self.state, State::Ready) {
-                                State::Ready => continue, // unreachable
+                                State::Ready => unreachable!(),
                                 State::Blocked { item, .. } => {
                                     // Yield the item directly, rate-limit has already been
                                     // accounted for by awaiting the future.
