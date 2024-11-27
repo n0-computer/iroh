@@ -17,14 +17,6 @@
 //! macro.
 use serde::{Deserialize, Serialize};
 
-pub mod authors;
-pub mod blobs;
-pub mod docs;
-pub mod gossip;
-pub mod net;
-pub mod node;
-pub mod tags;
-
 /// The RPC service for the iroh provider process.
 #[derive(Debug, Clone)]
 pub struct RpcService;
@@ -34,13 +26,7 @@ pub struct RpcService;
 #[derive(strum::Display, Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions()]
 pub enum Request {
-    Node(node::Request),
-    Net(net::Request),
-    Blobs(blobs::Request),
-    Docs(docs::Request),
-    Tags(tags::Request),
-    Authors(authors::Request),
-    Gossip(gossip::Request),
+    Node(iroh_node_util::rpc::proto::Request),
 }
 
 /// The response enum, listing all possible responses.
@@ -48,13 +34,7 @@ pub enum Request {
 #[derive(Debug, Serialize, Deserialize)]
 #[nested_enum_utils::enum_conversions()]
 pub enum Response {
-    Node(node::Response),
-    Net(net::Response),
-    Blobs(blobs::Response),
-    Tags(tags::Response),
-    Docs(docs::Response),
-    Authors(authors::Response),
-    Gossip(gossip::Response),
+    Node(iroh_node_util::rpc::proto::Response),
 }
 
 impl quic_rpc::Service for RpcService {

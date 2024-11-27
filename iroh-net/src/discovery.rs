@@ -46,11 +46,11 @@
 //! [`PkarrPublisher`] and [`DnsDiscovery`]:
 //!
 //! ```no_run
-//! use iroh_net::discovery::dns::DnsDiscovery;
-//! use iroh_net::discovery::pkarr::PkarrPublisher;
-//! use iroh_net::discovery::ConcurrentDiscovery;
-//! use iroh_net::key::SecretKey;
-//! use iroh_net::Endpoint;
+//! use iroh_net::{
+//!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
+//!     key::SecretKey,
+//!     Endpoint,
+//! };
 //!
 //! # async fn wrapper() -> anyhow::Result<()> {
 //! let secret_key = SecretKey::generate();
@@ -100,12 +100,13 @@
 
 use std::time::Duration;
 
-use crate::{AddrInfo, Endpoint, NodeId};
 use anyhow::{anyhow, ensure, Result};
 use futures_lite::stream::{Boxed as BoxStream, StreamExt};
 use iroh_base::node_addr::NodeAddr;
 use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{debug, error_span, warn, Instrument};
+
+use crate::{AddrInfo, Endpoint, NodeId};
 
 pub mod dns;
 
@@ -113,6 +114,7 @@ pub mod dns;
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "discovery-local-network")))]
 pub mod local_swarm_discovery;
 pub mod pkarr;
+pub mod static_provider;
 
 /// Node discovery for [`super::Endpoint`].
 ///
@@ -157,6 +159,8 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     /// An implementation may choose to defer emitting passively discovered nodes
     /// until the stream is actually polled. To avoid missing discovered nodes,
     /// poll the stream as soon as possible.
+    ///
+    /// If you do not regularly poll the stream, you may miss discovered nodes.
     ///
     /// Any discovery systems that only discover when explicitly resolving a
     /// specific [`NodeId`] do not need to implement this method. Any nodes or
@@ -439,9 +443,8 @@ mod tests {
     use rand::Rng;
     use tokio_util::task::AbortOnDropHandle;
 
-    use crate::{key::SecretKey, relay::RelayMode};
-
     use super::*;
+    use crate::{key::SecretKey, RelayMode};
 
     #[derive(Debug, Clone, Default)]
     struct TestDiscoveryShared {
@@ -733,13 +736,12 @@ mod test_dns_pkarr {
     use crate::{
         discovery::pkarr::PkarrPublisher,
         dns::{node_info::NodeInfo, ResolverExt},
-        relay::{RelayMap, RelayMode},
         test_utils::{
             dns_server::{create_dns_resolver, run_dns_server},
             pkarr_dns_state::State,
             run_relay_server, DnsPkarrServer,
         },
-        AddrInfo, Endpoint, NodeAddr,
+        AddrInfo, Endpoint, NodeAddr, RelayMap, RelayMode,
     };
 
     const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);

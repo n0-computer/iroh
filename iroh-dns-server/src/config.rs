@@ -12,7 +12,7 @@ use tracing::info;
 
 use crate::{
     dns::DnsConfig,
-    http::{CertMode, HttpConfig, HttpsConfig},
+    http::{CertMode, HttpConfig, HttpsConfig, RateLimitConfig},
 };
 
 const DEFAULT_METRICS_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9117);
@@ -43,6 +43,10 @@ pub struct Config {
 
     /// Config for the mainline lookup.
     pub mainline: Option<MainlineConfig>,
+
+    /// Config for pkarr rate limit
+    #[serde(default)]
+    pub pkarr_put_rate_limit: RateLimitConfig,
 }
 
 /// The config for the metrics server.
@@ -185,6 +189,7 @@ impl Default for Config {
             },
             metrics: None,
             mainline: None,
+            pkarr_put_rate_limit: RateLimitConfig::default(),
         }
     }
 }

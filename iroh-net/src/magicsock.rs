@@ -16,14 +16,14 @@
 //! however, read any packets that come off the UDP sockets.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fmt::Display,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
-        Arc,
+        Arc, RwLock,
     },
     task::{Context, Poll, Waker},
     time::{Duration, Instant},
@@ -35,6 +35,8 @@ use futures_lite::{FutureExt, Stream, StreamExt};
 use futures_util::stream::BoxStream;
 use iroh_base::key::NodeId;
 use iroh_metrics::{inc, inc_by};
+use iroh_relay::protos::stun;
+use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use smallvec::{smallvec, SmallVec};
@@ -51,24 +53,20 @@ use tracing::{
 use url::Url;
 use watchable::Watchable;
 
-use crate::{
-    defaults::timeouts::NETCHECK_REPORT_TIMEOUT,
-    disco::{self, SendAddr},
-    discovery::{Discovery, DiscoveryItem},
-    dns::DnsResolver,
-    endpoint::NodeAddr,
-    key::{PublicKey, SecretKey, SharedSecret},
-    net::{interfaces, ip::LocalAddresses, netmon},
-    netcheck, portmapper,
-    relay::{RelayMap, RelayUrl},
-    stun, AddrInfo,
-};
-
 use self::{
     metrics::Metrics as MagicsockMetrics,
     node_map::{NodeMap, PingAction, PingRole, SendPing},
     relay_actor::{RelayActor, RelayActorMessage, RelayReadResult},
     udp_conn::UdpConn,
+};
+use crate::{
+    defaults::timeouts::NET_REPORT_TIMEOUT,
+    disco::{self, CallMeMaybe, SendAddr},
+    discovery::{Discovery, DiscoveryItem},
+    dns::DnsResolver,
+    endpoint::NodeAddr,
+    key::{PublicKey, SecretKey, SharedSecret},
+    AddrInfo, RelayMap, RelayUrl,
 };
 
 mod metrics;
@@ -80,10 +78,9 @@ mod udp_conn;
 pub use node_map::Source;
 
 pub(super) use self::timer::Timer;
-
-pub use self::metrics::Metrics;
-pub use self::node_map::{
-    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, RemoteInfo,
+pub use self::{
+    metrics::Metrics,
+    node_map::{ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, RemoteInfo},
 };
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
@@ -206,7 +203,7 @@ pub(crate) struct MagicSock {
     closing: AtomicBool,
     /// Close was called.
     closed: AtomicBool,
-    /// If the last netcheck report, reports IPv6 to be available.
+    /// If the last net_report report, reports IPv6 to be available.
     ipv6_reported: Arc<AtomicBool>,
 
     /// None (or zero nodes) means relay is disabled.
@@ -219,8 +216,8 @@ pub(crate) struct MagicSock {
     pconn4: UdpConn,
     /// UDP IPv6 socket
     pconn6: Option<UdpConn>,
-    /// Netcheck client
-    net_checker: netcheck::Addr,
+    /// NetReport client
+    net_reporter: net_report::Addr,
     /// The state for an active DiscoKey.
     disco_secrets: DiscoSecrets,
 
@@ -231,7 +228,7 @@ pub(crate) struct MagicSock {
     discovery: Option<Box<dyn Discovery>>,
 
     /// Our discovered direct addresses.
-    direct_addrs: Watchable<DiscoveredDirectAddrs>,
+    direct_addrs: DiscoveredDirectAddrs,
 
     /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
@@ -322,10 +319,7 @@ impl MagicSock {
     /// To get the current direct addresses, drop the stream after the first item was
     /// received.
     pub(crate) fn direct_addresses(&self) -> DirectAddrsStream {
-        DirectAddrsStream {
-            initial: Some(self.direct_addrs.get()),
-            inner: self.direct_addrs.watch().into_stream(),
-        }
+        self.direct_addrs.updates_stream()
     }
 
     /// Watch for changes to the home relay.
@@ -367,11 +361,10 @@ impl MagicSock {
     /// Add addresses for a node to the magic socket's addresbook.
     #[instrument(skip_all, fields(me = %self.me))]
     pub fn add_node_addr(&self, mut addr: NodeAddr, source: node_map::Source) -> Result<()> {
-        let my_addresses = self.direct_addrs.get().addrs;
         let mut pruned = 0;
-        for my_addr in my_addresses.into_iter().map(|ep| ep.addr) {
+        for my_addr in self.direct_addrs.sockaddrs() {
             if addr.info.direct_addresses.remove(&my_addr) {
-                warn!(node_id=addr.node_id.fmt_short(), %my_addr, %source, "not adding our addr for node");
+                warn!( node_id=addr.node_id.fmt_short(), %my_addr, %source, "not adding our addr for node");
                 pruned += 1;
             }
         }
@@ -387,19 +380,15 @@ impl MagicSock {
         }
     }
 
-    /// Updates our direct addresses.
+    /// Stores a new set of direct addresses.
     ///
-    /// On a successful update, our address is published to discovery.
-    pub(super) fn update_direct_addresses(&self, eps: Vec<DirectAddr>) {
-        let updated = self
-            .direct_addrs
-            .update(DiscoveredDirectAddrs::new(eps))
-            .is_ok();
+    /// If the direct addresses have changed from the previous set, they are published to
+    /// discovery.
+    pub(super) fn store_direct_addresses(&self, addrs: BTreeSet<DirectAddr>) {
+        let updated = self.direct_addrs.update(addrs);
         if updated {
-            let direct_addrs = self.direct_addrs.read();
-            direct_addrs.log_direct_addrs_change();
             self.node_map
-                .on_direct_addr_discovered(direct_addrs.iter().map(|addr| addr.addr));
+                .on_direct_addr_discovered(self.direct_addrs.sockaddrs());
             self.publish_my_addr();
         }
     }
@@ -452,11 +441,8 @@ impl MagicSock {
         // Right now however we have one single poller behaving the same for each
         // connection.  It checks all paths and returns Poll::Ready as soon as any path is
         // ready.
-        let ipv4_poller = Arc::new(self.pconn4.clone()).create_io_poller();
-        let ipv6_poller = self
-            .pconn6
-            .as_ref()
-            .map(|sock| Arc::new(sock.clone()).create_io_poller());
+        let ipv4_poller = self.pconn4.create_io_poller();
+        let ipv6_poller = self.pconn6.as_ref().map(|sock| sock.create_io_poller());
         let relay_sender = self.relay_actor_sender.clone();
         Box::pin(IoPoller {
             ipv4_poller,
@@ -727,7 +713,7 @@ impl MagicSock {
                 let packet_is_quic = if stun::is(packet) {
                     trace!(src = %meta.addr, len = %meta.stride, "UDP recv: stun packet");
                     let packet2 = Bytes::copy_from_slice(packet);
-                    self.net_checker.receive_stun_packet(packet2, meta.addr);
+                    self.net_reporter.receive_stun_packet(packet2, meta.addr);
                     false
                 } else if let Some((sender, sealed_box)) = disco::source_and_box(packet) {
                     // Disco?
@@ -1066,17 +1052,21 @@ impl MagicSock {
         Ok(())
     }
 
-    fn send_disco_message_relay(
-        &self,
-        url: &RelayUrl,
-        dst_key: PublicKey,
-        msg: disco::Message,
-    ) -> bool {
-        debug!(node = %dst_key.fmt_short(), %url, %msg, "send disco message (relay)");
-        let pkt = self.encode_disco_message(dst_key, &msg);
+    fn send_disco_message_relay(&self, url: &RelayUrl, dst: NodeId, msg: disco::Message) -> bool {
+        debug!(node = %dst.fmt_short(), %url, %msg, "send disco message (relay)");
+        let pkt = self.encode_disco_message(dst, &msg);
         inc!(MagicsockMetrics, send_disco_relay);
-        match self.try_send_relay(url, dst_key, smallvec![pkt]) {
+        match self.try_send_relay(url, dst, smallvec![pkt]) {
             Ok(()) => {
+                if let disco::Message::CallMeMaybe(CallMeMaybe { ref my_numbers }) = msg {
+                    event!(
+                        target: "events.net.call-me-maybe.sent",
+                        Level::DEBUG,
+                        remote_node = %dst.fmt_short(),
+                        via = ?url,
+                        addrs = ?my_numbers,
+                    );
+                }
                 inc!(MagicsockMetrics, sent_disco_relay);
                 disco_message_sent(&msg);
                 true
@@ -1098,10 +1088,9 @@ impl MagicSock {
                     Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                         // This is the socket .try_send_disco_message_udp used.
                         let sock = self.conn_for_addr(dst)?;
-                        let sock = Arc::new(sock.clone());
-                        let mut poller = sock.create_io_poller();
-                        match poller.as_mut().poll_writable(cx)? {
-                            Poll::Ready(()) => continue,
+                        match sock.as_socket_ref().poll_writable(cx) {
+                            Poll::Ready(Ok(())) => continue,
+                            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
                             Poll::Pending => return Poll::Pending,
                         }
                     }
@@ -1212,7 +1201,7 @@ impl MagicSock {
     }
 
     fn send_queued_call_me_maybes(&self) {
-        let msg = self.direct_addrs.read().to_call_me_maybe_message();
+        let msg = self.direct_addrs.to_call_me_maybe_message();
         let msg = disco::Message::CallMeMaybe(msg);
         for (public_key, url) in self.pending_call_me_maybes.lock().drain() {
             if !self.send_disco_message_relay(&url, public_key, msg.clone()) {
@@ -1221,34 +1210,33 @@ impl MagicSock {
         }
     }
 
+    /// Sends the call-me-maybe DISCO message, queuing if addresses are too stale.
+    ///
+    /// To send the call-me-maybe message, we need to know our current direct addresses.  If
+    /// this information is too stale, the call-me-maybe is queued while a net_report run is
+    /// scheduled.  Once this run finishes, the call-me-maybe will be sent.
     fn send_or_queue_call_me_maybe(&self, url: &RelayUrl, dst_node: NodeId) {
-        let direct_addrs = self.direct_addrs.read();
-        if direct_addrs.fresh_enough() {
-            let addrs: Vec<_> = direct_addrs.iter().collect();
-            event!(
-                target: "events.net.call-me-maybe.sent",
-                Level::DEBUG,
-                remote_node = %dst_node.fmt_short(),
-                via = ?url,
-                ?addrs,
-            );
-            let msg = direct_addrs.to_call_me_maybe_message();
-            let msg = disco::Message::CallMeMaybe(msg);
-            if !self.send_disco_message_relay(url, dst_node, msg) {
-                warn!(dstkey = %dst_node.fmt_short(), relayurl = ?url,
+        match self.direct_addrs.fresh_enough() {
+            Ok(()) => {
+                let msg = self.direct_addrs.to_call_me_maybe_message();
+                let msg = disco::Message::CallMeMaybe(msg);
+                if !self.send_disco_message_relay(url, dst_node, msg) {
+                    warn!(dstkey = %dst_node.fmt_short(), relayurl = %url,
                       "relay channel full, dropping call-me-maybe");
-            } else {
-                debug!(dstkey = %dst_node.fmt_short(), relayurl = ?url, "call-me-maybe sent");
+                } else {
+                    debug!(dstkey = %dst_node.fmt_short(), relayurl = %url, "call-me-maybe sent");
+                }
             }
-        } else {
-            self.pending_call_me_maybes
-                .lock()
-                .insert(dst_node, url.clone());
-            debug!(
-                last_refresh_ago = ?direct_addrs.updated_at.map(|x| x.elapsed()),
-                "want call-me-maybe but direct addrs stale; queuing after restun",
-            );
-            self.re_stun("refresh-for-peering");
+            Err(last_refresh_ago) => {
+                self.pending_call_me_maybes
+                    .lock()
+                    .insert(dst_node, url.clone());
+                debug!(
+                    ?last_refresh_ago,
+                    "want call-me-maybe but direct addrs stale; queuing after restun",
+                );
+                self.re_stun("refresh-for-peering");
+            }
         }
     }
 
@@ -1265,12 +1253,9 @@ impl MagicSock {
     /// Called whenever our addresses or home relay node changes.
     fn publish_my_addr(&self) {
         if let Some(ref discovery) = self.discovery {
-            let addrs = self.direct_addrs.read();
-            let relay_url = self.my_relay();
-            let direct_addresses = addrs.iter().map(|da| da.addr).collect();
             let info = AddrInfo {
-                relay_url,
-                direct_addresses,
+                relay_url: self.my_relay(),
+                direct_addresses: self.direct_addrs.sockaddrs(),
             };
             discovery.publish(&info);
         }
@@ -1316,7 +1301,7 @@ impl DiscoMessageSource {
     }
 }
 
-/// Manages currently running direct addr discovery, aka netcheck runs.
+/// Manages currently running direct addr discovery, aka net_report runs.
 ///
 /// Invariants:
 /// - only one direct addr update must be running at a time
@@ -1416,7 +1401,11 @@ impl Handle {
         let ipv4_addr = pconn4.local_addr()?;
         let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
-        let net_checker = netcheck::Client::new(Some(port_mapper.clone()), dns_resolver.clone())?;
+        let net_reporter =
+            net_report::Client::new(Some(port_mapper.clone()), dns_resolver.clone())?;
+
+        let pconn4_sock = pconn4.as_socket();
+        let pconn6_sock = pconn6.as_ref().map(|p| p.as_socket());
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
         let (relay_actor_sender, relay_actor_receiver) = mpsc::channel(256);
@@ -1441,15 +1430,15 @@ impl Handle {
             ipv6_reported: Arc::new(AtomicBool::new(false)),
             relay_map,
             my_relay: Default::default(),
-            pconn4: pconn4.clone(),
-            pconn6: pconn6.clone(),
-            net_checker: net_checker.addr(),
+            net_reporter: net_reporter.addr(),
+            pconn4,
+            pconn6,
             disco_secrets: DiscoSecrets::default(),
             node_map,
             relay_actor_sender: relay_actor_sender.clone(),
             udp_disco_sender,
             discovery,
-            direct_addrs: Watchable::new(Default::default()),
+            direct_addrs: Default::default(),
             pending_call_me_maybes: Default::default(),
             direct_addr_update_state: DirectAddrUpdateState::new(),
             dns_resolver,
@@ -1491,10 +1480,10 @@ impl Handle {
                     periodic_re_stun_timer: new_re_stun_timer(false),
                     net_info_last: None,
                     port_mapper,
-                    pconn4,
-                    pconn6,
+                    pconn4: pconn4_sock,
+                    pconn6: pconn6_sock,
                     no_v4_send: false,
-                    net_checker,
+                    net_reporter,
                     network_monitor,
                 };
 
@@ -1526,7 +1515,7 @@ impl Handle {
         self.msock.closing.store(true, Ordering::Relaxed);
         self.msock.actor_sender.send(ActorMessage::Shutdown).await?;
         self.msock.closed.store(true, Ordering::SeqCst);
-        self.msock.direct_addrs.shutdown();
+        self.msock.direct_addrs.addrs.shutdown();
 
         let mut tasks = self.actor_tasks.lock().await;
 
@@ -1549,46 +1538,6 @@ impl Handle {
         }
 
         Ok(())
-    }
-}
-
-/// Stream returning local endpoints as they change.
-#[derive(Debug)]
-pub struct DirectAddrsStream {
-    initial: Option<DiscoveredDirectAddrs>,
-    inner: watchable::WatcherStream<DiscoveredDirectAddrs>,
-}
-
-impl Stream for DirectAddrsStream {
-    type Item = Vec<DirectAddr>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = &mut *self;
-        if let Some(initial_endpoints) = this.initial.take() {
-            if !initial_endpoints.is_empty() {
-                return Poll::Ready(Some(initial_endpoints.into_iter().collect()));
-            }
-        }
-        loop {
-            match Pin::new(&mut this.inner).poll_next(cx) {
-                Poll::Pending => break Poll::Pending,
-                Poll::Ready(Some(discovered)) => {
-                    if discovered.is_empty() {
-                        // When we start up we might initially have empty local endpoints as
-                        // the magic socket has not yet figured this out.  Later on this set
-                        // should never be empty.  However even if it was the magicsock
-                        // would be in a state not very usable so skipping those events is
-                        // probably fine.
-                        // To make sure we install the right waker we loop rather than
-                        // returning Poll::Pending immediately here.
-                        continue;
-                    } else {
-                        break Poll::Ready(Some(discovered.into_iter().collect()));
-                    }
-                }
-                Poll::Ready(None) => break Poll::Ready(None),
-            }
-        }
     }
 }
 
@@ -1641,34 +1590,6 @@ enum DiscoBoxError {
 }
 
 type RelayRecvResult = Result<(PublicKey, quinn_udp::RecvMeta, Bytes), io::Error>;
-
-/// Reports whether x and y represent the same set of endpoints. The order doesn't matter.
-fn endpoint_sets_equal(xs: &[DirectAddr], ys: &[DirectAddr]) -> bool {
-    if xs.is_empty() && ys.is_empty() {
-        return true;
-    }
-    if xs.len() == ys.len() {
-        let mut order_matches = true;
-        for (i, x) in xs.iter().enumerate() {
-            if x != &ys[i] {
-                order_matches = false;
-                break;
-            }
-        }
-        if order_matches {
-            return true;
-        }
-    }
-    let mut m: HashMap<&DirectAddr, usize> = HashMap::new();
-    for x in xs {
-        *m.entry(x).or_default() |= 1;
-    }
-    for y in ys {
-        *m.entry(y).or_default() |= 2;
-    }
-
-    m.values().all(|v| *v == 3)
-}
 
 impl AsyncUdpSocket for Handle {
     fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn quinn::UdpPoller>> {
@@ -1777,8 +1698,8 @@ impl quinn::UdpPoller for IoPoller {
 enum ActorMessage {
     Shutdown,
     ReceiveRelay(RelayReadResult),
-    EndpointPingExpired(usize, stun::TransactionId),
-    NetcheckReport(Result<Option<Arc<netcheck::Report>>>, &'static str),
+    EndpointPingExpired(usize, stun_rs::TransactionId),
+    NetReport(Result<Option<Arc<net_report::Report>>>, &'static str),
     NetworkChange,
     #[cfg(test)]
     ForceNetworkChange(bool),
@@ -1798,8 +1719,8 @@ struct Actor {
     net_info_last: Option<NetInfo>,
 
     // The underlying UDP sockets used to send/rcv packets.
-    pconn4: UdpConn,
-    pconn6: Option<UdpConn>,
+    pconn4: Arc<UdpSocket>,
+    pconn6: Option<Arc<UdpSocket>>,
 
     /// The NAT-PMP/PCP/UPnP prober/client, for requesting port mappings from NAT devices.
     port_mapper: portmapper::Client,
@@ -1810,7 +1731,7 @@ struct Actor {
     no_v4_send: bool,
 
     /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
-    net_checker: netcheck::Client,
+    net_reporter: net_report::Client,
 
     network_monitor: netmon::Monitor,
 }
@@ -1846,10 +1767,22 @@ impl Actor {
                 discovery_events = events;
             }
         }
+
+        let mut receiver_closed = false;
+        let mut portmap_watcher_closed = false;
+        let mut link_change_closed = false;
         loop {
             inc!(Metrics, actor_tick_main);
             tokio::select! {
-                Some(msg) = self.msg_receiver.recv() => {
+                msg = self.msg_receiver.recv(), if !receiver_closed => {
+                    let Some(msg) = msg else {
+                        trace!("tick: magicsock receiver closed");
+                        inc!(Metrics, actor_tick_other);
+
+                        receiver_closed = true;
+                        continue;
+                    };
+
                     trace!(?msg, "tick: msg");
                     inc!(Metrics, actor_tick_msg);
                     if self.handle_actor_message(msg).await {
@@ -1861,7 +1794,15 @@ impl Actor {
                     inc!(Metrics, actor_tick_re_stun);
                     self.msock.re_stun("periodic");
                 }
-                Ok(()) = portmap_watcher.changed() => {
+                change = portmap_watcher.changed(), if !portmap_watcher_closed => {
+                    if change.is_err() {
+                        trace!("tick: portmap watcher closed");
+                        inc!(Metrics, actor_tick_other);
+
+                        portmap_watcher_closed = true;
+                        continue;
+                    }
+
                     trace!("tick: portmap changed");
                     inc!(Metrics, actor_tick_portmap_changed);
                     let new_external_address = *portmap_watcher.borrow();
@@ -1885,24 +1826,31 @@ impl Actor {
                     trace!("tick: direct addr update receiver {:?}", reason);
                     inc!(Metrics, actor_tick_direct_addr_update_receiver);
                     if let Some(reason) = reason {
-                        self.update_direct_addrs(reason).await;
+                        self.refresh_direct_addrs(reason).await;
                     }
                 }
-                Some(is_major) = link_change_r.recv() => {
+                is_major = link_change_r.recv(), if !link_change_closed => {
+                    let Some(is_major) = is_major else {
+                        trace!("tick: link change receiver closed");
+                        inc!(Metrics, actor_tick_other);
+
+                        link_change_closed = true;
+                        continue;
+                    };
+
                     trace!("tick: link change {}", is_major);
                     inc!(Metrics, actor_link_change);
                     self.handle_network_change(is_major).await;
                 }
+                // Even if `discovery_events` yields `None`, it could begin to yield
+                // `Some` again in the future, so we don't want to disable this branch
+                // forever like we do with the other branches that yield `Option`s
                 Some(discovery_item) = discovery_events.next() => {
                     trace!("tick: discovery event, address discovered: {discovery_item:?}");
                     let node_addr = NodeAddr {node_id: discovery_item.node_id, info: discovery_item.addr_info};
                     if let Err(e) = self.msock.add_node_addr(node_addr.clone(), Source::Discovery { name: discovery_item.provenance.into() }) {
                         warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
                     }
-                }
-                else => {
-                    trace!("tick: other");
-                    inc!(Metrics, actor_tick_other);
                 }
             }
         }
@@ -1912,6 +1860,14 @@ impl Actor {
         debug!("link change detected: major? {}", is_major);
 
         if is_major {
+            if let Err(err) = self.pconn4.rebind() {
+                warn!("failed to rebind Udp IPv4 socket: {:?}", err);
+            };
+            if let Some(ref pconn6) = self.pconn6 {
+                if let Err(err) = pconn6.rebind() {
+                    warn!("failed to rebind Udp IPv6 socket: {:?}", err);
+                };
+            }
             self.msock.dns_resolver.clear_cache();
             self.msock.re_stun("link-change-major");
             self.close_stale_relay_connections().await;
@@ -1944,14 +1900,6 @@ impl Actor {
                 self.port_mapper.deactivate();
                 self.relay_actor_cancel_token.cancel();
 
-                // Ignore errors from pconnN
-                // They will frequently have been closed already by a call to connBind.Close.
-                debug!("stopping connections");
-                if let Some(ref conn) = self.pconn6 {
-                    conn.close().await.ok();
-                }
-                self.pconn4.close().await.ok();
-
                 debug!("shutdown complete");
                 return true;
             }
@@ -1971,13 +1919,16 @@ impl Actor {
             ActorMessage::EndpointPingExpired(id, txid) => {
                 self.msock.node_map.notify_ping_timeout(id, txid);
             }
-            ActorMessage::NetcheckReport(report, why) => {
+            ActorMessage::NetReport(report, why) => {
                 match report {
                     Ok(report) => {
-                        self.handle_netcheck_report(report).await;
+                        self.handle_net_report_report(report).await;
                     }
                     Err(err) => {
-                        warn!("failed to generate netcheck report for: {}: {:?}", why, err);
+                        warn!(
+                            "failed to generate net_report report for: {}: {:?}",
+                            why, err
+                        );
                     }
                 }
                 self.finalize_direct_addrs_update(why);
@@ -2049,13 +2000,13 @@ impl Actor {
 
     /// Refreshes knowledge about our direct addresses.
     ///
-    /// In other words, this triggers a netcheck run.
+    /// In other words, this triggers a net_report run.
     ///
     /// Note that invoking this is managed by the [`DirectAddrUpdateState`] and this should
     /// never be invoked directly.  Some day this will be refactored to not allow this easy
     /// mistake to be made.
     #[instrument(level = "debug", skip_all)]
-    async fn update_direct_addrs(&mut self, why: &'static str) {
+    async fn refresh_direct_addrs(&mut self, why: &'static str) {
         inc!(MagicsockMetrics, update_direct_addrs);
 
         debug!("starting direct addr update ({})", why);
@@ -2063,54 +2014,62 @@ impl Actor {
         self.update_net_info(why).await;
     }
 
-    /// Stores the results of a successful direct addr update.
-    async fn store_direct_addr_update(&mut self, nr: Option<Arc<netcheck::Report>>) {
+    /// Updates the direct addresses of this magic socket.
+    ///
+    /// Updates the [`DiscoveredDirectAddrs`] of this [`MagicSock`] with the current set of
+    /// direct addresses from:
+    ///
+    /// - The portmapper.
+    /// - A net_report report.
+    /// - The local interfaces IP addresses.
+    fn update_direct_addresses(&mut self, net_report_report: Option<Arc<net_report::Report>>) {
         let portmap_watcher = self.port_mapper.watch_external_address();
 
-        // direct_addr -> how it was found
-        let mut already = HashMap::new();
-        // unique direct addrs
-        let mut addrs = Vec::new();
+        // We only want to have one DirectAddr for each SocketAddr we have.  So we store
+        // this as a map of SocketAddr -> DirectAddrType.  At the end we will construct a
+        // DirectAddr from each entry.
+        let mut addrs: BTreeMap<SocketAddr, DirectAddrType> = BTreeMap::new();
 
-        macro_rules! add_addr {
-            ($already:expr, $addrs:expr, $ipp:expr, $typ:expr) => {
-                #[allow(clippy::map_entry)]
-                if !$already.contains_key(&$ipp) {
-                    $already.insert($ipp, $typ);
-                    $addrs.push(DirectAddr {
-                        addr: $ipp,
-                        typ: $typ,
-                    });
-                }
-            };
-        }
-
+        // First add PortMapper provided addresses.
         let maybe_port_mapped = *portmap_watcher.borrow();
-
         if let Some(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
-            add_addr!(already, addrs, portmap_ext, DirectAddrType::Portmapped);
-            self.set_net_info_have_port_map().await;
+            addrs
+                .entry(portmap_ext)
+                .or_insert(DirectAddrType::Portmapped);
+            self.set_net_info_have_port_map();
         }
 
-        if let Some(nr) = nr {
-            if let Some(global_v4) = nr.global_v4 {
-                add_addr!(already, addrs, global_v4.into(), DirectAddrType::Stun);
+        // Next add STUN addresses from the net_report report.
+        if let Some(net_report_report) = net_report_report {
+            if let Some(global_v4) = net_report_report.global_v4 {
+                addrs
+                    .entry(global_v4.into())
+                    .or_insert(DirectAddrType::Stun);
 
                 // If they're behind a hard NAT and are using a fixed
                 // port locally, assume they might've added a static
                 // port mapping on their router to the same explicit
                 // port that we are running with. Worst case it's an invalid candidate mapping.
                 let port = self.msock.port.load(Ordering::Relaxed);
-                if nr.mapping_varies_by_dest_ip.unwrap_or_default() && port != 0 {
+                if net_report_report
+                    .mapping_varies_by_dest_ip
+                    .unwrap_or_default()
+                    && port != 0
+                {
                     let mut addr = global_v4;
                     addr.set_port(port);
-                    add_addr!(already, addrs, addr.into(), DirectAddrType::Stun4LocalPort);
+                    addrs
+                        .entry(addr.into())
+                        .or_insert(DirectAddrType::Stun4LocalPort);
                 }
             }
-            if let Some(global_v6) = nr.global_v6 {
-                add_addr!(already, addrs, global_v6.into(), DirectAddrType::Stun);
+            if let Some(global_v6) = net_report_report.global_v6 {
+                addrs
+                    .entry(global_v6.into())
+                    .or_insert(DirectAddrType::Stun);
             }
         }
+
         let local_addr_v4 = self.pconn4.local_addr().ok();
         let local_addr_v6 = self.pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
@@ -2123,98 +2082,67 @@ impl Actor {
 
         let msock = self.msock.clone();
 
+        // The following code can be slow, we do not want to block the caller since it would
+        // block the actor loop.
         tokio::spawn(
             async move {
-                // Depending on the OS and network interfaces attached and their state enumerating
-                // the local interfaces can take a long time.  Especially Windows is very slow.
-                let LocalAddresses {
-                    regular: mut ips,
-                    loopback,
-                } = tokio::task::spawn_blocking(LocalAddresses::new)
-                    .await
-                    .unwrap();
-
+                // If a socket is bound to the unspecified address, create SocketAddrs for
+                // each local IP address by pairing it with the port the socket is bound on.
                 if is_unspecified_v4 || is_unspecified_v6 {
+                    // Depending on the OS and network interfaces attached and their state
+                    // enumerating the local interfaces can take a long time.  Especially
+                    // Windows is very slow.
+                    let LocalAddresses {
+                        regular: mut ips,
+                        loopback,
+                    } = tokio::task::spawn_blocking(LocalAddresses::new)
+                        .await
+                        .unwrap();
                     if ips.is_empty() && addrs.is_empty() {
-                        // Only include loopback addresses if we have no
-                        // interfaces at all to use as direct addrs and don't
-                        // have a public IPv4 or IPv6 address. This allows
-                        // for localhost testing when you're on a plane and
-                        // offline, for example.
+                        // Include loopback addresses only if there are no other interfaces
+                        // or public addresses, this allows testing offline.
                         ips = loopback;
                     }
-                    let v4_port = local_addr_v4.and_then(|addr| {
-                        if addr.ip().is_unspecified() {
-                            Some(addr.port())
-                        } else {
-                            None
-                        }
-                    });
-
-                    let v6_port = local_addr_v6.and_then(|addr| {
-                        if addr.ip().is_unspecified() {
-                            Some(addr.port())
-                        } else {
-                            None
-                        }
-                    });
-
                     for ip in ips {
-                        match ip {
-                            IpAddr::V4(_) => {
-                                if let Some(port) = v4_port {
-                                    add_addr!(
-                                        already,
-                                        addrs,
-                                        SocketAddr::new(ip, port),
-                                        DirectAddrType::Local
-                                    );
-                                }
+                        let port_if_unspecified = match ip {
+                            IpAddr::V4(_) if is_unspecified_v4 => {
+                                local_addr_v4.map(|addr| addr.port())
                             }
-                            IpAddr::V6(_) => {
-                                if let Some(port) = v6_port {
-                                    add_addr!(
-                                        already,
-                                        addrs,
-                                        SocketAddr::new(ip, port),
-                                        DirectAddrType::Local
-                                    );
-                                }
+                            IpAddr::V6(_) if is_unspecified_v6 => {
+                                local_addr_v6.map(|addr| addr.port())
                             }
+                            _ => None,
+                        };
+                        if let Some(port) = port_if_unspecified {
+                            let addr = SocketAddr::new(ip, port);
+                            addrs.entry(addr).or_insert(DirectAddrType::Local);
                         }
                     }
                 }
 
+                // If a socket is bound to a specific address, add it.
                 if !is_unspecified_v4 {
                     if let Some(addr) = local_addr_v4 {
-                        // Our local socket is bound to a particular address.
-                        // Do not offer addresses on other local interfaces.
-                        add_addr!(already, addrs, addr, DirectAddrType::Local);
+                        addrs.entry(addr).or_insert(DirectAddrType::Local);
                     }
                 }
-
                 if !is_unspecified_v6 {
                     if let Some(addr) = local_addr_v6 {
-                        // Our local socket is bound to a particular address.
-                        // Do not offer addresses on other local interfaces.
-                        add_addr!(already, addrs, addr, DirectAddrType::Local);
+                        addrs.entry(addr).or_insert(DirectAddrType::Local);
                     }
                 }
 
-                // Note: the direct addrs are intentionally returned in priority order,
-                // from "farthest but most reliable" to "closest but least
-                // reliable." Addresses returned from STUN should be globally
-                // addressable, but might go farther on the network than necessary.
-                // Local interface addresses might have lower latency, but not be
-                // globally addressable.
-                //
-                // The STUN address(es) are always first.
-                // Despite this sorting, clients are not relying on this sorting for decisions;
-
-                msock.update_direct_addresses(addrs);
-
-                // Regardless of whether our direct addrs changed, we now want to send any
+                // Finally create and store store all these direct addresses and send any
                 // queued call-me-maybe messages.
+                msock.store_direct_addresses(
+                    addrs
+                        .iter()
+                        .map(|(addr, typ)| DirectAddr {
+                            addr: *addr,
+                            typ: *typ,
+                        })
+                        .collect(),
+                );
                 msock.send_queued_call_me_maybes();
             }
             .instrument(Span::current()),
@@ -2238,7 +2166,7 @@ impl Actor {
 
     /// Updates `NetInfo.HavePortMap` to true.
     #[instrument(level = "debug", skip_all)]
-    async fn set_net_info_have_port_map(&mut self) {
+    fn set_net_info_have_port_map(&mut self) {
         if let Some(ref mut net_info_last) = self.net_info_last {
             if net_info_last.have_port_map {
                 // No change.
@@ -2260,58 +2188,58 @@ impl Actor {
         self.net_info_last = Some(ni);
     }
 
-    /// Calls netcheck.
+    /// Calls net_report.
     ///
     /// Note that invoking this is managed by [`DirectAddrUpdateState`] via
-    /// [`Actor::update_direct_addrs`] and this should never be invoked directly.  Some day
+    /// [`Actor::refresh_direct_addrs`] and this should never be invoked directly.  Some day
     /// this will be refactored to not allow this easy mistake to be made.
     #[instrument(level = "debug", skip_all)]
     async fn update_net_info(&mut self, why: &'static str) {
         if self.msock.relay_map.is_empty() {
-            debug!("skipping netcheck, empty RelayMap");
+            debug!("skipping net_report, empty RelayMap");
             self.msg_sender
-                .send(ActorMessage::NetcheckReport(Ok(None), why))
+                .send(ActorMessage::NetReport(Ok(None), why))
                 .await
                 .ok();
             return;
         }
 
         let relay_map = self.msock.relay_map.clone();
-        let pconn4 = Some(self.pconn4.as_socket());
-        let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
+        let pconn4 = Some(self.pconn4.clone());
+        let pconn6 = self.pconn6.clone();
 
-        debug!("requesting netcheck report");
+        debug!("requesting net_report report");
         match self
-            .net_checker
+            .net_reporter
             .get_report_channel(relay_map, pconn4, pconn6)
             .await
         {
             Ok(rx) => {
                 let msg_sender = self.msg_sender.clone();
                 tokio::task::spawn(async move {
-                    let report = time::timeout(NETCHECK_REPORT_TIMEOUT, rx).await;
+                    let report = time::timeout(NET_REPORT_TIMEOUT, rx).await;
                     let report: anyhow::Result<_> = match report {
                         Ok(Ok(Ok(report))) => Ok(Some(report)),
                         Ok(Ok(Err(err))) => Err(err),
-                        Ok(Err(_)) => Err(anyhow!("netcheck report not received")),
-                        Err(err) => Err(anyhow!("netcheck report timeout: {:?}", err)),
+                        Ok(Err(_)) => Err(anyhow!("net_report report not received")),
+                        Err(err) => Err(anyhow!("net_report report timeout: {:?}", err)),
                     };
                     msg_sender
-                        .send(ActorMessage::NetcheckReport(report, why))
+                        .send(ActorMessage::NetReport(report, why))
                         .await
                         .ok();
-                    // The receiver of the NetcheckReport message will call
-                    // .finalize_endpoints_update().
+                    // The receiver of the NetReport message will call
+                    // .finalize_direct_addrs_update().
                 });
             }
             Err(err) => {
-                warn!("unable to start netcheck generation: {:?}", err);
+                warn!("unable to start net_report generation: {:?}", err);
                 self.finalize_direct_addrs_update(why);
             }
         }
     }
 
-    async fn handle_netcheck_report(&mut self, report: Option<Arc<netcheck::Report>>) {
+    async fn handle_net_report_report(&mut self, report: Option<Arc<net_report::Report>>) {
         if let Some(ref report) = report {
             self.msock
                 .ipv6_reported
@@ -2359,7 +2287,7 @@ impl Actor {
             // TODO: set link type
             self.call_net_info_callback(ni).await;
         }
-        self.store_direct_addr_update(report).await;
+        self.update_direct_addresses(report);
     }
 
     fn set_nearest_relay(&mut self, relay_url: Option<RelayUrl>) -> bool {
@@ -2386,7 +2314,7 @@ impl Actor {
         true
     }
 
-    /// Returns a deterministic relay node to connect to. This is only used if netcheck
+    /// Returns a deterministic relay node to connect to. This is only used if net_report
     /// couldn't find the nearest one, for instance, if UDP is blocked and thus STUN
     /// latency checks aren't working.
     ///
@@ -2522,56 +2450,105 @@ fn bind(
 #[derive(derive_more::Debug, Default, Clone)]
 struct DiscoveredDirectAddrs {
     /// The last set of discovered direct addresses.
-    addrs: Vec<DirectAddr>,
+    addrs: Watchable<BTreeSet<DirectAddr>>,
 
     /// The last time the direct addresses were updated, even if there was no change.
-    updated_at: Option<Instant>,
-}
-
-impl PartialEq for DiscoveredDirectAddrs {
-    fn eq(&self, other: &Self) -> bool {
-        endpoint_sets_equal(&self.addrs, &other.addrs)
-    }
+    ///
+    /// This is only ever None at startup.
+    updated_at: Arc<RwLock<Option<Instant>>>,
 }
 
 impl DiscoveredDirectAddrs {
-    fn new(endpoints: Vec<DirectAddr>) -> Self {
-        Self {
-            addrs: endpoints,
-            updated_at: Some(Instant::now()),
+    /// Updates the direct addresses, returns `true` if they changed, `false` if not.
+    fn update(&self, addrs: BTreeSet<DirectAddr>) -> bool {
+        *self.updated_at.write().unwrap() = Some(Instant::now());
+        let updated = self.addrs.update(addrs).is_ok();
+        if updated {
+            event!(
+                target: "events.net.direct_addrs",
+                Level::DEBUG,
+                addrs = ?self.addrs.get(),
+            );
         }
+        updated
     }
 
-    fn into_iter(self) -> impl Iterator<Item = DirectAddr> {
-        self.addrs.into_iter()
+    fn sockaddrs(&self) -> BTreeSet<SocketAddr> {
+        self.addrs.read().iter().map(|da| da.addr).collect()
     }
 
-    fn iter(&self) -> impl Iterator<Item = &DirectAddr> + '_ {
-        self.addrs.iter()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.addrs.is_empty()
-    }
-
-    fn fresh_enough(&self) -> bool {
-        match self.updated_at.as_ref() {
-            None => false,
-            Some(time) => time.elapsed() <= ENDPOINTS_FRESH_ENOUGH_DURATION,
+    /// Whether the direct addr information is considered "fresh".
+    ///
+    /// If not fresh you should probably update the direct addresses before using this info.
+    ///
+    /// Returns `Ok(())` if fresh enough and `Err(elapsed)` if not fresh enough.
+    /// `elapsed` is the time elapsed since the direct addresses were last updated.
+    ///
+    /// If there is no direct address information `Err(Duration::ZERO)` is returned.
+    fn fresh_enough(&self) -> Result<(), Duration> {
+        match *self.updated_at.read().expect("poisoned") {
+            None => Err(Duration::ZERO),
+            Some(time) => {
+                let elapsed = time.elapsed();
+                if elapsed <= ENDPOINTS_FRESH_ENOUGH_DURATION {
+                    Ok(())
+                } else {
+                    Err(elapsed)
+                }
+            }
         }
     }
 
     fn to_call_me_maybe_message(&self) -> disco::CallMeMaybe {
-        let my_numbers = self.addrs.iter().map(|ep| ep.addr).collect();
+        let my_numbers = self.addrs.read().iter().map(|da| da.addr).collect();
         disco::CallMeMaybe { my_numbers }
     }
 
-    fn log_direct_addrs_change(&self) {
-        event!(
-            target: "events.net.direct_addrs",
-            Level::DEBUG,
-            addrs = ?self.addrs,
-        );
+    fn updates_stream(&self) -> DirectAddrsStream {
+        DirectAddrsStream {
+            initial: Some(self.addrs.get()),
+            inner: self.addrs.watch().into_stream(),
+        }
+    }
+}
+
+/// Stream returning local endpoints as they change.
+#[derive(Debug)]
+pub struct DirectAddrsStream {
+    initial: Option<BTreeSet<DirectAddr>>,
+    inner: watchable::WatcherStream<BTreeSet<DirectAddr>>,
+}
+
+impl Stream for DirectAddrsStream {
+    type Item = BTreeSet<DirectAddr>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = &mut *self;
+        if let Some(addrs) = this.initial.take() {
+            if !addrs.is_empty() {
+                return Poll::Ready(Some(addrs));
+            }
+        }
+        loop {
+            match Pin::new(&mut this.inner).poll_next(cx) {
+                Poll::Pending => break Poll::Pending,
+                Poll::Ready(Some(addrs)) => {
+                    if addrs.is_empty() {
+                        // When we start up we might initially have empty direct addrs as
+                        // the magic socket has not yet figured this out.  Later on this set
+                        // should never be empty.  However even if it was the magicsock
+                        // would be in a state not very usable so skipping those events is
+                        // probably fine.
+                        // To make sure we install the right waker we loop rather than
+                        // returning Poll::Pending immediately here.
+                        continue;
+                    } else {
+                        break Poll::Ready(Some(addrs));
+                    }
+                }
+                Poll::Ready(None) => break Poll::Ready(None),
+            }
+        }
     }
 }
 
@@ -2835,12 +2812,8 @@ mod tests {
     use rand::RngCore;
     use tokio_util::task::AbortOnDropHandle;
 
-    use crate::defaults::staging::EU_RELAY_HOSTNAME;
-    use crate::relay::RelayMode;
-    use crate::tls;
-    use crate::Endpoint;
-
     use super::*;
+    use crate::{defaults::staging::EU_RELAY_HOSTNAME, tls, Endpoint, RelayMode};
 
     const ALPN: &[u8] = b"n0/test/1";
 
@@ -2910,7 +2883,11 @@ mod tests {
     #[instrument(skip_all)]
     async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<CallOnDrop> {
         /// Registers endpoint addresses of a node to all other nodes.
-        fn update_direct_addrs(stacks: &[MagicStack], my_idx: usize, new_addrs: Vec<DirectAddr>) {
+        fn update_direct_addrs(
+            stacks: &[MagicStack],
+            my_idx: usize,
+            new_addrs: BTreeSet<DirectAddr>,
+        ) {
             let me = &stacks[my_idx];
             for (i, m) in stacks.iter().enumerate() {
                 if i == my_idx {
@@ -3117,6 +3094,45 @@ mod tests {
             run_roundtrip(m1.clone(), m2.clone(), &data).await;
             run_roundtrip(m2.clone(), m1.clone(), &data).await;
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_regression_network_change_rebind_wakes_connection_driver(
+    ) -> testresult::TestResult {
+        let _ = iroh_test::logging::setup();
+        let m1 = MagicStack::new(RelayMode::Disabled).await?;
+        let m2 = MagicStack::new(RelayMode::Disabled).await?;
+
+        println!("Net change");
+        m1.endpoint.magic_sock().force_network_change(true).await;
+        tokio::time::sleep(Duration::from_secs(1)).await; // wait for socket rebinding
+
+        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
+
+        let _handle = AbortOnDropHandle::new(tokio::spawn({
+            let endpoint = m2.endpoint.clone();
+            async move {
+                while let Some(incoming) = endpoint.accept().await {
+                    println!("Incoming first conn!");
+                    let conn = incoming.await?;
+                    conn.closed().await;
+                }
+
+                testresult::TestResult::Ok(())
+            }
+        }));
+
+        println!("first conn!");
+        let conn = m1
+            .endpoint
+            .connect(m2.endpoint.node_addr().await?, ALPN)
+            .await?;
+        println!("Closing first conn");
+        conn.close(0u32.into(), b"bye lolz");
+        conn.closed().await;
+        println!("Closed first conn");
 
         Ok(())
     }
@@ -3607,14 +3623,12 @@ mod tests {
         let ms = Handle::new(Default::default()).await.unwrap();
 
         // See if we can get endpoints.
-        let mut eps0 = ms.direct_addresses().next().await.unwrap();
-        eps0.sort();
+        let eps0 = ms.direct_addresses().next().await.unwrap();
         println!("{eps0:?}");
         assert!(!eps0.is_empty());
 
         // Getting the endpoints again immediately should give the same results.
-        let mut eps1 = ms.direct_addresses().next().await.unwrap();
-        eps1.sort();
+        let eps1 = ms.direct_addresses().next().await.unwrap();
         println!("{eps1:?}");
         assert_eq!(eps0, eps1);
     }

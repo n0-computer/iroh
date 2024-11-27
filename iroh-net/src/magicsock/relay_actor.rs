@@ -10,6 +10,7 @@ use anyhow::Context;
 use backoff::backoff::Backoff;
 use bytes::{Bytes, BytesMut};
 use iroh_metrics::{inc, inc_by};
+use iroh_relay::{self as relay, client::ClientError, ReceivedMessage, RelayUrl, MAX_PACKET_SIZE};
 use tokio::{
     sync::{mpsc, oneshot},
     task::{JoinHandle, JoinSet},
@@ -18,13 +19,8 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, info_span, trace, warn, Instrument};
 
-use crate::{
-    key::{NodeId, PUBLIC_KEY_LENGTH},
-    relay::{self, client::conn::ReceivedMessage, client::ClientError, RelayUrl, MAX_PACKET_SIZE},
-};
-
-use super::{ActorMessage, MagicSock};
-use super::{Metrics as MagicsockMetrics, RelayContents};
+use super::{ActorMessage, MagicSock, Metrics as MagicsockMetrics, RelayContents};
+use crate::key::{NodeId, PUBLIC_KEY_LENGTH};
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
 const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
@@ -115,7 +111,12 @@ impl ActiveRelay {
                 self.relay_client.connect().await.context("keepalive")?;
             }
             tokio::select! {
-                Some(msg) = inbox.recv() => {
+                msg = inbox.recv() => {
+                    let Some(msg) = msg else {
+                        debug!("all clients closed");
+                        break;
+                    };
+
                     trace!("tick: inbox: {:?}", msg);
                     match msg {
                         ActiveRelayMessage::GetLastWrite(r) => {
@@ -148,6 +149,7 @@ impl ActiveRelay {
                         }
                     }
                 }
+
                 msg = self.relay_client_receiver.recv() => {
                     trace!("tick: relay_client_receiver");
                     if let Some(msg) = msg {
@@ -156,10 +158,6 @@ impl ActiveRelay {
                             break;
                         }
                     }
-                }
-                else => {
-                    debug!("all clients closed");
-                    break;
                 }
             }
         }
@@ -213,7 +211,7 @@ impl ActiveRelay {
                 }
 
                 match msg {
-                    relay::client::conn::ReceivedMessage::ReceivedPacket { source, data } => {
+                    ReceivedMessage::ReceivedPacket { source, data } => {
                         trace!(len=%data.len(), "received msg");
                         // If this is a new sender we hadn't seen before, remember it and
                         // register a route for this peer.
@@ -240,7 +238,7 @@ impl ActiveRelay {
 
                         ReadResult::Continue
                     }
-                    relay::client::conn::ReceivedMessage::Ping(data) => {
+                    ReceivedMessage::Ping(data) => {
                         // Best effort reply to the ping.
                         let dc = self.relay_client.clone();
                         tokio::task::spawn(async move {
@@ -250,8 +248,8 @@ impl ActiveRelay {
                         });
                         ReadResult::Continue
                     }
-                    relay::client::conn::ReceivedMessage::Health { .. } => ReadResult::Continue,
-                    relay::client::conn::ReceivedMessage::PeerGone(key) => {
+                    ReceivedMessage::Health { .. } => ReadResult::Continue,
+                    ReceivedMessage::NodeGone(key) => {
                         self.node_present.remove(&key);
                         ReadResult::Continue
                     }
@@ -305,24 +303,36 @@ impl RelayActor {
                     trace!("shutting down");
                     break;
                 }
-                Some(Ok((url, ping_success))) = self.ping_tasks.join_next() => {
-                    if !ping_success {
-                        with_cancel(
-                            self.cancel_token.child_token(),
-                            self.close_or_reconnect_relay(&url, "rebind-ping-fail")
-                        ).await;
+                // `ping_tasks` being empty is a normal situation - in fact it starts empty
+                // until a `MaybeCloseRelaysOnRebind` message is received.
+                Some(task_result) = self.ping_tasks.join_next() => {
+                    match task_result {
+                        Ok((url, ping_success)) => {
+                            if !ping_success {
+                                with_cancel(
+                                    self.cancel_token.child_token(),
+                                    self.close_or_reconnect_relay(&url, "rebind-ping-fail")
+                                ).await;
+                            }
+                        }
+
+                        Err(err) => {
+                            warn!("ping task error: {:?}", err);
+                        }
                     }
                 }
-                Some(msg) = receiver.recv() => {
+
+                msg = receiver.recv() => {
+                    let Some(msg) = msg else {
+                        trace!("shutting down relay recv loop");
+                        break;
+                    };
+
                     with_cancel(self.cancel_token.child_token(), self.handle_msg(msg)).await;
                 }
                 _ = cleanup_timer.tick() => {
                     trace!("tick: cleanup");
                     with_cancel(self.cancel_token.child_token(), self.clean_stale_relay()).await;
-                }
-                else => {
-                    trace!("shutting down relay recv loop");
-                    break;
                 }
             }
         }
@@ -420,7 +430,7 @@ impl RelayActor {
         url: &RelayUrl,
         remote_node: Option<&NodeId>,
     ) -> relay::client::Client {
-        debug!(%url, ?remote_node, "connect relay");
+        trace!(%url, ?remote_node, "connect relay");
         // See if we have a connection open to that relay node ID first. If so, might as
         // well use it. (It's a little arbitrary whether we use this one vs. the reverse route
         // below when we have both.)

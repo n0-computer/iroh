@@ -76,23 +76,11 @@ jobs:
 
         - name: Fetch release binaries
           run: |
-            aws s3 cp s3://vorc/iroh-linux-amd64-${{ inputs.base_hash }} bins/linux/amd64/iroh
             aws s3 cp s3://vorc/iroh-relay-linux-amd64-${{ inputs.base_hash }} bins/linux/amd64/iroh-relay
             aws s3 cp s3://vorc/iroh-dns-server-linux-amd64-${{ inputs.base_hash }} bins/linux/amd64/iroh-dns-server
 
-            aws s3 cp s3://vorc/iroh-linux-aarch64-${{ inputs.base_hash }} bins/linux/arm64/iroh
             aws s3 cp s3://vorc/iroh-relay-linux-aarch64-${{ inputs.base_hash }} bins/linux/arm64/iroh-relay
             aws s3 cp s3://vorc/iroh-dns-server-linux-aarch64-${{ inputs.base_hash }} bins/linux/arm64/iroh-dns-server
-
-        - name: Build Docker image (iroh)
-          uses: docker/build-push-action@v6
-          with:
-            context: .
-            push: ${{ inputs.publish }}
-            tags: n0computer/iroh:latest,n0computer/iroh:${{ inputs.release_version }}
-            target: iroh
-            platforms: linux/amd64,linux/arm64/v8
-            file: docker/Dockerfile.ci
         
         - name: Build Docker image (iroh-relay)
           uses: docker/build-push-action@v6

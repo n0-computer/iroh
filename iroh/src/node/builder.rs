@@ -9,44 +9,25 @@ use anyhow::{Context, Result};
 use futures_lite::StreamExt;
 use futures_util::{FutureExt as _, TryFutureExt as _};
 use iroh_base::key::SecretKey;
-use iroh_blobs::{
-    downloader::Downloader,
-    provider::EventSender,
-    store::{Map, Store as BaoStore},
-    util::local_pool::{self, LocalPool, LocalPoolHandle, PanicMode},
-};
-use iroh_docs::engine::DefaultAuthorStorage;
-use iroh_docs::net::DOCS_ALPN;
-use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 #[cfg(not(test))]
 use iroh_net::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
-    endpoint::TransportConfig,
-    relay::RelayMode,
-    Endpoint,
+    endpoint::{force_staging_infra, TransportConfig},
+    Endpoint, RelayMode,
 };
-
-use quic_rpc::transport::{boxed::BoxableServerEndpoint, quinn::QuinnServerEndpoint};
-use serde::{Deserialize, Serialize};
+use iroh_router::{ProtocolHandler, RouterBuilder};
+use quic_rpc::transport::{boxed::BoxableListener, quinn::QuinnListener};
 use tokio::task::JoinError;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::{debug, error_span, trace, Instrument};
+use tracing::{error_span, trace, Instrument};
 
+use super::{rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner};
 use crate::{
     client::RPC_ALPN,
-    node::{
-        nodes_storage::load_node_addrs,
-        protocol::{BlobsProtocol, ProtocolMap},
-        ProtocolHandler,
-    },
-    rpc_protocol::RpcService,
+    node::nodes_storage::load_node_addrs,
     util::{fs::load_secret_key, path::IrohPaths},
-};
-
-use super::{
-    docs::DocsEngine, rpc_status::RpcStatus, IrohServerEndpoint, JoinErrToStr, Node, NodeInner,
 };
 
 /// Default bind address for the node.
@@ -56,9 +37,6 @@ pub const DEFAULT_BIND_PORT: u16 = 11204;
 /// How long we wait at most for some endpoints to be discovered.
 const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 
-/// Default interval between GC runs.
-const DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(60 * 5);
-
 /// The default bind address for the iroh IPv4 socket.
 pub const DEFAULT_BIND_ADDR_V4: SocketAddrV4 =
     SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_BIND_PORT);
@@ -67,25 +45,7 @@ pub const DEFAULT_BIND_ADDR_V4: SocketAddrV4 =
 pub const DEFAULT_BIND_ADDR_V6: SocketAddrV6 =
     SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, DEFAULT_BIND_PORT + 1, 0, 0);
 
-/// Storage backend for documents.
-#[derive(Debug, Clone)]
-pub enum DocsStorage {
-    /// Disable docs completely.
-    Disabled,
-    /// In-memory storage.
-    Memory,
-    /// File-based persistent storage.
-    Persistent(PathBuf),
-}
-
 /// Builder for the [`Node`].
-///
-/// You must supply a blob store and a document store.
-///
-/// Blob store implementations are available in [`iroh_blobs::store`].
-/// Document store implementations are available in [`iroh_docs::store`].
-///
-/// Everything else is optional, with some sensible defaults.
 ///
 /// The default **relay servers** are hosted by [number 0] on the `iroh.network` domain.  To
 /// customise this use the [`Builder::relay_mode`] function.
@@ -103,29 +63,19 @@ pub enum DocsStorage {
 ///
 /// [number 0]: https://n0.computer
 #[derive(derive_more::Debug)]
-pub struct Builder<D>
-where
-    D: Map,
-{
+pub struct Builder {
     storage: StorageConfig,
     addr_v4: SocketAddrV4,
     addr_v6: SocketAddrV6,
     secret_key: SecretKey,
     rpc_endpoint: IrohServerEndpoint,
     rpc_addr: Option<SocketAddr>,
-    blobs_store: D,
     keylog: bool,
     relay_mode: RelayMode,
-    gc_policy: GcPolicy,
     dns_resolver: Option<DnsResolver>,
     node_discovery: DiscoveryConfig,
-    docs_storage: DocsStorage,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
-    /// Callback to register when a gc loop is done
-    #[debug("callback")]
-    gc_done_callback: Option<Box<dyn Fn() + Send>>,
-    blob_events: EventSender,
     transport_config: Option<TransportConfig>,
 }
 
@@ -136,18 +86,6 @@ pub enum StorageConfig {
     Mem,
     /// On disk persistet, at this location.
     Persistent(PathBuf),
-}
-
-impl StorageConfig {
-    fn default_author_storage(&self) -> DefaultAuthorStorage {
-        match self {
-            StorageConfig::Persistent(ref root) => {
-                let path = IrohPaths::DefaultAuthor.with_root(root);
-                DefaultAuthorStorage::Persistent(path)
-            }
-            StorageConfig::Mem => DefaultAuthorStorage::Mem,
-        }
-    }
 }
 
 /// Configuration for node discovery.
@@ -177,7 +115,7 @@ pub enum DiscoveryConfig {
     /// cargo feature from [iroh-net] is enabled.  In this case only the Pkarr/DNS service
     /// is used, but on the `iroh.test` domain.  This domain is not integrated with the
     /// global DNS network and thus node discovery is effectively disabled.  To use node
-    /// discovery in a test use the [`iroh_net::test_utils::DnsPkarrServer`] in the test and
+    /// discovery in a test use the `iroh_net::test_utils::DnsPkarrServer` in the test and
     /// configure it here as a custom discovery mechanism ([`DiscoveryConfig::Custom`]).
     ///
     /// [number 0]: https://n0.computer
@@ -200,13 +138,12 @@ impl From<Box<ConcurrentDiscovery>> for DiscoveryConfig {
 #[derive(Debug, Default)]
 struct DummyServerEndpoint;
 
-impl BoxableServerEndpoint<crate::rpc_protocol::Request, crate::rpc_protocol::Response>
+impl BoxableListener<crate::rpc_protocol::Request, crate::rpc_protocol::Response>
     for DummyServerEndpoint
 {
     fn clone_box(
         &self,
-    ) -> Box<dyn BoxableServerEndpoint<crate::rpc_protocol::Request, crate::rpc_protocol::Response>>
-    {
+    ) -> Box<dyn BoxableListener<crate::rpc_protocol::Request, crate::rpc_protocol::Response>> {
         Box::new(DummyServerEndpoint)
     }
 
@@ -225,110 +162,65 @@ impl BoxableServerEndpoint<crate::rpc_protocol::Request, crate::rpc_protocol::Re
 }
 
 fn mk_external_rpc() -> IrohServerEndpoint {
-    quic_rpc::transport::boxed::ServerEndpoint::new(DummyServerEndpoint)
+    quic_rpc::transport::boxed::BoxedListener::new(DummyServerEndpoint)
 }
 
-impl Default for Builder<iroh_blobs::store::mem::Store> {
-    fn default() -> Self {
+impl Builder {
+    /// Creates a default node builder with in memory configuration.
+    pub fn memory() -> Self {
         // Use staging in testing
-        #[cfg(not(any(test, feature = "test-utils")))]
-        let relay_mode = RelayMode::Default;
-        #[cfg(any(test, feature = "test-utils"))]
-        let relay_mode = RelayMode::Staging;
+        let relay_mode = match force_staging_infra() {
+            true => RelayMode::Staging,
+            false => RelayMode::Default,
+        };
 
         Self {
             storage: StorageConfig::Mem,
             addr_v4: DEFAULT_BIND_ADDR_V4,
             addr_v6: DEFAULT_BIND_ADDR_V6,
             secret_key: SecretKey::generate(),
-            blobs_store: Default::default(),
             keylog: false,
             relay_mode,
             dns_resolver: None,
             rpc_endpoint: mk_external_rpc(),
             rpc_addr: None,
-            gc_policy: GcPolicy::Disabled,
-            docs_storage: DocsStorage::Disabled,
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
-            gc_done_callback: None,
-            blob_events: Default::default(),
             transport_config: None,
         }
     }
-}
 
-impl<D: Map> Builder<D> {
     /// Creates a new builder for [`Node`] using the given databases.
-    pub fn with_db_and_store(
-        blobs_store: D,
-        docs_storage: DocsStorage,
-        storage: StorageConfig,
-    ) -> Self {
+    pub fn with_db_and_store(storage: StorageConfig) -> Self {
         // Use staging in testing
-        #[cfg(not(any(test, feature = "test-utils")))]
-        let relay_mode = RelayMode::Default;
-        #[cfg(any(test, feature = "test-utils"))]
-        let relay_mode = RelayMode::Staging;
+        let relay_mode = match force_staging_infra() {
+            true => RelayMode::Staging,
+            false => RelayMode::Default,
+        };
 
         Self {
             storage,
             addr_v4: SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DEFAULT_BIND_PORT),
             addr_v6: SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, DEFAULT_BIND_PORT + 1, 0, 0),
             secret_key: SecretKey::generate(),
-            blobs_store,
             keylog: false,
             relay_mode,
             dns_resolver: None,
             rpc_endpoint: mk_external_rpc(),
             rpc_addr: None,
-            gc_policy: GcPolicy::Disabled,
-            docs_storage,
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
-            gc_done_callback: None,
-            blob_events: Default::default(),
             transport_config: None,
         }
     }
 }
 
-impl<D> Builder<D>
-where
-    D: BaoStore,
-{
-    /// Configure a blob events sender. This will replace the previous blob
-    /// event sender. By default, no events are sent.
-    ///
-    /// To define an event sender, implement the [`iroh_blobs::provider::CustomEventSender`] trait.
-    pub fn blobs_events(mut self, blob_events: impl Into<EventSender>) -> Self {
-        self.blob_events = blob_events.into();
-        self
-    }
-
+impl Builder {
     /// Persist all node data in the provided directory.
-    pub async fn persist(
-        self,
-        root: impl AsRef<Path>,
-    ) -> Result<Builder<iroh_blobs::store::fs::Store>> {
+    pub async fn persist(self, root: impl AsRef<Path>) -> Result<Builder> {
         let root = root.as_ref();
-        let blob_dir = IrohPaths::BaoStoreDir.with_root(root);
-
-        tokio::fs::create_dir_all(&blob_dir).await?;
-        let blobs_store = iroh_blobs::store::fs::Store::load(&blob_dir)
-            .await
-            .with_context(|| {
-                format!("Failed to load blobs database from {}", blob_dir.display())
-            })?;
-        let docs_storage = match self.docs_storage {
-            DocsStorage::Persistent(_) | DocsStorage::Memory => {
-                DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root))
-            }
-            DocsStorage::Disabled => DocsStorage::Disabled,
-        };
-
         let secret_key_path = IrohPaths::SecretKey.with_root(root);
         let secret_key = load_secret_key(secret_key_path).await?;
 
@@ -337,19 +229,14 @@ where
             addr_v4: self.addr_v4,
             addr_v6: self.addr_v6,
             secret_key,
-            blobs_store,
             keylog: self.keylog,
             rpc_endpoint: self.rpc_endpoint,
             rpc_addr: self.rpc_addr,
             relay_mode: self.relay_mode,
             dns_resolver: self.dns_resolver,
-            gc_policy: self.gc_policy,
-            docs_storage,
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
-            gc_done_callback: self.gc_done_callback,
-            blob_events: self.blob_events,
             transport_config: self.transport_config,
         })
     }
@@ -364,16 +251,16 @@ where
     }
 
     /// Configure the default iroh rpc endpoint, on the default address.
-    pub async fn enable_rpc(self) -> Result<Builder<D>> {
+    pub async fn enable_rpc(self) -> Result<Builder> {
         self.enable_rpc_with_addr(DEFAULT_RPC_ADDR).await
     }
 
     /// Configure the default iroh rpc endpoint.
-    pub async fn enable_rpc_with_addr(self, mut rpc_addr: SocketAddr) -> Result<Builder<D>> {
+    pub async fn enable_rpc_with_addr(self, mut rpc_addr: SocketAddr) -> Result<Builder> {
         let (ep, actual_rpc_port) = make_rpc_endpoint(&self.secret_key, rpc_addr)?;
         rpc_addr.set_port(actual_rpc_port);
 
-        let ep = quic_rpc::transport::boxed::ServerEndpoint::new(ep);
+        let ep = quic_rpc::transport::boxed::BoxedListener::new(ep);
         if let StorageConfig::Persistent(ref root) = self.storage {
             // store rpc endpoint
             RpcStatus::store(root, actual_rpc_port).await?;
@@ -386,25 +273,6 @@ where
         })
     }
 
-    /// Sets the garbage collection policy.
-    ///
-    /// By default garbage collection is disabled.
-    pub fn gc_policy(mut self, gc_policy: GcPolicy) -> Self {
-        self.gc_policy = gc_policy;
-        self
-    }
-
-    /// Enables documents support on this node.
-    pub fn enable_docs(mut self) -> Self {
-        self.docs_storage = match self.storage {
-            StorageConfig::Mem => DocsStorage::Memory,
-            StorageConfig::Persistent(ref root) => {
-                DocsStorage::Persistent(IrohPaths::DocsDatabase.with_root(root))
-            }
-        };
-        self
-    }
-
     /// Sets the relay servers to assist in establishing connectivity.
     ///
     /// Relay servers are used to discover other nodes by `PublicKey` and also help
@@ -412,7 +280,7 @@ where
     /// assisting in holepunching to establish a direct connection between peers.
     ///
     /// When using [`RelayMode::Custom`], the provided `relay_map` must contain at least one
-    /// configured relay node.  If an invalid [`iroh_net::relay::RelayMode`] is provided
+    /// configured relay node.  If an invalid [`iroh_net::RelayMode`] is provided
     /// [`Self::spawn`] will result in an error.
     ///
     /// # Usage during tests
@@ -509,15 +377,9 @@ where
     ///
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
+    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
         self.insecure_skip_relay_cert_verify = skip_verify;
-        self
-    }
-
-    /// Register a callback for when GC is done.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn register_gc_done_cb(mut self, cb: Box<dyn Fn() + Send>) -> Self {
-        self.gc_done_callback.replace(cb);
         self
     }
 
@@ -536,7 +398,7 @@ where
     /// This will create the underlying network server and spawn a tokio task accepting
     /// connections.  The returned [`Node`] can be used to control the task as well as
     /// get information about it.
-    pub async fn spawn(self) -> Result<Node<D>> {
+    pub async fn spawn(self) -> Result<Node> {
         let unspawned_node = self.build().await?;
         unspawned_node.spawn().await
     }
@@ -545,24 +407,8 @@ where
     ///
     /// Returns a [`ProtocolBuilder`], on which custom protocols can be registered with
     /// [`ProtocolBuilder::accept`]. To spawn the node, call [`ProtocolBuilder::spawn`].
-    pub async fn build(self) -> Result<ProtocolBuilder<D>> {
-        // Clone the blob store to shutdown in case of error.
-        let blobs_store = self.blobs_store.clone();
-        match self.build_inner().await {
-            Ok(node) => Ok(node),
-            Err(err) => {
-                blobs_store.shutdown().await;
-                Err(err)
-            }
-        }
-    }
-
-    async fn build_inner(self) -> Result<ProtocolBuilder<D>> {
+    pub async fn build(self) -> Result<ProtocolBuilder> {
         trace!("building node");
-        let lp = LocalPool::new(local_pool::Config {
-            panic_mode: PanicMode::LogAndContinue,
-            ..Default::default()
-        });
         let (endpoint, nodes_data_path) = {
             let discovery: Option<Box<dyn Discovery>> = match self.node_discovery {
                 DiscoveryConfig::None => None,
@@ -649,58 +495,28 @@ where
         let addr = endpoint.node_addr().await?;
         trace!("endpoint address: {addr:?}");
 
-        // Initialize the gossip protocol.
-        let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.info);
-        // Initialize the downloader.
-        let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
-
-        // Spawn the docs engine, if enabled.
-        // This returns None for DocsStorage::Disabled, otherwise Some(DocsEngine).
-        let docs = DocsEngine::spawn(
-            self.docs_storage,
-            self.blobs_store.clone(),
-            self.storage.default_author_storage(),
-            endpoint.clone(),
-            gossip.clone(),
-            downloader.clone(),
-        )
-        .await?;
-
         // Initialize the internal RPC connection.
-        let (internal_rpc, controller) = quic_rpc::transport::flume::connection::<RpcService>(32);
-        let internal_rpc = quic_rpc::transport::boxed::ServerEndpoint::new(internal_rpc);
+        let (internal_rpc, controller) = quic_rpc::transport::flume::channel(32);
+        let internal_rpc = quic_rpc::transport::boxed::BoxedListener::new(internal_rpc);
         // box the controller. Boxing has a special case for the flume channel that avoids allocations,
         // so this has zero overhead.
-        let controller = quic_rpc::transport::boxed::Connection::new(controller);
+        let controller = quic_rpc::transport::boxed::BoxedConnector::new(controller);
         let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
 
         let inner = Arc::new(NodeInner {
             rpc_addr: self.rpc_addr,
-            db: Default::default(),
-            endpoint,
+            endpoint: endpoint.clone(),
             client,
             cancel_token: CancellationToken::new(),
-            local_pool_handle: lp.handle().clone(),
         });
 
         let protocol_builder = ProtocolBuilder {
             inner,
-            protocols: Default::default(),
+            router: RouterBuilder::new(endpoint),
             internal_rpc,
             external_rpc: self.rpc_endpoint,
-            gc_policy: self.gc_policy,
-            gc_done_callback: self.gc_done_callback,
             nodes_data_path,
-            local_pool: lp,
         };
-
-        let protocol_builder = protocol_builder.register_iroh_protocols(
-            self.blob_events,
-            self.blobs_store,
-            gossip,
-            downloader,
-            docs,
-        );
 
         Ok(protocol_builder)
     }
@@ -715,19 +531,15 @@ where
 /// Note that RPC calls performed with client returned from [`Self::client`] will not complete
 /// until the node is spawned.
 #[derive(derive_more::Debug)]
-pub struct ProtocolBuilder<D> {
-    inner: Arc<NodeInner<D>>,
+pub struct ProtocolBuilder {
+    inner: Arc<NodeInner>,
     internal_rpc: IrohServerEndpoint,
     external_rpc: IrohServerEndpoint,
-    protocols: ProtocolMap,
-    #[debug("callback")]
-    gc_done_callback: Option<Box<dyn Fn() + Send>>,
-    gc_policy: GcPolicy,
+    router: RouterBuilder,
     nodes_data_path: Option<PathBuf>,
-    local_pool: LocalPool,
 }
 
-impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
+impl ProtocolBuilder {
     /// Registers a protocol handler for incoming connections.
     ///
     /// Use this to register custom protocols onto the iroh node. Whenever a new connection for
@@ -741,7 +553,7 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     /// # use std::sync::Arc;
     /// # use anyhow::Result;
     /// # use futures_lite::future::Boxed as BoxedFuture;
-    /// # use iroh::{node::{Node, ProtocolHandler}, net::endpoint::Connecting, client::Iroh};
+    /// # use iroh::{node::{Node}, net::endpoint::Connecting, client::Iroh, router::ProtocolHandler};
     /// #
     /// # #[tokio::main]
     /// # async fn main() -> Result<()> {
@@ -767,17 +579,15 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     /// let handler = MyProtocol { client };
     ///
     /// let node = unspawned_node
-    ///     .accept(MY_ALPN.to_vec(), Arc::new(handler))
+    ///     .accept(MY_ALPN, Arc::new(handler))
     ///     .spawn()
     ///     .await?;
     /// # node.shutdown().await?;
     /// # Ok(())
     /// # }
     /// ```
-    ///
-    ///
-    pub fn accept(mut self, alpn: Vec<u8>, handler: Arc<dyn ProtocolHandler>) -> Self {
-        self.protocols.insert(alpn, handler);
+    pub fn accept(mut self, alpn: impl AsRef<[u8]>, handler: Arc<dyn ProtocolHandler>) -> Self {
+        self.router = self.router.accept(alpn, handler);
         self
     }
 
@@ -794,91 +604,37 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
         &self.inner.endpoint
     }
 
-    /// Returns a reference to the used [`LocalPoolHandle`].
-    pub fn local_pool_handle(&self) -> &LocalPoolHandle {
-        self.local_pool.handle()
-    }
-
     /// Returns a protocol handler for an ALPN.
     ///
     /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
     /// does not match the passed type.
     pub fn get_protocol<P: ProtocolHandler>(&self, alpn: &[u8]) -> Option<Arc<P>> {
-        self.protocols.get_typed(alpn)
-    }
-
-    /// Registers the core iroh protocols (blobs, gossip, docs).
-    fn register_iroh_protocols(
-        mut self,
-        blob_events: EventSender,
-        store: D,
-        gossip: Gossip,
-        downloader: Downloader,
-        docs: Option<DocsEngine>,
-    ) -> Self {
-        // Register blobs.
-        let blobs_proto = BlobsProtocol::new_with_events(
-            store,
-            self.local_pool_handle().clone(),
-            blob_events,
-            downloader,
-        );
-        self = self.accept(iroh_blobs::protocol::ALPN.to_vec(), Arc::new(blobs_proto));
-
-        // Register gossip.
-        self = self.accept(GOSSIP_ALPN.to_vec(), Arc::new(gossip));
-
-        // Register docs, if enabled.
-        if let Some(docs) = docs {
-            self = self.accept(DOCS_ALPN.to_vec(), Arc::new(docs));
-        }
-
-        self
+        self.router.get_protocol::<P>(alpn)
     }
 
     /// Spawns the node and starts accepting connections.
-    pub async fn spawn(self) -> Result<Node<D>> {
+    pub async fn spawn(self) -> Result<Node> {
         let Self {
             inner,
             internal_rpc,
             external_rpc,
-            protocols,
-            gc_done_callback,
-            gc_policy,
+            router,
             nodes_data_path,
-            local_pool: rt,
         } = self;
-        let protocols = Arc::new(protocols);
         let node_id = inner.endpoint.node_id();
 
-        // Update the endpoint with our alpns.
-        let alpns = protocols
-            .alpns()
-            .map(|alpn| alpn.to_vec())
-            .collect::<Vec<_>>();
-        if let Err(err) = inner.endpoint.set_alpns(alpns) {
-            inner.shutdown(protocols).await;
-            return Err(err);
-        }
+        let router = router.spawn().await?;
 
         // Spawn the main task and store it in the node for structured termination in shutdown.
         let fut = inner
             .clone()
-            .run(
-                external_rpc,
-                internal_rpc,
-                protocols.clone(),
-                gc_policy,
-                gc_done_callback,
-                nodes_data_path,
-                rt,
-            )
+            .run(external_rpc, internal_rpc, router.clone(), nodes_data_path)
             .instrument(error_span!("node", me=%node_id.fmt_short()));
         let task = tokio::task::spawn(fut);
 
         let node = Node {
             inner,
-            protocols,
+            router,
             task: AbortOnDropHandle::new(task)
                 .map_err(Box::new(|e: JoinError| e.to_string()) as JoinErrToStr)
                 .shared(),
@@ -906,23 +662,6 @@ impl<D: iroh_blobs::store::Store> ProtocolBuilder<D> {
     }
 }
 
-/// Policy for garbage collection.
-// Please note that this is documented in the `iroh.computer` repository under
-// `src/app/docs/reference/config/page.mdx`.  Any changes to this need to be updated there.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum GcPolicy {
-    /// Garbage collection is disabled.
-    Disabled,
-    /// Garbage collection is run at the given interval.
-    Interval(Duration),
-}
-
-impl Default for GcPolicy {
-    fn default() -> Self {
-        Self::Interval(DEFAULT_GC_INTERVAL)
-    }
-}
-
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const MAX_RPC_STREAMS: u32 = 1024;
 
@@ -936,7 +675,10 @@ pub const DEFAULT_RPC_ADDR: SocketAddr =
 fn make_rpc_endpoint(
     secret_key: &SecretKey,
     mut rpc_addr: SocketAddr,
-) -> Result<(QuinnServerEndpoint<RpcService>, u16)> {
+) -> Result<(
+    QuinnListener<crate::rpc_protocol::Request, crate::rpc_protocol::Response>,
+    u16,
+)> {
     let mut transport_config = quinn::TransportConfig::default();
     transport_config
         .max_concurrent_bidi_streams(MAX_RPC_STREAMS.into())
@@ -967,7 +709,7 @@ fn make_rpc_endpoint(
     };
 
     let actual_rpc_port = rpc_quinn_endpoint.local_addr()?.port();
-    let rpc_endpoint = QuinnServerEndpoint::<RpcService>::new(rpc_quinn_endpoint)?;
+    let rpc_endpoint = QuinnListener::new(rpc_quinn_endpoint)?;
 
     Ok((rpc_endpoint, actual_rpc_port))
 }

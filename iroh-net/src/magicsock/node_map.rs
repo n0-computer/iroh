@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     pin::Pin,
@@ -10,6 +10,7 @@ use std::{
 use futures_lite::stream::Stream;
 use iroh_base::key::NodeId;
 use iroh_metrics::inc;
+use iroh_relay::RelayUrl;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
@@ -25,8 +26,7 @@ use super::{
 use crate::{
     disco::{CallMeMaybe, Pong, SendAddr},
     key::PublicKey,
-    relay::RelayUrl,
-    stun, NodeAddr,
+    NodeAddr,
 };
 
 mod best_addr;
@@ -34,9 +34,8 @@ mod node_state;
 mod path_state;
 mod udp_paths;
 
-pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
-
 pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
+pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`NodeMap::prune_inactive`].
@@ -162,7 +161,7 @@ impl NodeMap {
         &self,
         id: usize,
         dst: SendAddr,
-        tx_id: stun::TransactionId,
+        tx_id: stun_rs::TransactionId,
         purpose: DiscoPingPurpose,
         msg_sender: tokio::sync::mpsc::Sender<ActorMessage>,
     ) {
@@ -171,7 +170,7 @@ impl NodeMap {
         }
     }
 
-    pub(super) fn notify_ping_timeout(&self, id: usize, tx_id: stun::TransactionId) {
+    pub(super) fn notify_ping_timeout(&self, id: usize, tx_id: stun_rs::TransactionId) {
         if let Some(ep) = self.inner.lock().get_mut(NodeStateKey::Idx(id)) {
             ep.ping_timeout(tx_id);
         }
@@ -284,10 +283,7 @@ impl NodeMap {
         self.inner.lock().prune_inactive();
     }
 
-    pub(crate) fn on_direct_addr_discovered(
-        &self,
-        discovered: impl Iterator<Item = impl Into<IpPort>>,
-    ) {
+    pub(crate) fn on_direct_addr_discovered(&self, discovered: BTreeSet<SocketAddr>) {
         self.inner.lock().on_direct_addr_discovered(discovered);
     }
 }
@@ -322,10 +318,7 @@ impl NodeMapInner {
     }
 
     /// Prunes direct addresses from nodes that claim to share an address we know points to us.
-    pub(super) fn on_direct_addr_discovered(
-        &mut self,
-        discovered: impl Iterator<Item = impl Into<IpPort>>,
-    ) {
+    pub(super) fn on_direct_addr_discovered(&mut self, discovered: BTreeSet<SocketAddr>) {
         for addr in discovered {
             self.remove_by_ipp(addr.into(), ClearReason::MatchesOurLocalAddr)
         }
@@ -655,10 +648,10 @@ impl IpPort {
 
 #[cfg(test)]
 mod tests {
-    use super::node_state::MAX_INACTIVE_DIRECT_ADDRESSES;
-    use super::*;
-    use crate::key::SecretKey;
     use std::net::Ipv4Addr;
+
+    use super::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, *};
+    use crate::key::SecretKey;
 
     impl NodeMap {
         #[track_caller]
@@ -785,7 +778,7 @@ mod tests {
         info!("Adding alive addresses");
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SendAddr::Udp(SocketAddr::new(LOCALHOST, 7000 + i as u16));
-            let txid = stun::TransactionId::from([i as u8; 12]);
+            let txid = stun_rs::TransactionId::from([i as u8; 12]);
             // Note that this already invokes .prune_direct_addresses() because these are
             // new UDP paths.
             endpoint.handle_ping(addr, txid);

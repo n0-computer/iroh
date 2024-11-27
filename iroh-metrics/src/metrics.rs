@@ -13,8 +13,10 @@
 //!
 //! # Example:
 //! ```rust
-//! use iroh_metrics::{inc, inc_by};
-//! use iroh_metrics::core::{Core, Metric, Counter};
+//! use iroh_metrics::{
+//!     core::{Core, Counter, Metric},
+//!     inc, inc_by,
+//! };
 //! use struct_iterable::Iterable;
 //!
 //! #[derive(Debug, Clone, Iterable)]
@@ -25,15 +27,17 @@
 //! impl Default for Metrics {
 //!     fn default() -> Self {
 //!         Self {
-//!             things_added: Counter::new("things_added tracks the number of things we have added"),
+//!             things_added: Counter::new(
+//!                 "things_added tracks the number of things we have added",
+//!             ),
 //!         }
 //!     }
 //! }
 //!
 //! impl Metric for Metrics {
-//!    fn name() -> &'static str {
+//!     fn name() -> &'static str {
 //!         "my_metrics"
-//!    }
+//!     }
 //! }
 //!
 //! Core::init(|reg, metrics| {
@@ -61,4 +65,18 @@ pub async fn start_metrics_dumper(
     interval: std::time::Duration,
 ) -> anyhow::Result<()> {
     crate::service::dumper(&path, interval).await
+}
+
+/// Start a metrics exporter service.
+#[cfg(feature = "metrics")]
+pub async fn start_metrics_exporter(cfg: crate::PushMetricsConfig) {
+    crate::service::exporter(
+        cfg.endpoint,
+        cfg.service_name,
+        cfg.instance_name,
+        cfg.username,
+        cfg.password,
+        std::time::Duration::from_secs(cfg.interval),
+    )
+    .await;
 }

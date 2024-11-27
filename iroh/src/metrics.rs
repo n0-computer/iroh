@@ -4,8 +4,7 @@ use iroh_metrics::{
     core::{Counter, Metric},
     struct_iterable::Iterable,
 };
-
-use crate::rpc_protocol::node::CounterStats;
+use iroh_node_util::rpc::proto::node::CounterStats;
 
 /// Enum of metrics for the module
 #[allow(missing_docs)]
@@ -70,9 +69,8 @@ impl Metric for Metrics {
 pub fn try_init_metrics_collection() -> std::io::Result<()> {
     iroh_metrics::core::Core::try_init(|reg, metrics| {
         metrics.insert(crate::metrics::Metrics::new(reg));
-        metrics.insert(iroh_docs::metrics::Metrics::new(reg));
         metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
-        metrics.insert(iroh_net::metrics::NetcheckMetrics::new(reg));
+        metrics.insert(iroh_net::metrics::NetReportMetrics::new(reg));
         metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
     })
 }
@@ -85,15 +83,11 @@ pub fn get_metrics() -> anyhow::Result<BTreeMap<String, CounterStats>> {
     let core =
         iroh_metrics::core::Core::get().ok_or_else(|| anyhow::anyhow!("metrics are disabled"))?;
     collect(
-        core.get_collector::<iroh_docs::metrics::Metrics>(),
-        &mut map,
-    );
-    collect(
         core.get_collector::<iroh_net::metrics::MagicsockMetrics>(),
         &mut map,
     );
     collect(
-        core.get_collector::<iroh_net::metrics::NetcheckMetrics>(),
+        core.get_collector::<iroh_net::metrics::NetReportMetrics>(),
         &mut map,
     );
     collect(

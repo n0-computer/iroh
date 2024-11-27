@@ -5,17 +5,23 @@ use std::collections::HashMap;
 use futures_concurrency::stream::stream_group;
 use futures_lite::StreamExt;
 use iroh_base::key::NodeId;
-use tokio::sync::{mpsc, Notify};
-use tokio::task::JoinHandle;
-use tokio::time::Duration;
-use tracing::{debug, error, info_span, trace, warn, Instrument};
+use iroh_metrics::inc;
+use tokio::{
+    sync::{mpsc, Notify},
+    time::Duration,
+};
+use tokio_util::task::AbortOnDropHandle;
+use tracing::{debug, error, info_span, trace, Instrument};
 
-use crate::magicsock::{ConnectionType, ConnectionTypeStream};
+use crate::{
+    magicsock::{ConnectionType, ConnectionTypeStream},
+    metrics::MagicsockMetrics,
+};
 
 #[derive(Debug)]
 pub(super) struct RttHandle {
     // We should and some point use this to propagate panics and errors.
-    pub(super) _handle: JoinHandle<()>,
+    pub(super) _handle: AbortOnDropHandle<()>,
     pub(super) msg_tx: mpsc::Sender<RttMessage>,
 }
 
@@ -27,13 +33,16 @@ impl RttHandle {
             tick: Notify::new(),
         };
         let (msg_tx, msg_rx) = mpsc::channel(16);
-        let _handle = tokio::spawn(
+        let handle = tokio::spawn(
             async move {
                 actor.run(msg_rx).await;
             }
             .instrument(info_span!("rtt-actor")),
         );
-        Self { _handle, msg_tx }
+        Self {
+            _handle: AbortOnDropHandle::new(handle),
+            msg_tx,
+        }
     }
 }
 
@@ -63,7 +72,9 @@ struct RttActor {
     ///
     /// These are weak references so not to keep the connections alive.  The key allows
     /// removing the corresponding stream from `conn_type_changes`.
-    connections: HashMap<stream_group::Key, (quinn::WeakConnectionHandle, NodeId)>,
+    /// The boolean is an indiciator of whether this connection was direct before.
+    /// This helps establish metrics on number of connections that became direct.
+    connections: HashMap<stream_group::Key, (quinn::WeakConnectionHandle, NodeId, bool)>,
     /// A way to notify the main actor loop to run over.
     ///
     /// E.g. when a new stream was added.
@@ -79,12 +90,18 @@ impl RttActor {
         cleanup_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
-                Some(msg) = msg_rx.recv() => self.handle_msg(msg),
-                item = self.connection_events.next(),
-                    if !self.connection_events.is_empty() => self.do_reset_rtt(item),
+                biased;
+                msg = msg_rx.recv() => {
+                    match msg {
+                        Some(msg) => self.handle_msg(msg),
+                        None => break,
+                    }
+                }
+                item = self.connection_events.next(), if !self.connection_events.is_empty() => {
+                    self.do_reset_rtt(item);
+                }
                 _ = cleanup_interval.tick() => self.do_connections_cleanup(),
                 () = self.tick.notified() => continue,
-                else => break,
             }
         }
         debug!("rtt-actor finished");
@@ -111,8 +128,9 @@ impl RttActor {
         node_id: NodeId,
     ) {
         let key = self.connection_events.insert(conn_type_changes);
-        self.connections.insert(key, (connection, node_id));
+        self.connections.insert(key, (connection, node_id, false));
         self.tick.notify_one();
+        inc!(MagicsockMetrics, connection_handshake_success);
     }
 
     /// Performs the congestion controller reset for a magic socket path change.
@@ -123,14 +141,19 @@ impl RttActor {
     /// happens commonly.
     fn do_reset_rtt(&mut self, item: Option<(stream_group::Key, ConnectionType)>) {
         match item {
-            Some((key, new_conn_type)) => match self.connections.get(&key) {
-                Some((handle, node_id)) => {
-                    if handle.reset_congestion_state() {
+            Some((key, new_conn_type)) => match self.connections.get_mut(&key) {
+                Some((handle, node_id, was_direct_before)) => {
+                    if handle.network_path_changed() {
                         debug!(
                             node_id = %node_id.fmt_short(),
                             new_type = ?new_conn_type,
                             "Congestion controller state reset",
                         );
+                        if !*was_direct_before && matches!(new_conn_type, ConnectionType::Direct(_))
+                        {
+                            *was_direct_before = true;
+                            inc!(MagicsockMetrics, connection_became_direct);
+                        }
                     } else {
                         debug!(
                             node_id = %node_id.fmt_short(),
@@ -142,18 +165,44 @@ impl RttActor {
                 None => error!("No connection found for stream item"),
             },
             None => {
-                warn!("self.conn_type_changes is empty but was polled");
+                trace!("No more connections");
             }
         }
     }
 
     /// Performs cleanup for closed connection.
     fn do_connections_cleanup(&mut self) {
-        for (key, (handle, node_id)) in self.connections.iter() {
+        for (key, (handle, node_id, _)) in self.connections.iter() {
             if !handle.is_alive() {
                 trace!(node_id = %node_id.fmt_short(), "removing stale connection");
                 self.connection_events.remove(*key);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_actor_mspc_close() {
+        let mut actor = RttActor {
+            connection_events: stream_group::StreamGroup::new().keyed(),
+            connections: HashMap::new(),
+            tick: Notify::new(),
+        };
+        let (msg_tx, msg_rx) = mpsc::channel(16);
+        let handle = tokio::spawn(async move {
+            actor.run(msg_rx).await;
+        });
+
+        // Dropping the msg_tx should stop the actor
+        drop(msg_tx);
+
+        let task_res = tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("timeout - actor did not finish");
+        assert!(task_res.is_ok());
     }
 }

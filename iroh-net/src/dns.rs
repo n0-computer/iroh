@@ -5,15 +5,16 @@
 //! by ipv4, ipv6, name and node_id. See the [`node_info`] module documentation for details on how
 //! iroh node records are structured.
 
-use std::fmt::Write;
-use std::net::{IpAddr, Ipv6Addr};
-use std::time::Duration;
+use std::{
+    fmt::Write,
+    net::{IpAddr, Ipv6Addr},
+    time::Duration,
+};
 
 use anyhow::Result;
 use futures_lite::{Future, StreamExt};
 use hickory_resolver::{AsyncResolver, IntoName, TokioAsyncResolver};
-use iroh_base::key::NodeId;
-use iroh_base::node_addr::NodeAddr;
+use iroh_base::{key::NodeId, node_addr::NodeAddr};
 use once_cell::sync::Lazy;
 
 pub mod node_info;
@@ -381,9 +382,8 @@ async fn stagger_call<T, F: Fn() -> Fut, Fut: Future<Output = Result<T>>>(
 pub(crate) mod tests {
     use std::sync::atomic::AtomicUsize;
 
-    use crate::defaults::staging::NA_RELAY_HOSTNAME;
-
     use super::*;
+    use crate::defaults::staging::NA_RELAY_HOSTNAME;
     const TIMEOUT: Duration = Duration::from_secs(5);
     const STAGGERING_DELAYS: &[u64] = &[200, 300];
 

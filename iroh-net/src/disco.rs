@@ -24,12 +24,12 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
+use iroh_relay::RelayUrl;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::{key, relay::RelayUrl};
-
-use super::{key::PublicKey, stun};
+use super::key::PublicKey;
+use crate::key;
 
 // TODO: custom magicn
 /// The 6 byte header of all discovery messages.
@@ -115,7 +115,7 @@ pub enum Message {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ping {
     /// Random client-generated per-ping transaction ID.
-    pub tx_id: stun::TransactionId,
+    pub tx_id: stun_rs::TransactionId,
 
     /// Allegedly the ping sender's wireguard public key.
     /// It shouldn't be trusted by itself, but can be combined with
@@ -128,7 +128,7 @@ pub struct Ping {
 /// It includes the sender's source IP + port, so it's effectively a STUN response.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pong {
-    pub tx_id: stun::TransactionId,
+    pub tx_id: stun_rs::TransactionId,
     /// The observed address off the ping sender.
     ///
     /// 18 bytes (16+2) on the wire; v4-mapped ipv6 for IPv4.
@@ -211,7 +211,7 @@ impl Ping {
         let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().expect("length checked");
         let raw_key = &p[TX_LEN..TX_LEN + key::PUBLIC_KEY_LENGTH];
         let node_key = PublicKey::try_from(raw_key)?;
-        let tx_id = stun::TransactionId::from(tx_id);
+        let tx_id = stun_rs::TransactionId::from(tx_id);
 
         Ok(Ping { tx_id, node_key })
     }
@@ -291,7 +291,7 @@ impl Pong {
     fn from_bytes(ver: u8, p: &[u8]) -> Result<Self> {
         ensure!(ver == V0, "invalid version");
         let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().context("message too short")?;
-        let tx_id = stun::TransactionId::from(tx_id);
+        let tx_id = stun_rs::TransactionId::from(tx_id);
         let src = send_addr_from_bytes(&p[TX_LEN..])?;
 
         Ok(Pong {
@@ -404,9 +404,8 @@ const fn msg_header(t: MessageType, ver: u8) -> [u8; HEADER_LEN] {
 
 #[cfg(test)]
 mod tests {
-    use crate::key::SecretKey;
-
     use super::*;
+    use crate::key::SecretKey;
 
     #[test]
     fn test_to_from_bytes() {
@@ -478,7 +477,7 @@ mod tests {
         let recv_key = SecretKey::generate();
 
         let msg = Message::Ping(Ping {
-            tx_id: stun::TransactionId::default(),
+            tx_id: stun_rs::TransactionId::default(),
             node_key: sender_key.public(),
         });
 

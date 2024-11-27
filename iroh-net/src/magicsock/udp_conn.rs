@@ -1,26 +1,22 @@
 use std::{
     fmt::Debug,
-    future::Future,
     io,
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
-    task::{ready, Context, Poll},
+    task::{Context, Poll},
 };
 
 use anyhow::{bail, Context as _};
+use netwatch::UdpSocket;
 use quinn::AsyncUdpSocket;
-use quinn_udp::{Transmit, UdpSockRef};
-use tokio::io::Interest;
-use tracing::{debug, trace, warn};
-
-use crate::net::UdpSocket;
+use quinn_udp::Transmit;
+use tracing::debug;
 
 /// A UDP socket implementing Quinn's [`AsyncUdpSocket`].
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub struct UdpConn {
     io: Arc<UdpSocket>,
-    inner: Arc<quinn_udp::UdpSocketState>,
 }
 
 impl UdpConn {
@@ -28,43 +24,34 @@ impl UdpConn {
         self.io.clone()
     }
 
+    pub(super) fn as_socket_ref(&self) -> &UdpSocket {
+        &self.io
+    }
+
     pub(super) fn bind(addr: SocketAddr) -> anyhow::Result<Self> {
         let sock = bind(addr)?;
-        let state = quinn_udp::UdpSocketState::new(quinn_udp::UdpSockRef::from(&sock))?;
-        Ok(Self {
-            io: Arc::new(sock),
-            inner: Arc::new(state),
-        })
+
+        Ok(Self { io: Arc::new(sock) })
     }
 
     pub fn port(&self) -> u16 {
         self.local_addr().map(|p| p.port()).unwrap_or_default()
     }
 
-    #[allow(clippy::unused_async)]
-    pub async fn close(&self) -> Result<(), io::Error> {
-        // Nothing to do atm
-        Ok(())
+    pub(super) fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
+        Box::pin(IoPoller {
+            io: self.io.clone(),
+        })
     }
 }
 
 impl AsyncUdpSocket for UdpConn {
     fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn quinn::UdpPoller>> {
-        let sock = self.io.clone();
-        Box::pin(IoPoller {
-            next_waiter: move || {
-                let sock = sock.clone();
-                async move { sock.writable().await }
-            },
-            waiter: None,
-        })
+        (*self).create_io_poller()
     }
 
     fn try_send(&self, transmit: &Transmit<'_>) -> io::Result<()> {
-        self.io.try_io(Interest::WRITABLE, || {
-            let sock_ref = UdpSockRef::from(&self.io);
-            self.inner.send(sock_ref, transmit)
-        })
+        self.io.try_send_quinn(transmit)
     }
 
     fn poll_recv(
@@ -73,24 +60,7 @@ impl AsyncUdpSocket for UdpConn {
         bufs: &mut [io::IoSliceMut<'_>],
         meta: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        loop {
-            ready!(self.io.poll_recv_ready(cx))?;
-            if let Ok(res) = self.io.try_io(Interest::READABLE, || {
-                self.inner.recv(Arc::as_ref(&self.io).into(), bufs, meta)
-            }) {
-                for meta in meta.iter().take(res) {
-                    trace!(
-                        src = %meta.addr,
-                        len = meta.len,
-                        count = meta.len / meta.stride,
-                        dst = %meta.dst_ip.map(|x| x.to_string()).unwrap_or_default(),
-                        "UDP recv"
-                    );
-                }
-
-                return Poll::Ready(Ok(res));
-            }
-        }
+        self.io.poll_recv_quinn(cx, bufs, meta)
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -98,15 +68,15 @@ impl AsyncUdpSocket for UdpConn {
     }
 
     fn may_fragment(&self) -> bool {
-        self.inner.may_fragment()
+        self.io.may_fragment()
     }
 
     fn max_transmit_segments(&self) -> usize {
-        self.inner.max_gso_segments()
+        self.io.max_gso_segments()
     }
 
     fn max_receive_segments(&self) -> usize {
-        self.inner.gro_segments()
+        self.io.gro_segments()
     }
 }
 
@@ -137,7 +107,7 @@ fn bind(mut addr: SocketAddr) -> anyhow::Result<UdpSocket> {
                 return Ok(pconn);
             }
             Err(err) => {
-                warn!(%addr, "failed to bind: {:#?}", err);
+                debug!(%addr, "failed to bind: {err:#}");
                 continue;
             }
         }
@@ -148,60 +118,26 @@ fn bind(mut addr: SocketAddr) -> anyhow::Result<UdpSocket> {
 }
 
 /// Poller for when the socket is writable.
-///
-/// The tricky part is that we only have `tokio::net::UdpSocket::writable()` to create the
-/// waiter we need, which does not return a named future type.  In order to be able to store
-/// this waiter in a struct without boxing we need to specify the future itself as a type
-/// parameter, which we can only do if we introduce a second type parameter which returns
-/// the future.  So we end up with a function which we do not need, but it makes the types
-/// work.
-#[derive(derive_more::Debug)]
-#[pin_project::pin_project]
-struct IoPoller<F, Fut>
-where
-    F: Fn() -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = io::Result<()>> + Send + Sync + 'static,
-{
-    /// Function which can create a new waiter if there is none.
-    #[debug("next_waiter")]
-    next_waiter: F,
-    /// The waiter which tells us when the socket is writable.
-    #[debug("waiter")]
-    #[pin]
-    waiter: Option<Fut>,
+#[derive(Debug)]
+struct IoPoller {
+    io: Arc<UdpSocket>,
 }
 
-impl<F, Fut> quinn::UdpPoller for IoPoller<F, Fut>
-where
-    F: Fn() -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = io::Result<()>> + Send + Sync + 'static,
-{
+impl quinn::UdpPoller for IoPoller {
     fn poll_writable(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        let mut this = self.project();
-        if this.waiter.is_none() {
-            this.waiter.set(Some((this.next_waiter)()));
-        }
-        let result = this
-            .waiter
-            .as_mut()
-            .as_pin_mut()
-            .expect("just set")
-            .poll(cx);
-        if result.is_ready() {
-            this.waiter.set(None);
-        }
-        result
+        self.io.poll_writable(cx)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{key, net::IpFamily, tls};
-
-    use super::*;
     use anyhow::Result;
+    use netwatch::IpFamily;
     use tokio::sync::mpsc;
     use tracing::{info_span, Instrument};
+
+    use super::*;
+    use crate::{key, tls};
 
     const ALPN: &[u8] = b"n0/test/1";
 
@@ -231,7 +167,7 @@ mod tests {
     #[tokio::test]
     async fn test_rebinding_conn_send_recv_ipv6() -> Result<()> {
         let _guard = iroh_test::logging::setup();
-        if !crate::netcheck::os_has_ipv6() {
+        if !net_report::os_has_ipv6() {
             return Ok(());
         }
         rebinding_conn_send_recv(IpFamily::V6).await

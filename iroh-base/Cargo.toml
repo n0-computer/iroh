@@ -1,6 +1,6 @@
 [package]
 name = "iroh-base"
-version = "0.26.0"
+version = "0.28.0"
 edition = "2021"
 readme = "README.md"
 description = "base type and utilities for Iroh"
@@ -15,6 +15,7 @@ rust-version = "1.76"
 workspace = true
 
 [dependencies]
+cc = "=1.1.31" # enforce cc version, because of https://github.com/rust-lang/cc-rs/issues/1278
 anyhow = { version = "1" }
 blake3 = { version = "1.4.5", package = "iroh-blake3", optional = true }
 data-encoding = { version = "2.3.3", optional = true }
@@ -22,7 +23,6 @@ hex = "0.4.3"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"], optional = true }
 redb = { version = "2.0.0", optional = true }
 serde = { version = "1", features = ["derive"] }
-serde-error = "0.1.2"
 thiserror = "1"
 
 # key module
@@ -41,18 +41,19 @@ url = { version = "2.5.0", features = ["serde"], optional = true }
 getrandom = { version = "0.2", default-features = false, optional = true }
 
 [dev-dependencies]
-iroh-test = { path = "../iroh-test" }
+iroh-test = "0.28.0"
 proptest = "1.0.0"
 serde_json = "1.0.107"
 serde_test = "1.0.176"
 
 [features]
-default = ["hash", "base32"]
+default = ["hash", "base32", "relay"]
 hash = ["dep:blake3", "dep:data-encoding", "dep:postcard", "dep:derive_more", "base32"]
 base32 = ["dep:data-encoding", "dep:postcard"]
 redb = ["dep:redb"]
 key = ["dep:ed25519-dalek", "dep:once_cell", "dep:rand", "dep:rand_core", "dep:ssh-key", "dep:ttl_cache", "dep:aead", "dep:crypto_box", "dep:zeroize", "dep:url", "dep:derive_more", "dep:getrandom"]
 wasm = ["getrandom?/js"]
+relay = ["dep:url", "dep:derive_more"]
 
 [package.metadata.docs.rs]
 all-features = true

@@ -2,9 +2,11 @@
 
 use tokio::runtime::RuntimeFlavor;
 use tracing::level_filters::LevelFilter;
-use tracing_subscriber::layer::{Layer, SubscriberExt};
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{
+    layer::{Layer, SubscriberExt},
+    util::SubscriberInitExt,
+    EnvFilter,
+};
 
 /// Configures logging for the current test, **single-threaded runtime only**.
 ///
