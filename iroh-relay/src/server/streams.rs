@@ -14,6 +14,9 @@ use tokio_util::codec::Framed;
 
 use crate::protos::relay::{DerpCodec, Frame};
 
+/// A Stream and Sink for [`Frame`]s connected to a single relay client.
+///
+/// The stream receives message from the client while the sink sends them to the client.
 #[derive(Debug)]
 pub(crate) enum RelayedStream {
     Derp(Framed<MaybeTlsStream, DerpCodec>),

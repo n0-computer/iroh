@@ -510,7 +510,7 @@ pub(crate) async fn send_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(
     };
     if let Some(rate_limiter) = rate_limiter {
         if rate_limiter.check_n(frame.len()).is_err() {
-            tracing::warn!("dropping send: rate limit reached");
+            tracing::debug!("dropping send: rate limit reached");
             return Ok(());
         }
     }
@@ -521,12 +521,7 @@ pub(crate) async fn send_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(
 }
 
 pub(crate) struct RateLimiter {
-    inner: governor::RateLimiter<
-        governor::state::direct::NotKeyed,
-        governor::state::InMemoryState,
-        governor::clock::DefaultClock,
-        governor::middleware::NoOpMiddleware,
-    >,
+    inner: governor::DefaultDirectRateLimiter,
 }
 
 impl RateLimiter {

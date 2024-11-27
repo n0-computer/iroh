@@ -8,11 +8,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{bail, Context as _, Result};
 use clap::Parser;
 use iroh_relay::{
     defaults::{DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_STUN_PORT},
-    server as relay,
+    server::{self as relay, ClientConnRateLimit},
 };
 use serde::{Deserialize, Serialize};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
@@ -282,6 +282,29 @@ struct Limits {
     accept_conn_limit: Option<f64>,
     /// Burst limit for accepting new connection. Unlimited if not set.
     accept_conn_burst: Option<usize>,
+    /// Rate limiting configuration per client.
+    client: Option<PerClientRateLimitConfig>,
+}
+
+/// Rate limit configuration for each connected client.
+///
+/// The rate limiting uses a token-bucket style algorithm:
+///
+/// - The base rate limit uses a steady-stream rate of bytes allowed.
+/// - Additionally a burst quota allows sending bytes over this steady-stream rate
+///   limit, as long as the maximum burst quota is not exceeded.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct PerClientRateLimitConfig {
+    /// Rate limit configuration for the incoming data from the client.
+    rx: Option<RateLimitConfig>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct RateLimitConfig {
+    /// Maximum number of bytes per second.
+    bytes_per_second: Option<u32>,
+    /// Maximum number of bytes to read in a single burst.
+    max_burst_bytes: Option<u32>,
 }
 
 impl Config {
@@ -295,11 +318,12 @@ impl Config {
         if config_path.exists() {
             Self::read_from_file(&config_path).await
         } else {
-            let config = Config::default();
-            config.write_to_file(&config_path).await?;
-
-            Ok(config)
+            Ok(Config::default())
         }
+    }
+
+    fn from_str(config: &str) -> Result<Self> {
+        toml::from_str(config).context("config must be valid toml")
     }
 
     async fn read_from_file(path: impl AsRef<Path>) -> Result<Self> {
@@ -309,27 +333,7 @@ impl Config {
         let config_ser = tokio::fs::read_to_string(&path)
             .await
             .context("unable to read config")?;
-        let config: Self = toml::from_str(&config_ser).context("config file must be valid toml")?;
-
-        Ok(config)
-    }
-
-    /// Write the content of this configuration to the provided path.
-    async fn write_to_file(&self, path: impl AsRef<Path>) -> Result<()> {
-        let p = path
-            .as_ref()
-            .parent()
-            .ok_or_else(|| anyhow!("invalid config file path, no parent"))?;
-        // TODO: correct permissions (0777 for dir, 0600 for file)
-        tokio::fs::create_dir_all(p)
-            .await
-            .with_context(|| format!("unable to create config-path dir: {}", p.display()))?;
-        let config_ser = toml::to_string(self).context("unable to serialize configuration")?;
-        tokio::fs::write(path, config_ser)
-            .await
-            .context("unable to write config file")?;
-
-        Ok(())
+        Self::from_str(&config_ser)
     }
 }
 
@@ -402,17 +406,37 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
         }
         None => None,
     };
-    let limits = relay::Limits {
-        accept_conn_limit: cfg
-            .limits
-            .as_ref()
-            .map(|l| l.accept_conn_limit)
-            .unwrap_or_default(),
-        accept_conn_burst: cfg
-            .limits
-            .as_ref()
-            .map(|l| l.accept_conn_burst)
-            .unwrap_or_default(),
+    let limits = match cfg.limits {
+        Some(ref limits) => {
+            let client_rx = match &limits.client {
+                Some(PerClientRateLimitConfig { rx: Some(rx) }) => {
+                    if rx.bytes_per_second.is_none() && rx.max_burst_bytes.is_some() {
+                        bail!("bytes_per_seconds must be specified to enable the rate-limiter");
+                    }
+                    match rx.bytes_per_second {
+                        Some(bps) => Some(ClientConnRateLimit {
+                            bytes_per_second: bps
+                                .try_into()
+                                .context("bytes_per_second must be non-zero u32")?,
+                            max_burst_bytes: rx
+                                .max_burst_bytes
+                                .map(|v| {
+                                    v.try_into().context("max_burst_bytes must be non-zero u32")
+                                })
+                                .transpose()?,
+                        }),
+                        None => None,
+                    }
+                }
+                Some(PerClientRateLimitConfig { rx: None }) | None => None,
+            };
+            relay::Limits {
+                accept_conn_limit: limits.accept_conn_limit,
+                accept_conn_burst: limits.accept_conn_burst,
+                client_rx,
+            }
+        }
+        None => Default::default(),
     };
     let relay_config = relay::RelayConfig {
         http_bind_addr: cfg.http_bind_addr(),
@@ -475,5 +499,48 @@ mod metrics {
         fn name() -> &'static str {
             "stun"
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroU32;
+
+    use testresult::TestResult;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_rate_limit_config() -> TestResult {
+        let config = "
+            [limits.client.rx]
+            bytes_per_second = 400
+            max_burst_bytes = 800
+        ";
+        let config = Config::from_str(config)?;
+        let relay_config = build_relay_config(config).await?;
+
+        let relay = relay_config.relay.expect("no relay config");
+        assert_eq!(
+            relay.limits.client_rx.expect("ratelimit").bytes_per_second,
+            NonZeroU32::try_from(400).unwrap()
+        );
+        assert_eq!(
+            relay.limits.client_rx.expect("ratelimit").max_burst_bytes,
+            Some(NonZeroU32::try_from(800).unwrap())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_default() -> TestResult {
+        let config = Config::from_str("")?;
+        let relay_config = build_relay_config(config).await?;
+
+        let relay = relay_config.relay.expect("no relay config");
+        assert!(relay.limits.client_rx.is_none());
+
+        Ok(())
     }
 }

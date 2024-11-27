@@ -42,6 +42,11 @@ pub struct Metrics {
     /// Number of `FrameType::Unknown` received
     pub unknown_frames: Counter,
 
+    /// Number of frames received from client connection which have been rate-limited.
+    pub frames_rx_ratelimited_total: Counter,
+    /// Number of client connections which have had any frames rate-limited.
+    pub conns_rx_ratelimited_total: Counter,
+
     /*
      * Metrics about peers
      */
@@ -91,6 +96,12 @@ impl Default for Metrics {
             got_ping: Counter::new("Number of times the server has received a Ping from a client."),
             sent_pong: Counter::new("Number of times the server has sent a Pong to a client."),
             unknown_frames: Counter::new("Number of unknown frames sent to this server."),
+            frames_rx_ratelimited_total: Counter::new(
+                "Number of frames received from client connection which have been rate-limited.",
+            ),
+            conns_rx_ratelimited_total: Counter::new(
+                "Number of client connections which have had any frames rate-limited.",
+            ),
 
             /*
              * Metrics about peers

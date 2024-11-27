@@ -16,7 +16,7 @@
 //! - HTTPS `/generate_204`: Used for net_report probes.
 //! - STUN: UDP port for STUN requests/responses.
 
-use std::{fmt, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
+use std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync::Arc};
 
 use anyhow::{anyhow, bail, Context, Result};
 use futures_lite::StreamExt;
@@ -140,12 +140,24 @@ pub struct TlsConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
 }
 
 /// Rate limits.
+// TODO: accept_conn_limit and accept_conn_burst are not currently implemented.
 #[derive(Debug, Default)]
 pub struct Limits {
     /// Rate limit for accepting new connection. Unlimited if not set.
     pub accept_conn_limit: Option<f64>,
     /// Burst limit for accepting new connection. Unlimited if not set.
     pub accept_conn_burst: Option<usize>,
+    /// Rate limits for incoming traffic from a client connection.
+    pub client_rx: Option<ClientConnRateLimit>,
+}
+
+/// Per-client rate limit configuration.
+#[derive(Debug, Copy, Clone)]
+pub struct ClientConnRateLimit {
+    /// Max number of bytes per second to read from the client connection.
+    pub bytes_per_second: NonZeroU32,
+    /// Max number of bytes to read in a single burst.
+    pub max_burst_bytes: Option<NonZeroU32>,
 }
 
 /// TLS certificate configuration.
@@ -260,6 +272,9 @@ impl Server {
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
                     .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
                     .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler));
+                if let Some(cfg) = relay_config.limits.client_rx {
+                    builder = builder.client_rx_ratelimit(cfg);
+                }
                 let http_addr = match relay_config.tls {
                     Some(tls_config) => {
                         let server_config = rustls::ServerConfig::builder_with_provider(Arc::new(
