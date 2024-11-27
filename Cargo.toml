@@ -55,5 +55,3 @@ iroh-net = { path = "./iroh-net" }
 iroh-metrics = { path = "./iroh-metrics" }
 iroh-test = { path = "./iroh-test" }
 iroh-router = { path = "./iroh-router" }
-
-tokio-rustls-acme = { git = "https://github.com/n0-computer/tokio-rustls-acme", branch = "main" }
