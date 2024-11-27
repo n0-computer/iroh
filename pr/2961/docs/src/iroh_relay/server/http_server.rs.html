@@ -1261,7 +1261,7 @@
     ///
     /// Rate-limiting is enforced on received traffic from individual clients.  This
     /// configuration applies to a single client connection.
-    </span>client_rx_ratelimit: ClientConnRateLimit,
+    </span>client_rx_ratelimit: <span class="prelude-ty">Option</span>&lt;ClientConnRateLimit&gt;,
 }
 
 <span class="kw">impl </span>ServerBuilder {
@@ -1272,7 +1272,7 @@
             tls_config: <span class="prelude-val">None</span>,
             handlers: Default::default(),
             headers: HeaderMap::new(),
-            client_rx_ratelimit: ClientConnRateLimit::MAX,
+            client_rx_ratelimit: <span class="prelude-val">None</span>,
         }
     }
 
@@ -1285,9 +1285,9 @@
     <span class="doccomment">/// Sets the per-client rate-limit configuration for incoming data.
     ///
     /// On each client connection the incoming data is rate-limited.  By default
-    /// [`ClientConnRateLimit::MAX`] is enforced.
+    /// no rate limit is enforced.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>client_rx_ratelimit(<span class="kw-2">mut </span><span class="self">self</span>, config: ClientConnRateLimit) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.client_rx_ratelimit = config;
+        <span class="self">self</span>.client_rx_ratelimit = <span class="prelude-val">Some</span>(config);
         <span class="self">self
     </span>}
 
@@ -1400,7 +1400,7 @@
     headers: HeaderMap,
     server_channel: mpsc::Sender&lt;Message&gt;,
     write_timeout: Duration,
-    rate_limit: ClientConnRateLimit,
+    rate_limit: <span class="prelude-ty">Option</span>&lt;ClientConnRateLimit&gt;,
 }
 
 <span class="kw">impl </span>RelayService {
@@ -1648,7 +1648,7 @@
         headers: HeaderMap,
         server_channel: mpsc::Sender&lt;Message&gt;,
         write_timeout: Duration,
-        rate_limit: ClientConnRateLimit,
+        rate_limit: <span class="prelude-ty">Option</span>&lt;ClientConnRateLimit&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>(Arc::new(Inner {
             handlers,
@@ -2017,7 +2017,7 @@
             Default::default(),
             server_task.server_channel.clone(),
             server_task.write_timeout,
-            ClientConnRateLimit::MAX,
+            <span class="prelude-val">None</span>,
         );
 
         <span class="comment">// create client a and connect it to the server
@@ -2097,7 +2097,7 @@
             Default::default(),
             server_task.server_channel.clone(),
             server_task.write_timeout,
-            ClientConnRateLimit::MAX,
+            <span class="prelude-val">None</span>,
         );
 
         <span class="comment">// create client a and connect it to the server

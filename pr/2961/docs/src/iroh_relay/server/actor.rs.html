@@ -341,7 +341,6 @@
 <a href="#341" id="341">341</a>
 <a href="#342" id="342">342</a>
 <a href="#343" id="343">343</a>
-<a href="#344" id="344">344</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The main event loop for the relay server.
 //!
 //! based on tailscale/derp/derp_server.go
@@ -598,7 +597,6 @@
         server::{
             client_conn::ClientConnConfig,
             streams::{MaybeTlsStream, RelayedStream},
-            ClientConnRateLimit,
         },
     };
 
@@ -613,7 +611,7 @@
                 stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
                 write_timeout: Duration::from_secs(<span class="number">1</span>),
                 channel_capacity: <span class="number">10</span>,
-                rate_limit: ClientConnRateLimit::MAX,
+                rate_limit: <span class="prelude-val">None</span>,
                 server_channel,
             },
             Framed::new(test_io, DerpCodec),

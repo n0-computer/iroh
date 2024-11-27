@@ -779,6 +779,12 @@
 <a href="#779" id="779">779</a>
 <a href="#780" id="780">780</a>
 <a href="#781" id="781">781</a>
+<a href="#782" id="782">782</a>
+<a href="#783" id="783">783</a>
+<a href="#784" id="784">784</a>
+<a href="#785" id="785">785</a>
+<a href="#786" id="786">786</a>
+<a href="#787" id="787">787</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
@@ -814,7 +820,7 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) stream: RelayedStream,
     <span class="kw">pub</span>(<span class="kw">super</span>) write_timeout: Duration,
     <span class="kw">pub</span>(<span class="kw">super</span>) channel_capacity: usize,
-    <span class="kw">pub</span>(<span class="kw">super</span>) rate_limit: ClientConnRateLimit,
+    <span class="kw">pub</span>(<span class="kw">super</span>) rate_limit: <span class="prelude-ty">Option</span>&lt;ClientConnRateLimit&gt;,
     <span class="kw">pub</span>(<span class="kw">super</span>) server_channel: mpsc::Sender&lt;actor::Message&gt;,
 }
 
@@ -850,13 +856,17 @@
             stream: io,
             write_timeout,
             channel_capacity,
-            rate_limit: rate_limit_config,
+            rate_limit,
             server_channel,
         } = config;
 
-        <span class="kw">let </span>quota = governor::Quota::per_second(rate_limit_config.bytes_per_second)
-            .allow_burst(rate_limit_config.max_burst_bytes);
-        <span class="kw">let </span>rate_limiter = governor::RateLimiter::direct(quota);
+        <span class="kw">let </span>rate_limiter = rate_limit.map(|cfg| {
+            <span class="kw">let </span><span class="kw-2">mut </span>quota = governor::Quota::per_second(cfg.bytes_per_second);
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(max_burst) = cfg.max_burst_bytes {
+                quota = quota.allow_burst(max_burst);
+            }
+            governor::RateLimiter::direct(quota)
+        });
         <span class="kw">let </span>stream = RateLimitedRelayedStream::new(io, rate_limiter);
 
         <span class="kw">let </span>done = CancellationToken::new();
@@ -1116,7 +1126,7 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>RateLimitedRelayedStream {
     inner: RelayedStream,
-    limiter: Arc&lt;governor::DefaultDirectRateLimiter&gt;,
+    limiter: <span class="prelude-ty">Option</span>&lt;Arc&lt;governor::DefaultDirectRateLimiter&gt;&gt;,
     state: State,
     <span class="doccomment">/// Keeps track if this stream was ever rate-limited.
     </span>limited_once: bool,
@@ -1135,10 +1145,10 @@
 }
 
 <span class="kw">impl </span>RateLimitedRelayedStream {
-    <span class="kw">fn </span>new(inner: RelayedStream, limiter: governor::DefaultDirectRateLimiter) -&gt; <span class="self">Self </span>{
+    <span class="kw">fn </span>new(inner: RelayedStream, limiter: <span class="prelude-ty">Option</span>&lt;governor::DefaultDirectRateLimiter&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             inner,
-            limiter: Arc::new(limiter),
+            limiter: limiter.map(Arc::new),
             state: State::Ready,
             limited_once: <span class="bool-val">false</span>,
         }
@@ -1165,6 +1175,10 @@
         <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
         cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;,
     ) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
+        <span class="kw">let </span><span class="prelude-val">Some</span>(limiter) = <span class="self">self</span>.limiter.clone() <span class="kw">else </span>{
+            <span class="comment">// If there is no rate-limiter directly poll the inner.
+            </span><span class="kw">return </span>Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner).poll_next(cx);
+        };
         <span class="kw">loop </span>{
             <span class="kw">match </span><span class="kw-2">&amp;mut </span><span class="self">self</span>.state {
                 State::Ready =&gt; {
@@ -1183,14 +1197,16 @@
                                         </span><span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(item));
                                     };
 
-                                    <span class="kw">match </span><span class="self">self</span>.limiter.check_n(frame_len) {
+                                    <span class="kw">match </span>limiter.check_n(frame_len) {
                                         <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(<span class="kw">_</span>)) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(item)),
                                         <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="kw">_</span>)) =&gt; {
                                             <span class="comment">// Item is rate-limited.
                                             </span><span class="self">self</span>.record_rate_limited();
-                                            <span class="kw">let </span>limiter = <span class="self">self</span>.limiter.clone();
-                                            <span class="kw">let </span>delay = Box::pin(<span class="kw">async move </span>{
-                                                limiter.until_n_ready(frame_len).<span class="kw">await</span>.ok();
+                                            <span class="kw">let </span>delay = Box::pin({
+                                                <span class="kw">let </span>limiter = limiter.clone();
+                                                <span class="kw">async move </span>{
+                                                    limiter.until_n_ready(frame_len).<span class="kw">await</span>.ok();
+                                                }
                                             });
                                             <span class="self">self</span>.state = State::Blocked { delay, item };
                                             <span class="kw">continue</span>;
@@ -1290,12 +1306,10 @@
         <span class="kw">let </span>(io, io_rw) = tokio::io::duplex(<span class="number">1024</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>io_rw = Framed::new(io_rw, DerpCodec);
         <span class="kw">let </span>(server_channel_s, <span class="kw-2">mut </span>server_channel_r) = mpsc::channel(<span class="number">10</span>);
-        <span class="kw">let </span>quota = governor::Quota::per_second(NonZeroU32::MAX);
-        <span class="kw">let </span>limiter = governor::RateLimiter::direct(quota);
         <span class="kw">let </span>stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec));
 
         <span class="kw">let </span>actor = Actor {
-            stream: RateLimitedRelayedStream::new(stream, limiter),
+            stream: RateLimitedRelayedStream::new(stream, <span class="prelude-val">None</span>),
             timeout: Duration::from_secs(<span class="number">1</span>),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -1432,13 +1446,11 @@
         <span class="kw">let </span>(io, io_rw) = tokio::io::duplex(<span class="number">1024</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>io_rw = Framed::new(io_rw, DerpCodec);
         <span class="kw">let </span>(server_channel_s, <span class="kw-2">mut </span>server_channel_r) = mpsc::channel(<span class="number">10</span>);
-        <span class="kw">let </span>quota = governor::Quota::per_second(NonZeroU32::MAX);
-        <span class="kw">let </span>limiter = governor::RateLimiter::direct(quota);
         <span class="kw">let </span>stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec));
 
         <span class="macro">println!</span>(<span class="string">"-- create client conn"</span>);
         <span class="kw">let </span>actor = Actor {
-            stream: RateLimitedRelayedStream::new(stream, limiter),
+            stream: RateLimitedRelayedStream::new(stream, <span class="prelude-val">None</span>),
             timeout: Duration::from_secs(<span class="number">1</span>),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -1514,7 +1526,7 @@
         </span><span class="kw">let </span>(io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) <span class="kw">as _</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>frame_writer = Framed::new(io_write, DerpCodec);
         <span class="kw">let </span>stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io_read), DerpCodec));
-        <span class="kw">let </span><span class="kw-2">mut </span>stream = RateLimitedRelayedStream::new(stream, limiter);
+        <span class="kw">let </span><span class="kw-2">mut </span>stream = RateLimitedRelayedStream::new(stream, <span class="prelude-val">Some</span>(limiter));
 
         <span class="comment">// Prepare a frame to send, assert its size.
         </span><span class="kw">let </span>data = Bytes::from_static(<span class="string">b"hello world!!"</span>);
