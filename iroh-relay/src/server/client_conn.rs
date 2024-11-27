@@ -338,6 +338,8 @@ struct RateLimitedRelayedStream {
     inner: RelayedStream,
     limiter: Arc<governor::DefaultDirectRateLimiter>,
     state: State,
+    /// Keeps track if this stream was ever rate-limited.
+    limited_once: bool,
 }
 
 #[derive(derive_more::Debug)]
@@ -358,6 +360,19 @@ impl RateLimitedRelayedStream {
             inner,
             limiter: Arc::new(limiter),
             state: State::Ready,
+            limited_once: false,
+        }
+    }
+}
+
+impl RateLimitedRelayedStream {
+    /// Records metrics about being rate-limited.
+    fn record_rate_limited(&mut self) {
+        // TODO: add a label for the frame type.
+        inc!(Metrics, frames_rx_ratelimited_total);
+        if !self.limited_once {
+            inc!(Metrics, conns_rx_ratelimited_total);
+            self.limited_once = true;
         }
     }
 }
@@ -392,6 +407,7 @@ impl Stream for RateLimitedRelayedStream {
                                         Ok(Ok(_)) => return Poll::Ready(Some(item)),
                                         Ok(Err(_)) => {
                                             // Item is rate-limited.
+                                            self.record_rate_limited();
                                             let limiter = self.limiter.clone();
                                             let delay = Box::pin(async move {
                                                 limiter.until_n_ready(frame_len).await.ok();
