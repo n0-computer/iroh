@@ -964,7 +964,7 @@ impl Endpoint {
     ///
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
-    pub async fn close(self, error_code: VarInt, reason: &[u8]) -> Result<()> {
+    pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
         let Endpoint {
             msock,
             endpoint,
@@ -975,9 +975,7 @@ impl Endpoint {
         tracing::debug!("Closing connections");
         endpoint.close(error_code, reason);
         endpoint.wait_idle().await;
-        // In case this is the last clone of `Endpoint`, dropping the `quinn::Endpoint` will
-        // make it more likely that the underlying socket is not polled by quinn anymore after this
-        drop(endpoint);
+
         tracing::debug!("Connections closed");
 
         msock.close().await?;

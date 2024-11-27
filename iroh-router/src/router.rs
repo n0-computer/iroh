@@ -181,9 +181,7 @@ async fn shutdown(endpoint: &Endpoint, protocols: Arc<ProtocolMap>) {
         // Closing the Endpoint is the equivalent of calling Connection::close on all
         // connections: Operations will immediately fail with ConnectionError::LocallyClosed.
         // All streams are interrupted, this is not graceful.
-        endpoint
-            .clone()
-            .close(error_code.into(), b"provider terminating"),
+        endpoint.close(error_code.into(), b"provider terminating"),
         // Shutdown protocol handlers.
         protocols.shutdown(),
     );
