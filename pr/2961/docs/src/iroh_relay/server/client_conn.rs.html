@@ -776,6 +776,9 @@
 <a href="#776" id="776">776</a>
 <a href="#777" id="777">777</a>
 <a href="#778" id="778">778</a>
+<a href="#779" id="779">779</a>
+<a href="#780" id="780">780</a>
+<a href="#781" id="781">781</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
@@ -853,8 +856,7 @@
 
         <span class="kw">let </span>quota = governor::Quota::per_second(rate_limit_config.bytes_per_second)
             .allow_burst(rate_limit_config.max_burst_bytes);
-        <span class="comment">// TODO: Allow creating this with mocked time for tests?
-        </span><span class="kw">let </span>rate_limiter = governor::RateLimiter::direct(quota);
+        <span class="kw">let </span>rate_limiter = governor::RateLimiter::direct(quota);
         <span class="kw">let </span>stream = RateLimitedRelayedStream::new(io, rate_limiter);
 
         <span class="kw">let </span>done = CancellationToken::new();
@@ -1194,7 +1196,11 @@
                                             <span class="kw">continue</span>;
                                         }
                                         <span class="prelude-val">Err</span>(_insufficient_capacity) =&gt; {
-                                            <span class="macro">error!</span>(<span class="string">"frame larger than bucket capacity"</span>);
+                                            <span class="macro">error!</span>(
+                                                <span class="string">"frame larger than bucket capacity: \
+                                                 configuration error: \
+                                                 max_burst_bytes &lt; MAX_FRAME_SIZE?"
+                                            </span>);
                                             <span class="comment">// Let this frame through so to not completely break.
                                             </span><span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(item));
                                         }
@@ -1214,8 +1220,8 @@
                     <span class="kw">match </span>delay.poll(cx) {
                         Poll::Ready(<span class="kw">_</span>) =&gt; {
                             <span class="kw">match </span>std::mem::replace(<span class="kw-2">&amp;mut </span><span class="self">self</span>.state, State::Ready) {
-                                State::Ready =&gt; <span class="kw">continue</span>, <span class="comment">// unreachable
-                                </span>State::Blocked { item, .. } =&gt; {
+                                State::Ready =&gt; <span class="macro">unreachable!</span>(),
+                                State::Blocked { item, .. } =&gt; {
                                     <span class="comment">// Yield the item directly, rate-limit has already been
                                     // accounted for by awaiting the future.
                                     </span><span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(item));
