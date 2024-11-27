@@ -405,7 +405,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use iroh_base::node_addr::RelayUrl;
-    use mainline::dht::DhtSettings;
+    use pkarr::mainline::dht::DhtSettings;
     use testresult::TestResult;
 
     use super::*;
@@ -416,7 +416,7 @@ mod tests {
         let _logging_guard = iroh_test::logging::setup();
         let ep = crate::Endpoint::builder().bind().await?;
         let secret = ep.secret_key().clone();
-        let testnet = mainline::dht::Testnet::new(2);
+        let testnet = pkarr::mainline::dht::Testnet::new(2);
         let settings = pkarr::Settings {
             dht: DhtSettings {
                 bootstrap: Some(testnet.bootstrap.clone()),

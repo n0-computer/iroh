@@ -1,45 +1,29 @@
 [bans]
 multiple-versions = "allow"
-deny = [
-     "aws-lc",
-     "aws-lc-rs",
-     "aws-lc-sys",
-     "native-tls",
-     "openssl",
-]
+deny = ["aws-lc", "aws-lc-rs", "aws-lc-sys", "native-tls", "openssl"]
 
 [licenses]
 allow = [
-      "Apache-2.0",
-      "Apache-2.0 WITH LLVM-exception",
-      "BSD-2-Clause",
-      "BSD-3-Clause",
-      "BSL-1.0", # BOSL license
-      "ISC",
-      "MIT",
-      "OpenSSL",
-      "Unicode-DFS-2016",
-      "Zlib",
-      "MPL-2.0", # https://fossa.com/blog/open-source-software-licenses-101-mozilla-public-license-2-0/
-      "Unicode-3.0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",                        # BOSL license
+    "ISC",
+    "MIT",
+    "OpenSSL",
+    "Zlib",
+    "MPL-2.0",                        # https://fossa.com/blog/open-source-software-licenses-101-mozilla-public-license-2-0/
+    "Unicode-3.0",
 ]
 
 [[licenses.clarify]]
 name = "ring"
 expression = "MIT AND ISC AND OpenSSL"
-license-files = [
-      { path = "LICENSE", hash = 0xbd0eed23 },
-]
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 
 [advisories]
 ignore = [
-      "RUSTSEC-2024-0370", # unmaintained, no upgrade available
-      "RUSTSEC-2024-0384", # unmaintained, no upgrade available
-]
-
-[sources]
-allow-git = [
-    "https://github.com/n0-computer/iroh-blobs.git",
-    "https://github.com/n0-computer/iroh-gossip.git",
-    "https://github.com/n0-computer/iroh-docs.git",
+    "RUSTSEC-2024-0370", # unmaintained, no upgrade available
+    "RUSTSEC-2024-0384", # unmaintained, no upgrade available
 ]

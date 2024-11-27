@@ -36,7 +36,7 @@ use futures_util::stream::BoxStream;
 use iroh_base::key::NodeId;
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::protos::stun;
-use netwatch::{interfaces, ip::LocalAddresses, netmon};
+use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use smallvec::{smallvec, SmallVec};
@@ -441,11 +441,8 @@ impl MagicSock {
         // Right now however we have one single poller behaving the same for each
         // connection.  It checks all paths and returns Poll::Ready as soon as any path is
         // ready.
-        let ipv4_poller = Arc::new(self.pconn4.clone()).create_io_poller();
-        let ipv6_poller = self
-            .pconn6
-            .as_ref()
-            .map(|sock| Arc::new(sock.clone()).create_io_poller());
+        let ipv4_poller = self.pconn4.create_io_poller();
+        let ipv6_poller = self.pconn6.as_ref().map(|sock| sock.create_io_poller());
         let relay_sender = self.relay_actor_sender.clone();
         Box::pin(IoPoller {
             ipv4_poller,
@@ -1091,10 +1088,9 @@ impl MagicSock {
                     Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                         // This is the socket .try_send_disco_message_udp used.
                         let sock = self.conn_for_addr(dst)?;
-                        let sock = Arc::new(sock.clone());
-                        let mut poller = sock.create_io_poller();
-                        match poller.as_mut().poll_writable(cx)? {
-                            Poll::Ready(()) => continue,
+                        match sock.as_socket_ref().poll_writable(cx) {
+                            Poll::Ready(Ok(())) => continue,
+                            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
                             Poll::Pending => return Poll::Pending,
                         }
                     }
@@ -1408,6 +1404,9 @@ impl Handle {
         let net_reporter =
             net_report::Client::new(Some(port_mapper.clone()), dns_resolver.clone())?;
 
+        let pconn4_sock = pconn4.as_socket();
+        let pconn6_sock = pconn6.as_ref().map(|p| p.as_socket());
+
         let (actor_sender, actor_receiver) = mpsc::channel(256);
         let (relay_actor_sender, relay_actor_receiver) = mpsc::channel(256);
         let (udp_disco_sender, mut udp_disco_receiver) = mpsc::channel(256);
@@ -1431,9 +1430,9 @@ impl Handle {
             ipv6_reported: Arc::new(AtomicBool::new(false)),
             relay_map,
             my_relay: Default::default(),
-            pconn4: pconn4.clone(),
-            pconn6: pconn6.clone(),
             net_reporter: net_reporter.addr(),
+            pconn4,
+            pconn6,
             disco_secrets: DiscoSecrets::default(),
             node_map,
             relay_actor_sender: relay_actor_sender.clone(),
@@ -1481,8 +1480,8 @@ impl Handle {
                     periodic_re_stun_timer: new_re_stun_timer(false),
                     net_info_last: None,
                     port_mapper,
-                    pconn4,
-                    pconn6,
+                    pconn4: pconn4_sock,
+                    pconn6: pconn6_sock,
                     no_v4_send: false,
                     net_reporter,
                     network_monitor,
@@ -1720,8 +1719,8 @@ struct Actor {
     net_info_last: Option<NetInfo>,
 
     // The underlying UDP sockets used to send/rcv packets.
-    pconn4: UdpConn,
-    pconn6: Option<UdpConn>,
+    pconn4: Arc<UdpSocket>,
+    pconn6: Option<Arc<UdpSocket>>,
 
     /// The NAT-PMP/PCP/UPnP prober/client, for requesting port mappings from NAT devices.
     port_mapper: portmapper::Client,
@@ -1861,6 +1860,14 @@ impl Actor {
         debug!("link change detected: major? {}", is_major);
 
         if is_major {
+            if let Err(err) = self.pconn4.rebind() {
+                warn!("failed to rebind Udp IPv4 socket: {:?}", err);
+            };
+            if let Some(ref pconn6) = self.pconn6 {
+                if let Err(err) = pconn6.rebind() {
+                    warn!("failed to rebind Udp IPv6 socket: {:?}", err);
+                };
+            }
             self.msock.dns_resolver.clear_cache();
             self.msock.re_stun("link-change-major");
             self.close_stale_relay_connections().await;
@@ -1892,14 +1899,6 @@ impl Actor {
                 self.msock.node_map.notify_shutdown();
                 self.port_mapper.deactivate();
                 self.relay_actor_cancel_token.cancel();
-
-                // Ignore errors from pconnN
-                // They will frequently have been closed already by a call to connBind.Close.
-                debug!("stopping connections");
-                if let Some(ref conn) = self.pconn6 {
-                    conn.close().await.ok();
-                }
-                self.pconn4.close().await.ok();
 
                 debug!("shutdown complete");
                 return true;
@@ -2206,8 +2205,8 @@ impl Actor {
         }
 
         let relay_map = self.msock.relay_map.clone();
-        let pconn4 = Some(self.pconn4.as_socket());
-        let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
+        let pconn4 = Some(self.pconn4.clone());
+        let pconn6 = self.pconn6.clone();
 
         debug!("requesting net_report report");
         match self
@@ -3095,6 +3094,45 @@ mod tests {
             run_roundtrip(m1.clone(), m2.clone(), &data).await;
             run_roundtrip(m2.clone(), m1.clone(), &data).await;
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_regression_network_change_rebind_wakes_connection_driver(
+    ) -> testresult::TestResult {
+        let _ = iroh_test::logging::setup();
+        let m1 = MagicStack::new(RelayMode::Disabled).await?;
+        let m2 = MagicStack::new(RelayMode::Disabled).await?;
+
+        println!("Net change");
+        m1.endpoint.magic_sock().force_network_change(true).await;
+        tokio::time::sleep(Duration::from_secs(1)).await; // wait for socket rebinding
+
+        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
+
+        let _handle = AbortOnDropHandle::new(tokio::spawn({
+            let endpoint = m2.endpoint.clone();
+            async move {
+                while let Some(incoming) = endpoint.accept().await {
+                    println!("Incoming first conn!");
+                    let conn = incoming.await?;
+                    conn.closed().await;
+                }
+
+                testresult::TestResult::Ok(())
+            }
+        }));
+
+        println!("first conn!");
+        let conn = m1
+            .endpoint
+            .connect(m2.endpoint.node_addr().await?, ALPN)
+            .await?;
+        println!("Closing first conn");
+        conn.close(0u32.into(), b"bye lolz");
+        conn.closed().await;
+        println!("Closed first conn");
 
         Ok(())
     }

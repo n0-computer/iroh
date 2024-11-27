@@ -180,7 +180,7 @@ mod tests {
         iroh_test::logging::setup_multithreaded();
 
         // run a mainline testnet
-        let testnet = mainline::dht::Testnet::new(5);
+        let testnet = pkarr::mainline::dht::Testnet::new(5);
         let bootstrap = testnet.bootstrap.clone();
 
         // spawn our server with mainline support
@@ -198,7 +198,7 @@ mod tests {
 
         // publish the signed packet to our DHT
         let pkarr = PkarrClient::builder()
-            .dht_settings(mainline::dht::DhtSettings {
+            .dht_settings(pkarr::mainline::dht::DhtSettings {
                 bootstrap: Some(testnet.bootstrap),
                 ..Default::default()
             })

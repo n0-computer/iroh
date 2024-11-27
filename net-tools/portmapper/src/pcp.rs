@@ -54,7 +54,7 @@ impl Mapping {
     ) -> anyhow::Result<Self> {
         // create the socket and send the request
         let socket = UdpSocket::bind_full((local_ip, 0))?;
-        socket.connect((gateway, protocol::SERVER_PORT)).await?;
+        socket.connect((gateway, protocol::SERVER_PORT).into())?;
 
         let mut nonce = [0u8; 12];
         rand::thread_rng().fill_bytes(&mut nonce);
@@ -144,7 +144,7 @@ impl Mapping {
 
         // create the socket and send the request
         let socket = UdpSocket::bind_full((local_ip, 0))?;
-        socket.connect((gateway, protocol::SERVER_PORT)).await?;
+        socket.connect((gateway, protocol::SERVER_PORT).into())?;
 
         let local_port = local_port.into();
         let req = protocol::Request::mapping(nonce, local_port, local_ip, None, None, 0);
@@ -188,7 +188,7 @@ async fn probe_available_fallible(
 ) -> anyhow::Result<protocol::Response> {
     // create the socket and send the request
     let socket = UdpSocket::bind_full((local_ip, 0))?;
-    socket.connect((gateway, protocol::SERVER_PORT)).await?;
+    socket.connect((gateway, protocol::SERVER_PORT).into())?;
     let req = protocol::Request::announce(local_ip.to_ipv6_mapped());
     socket.send(&req.encode()).await?;
 

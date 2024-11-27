@@ -17,7 +17,7 @@ anyhow = { version = "1" }
 base64 = "0.22.1"
 bytes = "1.7"
 derive_more = { version = "1.0.0", features = ["debug", "display", "from", "try_into", "deref"] }
-futures-lite = "2.3"
+futures-lite = "2.5"
 futures-util = "0.3.25"
 igd-next = { version = "0.15.1", features = ["aio_tokio"] }
 iroh-metrics = { version = "0.28.0", default-features = false }
@@ -28,12 +28,12 @@ rand = "0.8"
 serde = { version = "1", features = ["derive", "rc"] }
 smallvec = "1.11.1"
 socket2 = "0.5.3"
-thiserror = "1"
+thiserror = "2"
 time = "0.3.20"
 tokio = { version = "1", features = ["io-util", "macros", "sync", "rt", "net", "fs", "io-std", "signal", "process"] }
-tokio-util = { version = "0.7.12", features = ["io-util", "io", "codec", "rt"] }
+tokio-util = { version = "0.7", features = ["io-util", "io", "codec", "rt"] }
 tracing = "0.1"
-url = { version = "2.4", features = ["serde"] }
+url = { version = "2.5", features = ["serde"] }
 
 [dev-dependencies]
 ntest = "0.9"

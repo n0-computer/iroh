@@ -128,18 +128,32 @@ async fn default_route_netlink_family(
     handle: &rtnetlink::Handle,
     family: rtnetlink::IpVersion,
 ) -> Result<Option<(String, u32)>> {
+    use netlink_packet_route::route::RouteAttribute;
+
     let mut routes = handle.route().get(family).execute();
     while let Some(route) = routes.try_next().await? {
-        if route.gateway().is_none() {
+        let route_attrs = route.attributes;
+
+        if !route_attrs
+            .iter()
+            .any(|attr| matches!(attr, RouteAttribute::Gateway(_)))
+        {
             // A default route has a gateway.
             continue;
         }
-        if route.destination_prefix().is_some() {
-            // A default route has no destination prefix because it needs to route all
+
+        if route.header.destination_prefix_length > 0 {
+            // A default route has no destination prefix length because it needs to route all
             // destinations.
             continue;
         }
-        if let Some(index) = route.output_interface() {
+
+        let index = route_attrs.iter().find_map(|attr| match attr {
+            RouteAttribute::Oif(index) => Some(*index),
+            _ => None,
+        });
+
+        if let Some(index) = index {
             if index == 0 {
                 continue;
             }
@@ -152,14 +166,16 @@ async fn default_route_netlink_family(
 
 #[cfg(not(target_os = "android"))]
 async fn iface_by_index(handle: &rtnetlink::Handle, index: u32) -> Result<String> {
+    use netlink_packet_route::link::LinkAttribute;
+
     let mut links = handle.link().get().match_index(index).execute();
     let msg = links
         .try_next()
         .await?
         .ok_or_else(|| anyhow!("No netlink response"))?;
 
-    for nla in msg.nlas {
-        if let netlink_packet_route::link::nlas::Nla::IfName(name) = nla {
+    for nla in msg.attributes {
+        if let LinkAttribute::IfName(name) = nla {
             return Ok(name);
         }
     }

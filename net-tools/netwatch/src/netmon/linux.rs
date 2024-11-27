@@ -5,8 +5,12 @@ use std::{
 
 use anyhow::Result;
 use futures_lite::StreamExt;
+use libc::{
+    RTNLGRP_IPV4_IFADDR, RTNLGRP_IPV4_ROUTE, RTNLGRP_IPV4_RULE, RTNLGRP_IPV6_IFADDR,
+    RTNLGRP_IPV6_ROUTE, RTNLGRP_IPV6_RULE,
+};
 use netlink_packet_core::NetlinkPayload;
-use netlink_packet_route::{address, constants::*, route, RtnlMessage};
+use netlink_packet_route::{address, route, RouteNetlinkMessage};
 use netlink_sys::{AsyncSocket, SocketAddr};
 use rtnetlink::new_connection;
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -40,7 +44,7 @@ const fn nl_mgrp(group: u32) -> u32 {
 }
 macro_rules! get_nla {
     ($msg:expr, $nla:path) => {
-        $msg.nlas.iter().find_map(|nla| match nla {
+        $msg.attributes.iter().find_map(|nla| match nla {
             $nla(n) => Some(n),
             _ => None,
         })
@@ -65,7 +69,8 @@ impl RouteMonitor {
         let conn_handle = tokio::task::spawn(conn);
 
         let handle = tokio::task::spawn(async move {
-            let mut addr_cache: HashMap<u32, HashSet<Vec<u8>>> = HashMap::new();
+            // let mut addr_cache: HashMap<u32, HashSet<Vec<u8>>> = HashMap::new();
+            let mut addr_cache: HashMap<u32, HashSet<IpAddr>> = HashMap::new();
 
             while let Some((message, _)) = messages.next().await {
                 match message.payload {
@@ -77,67 +82,70 @@ impl RouteMonitor {
                         break;
                     }
                     NetlinkPayload::InnerMessage(msg) => match msg {
-                        RtnlMessage::NewAddress(msg) => {
+                        RouteNetlinkMessage::NewAddress(msg) => {
                             trace!("NEWADDR: {:?}", msg);
                             let addrs = addr_cache.entry(msg.header.index).or_default();
-                            if let Some(addr) = get_nla!(msg, address::Nla::Address) {
+                            if let Some(addr) = get_nla!(msg, address::AddressAttribute::Address) {
                                 if addrs.contains(addr) {
                                     // already cached
                                     continue;
                                 } else {
-                                    addrs.insert(addr.clone());
+                                    addrs.insert(*addr);
                                     sender.send(NetworkMessage::Change).await.ok();
                                 }
                             }
                         }
-                        RtnlMessage::DelAddress(msg) => {
+                        RouteNetlinkMessage::DelAddress(msg) => {
                             trace!("DELADDR: {:?}", msg);
                             let addrs = addr_cache.entry(msg.header.index).or_default();
-                            if let Some(addr) = get_nla!(msg, address::Nla::Address) {
+                            if let Some(addr) = get_nla!(msg, address::AddressAttribute::Address) {
                                 addrs.remove(addr);
                             }
                             sender.send(NetworkMessage::Change).await.ok();
                         }
-                        RtnlMessage::NewRoute(msg) | RtnlMessage::DelRoute(msg) => {
+                        RouteNetlinkMessage::NewRoute(msg) | RouteNetlinkMessage::DelRoute(msg) => {
                             trace!("ROUTE:: {:?}", msg);
 
                             // Ignore the following messages
-                            let table = get_nla!(msg, route::Nla::Table)
+                            let table = get_nla!(msg, route::RouteAttribute::Table)
                                 .copied()
                                 .unwrap_or_default();
-                            if let Some(dst) = get_nla!(msg, route::Nla::Destination) {
-                                let dst_addr = match dst.len() {
-                                    4 => TryInto::<[u8; 4]>::try_into(&dst[..])
-                                        .ok()
-                                        .map(IpAddr::from),
-                                    16 => TryInto::<[u8; 16]>::try_into(&dst[..])
-                                        .ok()
-                                        .map(IpAddr::from),
-                                    _ => None,
-                                };
-                                if let Some(dst_addr) = dst_addr {
-                                    if (table == 255 || table == 254)
-                                        && (dst_addr.is_multicast() || is_link_local(dst_addr))
-                                    {
-                                        continue;
+                            if let Some(dst) = get_nla!(msg, route::RouteAttribute::Destination) {
+                                match dst {
+                                    route::RouteAddress::Inet(addr) => {
+                                        if (table == 255 || table == 254)
+                                            && (addr.is_multicast()
+                                                || is_link_local(IpAddr::V4(*addr)))
+                                        {
+                                            continue;
+                                        }
                                     }
+                                    route::RouteAddress::Inet6(addr) => {
+                                        if (table == 255 || table == 254)
+                                            && (addr.is_multicast()
+                                                || is_link_local(IpAddr::V6(*addr)))
+                                        {
+                                            continue;
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
                             sender.send(NetworkMessage::Change).await.ok();
                         }
-                        RtnlMessage::NewRule(msg) => {
+                        RouteNetlinkMessage::NewRule(msg) => {
                             trace!("NEWRULE: {:?}", msg);
                             sender.send(NetworkMessage::Change).await.ok();
                         }
-                        RtnlMessage::DelRule(msg) => {
+                        RouteNetlinkMessage::DelRule(msg) => {
                             trace!("DELRULE: {:?}", msg);
                             sender.send(NetworkMessage::Change).await.ok();
                         }
-                        RtnlMessage::NewLink(msg) => {
+                        RouteNetlinkMessage::NewLink(msg) => {
                             trace!("NEWLINK: {:?}", msg);
                             // ignored atm
                         }
-                        RtnlMessage::DelLink(msg) => {
+                        RouteNetlinkMessage::DelLink(msg) => {
                             trace!("DELLINK: {:?}", msg);
                             // ignored atm
                         }

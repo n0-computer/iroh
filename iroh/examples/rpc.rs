@@ -9,7 +9,6 @@
 //! The `net node-addr` command will reach out over RPC to the node constructed in the example.
 
 use clap::Parser;
-use iroh_blobs::store::Store;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -21,10 +20,7 @@ pub fn setup_logging() {
         .ok();
 }
 
-async fn run<S>(builder: iroh::node::Builder<S>) -> anyhow::Result<()>
-where
-    S: Store,
-{
+async fn run(builder: iroh::node::Builder) -> anyhow::Result<()> {
     let node = builder
         .enable_rpc()
         .await? // enable the RPC endpoint

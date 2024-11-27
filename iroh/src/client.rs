@@ -6,9 +6,6 @@ pub use crate::rpc_protocol::RpcService;
 
 mod quic;
 
-pub use iroh_blobs::rpc::client::{blobs, tags};
-pub use iroh_docs::rpc::client::{authors, docs, docs::Doc};
-pub use iroh_gossip::rpc::client as gossip;
 pub use iroh_node_util::rpc::client::{net, node};
 
 pub(crate) use self::quic::{connect_raw as quic_connect_raw, RPC_ALPN};
@@ -45,29 +42,9 @@ impl Iroh {
         Self { rpc }
     }
 
-    /// Returns the blobs client.
-    pub fn blobs(&self) -> blobs::Client {
-        blobs::Client::new(self.rpc.clone().map().boxed())
-    }
-
-    /// Returns the docs client.
-    pub fn docs(&self) -> iroh_docs::rpc::client::docs::Client {
-        iroh_docs::rpc::client::docs::Client::new(self.rpc.clone().map().boxed())
-    }
-
-    /// Returns the docs client.
-    pub fn authors(&self) -> iroh_docs::rpc::client::authors::Client {
-        iroh_docs::rpc::client::authors::Client::new(self.rpc.clone().map().boxed())
-    }
-
-    /// Returns the tags client.
-    pub fn tags(&self) -> tags::Client {
-        tags::Client::new(self.rpc.clone().map().boxed())
-    }
-
-    /// Returns the gossip client.
-    pub fn gossip(&self) -> gossip::Client {
-        gossip::Client::new(self.rpc.clone().map().boxed())
+    /// Returns the actual [`RpcClient`].
+    pub fn client(&self) -> RpcClient {
+        self.rpc.clone()
     }
 
     /// Returns the net client.

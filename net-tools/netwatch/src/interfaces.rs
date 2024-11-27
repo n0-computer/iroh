@@ -15,7 +15,7 @@ mod linux;
 #[cfg(target_os = "windows")]
 mod windows;
 
-pub(crate) use netdev::ip::{Ipv4Net, Ipv6Net};
+pub(crate) use netdev::ipnet::{Ipv4Net, Ipv6Net};
 
 #[cfg(any(
     target_os = "freebsd",
@@ -96,11 +96,7 @@ impl Interface {
                 description: None,
                 if_type: InterfaceType::Ethernet,
                 mac_addr: Some(MacAddr::new(2, 3, 4, 5, 6, 7)),
-                ipv4: vec![Ipv4Net {
-                    addr: Ipv4Addr::from([192, 168, 0, 189]),
-                    prefix_len: 24,
-                    netmask: Ipv4Addr::from([255, 255, 255, 0]),
-                }],
+                ipv4: vec![Ipv4Net::new(Ipv4Addr::new(192, 168, 0, 189), 24).unwrap()],
                 ipv6: vec![],
                 flags: 69699,
                 transmit_speed: None,
@@ -130,10 +126,14 @@ impl PartialEq for IpNet {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (IpNet::V4(a), IpNet::V4(b)) => {
-                a.addr == b.addr && a.prefix_len == b.prefix_len && a.netmask == b.netmask
+                a.addr() == b.addr()
+                    && a.prefix_len() == b.prefix_len()
+                    && a.netmask() == b.netmask()
             }
             (IpNet::V6(a), IpNet::V6(b)) => {
-                a.addr == b.addr && a.prefix_len == b.prefix_len && a.netmask == b.netmask
+                a.addr() == b.addr()
+                    && a.prefix_len() == b.prefix_len()
+                    && a.netmask() == b.netmask()
             }
             _ => false,
         }
@@ -145,8 +145,8 @@ impl IpNet {
     /// The IP address of this structure.
     pub fn addr(&self) -> IpAddr {
         match self {
-            IpNet::V4(a) => IpAddr::V4(a.addr),
-            IpNet::V6(a) => IpAddr::V6(a.addr),
+            IpNet::V4(a) => IpAddr::V4(a.addr()),
+            IpNet::V6(a) => IpAddr::V6(a.addr()),
         }
     }
 }
