@@ -75,7 +75,6 @@ impl ClientConn {
 
         let quota = governor::Quota::per_second(rate_limit_config.bytes_per_second)
             .allow_burst(rate_limit_config.max_burst_bytes);
-        // TODO: Allow creating this with mocked time for tests?
         let rate_limiter = governor::RateLimiter::direct(quota);
         let stream = RateLimitedRelayedStream::new(io, rate_limiter);
 
