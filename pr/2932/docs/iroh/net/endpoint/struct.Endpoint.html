@@ -173,7 +173,11 @@ function allows for notifying iroh of any potential network changes like
 this.</p>
 <p>Even when the network did not change, or iroh was already able to detect
 the network change itself, there is no harm in calling this function.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.close" class="method"><h4 class="code-header">pub async fn <a href="#method.close" class="fn">close</a>(self, error_code: <a class="struct" href="struct.VarInt.html" title="struct iroh::net::endpoint::VarInt">VarInt</a>, reason: &amp;[<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>]) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>, <a class="struct" href="https://docs.rs/anyhow/1.0.93/anyhow/struct.Error.html" title="struct anyhow::Error">Error</a>&gt;</h4></section></summary><div class="docblock"><p>Closes the QUIC endpoint and the magic socket.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.close" class="method"><h4 class="code-header">pub async fn <a href="#method.close" class="fn">close</a>(
+    &amp;self,
+    error_code: <a class="struct" href="struct.VarInt.html" title="struct iroh::net::endpoint::VarInt">VarInt</a>,
+    reason: &amp;[<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>]
+) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>, <a class="struct" href="https://docs.rs/anyhow/1.0.93/anyhow/struct.Error.html" title="struct anyhow::Error">Error</a>&gt;</h4></section></summary><div class="docblock"><p>Closes the QUIC endpoint and the magic socket.</p>
 <p>This will close all open QUIC connections with the provided error_code and
 reason. See <a href="struct.Connection.html" title="struct iroh::net::endpoint::Connection"><code>quinn::Connection</code></a> for details on how these are interpreted.</p>
 <p>It will then wait for all connections to actually be shutdown, and afterwards close
