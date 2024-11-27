@@ -344,7 +344,9 @@ struct RateLimitedRelayedStream {
 enum State {
     #[debug("Blocked")]
     Blocked {
+        /// Future which will complete when the item can be yielded.
         delay: Pin<Box<dyn Future<Output = ()> + Send + Sync>>,
+        /// Item to yield when the `delay` future completes.
         item: anyhow::Result<Frame>,
     },
     Ready,
