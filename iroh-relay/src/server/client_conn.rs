@@ -388,10 +388,11 @@ impl Stream for RateLimitedRelayedStream {
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        let Some(limiter) = self.limiter.clone() else {
+        let Some(ref limiter) = self.limiter else {
             // If there is no rate-limiter directly poll the inner.
             return Pin::new(&mut self.inner).poll_next(cx);
         };
+        let limiter = limiter.clone();
         loop {
             match &mut self.state {
                 State::Ready => {
