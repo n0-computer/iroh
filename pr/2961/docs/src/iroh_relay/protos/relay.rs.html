@@ -824,6 +824,7 @@
 <a href="#824" id="824">824</a>
 <a href="#825" id="825">825</a>
 <a href="#826" id="826">826</a>
+<a href="#827" id="827">827</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used the [`crate::server`] and [`crate::client`].
 
 </span><span class="kw">use </span>std::time::Duration;
@@ -1114,6 +1115,7 @@
     }
 
     <span class="doccomment">/// Serialized length with frame header.
+    </span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>len_with_header(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.len() + HEADER_LEN
     }

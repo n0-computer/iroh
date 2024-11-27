@@ -1285,7 +1285,7 @@
     <span class="doccomment">/// Sets the per-client rate-limit configuration for incoming data.
     ///
     /// On each client connection the incoming data is rate-limited.  By default
-    /// [`RateLimitConfig::MAX`] is enforced.
+    /// [`ClientConnRateLimit::MAX`] is enforced.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>client_rx_ratelimit(<span class="kw-2">mut </span><span class="self">self</span>, config: ClientConnRateLimit) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.client_rx_ratelimit = config;
         <span class="self">self
