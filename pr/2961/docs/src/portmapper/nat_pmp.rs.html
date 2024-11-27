@@ -231,7 +231,7 @@
     ) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
         <span class="comment">// create the socket and send the request
         </span><span class="kw">let </span>socket = UdpSocket::bind_full((local_ip, <span class="number">0</span>))<span class="question-mark">?</span>;
-        socket.connect((gateway, protocol::SERVER_PORT)).<span class="kw">await</span><span class="question-mark">?</span>;
+        socket.connect((gateway, protocol::SERVER_PORT).into())<span class="question-mark">?</span>;
 
         <span class="kw">let </span>req = Request::Mapping {
             proto: MapProtocol::Udp,
@@ -304,7 +304,7 @@
 
         <span class="comment">// create the socket and send the request
         </span><span class="kw">let </span>socket = UdpSocket::bind_full((local_ip, <span class="number">0</span>))<span class="question-mark">?</span>;
-        socket.connect((gateway, protocol::SERVER_PORT)).<span class="kw">await</span><span class="question-mark">?</span>;
+        socket.connect((gateway, protocol::SERVER_PORT).into())<span class="question-mark">?</span>;
 
         <span class="kw">let </span>req = Request::Mapping {
             proto: MapProtocol::Udp,
@@ -347,7 +347,7 @@
 ) -&gt; anyhow::Result&lt;Response&gt; {
     <span class="comment">// create the socket and send the request
     </span><span class="kw">let </span>socket = UdpSocket::bind_full((local_ip, <span class="number">0</span>))<span class="question-mark">?</span>;
-    socket.connect((gateway, protocol::SERVER_PORT)).<span class="kw">await</span><span class="question-mark">?</span>;
+    socket.connect((gateway, protocol::SERVER_PORT).into())<span class="question-mark">?</span>;
     <span class="kw">let </span>req = Request::ExternalAddress;
     socket.send(<span class="kw-2">&amp;</span>req.encode()).<span class="kw">await</span><span class="question-mark">?</span>;
 

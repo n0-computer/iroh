@@ -761,12 +761,28 @@
 <a href="#761" id="761">761</a>
 <a href="#762" id="762">762</a>
 <a href="#763" id="763">763</a>
+<a href="#764" id="764">764</a>
+<a href="#765" id="765">765</a>
+<a href="#766" id="766">766</a>
+<a href="#767" id="767">767</a>
+<a href="#768" id="768">768</a>
+<a href="#769" id="769">769</a>
+<a href="#770" id="770">770</a>
+<a href="#771" id="771">771</a>
+<a href="#772" id="772">772</a>
+<a href="#773" id="773">773</a>
+<a href="#774" id="774">774</a>
+<a href="#775" id="775">775</a>
+<a href="#776" id="776">776</a>
+<a href="#777" id="777">777</a>
+<a href="#778" id="778">778</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
+<span class="kw">use </span>futures_lite::FutureExt;
 <span class="kw">use </span>futures_sink::Sink;
 <span class="kw">use </span>futures_util::{SinkExt, Stream, StreamExt};
 <span class="kw">use </span>iroh_base::key::NodeId;
@@ -1095,13 +1111,25 @@
 ///
 /// This potentially buffers one frame if the rate limiter does not allows this frame.
 /// While the frame is buffered the undernlying stream is no longer polled.
-</span><span class="attr">#[derive(derive_more::Debug)]
+</span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>RateLimitedRelayedStream {
     inner: RelayedStream,
     limiter: Arc&lt;governor::DefaultDirectRateLimiter&gt;,
-    <span class="attr">#[debug(<span class="string">"Option&lt;Pin&lt;Box&lt;dyn Future&lt;Output = ()&gt;&gt;&gt;&gt;"</span>)]
-    </span>delay: <span class="prelude-ty">Option</span>&lt;Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = ()&gt; + Send + Sync&gt;&gt;&gt;,
-    buf: <span class="prelude-ty">Option</span>&lt;anyhow::Result&lt;Frame&gt;&gt;,
+    state: State,
+    <span class="doccomment">/// Keeps track if this stream was ever rate-limited.
+    </span>limited_once: bool,
+}
+
+<span class="attr">#[derive(derive_more::Debug)]
+</span><span class="kw">enum </span>State {
+    <span class="attr">#[debug(<span class="string">"Blocked"</span>)]
+    </span>Blocked {
+        <span class="doccomment">/// Future which will complete when the item can be yielded.
+        </span>delay: Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = ()&gt; + Send + Sync&gt;&gt;,
+        <span class="doccomment">/// Item to yield when the `delay` future completes.
+        </span>item: anyhow::Result&lt;Frame&gt;,
+    },
+    Ready,
 }
 
 <span class="kw">impl </span>RateLimitedRelayedStream {
@@ -1109,8 +1137,20 @@
         <span class="self">Self </span>{
             inner,
             limiter: Arc::new(limiter),
-            delay: <span class="prelude-val">None</span>,
-            buf: <span class="prelude-val">None</span>,
+            state: State::Ready,
+            limited_once: <span class="bool-val">false</span>,
+        }
+    }
+}
+
+<span class="kw">impl </span>RateLimitedRelayedStream {
+    <span class="doccomment">/// Records metrics about being rate-limited.
+    </span><span class="kw">fn </span>record_rate_limited(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="comment">// TODO: add a label for the frame type.
+        </span><span class="macro">inc!</span>(Metrics, frames_rx_ratelimited_total);
+        <span class="kw">if </span>!<span class="self">self</span>.limited_once {
+            <span class="macro">inc!</span>(Metrics, conns_rx_ratelimited_total);
+            <span class="self">self</span>.limited_once = <span class="bool-val">true</span>;
         }
     }
 }
@@ -1124,77 +1164,67 @@
         cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;,
     ) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
         <span class="kw">loop </span>{
-            <span class="comment">// If we have a delay installed, we need to await it.
-            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref mut </span>wait_fut) = <span class="self">self</span>.delay {
-                <span class="kw">match </span>Pin::new(wait_fut).poll(cx) {
-                    Poll::Ready(<span class="kw">_</span>) =&gt; {
-                        <span class="self">self</span>.delay.take();
-                        <span class="kw">continue</span>;
-                    }
-                    Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
-                }
-            }
-            <span class="comment">// If we have an item buffered, check if we can yield it.
-            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>item) = <span class="self">self</span>.buf {
-                <span class="kw">match </span>item {
-                    <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
-                        <span class="comment">// Yielding errors is not rate-limited.
-                        </span><span class="kw">match </span><span class="self">self</span>.buf.take() {
-                            <span class="prelude-val">Some</span>(item) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(item)),
-                            <span class="prelude-val">None </span>=&gt; <span class="kw">continue</span>, <span class="comment">// unreachable
-                        </span>}
-                    }
-                    <span class="prelude-val">Ok</span>(frame) =&gt; {
-                        <span class="comment">// First we need to know how many bytes this frame consumes.
-                        </span><span class="kw">let </span><span class="prelude-val">Ok</span>(frame_len) = TryInto::&lt;u32&gt;::try_into(frame.len_with_header())
-                            .and_then(TryInto::&lt;NonZeroU32&gt;::try_into)
-                        <span class="kw">else </span>{
-                            <span class="macro">error!</span>(<span class="string">"frame len not NonZeroU32, is MAX_FRAME_SIZE too large?"</span>);
-                            <span class="comment">// Let this frame through anyway so to not completely break.
-                            </span><span class="kw">match </span><span class="self">self</span>.buf.take() {
-                                <span class="prelude-val">Some</span>(item) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(item)),
-                                <span class="prelude-val">None </span>=&gt; <span class="kw">continue</span>, <span class="comment">// unreachable
-                            </span>}
-                        };
+            <span class="kw">match </span><span class="kw-2">&amp;mut </span><span class="self">self</span>.state {
+                State::Ready =&gt; {
+                    <span class="comment">// Poll inner for a new item.
+                    </span><span class="kw">match </span>Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner).poll_next(cx) {
+                        Poll::Ready(<span class="prelude-val">Some</span>(item)) =&gt; {
+                            <span class="kw">match </span><span class="kw-2">&amp;</span>item {
+                                <span class="prelude-val">Ok</span>(frame) =&gt; {
+                                    <span class="comment">// How many bytes does this frame consume?
+                                    </span><span class="kw">let </span><span class="prelude-val">Ok</span>(frame_len) =
+                                        TryInto::&lt;u32&gt;::try_into(frame.len_with_header())
+                                            .and_then(TryInto::&lt;NonZeroU32&gt;::try_into)
+                                    <span class="kw">else </span>{
+                                        <span class="macro">error!</span>(<span class="string">"frame len not NonZeroU32, is MAX_FRAME_SIZE too large?"</span>);
+                                        <span class="comment">// Let this frame through so to not completely break.
+                                        </span><span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(item));
+                                    };
 
-                        <span class="comment">// Now check the rate limiter.
-                        </span><span class="kw">match </span><span class="self">self</span>.limiter.check_n(frame_len) {
-                            <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(<span class="kw">_</span>)) =&gt; {
-                                <span class="comment">// Item not rate-limited, yield it.
-                                </span><span class="kw">match </span><span class="self">self</span>.buf.take() {
-                                    <span class="prelude-val">Some</span>(frame) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(frame)),
-                                    <span class="prelude-val">None </span>=&gt; <span class="kw">continue</span>, <span class="comment">// unreachable
-                                </span>}
-                            }
-                            <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(_until)) =&gt; {
-                                <span class="comment">// Item is rate-limited, install a delay future.
-                                </span><span class="kw">let </span>limiter = <span class="self">self</span>.limiter.clone();
-                                <span class="kw">let </span>fut = <span class="kw">async move </span>{
-                                    limiter.until_n_ready(frame_len).<span class="kw">await</span>.ok();
-                                };
-                                <span class="self">self</span>.delay = <span class="prelude-val">Some</span>(Box::pin(fut));
-                                <span class="kw">continue</span>;
-                            }
-                            <span class="prelude-val">Err</span>(_insufficient_capacity) =&gt; {
-                                <span class="macro">error!</span>(<span class="string">"frame larger than bucket capacity, accepting frame"</span>);
-                                <span class="comment">// Let this frame through since this is misconfigured.
-                                </span><span class="kw">match </span><span class="self">self</span>.buf.take() {
-                                    <span class="prelude-val">Some</span>(item) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(item)),
-                                    <span class="prelude-val">None </span>=&gt; <span class="kw">continue</span>, <span class="comment">// unreachable
-                                </span>}
+                                    <span class="kw">match </span><span class="self">self</span>.limiter.check_n(frame_len) {
+                                        <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(<span class="kw">_</span>)) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(item)),
+                                        <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="kw">_</span>)) =&gt; {
+                                            <span class="comment">// Item is rate-limited.
+                                            </span><span class="self">self</span>.record_rate_limited();
+                                            <span class="kw">let </span>limiter = <span class="self">self</span>.limiter.clone();
+                                            <span class="kw">let </span>delay = Box::pin(<span class="kw">async move </span>{
+                                                limiter.until_n_ready(frame_len).<span class="kw">await</span>.ok();
+                                            });
+                                            <span class="self">self</span>.state = State::Blocked { delay, item };
+                                            <span class="kw">continue</span>;
+                                        }
+                                        <span class="prelude-val">Err</span>(_insufficient_capacity) =&gt; {
+                                            <span class="macro">error!</span>(<span class="string">"frame larger than bucket capacity"</span>);
+                                            <span class="comment">// Let this frame through so to not completely break.
+                                            </span><span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(item));
+                                        }
+                                    }
+                                }
+                                <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
+                                    <span class="comment">// Yielding errors is not rate-limited.
+                                    </span><span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(item));
+                                }
                             }
                         }
+                        Poll::Ready(<span class="prelude-val">None</span>) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">None</span>),
+                        Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
                     }
                 }
-            }
-            <span class="comment">// If we have neither a delay future or a buffered item, poll for a new item.
-            </span><span class="kw">match </span>Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner).poll_next(cx) {
-                Poll::Ready(<span class="prelude-val">Some</span>(item)) =&gt; {
-                    <span class="self">self</span>.buf = <span class="prelude-val">Some</span>(item);
-                    <span class="kw">continue</span>;
+                State::Blocked { delay, .. } =&gt; {
+                    <span class="kw">match </span>delay.poll(cx) {
+                        Poll::Ready(<span class="kw">_</span>) =&gt; {
+                            <span class="kw">match </span>std::mem::replace(<span class="kw-2">&amp;mut </span><span class="self">self</span>.state, State::Ready) {
+                                State::Ready =&gt; <span class="kw">continue</span>, <span class="comment">// unreachable
+                                </span>State::Blocked { item, .. } =&gt; {
+                                    <span class="comment">// Yield the item directly, rate-limit has already been
+                                    // accounted for by awaiting the future.
+                                    </span><span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(item));
+                                }
+                            }
+                        }
+                        Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
+                    }
                 }
-                Poll::Ready(<span class="prelude-val">None</span>) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">None</span>),
-                Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
             }
         }
     }
@@ -1480,7 +1510,7 @@
         <span class="kw">let </span>stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io_read), DerpCodec));
         <span class="kw">let </span><span class="kw-2">mut </span>stream = RateLimitedRelayedStream::new(stream, limiter);
 
-        <span class="comment">// Prepare a packet to send, assert its size.
+        <span class="comment">// Prepare a frame to send, assert its size.
         </span><span class="kw">let </span>data = Bytes::from_static(<span class="string">b"hello world!!"</span>);
         <span class="kw">let </span>target = SecretKey::generate().public();
         <span class="kw">let </span>frame = Frame::SendPacket {
@@ -1490,7 +1520,7 @@
         <span class="kw">let </span>frame_len = frame.len_with_header();
         <span class="macro">assert_eq!</span>(frame_len, LIMIT <span class="kw">as </span>usize);
 
-        <span class="comment">// Send a packet, it should arrive.
+        <span class="comment">// Send a frame, it should arrive.
         </span><span class="macro">info!</span>(<span class="string">"-- send packet"</span>);
         frame_writer.send(frame.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         frame_writer.flush().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1501,7 +1531,7 @@
             .expect(<span class="string">"ok"</span>);
         <span class="macro">assert_eq!</span>(recv_frame, frame);
 
-        <span class="comment">// Next packet does not arrive.
+        <span class="comment">// Next frame does not arrive.
         </span><span class="macro">info!</span>(<span class="string">"-- send packet"</span>);
         frame_writer.send(frame.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         frame_writer.flush().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1513,7 +1543,7 @@
         </span><span class="macro">info!</span>(<span class="string">"-- sleep"</span>);
         tokio::time::sleep(Duration::from_secs(<span class="number">1</span>)).<span class="kw">await</span>;
 
-        <span class="comment">// Packet arrives.
+        <span class="comment">// Frame arrives.
         </span><span class="kw">let </span>recv_frame = tokio::time::timeout(Duration::from_millis(<span class="number">500</span>), stream.next())
             .<span class="kw">await
             </span>.expect(<span class="string">"timeout"</span>)

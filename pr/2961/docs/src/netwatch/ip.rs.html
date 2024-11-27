@@ -190,8 +190,8 @@
             <span class="kw">let </span>addrs = iface
                 .ipv4
                 .iter()
-                .map(|a| IpAddr::V4(a.addr))
-                .chain(iface.ipv6.iter().map(|a| IpAddr::V6(a.addr)));
+                .map(|a| IpAddr::V4(a.addr()))
+                .chain(iface.ipv6.iter().map(|a| IpAddr::V6(a.addr())));
 
             <span class="kw">for </span>ip <span class="kw">in </span>addrs {
                 <span class="kw">let </span>ip = ip.to_canonical();

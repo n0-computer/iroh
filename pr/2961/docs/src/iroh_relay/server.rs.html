@@ -1065,9 +1065,6 @@
 <a href="#1065" id="1065">1065</a>
 <a href="#1066" id="1066">1066</a>
 <a href="#1067" id="1067">1067</a>
-<a href="#1068" id="1068">1068</a>
-<a href="#1069" id="1069">1069</a>
-<a href="#1070" id="1070">1070</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
@@ -1226,11 +1223,11 @@
 </span><span class="kw">pub struct </span>ClientConnRateLimit {
     <span class="doccomment">/// Max number of bytes per second to read from the client connection.
     ///
-    /// Defaults to 4KiB/s.
+    /// Defaults to [`NonZeroU32::MAX`], effectively unlimited.
     </span><span class="kw">pub </span>bytes_per_second: NonZeroU32,
     <span class="doccomment">/// Max number of bytes to read in a single burst.
     ///
-    /// Defaults to 16 MiB.
+    /// Defaults to [`NonZeroU32::MAX`], effectively unlimited.
     </span><span class="kw">pub </span>max_burst_bytes: NonZeroU32,
 }
 
@@ -1243,10 +1240,7 @@
 
 <span class="kw">impl </span>Default <span class="kw">for </span>ClientConnRateLimit {
     <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            bytes_per_second: NonZeroU32::try_from(<span class="number">1024 </span>* <span class="number">4</span>).expect(<span class="string">"nonzero"</span>),
-            max_burst_bytes: NonZeroU32::try_from(<span class="number">1024 </span>* <span class="number">1024 </span>* <span class="number">16</span>).expect(<span class="string">"nonzero"</span>),
-        }
+        <span class="self">Self</span>::MAX
     }
 }
 
@@ -1811,7 +1805,7 @@
 
     <span class="kw">async fn </span>spawn_local_relay() -&gt; <span class="prelude-ty">Result</span>&lt;Server&gt; {
         Server::spawn(ServerConfig::&lt;(), ()&gt; {
-            relay: <span class="prelude-val">Some</span>(RelayConfig {
+            relay: <span class="prelude-val">Some</span>(RelayConfig::&lt;(), ()&gt; {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
                 tls: <span class="prelude-val">None</span>,
                 limits: Default::default(),
