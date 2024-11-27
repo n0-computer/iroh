@@ -526,4 +526,16 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_rate_limit_default() -> TestResult {
+        let config = Config::from_str("")?;
+        let relay_config = build_relay_config(config).await?;
+
+        let relay = relay_config.relay.expect("no relay config");
+        assert_eq!(relay.limits.client_rx.bytes_per_second, NonZeroU32::MAX);
+        assert_eq!(relay.limits.client_rx.max_burst_bytes, NonZeroU32::MAX);
+
+        Ok(())
+    }
 }

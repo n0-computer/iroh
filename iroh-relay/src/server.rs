@@ -156,11 +156,11 @@ pub struct Limits {
 pub struct ClientConnRateLimit {
     /// Max number of bytes per second to read from the client connection.
     ///
-    /// Defaults to 4KiB/s.
+    /// Defaults to [`NonZeroU32::MAX`], effectively unlimited.
     pub bytes_per_second: NonZeroU32,
     /// Max number of bytes to read in a single burst.
     ///
-    /// Defaults to 16 MiB.
+    /// Defaults to [`NonZeroU32::MAX`], effectively unlimited.
     pub max_burst_bytes: NonZeroU32,
 }
 
@@ -173,10 +173,7 @@ impl ClientConnRateLimit {
 
 impl Default for ClientConnRateLimit {
     fn default() -> Self {
-        Self {
-            bytes_per_second: NonZeroU32::try_from(1024 * 4).expect("nonzero"),
-            max_burst_bytes: NonZeroU32::try_from(1024 * 1024 * 16).expect("nonzero"),
-        }
+        Self::MAX
     }
 }
 
