@@ -288,6 +288,7 @@ impl Frame {
     }
 
     /// Serialized length with frame header.
+    #[cfg(feature = "server")]
     pub(crate) fn len_with_header(&self) -> usize {
         self.len() + HEADER_LEN
     }
