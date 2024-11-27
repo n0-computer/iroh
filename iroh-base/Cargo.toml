@@ -23,7 +23,7 @@ hex = "0.4.3"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"], optional = true }
 redb = { version = "2.0.0", optional = true }
 serde = { version = "1", features = ["derive"] }
-thiserror = "1"
+thiserror = "2"
 
 # key module
 aead = { version = "0.5.2", features = ["bytes"], optional = true }
@@ -36,15 +36,15 @@ ssh-key = { version = "0.6.0", features = ["ed25519", "std", "rand_core"], optio
 ttl_cache = { version = "0.5.1", optional = true }
 crypto_box = { version = "0.9.1", features = ["serde", "chacha20"], optional = true }
 zeroize = { version = "1.5", optional = true }
-url = { version = "2.5.0", features = ["serde"], optional = true }
+url = { version = "2.5", features = ["serde"], optional = true }
 # wasm
 getrandom = { version = "0.2", default-features = false, optional = true }
 
 [dev-dependencies]
 iroh-test = "0.28.0"
 proptest = "1.0.0"
-serde_json = "1.0.107"
-serde_test = "1.0.176"
+serde_json = "1"
+serde_test = "1"
 
 [features]
 default = ["hash", "base32", "relay"]

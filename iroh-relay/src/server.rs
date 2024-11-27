@@ -708,7 +708,7 @@ mod tests {
 
     async fn spawn_local_relay() -> Result<Server> {
         Server::spawn(ServerConfig::<(), ()> {
-            relay: Some(RelayConfig {
+            relay: Some(RelayConfig::<(), ()> {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
                 tls: None,
                 limits: Default::default(),

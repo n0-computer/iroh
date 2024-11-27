@@ -20,10 +20,12 @@ use tokio::{
     sync::mpsc,
 };
 use tokio_rustls_acme::AcmeAcceptor;
-use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::{
+    tungstenite::{handshake::derive_accept_key, protocol::Role},
+    WebSocketStream,
+};
 use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
-use tungstenite::{handshake::derive_accept_key, protocol::Role};
 
 use crate::{
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},

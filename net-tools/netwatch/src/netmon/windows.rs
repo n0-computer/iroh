@@ -66,7 +66,7 @@ impl Drop for CallbackHandler {
         let handles: Vec<_> = self
             .unicast_callbacks
             .keys()
-            .map(|h| UnicastCallbackHandle(Handle(*h)))
+            .map(|h| UnicastCallbackHandle(Handle(*h as *mut c_void)))
             .collect();
 
         for handle in handles {
@@ -76,7 +76,7 @@ impl Drop for CallbackHandler {
         let handles: Vec<_> = self
             .route_callbacks
             .keys()
-            .map(|h| RouteCallbackHandle(Handle(*h)))
+            .map(|h| RouteCallbackHandle(Handle(*h as *mut c_void)))
             .collect();
 
         for handle in handles {
@@ -100,16 +100,22 @@ impl CallbackHandler {
         let mut handle = Handle::default();
         let cb = Arc::new(cb);
         unsafe {
-            windows::Win32::NetworkManagement::IpHelper::NotifyUnicastIpAddressChange(
+            let r = windows::Win32::NetworkManagement::IpHelper::NotifyUnicastIpAddressChange(
                 windows::Win32::Networking::WinSock::AF_UNSPEC,
                 Some(unicast_change_callback),
                 Some(Arc::as_ptr(&cb) as *const c_void), // context
                 BOOLEAN::from(false),                    // initial notification,
                 &mut handle,
-            )?;
+            );
+            if r.is_err() {
+                return Err(anyhow::anyhow!(
+                    "NotifyUnicastIpAddressChange failed: {:?}",
+                    r
+                ));
+            }
         }
 
-        self.unicast_callbacks.insert(handle.0, cb);
+        self.unicast_callbacks.insert(handle.0 as isize, cb);
 
         Ok(UnicastCallbackHandle(handle))
     }
@@ -119,9 +125,17 @@ impl CallbackHandler {
         handle: UnicastCallbackHandle,
     ) -> Result<()> {
         trace!("unregistering unicast callback");
-        if self.unicast_callbacks.remove(&handle.0 .0).is_some() {
+        if self
+            .unicast_callbacks
+            .remove(&(handle.0 .0 as isize))
+            .is_some()
+        {
             unsafe {
-                windows::Win32::NetworkManagement::IpHelper::CancelMibChangeNotify2(handle.0)?;
+                let r =
+                    windows::Win32::NetworkManagement::IpHelper::CancelMibChangeNotify2(handle.0);
+                if r.is_err() {
+                    return Err(anyhow::anyhow!("CancelMibChangeNotify2 failed: {:?}", r));
+                }
             }
         }
 
@@ -133,25 +147,36 @@ impl CallbackHandler {
         let mut handle = Handle::default();
         let cb = Arc::new(cb);
         unsafe {
-            windows::Win32::NetworkManagement::IpHelper::NotifyRouteChange2(
+            let r = windows::Win32::NetworkManagement::IpHelper::NotifyRouteChange2(
                 windows::Win32::Networking::WinSock::AF_UNSPEC,
                 Some(route_change_callback),
                 Arc::as_ptr(&cb) as *const c_void, // context
                 BOOLEAN::from(false),              // initial notification,
                 &mut handle,
-            )?;
+            );
+            if r.is_err() {
+                return Err(anyhow::anyhow!("NotifyRouteChange2 failed: {:?}", r));
+            }
         }
 
-        self.route_callbacks.insert(handle.0, cb);
+        self.route_callbacks.insert(handle.0 as isize, cb);
 
         Ok(RouteCallbackHandle(handle))
     }
 
     fn unregister_route_change_callback(&mut self, handle: RouteCallbackHandle) -> Result<()> {
         trace!("unregistering route callback");
-        if self.route_callbacks.remove(&handle.0 .0).is_some() {
+        if self
+            .route_callbacks
+            .remove(&(handle.0 .0 as isize))
+            .is_some()
+        {
             unsafe {
-                windows::Win32::NetworkManagement::IpHelper::CancelMibChangeNotify2(handle.0)?;
+                let r =
+                    windows::Win32::NetworkManagement::IpHelper::CancelMibChangeNotify2(handle.0);
+                if r.is_err() {
+                    return Err(anyhow::anyhow!("CancelMibChangeNotify2 failed: {:?}", r));
+                }
             }
         }
 

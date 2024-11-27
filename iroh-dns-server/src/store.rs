@@ -6,9 +6,8 @@ use anyhow::Result;
 use hickory_proto::rr::{Name, RecordSet, RecordType, RrKey};
 use iroh_metrics::inc;
 use lru::LruCache;
-use mainline::dht::DhtSettings;
 use parking_lot::Mutex;
-use pkarr::{PkarrClient, SignedPacket};
+use pkarr::{mainline::dht::DhtSettings, PkarrClient, SignedPacket};
 use tracing::{debug, trace};
 use ttl_cache::TtlCache;
 
