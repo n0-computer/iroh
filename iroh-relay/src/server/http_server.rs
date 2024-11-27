@@ -184,7 +184,7 @@ impl ServerBuilder {
     /// Sets the per-client rate-limit configuration for incoming data.
     ///
     /// On each client connection the incoming data is rate-limited.  By default
-    /// [`RateLimitConfig::MAX`] is enforced.
+    /// [`ClientConnRateLimit::MAX`] is enforced.
     pub(super) fn client_rx_ratelimit(mut self, config: ClientConnRateLimit) -> Self {
         self.client_rx_ratelimit = config;
         self
