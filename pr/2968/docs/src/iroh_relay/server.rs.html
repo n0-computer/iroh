@@ -1035,6 +1035,21 @@
 <a href="#1035" id="1035">1035</a>
 <a href="#1036" id="1036">1036</a>
 <a href="#1037" id="1037">1037</a>
+<a href="#1038" id="1038">1038</a>
+<a href="#1039" id="1039">1039</a>
+<a href="#1040" id="1040">1040</a>
+<a href="#1041" id="1041">1041</a>
+<a href="#1042" id="1042">1042</a>
+<a href="#1043" id="1043">1043</a>
+<a href="#1044" id="1044">1044</a>
+<a href="#1045" id="1045">1045</a>
+<a href="#1046" id="1046">1046</a>
+<a href="#1047" id="1047">1047</a>
+<a href="#1048" id="1048">1048</a>
+<a href="#1049" id="1049">1049</a>
+<a href="#1050" id="1050">1050</a>
+<a href="#1051" id="1051">1051</a>
+<a href="#1052" id="1052">1052</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
@@ -1053,7 +1068,7 @@
 //! - HTTPS `/generate_204`: Used for net_report probes.
 //! - STUN: UDP port for STUN requests/responses.
 
-</span><span class="kw">use </span>std::{fmt, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
+</span><span class="kw">use </span>std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync::Arc};
 
 <span class="kw">use </span>anyhow::{anyhow, bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::StreamExt;
@@ -1177,12 +1192,24 @@
 }
 
 <span class="doccomment">/// Rate limits.
+</span><span class="comment">// TODO: accept_conn_limit and accept_conn_burst are not currently implemented.
 </span><span class="attr">#[derive(Debug, Default)]
 </span><span class="kw">pub struct </span>Limits {
     <span class="doccomment">/// Rate limit for accepting new connection. Unlimited if not set.
     </span><span class="kw">pub </span>accept_conn_limit: <span class="prelude-ty">Option</span>&lt;f64&gt;,
     <span class="doccomment">/// Burst limit for accepting new connection. Unlimited if not set.
     </span><span class="kw">pub </span>accept_conn_burst: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+    <span class="doccomment">/// Rate limits for incoming traffic from a client connection.
+    </span><span class="kw">pub </span>client_rx: <span class="prelude-ty">Option</span>&lt;ClientConnRateLimit&gt;,
+}
+
+<span class="doccomment">/// Per-client rate limit configuration.
+</span><span class="attr">#[derive(Debug, Copy, Clone)]
+</span><span class="kw">pub struct </span>ClientConnRateLimit {
+    <span class="doccomment">/// Max number of bytes per second to read from the client connection.
+    </span><span class="kw">pub </span>bytes_per_second: NonZeroU32,
+    <span class="doccomment">/// Max number of bytes to read in a single burst.
+    </span><span class="kw">pub </span>max_burst_bytes: <span class="prelude-ty">Option</span>&lt;NonZeroU32&gt;,
 }
 
 <span class="doccomment">/// TLS certificate configuration.
@@ -1297,6 +1324,9 @@
                     .request_handler(Method::GET, <span class="string">"/index.html"</span>, Box::new(root_handler))
                     .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
                     .request_handler(Method::GET, <span class="string">"/robots.txt"</span>, Box::new(robots_handler));
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(cfg) = relay_config.limits.client_rx {
+                    builder = builder.client_rx_ratelimit(cfg);
+                }
                 <span class="kw">let </span>http_addr = <span class="kw">match </span>relay_config.tls {
                     <span class="prelude-val">Some</span>(tls_config) =&gt; {
                         <span class="kw">let </span>server_config = rustls::ServerConfig::builder_with_provider(Arc::new(
