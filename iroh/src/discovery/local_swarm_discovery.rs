@@ -20,8 +20,7 @@
 //!         .filter(|remote| {
 //!             remote.sources().iter().any(|(source, duration)| {
 //!                 if let Source::Discovery { name } = source {
-//!                     name == iroh::discovery::local_swarm_discovery::NAME
-//!                         && *duration <= recent
+//!                     name == iroh::discovery::local_swarm_discovery::NAME && *duration <= recent
 //!                 } else {
 //!                     false
 //!                 }
