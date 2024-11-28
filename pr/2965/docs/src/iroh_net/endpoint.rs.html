@@ -1910,8 +1910,6 @@
 <a href="#1910" id="1910">1910</a>
 <a href="#1911" id="1911">1911</a>
 <a href="#1912" id="1912">1912</a>
-<a href="#1913" id="1913">1913</a>
-<a href="#1914" id="1914">1914</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
@@ -2878,7 +2876,7 @@
     ///
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
-    </span><span class="kw">pub async fn </span>close(<span class="self">self</span>, error_code: VarInt, reason: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>, error_code: VarInt, reason: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>Endpoint {
             msock,
             endpoint,
@@ -2889,9 +2887,7 @@
         <span class="macro">tracing::debug!</span>(<span class="string">"Closing connections"</span>);
         endpoint.close(error_code, reason);
         endpoint.wait_idle().<span class="kw">await</span>;
-        <span class="comment">// In case this is the last clone of `Endpoint`, dropping the `quinn::Endpoint` will
-        // make it more likely that the underlying socket is not polled by quinn anymore after this
-        </span>drop(endpoint);
+
         <span class="macro">tracing::debug!</span>(<span class="string">"Connections closed"</span>);
 
         msock.close().<span class="kw">await</span><span class="question-mark">?</span>;

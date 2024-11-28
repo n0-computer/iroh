@@ -163,6 +163,9 @@
 <a href="#163" id="163">163</a>
 <a href="#164" id="164">164</a>
 <a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Streams used in the server-side implementation of iroh relays.
 
 </span><span class="kw">use </span>std::{
@@ -174,12 +177,15 @@
 <span class="kw">use </span>futures_lite::Stream;
 <span class="kw">use </span>futures_sink::Sink;
 <span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
-<span class="kw">use </span>tokio_tungstenite::WebSocketStream;
+<span class="kw">use </span>tokio_tungstenite::{tungstenite, WebSocketStream};
 <span class="kw">use </span>tokio_util::codec::Framed;
 
 <span class="kw">use </span><span class="kw">crate</span>::protos::relay::{DerpCodec, Frame};
 
-<span class="attr">#[derive(Debug)]
+<span class="doccomment">/// A Stream and Sink for [`Frame`]s connected to a single relay client.
+///
+/// The stream receives message from the client while the sink sends them to the client.
+</span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>RelayedStream {
     Derp(Framed&lt;MaybeTlsStream, DerpCodec&gt;),
     Ws(WebSocketStream&lt;MaybeTlsStream&gt;),

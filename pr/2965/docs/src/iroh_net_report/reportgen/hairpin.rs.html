@@ -424,7 +424,7 @@
             </span>.context(<span class="string">"net_report actor gone"</span>)<span class="question-mark">?</span>;
         msg_response_rx.<span class="kw">await</span>.context(<span class="string">"net_report actor died"</span>)<span class="question-mark">?</span>;
 
-        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = socket.send_to(<span class="kw-2">&amp;</span>stun::request(txn), dst).<span class="kw">await </span>{
+        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = socket.send_to(<span class="kw-2">&amp;</span>stun::request(txn), dst.into()).<span class="kw">await </span>{
             <span class="macro">warn!</span>(%dst, <span class="string">"failed to send hairpin check"</span>);
             <span class="kw">return </span><span class="prelude-val">Err</span>(err.into());
         }

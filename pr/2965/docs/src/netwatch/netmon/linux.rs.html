@@ -162,6 +162,14 @@
 <a href="#162" id="162">162</a>
 <a href="#163" id="163">163</a>
 <a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{HashMap, HashSet},
     net::IpAddr,
@@ -169,8 +177,12 @@
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::StreamExt;
+<span class="kw">use </span>libc::{
+    RTNLGRP_IPV4_IFADDR, RTNLGRP_IPV4_ROUTE, RTNLGRP_IPV4_RULE, RTNLGRP_IPV6_IFADDR,
+    RTNLGRP_IPV6_ROUTE, RTNLGRP_IPV6_RULE,
+};
 <span class="kw">use </span>netlink_packet_core::NetlinkPayload;
-<span class="kw">use </span>netlink_packet_route::{address, constants::<span class="kw-2">*</span>, route, RtnlMessage};
+<span class="kw">use </span>netlink_packet_route::{address, route, RouteNetlinkMessage};
 <span class="kw">use </span>netlink_sys::{AsyncSocket, SocketAddr};
 <span class="kw">use </span>rtnetlink::new_connection;
 <span class="kw">use </span>tokio::{sync::mpsc, task::JoinHandle};
@@ -204,7 +216,7 @@
 }
 <span class="macro">macro_rules!</span> get_nla {
     (<span class="macro-nonterminal">$msg</span>:expr, <span class="macro-nonterminal">$nla</span>:path) =&gt; {
-        <span class="macro-nonterminal">$msg</span>.nlas.iter().find_map(|nla| <span class="kw">match </span>nla {
+        <span class="macro-nonterminal">$msg</span>.attributes.iter().find_map(|nla| <span class="kw">match </span>nla {
             <span class="macro-nonterminal">$nla</span>(n) =&gt; <span class="prelude-val">Some</span>(n),
             <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
         })
@@ -229,7 +241,8 @@
         <span class="kw">let </span>conn_handle = tokio::task::spawn(conn);
 
         <span class="kw">let </span>handle = tokio::task::spawn(<span class="kw">async move </span>{
-            <span class="kw">let </span><span class="kw-2">mut </span>addr_cache: HashMap&lt;u32, HashSet&lt;Vec&lt;u8&gt;&gt;&gt; = HashMap::new();
+            <span class="comment">// let mut addr_cache: HashMap&lt;u32, HashSet&lt;Vec&lt;u8&gt;&gt;&gt; = HashMap::new();
+            </span><span class="kw">let </span><span class="kw-2">mut </span>addr_cache: HashMap&lt;u32, HashSet&lt;IpAddr&gt;&gt; = HashMap::new();
 
             <span class="kw">while let </span><span class="prelude-val">Some</span>((message, <span class="kw">_</span>)) = messages.next().<span class="kw">await </span>{
                 <span class="kw">match </span>message.payload {
@@ -241,67 +254,70 @@
                         <span class="kw">break</span>;
                     }
                     NetlinkPayload::InnerMessage(msg) =&gt; <span class="kw">match </span>msg {
-                        RtnlMessage::NewAddress(msg) =&gt; {
+                        RouteNetlinkMessage::NewAddress(msg) =&gt; {
                             <span class="macro">trace!</span>(<span class="string">"NEWADDR: {:?}"</span>, msg);
                             <span class="kw">let </span>addrs = addr_cache.entry(msg.header.index).or_default();
-                            <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = <span class="macro">get_nla!</span>(msg, address::Nla::Address) {
+                            <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = <span class="macro">get_nla!</span>(msg, address::AddressAttribute::Address) {
                                 <span class="kw">if </span>addrs.contains(addr) {
                                     <span class="comment">// already cached
                                     </span><span class="kw">continue</span>;
                                 } <span class="kw">else </span>{
-                                    addrs.insert(addr.clone());
+                                    addrs.insert(<span class="kw-2">*</span>addr);
                                     sender.send(NetworkMessage::Change).<span class="kw">await</span>.ok();
                                 }
                             }
                         }
-                        RtnlMessage::DelAddress(msg) =&gt; {
+                        RouteNetlinkMessage::DelAddress(msg) =&gt; {
                             <span class="macro">trace!</span>(<span class="string">"DELADDR: {:?}"</span>, msg);
                             <span class="kw">let </span>addrs = addr_cache.entry(msg.header.index).or_default();
-                            <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = <span class="macro">get_nla!</span>(msg, address::Nla::Address) {
+                            <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = <span class="macro">get_nla!</span>(msg, address::AddressAttribute::Address) {
                                 addrs.remove(addr);
                             }
                             sender.send(NetworkMessage::Change).<span class="kw">await</span>.ok();
                         }
-                        RtnlMessage::NewRoute(msg) | RtnlMessage::DelRoute(msg) =&gt; {
+                        RouteNetlinkMessage::NewRoute(msg) | RouteNetlinkMessage::DelRoute(msg) =&gt; {
                             <span class="macro">trace!</span>(<span class="string">"ROUTE:: {:?}"</span>, msg);
 
                             <span class="comment">// Ignore the following messages
-                            </span><span class="kw">let </span>table = <span class="macro">get_nla!</span>(msg, route::Nla::Table)
+                            </span><span class="kw">let </span>table = <span class="macro">get_nla!</span>(msg, route::RouteAttribute::Table)
                                 .copied()
                                 .unwrap_or_default();
-                            <span class="kw">if let </span><span class="prelude-val">Some</span>(dst) = <span class="macro">get_nla!</span>(msg, route::Nla::Destination) {
-                                <span class="kw">let </span>dst_addr = <span class="kw">match </span>dst.len() {
-                                    <span class="number">4 </span>=&gt; TryInto::&lt;[u8; <span class="number">4</span>]&gt;::try_into(<span class="kw-2">&amp;</span>dst[..])
-                                        .ok()
-                                        .map(IpAddr::from),
-                                    <span class="number">16 </span>=&gt; TryInto::&lt;[u8; <span class="number">16</span>]&gt;::try_into(<span class="kw-2">&amp;</span>dst[..])
-                                        .ok()
-                                        .map(IpAddr::from),
-                                    <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-                                };
-                                <span class="kw">if let </span><span class="prelude-val">Some</span>(dst_addr) = dst_addr {
-                                    <span class="kw">if </span>(table == <span class="number">255 </span>|| table == <span class="number">254</span>)
-                                        &amp;&amp; (dst_addr.is_multicast() || is_link_local(dst_addr))
-                                    {
-                                        <span class="kw">continue</span>;
+                            <span class="kw">if let </span><span class="prelude-val">Some</span>(dst) = <span class="macro">get_nla!</span>(msg, route::RouteAttribute::Destination) {
+                                <span class="kw">match </span>dst {
+                                    route::RouteAddress::Inet(addr) =&gt; {
+                                        <span class="kw">if </span>(table == <span class="number">255 </span>|| table == <span class="number">254</span>)
+                                            &amp;&amp; (addr.is_multicast()
+                                                || is_link_local(IpAddr::V4(<span class="kw-2">*</span>addr)))
+                                        {
+                                            <span class="kw">continue</span>;
+                                        }
                                     }
+                                    route::RouteAddress::Inet6(addr) =&gt; {
+                                        <span class="kw">if </span>(table == <span class="number">255 </span>|| table == <span class="number">254</span>)
+                                            &amp;&amp; (addr.is_multicast()
+                                                || is_link_local(IpAddr::V6(<span class="kw-2">*</span>addr)))
+                                        {
+                                            <span class="kw">continue</span>;
+                                        }
+                                    }
+                                    <span class="kw">_ </span>=&gt; {}
                                 }
                             }
                             sender.send(NetworkMessage::Change).<span class="kw">await</span>.ok();
                         }
-                        RtnlMessage::NewRule(msg) =&gt; {
+                        RouteNetlinkMessage::NewRule(msg) =&gt; {
                             <span class="macro">trace!</span>(<span class="string">"NEWRULE: {:?}"</span>, msg);
                             sender.send(NetworkMessage::Change).<span class="kw">await</span>.ok();
                         }
-                        RtnlMessage::DelRule(msg) =&gt; {
+                        RouteNetlinkMessage::DelRule(msg) =&gt; {
                             <span class="macro">trace!</span>(<span class="string">"DELRULE: {:?}"</span>, msg);
                             sender.send(NetworkMessage::Change).<span class="kw">await</span>.ok();
                         }
-                        RtnlMessage::NewLink(msg) =&gt; {
+                        RouteNetlinkMessage::NewLink(msg) =&gt; {
                             <span class="macro">trace!</span>(<span class="string">"NEWLINK: {:?}"</span>, msg);
                             <span class="comment">// ignored atm
                         </span>}
-                        RtnlMessage::DelLink(msg) =&gt; {
+                        RouteNetlinkMessage::DelLink(msg) =&gt; {
                             <span class="macro">trace!</span>(<span class="string">"DELLINK: {:?}"</span>, msg);
                             <span class="comment">// ignored atm
                         </span>}

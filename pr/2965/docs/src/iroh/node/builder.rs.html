@@ -1294,14 +1294,14 @@
     /// let handler = MyProtocol { client };
     ///
     /// let node = unspawned_node
-    ///     .accept(MY_ALPN.to_vec(), Arc::new(handler))
+    ///     .accept(MY_ALPN, Arc::new(handler))
     ///     .spawn()
     ///     .await?;
     /// # node.shutdown().await?;
     /// # Ok(())
     /// # }
     /// ```
-    </span><span class="kw">pub fn </span>accept(<span class="kw-2">mut </span><span class="self">self</span>, alpn: Vec&lt;u8&gt;, handler: Arc&lt;<span class="kw">dyn </span>ProtocolHandler&gt;) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>accept(<span class="kw-2">mut </span><span class="self">self</span>, alpn: <span class="kw">impl </span>AsRef&lt;[u8]&gt;, handler: Arc&lt;<span class="kw">dyn </span>ProtocolHandler&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.router = <span class="self">self</span>.router.accept(alpn, handler);
         <span class="self">self
     </span>}

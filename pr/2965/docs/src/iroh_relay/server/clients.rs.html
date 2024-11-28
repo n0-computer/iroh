@@ -307,6 +307,7 @@
 <a href="#307" id="307">307</a>
 <a href="#308" id="308">308</a>
 <a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
 </span><span class="comment">// Based on tailscale/derp/derp_server.go
 
@@ -372,9 +373,9 @@
         conn_num
     }
 
-    <span class="kw">pub async fn </span>register(<span class="kw-2">&amp;mut </span><span class="self">self</span>, client_config: ClientConnConfig) {
-        <span class="comment">// this builds the client handler &amp; starts the read &amp; write loops to that client connection
-        </span><span class="kw">let </span>key = client_config.node_id;
+    <span class="doccomment">/// Builds the client handler and starts the read &amp; write loops for the connection.
+    </span><span class="kw">pub async fn </span>register(<span class="kw-2">&amp;mut </span><span class="self">self</span>, client_config: ClientConnConfig) {
+        <span class="kw">let </span>key = client_config.node_id;
         <span class="macro">trace!</span>(<span class="string">"registering client: {:?}"</span>, key);
         <span class="kw">let </span>conn_num = <span class="self">self</span>.next_conn_num();
         <span class="kw">let </span>client = ClientConn::new(client_config, conn_num);
@@ -556,6 +557,7 @@
                 stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
                 write_timeout: Duration::from_secs(<span class="number">1</span>),
                 channel_capacity: <span class="number">10</span>,
+                rate_limit: <span class="prelude-val">None</span>,
                 server_channel,
             },
             FramedRead::new(test_io, DerpCodec),

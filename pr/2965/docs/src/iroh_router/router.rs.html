@@ -210,8 +210,6 @@
 <a href="#210" id="210">210</a>
 <a href="#211" id="211">211</a>
 <a href="#212" id="212">212</a>
-<a href="#213" id="213">213</a>
-<a href="#214" id="214">214</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
@@ -284,8 +282,8 @@
         }
     }
 
-    <span class="kw">pub fn </span>accept(<span class="kw-2">mut </span><span class="self">self</span>, alpn: Vec&lt;u8&gt;, handler: Arc&lt;<span class="kw">dyn </span>ProtocolHandler&gt;) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.protocols.insert(alpn, handler);
+    <span class="kw">pub fn </span>accept(<span class="kw-2">mut </span><span class="self">self</span>, alpn: <span class="kw">impl </span>AsRef&lt;[u8]&gt;, handler: Arc&lt;<span class="kw">dyn </span>ProtocolHandler&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.protocols.insert(alpn.as_ref().to_vec(), handler);
         <span class="self">self
     </span>}
 
@@ -395,9 +393,7 @@
         // Closing the Endpoint is the equivalent of calling Connection::close on all
         // connections: Operations will immediately fail with ConnectionError::LocallyClosed.
         // All streams are interrupted, this is not graceful.
-        </span>endpoint
-            .clone()
-            .close(error_code.into(), <span class="string">b"provider terminating"</span>),
+        </span>endpoint.close(error_code.into(), <span class="string">b"provider terminating"</span>),
         <span class="comment">// Shutdown protocol handlers.
         </span>protocols.shutdown(),
     );

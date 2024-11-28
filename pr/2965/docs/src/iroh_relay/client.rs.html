@@ -1234,9 +1234,6 @@
 <a href="#1234" id="1234">1234</a>
 <a href="#1235" id="1235">1235</a>
 <a href="#1236" id="1236">1236</a>
-<a href="#1237" id="1237">1237</a>
-<a href="#1238" id="1238">1238</a>
-<a href="#1239" id="1239">1239</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
@@ -1617,27 +1614,21 @@
 }
 
 <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>, feature = <span class="string">"dangerous-certs"</span>))]
-</span><span class="doccomment">/// Creates a client config that trusts relay servers without verification
+</span><span class="doccomment">/// Creates a client config that trusts any servers without verifying their TLS certificate.
 ///
 /// Should be used for testing local relay setups only.
-</span><span class="kw">pub fn </span>make_dangerous_client_config() -&gt; quinn::crypto::rustls::QuicClientConfig {
-    <span class="kw">let </span>roots = rustls::RootCertStore {
-        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-    };
-    <span class="kw">let </span><span class="kw-2">mut </span>config = rustls::client::ClientConfig::builder_with_provider(Arc::new(
+</span><span class="kw">pub fn </span>make_dangerous_client_config() -&gt; rustls::ClientConfig {
+    <span class="macro">warn!</span>(
+        <span class="string">"Insecure config: SSL certificates from relay servers will be trusted without verification"
+    </span>);
+    rustls::client::ClientConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
     .with_protocol_versions(<span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>rustls::version::TLS13])
     .expect(<span class="string">"protocols supported by ring"</span>)
-    .with_root_certificates(roots)
-    .with_no_client_auth();
-    <span class="macro">warn!</span>(
-        <span class="string">"Insecure config: SSL certificates from relay servers will be trusted without verification"
-    </span>);
-    config
-        .dangerous()
-        .set_certificate_verifier(Arc::new(NoCertVerifier));
-    quinn::crypto::rustls::QuicClientConfig::try_from(config).expect(<span class="string">"Using tls1.3"</span>)
+    .dangerous()
+    .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
+    .with_no_client_auth()
 }
 
 <span class="kw">impl </span>ClientReceiver {
@@ -2373,12 +2364,15 @@
 }
 
 <span class="doccomment">/// Used to allow self signed certificates in tests
-</span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-#[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = <span class="string">"test-utils"</span>))))]
+</span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>, feature = <span class="string">"dangerous-certs"</span>))]
+#[cfg_attr(
+    iroh_docsrs,
+    doc(cfg(any(test, feature = <span class="string">"test-utils"</span>, feature = <span class="string">"dangerous-certs"</span>)))
+)]
 #[derive(Debug)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>NoCertVerifier;
+</span><span class="kw">struct </span>NoCertVerifier;
 
-<span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+<span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>, feature = <span class="string">"dangerous-certs"</span>))]
 </span><span class="kw">impl </span>rustls::client::danger::ServerCertVerifier <span class="kw">for </span>NoCertVerifier {
     <span class="kw">fn </span>verify_server_cert(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
