@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
 use futures_lite::{Stream, StreamExt};
-use iroh_net::{Endpoint, NodeAddr, NodeId, RelayUrl};
+use iroh::{Endpoint, NodeAddr, NodeId, RelayUrl};
 use quic_rpc::server::{ChannelTypes, RpcChannel, RpcServerError};
 use tracing::{debug, info};
 

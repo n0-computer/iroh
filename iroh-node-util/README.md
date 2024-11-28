@@ -1,6 +1,6 @@
 # iroh-node-util
 
-This crate provides utilities to build binaries containing an iroh-net endpoint.
+This crate provides utilities to build binaries containing an iroh endpoint.
 
 # License
 

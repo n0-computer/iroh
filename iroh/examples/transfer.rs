@@ -8,12 +8,11 @@ use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use futures_lite::StreamExt;
 use indicatif::HumanBytes;
-use iroh_net::{
+use iroh::{
     endpoint::ConnectionError, key::SecretKey, ticket::NodeTicket, Endpoint, NodeAddr, RelayMap,
     RelayMode, RelayUrl,
 };
 use tracing::info;
-
 // Transfer ALPN that we are using to communicate over the `Endpoint`
 const TRANSFER_ALPN: &[u8] = b"n0/iroh/transfer/example/0";
 
@@ -110,7 +109,7 @@ async fn provide(size: u64, relay_url: Option<String>) -> anyhow::Result<()> {
             }
         };
         let conn = connecting.await?;
-        let node_id = iroh_net::endpoint::get_remote_node_id(&conn)?;
+        let node_id = iroh::endpoint::get_remote_node_id(&conn)?;
         info!(
             "new connection from {node_id} with ALPN {} (coming from {})",
             String::from_utf8_lossy(TRANSFER_ALPN),
@@ -233,7 +232,7 @@ async fn fetch(ticket: &str, relay_url: Option<String>) -> anyhow::Result<()> {
 }
 
 async fn drain_stream(
-    stream: &mut iroh_net::endpoint::RecvStream,
+    stream: &mut iroh::endpoint::RecvStream,
     read_unordered: bool,
 ) -> Result<(usize, Duration, u64)> {
     let mut read = 0;
@@ -281,7 +280,7 @@ async fn drain_stream(
 }
 
 async fn send_data_on_stream(
-    stream: &mut iroh_net::endpoint::SendStream,
+    stream: &mut iroh::endpoint::SendStream,
     stream_size: u64,
 ) -> Result<()> {
     const DATA: &[u8] = &[0xAB; 1024 * 1024];

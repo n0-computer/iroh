@@ -4,7 +4,7 @@ use anyhow::Result;
 use hickory_resolver::{AsyncResolver, TokioAsyncResolver};
 use once_cell::sync::Lazy;
 
-/// The DNS resolver type used throughout `iroh-net`.
+/// The DNS resolver type used throughout `iroh`.
 pub(crate) type DnsResolver = TokioAsyncResolver;
 
 static DNS_RESOLVER: Lazy<TokioAsyncResolver> =

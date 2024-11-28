@@ -1,4 +1,4 @@
-//! RPC protocol definitions for controlling iroh-net endpoints and iroh nodes
+//! RPC protocol definitions for controlling iroh endpoints and iroh nodes
 use nested_enum_utils::enum_conversions;
 use serde::{Deserialize, Serialize};
 

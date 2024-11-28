@@ -129,9 +129,7 @@ If you want to use iroh from other languages, make sure to check out [iroh-ffi],
 ## Repository Structure
 
 This repository contains a workspace of crates:
-- `iroh`: Re-exports of stables APIs like `iroh-router` and `iroh-net`.
-- `iroh-router`: APIs to compose multiple protocols in a node.
-- `iroh-net`: The core networking code for hole-punching & connections to relays.
+- `iroh`: The core library for hole-punching & communicating with relays.
 - `iroh-relay`: The relay server implementation. This is the code we run in production (and you can, too!).
 - `iroh-base`: Common types like `Hash`, key types or `RelayUrl`.
 - `iroh-metrics`: Helper library for adding metrics support to crates.
@@ -139,8 +137,6 @@ This repository contains a workspace of crates:
 - `iroh-dns-server`: DNS server implementation powering the `n0_discovery` for NodeIds, running at dns.iroh.link.
 - `iroh-net-report`: Analyzes your host's networking ability & NAT.
 - `net-tools/*`: Networking utility crates
-
-The main entry point for anyone interested in the inner workings should be `iroh-net`.
 
 ## License
 

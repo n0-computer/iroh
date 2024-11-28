@@ -2404,17 +2404,93 @@ name = "iroh"
 version = "0.28.1"
 dependencies = [
  "anyhow",
+ "axum",
+ "backoff",
+ "base64",
  "bytes",
  "clap",
+ "criterion",
+ "crypto_box",
+ "der",
+ "derive_more",
+ "futures-buffered",
+ "futures-concurrency",
  "futures-lite 2.5.0",
+ "futures-sink",
+ "futures-util",
+ "genawaiter",
+ "governor 0.7.0",
+ "hex",
+ "hickory-proto 0.25.0-alpha.2",
+ "hickory-resolver",
+ "hostname 0.4.0",
+ "http 1.1.0",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "igd-next",
  "indicatif",
+ "iroh",
  "iroh-base",
- "iroh-net",
- "iroh-router",
+ "iroh-metrics",
+ "iroh-net-report",
+ "iroh-quinn",
+ "iroh-quinn-proto",
+ "iroh-quinn-udp",
+ "iroh-relay",
+ "iroh-test",
+ "libc",
+ "netdev",
+ "netlink-packet-core",
+ "netlink-packet-route 0.19.0",
+ "netlink-packet-route 0.21.0",
+ "netlink-sys",
+ "netwatch",
+ "num_enum",
+ "once_cell",
+ "parking_lot",
  "parse-size",
+ "pin-project",
+ "pkarr",
+ "portmapper",
+ "postcard",
+ "pretty_assertions",
+ "rand",
+ "rand_chacha",
+ "rcgen",
+ "regex",
+ "reqwest",
+ "ring",
+ "rtnetlink 0.13.1",
+ "rtnetlink 0.14.1",
+ "rustls",
+ "rustls-webpki",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "socket2",
+ "strum",
+ "stun-rs",
+ "surge-ping",
+ "swarm-discovery",
+ "testresult",
+ "thiserror 2.0.3",
+ "time",
  "tokio",
+ "tokio-rustls",
+ "tokio-stream",
+ "tokio-tungstenite 0.24.0",
+ "tokio-tungstenite-wasm",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "url",
+ "watchable",
+ "webpki-roots",
+ "windows 0.58.0",
+ "wmi",
+ "x509-parser",
+ "z32",
 ]
 
 [[package]]
@@ -2479,8 +2555,8 @@ dependencies = [
  "hickory-resolver",
  "hickory-server",
  "http 1.1.0",
+ "iroh",
  "iroh-metrics",
- "iroh-net",
  "iroh-test",
  "lru",
  "parking_lot",
@@ -2528,98 +2604,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "iroh-net"
-version = "0.28.1"
-dependencies = [
- "anyhow",
- "axum",
- "backoff",
- "base64",
- "bytes",
- "clap",
- "criterion",
- "crypto_box",
- "der",
- "derive_more",
- "futures-buffered",
- "futures-concurrency",
- "futures-lite 2.5.0",
- "futures-sink",
- "futures-util",
- "genawaiter",
- "governor 0.7.0",
- "hex",
- "hickory-proto 0.25.0-alpha.2",
- "hickory-resolver",
- "hostname 0.4.0",
- "http 1.1.0",
- "http-body-util",
- "hyper",
- "hyper-util",
- "igd-next",
- "iroh-base",
- "iroh-metrics",
- "iroh-net",
- "iroh-net-report",
- "iroh-quinn",
- "iroh-quinn-proto",
- "iroh-quinn-udp",
- "iroh-relay",
- "iroh-test",
- "libc",
- "netdev",
- "netlink-packet-core",
- "netlink-packet-route 0.19.0",
- "netlink-packet-route 0.21.0",
- "netlink-sys",
- "netwatch",
- "num_enum",
- "once_cell",
- "parking_lot",
- "pin-project",
- "pkarr",
- "portmapper",
- "postcard",
- "pretty_assertions",
- "rand",
- "rand_chacha",
- "rcgen",
- "regex",
- "reqwest",
- "ring",
- "rtnetlink 0.13.1",
- "rtnetlink 0.14.1",
- "rustls",
- "rustls-webpki",
- "serde",
- "serde_json",
- "smallvec",
- "socket2",
- "strum",
- "stun-rs",
- "surge-ping",
- "swarm-discovery",
- "testresult",
- "thiserror 2.0.3",
- "time",
- "tokio",
- "tokio-rustls",
- "tokio-stream",
- "tokio-tungstenite 0.24.0",
- "tokio-tungstenite-wasm",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "url",
- "watchable",
- "webpki-roots",
- "windows 0.58.0",
- "wmi",
- "x509-parser",
- "z32",
-]
-
-[[package]]
 name = "iroh-net-bench"
 version = "0.28.0"
 dependencies = [
@@ -2628,8 +2612,8 @@ dependencies = [
  "clap",
  "futures-lite 2.5.0",
  "hdrhistogram",
+ "iroh",
  "iroh-metrics",
- "iroh-net",
  "iroh-quinn",
  "rcgen",
  "rustls",
@@ -2681,7 +2665,7 @@ dependencies = [
  "dirs-next",
  "futures-lite 2.5.0",
  "human-time",
- "iroh-net",
+ "iroh",
  "nested_enum_utils",
  "quic-rpc",
  "quic-rpc-derive",
@@ -2809,22 +2793,6 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "webpki-roots",
-]
-
-[[package]]
-name = "iroh-router"
-version = "0.28.0"
-dependencies = [
- "anyhow",
- "clap",
- "futures-buffered",
- "futures-lite 2.5.0",
- "futures-util",
- "iroh-net",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -3861,9 +3829,9 @@ dependencies = [
 
 [[package]]
 name = "postcard"
-version = "1.0.10"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f7f0a8d620d71c457dd1d47df76bb18960378da56af4527aaa10f515eee732e"
+checksum = "f63d01def49fc815900a83e7a4a5083d2abc81b7ddd569a3fa0477778ae9b3ec"
 dependencies = [
  "cobs",
  "embedded-io 0.4.0",
@@ -4529,9 +4497,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.18"
+version = "0.23.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c9cc1d47e243d655ace55ed38201c19ae02c148ae56412ab8750e8f0166ab7f"
+checksum = "934b404430bb06b3fae2cba809eb45a1ab1aecd64491213d7c3301b88393f8d1"
 dependencies = [
  "log",
  "once_cell",
@@ -4991,9 +4959,9 @@ checksum = "fad6c857cbab2627dcf01ec85a623ca4e7dcb5691cbaa3d7fb7653671f0d09c9"
 
 [[package]]
 name = "socket2"
-version = "0.5.7"
+version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce305eb0b4296696835b71df73eb912e0f1ffd2556a501fcede6e0c50349191c"
+checksum = "c970269d99b64e60ec3bd6ad27270092a5394c4e309314b18ae3fe575695fbe8"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
@@ -5664,9 +5632,9 @@ dependencies = [
 
 [[package]]
 name = "tracing"
-version = "0.1.40"
+version = "0.1.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3523ab5a71916ccf420eebdf5521fcef02141234bbc0b8a49f2fdc4544364ef"
+checksum = "784e0ac535deb450455cbfa28a6f0df145ea1bb7ae51b821cf5e7927fdcfbdd0"
 dependencies = [
  "log",
  "pin-project-lite",
