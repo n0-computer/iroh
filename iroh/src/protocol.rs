@@ -203,7 +203,7 @@ impl Router {
 
     /// Shuts down the accept loop cleanly.
     ///
-    /// If some [`ProtocolHandler`] paniced in the accept loop, this will propagate
+    /// If some [`ProtocolHandler`] panicked in the accept loop, this will propagate
     /// that panic into the result here.
     pub async fn shutdown(self) -> Result<()> {
         // Trigger shutdown of the main run task by activating the cancel token.
