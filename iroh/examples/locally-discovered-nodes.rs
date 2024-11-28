@@ -1,11 +1,11 @@
-//! A small example showing how to get a list of nodes that were discovered via [`iroh_net::discovery::LocalSwarmDiscovery`]. LocalSwarmDiscovery uses [`swarm-discovery`](https://crates.io/crates/swarm-discovery) to discover other nodes in the local network ala mDNS.
+//! A small example showing how to get a list of nodes that were discovered via [`iroh::discovery::LocalSwarmDiscovery`]. LocalSwarmDiscovery uses [`swarm-discovery`](https://crates.io/crates/swarm-discovery) to discover other nodes in the local network ala mDNS.
 //!
-//! This example creates an iroh endpoint, a few additional iroh endpoints to discover, waits a few seconds, and reports all of the iroh NodeIds (also called `[iroh_net::key::PublicKey]`s) it has discovered.
+//! This example creates an iroh endpoint, a few additional iroh endpoints to discover, waits a few seconds, and reports all of the iroh NodeIds (also called `[iroh::key::PublicKey]`s) it has discovered.
 //!
 //! This is an async, non-determinate process, so the number of NodeIDs discovered each time may be different. If you have other iroh endpoints or iroh nodes with [`LocalSwarmDiscovery`] enabled, it may discover those nodes as well.
 use std::time::Duration;
 
-use iroh_net::{
+use iroh::{
     discovery::local_swarm_discovery::LocalSwarmDiscovery, endpoint::Source, key::SecretKey,
     Endpoint,
 };
@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
     // get an iterator of all the remote nodes this endpoint knows about
     let remotes = ep.remote_info_iter();
     // filter that list down to the nodes that have a `Source::Discovery` with
-    // the `service` name [`iroh_net::discovery::local_swarm_discovery::NAME`]
+    // the `service` name [`iroh::discovery::local_swarm_discovery::NAME`]
     // If you have a long running node and want to only get the nodes that were
     // discovered recently, you can also filter on the `Duration` of the source,
     // which indicates how long ago we got information from that source.
@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
         .filter(|remote| {
             remote.sources().iter().any(|(source, _duration)| {
                 if let Source::Discovery { name } = source {
-                    name == iroh_net::discovery::local_swarm_discovery::NAME
+                    name == iroh::discovery::local_swarm_discovery::NAME
                 } else {
                     false
                 }

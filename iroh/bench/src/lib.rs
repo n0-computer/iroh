@@ -78,7 +78,7 @@ pub struct Opt {
 }
 
 pub enum EndpointSelector {
-    Iroh(iroh_net::Endpoint),
+    Iroh(::iroh::Endpoint),
     #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
     Quinn(::quinn::Endpoint),
 }
@@ -99,7 +99,7 @@ impl EndpointSelector {
 }
 
 pub enum ConnectionSelector {
-    Iroh(iroh_net::endpoint::Connection),
+    Iroh(::iroh::endpoint::Connection),
     #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
     Quinn(::quinn::Connection),
 }

@@ -10,9 +10,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use futures_lite::future::Boxed as BoxedFuture;
-use iroh_net::{
-    endpoint::Connecting, protocol::ProtocolHandler, router::Router, Endpoint, NodeAddr,
-};
+use iroh::{endpoint::Connecting, protocol::ProtocolHandler, router::Router, Endpoint, NodeAddr};
 
 /// Each protocol is identified by its ALPN string.
 ///
@@ -83,7 +81,7 @@ impl ProtocolHandler for Echo {
             // Wait for the connection to be fully established.
             let connection = connecting.await?;
             // We can get the remote's node id from the connection.
-            let node_id = iroh_net::endpoint::get_remote_node_id(&connection)?;
+            let node_id = iroh::endpoint::get_remote_node_id(&connection)?;
             println!("accepted connection from {node_id}");
 
             // Our protocol is a simple request-response protocol, so we expect the

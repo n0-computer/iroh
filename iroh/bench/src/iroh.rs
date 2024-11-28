@@ -6,7 +6,7 @@ use std::{
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_lite::StreamExt as _;
-use iroh_net::{
+use iroh::{
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
     Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl,
 };

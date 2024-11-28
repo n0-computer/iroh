@@ -1,4 +1,4 @@
-//! The smallest example showing how to use iroh-net and [`iroh_net::Endpoint`] to connect two devices.
+//! The smallest example showing how to use iroh-net and [`iroh::Endpoint`] to connect two devices.
 //!
 //! This example uses the default relay servers to attempt to holepunch, and will use that relay server to relay packets if the two devices cannot establish a direct UDP connection.
 //! run this example from the project root:
@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use futures_lite::StreamExt;
-use iroh_net::{endpoint::ConnectionError, key::SecretKey, Endpoint, RelayMode};
+use iroh::{endpoint::ConnectionError, key::SecretKey, Endpoint, RelayMode};
 use tracing::{debug, info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -75,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
         };
         let alpn = connecting.alpn().await?;
         let conn = connecting.await?;
-        let node_id = iroh_net::endpoint::get_remote_node_id(&conn)?;
+        let node_id = iroh::endpoint::get_remote_node_id(&conn)?;
         info!(
             "new connection from {node_id} with ALPN {} (coming from {})",
             String::from_utf8_lossy(&alpn),

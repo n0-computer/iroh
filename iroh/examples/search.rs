@@ -34,7 +34,7 @@ use std::{collections::BTreeSet, sync::Arc};
 use anyhow::Result;
 use clap::Parser;
 use futures_lite::future::Boxed as BoxedFuture;
-use iroh_net::{
+use iroh::{
     endpoint::{get_remote_node_id, Connecting},
     protocol::ProtocolHandler,
     router::Router,

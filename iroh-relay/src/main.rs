@@ -1,7 +1,7 @@
 //! A simple relay server for iroh-net.
 //!
 //! This handles only the CLI and config file loading, the server implementation lives in
-//! [`iroh_net::relay::server`].
+//! [`iroh::relay::server`].
 
 use std::{
     net::{Ipv6Addr, SocketAddr},

@@ -35,12 +35,12 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
         // enable recording metrics
         iroh_metrics::core::Core::try_init(|reg, metrics| {
             use iroh_metrics::core::Metric;
-            metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
-            metrics.insert(iroh_net::metrics::NetReportMetrics::new(reg));
-            metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
+            metrics.insert(::iroh::metrics::MagicsockMetrics::new(reg));
+            metrics.insert(::iroh::metrics::NetReportMetrics::new(reg));
+            metrics.insert(::iroh::metrics::PortmapMetrics::new(reg));
             #[cfg(feature = "local-relay")]
             if opt.with_relay {
-                metrics.insert(iroh_net::metrics::RelayMetrics::new(reg));
+                metrics.insert(::iroh::metrics::RelayMetrics::new(reg));
             }
         })?;
     }
@@ -57,7 +57,7 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
 
     #[cfg(feature = "local-relay")]
     let (relay_url, _guard) = if opt.with_relay {
-        let (_, relay_url, _guard) = runtime.block_on(iroh_net::test_utils::run_relay_server())?;
+        let (_, relay_url, _guard) = runtime.block_on(::iroh::test_utils::run_relay_server())?;
 
         (Some(relay_url), Some(_guard))
     } else {
@@ -110,21 +110,21 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
         println!("\nMetrics:");
         collect_and_print(
             "MagicsockMetrics",
-            core.get_collector::<iroh_net::metrics::MagicsockMetrics>(),
+            core.get_collector::<::iroh::metrics::MagicsockMetrics>(),
         );
         collect_and_print(
             "NetReportMetrics",
-            core.get_collector::<iroh_net::metrics::NetReportMetrics>(),
+            core.get_collector::<::iroh::metrics::NetReportMetrics>(),
         );
         collect_and_print(
             "PortmapMetrics",
-            core.get_collector::<iroh_net::metrics::PortmapMetrics>(),
+            core.get_collector::<::iroh::metrics::PortmapMetrics>(),
         );
         // if None, (this is the case if opt.with_relay is false), then this is skipped internally:
         #[cfg(feature = "local-relay")]
         collect_and_print(
             "RelayMetrics",
-            core.get_collector::<iroh_net::metrics::RelayMetrics>(),
+            core.get_collector::<::iroh::metrics::RelayMetrics>(),
         );
     }
 

@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use crypto_box::aead::{AeadCore, AeadInPlace, OsRng};
-use iroh_net::key::SecretKey;
+use iroh::key::SecretKey;
 use rand::RngCore;
 
 pub fn seal_to(c: &mut Criterion) {

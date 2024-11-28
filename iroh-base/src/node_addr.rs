@@ -34,9 +34,9 @@ pub use crate::relay_url::RelayUrl;
 /// number of network-level addressing information.  It is a generic addressing type used
 /// whenever a connection to other nodes needs to be established.
 ///
-/// [discovery]: https://docs.rs/iroh_net/*/iroh_net/index.html#node-discovery
-/// [home relay]: https://docs.rs/iroh_net/*/iroh_net/relay/index.html
-/// [Relay server]: https://docs.rs/iroh_net/*/iroh_net/index.html#relay-servers
+/// [discovery]: https://docs.rs/iroh/*/iroh/index.html#node-discovery
+/// [home relay]: https://docs.rs/iroh/*/iroh/relay/index.html
+/// [Relay server]: https://docs.rs/iroh/*/iroh/index.html#relay-servers
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct NodeAddr {
     /// The node's identifier.
@@ -90,7 +90,7 @@ impl NodeAddr {
     /// received from another API.  E.g. to ensure a [discovery] service is used the
     /// `AddrInfoOptions::Id`] option could be used to remove all other addressing details.
     ///
-    /// [discovery]: https://docs.rs/iroh_net/*/iroh_net/index.html#node-discovery
+    /// [discovery]: https://docs.rs/iroh/*/iroh/index.html#node-discovery
     pub fn apply_options(&mut self, opts: AddrInfoOptions) {
         self.info.apply_options(opts);
     }
@@ -131,7 +131,7 @@ impl From<NodeId> for NodeAddr {
 /// Unless a [discovery service] is used at least one path is required to connect to an
 /// other node, see [`NodeAddr`] for details.
 ///
-/// [discovery]: https://docs.rs/iroh_net/*/iroh_net/index.html#node-discovery
+/// [discovery]: https://docs.rs/iroh/*/iroh/index.html#node-discovery
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, PartialOrd, Ord)]
 pub struct AddrInfo {
     /// The node's home relay url.
@@ -152,7 +152,7 @@ impl AddrInfo {
     /// received from another API.  E.g. to ensure a [discovery] service is used the
     /// `AddrInfoOptions::Id`] option could be used to remove all other addressing details.
     ///
-    /// [discovery]: https://docs.rs/iroh_net/*/iroh_net/index.html#node-discovery
+    /// [discovery]: https://docs.rs/iroh/*/iroh/index.html#node-discovery
     pub fn apply_options(&mut self, opts: AddrInfoOptions) {
         match opts {
             AddrInfoOptions::Id => {

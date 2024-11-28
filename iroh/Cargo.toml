@@ -1,5 +1,5 @@
 [package]
-name = "iroh-net"
+name = "iroh"
 version = "0.28.1"
 edition = "2021"
 readme = "README.md"
@@ -167,7 +167,7 @@ tokio = { version = "1", features = [
 ] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 iroh-test = "0.28.0"
-iroh-net = { path = "." }
+iroh = { path = "." }
 serde_json = "1"
 testresult = "0.4.0"
 iroh-relay = { version = "0.28", path = "../iroh-relay", features = ["test-utils", "server"] }

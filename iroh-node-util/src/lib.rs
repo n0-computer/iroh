@@ -17,7 +17,7 @@ pub mod fs;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use iroh_net::key::SecretKey;
+use iroh::key::SecretKey;
 use tokio::io::AsyncWriteExt;
 
 /// Loads a [`SecretKey`] from the provided file, or stores a newly generated one

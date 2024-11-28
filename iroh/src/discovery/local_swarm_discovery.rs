@@ -8,7 +8,7 @@
 //! ```
 //! use std::time::Duration;
 //!
-//! use iroh_net::endpoint::{Endpoint, Source};
+//! use iroh::endpoint::{Endpoint, Source};
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -20,7 +20,7 @@
 //!         .filter(|remote| {
 //!             remote.sources().iter().any(|(source, duration)| {
 //!                 if let Source::Discovery { name } = source {
-//!                     name == iroh_net::discovery::local_swarm_discovery::NAME
+//!                     name == iroh::discovery::local_swarm_discovery::NAME
 //!                         && *duration <= recent
 //!                 } else {
 //!                     false

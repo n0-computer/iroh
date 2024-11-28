@@ -841,7 +841,7 @@ impl Endpoint {
     /// To get the current endpoints, drop the stream after the first item was received:
     /// ```
     /// use futures_lite::StreamExt;
-    /// use iroh_net::Endpoint;
+    /// use iroh::Endpoint;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {

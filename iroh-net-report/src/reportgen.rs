@@ -1358,7 +1358,7 @@ mod tests {
     //
     // Build the test binary:
     //
-    //    cargo nextest run -p iroh_net net_report::reportgen::tests --no-run
+    //    cargo nextest run -p iroh net_report::reportgen::tests --no-run
     //
     // Find out the test binary location:
     //
@@ -1368,11 +1368,11 @@ mod tests {
     // Set the CAP_NET_RAW permission, note that nextest runs each test in a child process
     // so the capabilities need to be inherited:
     //
-    //    sudo setcap CAP_NET_RAW=eip target/debug/deps/iroh_net-abc123
+    //    sudo setcap CAP_NET_RAW=eip target/debug/deps/iroh-abc123
     //
     // Finally run the test:
     //
-    //    cargo nextest run -p iroh_net net_report::reportgen::tests
+    //    cargo nextest run -p iroh net_report::reportgen::tests
     //
     // This allows the pinger to create a SOCK_RAW socket for IPPROTO_ICMP.
     //

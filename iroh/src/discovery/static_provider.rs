@@ -42,7 +42,7 @@ impl StaticProvider {
     /// use std::str::FromStr;
     ///
     /// use iroh_base::ticket::NodeTicket;
-    /// use iroh_net::{Endpoint, discovery::static_provider::StaticProvider};
+    /// use iroh::{Endpoint, discovery::static_provider::StaticProvider};
     ///
     /// # async fn example() -> anyhow::Result<()> {
     /// # #[derive(Default)] struct Args { tickets: Vec<NodeTicket> }

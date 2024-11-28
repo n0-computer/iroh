@@ -8,7 +8,7 @@
 //! another node:
 //!
 //! ```no_run
-//! # use iroh_net::{Endpoint, NodeAddr};
+//! # use iroh::{Endpoint, NodeAddr};
 //! # async fn wrapper() -> testresult::TestResult {
 //! let addr: NodeAddr = todo!();
 //! let ep = Endpoint::builder().bind().await?;
@@ -22,7 +22,7 @@
 //! The other node can accept incoming connections using the [`Endpoint`] as well:
 //!
 //! ```no_run
-//! # use iroh_net::{Endpoint, NodeAddr};
+//! # use iroh::{Endpoint, NodeAddr};
 //! # async fn wrapper() -> testresult::TestResult {
 //! let ep = Endpoint::builder()
 //!     .alpns(vec![b"my-alpn".to_vec()])
@@ -158,7 +158,7 @@
 //!
 //! ```no_run
 //! use anyhow::Result;
-//! use iroh_net::{Endpoint, NodeAddr};
+//! use iroh::{Endpoint, NodeAddr};
 //!
 //! async fn connect(addr: NodeAddr) -> Result<()> {
 //!     // The Endpoint is the central object that manages an iroh-net node.
@@ -184,7 +184,7 @@
 //! ```no_run
 //! use anyhow::{Context, Result};
 //! use futures_lite::StreamExt;
-//! use iroh_net::{ticket::NodeTicket, Endpoint, NodeAddr};
+//! use iroh::{ticket::NodeTicket, Endpoint, NodeAddr};
 //!
 //! async fn accept() -> Result<()> {
 //!     // To accept connections at least one ALPN must be configured.

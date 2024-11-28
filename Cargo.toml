@@ -3,9 +3,9 @@ members = [
   "iroh-base",
   "iroh-dns-server",
   "iroh-metrics",
-  "iroh-net",
+  "iroh",
   "iroh-test",
-  "iroh-net/bench",
+  "iroh/bench",
   "iroh-relay",
   "net-tools/netwatch",
   "net-tools/portmapper",
@@ -48,7 +48,7 @@ unused-async = "warn"
 
 # Temporary fix for dependencies
 [patch.crates-io]
+iroh = { path = "./iroh" }
 iroh-base = { path = "./iroh-base" }
-iroh-net = { path = "./iroh-net" }
 iroh-metrics = { path = "./iroh-metrics" }
 iroh-test = { path = "./iroh-test" }
