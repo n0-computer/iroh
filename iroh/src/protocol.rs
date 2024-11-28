@@ -1,4 +1,44 @@
-//! TODO(matheus23) docs
+//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
+//!
+//! ## Example
+//!
+//! ```no_run
+//! # use std::sync::Arc;
+//! # use anyhow::Result;
+//! # use futures_lite::future::Boxed as BoxedFuture;
+//! # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
+//! #
+//! # async fn test_compile() -> Result<()> {
+//! let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+//!
+//! let router = Router::builder(endpoint)
+//!     .accept(ALPN.to_vec(), Arc::new(Echo))
+//!     .spawn()
+//!     .await?;
+//! # Ok(())
+//! # }
+//!
+//! // The protocol definition:
+//! #[derive(Debug, Clone)]
+//! struct Echo;
+//!
+//! impl ProtocolHandler for Echo {
+//!     fn accept(self: Arc<Self>, connecting: Connecting) -> BoxedFuture<Result<()>> {
+//!         Box::pin(async move {
+//!             let connection = connecting.await?;
+//!             let (mut send, mut recv) = connection.accept_bi().await?;
+//!             
+//!             // Echo any bytes received back directly.
+//!             let bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
+//!
+//!             send.finish()?;
+//!             connection.closed().await;
+//!
+//!             Ok(())
+//!         })
+//!     }
+//! }
+//! ```
 use std::{any::Any, collections::BTreeMap, sync::Arc};
 
 use anyhow::{anyhow, Result};
@@ -14,7 +54,39 @@ use tracing::{debug, error, warn};
 
 use crate::{endpoint::Connecting, Endpoint};
 
-/// TODO(matheus23): docs
+/// The built router.
+///
+/// Construct this using [`Router::builder`].
+///
+/// When dropped, this will abort listening the tasks, so make sure to store it.
+///
+/// Even with this abort-on-drop behaviour, it's recommended to call and await
+/// [`Router::shutdown`] before ending the process.
+///
+/// As an example for graceful shutdown, e.g. for tests or CLI tools,
+/// wait for [`tokio::signal::ctrl_c()`]:
+///
+/// ```no_run
+/// # use std::sync::Arc;
+/// # use anyhow::Result;
+/// # use futures_lite::future::Boxed as BoxedFuture;
+/// # use iroh::{endpoint::Connecting, protocol::ProtocolHandler, router::Router, Endpoint, NodeAddr};
+/// #
+/// # async fn test_compile() -> Result<()> {
+/// let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+///
+/// let router = Router::builder(endpoint)
+///     // .accept(ALPN.to_vec(), <something>)
+///     .spawn()
+///     .await?;
+///
+/// // wait until the user wants to
+/// tokio::signal::ctrl_c().await?;
+/// router.shutdown().await?;
+/// # Ok(())
+/// # }
+///
+/// ```
 #[derive(Clone, Debug)]
 pub struct Router {
     endpoint: Endpoint,
@@ -31,7 +103,7 @@ pub struct Router {
 
 type JoinErrToStr = Box<dyn Fn(JoinError) -> String + Send + Sync + 'static>;
 
-/// TODO(matheus23): docs
+/// Builder for creating a [`Router`] for accepting protocols.
 #[derive(Debug)]
 pub struct RouterBuilder {
     endpoint: Endpoint,
@@ -46,7 +118,7 @@ pub struct RouterBuilder {
 ///
 /// Implement this trait on a struct that should handle incoming connections.
 /// The protocol handler must then be registered on the node for an ALPN protocol with
-/// [`crate::router::RouterBuilder::accept`].
+/// [`crate::protocol::RouterBuilder::accept`].
 pub trait ProtocolHandler: Send + Sync + IntoArcAny + std::fmt::Debug + 'static {
     /// Handle an incoming connection.
     ///
@@ -63,7 +135,7 @@ pub trait ProtocolHandler: Send + Sync + IntoArcAny + std::fmt::Debug + 'static 
 ///
 /// This trait has a blanket implementation so there is no need to implement this yourself.
 pub trait IntoArcAny {
-    /// TODO(matheus23): docs
+    /// Casts `Arc<Self>` into `Arc<dyn Any + Send + Sync>`.
     fn into_arc_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
 }
 
@@ -111,7 +183,7 @@ impl ProtocolMap {
 }
 
 impl Router {
-    /// TODO(matheus23): docs
+    /// Creates a new [`Router`] using given [`Endpoint`].
     pub fn builder(endpoint: Endpoint) -> RouterBuilder {
         RouterBuilder::new(endpoint)
     }
@@ -124,12 +196,15 @@ impl Router {
         self.protocols.get_typed(alpn)
     }
 
-    /// TODO(matheus23): docs
+    /// Returns the [`Endpoint`] stored in this router.
     pub fn endpoint(&self) -> &Endpoint {
         &self.endpoint
     }
 
-    /// TODO(matheus23): docs
+    /// Shuts down the accept loop cleanly.
+    ///
+    /// If some [`ProtocolHandler`] paniced in the accept loop, this will propagate
+    /// that panic into the result here.
     pub async fn shutdown(self) -> Result<()> {
         // Trigger shutdown of the main run task by activating the cancel token.
         self.cancel_token.cancel();
@@ -142,7 +217,7 @@ impl Router {
 }
 
 impl RouterBuilder {
-    /// TODO(matheus23): docs
+    /// Creates a new router builder using given [`Endpoint`].
     pub fn new(endpoint: Endpoint) -> Self {
         Self {
             endpoint,
@@ -150,7 +225,8 @@ impl RouterBuilder {
         }
     }
 
-    /// TODO(matheus23): docs
+    /// Configures the router to accept the [`ProtocolHandler`] when receiving a connection
+    /// with this `alpn`.
     pub fn accept(mut self, alpn: impl AsRef<[u8]>, handler: Arc<dyn ProtocolHandler>) -> Self {
         self.protocols.insert(alpn.as_ref().to_vec(), handler);
         self
@@ -169,7 +245,7 @@ impl RouterBuilder {
         self.protocols.get_typed(alpn)
     }
 
-    /// TODO(matheus23): docs
+    /// Spawns an accept loop and returns a handle to it encapsulated as the [`Router`].
     pub async fn spawn(self) -> Result<Router> {
         // Update the endpoint with our alpns.
         let alpns = self
