@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Rotation"],"fn":["env_file_rust_log","init_terminal_and_file_logging","init_terminal_logging"],"struct":["EnvFilter","FileLogging"]};
