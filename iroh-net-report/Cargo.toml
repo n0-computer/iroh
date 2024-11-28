@@ -22,8 +22,8 @@ derive_more = { version = "1.0.0", features = ["display"] }
 futures-buffered = "0.2.8"
 futures-lite = "2.3"
 hickory-resolver = "=0.25.0-alpha.2"
-iroh-base = { version = "0.28.0", default-features = false, features = ["relay"] }
-iroh-metrics = { version = "0.28.0", default-features = false, optional = true }
+iroh-base = { version = "0.28.0", path = "../iroh-base", default-features = false, features = ["relay"] }
+iroh-metrics = { version = "0.28.0", path = "../iroh-metrics", default-features = false, optional = true }
 iroh-relay = { version = "0.28", path = "../iroh-relay" }
 netwatch = { version = "0.1.0", path = "../net-tools/netwatch" }
 portmapper = { version = "0.1.0", path = "../net-tools/portmapper" }
@@ -39,7 +39,7 @@ url = { version = "2.4" }
 
 [dev-dependencies]
 iroh-relay = { version = "0.28", path = "../iroh-relay", features = ["test-utils", "server"] }
-iroh-test = "0.28.0"
+iroh-test = { version = "0.28.0", path = "../iroh-test" }
 once_cell = "1.18.0"
 pretty_assertions = "1.4"
 testresult = "0.4.0"

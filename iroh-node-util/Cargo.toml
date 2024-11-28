@@ -19,7 +19,7 @@ workspace = true
 anyhow = "1"
 clap = { version = "4", features = ["derive"], optional = true }
 tokio = "1"
-iroh = { path = "../iroh" }
+iroh = { version = "0.28.1", path = "../iroh" }
 tempfile = "3"
 strum = "0.26"
 nested_enum_utils = "0.1.0"
