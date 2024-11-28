@@ -2440,24 +2440,24 @@ dependencies = [
  "iroh-relay",
  "iroh-test",
  "libc",
- "netdev 0.31.0",
+ "netdev",
  "netlink-packet-core",
  "netlink-packet-route 0.19.0",
  "netlink-packet-route 0.21.0",
  "netlink-sys",
- "netwatch 0.1.0",
+ "netwatch",
  "num_enum",
  "once_cell",
  "parking_lot",
  "parse-size",
  "pin-project",
  "pkarr",
- "portmapper 0.1.0",
+ "portmapper",
  "postcard",
  "pretty_assertions",
  "rand",
  "rand_chacha",
- "rcgen 0.13.1",
+ "rcgen",
  "regex",
  "reqwest",
  "ring",
@@ -2488,7 +2488,7 @@ dependencies = [
  "watchable",
  "webpki-roots",
  "windows 0.58.0",
- "wmi 0.14.1",
+ "wmi",
  "x509-parser",
  "z32",
 ]
@@ -2555,13 +2555,13 @@ dependencies = [
  "hickory-resolver",
  "hickory-server",
  "http 1.1.0",
+ "iroh",
  "iroh-metrics",
- "iroh-net",
  "iroh-test",
  "lru",
  "parking_lot",
  "pkarr",
- "rcgen 0.13.1",
+ "rcgen",
  "redb",
  "regex",
  "rustls",
@@ -2604,85 +2604,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "iroh-net"
-version = "0.28.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b40e1f1f9029e198c6d05bd232d3239814b0a66ac4668978729b709aeb6a44e2"
-dependencies = [
- "anyhow",
- "backoff",
- "base64",
- "bytes",
- "der",
- "derive_more",
- "duct",
- "futures-buffered",
- "futures-concurrency",
- "futures-lite 2.5.0",
- "futures-sink",
- "futures-util",
- "genawaiter",
- "governor 0.6.3",
- "hex",
- "hickory-proto 0.25.0-alpha.2",
- "hickory-resolver",
- "hostname 0.3.1",
- "http 1.1.0",
- "http-body-util",
- "hyper",
- "hyper-util",
- "igd-next",
- "iroh-base",
- "iroh-metrics",
- "iroh-quinn",
- "iroh-quinn-proto",
- "iroh-quinn-udp",
- "libc",
- "netdev 0.30.0",
- "netlink-packet-core",
- "netlink-packet-route 0.17.1",
- "netlink-sys",
- "netwatch 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "num_enum",
- "once_cell",
- "parking_lot",
- "pin-project",
- "pkarr",
- "portmapper 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "postcard",
- "rand",
- "rcgen 0.12.1",
- "reqwest",
- "ring",
- "rtnetlink 0.13.1",
- "rustls",
- "rustls-webpki",
- "serde",
- "smallvec",
- "socket2",
- "strum",
- "stun-rs",
- "surge-ping",
- "thiserror 1.0.69",
- "time",
- "tokio",
- "tokio-rustls",
- "tokio-stream",
- "tokio-tungstenite 0.21.0",
- "tokio-tungstenite-wasm",
- "tokio-util",
- "tracing",
- "tungstenite 0.21.0",
- "url",
- "watchable",
- "webpki-roots",
- "windows 0.51.1",
- "wmi 0.13.4",
- "x509-parser",
- "z32",
-]
-
-[[package]]
 name = "iroh-net-bench"
 version = "0.28.0"
 dependencies = [
@@ -2694,7 +2615,7 @@ dependencies = [
  "iroh",
  "iroh-metrics",
  "iroh-quinn",
- "rcgen 0.13.1",
+ "rcgen",
  "rustls",
  "socket2",
  "tokio",
@@ -2716,9 +2637,9 @@ dependencies = [
  "iroh-metrics",
  "iroh-relay",
  "iroh-test",
- "netwatch 0.1.0",
+ "netwatch",
  "once_cell",
- "portmapper 0.1.0",
+ "portmapper",
  "pretty_assertions",
  "rand",
  "reqwest",
@@ -2846,7 +2767,7 @@ dependencies = [
  "proptest",
  "rand",
  "rand_chacha",
- "rcgen 0.13.1",
+ "rcgen",
  "regex",
  "reqwest",
  "ring",
@@ -3095,12 +3016,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
 
 [[package]]
-name = "memalloc"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df39d232f5c40b0891c10216992c2f250c054105cb1e56f0fc9032db6203ecc1"
-
-[[package]]
 name = "memchr"
 version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3158,23 +3073,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "netdev"
-version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7516ad2c46cc25da098ed7d6b9a0cbe9e1fbffbd04b1596148b95f2841179c83"
-dependencies = [
- "dlopen2",
- "libc",
- "memalloc",
- "netlink-packet-core",
- "netlink-packet-route 0.17.1",
- "netlink-sys",
- "once_cell",
- "system-configuration",
- "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3301,7 +3199,7 @@ dependencies = [
  "futures-util",
  "iroh-quinn-udp",
  "libc",
- "netdev 0.31.0",
+ "netdev",
  "netlink-packet-core",
  "netlink-packet-route 0.19.0",
  "netlink-sys",
@@ -3316,36 +3214,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "windows 0.58.0",
- "wmi 0.14.1",
-]
-
-[[package]]
-name = "netwatch"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a639d52c0996ac640e2a7052a5265c8f71efdbdadc83188435ffc358b7ca931"
-dependencies = [
- "anyhow",
- "bytes",
- "derive_more",
- "futures-lite 2.5.0",
- "futures-sink",
- "futures-util",
- "libc",
- "netdev 0.30.0",
- "netlink-packet-core",
- "netlink-packet-route 0.17.1",
- "netlink-sys",
- "once_cell",
- "rtnetlink 0.13.1",
- "serde",
- "socket2",
- "thiserror 1.0.69",
- "time",
- "tokio",
- "tracing",
- "windows 0.51.1",
- "wmi 0.13.4",
+ "wmi",
 ]
 
 [[package]]
@@ -3942,7 +3811,7 @@ dependencies = [
  "igd-next",
  "iroh-metrics",
  "libc",
- "netwatch 0.1.0",
+ "netwatch",
  "ntest",
  "num_enum",
  "rand",
@@ -3959,39 +3828,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "portmapper"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93d60045fdcfe8ff6b781cf1027fdbb08ed319d93aff7da4bedc018e3bc92226"
-dependencies = [
- "anyhow",
- "base64",
- "bytes",
- "derive_more",
- "futures-lite 2.5.0",
- "futures-util",
- "igd-next",
- "iroh-metrics",
- "libc",
- "netwatch 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "num_enum",
- "rand",
- "serde",
- "smallvec",
- "socket2",
- "thiserror 1.0.69",
- "time",
- "tokio",
- "tokio-util",
- "tracing",
- "url",
-]
-
-[[package]]
 name = "postcard"
-version = "1.0.10"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f7f0a8d620d71c457dd1d47df76bb18960378da56af4527aaa10f515eee732e"
+checksum = "f63d01def49fc815900a83e7a4a5083d2abc81b7ddd569a3fa0477778ae9b3ec"
 dependencies = [
  "cobs",
  "embedded-io 0.4.0",
@@ -4388,18 +4228,6 @@ dependencies = [
 
 [[package]]
 name = "rcgen"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48406db8ac1f3cbc7dcdb56ec355343817958a356ff430259bb07baf7607e1e1"
-dependencies = [
- "pem",
- "ring",
- "time",
- "yasna",
-]
-
-[[package]]
-name = "rcgen"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54077e1872c46788540de1ea3d7f4ccb1983d12f9aa909b234468676c1a36779"
@@ -4669,9 +4497,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.18"
+version = "0.23.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c9cc1d47e243d655ace55ed38201c19ae02c148ae56412ab8750e8f0166ab7f"
+checksum = "934b404430bb06b3fae2cba809eb45a1ab1aecd64491213d7c3301b88393f8d1"
 dependencies = [
  "log",
  "once_cell",
@@ -5131,9 +4959,9 @@ checksum = "fad6c857cbab2627dcf01ec85a623ca4e7dcb5691cbaa3d7fb7653671f0d09c9"
 
 [[package]]
 name = "socket2"
-version = "0.5.7"
+version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce305eb0b4296696835b71df73eb912e0f1ffd2556a501fcede6e0c50349191c"
+checksum = "c970269d99b64e60ec3bd6ad27270092a5394c4e309314b18ae3fe575695fbe8"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
@@ -5611,7 +5439,7 @@ dependencies = [
  "num-bigint",
  "pem",
  "proc-macro2",
- "rcgen 0.13.1",
+ "rcgen",
  "reqwest",
  "ring",
  "rustls",
@@ -5804,9 +5632,9 @@ dependencies = [
 
 [[package]]
 name = "tracing"
-version = "0.1.40"
+version = "0.1.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3523ab5a71916ccf420eebdf5521fcef02141234bbc0b8a49f2fdc4544364ef"
+checksum = "784e0ac535deb450455cbfa28a6f0df145ea1bb7ae51b821cf5e7927fdcfbdd0"
 dependencies = [
  "log",
  "pin-project-lite",
@@ -6276,16 +6104,6 @@ dependencies = [
 
 [[package]]
 name = "windows"
-version = "0.51.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca229916c5ee38c2f2bc1e9d8f04df975b4bd93f9955dc69fabb5d91270045c9"
-dependencies = [
- "windows-core 0.51.1",
- "windows-targets 0.48.5",
-]
-
-[[package]]
-name = "windows"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e48a53791691ab099e5e2ad123536d0fff50652600abaf43bbf952894110d0be"
@@ -6302,15 +6120,6 @@ checksum = "dd04d41d93c4992d421894c18c8b43496aa748dd4c081bac0dc93eb0489272b6"
 dependencies = [
  "windows-core 0.58.0",
  "windows-targets 0.52.6",
-]
-
-[[package]]
-name = "windows-core"
-version = "0.51.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1f8cf84f35d2db49a46868f947758c7a1138116f7fac3bc844f43ade1292e64"
-dependencies = [
- "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -6552,21 +6361,6 @@ checksum = "524e57b2c537c0f9b1e69f1965311ec12182b4122e45035b1508cd24d2adadb1"
 dependencies = [
  "cfg-if",
  "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "wmi"
-version = "0.13.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff00ac1309d4c462be86f03a55e409509e8bf4323ec296aeb4b381dd9aabe6ec"
-dependencies = [
- "chrono",
- "futures",
- "log",
- "serde",
- "thiserror 1.0.69",
- "windows 0.58.0",
- "windows-core 0.58.0",
 ]
 
 [[package]]

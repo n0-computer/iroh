@@ -10,7 +10,11 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use futures_lite::future::Boxed as BoxedFuture;
-use iroh::{endpoint::Connecting, protocol::ProtocolHandler, router::Router, Endpoint, NodeAddr};
+use iroh::{
+    endpoint::Connecting,
+    protocol::{ProtocolHandler, Router},
+    Endpoint, NodeAddr,
+};
 
 /// Each protocol is identified by its ALPN string.
 ///

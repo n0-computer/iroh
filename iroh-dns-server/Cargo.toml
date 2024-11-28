@@ -60,7 +60,7 @@ z32 = "1.1.1"
 
 [dev-dependencies]
 hickory-resolver = "=0.25.0-alpha.2"
-iroh-net = { version = "0.28.0" }
+iroh = { version = "0.28.0" }
 iroh-test = "0.28.0"
 pkarr = { version = "2.2.0", features = ["rand"] }
 
