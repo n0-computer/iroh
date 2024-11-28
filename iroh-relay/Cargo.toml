@@ -133,7 +133,7 @@ dangerous-certs = []
 [[bin]]
 name = "iroh-relay"
 path = "src/main.rs"
-required-features = ["server", "dangerous-certs"]
+required-features = ["server"]
 
 [package.metadata.docs.rs]
 all-features = true

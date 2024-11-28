@@ -16,14 +16,7 @@
 //! - HTTPS `/generate_204`: Used for net_report probes.
 //! - STUN: UDP port for STUN requests/responses.
 
-use std::{
-    fmt,
-    future::Future,
-    net::{IpAddr, SocketAddr},
-    num::NonZeroU32,
-    pin::Pin,
-    sync::Arc,
-};
+use std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync::Arc};
 
 use anyhow::{anyhow, bail, Context, Result};
 use derive_more::Debug;
@@ -35,7 +28,6 @@ use hyper::body::Incoming;
 #[cfg(feature = "test-utils")]
 use iroh_base::node_addr::RelayUrl;
 use iroh_metrics::inc;
-use quinn::crypto::rustls::QuicServerConfig;
 use tokio::{
     net::{TcpListener, UdpSocket},
     task::JoinSet,
@@ -140,7 +132,6 @@ pub struct StunConfig {
 }
 
 /// Configuration for the QUIC server.
-// TODO(ramfox): limits? Limiting connections or accepted # of connections from a single IP? from a single node ID?
 #[derive(Debug)]
 pub struct QuicConfig {
     /// The socket address on which the QUIC server should bind.
@@ -148,22 +139,10 @@ pub struct QuicConfig {
     /// Normally you'd chose port `7842`, see [`crate::defaults::DEFAULT_QUIC_PORT`].
     pub bind_addr: SocketAddr,
     /// The TLS server configuration for the QUIC server.
-    #[debug(skip)]
-    pub server_config: QuicServerConfig,
-}
-
-impl QuicConfig {
-    /// Create a new [`QuicConfig`] from a [`TlsConfig`].
     ///
-    /// If `port` is `None`, will use [`crate::defaults::DEFAULT_QUIC_PORT`]
-    pub fn new(server_config: rustls::ServerConfig, ip: IpAddr, port: Option<u16>) -> Result<Self> {
-        // server_config.alpn_protocols = vec![crate::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
-        let server_config: QuicServerConfig = QuicServerConfig::try_from(server_config)?;
-        Ok(Self {
-            bind_addr: SocketAddr::new(ip, port.unwrap_or(crate::defaults::DEFAULT_QUIC_PORT)),
-            server_config,
-        })
-    }
+    /// If this [`rustls::ServerConfig`] does not support
+    /// TLS 1.3, the QUIC server will fail at [`QuicServer::spawn`].
+    pub server_config: rustls::ServerConfig,
 }
 
 /// TLS configuration for Relay server.
@@ -179,6 +158,8 @@ pub struct TlsConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     ///
     /// Normally you'd choose port `80`.
     pub https_bind_addr: SocketAddr,
+    /// The socket address on which to server the QUIC server.
+    pub quic_bind_addr: SocketAddr,
     /// Mode for getting a cert.
     pub cert: CertConfig<EC, EA>,
     /// The server configuration.
@@ -311,7 +292,7 @@ impl Server {
             }
             None => None,
         };
-        let quic_addr = quic_server.as_ref().map(|srv| *srv.bind_addr());
+        let quic_addr = quic_server.as_ref().map(|srv| srv.bind_addr());
         let quic_handle = quic_server.as_ref().map(|srv| srv.handle());
 
         let (relay_server, http_addr) = match config.relay {
@@ -569,7 +550,7 @@ async fn relay_supervisor(
 
     // Ensure the QUIC server is closed
     if let Some(server) = quic_server {
-        server.shutdown();
+        server.shutdown().await?;
     }
 
     // Stop all remaining tasks

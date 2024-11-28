@@ -10,6 +10,7 @@ use std::{
 
 use anyhow::{bail, Context as _, Result};
 use clap::Parser;
+use iroh_base::relay_map::DEFAULT_QUIC_PORT;
 use iroh_relay::{
     defaults::{DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_STUN_PORT},
     server::{self as relay, ClientConnRateLimit, QuicConfig},
@@ -33,6 +34,14 @@ struct Cli {
     /// Running in dev mode will ignore any config file fields pertaining to TLS.
     #[clap(long, default_value_t = false)]
     dev: bool,
+    /// Run in localhost development mode over plain HTTP and the QUIC endpoint for QUIC address discovery.
+    ///
+    /// Defaults to running the relay server on port 3340 and the QUIC endpoint over 7842.
+    ///
+    /// Running in dev-quic mode requires tls configuration for the QUIC endpoint. It will ignore
+    /// any tls configuration for the relay.
+    #[clap(long, default_value_t = false)]
+    dev_quic: bool,
     /// Path to the configuration file.
     ///
     /// If provided and no configuration file exists the default configuration will be
@@ -115,13 +124,20 @@ struct Config {
     /// `https_bind_addr` of the `tls` configuration section and only the captive portal
     /// will be served from the HTTP socket.
     http_bind_addr: Option<SocketAddr>,
+    /// When `true`, will only bind the relay to http.
+    /// Default is `false`.
+    ///
+    /// When the `--dev` flag is used on the CLI, it will set `http_only` to `true`.
+    #[serde(default = "cfg_defaults::http_only")]
+    http_only: bool,
     /// TLS specific configuration.
     ///
     /// TLS is disabled if not present and the Relay server will serve all services over
     /// plain HTTP.
     ///
-    /// If disabled all services will run on plain HTTP.  The `--dev` option disables this,
-    /// regardless of what is in the configuration file.
+    /// If disabled all services will run on plain HTTP.
+    ///
+    /// Must exist if `enable_quic_addr_discovery` is `true`.
     tls: Option<TlsConfig>,
     /// Whether to run a STUN server. It will bind to the same IP as the `addr` field.
     ///
@@ -134,25 +150,11 @@ struct Config {
     stun_bind_addr: Option<SocketAddr>,
     /// Whether to allow QUIC connections for QUIC address discovery
     ///
+    /// If no `tls` is set, this will cause building the server to erorr.
+    ///
     /// Defaults to `true`
     #[serde(default = "cfg_defaults::enable_quic_addr_discovery")]
     enable_quic_addr_discovery: bool,
-    /// Whether to use self-signed local certificates for the QUIC server.
-    ///
-    /// Only considered when `enable_quic_addr_discovery` is `true` and should
-    /// only be used when the relay is run locally in dev mode.
-    ///
-    /// Will ignore any other tls certificates passed to the relay server.
-    ///
-    /// Binds the QUIC server to "127.0.0.1".
-    enable_quic_local_cert: bool,
-    /// The port to bind the QUIC server on.
-    ///
-    /// The socket address will use the ip address from the tls config.
-    ///
-    /// If `None`, then the [`DEFAULT_QUIC_PORT`] will be used. If 0,
-    /// then the socket will bind to a random unused port.
-    quic_bind_port: Option<u16>,
     /// Rate limiting configuration.
     ///
     /// Disabled if not present.
@@ -191,12 +193,11 @@ impl Default for Config {
         Self {
             enable_relay: true,
             http_bind_addr: None,
+            http_only: false,
             tls: None,
             enable_stun: true,
             stun_bind_addr: None,
             enable_quic_addr_discovery: true,
-            enable_quic_local_cert: false,
-            quic_bind_port: None,
             limits: None,
             enable_metrics: true,
             metrics_bind_addr: None,
@@ -211,6 +212,10 @@ impl Default for Config {
 mod cfg_defaults {
     pub(crate) fn enable_relay() -> bool {
         true
+    }
+
+    pub(crate) fn http_only() -> bool {
+        false
     }
 
     pub(crate) fn enable_stun() -> bool {
@@ -238,6 +243,14 @@ struct TlsConfig {
     ///
     /// Defaults to the `http_bind_addr` with the port set to `443`.
     https_bind_addr: Option<SocketAddr>,
+    /// The socket address to bind the QUIC server one.
+    ///
+    /// Defaults to the `https_bind_addr` with the port set to [`iroh_base::relay_map::DEFAULT_QUIC_PORT`].
+    ///
+    /// If `https_bind_addr` is not set, defaults to `http_bind_addr` with the
+    /// port set to [`iroh_base::relay_map::DEFAULT_QUIC_PORT`]
+    quic_bind_addr: Option<SocketAddr>,
+    ///
     /// Certificate hostname when using LetsEncrypt.
     hostname: Option<String>,
     /// Mode for getting a cert.
@@ -285,6 +298,11 @@ impl TlsConfig {
     fn https_bind_addr(&self, cfg: &Config) -> SocketAddr {
         self.https_bind_addr
             .unwrap_or_else(|| SocketAddr::new(cfg.http_bind_addr().ip(), DEFAULT_HTTPS_PORT))
+    }
+
+    fn quic_bind_addr(&self, cfg: &Config) -> SocketAddr {
+        self.quic_bind_addr
+            .unwrap_or_else(|| SocketAddr::new(self.https_bind_addr(cfg).ip(), DEFAULT_QUIC_PORT))
     }
 
     fn cert_dir(&self) -> PathBuf {
@@ -374,13 +392,18 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     let mut cfg = Config::load(&cli).await?;
-    if cli.dev {
-        cfg.tls = None;
+    if cli.dev || cli.dev_quic {
+        cfg.http_only = true;
         if cfg.http_bind_addr.is_none() {
             cfg.http_bind_addr = Some((Ipv6Addr::UNSPECIFIED, DEV_MODE_HTTP_PORT).into());
         }
-        cfg.enable_quic_local_cert = true;
     }
+    if cli.dev {
+        cfg.enable_quic_addr_discovery = false;
+    }
+    if cfg.tls.is_none() && cfg.enable_quic_addr_discovery {
+        bail!("If QUIC address discovery is enabled, TLS must also be configured");
+    };
     let relay_config = build_relay_config(cfg).await?;
     debug!("{relay_config:#?}");
 
@@ -398,10 +421,10 @@ async fn main() -> Result<()> {
 async fn maybe_load_tls(
     cfg: &Config,
 ) -> Result<Option<relay::TlsConfig<std::io::Error, std::io::Error>>> {
-    if cfg.tls.is_none() {
+    let Some(ref tls) = cfg.tls else {
+        println!("no tls, returning none");
         return Ok(None);
-    }
-    let tls = cfg.tls.as_ref().expect("checked");
+    };
     let server_config = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
@@ -445,6 +468,7 @@ async fn maybe_load_tls(
         https_bind_addr: tls.https_bind_addr(cfg),
         cert: cert_config,
         server_config,
+        quic_bind_addr: tls.quic_bind_addr(cfg),
     }))
 }
 
@@ -455,18 +479,10 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
     let mut quic_config = None;
     if cfg.enable_quic_addr_discovery {
         if let Some(ref tls) = relay_tls {
-            quic_config = Some(QuicConfig::new(
-                tls.server_config.clone(),
-                tls.https_bind_addr.ip(),
-                cfg.quic_bind_port,
-            )?);
-        } else if cfg.enable_quic_local_cert {
-            let (_, server_config) = iroh_relay::server::self_signed_tls_certs_and_config();
-            quic_config = Some(QuicConfig::new(
-                server_config,
-                Ipv6Addr::UNSPECIFIED.into(),
-                cfg.quic_bind_port,
-            )?);
+            quic_config = Some(QuicConfig {
+                server_config: tls.server_config.clone(),
+                bind_addr: tls.quic_bind_addr,
+            });
         } else {
             bail!("Must have a valid TLS configuration to enable a QUIC server for QUIC address discovery")
         }
@@ -506,7 +522,8 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
 
     let relay_config = relay::RelayConfig {
         http_bind_addr: cfg.http_bind_addr(),
-        tls: relay_tls,
+        // if `http_only` is set, do not pass in any tls configuration
+        tls: relay_tls.and_then(|tls| if cfg.http_only { None } else { Some(tls) }),
         limits,
     };
     let stun_config = relay::StunConfig {

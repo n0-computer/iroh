@@ -378,27 +378,21 @@ impl ClientBuilder {
 }
 
 #[cfg(any(test, feature = "test-utils", feature = "dangerous-certs"))]
-/// Creates a client config that trusts relay servers without verification
+/// Creates a client config that trusts any servers without verifying their TLS certificate.
 ///
 /// Should be used for testing local relay setups only.
-pub fn make_dangerous_client_config() -> quinn::crypto::rustls::QuicClientConfig {
-    let roots = rustls::RootCertStore {
-        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-    };
-    let mut config = rustls::client::ClientConfig::builder_with_provider(Arc::new(
+pub fn make_dangerous_client_config() -> rustls::ClientConfig {
+    warn!(
+        "Insecure config: SSL certificates from relay servers will be trusted without verification"
+    );
+    rustls::client::ClientConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
     .with_protocol_versions(&[&rustls::version::TLS13])
     .expect("protocols supported by ring")
-    .with_root_certificates(roots)
-    .with_no_client_auth();
-    warn!(
-        "Insecure config: SSL certificates from relay servers will be trusted without verification"
-    );
-    config
-        .dangerous()
-        .set_certificate_verifier(Arc::new(NoCertVerifier));
-    quinn::crypto::rustls::QuicClientConfig::try_from(config).expect("Using tls1.3")
+    .dangerous()
+    .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
+    .with_no_client_auth()
 }
 
 impl ClientReceiver {
@@ -1134,12 +1128,15 @@ impl DnsExt for DnsResolver {
 }
 
 /// Used to allow self signed certificates in tests
-#[cfg(any(test, feature = "test-utils"))]
-#[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
+#[cfg(any(test, feature = "test-utils", feature = "dangerous-certs"))]
+#[cfg_attr(
+    iroh_docsrs,
+    doc(cfg(any(test, feature = "test-utils", feature = "dangerous-certs")))
+)]
 #[derive(Debug)]
-pub(crate) struct NoCertVerifier;
+struct NoCertVerifier;
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(any(test, feature = "test-utils", feature = "dangerous-certs"))]
 impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
     fn verify_server_cert(
         &self,

@@ -1,8 +1,6 @@
 //! Exposes functions to quickly configure a server suitable for testing.
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use quinn::crypto::rustls::QuicServerConfig;
-
 use super::{CertConfig, QuicConfig, RelayConfig, ServerConfig, StunConfig, TlsConfig};
 
 /// Creates a [`StunConfig`] suitable for testing.
@@ -17,7 +15,6 @@ pub fn stun_config() -> StunConfig {
 /// Creates a [`rustls::ServerConfig`] and certificates suitable for testing.
 ///
 /// - Uses a self signed certificate valid for the `"localhost"` and `"127.0.0.1"` domains.
-#[cfg(any(feature = "dangerous-certs", feature = "test-utils"))]
 pub fn self_signed_tls_certs_and_config() -> (
     Vec<rustls::pki_types::CertificateDer<'static>>,
     rustls::ServerConfig,
@@ -55,6 +52,7 @@ pub fn tls_config() -> TlsConfig<()> {
         server_config,
         cert: CertConfig::<(), ()>::Manual { certs },
         https_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+        quic_bind_addr: (Ipv4Addr::UNSPECIFIED, 0).into(),
     }
 }
 
@@ -77,7 +75,6 @@ pub fn relay_config() -> RelayConfig<()> {
 /// - Uses [`self_signed_tls_certs_and_config`] to create tls certificates
 pub fn quic_config() -> QuicConfig {
     let (_, server_config) = self_signed_tls_certs_and_config();
-    let server_config = QuicServerConfig::try_from(server_config).unwrap();
     QuicConfig {
         bind_addr: (Ipv6Addr::UNSPECIFIED, 0).into(),
         server_config,

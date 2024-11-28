@@ -4,7 +4,6 @@ use std::net::Ipv4Addr;
 use anyhow::Result;
 pub use dns_and_pkarr_servers::DnsPkarrServer;
 pub use dns_server::create_dns_resolver;
-use iroh_base::relay_map::DEFAULT_QUIC_PORT;
 use iroh_relay::server::{
     CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig,
 };
@@ -55,7 +54,7 @@ pub async fn run_relay_server_with_stun() -> Result<(RelayMap, RelayUrl, Server)
 /// `stun` can be set to `None` to disable stun, or set to `Some` `StunConfig`,
 /// to enable stun on a specific socket.
 ///
-/// If `quic` is set to `true`, it will make the appropriate [`QuicConfig`] from the generated tls certificates and run the quic server at port [`iroh_relay::defaults::DEFAULT_QUIC_PORT`].
+/// If `quic` is set to `true`, it will make the appropriate [`QuicConfig`] from the generated tls certificates and run the quic server at a random free port.
 ///
 ///
 /// The return value is similar to [`run_relay_server`].
@@ -64,23 +63,24 @@ pub async fn run_relay_server_with(
     quic: bool,
 ) -> Result<(RelayMap, RelayUrl, Server)> {
     let (certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
+    let tls = TlsConfig {
+        cert: CertConfig::<(), ()>::Manual { certs },
+        https_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+        quic_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+        server_config,
+    };
     let quic = if quic {
-        Some(QuicConfig::new(
-            server_config.clone(),
-            "127.0.0.1".parse()?,
-            Some(0),
-        )?)
+        Some(QuicConfig {
+            server_config: tls.server_config.clone(),
+            bind_addr: tls.quic_bind_addr,
+        })
     } else {
         None
     };
     let config = ServerConfig {
         relay: Some(RelayConfig {
             http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-            tls: Some(TlsConfig {
-                cert: CertConfig::<(), ()>::Manual { certs },
-                https_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-                server_config,
-            }),
+            tls: Some(tls),
             limits: Default::default(),
         }),
         quic,
@@ -92,9 +92,10 @@ pub async fn run_relay_server_with(
     let url: RelayUrl = format!("https://{}", server.https_addr().expect("configured"))
         .parse()
         .unwrap();
-    let quic = Some(iroh_base::relay_map::QuicConfig {
-        port: server.quic_addr().map_or(DEFAULT_QUIC_PORT, |s| s.port()),
-    });
+    let quic = match server.quic_addr() {
+        Some(addr) => Some(iroh_base::relay_map::QuicConfig { port: addr.port() }),
+        None => None,
+    };
     let m = RelayMap::from_nodes([RelayNode {
         url: url.clone(),
         stun_only: false,
