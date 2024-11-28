@@ -172,9 +172,6 @@ iroh-relay = { version = "0.28", path = "../iroh-relay", features = ["test-utils
 name = "key"
 harness = false
 
-[build-dependencies]
-duct = "0.13.6"
-
 [features]
 default = ["metrics", "discovery-pkarr-dht"]
 metrics = ["iroh-metrics/metrics"]

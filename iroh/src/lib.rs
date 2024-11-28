@@ -1,63 +1,12 @@
 //! Send data over the internet.
 //!
-//! # Getting started
-//!
-//! ## Example
-//!
-//! Create a new node.
-//!
-//! ```rust
-//! # async fn run() -> anyhow::Result<()> {
-//! let _node = iroh::node::Node::memory().spawn().await?;
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! ## Explanation
-//!
-//! ### Iroh node
-//!
-//! To create an iroh [Node](crate::node::Node), you use the
-//! [Builder](crate::node::Builder) to configure the node and to spawn it.
-//!
-//! There are also shortcuts to create an in [memory](crate::node::Node::memory)
-//! or [persistent](crate::node::Node::persistent) node with default settings.
-//!
-//! ## Iroh client
-//!
-//! A node is controlled via a **client**. The client provides the main API to
-//! interact with a node, no matter if it is a local in-process node or a node
-//! in a different process. All clients are cheaply cloneable and can be shared
-//! across threads.
-//!
-//! A handle to the client is available via the
-//! [client](crate::node::Node::client) method on the node.
-//!
-//! Node also implements [Deref](std::ops::Deref) to the client, so you can call
-//! client methods directly on the node.
-//!
-//! ## Subsystems
-//!
-//! The client provides access to various subsystems:
-//! - [net](crate::client::net):
-//!   information and control of the iroh network
-//!
-//! The subsystem clients can be obtained cheaply from the main iroh client.
-//! They are also cheaply cloneable and can be shared across threads.
-//!
-//! So if you have code that only needs to interact with one subsystem, pass
-//! it just the subsystem client.
-//!
 //!
 //! ## Reexports
 //!
 //! The iroh crate re-exports the following crates:
 //! - [iroh_base] as [`base`]
 //! - [iroh_net] as [`net`]
-//!
-//! ## Feature Flags
-//!
-//! - `metrics`: Enable metrics collection. Enabled by default.
+//! - [iroh_router] as [`router`]
 #![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
@@ -68,14 +17,3 @@ pub use iroh_base as base;
 pub use iroh_net as net;
 #[doc(inline)]
 pub use iroh_router as router;
-
-pub mod client;
-pub mod node;
-pub mod util;
-
-mod rpc_protocol;
-
-/// Expose metrics module
-#[cfg(feature = "metrics")]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = "metrics")))]
-pub mod metrics;

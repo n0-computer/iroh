@@ -12,6 +12,8 @@ pub mod config;
 pub mod logging;
 pub mod rpc;
 
+pub mod fs;
+
 use std::path::PathBuf;
 
 use anyhow::Context;
