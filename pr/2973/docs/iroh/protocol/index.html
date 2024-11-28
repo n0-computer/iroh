@@ -2,8 +2,9 @@
 <h3 id="example"><a class="doc-anchor" href="#example">§</a>Example</h3>
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>endpoint = Endpoint::builder().discovery_n0().bind().<span class="kw">await</span><span class="question-mark">?</span>;
 
+<span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"/my/alpn"</span>;
 <span class="kw">let </span>router = Router::builder(endpoint)
-    .accept(ALPN.to_vec(), Arc::new(Echo))
+    .accept(<span class="kw-2">&amp;</span>ALPN, Arc::new(Echo))
     .spawn()
     .<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -16,7 +17,7 @@
         Box::pin(<span class="kw">async move </span>{
             <span class="kw">let </span>connection = connecting.<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = connection.accept_bi().<span class="kw">await</span><span class="question-mark">?</span>;
-             
+
             <span class="comment">// Echo any bytes received back directly.
             </span><span class="kw">let </span>bytes_sent = tokio::io::copy(<span class="kw-2">&amp;mut </span>recv, <span class="kw-2">&amp;mut </span>send).<span class="kw">await</span><span class="question-mark">?</span>;
 

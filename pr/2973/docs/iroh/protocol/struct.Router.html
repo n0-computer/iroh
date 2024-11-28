@@ -9,14 +9,13 @@ wait for [<code>tokio::signal::ctrl_c()</code>]:</p>
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>endpoint = Endpoint::builder().discovery_n0().bind().<span class="kw">await</span><span class="question-mark">?</span>;
 
 <span class="kw">let </span>router = Router::builder(endpoint)
-    <span class="comment">// .accept(ALPN.to_vec(), &lt;something&gt;)
+    <span class="comment">// .accept(&amp;ALPN, &lt;something&gt;)
     </span>.spawn()
     .<span class="kw">await</span><span class="question-mark">?</span>;
 
 <span class="comment">// wait until the user wants to
 </span>tokio::signal::ctrl_c().<span class="kw">await</span><span class="question-mark">?</span>;
-router.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
-</code></pre></div>
+router.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div>
 </div></details><h2 id="implementations" class="section-header">Implementations<a href="#implementations" class="anchor">§</a></h2><div id="implementations-list"><details class="toggle implementors-toggle" open><summary><section id="impl-Router" class="impl"><a class="src rightside" href="../../src/iroh/protocol.rs.html#185-217">source</a><a href="#impl-Router" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.Router.html" title="struct iroh::protocol::Router">Router</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.builder" class="method"><a class="src rightside" href="../../src/iroh/protocol.rs.html#187-189">source</a><h4 class="code-header">pub fn <a href="#method.builder" class="fn">builder</a>(endpoint: <a class="struct" href="../endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint">Endpoint</a>) -&gt; <a class="struct" href="struct.RouterBuilder.html" title="struct iroh::protocol::RouterBuilder">RouterBuilder</a></h4></section></summary><div class="docblock"><p>Creates a new <a href="struct.Router.html" title="struct iroh::protocol::Router"><code>Router</code></a> using given <a href="../endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a>.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.get_protocol" class="method"><a class="src rightside" href="../../src/iroh/protocol.rs.html#195-197">source</a><h4 class="code-header">pub fn <a href="#method.get_protocol" class="fn">get_protocol</a>&lt;P: <a class="trait" href="trait.ProtocolHandler.html" title="trait iroh::protocol::ProtocolHandler">ProtocolHandler</a>&gt;(&amp;self, alpn: &amp;[<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>]) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;P&gt;&gt;</h4></section></summary><div class="docblock"><p>Returns a protocol handler for an ALPN.</p>
 <p>This downcasts to the concrete type and returns <code>None</code> if the handler registered for <code>alpn</code>
