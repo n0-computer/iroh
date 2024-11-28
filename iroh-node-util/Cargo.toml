@@ -1,6 +1,6 @@
 [package]
 name = "iroh-node-util"
-description = "Utilities to build binaries containing an iroh-net endpoint"
+description = "Utilities to build binaries containing an iroh endpoint"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 version = "0.28.0"
@@ -19,7 +19,7 @@ workspace = true
 anyhow = "1"
 clap = { version = "4", features = ["derive"], optional = true }
 tokio = "1"
-iroh-net = { path = "../iroh-net" }
+iroh = { path = "../iroh" }
 tempfile = "3"
 strum = "0.26"
 nested_enum_utils = "0.1.0"

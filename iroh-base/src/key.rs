@@ -1,4 +1,4 @@
-//! Cryptographic key handling for `iroh-net`.
+//! Cryptographic key handling for `iroh`.
 
 mod encryption;
 

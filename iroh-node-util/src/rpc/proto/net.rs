@@ -1,6 +1,6 @@
-//! RPC calls to control an iroh-net endpoint.
+//! RPC calls to control an iroh endpoint.
 #![allow(missing_docs)]
-use iroh_net::{endpoint::RemoteInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
+use iroh::{endpoint::RemoteInfo, key::PublicKey, relay::RelayUrl, NodeAddr, NodeId};
 use nested_enum_utils::enum_conversions;
 use quic_rpc_derive::rpc_requests;
 use serde::{Deserialize, Serialize};

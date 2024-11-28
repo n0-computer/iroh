@@ -15,7 +15,7 @@ pub const DEFAULT_HTTPS_PORT: u16 = 443;
 /// The default metrics port used by the Relay server.
 pub const DEFAULT_METRICS_PORT: u16 = 9090;
 
-/// Contains all timeouts that we use in `iroh-net`.
+/// Contains all timeouts that we use in `iroh`.
 pub(crate) mod timeouts {
     use std::time::Duration;
 

@@ -7,7 +7,7 @@ use colored::Colorize;
 use comfy_table::{presets::NOTHING, Cell, Table};
 use futures_lite::{Stream, StreamExt};
 use human_time::ToHumanTimeString;
-use iroh_net::{
+use iroh::{
     endpoint::{DirectAddrInfo, RemoteInfo},
     NodeAddr, NodeId, RelayUrl,
 };

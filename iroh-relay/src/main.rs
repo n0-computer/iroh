@@ -1,7 +1,7 @@
-//! A simple relay server for iroh-net.
+//! The relay server for iroh.
 //!
 //! This handles only the CLI and config file loading, the server implementation lives in
-//! [`iroh_net::relay::server`].
+//! [`iroh::relay::server`].
 
 use std::{
     net::{Ipv6Addr, SocketAddr},
@@ -22,7 +22,7 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 /// The default `http_bind_port` when using `--dev`.
 const DEV_MODE_HTTP_PORT: u16 = 3340;
 
-/// A relay server for iroh-net.
+/// A relay server for iroh.
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None)]
 struct Cli {
