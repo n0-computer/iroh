@@ -11,8 +11,9 @@
 //! # async fn test_compile() -> Result<()> {
 //! let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 //!
+//! const ALPN: &[u8] = b"/my/alpn";
 //! let router = Router::builder(endpoint)
-//!     .accept(ALPN.to_vec(), Arc::new(Echo))
+//!     .accept(&ALPN, Arc::new(Echo))
 //!     .spawn()
 //!     .await?;
 //! # Ok(())
@@ -27,7 +28,7 @@
 //!         Box::pin(async move {
 //!             let connection = connecting.await?;
 //!             let (mut send, mut recv) = connection.accept_bi().await?;
-//!             
+//!
 //!             // Echo any bytes received back directly.
 //!             let bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
 //!
@@ -70,13 +71,13 @@ use crate::{endpoint::Connecting, Endpoint};
 /// # use std::sync::Arc;
 /// # use anyhow::Result;
 /// # use futures_lite::future::Boxed as BoxedFuture;
-/// # use iroh::{endpoint::Connecting, protocol::ProtocolHandler, router::Router, Endpoint, NodeAddr};
+/// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
 /// #
 /// # async fn test_compile() -> Result<()> {
 /// let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 ///
 /// let router = Router::builder(endpoint)
-///     // .accept(ALPN.to_vec(), <something>)
+///     // .accept(&ALPN, <something>)
 ///     .spawn()
 ///     .await?;
 ///
@@ -85,7 +86,6 @@ use crate::{endpoint::Connecting, Endpoint};
 /// router.shutdown().await?;
 /// # Ok(())
 /// # }
-///
 /// ```
 #[derive(Clone, Debug)]
 pub struct Router {
