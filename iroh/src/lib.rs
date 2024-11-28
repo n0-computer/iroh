@@ -242,16 +242,16 @@ pub mod endpoint;
 mod magicsock;
 pub mod metrics;
 pub mod protocol;
-pub mod ticket;
 pub mod tls;
 
 pub(crate) mod util;
 
-pub use endpoint::{AddrInfo, Endpoint, NodeAddr, RelayMode};
+pub use endpoint::{AddrInfo, AddrInfoOptions, Endpoint, NodeAddr, RelayMode};
 pub use iroh_base::{
-    key,
+    hash, key,
     key::NodeId,
     relay_map::{RelayMap, RelayNode, RelayUrl},
+    ticket,
 };
 pub use iroh_relay as relay;
 
