@@ -435,9 +435,9 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
 name = "bytes"
-version = "1.8.0"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ac0150caa2ae65ca5bd83f25c7de183dea78d4d366469f148435e2acfbad0da"
+checksum = "325918d6fe32f23b19878fe4b34794ae41fc19ddbe53b10571a4874d44ffd39b"
 
 [[package]]
 name = "cast"
@@ -1109,18 +1109,6 @@ name = "dtoa"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dcbb2bf8e87535c23f7a8a321e364ce21462d0ff10cb6407820e8e96dfff6653"
-
-[[package]]
-name = "duct"
-version = "0.13.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4ab5718d1224b63252cd0c6f74f6480f9ffeb117438a2e0f5cf6d9a4798929c"
-dependencies = [
- "libc",
- "once_cell",
- "os_pipe",
- "shared_child",
-]
 
 [[package]]
 name = "dyn-clone"
@@ -2437,7 +2425,7 @@ dependencies = [
  "iroh-quinn-proto",
  "iroh-quinn-udp",
  "iroh-relay",
- "iroh-test",
+ "iroh-test 0.28.0",
  "libc",
  "netdev",
  "netlink-packet-core",
@@ -2505,7 +2493,7 @@ dependencies = [
  "getrandom",
  "hex",
  "iroh-blake3",
- "iroh-test",
+ "iroh-test 0.28.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "once_cell",
  "postcard",
  "proptest",
@@ -2556,7 +2544,7 @@ dependencies = [
  "http 1.1.0",
  "iroh",
  "iroh-metrics",
- "iroh-test",
+ "iroh-test 0.28.0",
  "lru",
  "parking_lot",
  "pkarr",
@@ -2635,7 +2623,7 @@ dependencies = [
  "iroh-base",
  "iroh-metrics",
  "iroh-relay",
- "iroh-test",
+ "iroh-test 0.28.0",
  "netwatch",
  "once_cell",
  "portmapper",
@@ -2740,7 +2728,6 @@ dependencies = [
  "clap",
  "crypto_box",
  "derive_more",
- "duct",
  "futures-buffered",
  "futures-lite 2.5.0",
  "futures-sink",
@@ -2756,7 +2743,7 @@ dependencies = [
  "hyper-util",
  "iroh-base",
  "iroh-metrics",
- "iroh-test",
+ "iroh-test 0.28.0",
  "libc",
  "num_enum",
  "once_cell",
@@ -2797,6 +2784,18 @@ dependencies = [
 [[package]]
 name = "iroh-test"
 version = "0.28.0"
+dependencies = [
+ "anyhow",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "iroh-test"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f909a839e5aafd4c4ca473e6e143bacdd6a8483385e64186cacfa62e91f4081d"
 dependencies = [
  "anyhow",
  "tokio",
@@ -3464,16 +3463,6 @@ name = "openssl-probe"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff011a302c396a5197692431fc1948019154afc178baf7d8e37367442a4601cf"
-
-[[package]]
-name = "os_pipe"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ffd2b0a5634335b135d5728d84c5e0fd726954b87111f7506a61c502280d982"
-dependencies = [
- "libc",
- "windows-sys 0.59.0",
-]
 
 [[package]]
 name = "overload"
@@ -4889,16 +4878,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
-]
-
-[[package]]
-name = "shared_child"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09fa9338aed9a1df411814a5b2252f7cd206c55ae9bf2fa763f8de84603aa60c"
-dependencies = [
- "libc",
- "windows-sys 0.59.0",
 ]
 
 [[package]]

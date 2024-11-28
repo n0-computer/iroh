@@ -84,7 +84,7 @@ impl fmt::Debug for RelayUrl {
 /// output.
 struct DbgStr<'a>(&'a str);
 
-impl<'a> fmt::Debug for DbgStr<'a> {
+impl fmt::Debug for DbgStr<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, r#""{}""#, self.0)
     }
