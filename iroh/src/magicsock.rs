@@ -878,7 +878,7 @@ impl MagicSock {
                 match src {
                     DiscoMessageSource::Relay { url, .. } => {
                         event!(
-                            target: "events.net.call-me-maybe.recv",
+                            target: "iroh::events::call-me-maybe::recv",
                             Level::DEBUG,
                             remote_node = sender.fmt_short(),
                             via = ?url,
@@ -934,7 +934,7 @@ impl MagicSock {
             ping_observed_addr: addr.clone(),
         });
         event!(
-            target: "events.net.pong.sent",
+            target: "iroh::events::pong::sent",
             Level::DEBUG,
             remote_node = %sender.fmt_short(),
             dst = ?addr,
@@ -1060,7 +1060,7 @@ impl MagicSock {
             Ok(()) => {
                 if let disco::Message::CallMeMaybe(CallMeMaybe { ref my_numbers }) = msg {
                     event!(
-                        target: "events.net.call-me-maybe.sent",
+                        target: "iroh::events::call-me-maybe::sent",
                         Level::DEBUG,
                         remote_node = %dst.fmt_short(),
                         via = ?url,
@@ -2465,7 +2465,7 @@ impl DiscoveredDirectAddrs {
         let updated = self.addrs.update(addrs).is_ok();
         if updated {
             event!(
-                target: "events.net.direct_addrs",
+                target: "iroh::events::direct_addrs",
                 Level::DEBUG,
                 addrs = ?self.addrs.get(),
             );

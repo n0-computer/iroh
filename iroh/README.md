@@ -20,9 +20,10 @@ The library uses [tracing](https://docs.rs/tracing) to for logging as
 well as for **structured events**.  Events are different from normal
 logging by convention:
 
-- The [target] has a prefix of `events` and target names are dot-separated.
+- The [target] has a prefix of `$crate_name::events` and target names
+  are `::` separated.
 
-  For this library the target will always start with `events.net.`.
+  For this library the target will always start with `iroh::events::`.
 
 - There is **no message**.
 
@@ -38,12 +39,12 @@ logging by convention:
 
 ### Using events
 
-If desired an application can use the `events.*` target to handle
-events by a different subscriber.  However with the default file
-logging it is already easy to search for all events, e.g. using
+If desired an application can use the `$crate_name::events` target to
+handle events by a different subscriber.  However with the default
+file logging it is already easy to search for all events, e.g. using
 ripgrep:
 
-`rg 'events\.[a-z_\-.]+' path/to/iroh/logs/iroh.YYYY-MM-DD-NN.log`
+`rg 'events::[a-z_\-:]+' path/to/iroh/logs/iroh.YYYY-MM-DD-NN.log`
 
 Which will also highlight the full target name by default on a colour
 supporting terminal.
@@ -60,7 +61,7 @@ recommended to write them using the `event!()` macro:
 
 ```rust
 event!(
-    target: "event.net.subject",
+    target: "iroh::event::subject",
     Level::DEBUG,
     field = value,
 );
