@@ -1,4 +1,16 @@
 //! This module implements the relaying protocol used the [`crate::server`] and [`crate::client`].
+//!
+//! Protocol flow:
+//!
+//! Login:
+//!  * client connects
+//!  * -> client sends `FrameType::ClientInfo`
+//!
+//!  Steady state:
+//!  * server occasionally sends `FrameType::KeepAlive` (or `FrameType::Ping`)
+//!  * client responds to any `FrameType::Ping` with a `FrameType::Pong`
+//!  * clients sends `FrameType::SendPacket`
+//!  * server then sends `FrameType::RecvPacket` to recipient
 
 use std::time::Duration;
 
@@ -51,21 +63,9 @@ pub(crate) const PER_CLIENT_READ_QUEUE_DEPTH: usize = 512;
 /// with nodes running earlier protocol versions.
 pub(crate) const PROTOCOL_VERSION: usize = 3;
 
-///
-/// Protocol flow:
-///
-/// Login:
-///  * client connects
-///  * -> client sends FrameType::ClientInfo
-///
-///  Steady state:
-///  * server occasionally sends FrameType::KeepAlive (or FrameType::Ping)
-///  * client responds to any FrameType::Ping with a FrameType::Pong
-///  * clients sends FrameType::SendPacket
-///  * server then sends FrameType::RecvPacket to recipient
-
+/// Indicates this IS the client's home node
 const PREFERRED: u8 = 1u8;
-/// indicates this is NOT the client's home node
+/// Indicates this IS NOT the client's home node
 const NOT_PREFERRED: u8 = 0u8;
 
 /// The one byte frame type at the beginning of the frame

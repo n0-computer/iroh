@@ -1070,7 +1070,7 @@ pub struct Accept<'a> {
     ep: Endpoint,
 }
 
-impl<'a> Future for Accept<'a> {
+impl Future for Accept<'_> {
     type Output = Option<Incoming>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
