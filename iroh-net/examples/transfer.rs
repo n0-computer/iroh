@@ -13,7 +13,6 @@ use iroh_net::{
     RelayMode, RelayUrl,
 };
 use tracing::info;
-
 // Transfer ALPN that we are using to communicate over the `Endpoint`
 const TRANSFER_ALPN: &[u8] = b"n0/iroh/transfer/example/0";
 

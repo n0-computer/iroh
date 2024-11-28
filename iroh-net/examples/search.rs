@@ -36,9 +36,10 @@ use clap::Parser;
 use futures_lite::future::Boxed as BoxedFuture;
 use iroh_net::{
     endpoint::{get_remote_node_id, Connecting},
+    protocol::ProtocolHandler,
+    router::Router,
     Endpoint, NodeId,
 };
-use iroh_router::{ProtocolHandler, Router};
 use tokio::sync::Mutex;
 use tracing_subscriber::{prelude::*, EnvFilter};
 

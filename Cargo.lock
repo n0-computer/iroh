@@ -2400,24 +2400,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "iroh"
-version = "0.28.1"
-dependencies = [
- "anyhow",
- "bytes",
- "clap",
- "futures-lite 2.5.0",
- "indicatif",
- "iroh-base",
- "iroh-net",
- "iroh-router",
- "parse-size",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "iroh-base"
 version = "0.28.0"
 dependencies = [
@@ -2557,6 +2539,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "igd-next",
+ "indicatif",
  "iroh-base",
  "iroh-metrics",
  "iroh-net",
@@ -2576,6 +2559,7 @@ dependencies = [
  "num_enum",
  "once_cell",
  "parking_lot",
+ "parse-size",
  "pin-project",
  "pkarr",
  "portmapper",
@@ -2809,22 +2793,6 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "webpki-roots",
-]
-
-[[package]]
-name = "iroh-router"
-version = "0.28.0"
-dependencies = [
- "anyhow",
- "clap",
- "futures-buffered",
- "futures-lite 2.5.0",
- "futures-util",
- "iroh-net",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
