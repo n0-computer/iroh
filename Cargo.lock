@@ -2430,7 +2430,6 @@ dependencies = [
  "hyper-util",
  "igd-next",
  "indicatif",
- "iroh",
  "iroh-base",
  "iroh-metrics",
  "iroh-net-report",
