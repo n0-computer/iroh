@@ -150,7 +150,7 @@ struct Config {
     stun_bind_addr: Option<SocketAddr>,
     /// Whether to allow QUIC connections for QUIC address discovery
     ///
-    /// If no `tls` is set, this will cause building the server to erorr.
+    /// If no `tls` is set, this will error.
     ///
     /// Defaults to `true`
     #[serde(default = "cfg_defaults::enable_quic_addr_discovery")]
@@ -597,6 +597,8 @@ mod tests {
     #[tokio::test]
     async fn test_rate_limit_config() -> TestResult {
         let config = "
+            enable_quic_addr_discovery = false
+
             [limits.client.rx]
             bytes_per_second = 400
             max_burst_bytes = 800
@@ -619,7 +621,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rate_limit_default() -> TestResult {
-        let config = Config::from_str("")?;
+        let config = Config::from_str("enable_quic_addr_discovery = false")?;
         let relay_config = build_relay_config(config).await?;
 
         let relay = relay_config.relay.expect("no relay config");

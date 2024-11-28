@@ -92,10 +92,9 @@ pub async fn run_relay_server_with(
     let url: RelayUrl = format!("https://{}", server.https_addr().expect("configured"))
         .parse()
         .unwrap();
-    let quic = match server.quic_addr() {
-        Some(addr) => Some(iroh_base::relay_map::QuicConfig { port: addr.port() }),
-        None => None,
-    };
+    let quic = server
+        .quic_addr()
+        .map(|addr| iroh_base::relay_map::QuicConfig { port: addr.port() });
     let m = RelayMap::from_nodes([RelayNode {
         url: url.clone(),
         stun_only: false,
