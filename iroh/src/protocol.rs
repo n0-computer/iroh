@@ -201,16 +201,27 @@ impl Router {
         &self.endpoint
     }
 
+    /// Checks if the router is already shutdown.
+    pub fn is_shutdown(&self) -> bool {
+        self.cancel_token.is_cancelled()
+    }
+
     /// Shuts down the accept loop cleanly.
     ///
     /// If some [`ProtocolHandler`] panicked in the accept loop, this will propagate
     /// that panic into the result here.
-    pub async fn shutdown(self) -> Result<()> {
+    ///
+    /// If already shutdown, it just returns `Ok`.
+    pub async fn shutdown(&self) -> Result<()> {
+        if self.is_shutdown() {
+            return Ok(());
+        }
+
         // Trigger shutdown of the main run task by activating the cancel token.
         self.cancel_token.cancel();
 
         // Wait for the main task to terminate.
-        self.task.await.map_err(|err| anyhow!(err))?;
+        self.task.clone().await.map_err(|err| anyhow!(err))?;
 
         Ok(())
     }
@@ -267,6 +278,9 @@ impl RouterBuilder {
         let cancel_token = cancel.clone();
 
         let run_loop_fut = async move {
+            // Make sure to cancel the token, if this future ever exits.
+            let _cancel_guard = cancel_token.clone().drop_guard();
+
             let protocols = protos;
             loop {
                 tokio::select! {
@@ -281,9 +295,9 @@ impl RouterBuilder {
                         };
 
                         let protocols = protocols.clone();
+                        let token = cancel_token.child_token();
                         join_set.spawn(async move {
-                            handle_connection(incoming, protocols).await;
-                            anyhow::Ok(())
+                            token.run_until_cancelled(handle_connection(incoming, protocols)).await
                         });
                     },
                     // handle task terminations and quit on panics.
@@ -300,8 +314,11 @@ impl RouterBuilder {
                                     break;
                                 }
                             }
-                            Some(Ok(Err(inner))) => {
-                                debug!("Task errored: {inner:?}");
+                            Some(Ok(Some(()))) => {
+                                debug!("Task finished");
+                            }
+                            Some(Ok(None)) => {
+                                debug!("Task cancelled");
                             }
                             _ => {}
                         }
