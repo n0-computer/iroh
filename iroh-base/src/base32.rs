@@ -1,27 +1,12 @@
 pub use data_encoding::{DecodeError, DecodeKind};
 use hex::FromHexError;
 
-/// Convert to a base32 string
-pub fn fmt(bytes: impl AsRef<[u8]>) -> String {
-    let mut text = data_encoding::BASE32_NOPAD.encode(bytes.as_ref());
-    text.make_ascii_lowercase();
-    text
-}
-
 /// Convert to a base32 string and append out `out`
 pub fn fmt_append(bytes: impl AsRef<[u8]>, out: &mut String) {
     let start = out.len();
     data_encoding::BASE32_NOPAD.encode_append(bytes.as_ref(), out);
     let end = out.len();
     out[start..end].make_ascii_lowercase();
-}
-
-/// Convert to a base32 string limited to the first 10 bytes
-pub fn fmt_short(bytes: impl AsRef<[u8]>) -> String {
-    let len = bytes.as_ref().len().min(10);
-    let mut text = data_encoding::BASE32_NOPAD.encode(&bytes.as_ref()[..len]);
-    text.make_ascii_lowercase();
-    text
 }
 
 /// Parse from a base32 string into a byte array

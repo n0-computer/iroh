@@ -176,10 +176,10 @@ impl PublicKey {
         self.public().verify_strict(message, signature)
     }
 
-    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
+    /// Convert to a hex string limited to the first 10 bytes for a friendly string
     /// representation of the key.
     pub fn fmt_short(&self) -> String {
-        base32::fmt_short(self.as_bytes())
+        hex::encode(self.as_bytes()).chars().take(10).collect()
     }
 }
 
@@ -235,17 +235,13 @@ impl From<VerifyingKey> for PublicKey {
 
 impl Debug for PublicKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "PublicKey({})", base32::fmt_short(self.as_bytes()))
+        write!(f, "PublicKey({})", self.fmt_short())
     }
 }
 
 impl Display for PublicKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if f.alternate() {
-            write!(f, "{}", base32::fmt_short(self.as_bytes()))
-        } else {
-            write!(f, "{}", base32::fmt(self.as_bytes()))
-        }
+        write!(f, "{}", hex::encode(self.as_bytes()))
     }
 }
 
@@ -281,13 +277,13 @@ pub struct SecretKey {
 
 impl Debug for SecretKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SecretKey({})", base32::fmt_short(self.to_bytes()))
+        write!(f, "SecretKey({})", self.fmt_short())
     }
 }
 
 impl Display for SecretKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", base32::fmt(self.to_bytes()))
+        write!(f, "{}", hex::encode(self.to_bytes()))
     }
 }
 
@@ -378,6 +374,15 @@ impl SecretKey {
     pub fn from_bytes(bytes: &[u8; 32]) -> Self {
         let secret = SigningKey::from_bytes(bytes);
         secret.into()
+    }
+
+    /// Convert to a hex string limited to the first 10 bytes for a friendly string
+    /// representation of the key.
+    pub fn fmt_short(&self) -> String {
+        hex::encode(self.secret.as_bytes())
+            .chars()
+            .take(10)
+            .collect()
     }
 
     fn secret_crypto_box(&self) -> &crypto_box::SecretKey {
