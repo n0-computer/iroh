@@ -42,14 +42,10 @@
 //! ```
 use std::{any::Any, collections::BTreeMap, sync::Arc};
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use futures_buffered::join_all;
 use futures_lite::future::Boxed as BoxedFuture;
-use futures_util::{
-    future::{MapErr, Shared},
-    FutureExt, TryFutureExt,
-};
-use tokio::task::{JoinError, JoinSet};
+use tokio::{sync::Mutex, task::JoinSet};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, warn};
 
@@ -92,16 +88,9 @@ pub struct Router {
     endpoint: Endpoint,
     protocols: Arc<ProtocolMap>,
     // `Router` needs to be `Clone + Send`, and we need to `task.await` in its `shutdown()` impl.
-    // So we need
-    // - `Shared` so we can `task.await` from all `Node` clones
-    // - `MapErr` to map the `JoinError` to a `String`, because `JoinError` is `!Clone`
-    // - `AbortOnDropHandle` to make sure that the `task` is cancelled when all `Node`s are dropped
-    //   (`Shared` acts like an `Arc` around its inner future).
-    task: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
+    task: Arc<Mutex<Option<AbortOnDropHandle<()>>>>,
     cancel_token: CancellationToken,
 }
-
-type JoinErrToStr = Box<dyn Fn(JoinError) -> String + Send + Sync + 'static>;
 
 /// Builder for creating a [`Router`] for accepting protocols.
 #[derive(Debug)]
@@ -221,7 +210,9 @@ impl Router {
         self.cancel_token.cancel();
 
         // Wait for the main task to terminate.
-        self.task.clone().await.map_err(|err| anyhow!(err))?;
+        if let Some(task) = self.task.lock().await.take() {
+            task.await?;
+        }
 
         Ok(())
     }
@@ -334,14 +325,12 @@ impl RouterBuilder {
             join_set.shutdown().await;
         };
         let task = tokio::task::spawn(run_loop_fut);
-        let task = AbortOnDropHandle::new(task)
-            .map_err(Box::new(|e: JoinError| e.to_string()) as JoinErrToStr)
-            .shared();
+        let task = AbortOnDropHandle::new(task);
 
         Ok(Router {
             endpoint: self.endpoint,
             protocols,
-            task,
+            task: Arc::new(Mutex::new(Some(task))),
             cancel_token: cancel,
         })
     }
