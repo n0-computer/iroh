@@ -954,17 +954,23 @@ impl Endpoint {
 
     /// Closes the QUIC endpoint and the magic socket.
     ///
-    /// This will close all open QUIC connections.
+    /// This will close any remaining open [`Connection`]s with an error code
+    /// of `0` and an empty reason.  Though it is best practice to close those
+    /// explicitly before with a custom error code and reason.
     ///
-    /// It will then wait for all connections to actually be shutdown, and afterwards close
-    /// the magic socket.  Be aware however that the underlying UDP sockets are only closed
+    /// It will then make a best effort to wait for all close notifications to be
+    /// acknowledged by the peers, re-transmitting them if needed. This ensures the
+    /// peers are aware of the closed connections instead of having to wait for a timeout
+    /// on the connection. Once all connections are closed or timed out, the magic socket is closed.
+    ///
+    /// Be aware however that the underlying UDP sockets are only closed
     /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
     /// are dropped.
     ///
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
     pub async fn close(&self) -> Result<()> {
-        self.close_with_code(1u16.into(), b"shutting down").await?;
+        self.close_with_code(0u16.into(), b"").await?;
         Ok(())
     }
 
