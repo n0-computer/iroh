@@ -344,15 +344,10 @@ impl RouterBuilder {
 
 /// Shutdown the different parts of the router concurrently.
 async fn shutdown(endpoint: &Endpoint, protocols: Arc<ProtocolMap>) {
-    let error_code = 1u16;
-
     // We ignore all errors during shutdown.
     let _ = tokio::join!(
         // Close the endpoint.
-        // Closing the Endpoint is the equivalent of calling Connection::close on all
-        // connections: Operations will immediately fail with ConnectionError::LocallyClosed.
-        // All streams are interrupted, this is not graceful.
-        endpoint.close(error_code.into(), b"provider terminating"),
+        endpoint.close(),
         // Shutdown protocol handlers.
         protocols.shutdown(),
     );

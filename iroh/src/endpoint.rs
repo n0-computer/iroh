@@ -954,6 +954,22 @@ impl Endpoint {
 
     /// Closes the QUIC endpoint and the magic socket.
     ///
+    /// This will close all open QUIC connections.
+    ///
+    /// It will then wait for all connections to actually be shutdown, and afterwards close
+    /// the magic socket.  Be aware however that the underlying UDP sockets are only closed
+    /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
+    /// are dropped.
+    ///
+    /// Returns an error if closing the magic socket failed.
+    /// TODO: Document error cases.
+    pub async fn close(&self) -> Result<()> {
+        self.close_with_code(1u16.into(), b"shutting down").await?;
+        Ok(())
+    }
+
+    /// Closes the QUIC endpoint and the magic socket.
+    ///
     /// This will close all open QUIC connections with the provided error_code and
     /// reason. See [`quinn::Connection`] for details on how these are interpreted.
     ///
@@ -964,7 +980,7 @@ impl Endpoint {
     ///
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
-    pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
+    pub async fn close_with_code(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
         if self.is_closed() {
             return Ok(());
         }
@@ -1603,7 +1619,7 @@ mod tests {
 
         info!("closing endpoint");
         // close the endpoint and restart it
-        endpoint.close(0u32.into(), b"done").await.unwrap();
+        endpoint.close().await.unwrap();
 
         info!("restarting endpoint");
         // now restart it and check the addressing info of the peer
@@ -1702,7 +1718,7 @@ mod tests {
                 send.stopped().await.unwrap();
                 recv.read_to_end(0).await.unwrap();
                 info!("client finished");
-                ep.close(0u32.into(), &[]).await.unwrap();
+                ep.close().await.unwrap();
                 info!("client closed");
             }
             .instrument(error_span!("client", %i))
