@@ -1929,6 +1929,12 @@
 <a href="#1929" id="1929">1929</a>
 <a href="#1930" id="1930">1930</a>
 <a href="#1931" id="1931">1931</a>
+<a href="#1932" id="1932">1932</a>
+<a href="#1933" id="1933">1933</a>
+<a href="#1934" id="1934">1934</a>
+<a href="#1935" id="1935">1935</a>
+<a href="#1936" id="1936">1936</a>
+<a href="#1937" id="1937">1937</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
@@ -2885,17 +2891,23 @@
 
     </span><span class="doccomment">/// Closes the QUIC endpoint and the magic socket.
     ///
-    /// This will close all open QUIC connections.
+    /// This will close any remaining open [`Connection`]s with an error code
+    /// of `0` and an empty reason.  Though it is best practice to close those
+    /// explicitly before with a custom error code and reason.
     ///
-    /// It will then wait for all connections to actually be shutdown, and afterwards close
-    /// the magic socket.  Be aware however that the underlying UDP sockets are only closed
+    /// It will then make a best effort to wait for all close notifications to be
+    /// acknowledged by the peers, re-transmitting them if needed. This ensures the
+    /// peers are aware of the closed connections instead of having to wait for a timeout
+    /// on the connection. Once all connections are closed or timed out, the magic socket is closed.
+    ///
+    /// Be aware however that the underlying UDP sockets are only closed
     /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
     /// are dropped.
     ///
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
     </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="self">self</span>.close_with_code(<span class="number">1u16</span>.into(), <span class="string">b"shutting down"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.close_with_code(<span class="number">0u16</span>.into(), <span class="string">b""</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 
