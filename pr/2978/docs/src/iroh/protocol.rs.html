@@ -375,6 +375,10 @@
 <a href="#375" id="375">375</a>
 <a href="#376" id="376">376</a>
 <a href="#377" id="377">377</a>
+<a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
@@ -574,10 +578,14 @@
 
     <span class="doccomment">/// Shuts down the accept loop cleanly.
     ///
+    /// When this function returns, all [`ProtocolHandler`]s will be shutdown and
+    /// `Endpoint::close` will have been called.
+    ///
+    /// If already shutdown, it returns `Ok`.
+    ///
     /// If some [`ProtocolHandler`] panicked in the accept loop, this will propagate
     /// that panic into the result here.
     ///
-    /// If already shutdown, it just returns `Ok`.
     </span><span class="kw">pub async fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">if </span><span class="self">self</span>.is_shutdown() {
             <span class="kw">return </span><span class="prelude-val">Ok</span>(());
