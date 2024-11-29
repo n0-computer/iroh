@@ -197,10 +197,14 @@ impl Router {
 
     /// Shuts down the accept loop cleanly.
     ///
+    /// When this function returns, all [`ProtocolHandler`]s will be shutdown and
+    /// `Endpoint::close` will have been called.
+    ///
+    /// If already shutdown, it returns `Ok`.
+    ///
     /// If some [`ProtocolHandler`] panicked in the accept loop, this will propagate
     /// that panic into the result here.
     ///
-    /// If already shutdown, it just returns `Ok`.
     pub async fn shutdown(&self) -> Result<()> {
         if self.is_shutdown() {
             return Ok(());
