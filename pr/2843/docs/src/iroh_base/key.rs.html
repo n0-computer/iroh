@@ -501,7 +501,10 @@
 <a href="#501" id="501">501</a>
 <a href="#502" id="502">502</a>
 <a href="#503" id="503">503</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! Cryptographic key handling for `iroh-net`.
+<a href="#504" id="504">504</a>
+<a href="#505" id="505">505</a>
+<a href="#506" id="506">506</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! Cryptographic key handling for `iroh`.
 
 </span><span class="kw">mod </span>encryption;
 
@@ -882,7 +885,10 @@
     <span class="doccomment">/// Convert to a hex string limited to the first 10 bytes for a friendly string
     /// representation of the key.
     </span><span class="kw">pub fn </span>fmt_short(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; String {
-        hex::encode(<span class="self">self</span>.secret.as_bytes()).chars().take(<span class="number">10</span>).collect()
+        hex::encode(<span class="self">self</span>.secret.as_bytes())
+            .chars()
+            .take(<span class="number">10</span>)
+            .collect()
     }
 
     <span class="kw">fn </span>secret_crypto_box(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>crypto_box::SecretKey {

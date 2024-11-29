@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["hash","key","node_addr","rpc","ticket"]};
+window.SIDEBAR_ITEMS = {"mod":["hash","key","node_addr","relay_map","ticket"]};

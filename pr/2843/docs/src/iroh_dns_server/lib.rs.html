@@ -248,7 +248,7 @@
         config::{NameServerConfig, Protocol, ResolverConfig},
         AsyncResolver,
     };
-    <span class="kw">use </span>iroh_net::{
+    <span class="kw">use </span>iroh::{
         discovery::pkarr::PkarrRelayClient,
         dns::{node_info::NodeInfo, DnsResolver, ResolverExt},
         key::SecretKey,
@@ -408,7 +408,7 @@
         iroh_test::logging::setup_multithreaded();
 
         <span class="comment">// run a mainline testnet
-        </span><span class="kw">let </span>testnet = mainline::dht::Testnet::new(<span class="number">5</span>);
+        </span><span class="kw">let </span>testnet = pkarr::mainline::dht::Testnet::new(<span class="number">5</span>);
         <span class="kw">let </span>bootstrap = testnet.bootstrap.clone();
 
         <span class="comment">// spawn our server with mainline support
@@ -426,7 +426,7 @@
 
         <span class="comment">// publish the signed packet to our DHT
         </span><span class="kw">let </span>pkarr = PkarrClient::builder()
-            .dht_settings(mainline::dht::DhtSettings {
+            .dht_settings(pkarr::mainline::dht::DhtSettings {
                 bootstrap: <span class="prelude-val">Some</span>(testnet.bootstrap),
                 ..Default::default()
             })

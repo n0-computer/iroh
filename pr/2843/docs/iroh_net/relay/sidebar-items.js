@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["ENV_FORCE_STAGING_RELAYS","MAX_PACKET_SIZE"],"enum":["HttpClientError","ReceivedMessage","RelayMode"],"fn":["force_staging_infra"],"mod":["http","server"],"struct":["HttpClient","HttpClientBuilder","HttpClientReceiver","RelayConn","RelayMap","RelayNode","RelayUrl"]};
