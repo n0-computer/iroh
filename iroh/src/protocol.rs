@@ -204,7 +204,6 @@ impl Router {
     ///
     /// If some [`ProtocolHandler`] panicked in the accept loop, this will propagate
     /// that panic into the result here.
-    ///
     pub async fn shutdown(&self) -> Result<()> {
         if self.is_shutdown() {
             return Ok(());
