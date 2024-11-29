@@ -376,6 +376,27 @@
 <a href="#376" id="376">376</a>
 <a href="#377" id="377">377</a>
 <a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a>
+<a href="#382" id="382">382</a>
+<a href="#383" id="383">383</a>
+<a href="#384" id="384">384</a>
+<a href="#385" id="385">385</a>
+<a href="#386" id="386">386</a>
+<a href="#387" id="387">387</a>
+<a href="#388" id="388">388</a>
+<a href="#389" id="389">389</a>
+<a href="#390" id="390">390</a>
+<a href="#391" id="391">391</a>
+<a href="#392" id="392">392</a>
+<a href="#393" id="393">393</a>
+<a href="#394" id="394">394</a>
+<a href="#395" id="395">395</a>
+<a href="#396" id="396">396</a>
+<a href="#397" id="397">397</a>
+<a href="#398" id="398">398</a>
+<a href="#399" id="399">399</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
@@ -752,6 +773,27 @@
     };
     <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = handler.accept(connecting).<span class="kw">await </span>{
         <span class="macro">warn!</span>(<span class="string">"Handling incoming connection ended with error: {err}"</span>);
+    }
+}
+
+<span class="attr">#[cfg(test)]
+</span><span class="kw">mod </span>tests {
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_shutdown() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">let </span>endpoint = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>router = Router::builder(endpoint.clone()).spawn().<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="macro">assert!</span>(!router.is_shutdown());
+        <span class="macro">assert!</span>(!endpoint.is_closed());
+
+        router.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="macro">assert!</span>(router.is_shutdown());
+        <span class="macro">assert!</span>(endpoint.is_closed());
+
+        <span class="prelude-val">Ok</span>(())
     }
 }
 </code></pre></div></section></main></body></html>
