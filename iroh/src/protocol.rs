@@ -47,7 +47,7 @@ use futures_buffered::join_all;
 use futures_lite::future::Boxed as BoxedFuture;
 use tokio::{sync::Mutex, task::JoinSet};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::{error, trace, warn};
+use tracing::{error, info_span, trace, warn, Instrument};
 
 use crate::{endpoint::Connecting, Endpoint};
 
@@ -316,7 +316,7 @@ impl RouterBuilder {
                         let token = cancel_token.child_token();
                         join_set.spawn(async move {
                             token.run_until_cancelled(handle_connection(incoming, protocols)).await
-                        });
+                        }.instrument(info_span!("router.accept")));
                     },
                 }
             }
