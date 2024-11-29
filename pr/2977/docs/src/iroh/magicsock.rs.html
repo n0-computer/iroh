@@ -4825,7 +4825,7 @@
                 <span class="kw">match </span>src {
                     DiscoMessageSource::Relay { url, .. } =&gt; {
                         <span class="macro">event!</span>(
-                            target: <span class="string">"iroh::events::call-me-maybe::recv"</span>,
+                            target: <span class="string">"iroh::_events::call-me-maybe::recv"</span>,
                             Level::DEBUG,
                             remote_node = sender.fmt_short(),
                             via = <span class="question-mark">?</span>url,
@@ -4881,7 +4881,7 @@
             ping_observed_addr: addr.clone(),
         });
         <span class="macro">event!</span>(
-            target: <span class="string">"iroh::events::pong::sent"</span>,
+            target: <span class="string">"iroh::_events::pong::sent"</span>,
             Level::DEBUG,
             remote_node = %sender.fmt_short(),
             dst = <span class="question-mark">?</span>addr,
@@ -5007,7 +5007,7 @@
             <span class="prelude-val">Ok</span>(()) =&gt; {
                 <span class="kw">if let </span>disco::Message::CallMeMaybe(CallMeMaybe { <span class="kw-2">ref </span>my_numbers }) = msg {
                     <span class="macro">event!</span>(
-                        target: <span class="string">"iroh::events::call-me-maybe::sent"</span>,
+                        target: <span class="string">"iroh::_events::call-me-maybe::sent"</span>,
                         Level::DEBUG,
                         remote_node = %dst.fmt_short(),
                         via = <span class="question-mark">?</span>url,
@@ -6412,7 +6412,7 @@
         <span class="kw">let </span>updated = <span class="self">self</span>.addrs.update(addrs).is_ok();
         <span class="kw">if </span>updated {
             <span class="macro">event!</span>(
-                target: <span class="string">"iroh::events::direct_addrs"</span>,
+                target: <span class="string">"iroh::_events::direct_addrs"</span>,
                 Level::DEBUG,
                 addrs = <span class="question-mark">?</span><span class="self">self</span>.addrs.get(),
             );

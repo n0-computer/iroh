@@ -2037,7 +2037,7 @@
         <span class="kw">if let </span><span class="prelude-val">Ok</span>(prev_typ) = <span class="self">self</span>.conn_type.update(typ.clone()) {
             <span class="comment">// The connection type has changed.
             </span><span class="macro">event!</span>(
-                target: <span class="string">"iroh::events::conn_type::changed"</span>,
+                target: <span class="string">"iroh::_events::conn_type::changed"</span>,
                 Level::DEBUG,
                 remote_node = %<span class="self">self</span>.node_id.fmt_short(),
                 conn_type = <span class="question-mark">?</span>typ,
@@ -2192,7 +2192,7 @@
         <span class="macro">trace!</span>(tx = %hex::encode(tx_id), %dst, <span class="question-mark">?</span>purpose,
                dst = %<span class="self">self</span>.node_id.fmt_short(), <span class="string">"start ping"</span>);
         <span class="macro">event!</span>(
-            target: <span class="string">"iroh::events::ping::sent"</span>,
+            target: <span class="string">"iroh::_events::ping::sent"</span>,
             Level::DEBUG,
             remote_node = %<span class="self">self</span>.node_id.fmt_short(),
             <span class="question-mark">?</span>dst,
@@ -2483,7 +2483,7 @@
             }
         };
         <span class="macro">event!</span>(
-            target: <span class="string">"iroh::events::ping::recv"</span>,
+            target: <span class="string">"iroh::_events::ping::recv"</span>,
             Level::DEBUG,
             remote_node = %<span class="self">self</span>.node_id.fmt_short(),
             src = <span class="question-mark">?</span>path,
@@ -2585,7 +2585,7 @@
         src: SendAddr,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;(SocketAddr, PublicKey)&gt; {
         <span class="macro">event!</span>(
-            target: <span class="string">"iroh::events::pong::recv"</span>,
+            target: <span class="string">"iroh::_events::pong::recv"</span>,
             Level::DEBUG,
             remote_node = <span class="self">self</span>.node_id.fmt_short(),
             <span class="question-mark">?</span>src,

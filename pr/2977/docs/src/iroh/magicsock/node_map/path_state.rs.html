@@ -447,7 +447,7 @@
         <span class="kw">if let </span>SendAddr::Udp(<span class="kw-2">ref </span>path) = <span class="self">self</span>.path {
             <span class="kw">if </span><span class="self">self</span>.recent_pong.is_none() {
                 <span class="macro">event!</span>(
-                    target: <span class="string">"iroh::events::holepunched"</span>,
+                    target: <span class="string">"iroh::_events::holepunched"</span>,
                     Level::DEBUG,
                     remote_node = %<span class="self">self</span>.node_id.fmt_short(),
                     path = <span class="question-mark">?</span>path,
@@ -586,7 +586,7 @@
                 <span class="prelude-val">None </span>=&gt; {
                     <span class="kw">if let </span>SendAddr::Udp(<span class="kw-2">ref </span>addr) = <span class="self">self</span>.path {
                         <span class="macro">event!</span>(
-                            target: <span class="string">"iroh::events::holepunched"</span>,
+                            target: <span class="string">"iroh::_events::holepunched"</span>,
                             Level::DEBUG,
                             remote_node = %<span class="self">self</span>.node_id.fmt_short(),
                             path = <span class="question-mark">?</span>addr,
