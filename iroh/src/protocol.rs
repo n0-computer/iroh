@@ -47,7 +47,7 @@ use futures_buffered::join_all;
 use futures_lite::future::Boxed as BoxedFuture;
 use tokio::{sync::Mutex, task::JoinSet};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::{debug, error, warn};
+use tracing::{error, trace, warn};
 
 use crate::{endpoint::Connecting, Endpoint};
 
@@ -290,17 +290,17 @@ impl RouterBuilder {
                                     error!("Task panicked: {outer:?}");
                                     break;
                                 } else if outer.is_cancelled() {
-                                    debug!("Task cancelled: {outer:?}");
+                                    trace!("Task cancelled: {outer:?}");
                                 } else {
                                     error!("Task failed: {outer:?}");
                                     break;
                                 }
                             }
                             Some(Ok(Some(()))) => {
-                                debug!("Task finished");
+                                trace!("Task finished");
                             }
                             Some(Ok(None)) => {
-                                debug!("Task cancelled");
+                                trace!("Task cancelled");
                             }
                             _ => {}
                         }
