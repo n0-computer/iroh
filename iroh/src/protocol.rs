@@ -288,18 +288,6 @@ impl RouterBuilder {
                     _ = cancel_token.cancelled() => {
                         break;
                     },
-                    // handle incoming p2p connections.
-                    incoming = endpoint.accept() => {
-                        let Some(incoming) = incoming else {
-                            break;
-                        };
-
-                        let protocols = protocols.clone();
-                        let token = cancel_token.child_token();
-                        join_set.spawn(async move {
-                            token.run_until_cancelled(handle_connection(incoming, protocols)).await
-                        });
-                    },
                     // handle task terminations and quit on panics.
                     res = join_set.join_next(), if !join_set.is_empty() => {
                         match res {
@@ -322,6 +310,19 @@ impl RouterBuilder {
                             }
                             _ => {}
                         }
+                    },
+
+                    // handle incoming p2p connections.
+                    incoming = endpoint.accept() => {
+                        let Some(incoming) = incoming else {
+                            break;
+                        };
+
+                        let protocols = protocols.clone();
+                        let token = cancel_token.child_token();
+                        join_set.spawn(async move {
+                            token.run_until_cancelled(handle_connection(incoming, protocols)).await
+                        });
                     },
                 }
             }
