@@ -376,3 +376,24 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
         warn!("Handling incoming connection ended with error: {err}");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_shutdown() -> Result<()> {
+        let endpoint = Endpoint::builder().bind().await?;
+        let router = Router::builder(endpoint.clone()).spawn().await?;
+
+        assert!(!router.is_shutdown());
+        assert!(!endpoint.is_closed());
+
+        router.shutdown().await?;
+
+        assert!(router.is_shutdown());
+        assert!(endpoint.is_closed());
+
+        Ok(())
+    }
+}
