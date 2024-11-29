@@ -77,7 +77,7 @@ let response = recv.read_to_end(1000).await?;
 assert_eq!(&response, b"Hello, world!");
 
 // Close the endpoint and all its connections
-endpoint.close(0u32.into(), b"bye!").await?;
+endpoint.close().await?;
 ```
 
 And on the accepting side:
@@ -98,7 +98,7 @@ impl ProtocolHandler for Echo {
         Box::pin(async move {
             let connection = connecting.await?;
             let (mut send, mut recv) = connection.accept_bi().await?;
-            
+
             // Echo any bytes received back directly.
             let bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
 
