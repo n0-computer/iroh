@@ -20,10 +20,10 @@ The library uses [tracing](https://docs.rs/tracing) to for logging as
 well as for **structured events**.  Events are different from normal
 logging by convention:
 
-- The [target] has a prefix of `$crate_name::events` and target names
+- The [target] has a prefix of `$crate_name::_events` and target names
   are `::` separated.
 
-  For this library the target will always start with `iroh::events::`.
+  For this library the target will always start with `iroh::_events::`.
 
 - There is **no message**.
 
@@ -33,13 +33,19 @@ logging by convention:
 
 - The [Level] is always `DEBUG`.
 
+This is a compromise between being able to process events using
+automated tooling using custom subscribers and them still producing
+distinguishing output in logs when using the default tracing
+subscriber formatters.  While still being unlikely to conflict with
+real modules.
+
 [target]: https://docs.rs/tracing/latest/tracing/struct.Metadata.html#method.target
 [fields]: https://docs.rs/tracing/latest/tracing/#recording-fields
 [Level]: https://docs.rs/tracing/latest/tracing/struct.Level.html
 
 ### Using events
 
-If desired an application can use the `$crate_name::events` target to
+If desired an application can use the `$crate_name::_events` target to
 handle events by a different subscriber.  However with the default
 file logging it is already easy to search for all events, e.g. using
 ripgrep:
@@ -61,7 +67,7 @@ recommended to write them using the `event!()` macro:
 
 ```rust
 event!(
-    target: "iroh::event::subject",
+    target: "iroh::_event::subject",
     Level::DEBUG,
     field = value,
 );

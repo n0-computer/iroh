@@ -120,7 +120,7 @@ impl PathState {
         if let SendAddr::Udp(ref path) = self.path {
             if self.recent_pong.is_none() {
                 event!(
-                    target: "iroh::events::holepunched",
+                    target: "iroh::_events::holepunched",
                     Level::DEBUG,
                     remote_node = %self.node_id.fmt_short(),
                     path = ?path,
@@ -259,7 +259,7 @@ impl PathState {
                 None => {
                     if let SendAddr::Udp(ref addr) = self.path {
                         event!(
-                            target: "iroh::events::holepunched",
+                            target: "iroh::_events::holepunched",
                             Level::DEBUG,
                             remote_node = %self.node_id.fmt_short(),
                             path = ?addr,

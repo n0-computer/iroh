@@ -620,7 +620,7 @@ impl Actor {
         }
 
         event!(
-            target: "iroh::events::relay::connected",
+            target: "iroh::_events::relay::connected",
             Level::DEBUG,
             home = self.is_preferred,
             url = %self.url,

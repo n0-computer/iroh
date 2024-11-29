@@ -315,7 +315,7 @@ impl NodeState {
         if let Ok(prev_typ) = self.conn_type.update(typ.clone()) {
             // The connection type has changed.
             event!(
-                target: "iroh::events::conn_type::changed",
+                target: "iroh::_events::conn_type::changed",
                 Level::DEBUG,
                 remote_node = %self.node_id.fmt_short(),
                 conn_type = ?typ,
@@ -470,7 +470,7 @@ impl NodeState {
         trace!(tx = %hex::encode(tx_id), %dst, ?purpose,
                dst = %self.node_id.fmt_short(), "start ping");
         event!(
-            target: "iroh::events::ping::sent",
+            target: "iroh::_events::ping::sent",
             Level::DEBUG,
             remote_node = %self.node_id.fmt_short(),
             ?dst,
@@ -761,7 +761,7 @@ impl NodeState {
             }
         };
         event!(
-            target: "iroh::events::ping::recv",
+            target: "iroh::_events::ping::recv",
             Level::DEBUG,
             remote_node = %self.node_id.fmt_short(),
             src = ?path,
@@ -863,7 +863,7 @@ impl NodeState {
         src: SendAddr,
     ) -> Option<(SocketAddr, PublicKey)> {
         event!(
-            target: "iroh::events::pong::recv",
+            target: "iroh::_events::pong::recv",
             Level::DEBUG,
             remote_node = self.node_id.fmt_short(),
             ?src,
