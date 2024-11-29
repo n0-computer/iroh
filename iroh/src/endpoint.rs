@@ -26,7 +26,7 @@ use derive_more::Debug;
 use futures_lite::{Stream, StreamExt};
 use iroh_base::relay_map::RelayMap;
 use pin_project::pin_project;
-use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
@@ -965,27 +965,30 @@ impl Endpoint {
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
     pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
-        let Endpoint {
-            msock,
-            endpoint,
-            cancel_token,
-            ..
-        } = self;
-        cancel_token.cancel();
+        if self.is_closed() {
+            return Ok(());
+        }
+
+        self.cancel_token.cancel();
         tracing::debug!("Closing connections");
-        endpoint.close(error_code, reason);
-        endpoint.wait_idle().await;
+        self.endpoint.close(error_code, reason);
+        self.endpoint.wait_idle().await;
 
         tracing::debug!("Connections closed");
-
-        msock.close().await?;
+        self.msock.close().await?;
         Ok(())
+    }
+
+    /// Check if this endpoint is still alive, or already closed.
+    pub fn is_closed(&self) -> bool {
+        self.cancel_token.is_cancelled() && self.msock.is_closed()
     }
 
     // # Remaining private methods
 
-    pub(crate) fn cancelled(&self) -> WaitForCancellationFuture<'_> {
-        self.cancel_token.cancelled()
+    /// Expose the internal [`CancellationToken`] to link shutdowns.
+    pub(crate) fn cancel_token(&self) -> &CancellationToken {
+        &self.cancel_token
     }
 
     /// Return the quic mapped address for this `node_id` and possibly start discovery

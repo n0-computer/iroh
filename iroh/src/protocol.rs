@@ -268,7 +268,10 @@ impl RouterBuilder {
         let mut join_set = JoinSet::new();
         let endpoint = self.endpoint.clone();
         let protos = protocols.clone();
-        let cancel = CancellationToken::new();
+
+        // We use a child token of the endpoint, to ensure that this is shutdown
+        // when the endpoint is shutdown, but that we can shutdown ourselves independently.
+        let cancel = endpoint.cancel_token().child_token();
         let cancel_token = cancel.clone();
 
         let run_loop_fut = async move {

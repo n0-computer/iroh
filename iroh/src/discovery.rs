@@ -405,7 +405,7 @@ impl DiscoveryTask {
         debug!("discovery: start");
         loop {
             let next = tokio::select! {
-                _ = ep.cancelled() => break,
+                _ = ep.cancel_token().cancelled() => break,
                 next = stream.next() => next
             };
             match next {

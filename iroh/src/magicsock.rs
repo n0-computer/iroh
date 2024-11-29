@@ -274,7 +274,7 @@ impl MagicSock {
         self.closing.load(Ordering::Relaxed)
     }
 
-    fn is_closed(&self) -> bool {
+    pub(crate) fn is_closed(&self) -> bool {
         self.closed.load(Ordering::SeqCst)
     }
 
