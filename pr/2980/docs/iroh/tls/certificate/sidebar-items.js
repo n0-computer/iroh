@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["generate","parse"],"struct":["GenError","P2pCertificate","P2pExtension","ParseError","VerificationError"]};
