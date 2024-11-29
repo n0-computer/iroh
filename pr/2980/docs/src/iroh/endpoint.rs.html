@@ -1913,6 +1913,22 @@
 <a href="#1913" id="1913">1913</a>
 <a href="#1914" id="1914">1914</a>
 <a href="#1915" id="1915">1915</a>
+<a href="#1916" id="1916">1916</a>
+<a href="#1917" id="1917">1917</a>
+<a href="#1918" id="1918">1918</a>
+<a href="#1919" id="1919">1919</a>
+<a href="#1920" id="1920">1920</a>
+<a href="#1921" id="1921">1921</a>
+<a href="#1922" id="1922">1922</a>
+<a href="#1923" id="1923">1923</a>
+<a href="#1924" id="1924">1924</a>
+<a href="#1925" id="1925">1925</a>
+<a href="#1926" id="1926">1926</a>
+<a href="#1927" id="1927">1927</a>
+<a href="#1928" id="1928">1928</a>
+<a href="#1929" id="1929">1929</a>
+<a href="#1930" id="1930">1930</a>
+<a href="#1931" id="1931">1931</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
@@ -2869,6 +2885,22 @@
 
     </span><span class="doccomment">/// Closes the QUIC endpoint and the magic socket.
     ///
+    /// This will close all open QUIC connections.
+    ///
+    /// It will then wait for all connections to actually be shutdown, and afterwards close
+    /// the magic socket.  Be aware however that the underlying UDP sockets are only closed
+    /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
+    /// are dropped.
+    ///
+    /// Returns an error if closing the magic socket failed.
+    /// TODO: Document error cases.
+    </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="self">self</span>.close_with_code(<span class="number">1u16</span>.into(), <span class="string">b"shutting down"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="doccomment">/// Closes the QUIC endpoint and the magic socket.
+    ///
     /// This will close all open QUIC connections with the provided error_code and
     /// reason. See [`quinn::Connection`] for details on how these are interpreted.
     ///
@@ -2879,7 +2911,7 @@
     ///
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
-    </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>, error_code: VarInt, reason: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">pub async fn </span>close_with_code(<span class="kw-2">&amp;</span><span class="self">self</span>, error_code: VarInt, reason: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">if </span><span class="self">self</span>.is_closed() {
             <span class="kw">return </span><span class="prelude-val">Ok</span>(());
         }
@@ -3518,7 +3550,7 @@
 
         <span class="macro">info!</span>(<span class="string">"closing endpoint"</span>);
         <span class="comment">// close the endpoint and restart it
-        </span>endpoint.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>).<span class="kw">await</span>.unwrap();
+        </span>endpoint.close().<span class="kw">await</span>.unwrap();
 
         <span class="macro">info!</span>(<span class="string">"restarting endpoint"</span>);
         <span class="comment">// now restart it and check the addressing info of the peer
@@ -3617,7 +3649,7 @@
                 send.stopped().<span class="kw">await</span>.unwrap();
                 recv.read_to_end(<span class="number">0</span>).<span class="kw">await</span>.unwrap();
                 <span class="macro">info!</span>(<span class="string">"client finished"</span>);
-                ep.close(<span class="number">0u32</span>.into(), <span class="kw-2">&amp;</span>[]).<span class="kw">await</span>.unwrap();
+                ep.close().<span class="kw">await</span>.unwrap();
                 <span class="macro">info!</span>(<span class="string">"client closed"</span>);
             }
             .instrument(<span class="macro">error_span!</span>(<span class="string">"client"</span>, %i))

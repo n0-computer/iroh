@@ -356,7 +356,7 @@
     <span class="kw">pub async fn </span>close(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">match </span><span class="self">self </span>{
             EndpointSelector::Iroh(endpoint) =&gt; {
-                endpoint.close(<span class="number">0u32</span>.into(), <span class="string">b""</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+                endpoint.close().<span class="kw">await</span><span class="question-mark">?</span>;
             }
             <span class="attr">#[cfg(not(any(target_os = <span class="string">"freebsd"</span>, target_os = <span class="string">"openbsd"</span>, target_os = <span class="string">"netbsd"</span>)))]
             </span>EndpointSelector::Quinn(endpoint) =&gt; {

@@ -376,11 +376,6 @@
 <a href="#376" id="376">376</a>
 <a href="#377" id="377">377</a>
 <a href="#378" id="378">378</a>
-<a href="#379" id="379">379</a>
-<a href="#380" id="380">380</a>
-<a href="#381" id="381">381</a>
-<a href="#382" id="382">382</a>
-<a href="#383" id="383">383</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
@@ -727,15 +722,10 @@
 
 <span class="doccomment">/// Shutdown the different parts of the router concurrently.
 </span><span class="kw">async fn </span>shutdown(endpoint: <span class="kw-2">&amp;</span>Endpoint, protocols: Arc&lt;ProtocolMap&gt;) {
-    <span class="kw">let </span>error_code = <span class="number">1u16</span>;
-
     <span class="comment">// We ignore all errors during shutdown.
     </span><span class="kw">let _ </span>= <span class="macro">tokio::join!</span>(
         <span class="comment">// Close the endpoint.
-        // Closing the Endpoint is the equivalent of calling Connection::close on all
-        // connections: Operations will immediately fail with ConnectionError::LocallyClosed.
-        // All streams are interrupted, this is not graceful.
-        </span>endpoint.close(error_code.into(), <span class="string">b"provider terminating"</span>),
+        </span>endpoint.close(),
         <span class="comment">// Shutdown protocol handlers.
         </span>protocols.shutdown(),
     );

@@ -7213,8 +7213,8 @@
             <span class="macro">println!</span>(<span class="string">"closing endpoints"</span>);
             <span class="kw">let </span>msock1 = m1.endpoint.magic_sock();
             <span class="kw">let </span>msock2 = m2.endpoint.magic_sock();
-            m1.endpoint.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-            m2.endpoint.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            m1.endpoint.close().<span class="kw">await</span><span class="question-mark">?</span>;
+            m2.endpoint.close().<span class="kw">await</span><span class="question-mark">?</span>;
 
             <span class="macro">assert!</span>(msock1.msock.is_closed());
             <span class="macro">assert!</span>(msock2.msock.is_closed());
