@@ -378,7 +378,6 @@
 <a href="#378" id="378">378</a>
 <a href="#379" id="379">379</a>
 <a href="#380" id="380">380</a>
-<a href="#381" id="381">381</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
@@ -585,7 +584,6 @@
     ///
     /// If some [`ProtocolHandler`] panicked in the accept loop, this will propagate
     /// that panic into the result here.
-    ///
     </span><span class="kw">pub async fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">if </span><span class="self">self</span>.is_shutdown() {
             <span class="kw">return </span><span class="prelude-val">Ok</span>(());
