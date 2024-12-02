@@ -377,7 +377,7 @@ impl ClientBuilder {
     }
 }
 
-#[cfg(any(test))]
+#[cfg(test)]
 /// Creates a client config that trusts any servers without verifying their TLS certificate.
 ///
 /// Should be used for testing local relay setups only.
@@ -638,7 +638,7 @@ impl Actor {
         }
 
         event!(
-            target: "iroh::_events::relay::connected",
+            target: "events.net.relay.connected",
             Level::DEBUG,
             home = self.is_preferred,
             url = %self.url,
