@@ -478,48 +478,21 @@ async fn relay_supervisor(
     mut relay_http_server: Option<http_server::Server>,
     mut quic_server: Option<QuicServer>,
 ) -> Result<()> {
-    let res = match (
-        relay_http_server.as_mut(),
-        quic_server.as_mut(),
-        tasks.len(),
-    ) {
-        (None, None, 0) => Ok(Err(anyhow!("Nothing to supervise"))),
-        (None, None, _) => tasks.join_next().await.expect("checked"),
-        (None, Some(quic_ep), 0) => quic_ep.task_handle().await.map(anyhow::Ok),
-        (None, Some(quic_ep), _) => {
-            tokio::select! {
-                biased;
-
-                ret = tasks.join_next() => ret.expect("checked"),
-                ret = quic_ep.task_handle() => ret.map(anyhow::Ok),
-            }
-        }
-        (Some(relay), None, 0) => relay.task_handle().await.map(anyhow::Ok),
-        (Some(relay), Some(quic_ep), 0) => {
-            tokio::select! {
-                biased;
-
-                ret = relay.task_handle() => ret.map(anyhow::Ok),
-                ret = quic_ep.task_handle() => ret.map(anyhow::Ok),
-            }
-        }
-        (Some(relay), None, _) => {
-            tokio::select! {
-                biased;
-
-                ret = tasks.join_next() => ret.expect("checked"),
-                ret = relay.task_handle() => ret.map(anyhow::Ok),
-            }
-        }
-        (Some(relay), Some(quic_ep), _) => {
-            tokio::select! {
-                biased;
-
-                ret = tasks.join_next() => ret.expect("checked"),
-                ret = relay.task_handle() => ret.map(anyhow::Ok),
-                ret = quic_ep.task_handle() => ret.map(anyhow::Ok),
-            }
-        }
+    let quic_enabled = quic_server.is_some();
+    let mut quic_fut = match quic_server {
+        Some(ref mut server) => futures_util::future::Either::Left(server.task_handle()),
+        None => futures_util::future::Either::Right(futures_lite::future::pending()),
+    };
+    let relay_enabled = relay_http_server.is_some();
+    let mut relay_fut = match relay_http_server {
+        Some(ref mut server) => futures_util::future::Either::Left(server.task_handle()),
+        None => futures_util::future::Either::Right(futures_lite::future::pending()),
+    };
+    let res = tokio::select! {
+        biased;
+        ret = tasks.join_next(), if tasks.len() > 0 => ret.expect("checked"),
+        ret = &mut quic_fut, if quic_enabled => ret.map(anyhow::Ok),
+        ret = &mut relay_fut, if relay_enabled => ret.map(anyhow::Ok),
     };
     let ret = match res {
         Ok(Ok(())) => {
