@@ -96,6 +96,8 @@ jobs:
             targets="--lib --bins"
             echo cargo check -p $i $FEATURES $targets
             cargo check -p $i $FEATURES $targets
+            echo cargo test --doc --no-run $FEATURES
+            cargo test --doc --no-run $FEATURES
           done
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
