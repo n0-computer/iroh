@@ -783,6 +783,7 @@ mod test_utils {
 
     use std::sync::Arc;
 
+    use iroh_base::relay_map::QuicConfig;
     use iroh_relay::server;
 
     use crate::RelayNode;
@@ -791,10 +792,14 @@ mod test_utils {
         let server = server::Server::spawn(server::testing::server_config())
             .await
             .expect("should serve relay");
+        let quic = Some(QuicConfig {
+            port: server.quic_addr().expect("server should run quic").port(),
+        });
         let node_desc = RelayNode {
             url: server.https_url().expect("should work as relay"),
             stun_only: false, // the checks above and below guarantee both stun and relay
             stun_port: server.stun_addr().expect("server should serve stun").port(),
+            quic,
         };
 
         (server, Arc::new(node_desc))
@@ -879,6 +884,7 @@ mod tests {
                     url,
                     stun_port: port,
                     stun_only,
+                    quic: None,
                 }
             });
             RelayMap::from_nodes(nodes).expect("generated invalid nodes")

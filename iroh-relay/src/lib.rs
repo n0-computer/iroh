@@ -25,6 +25,7 @@ pub mod client;
 pub mod defaults;
 pub mod http;
 pub mod protos;
+pub mod quic;
 #[cfg(feature = "server")]
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]
 pub mod server;

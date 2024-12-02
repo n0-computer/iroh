@@ -1,14 +1,19 @@
 //! Default values used in [`iroh`][`crate`]
 
-use url::Url;
-
-use crate::{RelayMap, RelayNode};
-
+use iroh_base::relay_map::QuicConfig;
+/// The default QUIC port used by the Relay server to accept QUIC connections
+/// for QUIC address discovery
+///
+/// The port is "QUIC" typed on a phone keypad.
+pub use iroh_base::relay_map::DEFAULT_RELAY_QUIC_PORT;
 /// The default STUN port used by the Relay server.
 ///
 /// The STUN port as defined by [RFC
 /// 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
-pub const DEFAULT_STUN_PORT: u16 = 3478;
+pub use iroh_base::relay_map::DEFAULT_STUN_PORT;
+use url::Url;
+
+use crate::{RelayMap, RelayNode};
 
 /// The default HTTP port used by the Relay server.
 pub const DEFAULT_HTTP_PORT: u16 = 80;
@@ -21,6 +26,8 @@ pub const DEFAULT_METRICS_PORT: u16 = 9090;
 
 /// Production configuration.
 pub mod prod {
+    use iroh_base::relay_map::QuicConfig;
+
     use super::*;
 
     /// Hostname of the default NA relay.
@@ -50,6 +57,7 @@ pub mod prod {
             url: url.into(),
             stun_only: false,
             stun_port: DEFAULT_STUN_PORT,
+            quic: Some(QuicConfig::default()),
         }
     }
 
@@ -63,6 +71,7 @@ pub mod prod {
             url: url.into(),
             stun_only: false,
             stun_port: DEFAULT_STUN_PORT,
+            quic: Some(QuicConfig::default()),
         }
     }
 
@@ -76,6 +85,7 @@ pub mod prod {
             url: url.into(),
             stun_only: false,
             stun_port: DEFAULT_STUN_PORT,
+            quic: Some(QuicConfig::default()),
         }
     }
 }
@@ -109,6 +119,7 @@ pub mod staging {
             url: url.into(),
             stun_only: false,
             stun_port: DEFAULT_STUN_PORT,
+            quic: Some(QuicConfig::default()),
         }
     }
 
@@ -122,6 +133,7 @@ pub mod staging {
             url: url.into(),
             stun_only: false,
             stun_port: DEFAULT_STUN_PORT,
+            quic: Some(QuicConfig::default()),
         }
     }
 }

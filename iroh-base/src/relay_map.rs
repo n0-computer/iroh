@@ -10,7 +10,13 @@ pub use crate::relay_url::RelayUrl;
 /// The default STUN port used by the Relay server.
 ///
 /// The STUN port as defined by [RFC 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
-const DEFAULT_STUN_PORT: u16 = 3478;
+pub const DEFAULT_STUN_PORT: u16 = 3478;
+
+/// The default QUIC port used by the Relay server to accept QUIC connections
+/// for QUIC address discovery
+///
+/// The port is "QUIC" typed on a phone keypad.
+pub const DEFAULT_RELAY_QUIC_PORT: u16 = 7842;
 
 /// Configuration of all the relay servers that can be used.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +67,8 @@ impl RelayMap {
     ///
     /// Allows to set a custom STUN port and different IP addresses for IPv4 and IPv6.
     /// If IP addresses are provided, no DNS lookup will be performed.
+    ///
+    /// Sets the port to the default [`DEFAULT_RELAY_QUIC_PORT`].
     pub fn default_from_node(url: RelayUrl, stun_port: u16) -> Self {
         let mut nodes = BTreeMap::new();
         nodes.insert(
@@ -69,6 +77,7 @@ impl RelayMap {
                 url,
                 stun_only: false,
                 stun_port,
+                quic: Some(QuicConfig::default()),
             }
             .into(),
         );
@@ -80,7 +89,9 @@ impl RelayMap {
 
     /// Returns a [`RelayMap`] from a [`RelayUrl`].
     ///
-    /// This will use the default STUN port and IP addresses resolved from the URL's host name via DNS.
+    /// This will use the default STUN port, the default QUIC port
+    /// (as defined by the `iroh-relay` crate) and IP addresses
+    /// resolved from the URL's host name via DNS.
     /// relay nodes are specified at <../../docs/relay_nodes.md>
     pub fn from_url(url: RelayUrl) -> Self {
         Self::default_from_node(url, DEFAULT_STUN_PORT)
@@ -122,6 +133,31 @@ pub struct RelayNode {
     ///
     /// Setting this to `0` means the default STUN port is used.
     pub stun_port: u16,
+    /// Configuration to speak to the QUIC endpoint on the relay server.
+    ///
+    /// When `None`, we will not attempt to do QUIC address discovery
+    /// with this relay server.
+    #[serde(default = "quic_config")]
+    pub quic: Option<QuicConfig>,
+}
+
+fn quic_config() -> Option<QuicConfig> {
+    Some(QuicConfig::default())
+}
+
+/// Configuration for speaking to the QUIC endpoint on the relay
+/// server to do QUIC address discovery.
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq, PartialOrd, Ord)]
+pub struct QuicConfig {
+    pub port: u16,
+}
+
+impl Default for QuicConfig {
+    fn default() -> Self {
+        Self {
+            port: DEFAULT_RELAY_QUIC_PORT,
+        }
+    }
 }
 
 impl fmt::Display for RelayNode {

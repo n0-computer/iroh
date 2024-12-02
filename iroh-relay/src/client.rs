@@ -377,6 +377,24 @@ impl ClientBuilder {
     }
 }
 
+#[cfg(test)]
+/// Creates a client config that trusts any servers without verifying their TLS certificate.
+///
+/// Should be used for testing local relay setups only.
+pub(crate) fn make_dangerous_client_config() -> rustls::ClientConfig {
+    warn!(
+        "Insecure config: SSL certificates from relay servers will be trusted without verification"
+    );
+    rustls::client::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_protocol_versions(&[&rustls::version::TLS13])
+    .expect("protocols supported by ring")
+    .dangerous()
+    .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
+    .with_no_client_auth()
+}
+
 impl ClientReceiver {
     /// Reads a message from the server.
     pub async fn recv(&mut self) -> Option<Result<ReceivedMessage, ClientError>> {
@@ -620,7 +638,7 @@ impl Actor {
         }
 
         event!(
-            target: "iroh::_events::relay::connected",
+            target: "events.net.relay.connected",
             Level::DEBUG,
             home = self.is_preferred,
             url = %self.url,
