@@ -1610,7 +1610,7 @@
     </span>}
 }
 
-<span class="attr">#[cfg(any(test))]
+<span class="attr">#[cfg(test)]
 </span><span class="doccomment">/// Creates a client config that trusts any servers without verifying their TLS certificate.
 ///
 /// Should be used for testing local relay setups only.
@@ -1871,7 +1871,7 @@
         }
 
         <span class="macro">event!</span>(
-            target: <span class="string">"iroh::_events::relay::connected"</span>,
+            target: <span class="string">"events.net.relay.connected"</span>,
             Level::DEBUG,
             home = <span class="self">self</span>.is_preferred,
             url = %<span class="self">self</span>.url,
