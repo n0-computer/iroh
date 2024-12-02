@@ -30,7 +30,6 @@
 //!
 //! - The [`PkarrResolver`] which can perform lookups from designated [pkarr relay servers]
 //!   using HTTP.
-//!
 #![cfg_attr(
     feature = "discovery-local-network",
     doc = "- [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
