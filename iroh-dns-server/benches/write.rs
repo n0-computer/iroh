@@ -1,11 +1,7 @@
 use anyhow::Result;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use iroh::discovery::pkarr::PkarrRelayClient;
-use iroh::dns::node_info::NodeInfo;
-use iroh::key::SecretKey;
-use iroh_dns_server::config::Config;
-use iroh_dns_server::server::Server;
-use iroh_dns_server::store::ZoneStore;
+use iroh::{discovery::pkarr::PkarrRelayClient, dns::node_info::NodeInfo, key::SecretKey};
+use iroh_dns_server::{config::Config, server::Server, ZoneStore};
 use tokio::runtime::Runtime;
 
 const LOCALHOST_PKARR: &str = "http://localhost:8080/pkarr";

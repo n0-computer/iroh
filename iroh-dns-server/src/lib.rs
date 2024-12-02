@@ -8,8 +8,11 @@ pub mod http;
 pub mod metrics;
 pub mod server;
 pub mod state;
-pub mod store;
+mod store;
 mod util;
+
+// Re-export to be able to construct your own dns-server
+pub use store::ZoneStore;
 
 #[cfg(test)]
 mod tests {
