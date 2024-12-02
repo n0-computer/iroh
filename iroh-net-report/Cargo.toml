@@ -23,7 +23,7 @@ futures-buffered = "0.2.8"
 futures-lite = "2.3"
 hickory-resolver = "=0.25.0-alpha.2"
 iroh-base = { version = "0.28.0", path = "../iroh-base", default-features = false, features = ["relay"] }
-iroh-metrics = { version = "0.28.0", path = "../iroh-metrics", default-features = false, optional = true }
+iroh-metrics = { version = "0.28.0", default-features = false, optional = true }
 iroh-relay = { version = "0.28", path = "../iroh-relay" }
 netwatch = { version = "0.1.0", path = "../net-tools/netwatch" }
 portmapper = { version = "0.1.0", path = "../net-tools/portmapper" }

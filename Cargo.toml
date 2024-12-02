@@ -2,7 +2,6 @@
 members = [
   "iroh-base",
   "iroh-dns-server",
-  "iroh-metrics",
   "iroh",
   "iroh-test",
   "iroh/bench",

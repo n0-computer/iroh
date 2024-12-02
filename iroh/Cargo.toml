@@ -110,7 +110,7 @@ z32 = "1.0.3"
 net-report = { package = "iroh-net-report", path = "../iroh-net-report", version = "0.28" }
 
 # metrics
-iroh-metrics = { version = "0.28.0", path = "../iroh-metrics", default-features = false }
+iroh-metrics = { version = "0.28.0", default-features = false }
 strum = { version = "0.26", features = ["derive"] }
 
 # local-swarm-discovery
