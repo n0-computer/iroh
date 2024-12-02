@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["DEFAULT_CACHE_CAPACITY","DHT_CACHE_TTL"],"enum":["PacketSource"],"struct":["ZoneStore"]};
