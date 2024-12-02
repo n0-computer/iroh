@@ -205,7 +205,7 @@
 
     <span class="kw">pub async fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>PublicKeyBytes) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;SignedPacket&gt;&gt; {
         <span class="kw">let </span>db = <span class="self">self</span>.db.clone();
-        <span class="kw">let </span>key = key.clone();
+        <span class="kw">let </span>key = <span class="kw-2">*</span>key;
         <span class="kw">let </span>res = tokio::task::spawn_blocking(<span class="kw">move </span>|| {
             <span class="kw">let </span>tx = db.begin_read()<span class="question-mark">?</span>;
             <span class="kw">let </span>table = tx.open_table(SIGNED_PACKETS_TABLE)<span class="question-mark">?</span>;
@@ -217,7 +217,7 @@
 
     <span class="kw">pub async fn </span>remove(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>PublicKeyBytes) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
         <span class="kw">let </span>db = <span class="self">self</span>.db.clone();
-        <span class="kw">let </span>key = key.clone();
+        <span class="kw">let </span>key = <span class="kw-2">*</span>key;
         tokio::task::spawn_blocking(<span class="kw">move </span>|| {
             <span class="kw">let </span>tx = db.begin_write()<span class="question-mark">?</span>;
             <span class="kw">let </span>updated = {
