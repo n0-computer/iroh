@@ -96,8 +96,6 @@ jobs:
             targets="--lib --bins"
             echo cargo check -p $i $FEATURES $targets
             cargo check -p $i $FEATURES $targets
-            echo cargo test --doc --no-run $FEATURES
-            cargo test --doc --no-run $FEATURES
           done
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
@@ -129,13 +127,24 @@ jobs:
 
       - name: doctests
         if: ${{ (! inputs.flaky) &&  matrix.features == 'all' }}
+        env:
+          RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
         run: |
-          if [ -n "${{ runner.debug }}" ]; then
-              export RUST_LOG=TRACE
-          else
-              export RUST_LOG=DEBUG
-          fi
           cargo test --workspace --all-features --doc
+
+      # We can not check the doctest features by only compiling them,
+      # so are forced to run them once more.
+      - name: Check doctest features
+        if: ${{ ! inputs.flaky }}
+        env:
+          RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
+        run: |
+          for i in ${CRATES_LIST//,/ }
+          do
+            echo "Checking $i doctest $FEATURES"
+            echo cargo test -p $i --doc $FEATURES
+            cargo test -p $i --doc $FEATURES
+          done
 
   build_and_test_windows:
     timeout-minutes: 30
