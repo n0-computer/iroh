@@ -6,8 +6,6 @@ members = [
   "iroh-test",
   "iroh/bench",
   "iroh-relay",
-  "net-tools/netwatch",
-  "net-tools/portmapper",
   "iroh-net-report",
   "iroh-node-util",
 ]
