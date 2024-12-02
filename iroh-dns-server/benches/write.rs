@@ -17,7 +17,8 @@ async fn start_dns_server(config: Config) -> Result<Server> {
 
 fn benchmark_dns_server(c: &mut Criterion) {
     let mut group = c.benchmark_group("dns_server_writes");
-    for iters in [10 as u64, 100 as u64, 500 as u64].iter() {
+    group.sample_size(10);
+    for iters in [10_u64, 100_u64, 250_u64, 1000_u64].iter() {
         group.throughput(Throughput::Elements(*iters));
         group.bench_with_input(BenchmarkId::from_parameter(iters), iters, |b, &iters| {
             b.iter(|| {
