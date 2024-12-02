@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["MAX_PACKET_SIZE"],"enum":["HttpClientError","ReceivedMessage"],"mod":["client","defaults","http","protos","quic","server"],"struct":["HttpClient","HttpClientBuilder","HttpClientReceiver","RelayConn","RelayUrl"]};

@@ -183,7 +183,7 @@
 /// for QUIC address discovery
 ///
 /// The port is "QUIC" typed on a phone keypad.
-</span><span class="kw">pub const </span>DEFAULT_QUIC_PORT: u16 = <span class="number">7842</span>;
+</span><span class="kw">pub const </span>DEFAULT_RELAY_QUIC_PORT: u16 = <span class="number">7842</span>;
 
 <span class="doccomment">/// Configuration of all the relay servers that can be used.
 </span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
@@ -235,7 +235,7 @@
     /// Allows to set a custom STUN port and different IP addresses for IPv4 and IPv6.
     /// If IP addresses are provided, no DNS lookup will be performed.
     ///
-    /// Sets the port to the default [`DEFAULT_QUIC_PORT`].
+    /// Sets the port to the default [`DEFAULT_RELAY_QUIC_PORT`].
     </span><span class="kw">pub fn </span>default_from_node(url: RelayUrl, stun_port: u16) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>nodes = BTreeMap::new();
         nodes.insert(
@@ -322,7 +322,7 @@
 <span class="kw">impl </span>Default <span class="kw">for </span>QuicConfig {
     <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            port: DEFAULT_QUIC_PORT,
+            port: DEFAULT_RELAY_QUIC_PORT,
         }
     }
 }

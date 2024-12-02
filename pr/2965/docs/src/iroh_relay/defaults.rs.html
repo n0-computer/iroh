@@ -38,7 +38,7 @@
 <a href="#38" id="38">38</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Default values used in the relay.
 
-</span><span class="kw">pub use </span>iroh_base::relay_map::{DEFAULT_QUIC_PORT, DEFAULT_STUN_PORT};
+</span><span class="kw">pub use </span>iroh_base::relay_map::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT};
 
 <span class="doccomment">/// The default HTTP port used by the Relay server.
 </span><span class="kw">pub const </span>DEFAULT_HTTP_PORT: u16 = <span class="number">80</span>;
@@ -49,7 +49,7 @@
 <span class="doccomment">/// The default metrics port used by the Relay server.
 </span><span class="kw">pub const </span>DEFAULT_METRICS_PORT: u16 = <span class="number">9090</span>;
 
-<span class="doccomment">/// Contains all timeouts that we use in `iroh-net`.
+<span class="doccomment">/// Contains all timeouts that we use in `iroh`.
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>timeouts {
     <span class="kw">use </span>std::time::Duration;
 

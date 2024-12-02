@@ -55,6 +55,8 @@
 <a href="#55" id="55">55</a>
 <a href="#56" id="56">56</a>
 <a href="#57" id="57">57</a>
+<a href="#58" id="58">58</a>
+<a href="#59" id="59">59</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Utilities for building iroh nodes.
 </span><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![cfg_attr(iroh_docsrs, feature(doc_cfg))]
@@ -69,10 +71,12 @@
 </span><span class="kw">pub mod </span>logging;
 <span class="kw">pub mod </span>rpc;
 
+<span class="kw">pub mod </span>fs;
+
 <span class="kw">use </span>std::path::PathBuf;
 
 <span class="kw">use </span>anyhow::Context;
-<span class="kw">use </span>iroh_net::key::SecretKey;
+<span class="kw">use </span>iroh::key::SecretKey;
 <span class="kw">use </span>tokio::io::AsyncWriteExt;
 
 <span class="doccomment">/// Loads a [`SecretKey`] from the provided file, or stores a newly generated one

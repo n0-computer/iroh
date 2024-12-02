@@ -213,7 +213,7 @@
 <span class="kw">use </span><span class="kw">crate</span>::key::{NodeId, PublicKey};
 <span class="kw">pub use </span><span class="kw">crate</span>::relay_url::RelayUrl;
 
-<span class="doccomment">/// Network-level addressing information for an iroh-net node.
+<span class="doccomment">/// Network-level addressing information for an iroh node.
 ///
 /// This combines a node's identifier with network-level addressing information of how to
 /// contact the node.
@@ -234,9 +234,9 @@
 /// number of network-level addressing information.  It is a generic addressing type used
 /// whenever a connection to other nodes needs to be established.
 ///
-/// [discovery]: https://docs.rs/iroh_net/*/iroh_net/index.html#node-discovery
-/// [home relay]: https://docs.rs/iroh_net/*/iroh_net/relay/index.html
-/// [Relay server]: https://docs.rs/iroh_net/*/iroh_net/index.html#relay-servers
+/// [discovery]: https://docs.rs/iroh/*/iroh/index.html#node-discovery
+/// [home relay]: https://docs.rs/iroh/*/iroh/relay/index.html
+/// [Relay server]: https://docs.rs/iroh/*/iroh/index.html#relay-servers
 </span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 </span><span class="kw">pub struct </span>NodeAddr {
     <span class="doccomment">/// The node's identifier.
@@ -290,7 +290,7 @@
     /// received from another API.  E.g. to ensure a [discovery] service is used the
     /// `AddrInfoOptions::Id`] option could be used to remove all other addressing details.
     ///
-    /// [discovery]: https://docs.rs/iroh_net/*/iroh_net/index.html#node-discovery
+    /// [discovery]: https://docs.rs/iroh/*/iroh/index.html#node-discovery
     </span><span class="kw">pub fn </span>apply_options(<span class="kw-2">&amp;mut </span><span class="self">self</span>, opts: AddrInfoOptions) {
         <span class="self">self</span>.info.apply_options(opts);
     }
@@ -325,13 +325,13 @@
     }
 }
 
-<span class="doccomment">/// Network paths to contact an iroh-net node.
+<span class="doccomment">/// Network paths to contact an iroh node.
 ///
-/// This contains zero or more network paths to establish a connection to an iroh-net node.
+/// This contains zero or more network paths to establish a connection to an iroh node.
 /// Unless a [discovery service] is used at least one path is required to connect to an
 /// other node, see [`NodeAddr`] for details.
 ///
-/// [discovery]: https://docs.rs/iroh_net/*/iroh_net/index.html#node-discovery
+/// [discovery]: https://docs.rs/iroh/*/iroh/index.html#node-discovery
 </span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, PartialOrd, Ord)]
 </span><span class="kw">pub struct </span>AddrInfo {
     <span class="doccomment">/// The node's home relay url.
@@ -352,7 +352,7 @@
     /// received from another API.  E.g. to ensure a [discovery] service is used the
     /// `AddrInfoOptions::Id`] option could be used to remove all other addressing details.
     ///
-    /// [discovery]: https://docs.rs/iroh_net/*/iroh_net/index.html#node-discovery
+    /// [discovery]: https://docs.rs/iroh/*/iroh/index.html#node-discovery
     </span><span class="kw">pub fn </span>apply_options(<span class="kw-2">&amp;mut </span><span class="self">self</span>, opts: AddrInfoOptions) {
         <span class="kw">match </span>opts {
             AddrInfoOptions::Id =&gt; {

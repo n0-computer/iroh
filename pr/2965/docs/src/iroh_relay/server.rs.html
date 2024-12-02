@@ -1101,34 +1101,6 @@
 <a href="#1101" id="1101">1101</a>
 <a href="#1102" id="1102">1102</a>
 <a href="#1103" id="1103">1103</a>
-<a href="#1104" id="1104">1104</a>
-<a href="#1105" id="1105">1105</a>
-<a href="#1106" id="1106">1106</a>
-<a href="#1107" id="1107">1107</a>
-<a href="#1108" id="1108">1108</a>
-<a href="#1109" id="1109">1109</a>
-<a href="#1110" id="1110">1110</a>
-<a href="#1111" id="1111">1111</a>
-<a href="#1112" id="1112">1112</a>
-<a href="#1113" id="1113">1113</a>
-<a href="#1114" id="1114">1114</a>
-<a href="#1115" id="1115">1115</a>
-<a href="#1116" id="1116">1116</a>
-<a href="#1117" id="1117">1117</a>
-<a href="#1118" id="1118">1118</a>
-<a href="#1119" id="1119">1119</a>
-<a href="#1120" id="1120">1120</a>
-<a href="#1121" id="1121">1121</a>
-<a href="#1122" id="1122">1122</a>
-<a href="#1123" id="1123">1123</a>
-<a href="#1124" id="1124">1124</a>
-<a href="#1125" id="1125">1125</a>
-<a href="#1126" id="1126">1126</a>
-<a href="#1127" id="1127">1127</a>
-<a href="#1128" id="1128">1128</a>
-<a href="#1129" id="1129">1129</a>
-<a href="#1130" id="1130">1130</a>
-<a href="#1131" id="1131">1131</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
@@ -1178,11 +1150,9 @@
 <span class="kw">mod </span>http_server;
 <span class="kw">mod </span>metrics;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>streams;
-<span class="attr">#[cfg(any(feature = <span class="string">"test-utils"</span>, feature = <span class="string">"dangerous-certs"</span>))]
+<span class="attr">#[cfg(feature = <span class="string">"test-utils"</span>)]
 </span><span class="kw">pub mod </span>testing;
 
-<span class="attr">#[cfg(feature = <span class="string">"dangerous-certs"</span>)]
-</span><span class="kw">pub use </span><span class="self">self</span>::testing::self_signed_tls_certs_and_config;
 <span class="kw">pub use </span><span class="self">self</span>::{
     metrics::{Metrics, StunMetrics},
     streams::MaybeTlsStream <span class="kw">as </span>MaybeTlsStreamServer,
@@ -1267,7 +1237,7 @@
 </span><span class="kw">pub struct </span>QuicConfig {
     <span class="doccomment">/// The socket address on which the QUIC server should bind.
     ///
-    /// Normally you'd chose port `7842`, see [`crate::defaults::DEFAULT_QUIC_PORT`].
+    /// Normally you'd chose port `7842`, see [`crate::defaults::DEFAULT_RELAY_QUIC_PORT`].
     </span><span class="kw">pub </span>bind_addr: SocketAddr,
     <span class="doccomment">/// The TLS server configuration for the QUIC server.
     ///
@@ -1396,7 +1366,7 @@
                 <span class="kw">match </span>UdpSocket::bind(stun.bind_addr).<span class="kw">await </span>{
                     <span class="prelude-val">Ok</span>(sock) =&gt; {
                         <span class="kw">let </span>addr = sock.local_addr()<span class="question-mark">?</span>;
-                        <span class="macro">info!</span>(<span class="string">"STUN server bound on {addr}"</span>);
+                        <span class="macro">info!</span>(<span class="string">"STUN server listening on {addr}"</span>);
                         tasks.spawn(
                             server_stun_listener(sock).instrument(<span class="macro">info_span!</span>(<span class="string">"stun-server"</span>, %addr)),
                         );
@@ -1611,48 +1581,22 @@
     <span class="kw-2">mut </span>relay_http_server: <span class="prelude-ty">Option</span>&lt;http_server::Server&gt;,
     <span class="kw-2">mut </span>quic_server: <span class="prelude-ty">Option</span>&lt;QuicServer&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-    <span class="kw">let </span>res = <span class="kw">match </span>(
-        relay_http_server.as_mut(),
-        quic_server.as_mut(),
-        tasks.len(),
-    ) {
-        (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="number">0</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Nothing to supervise"</span>))),
-        (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="kw">_</span>) =&gt; tasks.join_next().<span class="kw">await</span>.expect(<span class="string">"checked"</span>),
-        (<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(quic_ep), <span class="number">0</span>) =&gt; quic_ep.task_handle().<span class="kw">await</span>.map(anyhow::Ok),
-        (<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(quic_ep), <span class="kw">_</span>) =&gt; {
-            <span class="macro">tokio::select!</span> {
-                biased;
-
-                ret = tasks.join_next() =&gt; ret.expect(<span class="string">"checked"</span>),
-                ret = quic_ep.task_handle() =&gt; ret.map(anyhow::Ok),
-            }
-        }
-        (<span class="prelude-val">Some</span>(relay), <span class="prelude-val">None</span>, <span class="number">0</span>) =&gt; relay.task_handle().<span class="kw">await</span>.map(anyhow::Ok),
-        (<span class="prelude-val">Some</span>(relay), <span class="prelude-val">Some</span>(quic_ep), <span class="number">0</span>) =&gt; {
-            <span class="macro">tokio::select!</span> {
-                biased;
-
-                ret = relay.task_handle() =&gt; ret.map(anyhow::Ok),
-                ret = quic_ep.task_handle() =&gt; ret.map(anyhow::Ok),
-            }
-        }
-        (<span class="prelude-val">Some</span>(relay), <span class="prelude-val">None</span>, <span class="kw">_</span>) =&gt; {
-            <span class="macro">tokio::select!</span> {
-                biased;
-
-                ret = tasks.join_next() =&gt; ret.expect(<span class="string">"checked"</span>),
-                ret = relay.task_handle() =&gt; ret.map(anyhow::Ok),
-            }
-        }
-        (<span class="prelude-val">Some</span>(relay), <span class="prelude-val">Some</span>(quic_ep), <span class="kw">_</span>) =&gt; {
-            <span class="macro">tokio::select!</span> {
-                biased;
-
-                ret = tasks.join_next() =&gt; ret.expect(<span class="string">"checked"</span>),
-                ret = relay.task_handle() =&gt; ret.map(anyhow::Ok),
-                ret = quic_ep.task_handle() =&gt; ret.map(anyhow::Ok),
-            }
-        }
+    <span class="kw">let </span>quic_enabled = quic_server.is_some();
+    <span class="kw">let </span><span class="kw-2">mut </span>quic_fut = <span class="kw">match </span>quic_server {
+        <span class="prelude-val">Some</span>(<span class="kw-2">ref mut </span>server) =&gt; futures_util::future::Either::Left(server.task_handle()),
+        <span class="prelude-val">None </span>=&gt; futures_util::future::Either::Right(futures_lite::future::pending()),
+    };
+    <span class="kw">let </span>relay_enabled = relay_http_server.is_some();
+    <span class="kw">let </span><span class="kw-2">mut </span>relay_fut = <span class="kw">match </span>relay_http_server {
+        <span class="prelude-val">Some</span>(<span class="kw-2">ref mut </span>server) =&gt; futures_util::future::Either::Left(server.task_handle()),
+        <span class="prelude-val">None </span>=&gt; futures_util::future::Either::Right(futures_lite::future::pending()),
+    };
+    <span class="kw">let </span>res = <span class="macro">tokio::select!</span> {
+        biased;
+        ret = tasks.join_next(), <span class="kw">if </span>tasks.len() &gt; <span class="number">0 </span>=&gt; ret.expect(<span class="string">"checked"</span>),
+        ret = <span class="kw-2">&amp;mut </span>quic_fut, <span class="kw">if </span>quic_enabled =&gt; ret.map(anyhow::Ok),
+        ret = <span class="kw-2">&amp;mut </span>relay_fut, <span class="kw">if </span>relay_enabled =&gt; ret.map(anyhow::Ok),
+        <span class="kw">else </span>=&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No relay services are enabled."</span>))),
     };
     <span class="kw">let </span>ret = <span class="kw">match </span>res {
         <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(())) =&gt; {

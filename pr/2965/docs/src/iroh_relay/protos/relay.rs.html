@@ -826,6 +826,18 @@
 <a href="#826" id="826">826</a>
 <a href="#827" id="827">827</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used the [`crate::server`] and [`crate::client`].
+//!
+//! Protocol flow:
+//!
+//! Login:
+//!  * client connects
+//!  * -&gt; client sends `FrameType::ClientInfo`
+//!
+//!  Steady state:
+//!  * server occasionally sends `FrameType::KeepAlive` (or `FrameType::Ping`)
+//!  * client responds to any `FrameType::Ping` with a `FrameType::Pong`
+//!  * clients sends `FrameType::SendPacket`
+//!  * server then sends `FrameType::RecvPacket` to recipient
 
 </span><span class="kw">use </span>std::time::Duration;
 
@@ -878,21 +890,9 @@
 /// with nodes running earlier protocol versions.
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>PROTOCOL_VERSION: usize = <span class="number">3</span>;
 
-<span class="doccomment">///
-/// Protocol flow:
-///
-/// Login:
-///  * client connects
-///  * -&gt; client sends FrameType::ClientInfo
-///
-///  Steady state:
-///  * server occasionally sends FrameType::KeepAlive (or FrameType::Ping)
-///  * client responds to any FrameType::Ping with a FrameType::Pong
-///  * clients sends FrameType::SendPacket
-///  * server then sends FrameType::RecvPacket to recipient
-
+<span class="doccomment">/// Indicates this IS the client's home node
 </span><span class="kw">const </span>PREFERRED: u8 = <span class="number">1u8</span>;
-<span class="doccomment">/// indicates this is NOT the client's home node
+<span class="doccomment">/// Indicates this IS NOT the client's home node
 </span><span class="kw">const </span>NOT_PREFERRED: u8 = <span class="number">0u8</span>;
 
 <span class="doccomment">/// The one byte frame type at the beginning of the frame

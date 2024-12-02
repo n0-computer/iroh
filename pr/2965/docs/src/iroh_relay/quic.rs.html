@@ -314,15 +314,6 @@
 <a href="#314" id="314">314</a>
 <a href="#315" id="315">315</a>
 <a href="#316" id="316">316</a>
-<a href="#317" id="317">317</a>
-<a href="#318" id="318">318</a>
-<a href="#319" id="319">319</a>
-<a href="#320" id="320">320</a>
-<a href="#321" id="321">321</a>
-<a href="#322" id="322">322</a>
-<a href="#323" id="323">323</a>
-<a href="#324" id="324">324</a>
-<a href="#325" id="325">325</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
@@ -331,7 +322,7 @@
 <span class="kw">use </span>quinn::{crypto::rustls::QuicClientConfig, VarInt};
 
 <span class="doccomment">/// ALPN for our quic addr discovery
-</span><span class="kw">pub const </span>ALPN_QUIC_ADDR_DISC: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/qad"</span>;
+</span><span class="kw">pub const </span>ALPN_QUIC_ADDR_DISC: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"/iroh-qad/0"</span>;
 <span class="doccomment">/// Endpoint close error code
 </span><span class="kw">pub const </span>QUIC_ADDR_DISC_CLOSE_CODE: VarInt = VarInt::from_u32(<span class="number">1</span>);
 <span class="doccomment">/// Endpoint close reason
@@ -405,7 +396,7 @@
             <span class="kw">let </span>endpoint = quinn::Endpoint::server(server_config, quic_config.bind_addr)<span class="question-mark">?</span>;
             <span class="kw">let </span>bind_addr = endpoint.local_addr()<span class="question-mark">?</span>;
 
-            <span class="macro">info!</span>(<span class="question-mark">?</span>bind_addr, <span class="string">"QUIC server bound"</span>);
+            <span class="macro">info!</span>(<span class="question-mark">?</span>bind_addr, <span class="string">"QUIC server listening on"</span>);
 
             <span class="kw">let </span>cancel = CancellationToken::new();
             <span class="kw">let </span>cancel_accept_loop = cancel.clone();
@@ -422,10 +413,10 @@
                             }
                             <span class="prelude-val">Some</span>(res) = set.join_next(), <span class="kw">if </span>!set.is_empty() =&gt; {
                                 <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
-                                    <span class="comment">// panic if necessary, otherwise, this error has already
-                                    // been logged in `handle_connection`
-                                    </span><span class="kw">if </span>err.is_panic() {
-                                        <span class="macro">panic!</span>(<span class="string">"task panicked: {:#?}"</span>, err);
+                                    <span class="kw">if </span>err.is_panic() {
+                                        <span class="macro">panic!</span>(<span class="string">"task panicked: {err:#?}"</span>);
+                                    } <span class="kw">else </span>{
+                                        <span class="macro">debug!</span>(<span class="string">"error accepting incoming connection: {err:#?}"</span>);
                                     }
                                 }
                             }
@@ -433,10 +424,9 @@
                                 <span class="prelude-val">Some</span>(conn) =&gt; {
                                      <span class="macro">debug!</span>(<span class="string">"accepting connection"</span>);
                                      <span class="kw">let </span>remote_addr = conn.remote_address();
-                                     set.spawn(<span class="kw">async move </span>{
-                                         handle_connection(conn).<span class="kw">await
-                                     </span>}.instrument(<span class="macro">info_span!</span>(<span class="string">"qad-conn"</span>, %remote_addr)));
-                                }
+                                     set.spawn(
+                                         handle_connection(conn).instrument(<span class="macro">info_span!</span>(<span class="string">"qad-conn"</span>, %remote_addr))
+                                     );                                }
                                 <span class="prelude-val">None </span>=&gt; {
                                     <span class="macro">debug!</span>(<span class="string">"endpoint closed"</span>);
                                     <span class="kw">break</span>;
@@ -494,14 +484,10 @@
     }
 
     <span class="doccomment">/// Handle the connection from the client.
-    ///
-    /// Any errors that happen during this connection do not need to be handled,
-    /// and will be logged at the debug level in this function.
     </span><span class="kw">async fn </span>handle_connection(incoming: quinn::Incoming) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>connection = <span class="kw">match </span>incoming.<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(conn) =&gt; conn,
             <span class="prelude-val">Err</span>(e) =&gt; {
-                <span class="macro">debug!</span>(<span class="string">"error accepting incoming connection: {e:#?}"</span>);
                 <span class="kw">return </span><span class="prelude-val">Err</span>(e.into());
             }
         };
@@ -514,10 +500,7 @@
             {
                 <span class="prelude-val">Ok</span>(())
             }
-            <span class="kw">_ </span>=&gt; {
-                <span class="macro">debug!</span>(<span class="string">"error closing connection {connection_err:#?}"</span>,);
-                <span class="prelude-val">Err</span>(connection_err.into())
-            }
+            <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(connection_err.into()),
         }
     }
 }
@@ -590,9 +573,8 @@
             }
         };
         <span class="kw">let </span><span class="kw-2">mut </span>observed_addr = res.expect(<span class="string">"checked"</span>);
-        <span class="comment">// if we've sent an to an ipv4 address, but
-        // received an observed address that is ivp6
-        // then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
+        <span class="comment">// if we've sent to an ipv4 address, but received an observed address
+        // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
         </span><span class="kw">if </span>server_addr.is_ipv4() &amp;&amp; observed_addr.is_ipv6() {
             observed_addr =
                 SocketAddr::new(observed_addr.ip().to_canonical(), observed_addr.port());

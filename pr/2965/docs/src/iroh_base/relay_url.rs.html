@@ -205,7 +205,7 @@
 /// output.
 </span><span class="kw">struct </span>DbgStr&lt;<span class="lifetime">'a</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'a </span>str);
 
-<span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; fmt::Debug <span class="kw">for </span>DbgStr&lt;<span class="lifetime">'a</span>&gt; {
+<span class="kw">impl </span>fmt::Debug <span class="kw">for </span>DbgStr&lt;<span class="lifetime">'_</span>&gt; {
     <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; fmt::Result {
         <span class="macro">write!</span>(f, <span class="string">r#""{}""#</span>, <span class="self">self</span>.<span class="number">0</span>)
     }

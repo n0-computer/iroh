@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["create_dns_resolver","run_relay_server","run_relay_server_with","run_relay_server_with_stun"],"struct":["CleanupDropGuard","DnsPkarrServer"]};
