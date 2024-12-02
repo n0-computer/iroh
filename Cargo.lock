@@ -2180,7 +2180,7 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "0.28.1"
+version = "0.29.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2216,7 +2216,7 @@ dependencies = [
  "iroh-quinn-proto",
  "iroh-quinn-udp",
  "iroh-relay",
- "iroh-test 0.28.0",
+ "iroh-test 0.29.0",
  "libc",
  "netdev",
  "netlink-packet-core",
@@ -2273,7 +2273,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2284,7 +2284,7 @@ dependencies = [
  "getrandom",
  "hex",
  "iroh-blake3",
- "iroh-test 0.28.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "iroh-test 0.28.0",
  "once_cell",
  "postcard",
  "proptest",
@@ -2316,7 +2316,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns-server"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2335,7 +2335,7 @@ dependencies = [
  "http 1.1.0",
  "iroh",
  "iroh-metrics",
- "iroh-test 0.28.0",
+ "iroh-test 0.29.0",
  "lru",
  "parking_lot",
  "pkarr",
@@ -2385,7 +2385,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net-bench"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2405,7 +2405,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net-report"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2416,7 +2416,7 @@ dependencies = [
  "iroh-base",
  "iroh-metrics",
  "iroh-relay",
- "iroh-test 0.28.0",
+ "iroh-test 0.29.0",
  "netwatch",
  "once_cell",
  "portmapper",
@@ -2484,7 +2484,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-relay"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -2509,7 +2509,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-quinn",
  "iroh-quinn-proto",
- "iroh-test 0.28.0",
+ "iroh-test 0.29.0",
  "libc",
  "num_enum",
  "once_cell",
@@ -2550,6 +2550,8 @@ dependencies = [
 [[package]]
 name = "iroh-test"
 version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f909a839e5aafd4c4ca473e6e143bacdd6a8483385e64186cacfa62e91f4081d"
 dependencies = [
  "anyhow",
  "tokio",
@@ -2559,9 +2561,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-test"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f909a839e5aafd4c4ca473e6e143bacdd6a8483385e64186cacfa62e91f4081d"
+version = "0.29.0"
 dependencies = [
  "anyhow",
  "tokio",
