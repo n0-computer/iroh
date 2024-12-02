@@ -8,7 +8,7 @@ pub mod http;
 pub mod metrics;
 pub mod server;
 pub mod state;
-mod store;
+pub mod store;
 mod util;
 
 #[cfg(test)]

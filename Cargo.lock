@@ -2528,6 +2528,7 @@ dependencies = [
  "base64-url",
  "bytes",
  "clap",
+ "criterion",
  "derive_more",
  "dirs-next",
  "futures-lite 2.5.0",
