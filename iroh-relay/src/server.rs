@@ -138,8 +138,8 @@ pub struct QuicConfig {
     pub bind_addr: SocketAddr,
     /// The TLS server configuration for the QUIC server.
     ///
-    /// If this [`rustls::ServerConfig`] does not support
-    /// TLS 1.3, the QUIC server will fail at [`QuicServer::spawn`].
+    /// If this [`rustls::ServerConfig`] does not support TLS 1.3, the QUIC server will fail
+    /// to spawn.
     pub server_config: rustls::ServerConfig,
 }
 
