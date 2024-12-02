@@ -179,7 +179,7 @@ fn process_incoming_frame(frame: Frame) -> Result<ReceivedMessage> {
         Frame::NodeGone { node_id } => Ok(ReceivedMessage::NodeGone(node_id)),
         Frame::RecvPacket { src_key, content } => {
             let packet = ReceivedMessage::ReceivedPacket {
-                source: src_key,
+                remote_node_id: src_key,
                 data: content,
             };
             Ok(packet)
@@ -451,7 +451,7 @@ pub enum ReceivedMessage {
     /// Represents an incoming packet.
     ReceivedPacket {
         /// The [`NodeId`] of the packet sender.
-        source: NodeId,
+        remote_node_id: NodeId,
         /// The received packet bytes.
         #[debug(skip)]
         data: Bytes, // TODO: ref
