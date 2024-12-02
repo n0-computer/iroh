@@ -5,9 +5,15 @@ use iroh_net::{endpoint, Endpoint, NodeId};
 use iroh_router::{Protocol, ProtocolHandler};
 
 #[derive(Debug)]
-struct Ping(Arc<PingInner>);
+pub struct Ping(Arc<PingInner>);
 
 const ALPN: &[u8] = b"ping";
+
+impl From<Arc<PingInner>> for Ping {
+    fn from(inner: Arc<PingInner>) -> Self {
+        Self(inner)
+    }
+}
 
 impl Ping {
     fn new(endpoint: Endpoint) -> Self {
@@ -49,7 +55,7 @@ impl Protocol for Ping {
     }
 
     fn from_protocol_handler(handler: Arc<dyn iroh_router::ProtocolHandler>) -> Option<Self> {
-        Some(Self(handler.into_arc_any().downcast::<PingInner>().ok()?))
+        Self::downcast_via::<PingInner>(handler)
     }
 }
 

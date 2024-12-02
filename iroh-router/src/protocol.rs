@@ -29,6 +29,13 @@ pub trait ProtocolHandler: Send + Sync + IntoArcAny + std::fmt::Debug + 'static 
 pub trait Protocol: Sized {
     fn protocol_handler(&self) -> Arc<dyn ProtocolHandler>;
     fn from_protocol_handler(handler: Arc<dyn ProtocolHandler>) -> Option<Self>;
+
+    fn downcast_via<T: Any + Send + Sync>(handler: Arc<dyn ProtocolHandler>) -> Option<Self>
+    where
+        Self: From<Arc<T>>
+    {
+        Some(Self::from(handler.into_arc_any().downcast::<T>().ok()?))
+    }
 }
 
 /// Helper trait to facilite casting from `Arc<dyn T>` to `Arc<dyn Any>`.

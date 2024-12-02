@@ -10,7 +10,7 @@ use tokio::task::{JoinError, JoinSet};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, warn};
 
-use crate::{Protocol, ProtocolHandler, ProtocolMap};
+use crate::{Protocol, ProtocolMap};
 
 #[derive(Clone, Debug)]
 pub struct Router {
