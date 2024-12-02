@@ -377,11 +377,11 @@ impl ClientBuilder {
     }
 }
 
-#[cfg(any(test, feature = "test-utils", feature = "dangerous-certs"))]
+#[cfg(test)]
 /// Creates a client config that trusts any servers without verifying their TLS certificate.
 ///
 /// Should be used for testing local relay setups only.
-pub fn make_dangerous_client_config() -> rustls::ClientConfig {
+pub(crate) fn make_dangerous_client_config() -> rustls::ClientConfig {
     warn!(
         "Insecure config: SSL certificates from relay servers will be trusted without verification"
     );
@@ -1128,15 +1128,12 @@ impl DnsExt for DnsResolver {
 }
 
 /// Used to allow self signed certificates in tests
-#[cfg(any(test, feature = "test-utils", feature = "dangerous-certs"))]
-#[cfg_attr(
-    iroh_docsrs,
-    doc(cfg(any(test, feature = "test-utils", feature = "dangerous-certs")))
-)]
+#[cfg(any(test, feature = "test-utils"))]
+#[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
 #[derive(Debug)]
 struct NoCertVerifier;
 
-#[cfg(any(test, feature = "test-utils", feature = "dangerous-certs"))]
+#[cfg(any(test, feature = "test-utils"))]
 impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
     fn verify_server_cert(
         &self,
