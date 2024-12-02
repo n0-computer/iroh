@@ -493,6 +493,7 @@ async fn relay_supervisor(
         ret = tasks.join_next(), if tasks.len() > 0 => ret.expect("checked"),
         ret = &mut quic_fut, if quic_enabled => ret.map(anyhow::Ok),
         ret = &mut relay_fut, if relay_enabled => ret.map(anyhow::Ok),
+        else => Ok(Err(anyhow!("No relay services are enabled."))),
     };
     let ret = match res {
         Ok(Ok(())) => {
