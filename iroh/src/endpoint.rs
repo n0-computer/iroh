@@ -970,30 +970,13 @@ impl Endpoint {
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
     pub async fn close(&self) -> Result<()> {
-        self.close_with_code(0u16.into(), b"").await?;
-        Ok(())
-    }
-
-    /// Closes the QUIC endpoint and the magic socket.
-    ///
-    /// This will close all open QUIC connections with the provided error_code and
-    /// reason. See [`quinn::Connection`] for details on how these are interpreted.
-    ///
-    /// It will then wait for all connections to actually be shutdown, and afterwards close
-    /// the magic socket.  Be aware however that the underlying UDP sockets are only closed
-    /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
-    /// are dropped.
-    ///
-    /// Returns an error if closing the magic socket failed.
-    /// TODO: Document error cases.
-    pub async fn close_with_code(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
         if self.is_closed() {
             return Ok(());
         }
 
         self.cancel_token.cancel();
         tracing::debug!("Closing connections");
-        self.endpoint.close(error_code, reason);
+        self.endpoint.close(0u16.into(), b"");
         self.endpoint.wait_idle().await;
 
         tracing::debug!("Connections closed");
