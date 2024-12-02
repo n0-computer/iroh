@@ -81,7 +81,7 @@ impl SignedPacketStore {
 
     pub async fn get(&self, key: &PublicKeyBytes) -> Result<Option<SignedPacket>> {
         let db = self.db.clone();
-        let key = key.clone();
+        let key = *key;
         let res = tokio::task::spawn_blocking(move || {
             let tx = db.begin_read()?;
             let table = tx.open_table(SIGNED_PACKETS_TABLE)?;
@@ -93,7 +93,7 @@ impl SignedPacketStore {
 
     pub async fn remove(&self, key: &PublicKeyBytes) -> Result<bool> {
         let db = self.db.clone();
-        let key = key.clone();
+        let key = *key;
         tokio::task::spawn_blocking(move || {
             let tx = db.begin_write()?;
             let updated = {
