@@ -741,7 +741,7 @@ pub(super) enum ReadResult {
 /// The disco `iroh_relay::protos::Frame::SendPacket` frame can contain more then a single
 /// datagram.  Each datagram in this frame is prefixed with a little-endian 2-byte length
 /// prefix.  This occurs when Quinn sends a GSO transmit containing more than one datagram,
-/// which are split using [`magicsock::split_packets`].
+/// which are split using [`crate::magicsock::split_packets`].
 ///
 /// The [`PacketSplitIter`] does the inverse and splits such packets back into individual
 /// datagrams.
@@ -788,7 +788,7 @@ where
     }
 }
 
-/// Splits a single [`iroh_relay::proto::Frame::SendPacket`] frame into datagrams.
+/// Splits a single [`ReceivedMessage::ReceivedPacket`] frame into datagrams.
 ///
 /// This is splits packets joined by [`PacketizeIter`] back into individual datagrams.  See
 /// that struct for more details.
