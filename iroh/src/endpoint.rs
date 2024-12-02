@@ -26,7 +26,7 @@ use derive_more::Debug;
 use futures_lite::{Stream, StreamExt};
 use iroh_base::relay_map::RelayMap;
 use pin_project::pin_project;
-use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
@@ -954,38 +954,46 @@ impl Endpoint {
 
     /// Closes the QUIC endpoint and the magic socket.
     ///
-    /// This will close all open QUIC connections with the provided error_code and
-    /// reason. See [`quinn::Connection`] for details on how these are interpreted.
+    /// This will close any remaining open [`Connection`]s with an error code
+    /// of `0` and an empty reason.  Though it is best practice to close those
+    /// explicitly before with a custom error code and reason.
     ///
-    /// It will then wait for all connections to actually be shutdown, and afterwards close
-    /// the magic socket.  Be aware however that the underlying UDP sockets are only closed
+    /// It will then make a best effort to wait for all close notifications to be
+    /// acknowledged by the peers, re-transmitting them if needed. This ensures the
+    /// peers are aware of the closed connections instead of having to wait for a timeout
+    /// on the connection. Once all connections are closed or timed out, the magic socket is closed.
+    ///
+    /// Be aware however that the underlying UDP sockets are only closed
     /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
     /// are dropped.
     ///
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
-    pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
-        let Endpoint {
-            msock,
-            endpoint,
-            cancel_token,
-            ..
-        } = self;
-        cancel_token.cancel();
+    pub async fn close(&self) -> Result<()> {
+        if self.is_closed() {
+            return Ok(());
+        }
+
+        self.cancel_token.cancel();
         tracing::debug!("Closing connections");
-        endpoint.close(error_code, reason);
-        endpoint.wait_idle().await;
+        self.endpoint.close(0u16.into(), b"");
+        self.endpoint.wait_idle().await;
 
         tracing::debug!("Connections closed");
-
-        msock.close().await?;
+        self.msock.close().await?;
         Ok(())
+    }
+
+    /// Check if this endpoint is still alive, or already closed.
+    pub fn is_closed(&self) -> bool {
+        self.cancel_token.is_cancelled() && self.msock.is_closed()
     }
 
     // # Remaining private methods
 
-    pub(crate) fn cancelled(&self) -> WaitForCancellationFuture<'_> {
-        self.cancel_token.cancelled()
+    /// Expose the internal [`CancellationToken`] to link shutdowns.
+    pub(crate) fn cancel_token(&self) -> &CancellationToken {
+        &self.cancel_token
     }
 
     /// Return the quic mapped address for this `node_id` and possibly start discovery
@@ -1600,7 +1608,7 @@ mod tests {
 
         info!("closing endpoint");
         // close the endpoint and restart it
-        endpoint.close(0u32.into(), b"done").await.unwrap();
+        endpoint.close().await.unwrap();
 
         info!("restarting endpoint");
         // now restart it and check the addressing info of the peer
@@ -1699,7 +1707,7 @@ mod tests {
                 send.stopped().await.unwrap();
                 recv.read_to_end(0).await.unwrap();
                 info!("client finished");
-                ep.close(0u32.into(), &[]).await.unwrap();
+                ep.close().await.unwrap();
                 info!("client closed");
             }
             .instrument(error_span!("client", %i))
