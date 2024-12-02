@@ -5,7 +5,7 @@ use iroh_base::relay_map::QuicConfig;
 /// for QUIC address discovery
 ///
 /// The port is "QUIC" typed on a phone keypad.
-pub use iroh_base::relay_map::DEFAULT_QUIC_PORT as DEFAULT_RELAY_QUIC_PORT;
+pub use iroh_base::relay_map::DEFAULT_RELAY_QUIC_PORT;
 /// The default STUN port used by the Relay server.
 ///
 /// The STUN port as defined by [RFC

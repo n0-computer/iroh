@@ -6,7 +6,7 @@ use anyhow::Result;
 use quinn::{crypto::rustls::QuicClientConfig, VarInt};
 
 /// ALPN for our quic addr discovery
-pub const ALPN_QUIC_ADDR_DISC: &[u8] = b"n0/qad";
+pub const ALPN_QUIC_ADDR_DISC: &[u8] = b"/iroh-qad/0";
 /// Endpoint close error code
 pub const QUIC_ADDR_DISC_CLOSE_CODE: VarInt = VarInt::from_u32(1);
 /// Endpoint close reason
@@ -80,7 +80,7 @@ pub(crate) mod server {
             let endpoint = quinn::Endpoint::server(server_config, quic_config.bind_addr)?;
             let bind_addr = endpoint.local_addr()?;
 
-            info!(?bind_addr, "QUIC server bound");
+            info!(?bind_addr, "QUIC server listening on");
 
             let cancel = CancellationToken::new();
             let cancel_accept_loop = cancel.clone();
@@ -97,10 +97,10 @@ pub(crate) mod server {
                             }
                             Some(res) = set.join_next(), if !set.is_empty() => {
                                 if let Err(err) = res {
-                                    // panic if necessary, otherwise, this error has already
-                                    // been logged in `handle_connection`
                                     if err.is_panic() {
-                                        panic!("task panicked: {:#?}", err);
+                                        panic!("task panicked: {err:#?}");
+                                    } else {
+                                        debug!("error accepting incoming connection: {err:#?}");
                                     }
                                 }
                             }
@@ -108,10 +108,9 @@ pub(crate) mod server {
                                 Some(conn) => {
                                      debug!("accepting connection");
                                      let remote_addr = conn.remote_address();
-                                     set.spawn(async move {
-                                         handle_connection(conn).await
-                                     }.instrument(info_span!("qad-conn", %remote_addr)));
-                                }
+                                     set.spawn(
+                                         handle_connection(conn).instrument(info_span!("qad-conn", %remote_addr))
+                                     );                                }
                                 None => {
                                     debug!("endpoint closed");
                                     break;
@@ -169,14 +168,10 @@ pub(crate) mod server {
     }
 
     /// Handle the connection from the client.
-    ///
-    /// Any errors that happen during this connection do not need to be handled,
-    /// and will be logged at the debug level in this function.
     async fn handle_connection(incoming: quinn::Incoming) -> Result<()> {
         let connection = match incoming.await {
             Ok(conn) => conn,
             Err(e) => {
-                debug!("error accepting incoming connection: {e:#?}");
                 return Err(e.into());
             }
         };
@@ -189,10 +184,7 @@ pub(crate) mod server {
             {
                 Ok(())
             }
-            _ => {
-                debug!("error closing connection {connection_err:#?}",);
-                Err(connection_err.into())
-            }
+            _ => Err(connection_err.into()),
         }
     }
 }
@@ -265,9 +257,8 @@ impl QuicClient {
             }
         };
         let mut observed_addr = res.expect("checked");
-        // if we've sent an to an ipv4 address, but
-        // received an observed address that is ivp6
-        // then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
+        // if we've sent to an ipv4 address, but received an observed address
+        // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
         if server_addr.is_ipv4() && observed_addr.is_ipv6() {
             observed_addr =
                 SocketAddr::new(observed_addr.ip().to_canonical(), observed_addr.port());

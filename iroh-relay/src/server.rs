@@ -134,7 +134,7 @@ pub struct StunConfig {
 pub struct QuicConfig {
     /// The socket address on which the QUIC server should bind.
     ///
-    /// Normally you'd chose port `7842`, see [`crate::defaults::DEFAULT_QUIC_PORT`].
+    /// Normally you'd chose port `7842`, see [`crate::defaults::DEFAULT_RELAY_QUIC_PORT`].
     pub bind_addr: SocketAddr,
     /// The TLS server configuration for the QUIC server.
     ///
@@ -263,7 +263,7 @@ impl Server {
                 match UdpSocket::bind(stun.bind_addr).await {
                     Ok(sock) => {
                         let addr = sock.local_addr()?;
-                        info!("STUN server bound on {addr}");
+                        info!("STUN server listening on {addr}");
                         tasks.spawn(
                             server_stun_listener(sock).instrument(info_span!("stun-server", %addr)),
                         );

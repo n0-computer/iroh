@@ -377,7 +377,7 @@ impl ClientBuilder {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test))]
 /// Creates a client config that trusts any servers without verifying their TLS certificate.
 ///
 /// Should be used for testing local relay setups only.

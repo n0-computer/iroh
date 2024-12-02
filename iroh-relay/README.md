@@ -60,7 +60,7 @@ Then run the server with the `--dev-quic` flag:
 
 The relay server will run over http on port 3340, as it does using the `--dev` flag, but it will also run a QUIC server on port 7824.
 
-The relay will use the configured TLS certificates for the QUIC connection, but use http (rather than https) for the server; the local certificates that we generate using `rcgen` may not work properly for the TCP relay connections.
+The relay will use the configured TLS certificates for the QUIC connection, but use http (rather than https) for the server.
 
 # License
 

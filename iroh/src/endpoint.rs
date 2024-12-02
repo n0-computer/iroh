@@ -1636,7 +1636,7 @@ mod tests {
                         .await
                         .unwrap();
                     let eps = ep.bound_sockets();
-                    info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server bound");
+                    info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server listening on");
                     for i in 0..n_clients {
                         let now = Instant::now();
                         println!("[server] round {}", i + 1);
