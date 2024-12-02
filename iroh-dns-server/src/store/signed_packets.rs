@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use anyhow::{Context, Result};
 use iroh_metrics::inc;
@@ -14,7 +14,7 @@ const SIGNED_PACKETS_TABLE: TableDefinition<&SignedPacketsKey, &[u8]> =
 
 #[derive(Debug)]
 pub struct SignedPacketStore {
-    db: Database,
+    db: Arc<Database>,
 }
 
 impl SignedPacketStore {
@@ -47,53 +47,68 @@ impl SignedPacketStore {
             let _table = write_tx.open_table(SIGNED_PACKETS_TABLE)?;
         }
         write_tx.commit()?;
-        Ok(Self { db })
+        Ok(Self { db: Arc::new(db) })
     }
 
-    pub fn upsert(&self, packet: SignedPacket) -> Result<bool> {
+    pub async fn upsert(&self, packet: SignedPacket) -> Result<bool> {
         let key = PublicKeyBytes::from_signed_packet(&packet);
-        let tx = self.db.begin_write()?;
-        let mut replaced = false;
-        {
-            let mut table = tx.open_table(SIGNED_PACKETS_TABLE)?;
-            if let Some(existing) = get_packet(&table, &key)? {
-                if existing.more_recent_than(&packet) {
-                    return Ok(false);
-                } else {
-                    replaced = true;
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let tx = db.begin_write()?;
+            let mut replaced = false;
+            {
+                let mut table = tx.open_table(SIGNED_PACKETS_TABLE)?;
+                if let Some(existing) = get_packet(&table, &key)? {
+                    if existing.more_recent_than(&packet) {
+                        return Ok(false);
+                    } else {
+                        replaced = true;
+                    }
                 }
+                let value = packet.as_bytes();
+                table.insert(key.as_bytes(), &value[..])?;
             }
-            let value = packet.as_bytes();
-            table.insert(key.as_bytes(), &value[..])?;
-        }
-        tx.commit()?;
-        if replaced {
-            inc!(Metrics, store_packets_updated);
-        } else {
-            inc!(Metrics, store_packets_inserted);
-        }
-        Ok(true)
+            tx.commit()?;
+            if replaced {
+                inc!(Metrics, store_packets_updated);
+            } else {
+                inc!(Metrics, store_packets_inserted);
+            }
+            Ok(true)
+        })
+        .await?
     }
 
-    pub fn get(&self, key: &PublicKeyBytes) -> Result<Option<SignedPacket>> {
-        let tx = self.db.begin_read()?;
-        let table = tx.open_table(SIGNED_PACKETS_TABLE)?;
-        get_packet(&table, key)
+    pub async fn get(&self, key: &PublicKeyBytes) -> Result<Option<SignedPacket>> {
+        let db = self.db.clone();
+        let key = key.clone();
+        let res = tokio::task::spawn_blocking(move || {
+            let tx = db.begin_read()?;
+            let table = tx.open_table(SIGNED_PACKETS_TABLE)?;
+            get_packet(&table, &key)
+        })
+        .await??;
+        Ok(res)
     }
 
-    pub fn remove(&self, key: &PublicKeyBytes) -> Result<bool> {
-        let tx = self.db.begin_write()?;
-        let updated = {
-            let mut table = tx.open_table(SIGNED_PACKETS_TABLE)?;
-            let did_remove = table.remove(key.as_bytes())?.is_some();
-            #[allow(clippy::let_and_return)]
-            did_remove
-        };
-        tx.commit()?;
-        if updated {
-            inc!(Metrics, store_packets_removed)
-        }
-        Ok(updated)
+    pub async fn remove(&self, key: &PublicKeyBytes) -> Result<bool> {
+        let db = self.db.clone();
+        let key = key.clone();
+        tokio::task::spawn_blocking(move || {
+            let tx = db.begin_write()?;
+            let updated = {
+                let mut table = tx.open_table(SIGNED_PACKETS_TABLE)?;
+                let did_remove = table.remove(key.as_bytes())?.is_some();
+                #[allow(clippy::let_and_return)]
+                did_remove
+            };
+            tx.commit()?;
+            if updated {
+                inc!(Metrics, store_packets_removed)
+            }
+            Ok(updated)
+        })
+        .await?
     }
 }
 
