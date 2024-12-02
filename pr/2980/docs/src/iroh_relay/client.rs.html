@@ -1213,6 +1213,24 @@
 <a href="#1213" id="1213">1213</a>
 <a href="#1214" id="1214">1214</a>
 <a href="#1215" id="1215">1215</a>
+<a href="#1216" id="1216">1216</a>
+<a href="#1217" id="1217">1217</a>
+<a href="#1218" id="1218">1218</a>
+<a href="#1219" id="1219">1219</a>
+<a href="#1220" id="1220">1220</a>
+<a href="#1221" id="1221">1221</a>
+<a href="#1222" id="1222">1222</a>
+<a href="#1223" id="1223">1223</a>
+<a href="#1224" id="1224">1224</a>
+<a href="#1225" id="1225">1225</a>
+<a href="#1226" id="1226">1226</a>
+<a href="#1227" id="1227">1227</a>
+<a href="#1228" id="1228">1228</a>
+<a href="#1229" id="1229">1229</a>
+<a href="#1230" id="1230">1230</a>
+<a href="#1231" id="1231">1231</a>
+<a href="#1232" id="1232">1232</a>
+<a href="#1233" id="1233">1233</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
@@ -1592,6 +1610,24 @@
     </span>}
 }
 
+<span class="attr">#[cfg(test)]
+</span><span class="doccomment">/// Creates a client config that trusts any servers without verifying their TLS certificate.
+///
+/// Should be used for testing local relay setups only.
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>make_dangerous_client_config() -&gt; rustls::ClientConfig {
+    <span class="macro">warn!</span>(
+        <span class="string">"Insecure config: SSL certificates from relay servers will be trusted without verification"
+    </span>);
+    rustls::client::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_protocol_versions(<span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>rustls::version::TLS13])
+    .expect(<span class="string">"protocols supported by ring"</span>)
+    .dangerous()
+    .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
+    .with_no_client_auth()
+}
+
 <span class="kw">impl </span>ClientReceiver {
     <span class="doccomment">/// Reads a message from the server.
     </span><span class="kw">pub async fn </span>recv(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;ReceivedMessage, ClientError&gt;&gt; {
@@ -1835,7 +1871,7 @@
         }
 
         <span class="macro">event!</span>(
-            target: <span class="string">"iroh::_events::relay::connected"</span>,
+            target: <span class="string">"events.net.relay.connected"</span>,
             Level::DEBUG,
             home = <span class="self">self</span>.is_preferred,
             url = %<span class="self">self</span>.url,

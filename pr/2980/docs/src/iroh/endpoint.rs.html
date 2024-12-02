@@ -1918,23 +1918,6 @@
 <a href="#1918" id="1918">1918</a>
 <a href="#1919" id="1919">1919</a>
 <a href="#1920" id="1920">1920</a>
-<a href="#1921" id="1921">1921</a>
-<a href="#1922" id="1922">1922</a>
-<a href="#1923" id="1923">1923</a>
-<a href="#1924" id="1924">1924</a>
-<a href="#1925" id="1925">1925</a>
-<a href="#1926" id="1926">1926</a>
-<a href="#1927" id="1927">1927</a>
-<a href="#1928" id="1928">1928</a>
-<a href="#1929" id="1929">1929</a>
-<a href="#1930" id="1930">1930</a>
-<a href="#1931" id="1931">1931</a>
-<a href="#1932" id="1932">1932</a>
-<a href="#1933" id="1933">1933</a>
-<a href="#1934" id="1934">1934</a>
-<a href="#1935" id="1935">1935</a>
-<a href="#1936" id="1936">1936</a>
-<a href="#1937" id="1937">1937</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
@@ -2907,30 +2890,13 @@
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
     </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="self">self</span>.close_with_code(<span class="number">0u16</span>.into(), <span class="string">b""</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="doccomment">/// Closes the QUIC endpoint and the magic socket.
-    ///
-    /// This will close all open QUIC connections with the provided error_code and
-    /// reason. See [`quinn::Connection`] for details on how these are interpreted.
-    ///
-    /// It will then wait for all connections to actually be shutdown, and afterwards close
-    /// the magic socket.  Be aware however that the underlying UDP sockets are only closed
-    /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
-    /// are dropped.
-    ///
-    /// Returns an error if closing the magic socket failed.
-    /// TODO: Document error cases.
-    </span><span class="kw">pub async fn </span>close_with_code(<span class="kw-2">&amp;</span><span class="self">self</span>, error_code: VarInt, reason: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">if </span><span class="self">self</span>.is_closed() {
             <span class="kw">return </span><span class="prelude-val">Ok</span>(());
         }
 
         <span class="self">self</span>.cancel_token.cancel();
         <span class="macro">tracing::debug!</span>(<span class="string">"Closing connections"</span>);
-        <span class="self">self</span>.endpoint.close(error_code, reason);
+        <span class="self">self</span>.endpoint.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
         <span class="self">self</span>.endpoint.wait_idle().<span class="kw">await</span>;
 
         <span class="macro">tracing::debug!</span>(<span class="string">"Connections closed"</span>);
@@ -3598,7 +3564,7 @@
                         .<span class="kw">await
                         </span>.unwrap();
                     <span class="kw">let </span>eps = ep.bound_sockets();
-                    <span class="macro">info!</span>(me = %ep.node_id().fmt_short(), ipv4=%eps.<span class="number">0</span>, ipv6=<span class="question-mark">?</span>eps.<span class="number">1</span>, <span class="string">"server bound"</span>);
+                    <span class="macro">info!</span>(me = %ep.node_id().fmt_short(), ipv4=%eps.<span class="number">0</span>, ipv6=<span class="question-mark">?</span>eps.<span class="number">1</span>, <span class="string">"server listening on"</span>);
                     <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..n_clients {
                         <span class="kw">let </span>now = Instant::now();
                         <span class="macro">println!</span>(<span class="string">"[server] round {}"</span>, i + <span class="number">1</span>);
@@ -3856,7 +3822,7 @@
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_direct_addresses_no_stun_relay() {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
-        <span class="kw">let </span>(relay_map, <span class="kw">_</span>, _guard) = run_relay_server_with(<span class="prelude-val">None</span>).<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>(relay_map, <span class="kw">_</span>, _guard) = run_relay_server_with(<span class="prelude-val">None</span>, <span class="bool-val">false</span>).<span class="kw">await</span>.unwrap();
 
         <span class="kw">let </span>ep = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])

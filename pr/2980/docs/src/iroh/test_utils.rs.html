@@ -457,13 +457,45 @@
 <a href="#457" id="457">457</a>
 <a href="#458" id="458">458</a>
 <a href="#459" id="459">459</a>
+<a href="#460" id="460">460</a>
+<a href="#461" id="461">461</a>
+<a href="#462" id="462">462</a>
+<a href="#463" id="463">463</a>
+<a href="#464" id="464">464</a>
+<a href="#465" id="465">465</a>
+<a href="#466" id="466">466</a>
+<a href="#467" id="467">467</a>
+<a href="#468" id="468">468</a>
+<a href="#469" id="469">469</a>
+<a href="#470" id="470">470</a>
+<a href="#471" id="471">471</a>
+<a href="#472" id="472">472</a>
+<a href="#473" id="473">473</a>
+<a href="#474" id="474">474</a>
+<a href="#475" id="475">475</a>
+<a href="#476" id="476">476</a>
+<a href="#477" id="477">477</a>
+<a href="#478" id="478">478</a>
+<a href="#479" id="479">479</a>
+<a href="#480" id="480">480</a>
+<a href="#481" id="481">481</a>
+<a href="#482" id="482">482</a>
+<a href="#483" id="483">483</a>
+<a href="#484" id="484">484</a>
+<a href="#485" id="485">485</a>
+<a href="#486" id="486">486</a>
+<a href="#487" id="487">487</a>
+<a href="#488" id="488">488</a>
+<a href="#489" id="489">489</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">pub use </span>dns_and_pkarr_servers::DnsPkarrServer;
 <span class="kw">pub use </span>dns_server::create_dns_resolver;
-<span class="kw">use </span>iroh_relay::server::{CertConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig};
+<span class="kw">use </span>iroh_relay::server::{
+    CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig,
+};
 <span class="kw">use </span>tokio::sync::oneshot;
 
 <span class="kw">use crate</span>::{defaults::DEFAULT_STUN_PORT, RelayMap, RelayNode, RelayUrl};
@@ -478,14 +510,31 @@
 #[allow(dead_code)]
 </span><span class="kw">pub struct </span>CleanupDropGuard(<span class="kw">pub</span>(<span class="kw">crate</span>) oneshot::Sender&lt;()&gt;);
 
-<span class="doccomment">/// Runs a relay server with STUN enabled suitable for tests.
+<span class="doccomment">/// Runs a relay server with STUN and QUIC enabled suitable for tests.
 ///
 /// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
 /// When dropped, the returned [`Server`] does will stop running.
 </span><span class="kw">pub async fn </span>run_relay_server() -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server)&gt; {
-    run_relay_server_with(<span class="prelude-val">Some</span>(StunConfig {
-        bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
-    }))
+    run_relay_server_with(
+        <span class="prelude-val">Some</span>(StunConfig {
+            bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
+        }),
+        <span class="bool-val">true</span>,
+    )
+    .<span class="kw">await
+</span>}
+
+<span class="doccomment">/// Runs a relay server with STUN enabled suitable for tests.
+///
+/// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
+/// When dropped, the returned [`Server`] does will stop running.
+</span><span class="kw">pub async fn </span>run_relay_server_with_stun() -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server)&gt; {
+    run_relay_server_with(
+        <span class="prelude-val">Some</span>(StunConfig {
+            bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
+        }),
+        <span class="bool-val">false</span>,
+    )
     .<span class="kw">await
 </span>}
 
@@ -494,29 +543,36 @@
 /// `stun` can be set to `None` to disable stun, or set to `Some` `StunConfig`,
 /// to enable stun on a specific socket.
 ///
+/// If `quic` is set to `true`, it will make the appropriate [`QuicConfig`] from the generated tls certificates and run the quic server at a random free port.
+///
+///
 /// The return value is similar to [`run_relay_server`].
 </span><span class="kw">pub async fn </span>run_relay_server_with(
     stun: <span class="prelude-ty">Option</span>&lt;StunConfig&gt;,
+    quic: bool,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server)&gt; {
-    <span class="kw">let </span>cert =
-        rcgen::generate_simple_self_signed(<span class="macro">vec!</span>[<span class="string">"localhost"</span>.to_string(), <span class="string">"127.0.0.1"</span>.to_string()])
-            .expect(<span class="string">"valid"</span>);
-    <span class="kw">let </span>rustls_cert = cert.cert.der();
-    <span class="kw">let </span>private_key = rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
-    <span class="kw">let </span>private_key = rustls::pki_types::PrivateKeyDer::from(private_key);
-
+    <span class="kw">let </span>(certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
+    <span class="kw">let </span>tls = TlsConfig {
+        cert: CertConfig::&lt;(), ()&gt;::Manual { certs },
+        https_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
+        quic_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
+        server_config,
+    };
+    <span class="kw">let </span>quic = <span class="kw">if </span>quic {
+        <span class="prelude-val">Some</span>(QuicConfig {
+            server_config: tls.server_config.clone(),
+            bind_addr: tls.quic_bind_addr,
+        })
+    } <span class="kw">else </span>{
+        <span class="prelude-val">None
+    </span>};
     <span class="kw">let </span>config = ServerConfig {
         relay: <span class="prelude-val">Some</span>(RelayConfig {
             http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
-            tls: <span class="prelude-val">Some</span>(TlsConfig {
-                cert: CertConfig::&lt;(), ()&gt;::Manual {
-                    private_key,
-                    certs: <span class="macro">vec!</span>[rustls_cert.clone()],
-                },
-                https_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
-            }),
+            tls: <span class="prelude-val">Some</span>(tls),
             limits: Default::default(),
         }),
+        quic,
         stun,
         <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
         </span>metrics_addr: <span class="prelude-val">None</span>,
@@ -525,10 +581,14 @@
     <span class="kw">let </span>url: RelayUrl = <span class="macro">format!</span>(<span class="string">"https://{}"</span>, server.https_addr().expect(<span class="string">"configured"</span>))
         .parse()
         .unwrap();
+    <span class="kw">let </span>quic = server
+        .quic_addr()
+        .map(|addr| iroh_base::relay_map::QuicConfig { port: addr.port() });
     <span class="kw">let </span>m = RelayMap::from_nodes([RelayNode {
         url: url.clone(),
         stun_only: <span class="bool-val">false</span>,
         stun_port: server.stun_addr().map_or(DEFAULT_STUN_PORT, |s| s.port()),
+        quic,
     }])
     .unwrap();
     <span class="prelude-val">Ok</span>((m, url, server))

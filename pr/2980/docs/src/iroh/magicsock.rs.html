@@ -3917,34 +3917,6 @@
 <a href="#3917" id="3917">3917</a>
 <a href="#3918" id="3918">3918</a>
 <a href="#3919" id="3919">3919</a>
-<a href="#3920" id="3920">3920</a>
-<a href="#3921" id="3921">3921</a>
-<a href="#3922" id="3922">3922</a>
-<a href="#3923" id="3923">3923</a>
-<a href="#3924" id="3924">3924</a>
-<a href="#3925" id="3925">3925</a>
-<a href="#3926" id="3926">3926</a>
-<a href="#3927" id="3927">3927</a>
-<a href="#3928" id="3928">3928</a>
-<a href="#3929" id="3929">3929</a>
-<a href="#3930" id="3930">3930</a>
-<a href="#3931" id="3931">3931</a>
-<a href="#3932" id="3932">3932</a>
-<a href="#3933" id="3933">3933</a>
-<a href="#3934" id="3934">3934</a>
-<a href="#3935" id="3935">3935</a>
-<a href="#3936" id="3936">3936</a>
-<a href="#3937" id="3937">3937</a>
-<a href="#3938" id="3938">3938</a>
-<a href="#3939" id="3939">3939</a>
-<a href="#3940" id="3940">3940</a>
-<a href="#3941" id="3941">3941</a>
-<a href="#3942" id="3942">3942</a>
-<a href="#3943" id="3943">3943</a>
-<a href="#3944" id="3944">3944</a>
-<a href="#3945" id="3945">3945</a>
-<a href="#3946" id="3946">3946</a>
-<a href="#3947" id="3947">3947</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -5117,34 +5089,6 @@
         <span class="self">self</span>.node_map
             .notify_ping_sent(id, dst.clone(), tx_id, purpose, msg_sender);
         <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="kw">fn </span>poll_send_relay(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        url: <span class="kw-2">&amp;</span>RelayUrl,
-        node: PublicKey,
-        contents: RelayContents,
-    ) -&gt; Poll&lt;bool&gt; {
-        <span class="macro">trace!</span>(node = %node.fmt_short(), relay_url = %url, count = contents.len(), len = contents.iter().map(|c| c.len()).sum::&lt;usize&gt;(), <span class="string">"send relay"</span>);
-        <span class="kw">let </span>msg = RelayActorMessage::Send {
-            url: url.clone(),
-            contents,
-            remote_node: node,
-        };
-        <span class="kw">match </span><span class="self">self</span>.relay_actor_sender.try_send(msg) {
-            <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
-                <span class="macro">trace!</span>(node = %node.fmt_short(), relay_url = %url, <span class="string">"send relay: message queued"</span>);
-                Poll::Ready(<span class="bool-val">true</span>)
-            }
-            <span class="prelude-val">Err</span>(mpsc::error::TrySendError::Closed(<span class="kw">_</span>)) =&gt; {
-                <span class="macro">warn!</span>(node = %node.fmt_short(), relay_url = %url, <span class="string">"send relay: message dropped, channel to actor is closed"</span>);
-                Poll::Ready(<span class="bool-val">false</span>)
-            }
-            <span class="prelude-val">Err</span>(mpsc::error::TrySendError::Full(<span class="kw">_</span>)) =&gt; {
-                <span class="macro">warn!</span>(node = %node.fmt_short(), relay_url = %url, <span class="string">"send relay: message dropped, channel to actor is full"</span>);
-                Poll::Pending
-            }
-        }
     }
 
     <span class="kw">fn </span>send_queued_call_me_maybes(<span class="kw-2">&amp;</span><span class="self">self</span>) {
