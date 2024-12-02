@@ -98,7 +98,7 @@ impl ProtocolHandler for Echo {
         Box::pin(async move {
             let connection = connecting.await?;
             let (mut send, mut recv) = connection.accept_bi().await?;
-            
+
             // Echo any bytes received back directly.
             let bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
 
@@ -132,11 +132,9 @@ This repository contains a workspace of crates:
 - `iroh`: The core library for hole-punching & communicating with relays.
 - `iroh-relay`: The relay server implementation. This is the code we run in production (and you can, too!).
 - `iroh-base`: Common types like `Hash`, key types or `RelayUrl`.
-- `iroh-metrics`: Helper library for adding metrics support to crates.
 - `iroh-test`: Test utilities.
 - `iroh-dns-server`: DNS server implementation powering the `n0_discovery` for NodeIds, running at dns.iroh.link.
 - `iroh-net-report`: Analyzes your host's networking ability & NAT.
-- `net-tools/*`: Networking utility crates
 
 ## License
 

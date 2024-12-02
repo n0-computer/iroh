@@ -3184,7 +3184,9 @@ dependencies = [
 
 [[package]]
 name = "netwatch"
-version = "0.1.0"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "304c0c1b348830b016039f2cb1c5ac8217084a78875262c5594925dd08aa77fc"
 dependencies = [
  "anyhow",
  "atomic-waker",
@@ -3277,39 +3279,6 @@ name = "nonzero_ext"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
-
-[[package]]
-name = "ntest"
-version = "0.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb183f0a1da7a937f672e5ee7b7edb727bf52b8a52d531374ba8ebb9345c0330"
-dependencies = [
- "ntest_test_cases",
- "ntest_timeout",
-]
-
-[[package]]
-name = "ntest_test_cases"
-version = "0.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16d0d3f2a488592e5368ebbe996e7f1d44aa13156efad201f5b4d84e150eaa93"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "ntest_timeout"
-version = "0.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcc7c92f190c97f79b4a332f5e81dcf68c8420af2045c936c9be0bc9de6f63b5"
-dependencies = [
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
 
 [[package]]
 name = "nu-ansi-term"
@@ -3786,7 +3755,9 @@ checksum = "280dc24453071f1b63954171985a0b0d30058d287960968b9b2aca264c8d4ee6"
 
 [[package]]
 name = "portmapper"
-version = "0.1.0"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9579639b10bc90d8793be2cc86c42fc0d80b2de328e74dea1255d102399f41c1"
 dependencies = [
  "anyhow",
  "base64",
@@ -3798,10 +3769,8 @@ dependencies = [
  "iroh-metrics",
  "libc",
  "netwatch",
- "ntest",
  "num_enum",
  "rand",
- "rand_chacha",
  "serde",
  "smallvec",
  "socket2",

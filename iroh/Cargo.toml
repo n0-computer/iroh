@@ -48,7 +48,7 @@ iroh-base = { version = "0.28.0", features = ["key"], path = "../iroh-base" }
 iroh-relay = { version = "0.28", path = "../iroh-relay" }
 libc = "0.2.139"
 netdev = "0.31.0"
-netwatch = { version = "0.1.0", path = "../net-tools/netwatch" }
+netwatch = { version = "0.2.0" }
 num_enum = "0.7"
 once_cell = "1.18.0"
 parking_lot = "0.12.1"
@@ -57,7 +57,7 @@ pkarr = { version = "2", default-features = false, features = [
     "async",
     "relay",
 ] }
-portmapper = { version = "0.1.0", path = "../net-tools/portmapper" }
+portmapper = { version = "0.2.0" }
 postcard = { version = "1", default-features = false, features = [
     "alloc",
     "use-std",
