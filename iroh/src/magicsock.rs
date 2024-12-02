@@ -1172,34 +1172,6 @@ impl MagicSock {
         Ok(())
     }
 
-    fn poll_send_relay(
-        &self,
-        url: &RelayUrl,
-        node: PublicKey,
-        contents: RelayContents,
-    ) -> Poll<bool> {
-        trace!(node = %node.fmt_short(), relay_url = %url, count = contents.len(), len = contents.iter().map(|c| c.len()).sum::<usize>(), "send relay");
-        let msg = RelayActorMessage::Send {
-            url: url.clone(),
-            contents,
-            remote_node: node,
-        };
-        match self.relay_actor_sender.try_send(msg) {
-            Ok(_) => {
-                trace!(node = %node.fmt_short(), relay_url = %url, "send relay: message queued");
-                Poll::Ready(true)
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                warn!(node = %node.fmt_short(), relay_url = %url, "send relay: message dropped, channel to actor is closed");
-                Poll::Ready(false)
-            }
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!(node = %node.fmt_short(), relay_url = %url, "send relay: message dropped, channel to actor is full");
-                Poll::Pending
-            }
-        }
-    }
-
     fn send_queued_call_me_maybes(&self) {
         let msg = self.direct_addrs.to_call_me_maybe_message();
         let msg = disco::Message::CallMeMaybe(msg);
