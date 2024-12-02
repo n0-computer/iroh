@@ -882,6 +882,18 @@
 <a href="#882" id="882">882</a>
 <a href="#883" id="883">883</a>
 <a href="#884" id="884">884</a>
+<a href="#885" id="885">885</a>
+<a href="#886" id="886">886</a>
+<a href="#887" id="887">887</a>
+<a href="#888" id="888">888</a>
+<a href="#889" id="889">889</a>
+<a href="#890" id="890">890</a>
+<a href="#891" id="891">891</a>
+<a href="#892" id="892">892</a>
+<a href="#893" id="893">893</a>
+<a href="#894" id="894">894</a>
+<a href="#895" id="895">895</a>
+<a href="#896" id="896">896</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
@@ -915,9 +927,12 @@
 //! - The [`PkarrResolver`] which can perform lookups from designated [pkarr relay servers]
 //!   using HTTP.
 //!
-//! - The [`LocalSwarmDiscovery`] discovers iroh nodes present on the local network,
-//!   very similar to mdNS.
-//!
+</span><span class="attr">#![cfg_attr(
+    feature = <span class="string">"discovery-local-network"</span>,
+    doc = <span class="string">"- [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
+             very similar to mDNS."
+</span>)]
+</span><span class="doccomment">//!
 //! - The [`DhtDiscovery`] also uses the [`pkarr`] system but can also publish and lookup
 //!   records to/from the Mainline DHT.
 //!
@@ -951,7 +966,13 @@
 //! # }
 //! ```
 //!
-//! To also enable [`LocalSwarmDiscovery`], it can be added as another service in the
+//! To also enable
+</span><span class="attr">#![cfg_attr(feature = <span class="string">"discovery-local-network"</span>, doc = <span class="string">"[`LocalSwarmDiscovery`]"</span>)]
+#![cfg_attr(
+    not(feature = <span class="string">"discovery-local-network"</span>),
+    doc = <span class="string">"`LocalSwarmDiscovery`"
+</span>)]
+</span><span class="doccomment">//! it can be added as another service in the
 //! [`ConcurrentDiscovery`]:
 //!
 //! ```no_run
@@ -981,9 +1002,12 @@
 //! [Number 0]: https://n0.computer
 //! [`PkarrResolver`]: pkarr::PkarrResolver
 //! [`PkarrPublisher`]: pkarr::PkarrPublisher
-//! [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
 //! [`DhtDiscovery`]: pkarr::dht::DhtDiscovery
 //! [pkarr relay servers]: https://pkarr.org/#servers
+</span><span class="attr">#![cfg_attr(
+    feature = <span class="string">"discovery-local-network"</span>,
+    doc = <span class="string">"[`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery"
+</span>)]
 
 </span><span class="kw">use </span>std::time::Duration;
 
