@@ -71,6 +71,8 @@
 //! [`ConcurrentDiscovery`]:
 //!
 //! ```no_run
+//! # #[cfg(feature = "discovery-local-network")]
+//! # {
 //! # use iroh::discovery::dns::DnsDiscovery;
 //! # use iroh::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 //! # use iroh::discovery::pkarr::PkarrPublisher;
@@ -85,6 +87,7 @@
 //!     Box::new(LocalSwarmDiscovery::new(secret_key.public())?),
 //! ]);
 //! # Ok(())
+//! # }
 //! # }
 //! ```
 //!
