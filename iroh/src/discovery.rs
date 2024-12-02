@@ -30,9 +30,11 @@
 //!
 //! - The [`PkarrResolver`] which can perform lookups from designated [pkarr relay servers]
 //!   using HTTP.
-//!
-//! - The [`LocalSwarmDiscovery`] discovers iroh nodes present on the local network,
-//!   very similar to mdNS.
+#![cfg_attr(
+    feature = "discovery-local-network",
+    doc = "- [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
+             very similar to mDNS."
+)]
 //!
 //! - The [`DhtDiscovery`] also uses the [`pkarr`] system but can also publish and lookup
 //!   records to/from the Mainline DHT.
@@ -67,10 +69,18 @@
 //! # }
 //! ```
 //!
-//! To also enable [`LocalSwarmDiscovery`], it can be added as another service in the
+//! To also enable
+#![cfg_attr(feature = "discovery-local-network", doc = "[`LocalSwarmDiscovery`]")]
+#![cfg_attr(
+    not(feature = "discovery-local-network"),
+    doc = "`LocalSwarmDiscovery`"
+)]
+//! it can be added as another service in the
 //! [`ConcurrentDiscovery`]:
 //!
 //! ```no_run
+//! # #[cfg(feature = "discovery-local-network")]
+//! # {
 //! # use iroh::discovery::dns::DnsDiscovery;
 //! # use iroh::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 //! # use iroh::discovery::pkarr::PkarrPublisher;
@@ -86,6 +96,7 @@
 //! ]);
 //! # Ok(())
 //! # }
+//! # }
 //! ```
 //!
 //! [`RelayUrl`]: crate::relay::RelayUrl
@@ -94,9 +105,12 @@
 //! [Number 0]: https://n0.computer
 //! [`PkarrResolver`]: pkarr::PkarrResolver
 //! [`PkarrPublisher`]: pkarr::PkarrPublisher
-//! [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
 //! [`DhtDiscovery`]: pkarr::dht::DhtDiscovery
 //! [pkarr relay servers]: https://pkarr.org/#servers
+#![cfg_attr(
+    feature = "discovery-local-network",
+    doc = "[`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery"
+)]
 
 use std::time::Duration;
 
