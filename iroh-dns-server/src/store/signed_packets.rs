@@ -5,7 +5,7 @@ use iroh_metrics::inc;
 use pkarr::SignedPacket;
 use redb::{backends::InMemoryBackend, Database, ReadableTable, TableDefinition};
 use tokio::sync::{mpsc, oneshot};
-use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::{metrics::Metrics, util::PublicKeyBytes};
@@ -18,12 +18,18 @@ const SIGNED_PACKETS_TABLE: TableDefinition<&SignedPacketsKey, &[u8]> =
 pub struct SignedPacketStore {
     send: mpsc::Sender<Message>,
     cancel: CancellationToken,
-    _task: AbortOnDropHandle<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Drop for SignedPacketStore {
     fn drop(&mut self) {
+        // cancel the actor
         self.cancel.cancel();
+        // join the thread. This is important so that Drop implementations that
+        // are called from the actor thread can complete before we return.
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 }
 
@@ -51,70 +57,71 @@ struct Actor {
 }
 
 impl Actor {
-    async fn run(self) {
+    async fn run(mut self) {
         match self.run0().await {
             Ok(()) => {}
             Err(e) => {
+                self.cancel.cancel();
                 tracing::error!("packet store actor failed: {:?}", e);
             }
         }
     }
 
-    async fn run0(mut self) -> anyhow::Result<()> {
+    async fn run0(&mut self) -> anyhow::Result<()> {
         loop {
             let transaction = self.db.begin_write()?;
             let mut tables = Tables::new(&transaction)?;
             let timeout = tokio::time::sleep(self.max_batch_time);
             tokio::pin!(timeout);
-            loop {
-                for _ in 0..self.max_batch_size {
-                    tokio::select! {
-                        _ = self.cancel.cancelled() => {
-                            drop(tables);
-                            transaction.commit()?;
-                            return Ok(());
-                        }
-                        _ = &mut timeout => break,
-                        Some(msg) = self.recv.recv() => {
-                            match msg {
-                                Message::Get { key, res } => {
-                                    let packet = get_packet(&tables.signed_packets, &key)?;
-                                    res.send(packet).ok();
-                                }
-                                Message::Upsert { packet, res } => {
-                                    let key = PublicKeyBytes::from_signed_packet(&packet);
-                                    let mut replaced = false;
-                                    if let Some(existing) = get_packet(&tables.signed_packets, &key)? {
-                                        if existing.more_recent_than(&packet) {
-                                            res.send(false).ok();
-                                            continue;
-                                        } else {
-                                            replaced = true;
-                                        }
-                                    }
-                                    let value = packet.as_bytes();
-                                    tables.signed_packets.insert(key.as_bytes(), &value[..])?;
-                                    if replaced {
-                                        inc!(Metrics, store_packets_updated);
+            for _ in 0..self.max_batch_size {
+                tokio::select! {
+                    _ = self.cancel.cancelled() => {
+                        drop(tables);
+                        transaction.commit()?;
+                        return Ok(());
+                    }
+                    _ = &mut timeout => break,
+                    Some(msg) = self.recv.recv() => {
+                        match msg {
+                            Message::Get { key, res } => {
+                                let packet = get_packet(&tables.signed_packets, &key)?;
+                                res.send(packet).ok();
+                            }
+                            Message::Upsert { packet, res } => {
+                                let key = PublicKeyBytes::from_signed_packet(&packet);
+                                let mut replaced = false;
+                                if let Some(existing) = get_packet(&tables.signed_packets, &key)? {
+                                    if existing.more_recent_than(&packet) {
+                                        res.send(false).ok();
+                                        continue;
                                     } else {
-                                        inc!(Metrics, store_packets_inserted);
+                                        replaced = true;
                                     }
-                                    res.send(true).ok();
                                 }
-                                Message::Remove { key, res } => {
-                                    let updated =
-                                        tables.signed_packets.remove(key.as_bytes())?.is_some()
-                                    ;
-                                    if updated {
-                                        inc!(Metrics, store_packets_removed);
-                                    }
-                                    res.send(updated).ok();
+                                let value = packet.as_bytes();
+                                tables.signed_packets.insert(key.as_bytes(), &value[..])?;
+                                if replaced {
+                                    inc!(Metrics, store_packets_updated);
+                                } else {
+                                    inc!(Metrics, store_packets_inserted);
                                 }
+                                res.send(true).ok();
+                            }
+                            Message::Remove { key, res } => {
+                                let updated =
+                                    tables.signed_packets.remove(key.as_bytes())?.is_some()
+                                ;
+                                if updated {
+                                    inc!(Metrics, store_packets_removed);
+                                }
+                                res.send(updated).ok();
                             }
                         }
                     }
                 }
             }
+            drop(tables);
+            transaction.commit()?;
         }
     }
 }
@@ -172,11 +179,16 @@ impl SignedPacketStore {
             max_batch_size: 1024 * 64,
             max_batch_time: Duration::from_secs(1),
         };
-        let task = tokio::spawn(async move { actor.run().await });
+        let handle = tokio::runtime::Handle::try_current()?;
+        // start an io thread and donate it to the tokio runtime so we can do blocking IO
+        // inside the thread despite being in a tokio runtime
+        let thread = std::thread::spawn(move || {
+            handle.block_on(actor.run());
+        });
         Ok(Self {
             send,
             cancel,
-            _task: AbortOnDropHandle::new(task),
+            thread: Some(thread),
         })
     }
 
