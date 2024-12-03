@@ -309,11 +309,10 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> anyh
             let packet = SignedPacket::from_bytes(&value)?;
             if packet.timestamp() < expired {
                 debug!("evicting expired packet {}", packet.public_key());
-                let _ = send
-                    .send(Message::CheckExpired {
-                        key: PublicKeyBytes::from_signed_packet(&packet),
-                    })
-                    .await?;
+                send.send(Message::CheckExpired {
+                    key: PublicKeyBytes::from_signed_packet(&packet),
+                })
+                .await?;
             }
         }
         // sleep for the eviction interval so we don't constantly check
