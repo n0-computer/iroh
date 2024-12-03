@@ -1,9 +1,11 @@
-use std::{path::Path, sync::Arc};
+use std::{path::Path, result, time::Duration};
 
 use anyhow::{Context, Result};
 use iroh_metrics::inc;
 use pkarr::SignedPacket;
 use redb::{backends::InMemoryBackend, Database, ReadableTable, TableDefinition};
+use tokio::sync::{mpsc, oneshot};
+use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::info;
 
 use crate::{metrics::Metrics, util::PublicKeyBytes};
@@ -14,7 +16,121 @@ const SIGNED_PACKETS_TABLE: TableDefinition<&SignedPacketsKey, &[u8]> =
 
 #[derive(Debug)]
 pub struct SignedPacketStore {
-    db: Arc<Database>,
+    send: mpsc::Sender<Message>,
+    cancel: CancellationToken,
+    _task: AbortOnDropHandle<()>,
+}
+
+impl Drop for SignedPacketStore {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+    }
+}
+
+enum Message {
+    Upsert {
+        packet: SignedPacket,
+        res: oneshot::Sender<bool>,
+    },
+    Get {
+        key: PublicKeyBytes,
+        res: oneshot::Sender<Option<SignedPacket>>,
+    },
+    Remove {
+        key: PublicKeyBytes,
+        res: oneshot::Sender<bool>,
+    },
+}
+
+struct Actor {
+    db: Database,
+    recv: mpsc::Receiver<Message>,
+    cancel: CancellationToken,
+    max_batch_size: usize,
+    max_batch_time: Duration,
+}
+
+impl Actor {
+    async fn run(self) {
+        match self.run0().await {
+            Ok(()) => {}
+            Err(e) => {
+                tracing::error!("packet store actor failed: {:?}", e);
+            }
+        }
+    }
+
+    async fn run0(mut self) -> anyhow::Result<()> {
+        loop {
+            let transaction = self.db.begin_write()?;
+            let mut tables = Tables::new(&transaction)?;
+            let timeout = tokio::time::sleep(self.max_batch_time);
+            tokio::pin!(timeout);
+            loop {
+                for _ in 0..self.max_batch_size {
+                    tokio::select! {
+                        _ = self.cancel.cancelled() => {
+                            drop(tables);
+                            transaction.commit()?;
+                            return Ok(());
+                        }
+                        _ = &mut timeout => break,
+                        Some(msg) = self.recv.recv() => {
+                            match msg {
+                                Message::Get { key, res } => {
+                                    let packet = get_packet(&tables.signed_packets, &key)?;
+                                    res.send(packet).ok();
+                                }
+                                Message::Upsert { packet, res } => {
+                                    let key = PublicKeyBytes::from_signed_packet(&packet);
+                                    let mut replaced = false;
+                                    if let Some(existing) = get_packet(&tables.signed_packets, &key)? {
+                                        if existing.more_recent_than(&packet) {
+                                            res.send(false).ok();
+                                            continue;
+                                        } else {
+                                            replaced = true;
+                                        }
+                                    }
+                                    let value = packet.as_bytes();
+                                    tables.signed_packets.insert(key.as_bytes(), &value[..])?;
+                                    if replaced {
+                                        inc!(Metrics, store_packets_updated);
+                                    } else {
+                                        inc!(Metrics, store_packets_inserted);
+                                    }
+                                    res.send(true).ok();
+                                }
+                                Message::Remove { key, res } => {
+                                    let updated =
+                                        tables.signed_packets.remove(key.as_bytes())?.is_some()
+                                    ;
+                                    if updated {
+                                        inc!(Metrics, store_packets_removed);
+                                    }
+                                    res.send(updated).ok();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A struct similar to [`redb::Table`] but for all tables that make up the
+/// signed packet store.
+pub(super) struct Tables<'a> {
+    pub signed_packets: redb::Table<'a, &'static SignedPacketsKey, &'static [u8]>,
+}
+
+impl<'txn> Tables<'txn> {
+    pub fn new(tx: &'txn redb::WriteTransaction) -> result::Result<Self, redb::TableError> {
+        Ok(Self {
+            signed_packets: tx.open_table(SIGNED_PACKETS_TABLE)?,
+        })
+    }
 }
 
 impl SignedPacketStore {
@@ -42,73 +158,46 @@ impl SignedPacketStore {
     }
 
     pub fn open(db: Database) -> Result<Self> {
+        // create tables
         let write_tx = db.begin_write()?;
-        {
-            let _table = write_tx.open_table(SIGNED_PACKETS_TABLE)?;
-        }
+        let _ = Tables::new(&write_tx)?;
         write_tx.commit()?;
-        Ok(Self { db: Arc::new(db) })
+        let (send, recv) = mpsc::channel(1024);
+        let cancel = CancellationToken::new();
+        let cancel2 = cancel.clone();
+        let actor = Actor {
+            db,
+            recv,
+            cancel: cancel2,
+            max_batch_size: 1024,
+            max_batch_time: Duration::from_secs(1),
+        };
+        let task = tokio::spawn(async move { actor.run().await });
+        Ok(Self {
+            send,
+            cancel,
+            _task: AbortOnDropHandle::new(task),
+        })
     }
 
     pub async fn upsert(&self, packet: SignedPacket) -> Result<bool> {
-        let key = PublicKeyBytes::from_signed_packet(&packet);
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let tx = db.begin_write()?;
-            let mut replaced = false;
-            {
-                let mut table = tx.open_table(SIGNED_PACKETS_TABLE)?;
-                if let Some(existing) = get_packet(&table, &key)? {
-                    if existing.more_recent_than(&packet) {
-                        return Ok(false);
-                    } else {
-                        replaced = true;
-                    }
-                }
-                let value = packet.as_bytes();
-                table.insert(key.as_bytes(), &value[..])?;
-            }
-            tx.commit()?;
-            if replaced {
-                inc!(Metrics, store_packets_updated);
-            } else {
-                inc!(Metrics, store_packets_inserted);
-            }
-            Ok(true)
-        })
-        .await?
+        let (tx, rx) = oneshot::channel();
+        self.send.send(Message::Upsert { packet, res: tx }).await?;
+        Ok(rx.await?)
     }
 
     pub async fn get(&self, key: &PublicKeyBytes) -> Result<Option<SignedPacket>> {
-        let db = self.db.clone();
-        let key = *key;
-        let res = tokio::task::spawn_blocking(move || {
-            let tx = db.begin_read()?;
-            let table = tx.open_table(SIGNED_PACKETS_TABLE)?;
-            get_packet(&table, &key)
-        })
-        .await??;
-        Ok(res)
+        let (tx, rx) = oneshot::channel();
+        self.send.send(Message::Get { key: *key, res: tx }).await?;
+        Ok(rx.await?)
     }
 
     pub async fn remove(&self, key: &PublicKeyBytes) -> Result<bool> {
-        let db = self.db.clone();
-        let key = *key;
-        tokio::task::spawn_blocking(move || {
-            let tx = db.begin_write()?;
-            let updated = {
-                let mut table = tx.open_table(SIGNED_PACKETS_TABLE)?;
-                let did_remove = table.remove(key.as_bytes())?.is_some();
-                #[allow(clippy::let_and_return)]
-                did_remove
-            };
-            tx.commit()?;
-            if updated {
-                inc!(Metrics, store_packets_removed)
-            }
-            Ok(updated)
-        })
-        .await?
+        let (tx, rx) = oneshot::channel();
+        self.send
+            .send(Message::Remove { key: *key, res: tx })
+            .await?;
+        Ok(rx.await?)
     }
 }
 
