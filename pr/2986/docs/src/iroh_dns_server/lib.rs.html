@@ -226,6 +226,9 @@
 <a href="#226" id="226">226</a>
 <a href="#227" id="227">227</a>
 <a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A DNS server and pkarr relay
 
 </span><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
@@ -238,6 +241,9 @@
 <span class="kw">pub mod </span>state;
 <span class="kw">mod </span>store;
 <span class="kw">mod </span>util;
+
+<span class="comment">// Re-export to be able to construct your own dns-server
+</span><span class="kw">pub use </span>store::ZoneStore;
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {

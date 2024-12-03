@@ -107,12 +107,134 @@
 <a href="#107" id="107">107</a>
 <a href="#108" id="108">108</a>
 <a href="#109" id="109">109</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::path::Path;
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a>
+<a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
+<a href="#210" id="210">210</a>
+<a href="#211" id="211">211</a>
+<a href="#212" id="212">212</a>
+<a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a>
+<a href="#217" id="217">217</a>
+<a href="#218" id="218">218</a>
+<a href="#219" id="219">219</a>
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a>
+<a href="#224" id="224">224</a>
+<a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{path::Path, result, time::Duration};
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>pkarr::SignedPacket;
 <span class="kw">use </span>redb::{backends::InMemoryBackend, Database, ReadableTable, TableDefinition};
+<span class="kw">use </span>tokio::sync::{mpsc, oneshot};
+<span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::info;
 
 <span class="kw">use crate</span>::{metrics::Metrics, util::PublicKeyBytes};
@@ -120,10 +242,133 @@
 <span class="kw">pub type </span>SignedPacketsKey = [u8; <span class="number">32</span>];
 <span class="kw">const </span>SIGNED_PACKETS_TABLE: TableDefinition&lt;<span class="kw-2">&amp;</span>SignedPacketsKey, <span class="kw-2">&amp;</span>[u8]&gt; =
     TableDefinition::new(<span class="string">"signed-packets-1"</span>);
+<span class="kw">const </span>MAX_BATCH_SIZE: usize = <span class="number">1024 </span>* <span class="number">64</span>;
+<span class="kw">const </span>MAX_BATCH_TIME: Duration = Duration::from_secs(<span class="number">1</span>);
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>SignedPacketStore {
+    send: mpsc::Sender&lt;Message&gt;,
+    cancel: CancellationToken,
+    thread: <span class="prelude-ty">Option</span>&lt;std::thread::JoinHandle&lt;()&gt;&gt;,
+}
+
+<span class="kw">impl </span>Drop <span class="kw">for </span>SignedPacketStore {
+    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="comment">// cancel the actor
+        </span><span class="self">self</span>.cancel.cancel();
+        <span class="comment">// join the thread. This is important so that Drop implementations that
+        // are called from the actor thread can complete before we return.
+        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(thread) = <span class="self">self</span>.thread.take() {
+            <span class="kw">let _ </span>= thread.join();
+        }
+    }
+}
+
+<span class="kw">enum </span>Message {
+    Upsert {
+        packet: SignedPacket,
+        res: oneshot::Sender&lt;bool&gt;,
+    },
+    Get {
+        key: PublicKeyBytes,
+        res: oneshot::Sender&lt;<span class="prelude-ty">Option</span>&lt;SignedPacket&gt;&gt;,
+    },
+    Remove {
+        key: PublicKeyBytes,
+        res: oneshot::Sender&lt;bool&gt;,
+    },
+}
+
+<span class="kw">struct </span>Actor {
     db: Database,
+    recv: mpsc::Receiver&lt;Message&gt;,
+    cancel: CancellationToken,
+    max_batch_size: usize,
+    max_batch_time: Duration,
+}
+
+<span class="kw">impl </span>Actor {
+    <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) {
+        <span class="kw">match </span><span class="self">self</span>.run0().<span class="kw">await </span>{
+            <span class="prelude-val">Ok</span>(()) =&gt; {}
+            <span class="prelude-val">Err</span>(e) =&gt; {
+                <span class="self">self</span>.cancel.cancel();
+                <span class="macro">tracing::error!</span>(<span class="string">"packet store actor failed: {:?}"</span>, e);
+            }
+        }
+    }
+
+    <span class="kw">async fn </span>run0(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; anyhow::Result&lt;()&gt; {
+        <span class="kw">loop </span>{
+            <span class="kw">let </span>transaction = <span class="self">self</span>.db.begin_write()<span class="question-mark">?</span>;
+            <span class="kw">let </span><span class="kw-2">mut </span>tables = Tables::new(<span class="kw-2">&amp;</span>transaction)<span class="question-mark">?</span>;
+            <span class="kw">let </span>timeout = tokio::time::sleep(<span class="self">self</span>.max_batch_time);
+            <span class="macro">tokio::pin!</span>(timeout);
+            <span class="kw">for _ in </span><span class="number">0</span>..<span class="self">self</span>.max_batch_size {
+                <span class="macro">tokio::select!</span> {
+                    <span class="kw">_ </span>= <span class="self">self</span>.cancel.cancelled() =&gt; {
+                        drop(tables);
+                        transaction.commit()<span class="question-mark">?</span>;
+                        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                    }
+                    <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>timeout =&gt; <span class="kw">break</span>,
+                    <span class="prelude-val">Some</span>(msg) = <span class="self">self</span>.recv.recv() =&gt; {
+                        <span class="kw">match </span>msg {
+                            Message::Get { key, res } =&gt; {
+                                <span class="kw">let </span>packet = get_packet(<span class="kw-2">&amp;</span>tables.signed_packets, <span class="kw-2">&amp;</span>key)<span class="question-mark">?</span>;
+                                res.send(packet).ok();
+                            }
+                            Message::Upsert { packet, res } =&gt; {
+                                <span class="kw">let </span>key = PublicKeyBytes::from_signed_packet(<span class="kw-2">&amp;</span>packet);
+                                <span class="kw">let </span><span class="kw-2">mut </span>replaced = <span class="bool-val">false</span>;
+                                <span class="kw">if let </span><span class="prelude-val">Some</span>(existing) = get_packet(<span class="kw-2">&amp;</span>tables.signed_packets, <span class="kw-2">&amp;</span>key)<span class="question-mark">? </span>{
+                                    <span class="kw">if </span>existing.more_recent_than(<span class="kw-2">&amp;</span>packet) {
+                                        res.send(<span class="bool-val">false</span>).ok();
+                                        <span class="kw">continue</span>;
+                                    } <span class="kw">else </span>{
+                                        replaced = <span class="bool-val">true</span>;
+                                    }
+                                }
+                                <span class="kw">let </span>value = packet.as_bytes();
+                                tables.signed_packets.insert(key.as_bytes(), <span class="kw-2">&amp;</span>value[..])<span class="question-mark">?</span>;
+                                <span class="kw">if </span>replaced {
+                                    <span class="macro">inc!</span>(Metrics, store_packets_updated);
+                                } <span class="kw">else </span>{
+                                    <span class="macro">inc!</span>(Metrics, store_packets_inserted);
+                                }
+                                res.send(<span class="bool-val">true</span>).ok();
+                            }
+                            Message::Remove { key, res } =&gt; {
+                                <span class="kw">let </span>updated =
+                                    tables.signed_packets.remove(key.as_bytes())<span class="question-mark">?</span>.is_some()
+                                ;
+                                <span class="kw">if </span>updated {
+                                    <span class="macro">inc!</span>(Metrics, store_packets_removed);
+                                }
+                                res.send(updated).ok();
+                            }
+                        }
+                    }
+                }
+            }
+            drop(tables);
+            transaction.commit()<span class="question-mark">?</span>;
+        }
+    }
+}
+
+<span class="doccomment">/// A struct similar to [`redb::Table`] but for all tables that make up the
+/// signed packet store.
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Tables&lt;<span class="lifetime">'a</span>&gt; {
+    <span class="kw">pub </span>signed_packets: redb::Table&lt;<span class="lifetime">'a</span>, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>SignedPacketsKey, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>[u8]&gt;,
+}
+
+<span class="kw">impl</span>&lt;<span class="lifetime">'txn</span>&gt; Tables&lt;<span class="lifetime">'txn</span>&gt; {
+    <span class="kw">pub fn </span>new(tx: <span class="kw-2">&amp;</span><span class="lifetime">'txn </span>redb::WriteTransaction) -&gt; result::Result&lt;<span class="self">Self</span>, redb::TableError&gt; {
+        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+            signed_packets: tx.open_table(SIGNED_PACKETS_TABLE)<span class="question-mark">?</span>,
+        })
+    }
 }
 
 <span class="kw">impl </span>SignedPacketStore {
@@ -151,58 +396,53 @@
     }
 
     <span class="kw">pub fn </span>open(db: Database) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>write_tx = db.begin_write()<span class="question-mark">?</span>;
-        {
-            <span class="kw">let </span>_table = write_tx.open_table(SIGNED_PACKETS_TABLE)<span class="question-mark">?</span>;
-        }
+        <span class="comment">// create tables
+        </span><span class="kw">let </span>write_tx = db.begin_write()<span class="question-mark">?</span>;
+        <span class="kw">let _ </span>= Tables::new(<span class="kw-2">&amp;</span>write_tx)<span class="question-mark">?</span>;
         write_tx.commit()<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{ db })
-    }
-
-    <span class="kw">pub fn </span>upsert(<span class="kw-2">&amp;</span><span class="self">self</span>, packet: SignedPacket) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
-        <span class="kw">let </span>key = PublicKeyBytes::from_signed_packet(<span class="kw-2">&amp;</span>packet);
-        <span class="kw">let </span>tx = <span class="self">self</span>.db.begin_write()<span class="question-mark">?</span>;
-        <span class="kw">let </span><span class="kw-2">mut </span>replaced = <span class="bool-val">false</span>;
-        {
-            <span class="kw">let </span><span class="kw-2">mut </span>table = tx.open_table(SIGNED_PACKETS_TABLE)<span class="question-mark">?</span>;
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(existing) = get_packet(<span class="kw-2">&amp;</span>table, <span class="kw-2">&amp;</span>key)<span class="question-mark">? </span>{
-                <span class="kw">if </span>existing.more_recent_than(<span class="kw-2">&amp;</span>packet) {
-                    <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
-                } <span class="kw">else </span>{
-                    replaced = <span class="bool-val">true</span>;
-                }
-            }
-            <span class="kw">let </span>value = packet.as_bytes();
-            table.insert(key.as_bytes(), <span class="kw-2">&amp;</span>value[..])<span class="question-mark">?</span>;
-        }
-        tx.commit()<span class="question-mark">?</span>;
-        <span class="kw">if </span>replaced {
-            <span class="macro">inc!</span>(Metrics, store_packets_updated);
-        } <span class="kw">else </span>{
-            <span class="macro">inc!</span>(Metrics, store_packets_inserted);
-        }
-        <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
-    }
-
-    <span class="kw">pub fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>PublicKeyBytes) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;SignedPacket&gt;&gt; {
-        <span class="kw">let </span>tx = <span class="self">self</span>.db.begin_read()<span class="question-mark">?</span>;
-        <span class="kw">let </span>table = tx.open_table(SIGNED_PACKETS_TABLE)<span class="question-mark">?</span>;
-        get_packet(<span class="kw-2">&amp;</span>table, key)
-    }
-
-    <span class="kw">pub fn </span>remove(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>PublicKeyBytes) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
-        <span class="kw">let </span>tx = <span class="self">self</span>.db.begin_write()<span class="question-mark">?</span>;
-        <span class="kw">let </span>updated = {
-            <span class="kw">let </span><span class="kw-2">mut </span>table = tx.open_table(SIGNED_PACKETS_TABLE)<span class="question-mark">?</span>;
-            <span class="kw">let </span>did_remove = table.remove(key.as_bytes())<span class="question-mark">?</span>.is_some();
-            <span class="attr">#[allow(clippy::let_and_return)]
-            </span>did_remove
+        <span class="kw">let </span>(send, recv) = mpsc::channel(<span class="number">1024</span>);
+        <span class="kw">let </span>cancel = CancellationToken::new();
+        <span class="kw">let </span>cancel2 = cancel.clone();
+        <span class="kw">let </span>actor = Actor {
+            db,
+            recv,
+            cancel: cancel2,
+            max_batch_size: MAX_BATCH_SIZE,
+            max_batch_time: MAX_BATCH_TIME,
         };
-        tx.commit()<span class="question-mark">?</span>;
-        <span class="kw">if </span>updated {
-            <span class="macro">inc!</span>(Metrics, store_packets_removed)
-        }
-        <span class="prelude-val">Ok</span>(updated)
+        <span class="comment">// start an io thread and donate it to the tokio runtime so we can do blocking IO
+        // inside the thread despite being in a tokio runtime
+        </span><span class="kw">let </span>handle = tokio::runtime::Handle::try_current()<span class="question-mark">?</span>;
+        <span class="kw">let </span>thread = std::thread::Builder::new()
+            .name(<span class="string">"packet-store-actor"</span>.into())
+            .spawn(<span class="kw">move </span>|| {
+                handle.block_on(actor.run());
+            })<span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+            send,
+            cancel,
+            thread: <span class="prelude-val">Some</span>(thread),
+        })
+    }
+
+    <span class="kw">pub async fn </span>upsert(<span class="kw-2">&amp;</span><span class="self">self</span>, packet: SignedPacket) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
+        <span class="kw">let </span>(tx, rx) = oneshot::channel();
+        <span class="self">self</span>.send.send(Message::Upsert { packet, res: tx }).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(rx.<span class="kw">await</span><span class="question-mark">?</span>)
+    }
+
+    <span class="kw">pub async fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>PublicKeyBytes) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;SignedPacket&gt;&gt; {
+        <span class="kw">let </span>(tx, rx) = oneshot::channel();
+        <span class="self">self</span>.send.send(Message::Get { key: <span class="kw-2">*</span>key, res: tx }).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(rx.<span class="kw">await</span><span class="question-mark">?</span>)
+    }
+
+    <span class="kw">pub async fn </span>remove(<span class="kw-2">&amp;</span><span class="self">self</span>, key: <span class="kw-2">&amp;</span>PublicKeyBytes) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
+        <span class="kw">let </span>(tx, rx) = oneshot::channel();
+        <span class="self">self</span>.send
+            .send(Message::Remove { key: <span class="kw-2">*</span>key, res: tx })
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(rx.<span class="kw">await</span><span class="question-mark">?</span>)
     }
 }
 
