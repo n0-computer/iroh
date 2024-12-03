@@ -790,7 +790,7 @@ where
 
 /// Splits a single [`ReceivedMessage::ReceivedPacket`] frame into datagrams.
 ///
-/// This is splits packets joined by [`PacketizeIter`] back into individual datagrams.  See
+/// This splits packets joined by [`PacketizeIter`] back into individual datagrams.  See
 /// that struct for more details.
 #[derive(Debug)]
 struct PacketSplitIter {
