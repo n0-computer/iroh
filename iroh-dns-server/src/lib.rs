@@ -11,6 +11,9 @@ pub mod state;
 mod store;
 mod util;
 
+// Re-export to be able to construct your own dns-server
+pub use store::ZoneStore;
+
 #[cfg(test)]
 mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
