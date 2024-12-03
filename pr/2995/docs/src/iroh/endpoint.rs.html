@@ -1910,6 +1910,14 @@
 <a href="#1910" id="1910">1910</a>
 <a href="#1911" id="1911">1911</a>
 <a href="#1912" id="1912">1912</a>
+<a href="#1913" id="1913">1913</a>
+<a href="#1914" id="1914">1914</a>
+<a href="#1915" id="1915">1915</a>
+<a href="#1916" id="1916">1916</a>
+<a href="#1917" id="1917">1917</a>
+<a href="#1918" id="1918">1918</a>
+<a href="#1919" id="1919">1919</a>
+<a href="#1920" id="1920">1920</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
@@ -1938,7 +1946,7 @@
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>iroh_base::relay_map::RelayMap;
 <span class="kw">use </span>pin_project::pin_project;
-<span class="kw">use </span>tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
+<span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{debug, instrument, trace, warn};
 <span class="kw">use </span>url::Url;
 
@@ -2866,38 +2874,46 @@
 
     </span><span class="doccomment">/// Closes the QUIC endpoint and the magic socket.
     ///
-    /// This will close all open QUIC connections with the provided error_code and
-    /// reason. See [`quinn::Connection`] for details on how these are interpreted.
+    /// This will close any remaining open [`Connection`]s with an error code
+    /// of `0` and an empty reason.  Though it is best practice to close those
+    /// explicitly before with a custom error code and reason.
     ///
-    /// It will then wait for all connections to actually be shutdown, and afterwards close
-    /// the magic socket.  Be aware however that the underlying UDP sockets are only closed
+    /// It will then make a best effort to wait for all close notifications to be
+    /// acknowledged by the peers, re-transmitting them if needed. This ensures the
+    /// peers are aware of the closed connections instead of having to wait for a timeout
+    /// on the connection. Once all connections are closed or timed out, the magic socket is closed.
+    ///
+    /// Be aware however that the underlying UDP sockets are only closed
     /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
     /// are dropped.
     ///
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
-    </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>, error_code: VarInt, reason: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>Endpoint {
-            msock,
-            endpoint,
-            cancel_token,
-            ..
-        } = <span class="self">self</span>;
-        cancel_token.cancel();
+    </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">if </span><span class="self">self</span>.is_closed() {
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+        }
+
+        <span class="self">self</span>.cancel_token.cancel();
         <span class="macro">tracing::debug!</span>(<span class="string">"Closing connections"</span>);
-        endpoint.close(error_code, reason);
-        endpoint.wait_idle().<span class="kw">await</span>;
+        <span class="self">self</span>.endpoint.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
+        <span class="self">self</span>.endpoint.wait_idle().<span class="kw">await</span>;
 
         <span class="macro">tracing::debug!</span>(<span class="string">"Connections closed"</span>);
-
-        msock.close().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.msock.close().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="doccomment">/// Check if this endpoint is still alive, or already closed.
+    </span><span class="kw">pub fn </span>is_closed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="self">self</span>.cancel_token.is_cancelled() &amp;&amp; <span class="self">self</span>.msock.is_closed()
     }
 
     <span class="comment">// # Remaining private methods
 
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>cancelled(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; WaitForCancellationFuture&lt;<span class="lifetime">'_</span>&gt; {
-        <span class="self">self</span>.cancel_token.cancelled()
+    </span><span class="doccomment">/// Expose the internal [`CancellationToken`] to link shutdowns.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>cancel_token(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>CancellationToken {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.cancel_token
     }
 
     <span class="doccomment">/// Return the quic mapped address for this `node_id` and possibly start discovery
@@ -3512,7 +3528,7 @@
 
         <span class="macro">info!</span>(<span class="string">"closing endpoint"</span>);
         <span class="comment">// close the endpoint and restart it
-        </span>endpoint.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>).<span class="kw">await</span>.unwrap();
+        </span>endpoint.close().<span class="kw">await</span>.unwrap();
 
         <span class="macro">info!</span>(<span class="string">"restarting endpoint"</span>);
         <span class="comment">// now restart it and check the addressing info of the peer
@@ -3611,7 +3627,7 @@
                 send.stopped().<span class="kw">await</span>.unwrap();
                 recv.read_to_end(<span class="number">0</span>).<span class="kw">await</span>.unwrap();
                 <span class="macro">info!</span>(<span class="string">"client finished"</span>);
-                ep.close(<span class="number">0u32</span>.into(), <span class="kw-2">&amp;</span>[]).<span class="kw">await</span>.unwrap();
+                ep.close().<span class="kw">await</span>.unwrap();
                 <span class="macro">info!</span>(<span class="string">"client closed"</span>);
             }
             .instrument(<span class="macro">error_span!</span>(<span class="string">"client"</span>, %i))

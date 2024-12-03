@@ -3917,6 +3917,72 @@
 <a href="#3917" id="3917">3917</a>
 <a href="#3918" id="3918">3918</a>
 <a href="#3919" id="3919">3919</a>
+<a href="#3920" id="3920">3920</a>
+<a href="#3921" id="3921">3921</a>
+<a href="#3922" id="3922">3922</a>
+<a href="#3923" id="3923">3923</a>
+<a href="#3924" id="3924">3924</a>
+<a href="#3925" id="3925">3925</a>
+<a href="#3926" id="3926">3926</a>
+<a href="#3927" id="3927">3927</a>
+<a href="#3928" id="3928">3928</a>
+<a href="#3929" id="3929">3929</a>
+<a href="#3930" id="3930">3930</a>
+<a href="#3931" id="3931">3931</a>
+<a href="#3932" id="3932">3932</a>
+<a href="#3933" id="3933">3933</a>
+<a href="#3934" id="3934">3934</a>
+<a href="#3935" id="3935">3935</a>
+<a href="#3936" id="3936">3936</a>
+<a href="#3937" id="3937">3937</a>
+<a href="#3938" id="3938">3938</a>
+<a href="#3939" id="3939">3939</a>
+<a href="#3940" id="3940">3940</a>
+<a href="#3941" id="3941">3941</a>
+<a href="#3942" id="3942">3942</a>
+<a href="#3943" id="3943">3943</a>
+<a href="#3944" id="3944">3944</a>
+<a href="#3945" id="3945">3945</a>
+<a href="#3946" id="3946">3946</a>
+<a href="#3947" id="3947">3947</a>
+<a href="#3948" id="3948">3948</a>
+<a href="#3949" id="3949">3949</a>
+<a href="#3950" id="3950">3950</a>
+<a href="#3951" id="3951">3951</a>
+<a href="#3952" id="3952">3952</a>
+<a href="#3953" id="3953">3953</a>
+<a href="#3954" id="3954">3954</a>
+<a href="#3955" id="3955">3955</a>
+<a href="#3956" id="3956">3956</a>
+<a href="#3957" id="3957">3957</a>
+<a href="#3958" id="3958">3958</a>
+<a href="#3959" id="3959">3959</a>
+<a href="#3960" id="3960">3960</a>
+<a href="#3961" id="3961">3961</a>
+<a href="#3962" id="3962">3962</a>
+<a href="#3963" id="3963">3963</a>
+<a href="#3964" id="3964">3964</a>
+<a href="#3965" id="3965">3965</a>
+<a href="#3966" id="3966">3966</a>
+<a href="#3967" id="3967">3967</a>
+<a href="#3968" id="3968">3968</a>
+<a href="#3969" id="3969">3969</a>
+<a href="#3970" id="3970">3970</a>
+<a href="#3971" id="3971">3971</a>
+<a href="#3972" id="3972">3972</a>
+<a href="#3973" id="3973">3973</a>
+<a href="#3974" id="3974">3974</a>
+<a href="#3975" id="3975">3975</a>
+<a href="#3976" id="3976">3976</a>
+<a href="#3977" id="3977">3977</a>
+<a href="#3978" id="3978">3978</a>
+<a href="#3979" id="3979">3979</a>
+<a href="#3980" id="3980">3980</a>
+<a href="#3981" id="3981">3981</a>
+<a href="#3982" id="3982">3982</a>
+<a href="#3983" id="3983">3983</a>
+<a href="#3984" id="3984">3984</a>
+<a href="#3985" id="3985">3985</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -3941,7 +4007,7 @@
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering},
         Arc, RwLock,
     },
     task::{Context, Poll, Waker},
@@ -4105,6 +4171,8 @@
     <span class="doccomment">/// Stores wakers, to be called when relay_recv_ch receives new data.
     </span>network_recv_wakers: parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;,
     network_send_wakers: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
+    <span class="doccomment">/// Counter for ordering of [`MagicSock::poll_recv`] polling order.
+    </span>poll_recv_counter: AtomicUsize,
 
     <span class="doccomment">/// The DNS resolver to be used in this magicsock.
     </span>dns_resolver: DnsResolver,
@@ -4193,7 +4261,7 @@
         <span class="self">self</span>.closing.load(Ordering::Relaxed)
     }
 
-    <span class="kw">fn </span>is_closed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>is_closed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="self">self</span>.closed.load(Ordering::SeqCst)
     }
 
@@ -4569,27 +4637,86 @@
         bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
         metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
     ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
-        <span class="comment">// FIXME: currently ipv4 load results in ipv6 traffic being ignored
-        </span><span class="macro">debug_assert_eq!</span>(bufs.len(), metas.len(), <span class="string">"non matching bufs &amp; metas"</span>);
+        <span class="macro">debug_assert_eq!</span>(bufs.len(), metas.len(), <span class="string">"non matching bufs &amp; metas"</span>);
         <span class="kw">if </span><span class="self">self</span>.is_closed() {
             <span class="kw">return </span>Poll::Pending;
         }
 
-        <span class="comment">// order of polling is: UDPv4, UDPv6, relay
-        </span><span class="kw">let </span>(msgs, from_ipv4) = <span class="kw">match </span><span class="self">self</span>.pconn4.poll_recv(cx, bufs, metas)<span class="question-mark">? </span>{
-            Poll::Pending | Poll::Ready(<span class="number">0</span>) =&gt; <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.pconn6 {
-                <span class="prelude-val">Some</span>(conn) =&gt; <span class="kw">match </span>conn.poll_recv(cx, bufs, metas)<span class="question-mark">? </span>{
-                    Poll::Pending | Poll::Ready(<span class="number">0</span>) =&gt; {
-                        <span class="kw">return </span><span class="self">self</span>.poll_recv_relay(cx, bufs, metas);
+        <span class="comment">// Three macros to help polling: they return if they get a result, execution
+        // continues if they were Pending and we need to poll others (or finally return
+        // Pending).
+        </span><span class="macro">macro_rules!</span> poll_ipv4 {
+            () =&gt; {
+                <span class="kw">match </span><span class="self">self</span>.pconn4.poll_recv(cx, bufs, metas)<span class="question-mark">? </span>{
+                    Poll::Pending | Poll::Ready(<span class="number">0</span>) =&gt; {}
+                    Poll::Ready(n) =&gt; {
+                        <span class="self">self</span>.process_udp_datagrams(<span class="bool-val">true</span>, <span class="kw-2">&amp;mut </span>bufs[..n], <span class="kw-2">&amp;mut </span>metas[..n]);
+                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(n));
                     }
-                    Poll::Ready(n) =&gt; (n, <span class="bool-val">false</span>),
-                },
-                <span class="prelude-val">None </span>=&gt; {
-                    <span class="kw">return </span><span class="self">self</span>.poll_recv_relay(cx, bufs, metas);
                 }
-            },
-            Poll::Ready(n) =&gt; (n, <span class="bool-val">true</span>),
-        };
+            };
+        }
+        <span class="macro">macro_rules!</span> poll_ipv6 {
+            () =&gt; {
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>pconn) = <span class="self">self</span>.pconn6 {
+                    <span class="kw">match </span>pconn.poll_recv(cx, bufs, metas)<span class="question-mark">? </span>{
+                        Poll::Pending | Poll::Ready(<span class="number">0</span>) =&gt; {}
+                        Poll::Ready(n) =&gt; {
+                            <span class="self">self</span>.process_udp_datagrams(<span class="bool-val">false</span>, <span class="kw-2">&amp;mut </span>bufs[..n], <span class="kw-2">&amp;mut </span>metas[..n]);
+                            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(n));
+                        }
+                    }
+                }
+            };
+        }
+        <span class="macro">macro_rules!</span> poll_relay {
+            () =&gt; {
+                <span class="kw">match </span><span class="self">self</span>.poll_recv_relay(cx, bufs, metas) {
+                    Poll::Pending =&gt; {}
+                    Poll::Ready(n) =&gt; <span class="kw">return </span>Poll::Ready(n),
+                }
+            };
+        }
+
+        <span class="kw">let </span>counter = <span class="self">self</span>.poll_recv_counter.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
+        <span class="kw">match </span>counter % <span class="number">3 </span>{
+            <span class="number">0 </span>=&gt; {
+                <span class="comment">// order of polling: UDPv4, UDPv6, relay
+                </span><span class="macro">poll_ipv4!</span>();
+                <span class="macro">poll_ipv6!</span>();
+                <span class="macro">poll_relay!</span>();
+                Poll::Pending
+            }
+            <span class="number">1 </span>=&gt; {
+                <span class="comment">// order of polling: UDPv6, relay, UDPv4
+                </span><span class="macro">poll_ipv6!</span>();
+                <span class="macro">poll_relay!</span>();
+                <span class="macro">poll_ipv4!</span>();
+                Poll::Pending
+            }
+            <span class="kw">_ </span>=&gt; {
+                <span class="comment">// order of polling: relay, UDPv4, UDPv6
+                </span><span class="macro">poll_relay!</span>();
+                <span class="macro">poll_ipv4!</span>();
+                <span class="macro">poll_ipv6!</span>();
+                Poll::Pending
+            }
+        }
+    }
+
+    <span class="doccomment">/// Process datagrams received from UDP sockets.
+    ///
+    /// All the `bufs` and `metas` should have initialized packets in them.
+    ///
+    /// This fixes up the datagrams to use the correct [`QuicMappedAddr`] and extracts DISCO
+    /// packets, processing them inside the magic socket.
+    </span><span class="kw">fn </span>process_udp_datagrams(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        from_ipv4: bool,
+        bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
+        metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
+    ) {
+        <span class="macro">debug_assert_eq!</span>(bufs.len(), metas.len(), <span class="string">"non matching bufs &amp; metas"</span>);
 
         <span class="comment">// Adding the IP address we received something on results in Quinn using this
         // address on the send path to send from.  However we let Quinn use a
@@ -4611,77 +4738,83 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>quic_packets_total = <span class="number">0</span>;
 
-        <span class="kw">for </span>(meta, buf) <span class="kw">in </span>metas.iter_mut().zip(bufs.iter_mut()).take(msgs) {
-            <span class="kw">let </span><span class="kw-2">mut </span>is_quic = <span class="bool-val">false</span>;
-            <span class="kw">let </span><span class="kw-2">mut </span>quic_packets_count = <span class="number">0</span>;
+        <span class="kw">for </span>(meta, buf) <span class="kw">in </span>metas.iter_mut().zip(bufs.iter_mut()) {
+            <span class="kw">let </span><span class="kw-2">mut </span>buf_contains_quic_datagrams = <span class="bool-val">false</span>;
+            <span class="kw">let </span><span class="kw-2">mut </span>quic_datagram_count = <span class="number">0</span>;
             <span class="kw">if </span>meta.len &gt; meta.stride {
                 <span class="macro">trace!</span>(%meta.len, %meta.stride, <span class="string">"GRO datagram received"</span>);
                 <span class="macro">inc!</span>(MagicsockMetrics, recv_gro_datagrams);
             }
 
-            <span class="comment">// find disco and stun packets and forward them to the actor
-            </span><span class="kw">for </span>packet <span class="kw">in </span>buf[..meta.len].chunks_mut(meta.stride) {
-                <span class="kw">if </span>packet.len() &lt; meta.stride {
+            <span class="comment">// Chunk through the datagrams in this GRO payload to find disco and stun
+            // packets and forward them to the actor
+            </span><span class="kw">for </span>datagram <span class="kw">in </span>buf[..meta.len].chunks_mut(meta.stride) {
+                <span class="kw">if </span>datagram.len() &lt; meta.stride {
                     <span class="macro">trace!</span>(
-                        len = %packet.len(),
+                        len = %datagram.len(),
                         %meta.stride,
                         <span class="string">"Last GRO datagram smaller than stride"</span>,
                     );
                 }
 
-                <span class="kw">let </span>packet_is_quic = <span class="kw">if </span>stun::is(packet) {
+                <span class="comment">// Detect DISCO and STUN datagrams and process them.  Overwrite the first
+                // byte of those packets with zero to make Quinn ignore the packet.  This
+                // relies on quinn::EndpointConfig::grease_quic_bit being set to `false`,
+                // which we do in Endpoint::bind.
+                </span><span class="kw">if </span>stun::is(datagram) {
                     <span class="macro">trace!</span>(src = %meta.addr, len = %meta.stride, <span class="string">"UDP recv: stun packet"</span>);
-                    <span class="kw">let </span>packet2 = Bytes::copy_from_slice(packet);
+                    <span class="kw">let </span>packet2 = Bytes::copy_from_slice(datagram);
                     <span class="self">self</span>.net_reporter.receive_stun_packet(packet2, meta.addr);
-                    <span class="bool-val">false
-                </span>} <span class="kw">else if let </span><span class="prelude-val">Some</span>((sender, sealed_box)) = disco::source_and_box(packet) {
-                    <span class="comment">// Disco?
-                    </span><span class="macro">trace!</span>(src = %meta.addr, len = %meta.stride, <span class="string">"UDP recv: disco packet"</span>);
+                    datagram[<span class="number">0</span>] = <span class="number">0u8</span>;
+                } <span class="kw">else if let </span><span class="prelude-val">Some</span>((sender, sealed_box)) = disco::source_and_box(datagram) {
+                    <span class="macro">trace!</span>(src = %meta.addr, len = %meta.stride, <span class="string">"UDP recv: disco packet"</span>);
                     <span class="self">self</span>.handle_disco_message(
                         sender,
                         sealed_box,
                         DiscoMessageSource::Udp(meta.addr),
                     );
-                    <span class="bool-val">false
-                </span>} <span class="kw">else </span>{
+                    datagram[<span class="number">0</span>] = <span class="number">0u8</span>;
+                } <span class="kw">else </span>{
                     <span class="macro">trace!</span>(src = %meta.addr, len = %meta.stride, <span class="string">"UDP recv: quic packet"</span>);
                     <span class="kw">if </span>from_ipv4 {
-                        <span class="macro">inc_by!</span>(MagicsockMetrics, recv_data_ipv4, packet.len() <span class="kw">as _</span>);
+                        <span class="macro">inc_by!</span>(MagicsockMetrics, recv_data_ipv4, datagram.len() <span class="kw">as _</span>);
                     } <span class="kw">else </span>{
-                        <span class="macro">inc_by!</span>(MagicsockMetrics, recv_data_ipv6, packet.len() <span class="kw">as _</span>);
+                        <span class="macro">inc_by!</span>(MagicsockMetrics, recv_data_ipv6, datagram.len() <span class="kw">as _</span>);
                     }
-                    <span class="bool-val">true
-                </span>};
-
-                <span class="kw">if </span>packet_is_quic {
-                    quic_packets_count += <span class="number">1</span>;
-                    is_quic = <span class="bool-val">true</span>;
-                } <span class="kw">else </span>{
-                    <span class="comment">// overwrite the first byte of the packets with zero.
-                    // this makes quinn reliably and quickly ignore the packet as long as
-                    // [`quinn::EndpointConfig::grease_quic_bit`] is set to `false`
-                    // (which we always do in Endpoint::bind).
-                    </span>packet[<span class="number">0</span>] = <span class="number">0u8</span>;
-                }
+                    quic_datagram_count += <span class="number">1</span>;
+                    buf_contains_quic_datagrams = <span class="bool-val">true</span>;
+                };
             }
 
-            <span class="kw">if </span>is_quic {
-                <span class="comment">// remap addr
+            <span class="kw">if </span>buf_contains_quic_datagrams {
+                <span class="comment">// Update the NodeMap and remap RecvMeta to the QuicMappedAddr.
                 </span><span class="kw">match </span><span class="self">self</span>.node_map.receive_udp(meta.addr) {
                     <span class="prelude-val">None </span>=&gt; {
-                        <span class="macro">warn!</span>(src = <span class="question-mark">?</span>meta.addr, count = %quic_packets_count, len = meta.len, <span class="string">"UDP recv quic packets: no node state found, skipping"</span>);
-                        <span class="comment">// if we have no node state for the from addr, set len to 0 to make quinn skip the buf completely.
+                        <span class="macro">warn!</span>(
+                            src = <span class="question-mark">?</span>meta.addr,
+                            count = %quic_datagram_count,
+                            len = meta.len,
+                            <span class="string">"UDP recv quic packets: no node state found, skipping"</span>,
+                        );
+                        <span class="comment">// If we have no node state for the from addr, set len to 0 to make
+                        // quinn skip the buf completely.
                         </span>meta.len = <span class="number">0</span>;
                     }
                     <span class="prelude-val">Some</span>((node_id, quic_mapped_addr)) =&gt; {
-                        <span class="macro">trace!</span>(src = <span class="question-mark">?</span>meta.addr, node = %node_id.fmt_short(), count = %quic_packets_count, len = meta.len, <span class="string">"UDP recv quic packets"</span>);
-                        quic_packets_total += quic_packets_count;
+                        <span class="macro">trace!</span>(
+                            src = <span class="question-mark">?</span>meta.addr,
+                            node = %node_id.fmt_short(),
+                            count = %quic_datagram_count,
+                            len = meta.len,
+                            <span class="string">"UDP recv quic packets"</span>,
+                        );
+                        quic_packets_total += quic_datagram_count;
                         meta.addr = quic_mapped_addr.<span class="number">0</span>;
                     }
                 }
             } <span class="kw">else </span>{
-                <span class="comment">// if there is no non-stun,non-disco packet in the chunk, set len to zero to make
-                // quinn skip the buf completely.
+                <span class="comment">// If all datagrams in this buf are DISCO or STUN, set len to zero to make
+                // Quinn skip the buf completely.
                 </span>meta.len = <span class="number">0</span>;
             }
             <span class="comment">// Normalize local_ip
@@ -4692,8 +4825,6 @@
             <span class="macro">inc_by!</span>(MagicsockMetrics, recv_datagrams, quic_packets_total <span class="kw">as _</span>);
             <span class="macro">trace!</span>(<span class="string">"UDP recv: {} packets"</span>, quic_packets_total);
         }
-
-        Poll::Ready(<span class="prelude-val">Ok</span>(msgs))
     }
 
     <span class="attr">#[instrument(skip_all)]
@@ -5317,6 +5448,7 @@
             relay_recv_receiver: parking_lot::Mutex::new(relay_recv_receiver),
             network_recv_wakers: parking_lot::Mutex::new(<span class="prelude-val">None</span>),
             network_send_wakers: Arc::new(parking_lot::Mutex::new(<span class="prelude-val">None</span>)),
+            poll_recv_counter: AtomicUsize::new(<span class="number">0</span>),
             actor_sender: actor_sender.clone(),
             ipv6_reported: Arc::new(AtomicBool::new(<span class="bool-val">false</span>)),
             relay_map,
@@ -7157,8 +7289,8 @@
             <span class="macro">println!</span>(<span class="string">"closing endpoints"</span>);
             <span class="kw">let </span>msock1 = m1.endpoint.magic_sock();
             <span class="kw">let </span>msock2 = m2.endpoint.magic_sock();
-            m1.endpoint.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-            m2.endpoint.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            m1.endpoint.close().<span class="kw">await</span><span class="question-mark">?</span>;
+            m2.endpoint.close().<span class="kw">await</span><span class="question-mark">?</span>;
 
             <span class="macro">assert!</span>(msock1.msock.is_closed());
             <span class="macro">assert!</span>(msock2.msock.is_closed());

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["handle_rpc_request"],"trait":["AbstractNode"]};
