@@ -25,7 +25,7 @@ use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
 use crate::{
     key::{NodeId, PUBLIC_KEY_LENGTH},
-    magicsock::{MagicSock, Metrics as MagicsockMetrics, RelayContents, RelayRecvSender},
+    magicsock::{MagicSock, Metrics as MagicsockMetrics, RelayContents, RelayDatagramsQueue},
 };
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
@@ -53,7 +53,7 @@ struct ConnectedRelayActor {
     /// channel (currently even if there was no write).
     last_write: Instant,
     /// Channel to send received QUIC datagrams on.
-    relay_recv_channel: RelayRecvSender,
+    relay_recv_channel: Arc<RelayDatagramsQueue>,
     url: RelayUrl,
     relay_client: relay::client::Client,
     relay_client_receiver: relay::client::ClientReceiver,
@@ -84,7 +84,7 @@ impl ConnectedRelayActor {
         url: RelayUrl,
         relay_client: relay::client::Client,
         relay_client_receiver: relay::client::ClientReceiver,
-        relay_recv_channel: RelayRecvSender,
+        relay_recv_channel: Arc<RelayDatagramsQueue>,
     ) -> Self {
         ConnectedRelayActor {
             last_write: Instant::now(),
@@ -282,7 +282,7 @@ impl ConnectedRelayActor {
 
 pub(super) struct RelayActor {
     msock: Arc<MagicSock>,
-    relay_recv_channel: RelayRecvSender,
+    relay_recv_channel: Arc<RelayDatagramsQueue>,
     /// relay Url -> connection to the node
     connected_relays: BTreeMap<RelayUrl, (mpsc::Sender<ConnectedRelayMessage>, JoinHandle<()>)>,
     ping_tasks: JoinSet<(RelayUrl, bool)>,
@@ -290,7 +290,7 @@ pub(super) struct RelayActor {
 }
 
 impl RelayActor {
-    pub(super) fn new(msock: Arc<MagicSock>, recv_channel: RelayRecvSender) -> Self {
+    pub(super) fn new(msock: Arc<MagicSock>, recv_channel: Arc<RelayDatagramsQueue>) -> Self {
         let cancel_token = CancellationToken::new();
         Self {
             msock,
