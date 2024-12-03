@@ -16,7 +16,10 @@ pub use store::ZoneStore;
 
 #[cfg(test)]
 mod tests {
-    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+    use std::{
+        net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+        time::Duration,
+    };
 
     use anyhow::Result;
     use hickory_resolver::{
@@ -173,6 +176,9 @@ mod tests {
 
         assert_eq!(res.node_id, node_id);
         assert_eq!(res.info.relay_url.map(Url::from), Some(relay_url));
+
+        println!("Sleeping for 1 hour");
+        tokio::time::sleep(Duration::from_secs(3600)).await;
 
         server.shutdown().await?;
         Ok(())

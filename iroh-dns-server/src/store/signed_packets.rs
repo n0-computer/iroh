@@ -7,7 +7,7 @@ use pkarr::{system_time, SignedPacket};
 use redb::{backends::InMemoryBackend, Database, ReadableTable, TableDefinition};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{error, info};
 
 use crate::{metrics::Metrics, util::PublicKeyBytes};
 
@@ -21,16 +21,21 @@ const MAX_BATCH_TIME: Duration = Duration::from_secs(1);
 pub struct SignedPacketStore {
     send: mpsc::Sender<Message>,
     cancel: CancellationToken,
-    thread: Option<std::thread::JoinHandle<()>>,
+    write_thread: Option<std::thread::JoinHandle<()>>,
+    evict_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Drop for SignedPacketStore {
     fn drop(&mut self) {
+        println!("Dropping SignedPacketStore");
         // cancel the actor
         self.cancel.cancel();
         // join the thread. This is important so that Drop implementations that
         // are called from the actor thread can complete before we return.
-        if let Some(thread) = self.thread.take() {
+        if let Some(thread) = self.write_thread.take() {
+            let _ = thread.join();
+        }
+        if let Some(thread) = self.evict_thread.take() {
             let _ = thread.join();
         }
     }
@@ -53,7 +58,7 @@ enum Message {
         res: oneshot::Sender<Snapshot>,
     },
     CheckExpired {
-        key: Bytes,
+        key: PublicKeyBytes,
     },
 }
 
@@ -64,9 +69,16 @@ struct Actor {
     options: Options,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct Options {
+    /// Maximum number of packets to process in a single write transaction.
     max_batch_size: usize,
+    /// Maximum time to keep a write transaction open.
     max_batch_time: Duration,
+    /// Time to keep packets in the store before eviction.
+    eviction: Duration,
+    /// Pause between eviction checks.
+    eviction_interval: Duration,
 }
 
 impl Default for Options {
@@ -74,6 +86,8 @@ impl Default for Options {
         Self {
             max_batch_size: MAX_BATCH_SIZE,
             max_batch_time: MAX_BATCH_TIME,
+            eviction: Duration::from_secs(10),
+            eviction_interval: Duration::from_secs(10),
         }
     }
 }
@@ -90,10 +104,12 @@ impl Actor {
     }
 
     async fn run0(&mut self) -> anyhow::Result<()> {
+        let expired_us = Duration::from_secs(10).as_micros() as u64;
         loop {
             let transaction = self.db.begin_write()?;
             let mut tables = Tables::new(&transaction)?;
             let timeout = tokio::time::sleep(self.options.max_batch_time);
+            let expired = system_time() - expired_us;
             tokio::pin!(timeout);
             for _ in 0..self.options.max_batch_size {
                 tokio::select! {
@@ -142,7 +158,13 @@ impl Actor {
                                 res.send(Snapshot::new(&self.db)?).ok();
                             }
                             Message::CheckExpired { key } => {
-                                todo!()
+                                if let Some(packet) = get_packet(&tables.signed_packets, &key)? {
+                                    if packet.timestamp() < expired {
+                                        println!("Removing expired packet");
+                                        let _ = tables.signed_packets.remove(key.as_bytes())?;
+                                        // inc!(Metrics, store_packets_expired);
+                                    }
+                                }
                             }
                         }
                     }
@@ -211,26 +233,36 @@ impl SignedPacketStore {
         let _ = Tables::new(&write_tx)?;
         write_tx.commit()?;
         let (send, recv) = mpsc::channel(1024);
+        let send2 = send.clone();
         let cancel = CancellationToken::new();
         let cancel2 = cancel.clone();
+        let cancel3 = cancel.clone();
+        let options = Default::default();
         let actor = Actor {
             db,
             recv,
             cancel: cancel2,
-            options: Default::default(),
+            options,
         };
         // start an io thread and donate it to the tokio runtime so we can do blocking IO
         // inside the thread despite being in a tokio runtime
         let handle = tokio::runtime::Handle::try_current()?;
-        let thread = std::thread::Builder::new()
+        let write_thread = std::thread::Builder::new()
             .name("packet-store-actor".into())
             .spawn(move || {
                 handle.block_on(actor.run());
             })?;
+        let handle = tokio::runtime::Handle::try_current()?;
+        let evict_thread = std::thread::Builder::new()
+            .name("packet-store-evict".into())
+            .spawn(move || {
+                handle.block_on(evict_task(send2, options, cancel3));
+            })?;
         Ok(Self {
             send,
             cancel,
-            thread: Some(thread),
+            write_thread: Some(write_thread),
+            evict_thread: Some(evict_thread),
         })
     }
 
@@ -266,27 +298,43 @@ fn get_packet(
     Ok(Some(packet))
 }
 
-async fn evict_task(send: mpsc::Sender<Message>, expiry: Duration) -> anyhow::Result<()> {
-    let expiry_ms = expiry.as_micros() as u64;
+async fn evict_task(send: mpsc::Sender<Message>, options: Options, cancel: CancellationToken) {
+    let cancel2 = cancel.clone();
+    let _ = cancel2
+        .run_until_cancelled(async move {
+            info!("starting evict task");
+            if let Err(cause) = evict_task_inner(send, options).await {
+                error!("evict task failed: {:?}", cause);
+            }
+            // when we are done for whatever reason we want to shut down the actor
+            cancel.cancel();
+        })
+        .await;
+}
+
+/// Periodically check for expired packets and remove them.
+async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> anyhow::Result<()> {
+    let expiry_ms = options.eviction.as_micros() as u64;
     loop {
         let (tx, rx) = oneshot::channel();
         let _ = send.send(Message::Snapshot { res: tx }).await.ok();
         let Ok(snapshot) = rx.await else {
-            break;
+            anyhow::bail!("failed to get snapshot");
         };
         let expired = system_time() - expiry_ms;
         for item in snapshot.signed_packets.iter()? {
-            let (key, value) = item?;
+            let (_, value) = item?;
             let value = Bytes::copy_from_slice(value.value());
             let packet = SignedPacket::from_bytes(&value)?;
             if packet.timestamp() < expired {
                 let _ = send
                     .send(Message::CheckExpired {
-                        key: Bytes::copy_from_slice(key.value()),
+                        key: PublicKeyBytes::from_signed_packet(&packet),
                     })
                     .await?;
             }
         }
+        // sleep for the eviction interval so we don't constantly check
+        tokio::time::sleep(options.eviction_interval).await;
     }
-    Ok(())
 }
