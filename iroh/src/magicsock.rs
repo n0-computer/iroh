@@ -797,7 +797,7 @@ impl MagicSock {
                 };
                 match self.process_relay_read_result(recv) {
                     None => {
-                        // Received a DISCO packet that was handled internally.
+                        // Received a DISCO or STUN datagram that was handled internally.
                         continue;
                     }
                     Some((node_id, meta, buf)) => {
