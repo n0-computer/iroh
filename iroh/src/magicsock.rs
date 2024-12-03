@@ -56,7 +56,7 @@ use watchable::Watchable;
 use self::{
     metrics::Metrics as MagicsockMetrics,
     node_map::{NodeMap, PingAction, PingRole, SendPing},
-    relay_actor::{RelayActor, RelayActorMessage, RelayReadResult},
+    relay_actor::{RelayActor, RelayActorMessage, RelayRecvDatagram},
     udp_conn::UdpConn,
 };
 use crate::{
@@ -185,7 +185,7 @@ pub(crate) struct MagicSock {
     /// QUIC datagrams received by relays are put on this channel and consumed by
     /// [`AsyncUdpSocket`].  This channel takes care of the wakers needed by
     /// [`AsyncUdpSocket::poll_recv`].
-    relay_recv_channel: Arc<RelayRecvChannel>,
+    relay_recv_channel: RelayRecvReceiver,
 
     network_send_wakers: Arc<parking_lot::Mutex<Option<Waker>>>,
 
@@ -792,8 +792,18 @@ impl MagicSock {
                 break;
             }
             loop {
-                let Poll::Ready(recv) = self.relay_recv_channel.poll_recv(cx) else {
-                    break 'outer;
+                let recv = match self.relay_recv_channel.poll_recv(cx) {
+                    Poll::Ready(Ok(recv)) => recv,
+                    Poll::Ready(Err(err)) => {
+                        error!("relay_recv_channel closed: {err:#}");
+                        return Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::NotConnected,
+                            "connection closed",
+                        )));
+                    }
+                    Poll::Pending => {
+                        break 'outer;
+                    }
                 };
                 match self.process_relay_read_result(recv) {
                     None => {
@@ -836,7 +846,7 @@ impl MagicSock {
     /// is returned.
     fn process_relay_read_result(
         &self,
-        dm: RelayReadResult,
+        dm: RelayRecvDatagram,
     ) -> Option<(NodeId, quinn_udp::RecvMeta, Bytes)> {
         trace!("process_relay_read {} bytes", dm.buf.len());
         if dm.buf.is_empty() {
@@ -1432,7 +1442,7 @@ impl Handle {
             insecure_skip_relay_cert_verify,
         } = opts;
 
-        let relay_recv_channel = Arc::new(RelayRecvChannel::new());
+        let (relay_recv_tx, relay_recv_rx) = relay_recv_channel();
 
         let (pconn4, pconn6) = bind(addr_v4, addr_v6)?;
         let port = pconn4.port();
@@ -1469,7 +1479,7 @@ impl Handle {
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
-            relay_recv_channel: relay_recv_channel.clone(),
+            relay_recv_channel: relay_recv_rx,
             network_send_wakers: Arc::new(parking_lot::Mutex::new(None)),
             actor_sender: actor_sender.clone(),
             ipv6_reported: Arc::new(AtomicBool::new(false)),
@@ -1493,7 +1503,7 @@ impl Handle {
 
         let mut actor_tasks = JoinSet::default();
 
-        let relay_actor = RelayActor::new(inner.clone(), relay_recv_channel);
+        let relay_actor = RelayActor::new(inner.clone(), relay_recv_tx);
         let relay_actor_cancel_token = relay_actor.cancel_token();
         actor_tasks.spawn(
             async move {
@@ -1633,48 +1643,63 @@ enum DiscoBoxError {
     Parse(anyhow::Error),
 }
 
-/// Channel for [`MagicSock::poll_recv_relay`] to receive QUIC datagrams from relays.
+/// Channel for [`MagicSock::poll_recv_relay`] to receive datagrams from relays.
 ///
-/// This channel contains both the send and receive sides.  The receive side implements the
-/// poll interface with required wakers.
-#[derive(Debug)]
-struct RelayRecvChannel {
-    sender: mpsc::Sender<RelayReadResult>,
-    receiver: parking_lot::Mutex<mpsc::Receiver<RelayReadResult>>,
-    waker: parking_lot::Mutex<Option<Waker>>,
+/// The sender and receiver will take care of the required wakers needed for
+/// [`AsyncUdpSocket::poll_recv`].
+// TODO: This channel should possibly be implemented with concurrent-queue and atomic-waker.
+// Or maybe async-channel.
+fn relay_recv_channel() -> (RelayRecvSender, RelayRecvReceiver) {
+    let (tx, rx) = mpsc::channel(128);
+    let waker = Arc::new(parking_lot::Mutex::new(None));
+    let sender = RelayRecvSender {
+        sender: tx,
+        waker: waker.clone(),
+    };
+    let receiver = RelayRecvReceiver {
+        receiver: parking_lot::Mutex::new(rx),
+        waker,
+    };
+    (sender, receiver)
 }
 
-impl RelayRecvChannel {
-    fn new() -> Self {
-        let (tx, rx) = mpsc::channel(128);
-        Self {
-            sender: tx,
-            receiver: parking_lot::Mutex::new(rx),
-            waker: parking_lot::Mutex::new(None),
-        }
-    }
+#[derive(Debug, Clone)]
+struct RelayRecvSender {
+    sender: mpsc::Sender<RelayRecvDatagram>,
+    waker: Arc<parking_lot::Mutex<Option<Waker>>>,
+}
 
-    fn poll_recv(&self, cx: &mut Context) -> Poll<RelayReadResult> {
-        match self.receiver.lock().try_recv() {
-            Ok(item) => Poll::Ready(item),
-            Err(mpsc::error::TryRecvError::Empty) => {
-                self.waker.lock().replace(cx.waker().clone());
-                Poll::Pending
-            }
-            // The sender lives in this struct, so can not be dropped.
-            Err(mpsc::error::TryRecvError::Disconnected) => unreachable!(),
-        }
-    }
-
+impl RelayRecvSender {
     fn try_send(
         &self,
-        item: RelayReadResult,
-    ) -> Result<(), mpsc::error::TrySendError<RelayReadResult>> {
+        item: RelayRecvDatagram,
+    ) -> Result<(), mpsc::error::TrySendError<RelayRecvDatagram>> {
         self.sender.try_send(item).inspect(|_| {
             if let Some(waker) = self.waker.lock().take() {
                 waker.wake();
             }
         })
+    }
+}
+
+#[derive(Debug)]
+struct RelayRecvReceiver {
+    receiver: parking_lot::Mutex<mpsc::Receiver<RelayRecvDatagram>>,
+    waker: Arc<parking_lot::Mutex<Option<Waker>>>,
+}
+
+impl RelayRecvReceiver {
+    fn poll_recv(&self, cx: &mut Context) -> Poll<Result<RelayRecvDatagram>> {
+        match self.receiver.lock().try_recv() {
+            Ok(item) => Poll::Ready(Ok(item)),
+            Err(mpsc::error::TryRecvError::Empty) => {
+                self.waker.lock().replace(cx.waker().clone());
+                Poll::Pending
+            }
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                Poll::Ready(Err(anyhow!("All RelayRecvSenders disconnected")))
+            }
+        }
     }
 }
 

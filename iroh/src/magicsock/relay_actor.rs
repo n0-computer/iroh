@@ -26,7 +26,7 @@ use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
 use crate::{
     key::{NodeId, PUBLIC_KEY_LENGTH},
-    magicsock::{MagicSock, Metrics as MagicsockMetrics, RelayContents, RelayRecvChannel},
+    magicsock::{MagicSock, Metrics as MagicsockMetrics, RelayContents, RelayRecvSender},
 };
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
@@ -54,7 +54,7 @@ struct ConnectedRelayActor {
     /// channel (currently even if there was no write).
     last_write: Instant,
     /// Channel to send received QUIC datagrams on.
-    relay_recv_channel: Arc<RelayRecvChannel>,
+    relay_recv_channel: RelayRecvSender,
     url: RelayUrl,
     relay_client: relay::client::Client,
     relay_client_receiver: relay::client::ClientReceiver,
@@ -85,7 +85,7 @@ impl ConnectedRelayActor {
         url: RelayUrl,
         relay_client: relay::client::Client,
         relay_client_receiver: relay::client::ClientReceiver,
-        relay_recv_channel: Arc<RelayRecvChannel>,
+        relay_recv_channel: RelayRecvSender,
     ) -> Self {
         ConnectedRelayActor {
             last_write: Instant::now(),
@@ -242,7 +242,7 @@ impl ConnectedRelayActor {
                                 error!("Invalid packet split");
                                 break;
                             };
-                            let res = RelayReadResult {
+                            let res = RelayRecvDatagram {
                                 url: self.url.clone(),
                                 src: remote_node_id,
                                 buf: datagram,
@@ -283,7 +283,7 @@ impl ConnectedRelayActor {
 
 pub(super) struct RelayActor {
     msock: Arc<MagicSock>,
-    relay_recv_channel: Arc<RelayRecvChannel>,
+    relay_recv_channel: RelayRecvSender,
     /// relay Url -> connection to the node
     connected_relays: BTreeMap<RelayUrl, (mpsc::Sender<ConnectedRelayMessage>, JoinHandle<()>)>,
     ping_tasks: JoinSet<(RelayUrl, bool)>,
@@ -291,7 +291,7 @@ pub(super) struct RelayActor {
 }
 
 impl RelayActor {
-    pub(super) fn new(msock: Arc<MagicSock>, recv_channel: Arc<RelayRecvChannel>) -> Self {
+    pub(super) fn new(msock: Arc<MagicSock>, recv_channel: RelayRecvSender) -> Self {
         let cancel_token = CancellationToken::new();
         Self {
             msock,
@@ -724,7 +724,7 @@ impl RelayActor {
 ///
 /// This could be either a QUIC or DISCO packet.
 #[derive(Debug)]
-pub(super) struct RelayReadResult {
+pub(super) struct RelayRecvDatagram {
     pub(super) url: RelayUrl,
     pub(super) src: NodeId,
     pub(super) buf: Bytes,
