@@ -3918,6 +3918,17 @@
 <a href="#3918" id="3918">3918</a>
 <a href="#3919" id="3919">3919</a>
 <a href="#3920" id="3920">3920</a>
+<a href="#3921" id="3921">3921</a>
+<a href="#3922" id="3922">3922</a>
+<a href="#3923" id="3923">3923</a>
+<a href="#3924" id="3924">3924</a>
+<a href="#3925" id="3925">3925</a>
+<a href="#3926" id="3926">3926</a>
+<a href="#3927" id="3927">3927</a>
+<a href="#3928" id="3928">3928</a>
+<a href="#3929" id="3929">3929</a>
+<a href="#3930" id="3930">3930</a>
+<a href="#3931" id="3931">3931</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -5614,7 +5625,18 @@
             <span class="prelude-val">Ok</span>(item) =&gt; Poll::Ready(<span class="prelude-val">Ok</span>(item)),
             <span class="prelude-val">Err</span>(mpsc::error::TryRecvError::Empty) =&gt; {
                 <span class="self">self</span>.waker.lock().replace(cx.waker().clone());
-                Poll::Pending
+
+                <span class="comment">// After installing the waker we need to re-check the channel.
+                </span><span class="kw">match </span><span class="self">self</span>.receiver.lock().try_recv() {
+                    <span class="prelude-val">Ok</span>(item) =&gt; {
+                        <span class="self">self</span>.waker.lock().take();
+                        Poll::Ready(<span class="prelude-val">Ok</span>(item))
+                    }
+                    <span class="prelude-val">Err</span>(mpsc::error::TryRecvError::Empty) =&gt; Poll::Pending,
+                    <span class="prelude-val">Err</span>(mpsc::error::TryRecvError::Disconnected) =&gt; {
+                        Poll::Ready(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"All RelayRecvSenders disconnected"</span>)))
+                    }
+                }
             }
             <span class="prelude-val">Err</span>(mpsc::error::TryRecvError::Disconnected) =&gt; {
                 Poll::Ready(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"All RelayRecvSenders disconnected"</span>)))
