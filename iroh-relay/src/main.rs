@@ -6,6 +6,7 @@
 use std::{
     net::{Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use anyhow::{bail, Context as _, Result};
@@ -56,6 +57,7 @@ struct Cli {
 enum CertMode {
     Manual,
     LetsEncrypt,
+    Reloading,
 }
 
 fn load_certs(
@@ -467,6 +469,38 @@ async fn maybe_load_tls(
             let resolver = state.resolver().clone();
             let server_config = server_config.with_cert_resolver(resolver);
             (relay::CertConfig::LetsEncrypt { state }, server_config)
+        }
+        CertMode::Reloading => {
+            use rustls_cert_file_reader::FileReader;
+            use rustls_cert_reloadable_resolver::{key_provider::Dyn, CertifiedKeyLoader};
+            use webpki::types::{CertificateDer, PrivateKeyDer};
+
+            let cert_path = tls.cert_path();
+            let key_path = tls.key_path();
+            let interval = std::time::Duration::from_secs(60 * 60 * 24);
+
+            let key_reader = rustls_cert_file_reader::FileReader::new(
+                key_path,
+                rustls_cert_file_reader::Format::DER,
+            );
+            let certs_reader = rustls_cert_file_reader::FileReader::new(
+                cert_path,
+                rustls_cert_file_reader::Format::DER,
+            );
+
+            let loader: CertifiedKeyLoader<
+                Dyn,
+                FileReader<PrivateKeyDer<'_>>,
+                FileReader<Vec<CertificateDer<'_>>>,
+            > = CertifiedKeyLoader {
+                key_provider: Dyn(server_config.crypto_provider().key_provider),
+                key_reader,
+                certs_reader,
+            };
+
+            let resolver = Arc::new(relay::ReloadingResolver::init(loader, interval).await?);
+            let server_config = server_config.with_cert_resolver(resolver);
+            (relay::CertConfig::Reloading, server_config)
         }
     };
     Ok(Some(relay::TlsConfig {
