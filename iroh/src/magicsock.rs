@@ -180,11 +180,11 @@ pub(crate) struct MagicSock {
     me: String,
     /// Proxy
     proxy_url: Option<Url>,
-    /// Channel on which datagrams received by relays are passed to AsyncUdpSocket::poll_recv
+    /// Channel to receive datagrams from relays for [`AsyncUdpSocket::poll_recv`].
     ///
     /// QUIC datagrams received by relays are put on this channel and consumed by
-    /// AsyncUdpSocket.  This channel takes care of the wakers needed by
-    /// AsyncUdpSocket::poll_recv.
+    /// [`AsyncUdpSocket`].  This channel takes care of the wakers needed by
+    /// [`AsyncUdpSocket::poll_recv`].
     relay_recv_channel: Arc<RelayRecvChannel>,
 
     network_send_wakers: Arc<parking_lot::Mutex<Option<Waker>>>,
