@@ -1,6 +1,4 @@
-use std::path::Path;
-
-use anyhow::{Context, Result};
+use anyhow::Result;
 use iroh_metrics::inc;
 use pkarr::SignedPacket;
 use redb::{backends::InMemoryBackend, Database, ReadableTable, TableDefinition};
@@ -8,40 +6,25 @@ use tracing::info;
 
 use crate::{metrics::Metrics, util::PublicKeyBytes};
 
+use super::SignedPacketStore;
+
 pub type SignedPacketsKey = [u8; 32];
 const SIGNED_PACKETS_TABLE: TableDefinition<&SignedPacketsKey, &[u8]> =
     TableDefinition::new("signed-packets-1");
 
 #[derive(Debug)]
-pub struct SignedPacketStore {
+pub struct InMemoryStore {
     db: Database,
 }
 
-impl SignedPacketStore {
-    pub fn persistent(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
-        info!("loading packet database from {}", path.to_string_lossy());
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!(
-                    "failed to create database directory at {}",
-                    path.to_string_lossy()
-                )
-            })?;
-        }
-        let db = Database::builder()
-            .create(path)
-            .context("failed to open packet database")?;
-        Self::open(db)
-    }
-
-    pub fn in_memory() -> Result<Self> {
+impl InMemoryStore {
+    pub fn new() -> Result<Self> {
         info!("using in-memory packet database");
         let db = Database::builder().create_with_backend(InMemoryBackend::new())?;
         Self::open(db)
     }
 
-    pub fn open(db: Database) -> Result<Self> {
+    fn open(db: Database) -> Result<Self> {
         let write_tx = db.begin_write()?;
         {
             let _table = write_tx.open_table(SIGNED_PACKETS_TABLE)?;
@@ -49,8 +32,10 @@ impl SignedPacketStore {
         write_tx.commit()?;
         Ok(Self { db })
     }
+}
 
-    pub fn upsert(&self, packet: SignedPacket) -> Result<bool> {
+impl SignedPacketStore for InMemoryStore {
+    fn upsert(&self, packet: SignedPacket) -> Result<bool> {
         let key = PublicKeyBytes::from_signed_packet(&packet);
         let tx = self.db.begin_write()?;
         let mut replaced = false;
@@ -75,13 +60,13 @@ impl SignedPacketStore {
         Ok(true)
     }
 
-    pub fn get(&self, key: &PublicKeyBytes) -> Result<Option<SignedPacket>> {
+    fn get(&self, key: &PublicKeyBytes) -> Result<Option<SignedPacket>> {
         let tx = self.db.begin_read()?;
         let table = tx.open_table(SIGNED_PACKETS_TABLE)?;
         get_packet(&table, key)
     }
 
-    pub fn remove(&self, key: &PublicKeyBytes) -> Result<bool> {
+    fn remove(&self, key: &PublicKeyBytes) -> Result<bool> {
         let tx = self.db.begin_write()?;
         let updated = {
             let mut table = tx.open_table(SIGNED_PACKETS_TABLE)?;

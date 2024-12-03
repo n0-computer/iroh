@@ -3,22 +3,26 @@
 use std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time::Duration};
 
 use anyhow::Result;
+use evictable::EvictableStore;
 use hickory_proto::rr::{Name, RecordSet, RecordType, RrKey};
+use in_memory::InMemoryStore;
 use iroh_metrics::inc;
 use lru::LruCache;
 use parking_lot::Mutex;
+use persistent::PersistentStore;
 use pkarr::{mainline::dht::DhtSettings, PkarrClient, SignedPacket};
 use tracing::{debug, trace};
 use ttl_cache::TtlCache;
 
-use self::signed_packets::SignedPacketStore;
 use crate::{
     config::BootstrapOption,
     metrics::Metrics,
     util::{signed_packet_to_hickory_records_without_origin, PublicKeyBytes},
 };
 
-mod signed_packets;
+mod evictable;
+mod in_memory;
+mod persistent;
 
 /// Cache up to 1 million pkarr zones by default
 pub const DEFAULT_CACHE_CAPACITY: usize = 1024 * 1024;
@@ -38,20 +42,26 @@ pub enum PacketSource {
 #[derive(Debug, Clone)]
 pub struct ZoneStore {
     cache: Arc<Mutex<ZoneCache>>,
-    store: Arc<SignedPacketStore>,
+    store: Arc<dyn SignedPacketStore + Sync + Send>,
     pkarr: Option<Arc<PkarrClient>>,
 }
 
 impl ZoneStore {
     /// Create a persistent store
     pub fn persistent(path: impl AsRef<Path>) -> Result<Self> {
-        let packet_store = SignedPacketStore::persistent(path)?;
+        let packet_store = Arc::new(PersistentStore::new(path)?);
         Ok(Self::new(packet_store))
     }
 
     /// Create an in-memory store.
     pub fn in_memory() -> Result<Self> {
-        let packet_store = SignedPacketStore::in_memory()?;
+        let packet_store = Arc::new(InMemoryStore::new()?);
+        Ok(Self::new(packet_store))
+    }
+
+    /// Create an in-memory store that evicts entries after `max_age`
+    pub fn evictable(max_age: Duration) -> Result<Self> {
+        let packet_store = Arc::new(EvictableStore::new(max_age));
         Ok(Self::new(packet_store))
     }
 
@@ -79,10 +89,10 @@ impl ZoneStore {
     }
 
     /// Create a new zone store.
-    pub fn new(store: SignedPacketStore) -> Self {
+    pub fn new(store: Arc<dyn SignedPacketStore + Send + Sync>) -> Self {
         let zone_cache = ZoneCache::new(DEFAULT_CACHE_CAPACITY);
         Self {
-            store: Arc::new(store),
+            store,
             cache: Arc::new(Mutex::new(zone_cache)),
             pkarr: None,
         }
@@ -152,6 +162,12 @@ impl ZoneStore {
             Ok(false)
         }
     }
+}
+
+pub trait SignedPacketStore: std::fmt::Debug {
+    fn upsert(&self, packet: SignedPacket) -> Result<bool>;
+    fn get(&self, key: &PublicKeyBytes) -> Result<Option<SignedPacket>>;
+    fn remove(&self, key: &PublicKeyBytes) -> Result<bool>;
 }
 
 #[derive(derive_more::Debug)]

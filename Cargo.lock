@@ -2347,6 +2347,7 @@ dependencies = [
  "serde",
  "struct_iterable",
  "strum",
+ "timedmap",
  "tokio",
  "tokio-rustls",
  "tokio-rustls-acme",
@@ -4928,6 +4929,12 @@ dependencies = [
  "num-conv",
  "time-core",
 ]
+
+[[package]]
+name = "timedmap"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cc430736149d1428180bd452a3fdc981a29e818ee7513929c7d4c73f24df778"
 
 [[package]]
 name = "tinystr"
