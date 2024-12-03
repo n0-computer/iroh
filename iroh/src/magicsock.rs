@@ -22,7 +22,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering},
         Arc, RwLock,
     },
     task::{Context, Poll, Waker},
@@ -187,7 +187,7 @@ pub(crate) struct MagicSock {
     network_recv_wakers: parking_lot::Mutex<Option<Waker>>,
     network_send_wakers: Arc<parking_lot::Mutex<Option<Waker>>>,
     /// Counter for ordering of [`MagicSock::poll_recv`] polling order.
-    poll_recv_counter: AtomicU64,
+    poll_recv_counter: AtomicUsize,
 
     /// The DNS resolver to be used in this magicsock.
     dns_resolver: DnsResolver,
@@ -1463,7 +1463,7 @@ impl Handle {
             relay_recv_receiver: parking_lot::Mutex::new(relay_recv_receiver),
             network_recv_wakers: parking_lot::Mutex::new(None),
             network_send_wakers: Arc::new(parking_lot::Mutex::new(None)),
-            poll_recv_counter: AtomicU64::new(0),
+            poll_recv_counter: AtomicUsize::new(0),
             actor_sender: actor_sender.clone(),
             ipv6_reported: Arc::new(AtomicBool::new(false)),
             relay_map,
