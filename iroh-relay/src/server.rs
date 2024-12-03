@@ -46,12 +46,14 @@ pub(crate) mod client_conn;
 mod clients;
 mod http_server;
 mod metrics;
+pub(crate) mod resolver;
 pub(crate) mod streams;
 #[cfg(feature = "test-utils")]
 pub mod testing;
 
 pub use self::{
     metrics::{Metrics, StunMetrics},
+    resolver::ReloadingResolver,
     streams::MaybeTlsStream as MaybeTlsStreamServer,
 };
 
@@ -198,6 +200,8 @@ pub enum CertConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
         /// The TLS certificate chain.
         certs: Vec<rustls::pki_types::CertificateDer<'static>>,
     },
+    /// Use a TLS key and certificate chain that can be reloaded.
+    Reloading,
 }
 
 /// A running Relay + STUN server.
@@ -279,6 +283,7 @@ impl Server {
             relay.tls.as_ref().and_then(|tls| match tls.cert {
                 CertConfig::LetsEncrypt { .. } => None,
                 CertConfig::Manual { ref certs, .. } => Some(certs.clone()),
+                CertConfig::Reloading { .. } => None,
             })
         });
 
@@ -340,6 +345,16 @@ impl Server {
                                 let acceptor =
                                     tokio_rustls::TlsAcceptor::from(server_config.clone());
                                 let acceptor = http_server::TlsAcceptor::Manual(acceptor);
+                                Some(http_server::TlsConfig {
+                                    config: server_config,
+                                    acceptor,
+                                })
+                            }
+                            CertConfig::Reloading { .. } => {
+                                let server_config = Arc::new(tls_config.server_config);
+                                let acceptor =
+                                    tokio_rustls::TlsAcceptor::from(server_config.clone());
+                                let acceptor = http_server::TlsAcceptor::Reloading(acceptor);
                                 Some(http_server::TlsConfig {
                                     config: server_config,
                                     acceptor,

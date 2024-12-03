@@ -14,6 +14,10 @@ rust-version = "1.81"
 workspace = true
 
 [dependencies]
+rustls-cert-reloadable-resolver = "0.6.0"
+reloadable-state = "0.1.0"
+rustls-cert-file-reader = "0.4.0"
+
 anyhow = { version = "1" }
 base64 = "0.22.1"
 bytes = "1.7"
