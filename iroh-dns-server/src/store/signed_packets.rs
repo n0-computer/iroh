@@ -13,6 +13,8 @@ use crate::{metrics::Metrics, util::PublicKeyBytes};
 pub type SignedPacketsKey = [u8; 32];
 const SIGNED_PACKETS_TABLE: TableDefinition<&SignedPacketsKey, &[u8]> =
     TableDefinition::new("signed-packets-1");
+const MAX_BATCH_SIZE: usize = 1024 * 64;
+const MAX_BATCH_TIME: Duration = Duration::from_secs(1);
 
 #[derive(Debug)]
 pub struct SignedPacketStore {
@@ -176,8 +178,8 @@ impl SignedPacketStore {
             db,
             recv,
             cancel: cancel2,
-            max_batch_size: 1024 * 64,
-            max_batch_time: Duration::from_secs(1),
+            max_batch_size: MAX_BATCH_SIZE,
+            max_batch_time: MAX_BATCH_TIME,
         };
         // start an io thread and donate it to the tokio runtime so we can do blocking IO
         // inside the thread despite being in a tokio runtime
