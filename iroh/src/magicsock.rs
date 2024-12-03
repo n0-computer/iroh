@@ -721,7 +721,7 @@ impl MagicSock {
 
     /// Process datagrams received from UDP sockets.
     ///
-    /// All the `bufs` and `metas` should have initialised packets in them.
+    /// All the `bufs` and `metas` should have initialized packets in them.
     ///
     /// This fixes up the datagrams to use the correct [`QuicMappedAddr`] and extracts DISCO
     /// packets, processing them inside the magic socket.
