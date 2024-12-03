@@ -169,7 +169,7 @@ impl SignedPacketStore {
             db,
             recv,
             cancel: cancel2,
-            max_batch_size: 1024,
+            max_batch_size: 1024 * 64,
             max_batch_time: Duration::from_secs(1),
         };
         let task = tokio::spawn(async move { actor.run().await });
