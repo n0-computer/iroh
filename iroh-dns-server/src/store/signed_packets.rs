@@ -1,8 +1,9 @@
 use std::{path::Path, result, time::Duration};
 
 use anyhow::{Context, Result};
+use bytes::Bytes;
 use iroh_metrics::inc;
-use pkarr::SignedPacket;
+use pkarr::{system_time, SignedPacket};
 use redb::{backends::InMemoryBackend, Database, ReadableTable, TableDefinition};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -48,14 +49,33 @@ enum Message {
         key: PublicKeyBytes,
         res: oneshot::Sender<bool>,
     },
+    Snapshot {
+        res: oneshot::Sender<Snapshot>,
+    },
+    CheckExpired {
+        key: Bytes,
+    },
 }
 
 struct Actor {
     db: Database,
     recv: mpsc::Receiver<Message>,
     cancel: CancellationToken,
+    options: Options,
+}
+
+pub struct Options {
     max_batch_size: usize,
     max_batch_time: Duration,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            max_batch_size: MAX_BATCH_SIZE,
+            max_batch_time: MAX_BATCH_TIME,
+        }
+    }
 }
 
 impl Actor {
@@ -73,9 +93,9 @@ impl Actor {
         loop {
             let transaction = self.db.begin_write()?;
             let mut tables = Tables::new(&transaction)?;
-            let timeout = tokio::time::sleep(self.max_batch_time);
+            let timeout = tokio::time::sleep(self.options.max_batch_time);
             tokio::pin!(timeout);
-            for _ in 0..self.max_batch_size {
+            for _ in 0..self.options.max_batch_size {
                 tokio::select! {
                     _ = self.cancel.cancelled() => {
                         drop(tables);
@@ -118,6 +138,12 @@ impl Actor {
                                 }
                                 res.send(updated).ok();
                             }
+                            Message::Snapshot { res } => {
+                                res.send(Snapshot::new(&self.db)?).ok();
+                            }
+                            Message::CheckExpired { key } => {
+                                todo!()
+                            }
                         }
                     }
                 }
@@ -136,6 +162,19 @@ pub(super) struct Tables<'a> {
 
 impl<'txn> Tables<'txn> {
     pub fn new(tx: &'txn redb::WriteTransaction) -> result::Result<Self, redb::TableError> {
+        Ok(Self {
+            signed_packets: tx.open_table(SIGNED_PACKETS_TABLE)?,
+        })
+    }
+}
+
+pub(super) struct Snapshot {
+    pub signed_packets: redb::ReadOnlyTable<&'static SignedPacketsKey, &'static [u8]>,
+}
+
+impl Snapshot {
+    pub fn new(db: &Database) -> Result<Self> {
+        let tx = db.begin_read()?;
         Ok(Self {
             signed_packets: tx.open_table(SIGNED_PACKETS_TABLE)?,
         })
@@ -178,8 +217,7 @@ impl SignedPacketStore {
             db,
             recv,
             cancel: cancel2,
-            max_batch_size: MAX_BATCH_SIZE,
-            max_batch_time: MAX_BATCH_TIME,
+            options: Default::default(),
         };
         // start an io thread and donate it to the tokio runtime so we can do blocking IO
         // inside the thread despite being in a tokio runtime
@@ -226,4 +264,29 @@ fn get_packet(
     };
     let packet = SignedPacket::from_bytes(&row.value().to_vec().into())?;
     Ok(Some(packet))
+}
+
+async fn evict_task(send: mpsc::Sender<Message>, expiry: Duration) -> anyhow::Result<()> {
+    let expiry_ms = expiry.as_micros() as u64;
+    loop {
+        let (tx, rx) = oneshot::channel();
+        let _ = send.send(Message::Snapshot { res: tx }).await.ok();
+        let Ok(snapshot) = rx.await else {
+            break;
+        };
+        let expired = system_time() - expiry_ms;
+        for item in snapshot.signed_packets.iter()? {
+            let (key, value) = item?;
+            let value = Bytes::copy_from_slice(value.value());
+            let packet = SignedPacket::from_bytes(&value)?;
+            if packet.timestamp() < expired {
+                let _ = send
+                    .send(Message::CheckExpired {
+                        key: Bytes::copy_from_slice(key.value()),
+                    })
+                    .await?;
+            }
+        }
+    }
+    Ok(())
 }
