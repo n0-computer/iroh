@@ -17,7 +17,7 @@ env:
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
   MSRV: "1.76"
-  SCCACHE_CACHE_SIZE: "50G"
+  SCCACHE_CACHE_SIZE: "10G"
   IROH_FORCE_STAGING_RELAYS: "1"
 
 jobs:
@@ -189,7 +189,7 @@ jobs:
         # uses: obi1kenobi/cargo-semver-checks-action@v2
         uses: n0-computer/cargo-semver-checks-action@feat-baseline
         with:
-          package: iroh, iroh-base, iroh-dns-server, iroh-metrics, iroh-net-bench, iroh-node-util, netwatch, portmapper, iroh-relay, iroh-net-report
+          package: iroh, iroh-base, iroh-dns-server, iroh-net-bench, iroh-relay, iroh-net-report
           baseline-rev: ${{ env.HEAD_COMMIT_SHA }}
           use-cache: false
 
@@ -216,6 +216,7 @@ jobs:
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
+      RUSTDOCFLAGS: --cfg docsrs
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -226,8 +227,9 @@ jobs:
 
       - name: Docs
         run: cargo doc --workspace --all-features --no-deps --document-private-items
-        env:
-          RUSTDOCFLAGS: --cfg docsrs
+
+      - name: Docs (default features)
+        run: cargo doc --workspace --no-deps
 
   clippy_check:
     timeout-minutes: 30

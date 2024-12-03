@@ -90,6 +90,6 @@ async fn main() -> anyhow::Result<()> {
 
     // We received the last message: close all connections and allow for the close
     // message to be sent.
-    endpoint.close(0u8.into(), b"bye").await?;
+    endpoint.close().await?;
     Ok(())
 }
