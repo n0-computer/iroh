@@ -4007,7 +4007,7 @@
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering},
         Arc, RwLock,
     },
     task::{Context, Poll, Waker},
@@ -4172,7 +4172,7 @@
     </span>network_recv_wakers: parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;,
     network_send_wakers: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
     <span class="doccomment">/// Counter for ordering of [`MagicSock::poll_recv`] polling order.
-    </span>poll_recv_counter: AtomicU64,
+    </span>poll_recv_counter: AtomicUsize,
 
     <span class="doccomment">/// The DNS resolver to be used in this magicsock.
     </span>dns_resolver: DnsResolver,
@@ -5448,7 +5448,7 @@
             relay_recv_receiver: parking_lot::Mutex::new(relay_recv_receiver),
             network_recv_wakers: parking_lot::Mutex::new(<span class="prelude-val">None</span>),
             network_send_wakers: Arc::new(parking_lot::Mutex::new(<span class="prelude-val">None</span>)),
-            poll_recv_counter: AtomicU64::new(<span class="number">0</span>),
+            poll_recv_counter: AtomicUsize::new(<span class="number">0</span>),
             actor_sender: actor_sender.clone(),
             ipv6_reported: Arc::new(AtomicBool::new(<span class="bool-val">false</span>)),
             relay_map,
