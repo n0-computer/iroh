@@ -7,7 +7,7 @@ use pkarr::{system_time, SignedPacket};
 use redb::{backends::InMemoryBackend, Database, ReadableTable, TableDefinition};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 
 use crate::{metrics::Metrics, util::PublicKeyBytes};
 

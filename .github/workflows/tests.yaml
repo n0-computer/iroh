@@ -22,8 +22,8 @@ env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
-  SCCACHE_CACHE_SIZE: "50G"
-  CRATES_LIST: "iroh,iroh-node-util,iroh-metrics,iroh-net-bench,iroh-test,iroh-dns-server,netwatch,portmapper,iroh-relay,iroh-net-report"
+  SCCACHE_CACHE_SIZE: "10G"
+  CRATES_LIST: "iroh,iroh-net-bench,iroh-test,iroh-dns-server,iroh-relay,iroh-net-report"
   IROH_FORCE_STAGING_RELAYS: "1"
 
 jobs:
@@ -127,13 +127,24 @@ jobs:
 
       - name: doctests
         if: ${{ (! inputs.flaky) &&  matrix.features == 'all' }}
+        env:
+          RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
         run: |
-          if [ -n "${{ runner.debug }}" ]; then
-              export RUST_LOG=TRACE
-          else
-              export RUST_LOG=DEBUG
-          fi
           cargo test --workspace --all-features --doc
+
+      # We can not check the doctest features by only compiling them,
+      # so are forced to run them once more.
+      - name: Check doctest features
+        if: ${{ ! inputs.flaky }}
+        env:
+          RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
+        run: |
+          for i in ${CRATES_LIST//,/ }
+          do
+            echo "Checking $i doctest $FEATURES"
+            echo cargo test -p $i --doc $FEATURES
+            cargo test -p $i --doc $FEATURES
+          done
 
   build_and_test_windows:
     timeout-minutes: 30

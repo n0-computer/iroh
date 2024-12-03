@@ -268,7 +268,10 @@ impl RouterBuilder {
         let mut join_set = JoinSet::new();
         let endpoint = self.endpoint.clone();
         let protos = protocols.clone();
-        let cancel = CancellationToken::new();
+
+        // We use a child token of the endpoint, to ensure that this is shutdown
+        // when the endpoint is shutdown, but that we can shutdown ourselves independently.
+        let cancel = endpoint.cancel_token().child_token();
         let cancel_token = cancel.clone();
 
         let run_loop_fut = async move {
@@ -341,15 +344,10 @@ impl RouterBuilder {
 
 /// Shutdown the different parts of the router concurrently.
 async fn shutdown(endpoint: &Endpoint, protocols: Arc<ProtocolMap>) {
-    let error_code = 1u16;
-
     // We ignore all errors during shutdown.
     let _ = tokio::join!(
         // Close the endpoint.
-        // Closing the Endpoint is the equivalent of calling Connection::close on all
-        // connections: Operations will immediately fail with ConnectionError::LocallyClosed.
-        // All streams are interrupted, this is not graceful.
-        endpoint.close(error_code.into(), b"provider terminating"),
+        endpoint.close(),
         // Shutdown protocol handlers.
         protocols.shutdown(),
     );
@@ -376,5 +374,26 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
     };
     if let Err(err) = handler.accept(connecting).await {
         warn!("Handling incoming connection ended with error: {err}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_shutdown() -> Result<()> {
+        let endpoint = Endpoint::builder().bind().await?;
+        let router = Router::builder(endpoint.clone()).spawn().await?;
+
+        assert!(!router.is_shutdown());
+        assert!(!endpoint.is_closed());
+
+        router.shutdown().await?;
+
+        assert!(router.is_shutdown());
+        assert!(endpoint.is_closed());
+
+        Ok(())
     }
 }
