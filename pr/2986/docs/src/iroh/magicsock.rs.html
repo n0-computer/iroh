@@ -3929,6 +3929,9 @@
 <a href="#3929" id="3929">3929</a>
 <a href="#3930" id="3930">3930</a>
 <a href="#3931" id="3931">3931</a>
+<a href="#3932" id="3932">3932</a>
+<a href="#3933" id="3933">3933</a>
+<a href="#3934" id="3934">3934</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -4722,7 +4725,10 @@
             <span class="kw">if </span><span class="self">self</span>.is_closed() {
                 <span class="kw">break</span>;
             }
-            <span class="kw">loop </span>{
+
+            <span class="comment">// For each output buffer keep polling the datagrams from the relay until one is
+            // a QUIC datagram to be placed into the output buffer.  Or the channel is empty.
+            </span><span class="kw">loop </span>{
                 <span class="kw">let </span>recv = <span class="kw">match </span><span class="self">self</span>.relay_recv_channel.poll_recv(cx) {
                     Poll::Ready(<span class="prelude-val">Ok</span>(recv)) =&gt; recv,
                     Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; {
