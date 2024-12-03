@@ -179,12 +179,14 @@ impl SignedPacketStore {
             max_batch_size: 1024 * 64,
             max_batch_time: Duration::from_secs(1),
         };
-        let handle = tokio::runtime::Handle::try_current()?;
         // start an io thread and donate it to the tokio runtime so we can do blocking IO
         // inside the thread despite being in a tokio runtime
-        let thread = std::thread::spawn(move || {
-            handle.block_on(actor.run());
-        });
+        let handle = tokio::runtime::Handle::try_current()?;
+        let thread = std::thread::Builder::new()
+            .name("packet-store-actor".into())
+            .spawn(move || {
+                handle.block_on(actor.run());
+            })?;
         Ok(Self {
             send,
             cancel,
