@@ -276,7 +276,7 @@ impl MagicSock {
         self.closing.load(Ordering::Relaxed)
     }
 
-    fn is_closed(&self) -> bool {
+    pub(crate) fn is_closed(&self) -> bool {
         self.closed.load(Ordering::SeqCst)
     }
 
@@ -3250,8 +3250,8 @@ mod tests {
             println!("closing endpoints");
             let msock1 = m1.endpoint.magic_sock();
             let msock2 = m2.endpoint.magic_sock();
-            m1.endpoint.close(0u32.into(), b"done").await?;
-            m2.endpoint.close(0u32.into(), b"done").await?;
+            m1.endpoint.close().await?;
+            m2.endpoint.close().await?;
 
             assert!(msock1.msock.is_closed());
             assert!(msock2.msock.is_closed());
