@@ -358,7 +358,6 @@
 <a href="#358" id="358">358</a>
 <a href="#359" id="359">359</a>
 <a href="#360" id="360">360</a>
-<a href="#361" id="361">361</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{future::Future, path::Path, result, time::Duration};
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
@@ -670,11 +669,10 @@
             <span class="kw">let </span>packet = SignedPacket::from_bytes(<span class="kw-2">&amp;</span>value)<span class="question-mark">?</span>;
             <span class="kw">if </span>packet.timestamp() &lt; expired {
                 <span class="macro">debug!</span>(<span class="string">"evicting expired packet {}"</span>, packet.public_key());
-                <span class="kw">let _ </span>= send
-                    .send(Message::CheckExpired {
-                        key: PublicKeyBytes::from_signed_packet(<span class="kw-2">&amp;</span>packet),
-                    })
-                    .<span class="kw">await</span><span class="question-mark">?</span>;
+                send.send(Message::CheckExpired {
+                    key: PublicKeyBytes::from_signed_packet(<span class="kw-2">&amp;</span>packet),
+                })
+                .<span class="kw">await</span><span class="question-mark">?</span>;
             }
         }
         <span class="comment">// sleep for the eviction interval so we don't constantly check
