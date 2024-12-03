@@ -223,6 +223,8 @@
 <a href="#223" id="223">223</a>
 <a href="#224" id="224">224</a>
 <a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{path::Path, result, time::Duration};
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
@@ -404,12 +406,14 @@
             max_batch_size: <span class="number">1024 </span>* <span class="number">64</span>,
             max_batch_time: Duration::from_secs(<span class="number">1</span>),
         };
-        <span class="kw">let </span>handle = tokio::runtime::Handle::try_current()<span class="question-mark">?</span>;
         <span class="comment">// start an io thread and donate it to the tokio runtime so we can do blocking IO
         // inside the thread despite being in a tokio runtime
-        </span><span class="kw">let </span>thread = std::thread::spawn(<span class="kw">move </span>|| {
-            handle.block_on(actor.run());
-        });
+        </span><span class="kw">let </span>handle = tokio::runtime::Handle::try_current()<span class="question-mark">?</span>;
+        <span class="kw">let </span>thread = std::thread::Builder::new()
+            .name(<span class="string">"packet-store-actor"</span>.into())
+            .spawn(<span class="kw">move </span>|| {
+                handle.block_on(actor.run());
+            })<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             send,
             cancel,
