@@ -6,8 +6,8 @@ use anyhow::Result;
 use hickory_proto::rr::{Name, RecordSet, RecordType, RrKey};
 use iroh_metrics::inc;
 use lru::LruCache;
-use parking_lot::Mutex;
 use pkarr::{mainline::dht::DhtSettings, PkarrClient, SignedPacket};
+use tokio::sync::Mutex;
 use tracing::{debug, trace};
 use ttl_cache::TtlCache;
 
@@ -97,14 +97,15 @@ impl ZoneStore {
         record_type: RecordType,
     ) -> Result<Option<Arc<RecordSet>>> {
         tracing::info!("{} {}", name, record_type);
-        if let Some(rset) = self.cache.lock().resolve(pubkey, name, record_type) {
+        if let Some(rset) = self.cache.lock().await.resolve(pubkey, name, record_type) {
             return Ok(Some(rset));
         }
 
-        if let Some(packet) = self.store.get(pubkey)? {
+        if let Some(packet) = self.store.get(pubkey).await? {
             return self
                 .cache
                 .lock()
+                .await
                 .insert_and_resolve(&packet, name, record_type);
         };
 
@@ -120,6 +121,7 @@ impl ZoneStore {
                 return self
                     .cache
                     .lock()
+                    .await
                     .insert_and_resolve_dht(&packet, name, record_type);
             } else {
                 debug!("DHT resolve failed");
@@ -132,7 +134,7 @@ impl ZoneStore {
     // allow unused async: this will be async soon.
     #[allow(clippy::unused_async)]
     pub async fn get_signed_packet(&self, pubkey: &PublicKeyBytes) -> Result<Option<SignedPacket>> {
-        self.store.get(pubkey)
+        self.store.get(pubkey).await
     }
 
     /// Insert a signed packet into the cache and the store.
@@ -143,9 +145,9 @@ impl ZoneStore {
     #[allow(clippy::unused_async)]
     pub async fn insert(&self, signed_packet: SignedPacket, _source: PacketSource) -> Result<bool> {
         let pubkey = PublicKeyBytes::from_signed_packet(&signed_packet);
-        if self.store.upsert(signed_packet)? {
+        if self.store.upsert(signed_packet).await? {
             inc!(Metrics, pkarr_publish_update);
-            self.cache.lock().remove(&pubkey);
+            self.cache.lock().await.remove(&pubkey);
             Ok(true)
         } else {
             inc!(Metrics, pkarr_publish_noop);
