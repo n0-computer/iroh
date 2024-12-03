@@ -899,7 +899,7 @@
 
 <span class="kw">use crate</span>::{
     key::{NodeId, PUBLIC_KEY_LENGTH},
-    magicsock::{MagicSock, Metrics <span class="kw">as </span>MagicsockMetrics, RelayContents, RelayRecvChannel},
+    magicsock::{MagicSock, Metrics <span class="kw">as </span>MagicsockMetrics, RelayContents, RelayRecvSender},
 };
 
 <span class="doccomment">/// How long a non-home relay connection needs to be idle (last written to) before we close it.
@@ -927,7 +927,7 @@
     /// channel (currently even if there was no write).
     </span>last_write: Instant,
     <span class="doccomment">/// Channel to send received QUIC datagrams on.
-    </span>relay_recv_channel: Arc&lt;RelayRecvChannel&gt;,
+    </span>relay_recv_channel: RelayRecvSender,
     url: RelayUrl,
     relay_client: relay::client::Client,
     relay_client_receiver: relay::client::ClientReceiver,
@@ -958,7 +958,7 @@
         url: RelayUrl,
         relay_client: relay::client::Client,
         relay_client_receiver: relay::client::ClientReceiver,
-        relay_recv_channel: Arc&lt;RelayRecvChannel&gt;,
+        relay_recv_channel: RelayRecvSender,
     ) -&gt; <span class="self">Self </span>{
         ConnectedRelayActor {
             last_write: Instant::now(),
@@ -1115,7 +1115,7 @@
                                 <span class="macro">error!</span>(<span class="string">"Invalid packet split"</span>);
                                 <span class="kw">break</span>;
                             };
-                            <span class="kw">let </span>res = RelayReadResult {
+                            <span class="kw">let </span>res = RelayRecvDatagram {
                                 url: <span class="self">self</span>.url.clone(),
                                 src: remote_node_id,
                                 buf: datagram,
@@ -1156,7 +1156,7 @@
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>RelayActor {
     msock: Arc&lt;MagicSock&gt;,
-    relay_recv_channel: Arc&lt;RelayRecvChannel&gt;,
+    relay_recv_channel: RelayRecvSender,
     <span class="doccomment">/// relay Url -&gt; connection to the node
     </span>connected_relays: BTreeMap&lt;RelayUrl, (mpsc::Sender&lt;ConnectedRelayMessage&gt;, JoinHandle&lt;()&gt;)&gt;,
     ping_tasks: JoinSet&lt;(RelayUrl, bool)&gt;,
@@ -1164,7 +1164,7 @@
 }
 
 <span class="kw">impl </span>RelayActor {
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(msock: Arc&lt;MagicSock&gt;, recv_channel: Arc&lt;RelayRecvChannel&gt;) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(msock: Arc&lt;MagicSock&gt;, recv_channel: RelayRecvSender) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>cancel_token = CancellationToken::new();
         <span class="self">Self </span>{
             msock,
@@ -1597,7 +1597,7 @@
 ///
 /// This could be either a QUIC or DISCO packet.
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>RelayReadResult {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>RelayRecvDatagram {
     <span class="kw">pub</span>(<span class="kw">super</span>) url: RelayUrl,
     <span class="kw">pub</span>(<span class="kw">super</span>) src: NodeId,
     <span class="kw">pub</span>(<span class="kw">super</span>) buf: Bytes,

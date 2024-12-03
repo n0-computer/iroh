@@ -3893,6 +3893,31 @@
 <a href="#3893" id="3893">3893</a>
 <a href="#3894" id="3894">3894</a>
 <a href="#3895" id="3895">3895</a>
+<a href="#3896" id="3896">3896</a>
+<a href="#3897" id="3897">3897</a>
+<a href="#3898" id="3898">3898</a>
+<a href="#3899" id="3899">3899</a>
+<a href="#3900" id="3900">3900</a>
+<a href="#3901" id="3901">3901</a>
+<a href="#3902" id="3902">3902</a>
+<a href="#3903" id="3903">3903</a>
+<a href="#3904" id="3904">3904</a>
+<a href="#3905" id="3905">3905</a>
+<a href="#3906" id="3906">3906</a>
+<a href="#3907" id="3907">3907</a>
+<a href="#3908" id="3908">3908</a>
+<a href="#3909" id="3909">3909</a>
+<a href="#3910" id="3910">3910</a>
+<a href="#3911" id="3911">3911</a>
+<a href="#3912" id="3912">3912</a>
+<a href="#3913" id="3913">3913</a>
+<a href="#3914" id="3914">3914</a>
+<a href="#3915" id="3915">3915</a>
+<a href="#3916" id="3916">3916</a>
+<a href="#3917" id="3917">3917</a>
+<a href="#3918" id="3918">3918</a>
+<a href="#3919" id="3919">3919</a>
+<a href="#3920" id="3920">3920</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -3951,7 +3976,7 @@
 <span class="kw">use </span><span class="self">self</span>::{
     metrics::Metrics <span class="kw">as </span>MagicsockMetrics,
     node_map::{NodeMap, PingAction, PingRole, SendPing},
-    relay_actor::{RelayActor, RelayActorMessage, RelayReadResult},
+    relay_actor::{RelayActor, RelayActorMessage, RelayRecvDatagram},
     udp_conn::UdpConn,
 };
 <span class="kw">use crate</span>::{
@@ -4080,7 +4105,7 @@
     /// QUIC datagrams received by relays are put on this channel and consumed by
     /// [`AsyncUdpSocket`].  This channel takes care of the wakers needed by
     /// [`AsyncUdpSocket::poll_recv`].
-    </span>relay_recv_channel: Arc&lt;RelayRecvChannel&gt;,
+    </span>relay_recv_channel: RelayRecvReceiver,
 
     network_send_wakers: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
 
@@ -4687,8 +4712,18 @@
                 <span class="kw">break</span>;
             }
             <span class="kw">loop </span>{
-                <span class="kw">let </span>Poll::Ready(recv) = <span class="self">self</span>.relay_recv_channel.poll_recv(cx) <span class="kw">else </span>{
-                    <span class="kw">break </span><span class="lifetime">'outer</span>;
+                <span class="kw">let </span>recv = <span class="kw">match </span><span class="self">self</span>.relay_recv_channel.poll_recv(cx) {
+                    Poll::Ready(<span class="prelude-val">Ok</span>(recv)) =&gt; recv,
+                    Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; {
+                        <span class="macro">error!</span>(<span class="string">"relay_recv_channel closed: {err:#}"</span>);
+                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(io::Error::new(
+                            io::ErrorKind::NotConnected,
+                            <span class="string">"connection closed"</span>,
+                        )));
+                    }
+                    Poll::Pending =&gt; {
+                        <span class="kw">break </span><span class="lifetime">'outer</span>;
+                    }
                 };
                 <span class="kw">match </span><span class="self">self</span>.process_relay_read_result(recv) {
                     <span class="prelude-val">None </span>=&gt; {
@@ -4731,7 +4766,7 @@
     /// is returned.
     </span><span class="kw">fn </span>process_relay_read_result(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        dm: RelayReadResult,
+        dm: RelayRecvDatagram,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;(NodeId, quinn_udp::RecvMeta, Bytes)&gt; {
         <span class="macro">trace!</span>(<span class="string">"process_relay_read {} bytes"</span>, dm.buf.len());
         <span class="kw">if </span>dm.buf.is_empty() {
@@ -5327,7 +5362,7 @@
             </span>insecure_skip_relay_cert_verify,
         } = opts;
 
-        <span class="kw">let </span>relay_recv_channel = Arc::new(RelayRecvChannel::new());
+        <span class="kw">let </span>(relay_recv_tx, relay_recv_rx) = relay_recv_channel();
 
         <span class="kw">let </span>(pconn4, pconn6) = bind(addr_v4, addr_v6)<span class="question-mark">?</span>;
         <span class="kw">let </span>port = pconn4.port();
@@ -5364,7 +5399,7 @@
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(<span class="bool-val">false</span>),
             closed: AtomicBool::new(<span class="bool-val">false</span>),
-            relay_recv_channel: relay_recv_channel.clone(),
+            relay_recv_channel: relay_recv_rx,
             network_send_wakers: Arc::new(parking_lot::Mutex::new(<span class="prelude-val">None</span>)),
             actor_sender: actor_sender.clone(),
             ipv6_reported: Arc::new(AtomicBool::new(<span class="bool-val">false</span>)),
@@ -5388,7 +5423,7 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>actor_tasks = JoinSet::default();
 
-        <span class="kw">let </span>relay_actor = RelayActor::new(inner.clone(), relay_recv_channel);
+        <span class="kw">let </span>relay_actor = RelayActor::new(inner.clone(), relay_recv_tx);
         <span class="kw">let </span>relay_actor_cancel_token = relay_actor.cancel_token();
         actor_tasks.spawn(
             <span class="kw">async move </span>{
@@ -5528,48 +5563,63 @@
     </span>Parse(anyhow::Error),
 }
 
-<span class="doccomment">/// Channel for [`MagicSock::poll_recv_relay`] to receive QUIC datagrams from relays.
+<span class="doccomment">/// Channel for [`MagicSock::poll_recv_relay`] to receive datagrams from relays.
 ///
-/// This channel contains both the send and receive sides.  The receive side implements the
-/// poll interface with required wakers.
-</span><span class="attr">#[derive(Debug)]
-</span><span class="kw">struct </span>RelayRecvChannel {
-    sender: mpsc::Sender&lt;RelayReadResult&gt;,
-    receiver: parking_lot::Mutex&lt;mpsc::Receiver&lt;RelayReadResult&gt;&gt;,
-    waker: parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;,
+/// The sender and receiver will take care of the required wakers needed for
+/// [`AsyncUdpSocket::poll_recv`].
+</span><span class="comment">// TODO: This channel should possibly be implemented with concurrent-queue and atomic-waker.
+// Or maybe async-channel.
+</span><span class="kw">fn </span>relay_recv_channel() -&gt; (RelayRecvSender, RelayRecvReceiver) {
+    <span class="kw">let </span>(tx, rx) = mpsc::channel(<span class="number">128</span>);
+    <span class="kw">let </span>waker = Arc::new(parking_lot::Mutex::new(<span class="prelude-val">None</span>));
+    <span class="kw">let </span>sender = RelayRecvSender {
+        sender: tx,
+        waker: waker.clone(),
+    };
+    <span class="kw">let </span>receiver = RelayRecvReceiver {
+        receiver: parking_lot::Mutex::new(rx),
+        waker,
+    };
+    (sender, receiver)
 }
 
-<span class="kw">impl </span>RelayRecvChannel {
-    <span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>(tx, rx) = mpsc::channel(<span class="number">128</span>);
-        <span class="self">Self </span>{
-            sender: tx,
-            receiver: parking_lot::Mutex::new(rx),
-            waker: parking_lot::Mutex::new(<span class="prelude-val">None</span>),
-        }
-    }
+<span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">struct </span>RelayRecvSender {
+    sender: mpsc::Sender&lt;RelayRecvDatagram&gt;,
+    waker: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
+}
 
-    <span class="kw">fn </span>poll_recv(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;RelayReadResult&gt; {
-        <span class="kw">match </span><span class="self">self</span>.receiver.lock().try_recv() {
-            <span class="prelude-val">Ok</span>(item) =&gt; Poll::Ready(item),
-            <span class="prelude-val">Err</span>(mpsc::error::TryRecvError::Empty) =&gt; {
-                <span class="self">self</span>.waker.lock().replace(cx.waker().clone());
-                Poll::Pending
-            }
-            <span class="comment">// The sender lives in this struct, so can not be dropped.
-            </span><span class="prelude-val">Err</span>(mpsc::error::TryRecvError::Disconnected) =&gt; <span class="macro">unreachable!</span>(),
-        }
-    }
-
+<span class="kw">impl </span>RelayRecvSender {
     <span class="kw">fn </span>try_send(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        item: RelayReadResult,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), mpsc::error::TrySendError&lt;RelayReadResult&gt;&gt; {
+        item: RelayRecvDatagram,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), mpsc::error::TrySendError&lt;RelayRecvDatagram&gt;&gt; {
         <span class="self">self</span>.sender.try_send(item).inspect(|<span class="kw">_</span>| {
             <span class="kw">if let </span><span class="prelude-val">Some</span>(waker) = <span class="self">self</span>.waker.lock().take() {
                 waker.wake();
             }
         })
+    }
+}
+
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">struct </span>RelayRecvReceiver {
+    receiver: parking_lot::Mutex&lt;mpsc::Receiver&lt;RelayRecvDatagram&gt;&gt;,
+    waker: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
+}
+
+<span class="kw">impl </span>RelayRecvReceiver {
+    <span class="kw">fn </span>poll_recv(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;RelayRecvDatagram&gt;&gt; {
+        <span class="kw">match </span><span class="self">self</span>.receiver.lock().try_recv() {
+            <span class="prelude-val">Ok</span>(item) =&gt; Poll::Ready(<span class="prelude-val">Ok</span>(item)),
+            <span class="prelude-val">Err</span>(mpsc::error::TryRecvError::Empty) =&gt; {
+                <span class="self">self</span>.waker.lock().replace(cx.waker().clone());
+                Poll::Pending
+            }
+            <span class="prelude-val">Err</span>(mpsc::error::TryRecvError::Disconnected) =&gt; {
+                Poll::Ready(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"All RelayRecvSenders disconnected"</span>)))
+            }
+        }
     }
 }
 
