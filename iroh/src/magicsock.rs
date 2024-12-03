@@ -791,6 +791,9 @@ impl MagicSock {
             if self.is_closed() {
                 break;
             }
+
+            // For each output buffer keep polling the datagrams from the relay until one is
+            // a QUIC datagram to be placed into the output buffer.  Or the channel is empty.
             loop {
                 let recv = match self.relay_recv_channel.poll_recv(cx) {
                     Poll::Ready(Ok(recv)) => recv,
