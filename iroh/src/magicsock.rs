@@ -1694,7 +1694,18 @@ impl RelayRecvReceiver {
             Ok(item) => Poll::Ready(Ok(item)),
             Err(mpsc::error::TryRecvError::Empty) => {
                 self.waker.lock().replace(cx.waker().clone());
-                Poll::Pending
+
+                // After installing the waker we need to re-check the channel.
+                match self.receiver.lock().try_recv() {
+                    Ok(item) => {
+                        self.waker.lock().take();
+                        Poll::Ready(Ok(item))
+                    }
+                    Err(mpsc::error::TryRecvError::Empty) => Poll::Pending,
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        Poll::Ready(Err(anyhow!("All RelayRecvSenders disconnected")))
+                    }
+                }
             }
             Err(mpsc::error::TryRecvError::Disconnected) => {
                 Poll::Ready(Err(anyhow!("All RelayRecvSenders disconnected")))
