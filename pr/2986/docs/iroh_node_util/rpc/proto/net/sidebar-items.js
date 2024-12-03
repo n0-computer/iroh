@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["Request","Response"],"struct":["AddAddrRequest","AddrRequest","IdRequest","NodeWatchRequest","RelayRequest","RemoteInfoRequest","RemoteInfoResponse","RemoteInfosIterRequest","RemoteInfosIterResponse","WatchResponse"]};

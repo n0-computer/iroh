@@ -4075,11 +4075,11 @@
     </span>me: String,
     <span class="doccomment">/// Proxy
     </span>proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
-    <span class="doccomment">/// Channel on which datagrams received by relays are passed to AsyncUdpSocket::poll_recv
+    <span class="doccomment">/// Channel to receive datagrams from relays for [`AsyncUdpSocket::poll_recv`].
     ///
     /// QUIC datagrams received by relays are put on this channel and consumed by
-    /// AsyncUdpSocket.  This channel takes care of the wakers needed by
-    /// AsyncUdpSocket::poll_recv.
+    /// [`AsyncUdpSocket`].  This channel takes care of the wakers needed by
+    /// [`AsyncUdpSocket::poll_recv`].
     </span>relay_recv_channel: Arc&lt;RelayRecvChannel&gt;,
 
     network_send_wakers: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
@@ -4171,7 +4171,7 @@
         <span class="self">self</span>.closing.load(Ordering::Relaxed)
     }
 
-    <span class="kw">fn </span>is_closed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>is_closed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="self">self</span>.closed.load(Ordering::SeqCst)
     }
 
@@ -4692,7 +4692,7 @@
                 };
                 <span class="kw">match </span><span class="self">self</span>.process_relay_read_result(recv) {
                     <span class="prelude-val">None </span>=&gt; {
-                        <span class="comment">// Received a DISCO packet that was handled internally.
+                        <span class="comment">// Received a DISCO or STUN datagram that was handled internally.
                         </span><span class="kw">continue</span>;
                     }
                     <span class="prelude-val">Some</span>((node_id, meta, buf)) =&gt; {
@@ -7109,8 +7109,8 @@
             <span class="macro">println!</span>(<span class="string">"closing endpoints"</span>);
             <span class="kw">let </span>msock1 = m1.endpoint.magic_sock();
             <span class="kw">let </span>msock2 = m2.endpoint.magic_sock();
-            m1.endpoint.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-            m2.endpoint.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            m1.endpoint.close().<span class="kw">await</span><span class="question-mark">?</span>;
+            m2.endpoint.close().<span class="kw">await</span><span class="question-mark">?</span>;
 
             <span class="macro">assert!</span>(msock1.msock.is_closed());
             <span class="macro">assert!</span>(msock2.msock.is_closed());
