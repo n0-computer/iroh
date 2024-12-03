@@ -19,6 +19,7 @@ use crate::{
 };
 
 mod signed_packets;
+pub use signed_packets::Options as ZoneStoreOptions;
 
 /// Cache up to 1 million pkarr zones by default
 pub const DEFAULT_CACHE_CAPACITY: usize = 1024 * 1024;
@@ -44,14 +45,14 @@ pub struct ZoneStore {
 
 impl ZoneStore {
     /// Create a persistent store
-    pub fn persistent(path: impl AsRef<Path>) -> Result<Self> {
-        let packet_store = SignedPacketStore::persistent(path)?;
+    pub fn persistent(path: impl AsRef<Path>, options: ZoneStoreOptions) -> Result<Self> {
+        let packet_store = SignedPacketStore::persistent(path, options)?;
         Ok(Self::new(packet_store))
     }
 
     /// Create an in-memory store.
-    pub fn in_memory() -> Result<Self> {
-        let packet_store = SignedPacketStore::in_memory()?;
+    pub fn in_memory(options: ZoneStoreOptions) -> Result<Self> {
+        let packet_store = SignedPacketStore::in_memory(options)?;
         Ok(Self::new(packet_store))
     }
 

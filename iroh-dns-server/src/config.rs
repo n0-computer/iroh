@@ -4,6 +4,7 @@ use std::{
     env,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -13,6 +14,7 @@ use tracing::info;
 use crate::{
     dns::DnsConfig,
     http::{CertMode, HttpConfig, HttpsConfig, RateLimitConfig},
+    store::ZoneStoreOptions,
 };
 
 const DEFAULT_METRICS_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9117);
@@ -44,9 +46,59 @@ pub struct Config {
     /// Config for the mainline lookup.
     pub mainline: Option<MainlineConfig>,
 
+    /// Config for the zone store.
+    pub zone_store: Option<StoreConfig>,
+
     /// Config for pkarr rate limit
     #[serde(default)]
     pub pkarr_put_rate_limit: RateLimitConfig,
+}
+
+/// The config for the store.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct StoreConfig {
+    /// Maximum number of packets to process in a single write transaction.
+    max_batch_size: usize,
+
+    /// Maximum time to keep a write transaction open.
+    #[serde(with = "humantime_serde")]
+    max_batch_time: Duration,
+
+    /// Time to keep packets in the store before eviction.
+    #[serde(with = "humantime_serde")]
+    eviction: Duration,
+
+    /// Pause between eviction checks.
+    #[serde(with = "humantime_serde")]
+    eviction_interval: Duration,
+}
+
+impl Default for StoreConfig {
+    fn default() -> Self {
+        ZoneStoreOptions::default().into()
+    }
+}
+
+impl From<ZoneStoreOptions> for StoreConfig {
+    fn from(value: ZoneStoreOptions) -> Self {
+        Self {
+            max_batch_size: value.max_batch_size,
+            max_batch_time: value.max_batch_time,
+            eviction: value.eviction,
+            eviction_interval: value.eviction_interval,
+        }
+    }
+}
+
+impl From<StoreConfig> for ZoneStoreOptions {
+    fn from(value: StoreConfig) -> Self {
+        Self {
+            max_batch_size: value.max_batch_size,
+            max_batch_time: value.max_batch_time,
+            eviction: value.eviction,
+            eviction_interval: value.eviction_interval,
+        }
+    }
 }
 
 /// The config for the metrics server.
@@ -187,6 +239,7 @@ impl Default for Config {
                 rr_aaaa: None,
                 rr_ns: Some("ns1.irohdns.example.".to_string()),
             },
+            zone_store: None,
             metrics: None,
             mainline: None,
             pkarr_put_rate_limit: RateLimitConfig::default(),

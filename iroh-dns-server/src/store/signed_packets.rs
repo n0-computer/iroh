@@ -1,4 +1,4 @@
-use std::{path::Path, result, time::Duration};
+use std::{future::Future, path::Path, result, time::Duration};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -7,37 +7,27 @@ use pkarr::{system_time, SignedPacket};
 use redb::{backends::InMemoryBackend, Database, ReadableTable, TableDefinition};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{debug, error, info, trace};
 
 use crate::{metrics::Metrics, util::PublicKeyBytes};
 
 pub type SignedPacketsKey = [u8; 32];
 const SIGNED_PACKETS_TABLE: TableDefinition<&SignedPacketsKey, &[u8]> =
     TableDefinition::new("signed-packets-1");
-const MAX_BATCH_SIZE: usize = 1024 * 64;
-const MAX_BATCH_TIME: Duration = Duration::from_secs(1);
 
 #[derive(Debug)]
 pub struct SignedPacketStore {
     send: mpsc::Sender<Message>,
     cancel: CancellationToken,
-    write_thread: Option<std::thread::JoinHandle<()>>,
-    evict_thread: Option<std::thread::JoinHandle<()>>,
+    _write_thread: IoThread,
+    _evict_thread: IoThread,
 }
 
 impl Drop for SignedPacketStore {
     fn drop(&mut self) {
-        println!("Dropping SignedPacketStore");
         // cancel the actor
         self.cancel.cancel();
-        // join the thread. This is important so that Drop implementations that
-        // are called from the actor thread can complete before we return.
-        if let Some(thread) = self.write_thread.take() {
-            let _ = thread.join();
-        }
-        if let Some(thread) = self.evict_thread.take() {
-            let _ = thread.join();
-        }
+        // after cancellation, the two threads will be joined
     }
 }
 
@@ -72,22 +62,22 @@ struct Actor {
 #[derive(Debug, Clone, Copy)]
 pub struct Options {
     /// Maximum number of packets to process in a single write transaction.
-    max_batch_size: usize,
+    pub max_batch_size: usize,
     /// Maximum time to keep a write transaction open.
-    max_batch_time: Duration,
+    pub max_batch_time: Duration,
     /// Time to keep packets in the store before eviction.
-    eviction: Duration,
+    pub eviction: Duration,
     /// Pause between eviction checks.
-    eviction_interval: Duration,
+    pub eviction_interval: Duration,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Self {
-            max_batch_size: MAX_BATCH_SIZE,
-            max_batch_time: MAX_BATCH_TIME,
-            eviction: Duration::from_secs(10),
-            eviction_interval: Duration::from_secs(10),
+            max_batch_size: 1024 * 64,
+            max_batch_time: Duration::from_secs(1),
+            eviction: Duration::from_secs(3600 * 24 * 7),
+            eviction_interval: Duration::from_secs(3600 * 24),
         }
     }
 }
@@ -104,7 +94,7 @@ impl Actor {
     }
 
     async fn run0(&mut self) -> anyhow::Result<()> {
-        let expired_us = Duration::from_secs(10).as_micros() as u64;
+        let expired_us = self.options.eviction.as_micros() as u64;
         loop {
             let transaction = self.db.begin_write()?;
             let mut tables = Tables::new(&transaction)?;
@@ -160,9 +150,8 @@ impl Actor {
                             Message::CheckExpired { key } => {
                                 if let Some(packet) = get_packet(&tables.signed_packets, &key)? {
                                     if packet.timestamp() < expired {
-                                        println!("Removing expired packet");
                                         let _ = tables.signed_packets.remove(key.as_bytes())?;
-                                        // inc!(Metrics, store_packets_expired);
+                                        inc!(Metrics, store_packets_expired);
                                     }
                                 }
                             }
@@ -204,7 +193,7 @@ impl Snapshot {
 }
 
 impl SignedPacketStore {
-    pub fn persistent(path: impl AsRef<Path>) -> Result<Self> {
+    pub fn persistent(path: impl AsRef<Path>, options: Options) -> Result<Self> {
         let path = path.as_ref();
         info!("loading packet database from {}", path.to_string_lossy());
         if let Some(parent) = path.parent() {
@@ -218,16 +207,16 @@ impl SignedPacketStore {
         let db = Database::builder()
             .create(path)
             .context("failed to open packet database")?;
-        Self::open(db)
+        Self::open(db, options)
     }
 
-    pub fn in_memory() -> Result<Self> {
+    pub fn in_memory(options: Options) -> Result<Self> {
         info!("using in-memory packet database");
         let db = Database::builder().create_with_backend(InMemoryBackend::new())?;
-        Self::open(db)
+        Self::open(db, options)
     }
 
-    pub fn open(db: Database) -> Result<Self> {
+    pub fn open(db: Database, options: Options) -> Result<Self> {
         // create tables
         let write_tx = db.begin_write()?;
         let _ = Tables::new(&write_tx)?;
@@ -237,7 +226,6 @@ impl SignedPacketStore {
         let cancel = CancellationToken::new();
         let cancel2 = cancel.clone();
         let cancel3 = cancel.clone();
-        let options = Default::default();
         let actor = Actor {
             db,
             recv,
@@ -246,23 +234,15 @@ impl SignedPacketStore {
         };
         // start an io thread and donate it to the tokio runtime so we can do blocking IO
         // inside the thread despite being in a tokio runtime
-        let handle = tokio::runtime::Handle::try_current()?;
-        let write_thread = std::thread::Builder::new()
-            .name("packet-store-actor".into())
-            .spawn(move || {
-                handle.block_on(actor.run());
-            })?;
-        let handle = tokio::runtime::Handle::try_current()?;
-        let evict_thread = std::thread::Builder::new()
-            .name("packet-store-evict".into())
-            .spawn(move || {
-                handle.block_on(evict_task(send2, options, cancel3));
-            })?;
+        let _write_thread = IoThread::new("packet-store-actor", move || actor.run())?;
+        let _evict_thread = IoThread::new("packet-store-evict", move || {
+            evict_task(send2, options, cancel3)
+        })?;
         Ok(Self {
             send,
             cancel,
-            write_thread: Some(write_thread),
-            evict_thread: Some(evict_thread),
+            _write_thread,
+            _evict_thread,
         })
     }
 
@@ -321,12 +301,14 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> anyh
         let Ok(snapshot) = rx.await else {
             anyhow::bail!("failed to get snapshot");
         };
+        debug!("got snapshot");
         let expired = system_time() - expiry_ms;
         for item in snapshot.signed_packets.iter()? {
             let (_, value) = item?;
             let value = Bytes::copy_from_slice(value.value());
             let packet = SignedPacket::from_bytes(&value)?;
             if packet.timestamp() < expired {
+                debug!("evicting expired packet {}", packet.public_key());
                 let _ = send
                     .send(Message::CheckExpired {
                         key: PublicKeyBytes::from_signed_packet(&packet),
@@ -336,5 +318,44 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> anyh
         }
         // sleep for the eviction interval so we don't constantly check
         tokio::time::sleep(options.eviction_interval).await;
+    }
+}
+
+/// An io thread that drives a future to completion on the current tokio runtime
+///
+/// Inside the future, blocking IO can be done without blocking one of the tokio
+/// pool threads.
+#[derive(Debug)]
+struct IoThread {
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl IoThread {
+    /// Spawn a new io thread.
+    ///
+    /// Calling this function requires that the current thread is running in a
+    /// tokio runtime. It is up to the caller to make sure the future exits,
+    /// e.g. by using a cancellation token. Otherwise, drop will block.
+    fn new<F, Fut>(name: &str, f: F) -> Result<Self>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = ()>,
+    {
+        let rt = tokio::runtime::Handle::try_current()?;
+        let handle = std::thread::Builder::new()
+            .name(name.into())
+            .spawn(move || rt.block_on(f()))
+            .context("failed to spawn thread")?;
+        Ok(Self {
+            handle: Some(handle),
+        })
+    }
+}
+
+impl Drop for IoThread {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
     }
 }

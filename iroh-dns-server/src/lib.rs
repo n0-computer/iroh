@@ -32,9 +32,16 @@ mod tests {
         key::SecretKey,
     };
     use pkarr::{PkarrClient, SignedPacket};
+    use testresult::TestResult;
     use url::Url;
 
-    use crate::{config::BootstrapOption, server::Server};
+    use crate::{
+        config::BootstrapOption,
+        server::Server,
+        store::{PacketSource, ZoneStoreOptions},
+        util::PublicKeyBytes,
+        ZoneStore,
+    };
 
     #[tokio::test]
     async fn pkarr_publish_dns_resolve() -> Result<()> {
@@ -177,10 +184,36 @@ mod tests {
         assert_eq!(res.node_id, node_id);
         assert_eq!(res.info.relay_url.map(Url::from), Some(relay_url));
 
-        println!("Sleeping for 1 hour");
-        tokio::time::sleep(Duration::from_secs(3600)).await;
-
         server.shutdown().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn store_eviction() -> TestResult<()> {
+        iroh_test::logging::setup_multithreaded();
+        let options = ZoneStoreOptions {
+            eviction: Duration::from_millis(100),
+            eviction_interval: Duration::from_millis(100),
+            max_batch_time: Duration::from_millis(100),
+            ..Default::default()
+        };
+        let store = ZoneStore::in_memory(options)?;
+
+        // create a signed packet
+        let secret_key = SecretKey::generate();
+        let node_id = secret_key.public();
+        let relay_url: Url = "https://relay.example.".parse()?;
+        let node_info = NodeInfo::new(node_id, Some(relay_url.clone()), Default::default());
+        let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
+        let key = PublicKeyBytes::from_signed_packet(&signed_packet);
+
+        store
+            .insert(signed_packet, PacketSource::PkarrPublish)
+            .await?;
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let entry = store.get_signed_packet(&key).await?;
+        assert!(entry.is_none());
         Ok(())
     }
 
@@ -194,7 +227,8 @@ mod tests {
 
         // spawn our server with mainline support
         let (server, nameserver, _http_url) =
-            Server::spawn_for_tests_with_mainline(Some(BootstrapOption::Custom(bootstrap))).await?;
+            Server::spawn_for_tests_with_options(Some(BootstrapOption::Custom(bootstrap)), None)
+                .await?;
 
         let origin = "irohdns.example.";
 
