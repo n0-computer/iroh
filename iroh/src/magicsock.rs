@@ -1693,23 +1693,14 @@ struct RelayRecvReceiver {
 
 impl RelayRecvReceiver {
     fn poll_recv(&self, cx: &mut Context) -> Poll<Result<RelayRecvDatagram>> {
-        match self.receiver.lock().try_recv() {
-            Ok(item) => Poll::Ready(Ok(item)),
-            Err(mpsc::error::TryRecvError::Empty) => {
-                self.waker.lock().replace(cx.waker().clone());
-
-                // After installing the waker we need to re-check the channel.
-                match self.receiver.lock().try_recv() {
-                    Ok(item) => {
-                        self.waker.lock().take();
-                        Poll::Ready(Ok(item))
-                    }
-                    Err(mpsc::error::TryRecvError::Empty) => Poll::Pending,
-                    Err(mpsc::error::TryRecvError::Disconnected) => {
-                        Poll::Ready(Err(anyhow!("All RelayRecvSenders disconnected")))
-                    }
-                }
+        let mut receiver = self.receiver.lock();
+        self.waker.lock().replace(cx.waker().clone());
+        match receiver.try_recv() {
+            Ok(item) => {
+                self.waker.lock().take();
+                Poll::Ready(Ok(item))
             }
+            Err(mpsc::error::TryRecvError::Empty) => Poll::Pending,
             Err(mpsc::error::TryRecvError::Disconnected) => {
                 Poll::Ready(Err(anyhow!("All RelayRecvSenders disconnected")))
             }
