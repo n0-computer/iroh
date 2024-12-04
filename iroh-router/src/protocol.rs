@@ -1,4 +1,4 @@
-use std::{any::Any, collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
 use anyhow::Result;
 use futures_buffered::join_all;
@@ -14,7 +14,7 @@ use iroh_net::endpoint::Connecting;
 /// Implement this trait on a struct that should handle incoming connections.
 /// The protocol handler must then be registered on the node for an ALPN protocol with
 /// [`crate::RouterBuilder::accept`].
-pub trait ProtocolHandler: Send + Sync + IntoArcAny + std::fmt::Debug + 'static {
+pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     /// Handle an incoming connection.
     ///
     /// This runs on a freshly spawned tokio task so this can be long-running.
@@ -28,19 +28,6 @@ pub trait ProtocolHandler: Send + Sync + IntoArcAny + std::fmt::Debug + 'static 
 
 pub trait Protocol: Sized {
     fn protocol_handler(&self) -> Arc<dyn ProtocolHandler>;
-}
-
-/// Helper trait to facilite casting from `Arc<dyn T>` to `Arc<dyn Any>`.
-///
-/// This trait has a blanket implementation so there is no need to implement this yourself.
-pub trait IntoArcAny {
-    fn into_arc_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
-}
-
-impl<T: Send + Sync + 'static> IntoArcAny for T {
-    fn into_arc_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
-        self
-    }
 }
 
 /// A typed map of protocol handlers, mapping them from ALPNs.
