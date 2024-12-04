@@ -29,12 +29,10 @@ use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 mod defaults;
 mod dns;
-#[cfg(feature = "metrics")]
 mod metrics;
 mod ping;
 mod reportgen;
 
-#[cfg(feature = "metrics")]
 pub use metrics::Metrics;
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
