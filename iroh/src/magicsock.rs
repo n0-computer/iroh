@@ -2868,7 +2868,10 @@ mod tests {
     use tokio_util::task::AbortOnDropHandle;
 
     use super::*;
-    use crate::{defaults::staging::EU_RELAY_HOSTNAME, tls, Endpoint, RelayMode};
+    use crate::{
+        defaults::staging::{self, EU_RELAY_HOSTNAME},
+        tls, Endpoint, RelayMode,
+    };
 
     const ALPN: &[u8] = b"n0/test/1";
 
@@ -3998,5 +4001,58 @@ mod tests {
 
         // TODO: could remove the addresses again, send, add it back and see it recover.
         // But we don't have that much private access to the NodeMap.  This will do for now.
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_relay_datagram_queue() {
+        let queue = Arc::new(RelayDatagramsQueue::new());
+        let url = staging::default_na_relay_node().url;
+        let capacity = queue.queue.capacity().unwrap();
+
+        let mut tasks = JoinSet::new();
+
+        tasks.spawn({
+            let queue = queue.clone();
+            async move {
+                let mut expected_msgs = vec![false; capacity];
+
+                while let Ok(datagram) = tokio::time::timeout(
+                    Duration::from_millis(100),
+                    futures_lite::future::poll_fn(|cx| {
+                        queue.poll_recv(cx).map(|result| result.unwrap())
+                    }),
+                )
+                .await
+                {
+                    let msg_num = usize::from_le_bytes(datagram.buf.as_ref().try_into().unwrap());
+
+                    if expected_msgs[msg_num] {
+                        panic!("Received message number {msg_num} more than once (duplicated)");
+                    }
+
+                    expected_msgs[msg_num] = true;
+                }
+
+                assert!(expected_msgs.into_iter().all(|is_set| is_set));
+            }
+        });
+
+        for i in 0..capacity {
+            tasks.spawn({
+                let queue = queue.clone();
+                let url = url.clone();
+                async move {
+                    queue
+                        .try_send(RelayRecvDatagram {
+                            url,
+                            src: PublicKey::from_bytes(&[0u8; 32]).unwrap(),
+                            buf: Bytes::copy_from_slice(&i.to_le_bytes()),
+                        })
+                        .unwrap();
+                }
+            });
+        }
+
+        tasks.join_all().await;
     }
 }
