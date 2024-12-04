@@ -15,7 +15,6 @@ use crate::{Protocol, ProtocolMap};
 #[derive(Clone, Debug)]
 pub struct Router {
     endpoint: Endpoint,
-    protocols: Arc<ProtocolMap>,
     // `Router` needs to be `Clone + Send`, and we need to `task.await` in its `shutdown()` impl.
     // So we need
     // - `Shared` so we can `task.await` from all `Node` clones
@@ -31,14 +30,6 @@ type JoinErrToStr = Box<dyn Fn(JoinError) -> String + Send + Sync + 'static>;
 impl Router {
     pub fn builder(endpoint: Endpoint) -> RouterBuilder {
         RouterBuilder::new(endpoint)
-    }
-
-    /// Returns a protocol handler for an ALPN.
-    ///
-    /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
-    /// does not match the passed type.
-    pub fn get_protocol<P: Protocol>(&self, alpn: &[u8]) -> Option<P> {
-        self.protocols.get_typed(alpn)
     }
 
     pub fn endpoint(&self) -> &Endpoint {
@@ -79,15 +70,6 @@ impl RouterBuilder {
     /// Returns the [`Endpoint`] of the node.
     pub fn endpoint(&self) -> &Endpoint {
         &self.endpoint
-    }
-
-    /// Returns a protocol handler for an ALPN.
-    ///
-    /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
-    /// does not match the passed type.
-    pub fn get_protocol<P: Protocol>(&self, alpn: &[u8]) -> Option<P> {
-        let handler = self.protocols.get(alpn)?;
-        P::from_protocol_handler(handler)
     }
 
     pub async fn spawn(self) -> Result<Router> {
@@ -166,7 +148,6 @@ impl RouterBuilder {
 
         Ok(Router {
             endpoint: self.endpoint,
-            protocols,
             task,
             cancel_token: cancel,
         })

@@ -52,7 +52,7 @@ use iroh_net::{
     endpoint::{DirectAddrsStream, RemoteInfo},
     AddrInfo, Endpoint, NodeAddr,
 };
-use iroh_router::{Protocol, ProtocolHandler, Router};
+use iroh_router::Router;
 use quic_rpc::{transport::Listener as _, RpcServer};
 use tokio::task::{JoinError, JoinSet};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -101,6 +101,7 @@ pub struct Node {
     // - `AbortOnDropHandle` to make sure that the `task` is cancelled when all `Node`s are dropped
     //   (`Shared` acts like an `Arc` around its inner future).
     task: Shared<MapErr<AbortOnDropHandle<()>, JoinErrToStr>>,
+    #[allow(dead_code)]
     router: Router,
 }
 
@@ -204,14 +205,6 @@ impl Node {
     /// Returns a token that can be used to cancel the node.
     pub fn cancel_token(&self) -> CancellationToken {
         self.inner.cancel_token.clone()
-    }
-
-    /// Returns a protocol handler for an ALPN.
-    ///
-    /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
-    /// does not match the passed type.
-    pub fn get_protocol<P: Protocol>(&self, alpn: &[u8]) -> Option<P> {
-        self.router.get_protocol(alpn)
     }
 }
 

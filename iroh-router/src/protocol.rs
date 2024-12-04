@@ -28,14 +28,6 @@ pub trait ProtocolHandler: Send + Sync + IntoArcAny + std::fmt::Debug + 'static 
 
 pub trait Protocol: Sized {
     fn protocol_handler(&self) -> Arc<dyn ProtocolHandler>;
-    fn from_protocol_handler(handler: Arc<dyn ProtocolHandler>) -> Option<Self>;
-
-    fn downcast_via<T: Any + Send + Sync>(handler: Arc<dyn ProtocolHandler>) -> Option<Self>
-    where
-        Self: From<Arc<T>>
-    {
-        Some(Self::from(handler.into_arc_any().downcast::<T>().ok()?))
-    }
 }
 
 /// Helper trait to facilite casting from `Arc<dyn T>` to `Arc<dyn Any>`.
@@ -56,12 +48,6 @@ impl<T: Send + Sync + 'static> IntoArcAny for T {
 pub struct ProtocolMap(BTreeMap<Vec<u8>, Arc<dyn ProtocolHandler>>);
 
 impl ProtocolMap {
-    /// Returns the registered protocol handler for an ALPN as a concrete type.
-    pub fn get_typed<P: Protocol>(&self, alpn: &[u8]) -> Option<P> {
-        let protocol: Arc<dyn ProtocolHandler> = self.0.get(alpn)?.clone();
-        P::from_protocol_handler(protocol)
-    }
-
     /// Returns the registered protocol handler for an ALPN as a [`Arc<dyn ProtocolHandler>`].
     pub fn get(&self, alpn: &[u8]) -> Option<Arc<dyn ProtocolHandler>> {
         self.0.get(alpn).cloned()

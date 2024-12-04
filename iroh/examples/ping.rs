@@ -1,7 +1,7 @@
 use std::{str::FromStr, sync::Arc};
 
 use futures_lite::future;
-use iroh_net::{endpoint, Endpoint, NodeId};
+use iroh_net::{Endpoint, NodeId};
 use iroh_router::{Protocol, ProtocolHandler};
 
 #[derive(Debug)]
@@ -33,7 +33,10 @@ impl Ping {
 }
 
 impl ProtocolHandler for PingInner {
-    fn accept(self: Arc<Self>, conn: iroh_net::endpoint::Connecting) -> future::Boxed<anyhow::Result<()>> {
+    fn accept(
+        self: Arc<Self>,
+        conn: iroh_net::endpoint::Connecting,
+    ) -> future::Boxed<anyhow::Result<()>> {
         Box::pin(async move {
             let conn = conn.await?;
             let (mut send, mut recv) = conn.accept_bi().await?;
@@ -52,10 +55,6 @@ impl ProtocolHandler for PingInner {
 impl Protocol for Ping {
     fn protocol_handler(&self) -> Arc<dyn iroh_router::ProtocolHandler> {
         self.0.clone()
-    }
-
-    fn from_protocol_handler(handler: Arc<dyn iroh_router::ProtocolHandler>) -> Option<Self> {
-        Self::downcast_via::<PingInner>(handler)
     }
 }
 
@@ -79,7 +78,6 @@ async fn main() -> anyhow::Result<()> {
         let ping = Ping::new(endpoint);
         let builder = builder.accept(ALPN, &ping);
         let router = builder.spawn().await?;
-        let t = router.get_protocol::<Ping>(&ALPN).unwrap();
         println!("Listening for pings on {}", router.endpoint().node_id());
         tokio::signal::ctrl_c().await?;
         router.shutdown().await?;

@@ -604,14 +604,6 @@ impl ProtocolBuilder {
         &self.inner.endpoint
     }
 
-    /// Returns a protocol handler for an ALPN.
-    ///
-    /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
-    /// does not match the passed type.
-    pub fn get_protocol<P: Protocol>(&self, alpn: &[u8]) -> Option<P> {
-        self.router.get_protocol::<P>(alpn)
-    }
-
     /// Spawns the node and starts accepting connections.
     pub async fn spawn(self) -> Result<Node> {
         let Self {
