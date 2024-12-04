@@ -340,7 +340,6 @@
 <a href="#340" id="340">340</a>
 <a href="#341" id="341">341</a>
 <a href="#342" id="342">342</a>
-<a href="#343" id="343">343</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The main event loop for the relay server.
 //!
 //! based on tailscale/derp/derp_server.go
@@ -651,8 +650,7 @@
 
         <span class="comment">// write message from b to a
         </span><span class="kw">let </span>msg = <span class="string">b"hello world!"</span>;
-        <span class="kw">crate</span>::client::conn::send_packet(<span class="kw-2">&amp;mut </span>b_io, <span class="kw-2">&amp;</span><span class="prelude-val">None</span>, node_id_a, Bytes::from_static(msg))
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">crate</span>::client::conn::send_packet(<span class="kw-2">&amp;mut </span>b_io, node_id_a, Bytes::from_static(msg)).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// get message on a's reader
         </span><span class="kw">let </span>frame = recv_frame(FrameType::RecvPacket, <span class="kw-2">&amp;mut </span>a_io).<span class="kw">await</span><span class="question-mark">?</span>;

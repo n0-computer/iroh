@@ -1417,7 +1417,7 @@
         <span class="comment">// send packet
         </span><span class="macro">println!</span>(<span class="string">"  send packet"</span>);
         <span class="kw">let </span>data = <span class="string">b"hello world!"</span>;
-        conn::send_packet(<span class="kw-2">&amp;mut </span>io_rw, <span class="kw-2">&amp;</span><span class="prelude-val">None</span>, target, Bytes::from_static(data)).<span class="kw">await</span><span class="question-mark">?</span>;
+        conn::send_packet(<span class="kw-2">&amp;mut </span>io_rw, target, Bytes::from_static(data)).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>msg = server_channel_r.recv().<span class="kw">await</span>.unwrap();
         <span class="kw">match </span>msg {
             actor::Message::SendPacket {
@@ -1440,7 +1440,7 @@
         </span><span class="kw">let </span><span class="kw-2">mut </span>disco_data = disco::MAGIC.as_bytes().to_vec();
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
-        conn::send_packet(<span class="kw-2">&amp;mut </span>io_rw, <span class="kw-2">&amp;</span><span class="prelude-val">None</span>, target, disco_data.clone().into()).<span class="kw">await</span><span class="question-mark">?</span>;
+        conn::send_packet(<span class="kw-2">&amp;mut </span>io_rw, target, disco_data.clone().into()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>msg = server_channel_r.recv().<span class="kw">await</span>.unwrap();
         <span class="kw">match </span>msg {
             actor::Message::SendDiscoPacket {
@@ -1498,7 +1498,7 @@
         <span class="kw">let </span>data = <span class="string">b"hello world!"</span>;
         <span class="kw">let </span>target = SecretKey::generate().public();
 
-        conn::send_packet(<span class="kw-2">&amp;mut </span>io_rw, <span class="kw-2">&amp;</span><span class="prelude-val">None</span>, target, Bytes::from_static(data)).<span class="kw">await</span><span class="question-mark">?</span>;
+        conn::send_packet(<span class="kw-2">&amp;mut </span>io_rw, target, Bytes::from_static(data)).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>msg = server_channel_r.recv().<span class="kw">await</span>.unwrap();
         <span class="kw">match </span>msg {
             actor::Message::SendPacket {

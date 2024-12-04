@@ -358,13 +358,28 @@
 <a href="#358" id="358">358</a>
 <a href="#359" id="359">359</a>
 <a href="#360" id="360">360</a>
+<a href="#361" id="361">361</a>
+<a href="#362" id="362">362</a>
+<a href="#363" id="363">363</a>
+<a href="#364" id="364">364</a>
+<a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{future::Future, path::Path, result, time::Duration};
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>pkarr::{system_time, SignedPacket};
-<span class="kw">use </span>redb::{backends::InMemoryBackend, Database, ReadableTable, TableDefinition};
+<span class="kw">use </span>redb::{
+    backends::InMemoryBackend, Database, MultimapTableDefinition, ReadableTable, TableDefinition,
+};
 <span class="kw">use </span>tokio::sync::{mpsc, oneshot};
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{debug, error, info};
@@ -374,6 +389,8 @@
 <span class="kw">pub type </span>SignedPacketsKey = [u8; <span class="number">32</span>];
 <span class="kw">const </span>SIGNED_PACKETS_TABLE: TableDefinition&lt;<span class="kw-2">&amp;</span>SignedPacketsKey, <span class="kw-2">&amp;</span>[u8]&gt; =
     TableDefinition::new(<span class="string">"signed-packets-1"</span>);
+<span class="kw">const </span>UPDATE_TIME_TABLE: MultimapTableDefinition&lt;[u8; <span class="number">8</span>], SignedPacketsKey&gt; =
+    MultimapTableDefinition::new(<span class="string">"update-time-1"</span>);
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>SignedPacketStore {
@@ -408,6 +425,7 @@
         res: oneshot::Sender&lt;Snapshot&gt;,
     },
     CheckExpired {
+        time: [u8; <span class="number">8</span>],
         key: PublicKeyBytes,
     },
 }
@@ -483,11 +501,13 @@
                                         res.send(<span class="bool-val">false</span>).ok();
                                         <span class="kw">continue</span>;
                                     } <span class="kw">else </span>{
+                                        tables.update_time.remove(<span class="kw-2">&amp;</span>packet.timestamp().to_be_bytes(), key.as_bytes())<span class="question-mark">?</span>;
                                         replaced = <span class="bool-val">true</span>;
                                     }
                                 }
                                 <span class="kw">let </span>value = packet.as_bytes();
                                 tables.signed_packets.insert(key.as_bytes(), <span class="kw-2">&amp;</span>value[..])<span class="question-mark">?</span>;
+                                tables.update_time.insert(<span class="kw-2">&amp;</span>packet.timestamp().to_be_bytes(), key.as_bytes())<span class="question-mark">?</span>;
                                 <span class="kw">if </span>replaced {
                                     <span class="macro">inc!</span>(Metrics, store_packets_updated);
                                 } <span class="kw">else </span>{
@@ -496,9 +516,14 @@
                                 res.send(<span class="bool-val">true</span>).ok();
                             }
                             Message::Remove { key, res } =&gt; {
-                                <span class="kw">let </span>updated =
-                                    tables.signed_packets.remove(key.as_bytes())<span class="question-mark">?</span>.is_some()
-                                ;
+                                <span class="kw">let </span>updated = <span class="kw">if let </span><span class="prelude-val">Some</span>(row) = tables.signed_packets.remove(key.as_bytes())<span class="question-mark">? </span>{
+                                    <span class="kw">let </span>packet = SignedPacket::from_bytes(<span class="kw-2">&amp;</span>row.value().to_vec().into())<span class="question-mark">?</span>;
+                                    tables.update_time.remove(<span class="kw-2">&amp;</span>packet.timestamp().to_be_bytes(), key.as_bytes())<span class="question-mark">?</span>;
+                                    <span class="macro">inc!</span>(Metrics, store_packets_removed);
+                                    <span class="bool-val">true
+                                </span>} <span class="kw">else </span>{
+                                    <span class="bool-val">false
+                                </span>};
                                 <span class="kw">if </span>updated {
                                     <span class="macro">inc!</span>(Metrics, store_packets_removed);
                                 }
@@ -507,7 +532,8 @@
                             Message::Snapshot { res } =&gt; {
                                 res.send(Snapshot::new(<span class="kw-2">&amp;</span><span class="self">self</span>.db)<span class="question-mark">?</span>).ok();
                             }
-                            Message::CheckExpired { key } =&gt; {
+                            Message::CheckExpired { key, time } =&gt; {
+                                tables.update_time.remove_all(<span class="kw-2">&amp;</span>time)<span class="question-mark">?</span>;
                                 <span class="kw">if let </span><span class="prelude-val">Some</span>(packet) = get_packet(<span class="kw-2">&amp;</span>tables.signed_packets, <span class="kw-2">&amp;</span>key)<span class="question-mark">? </span>{
                                     <span class="kw">if </span>packet.timestamp() &lt; expired {
                                         <span class="kw">let _ </span>= tables.signed_packets.remove(key.as_bytes())<span class="question-mark">?</span>;
@@ -529,18 +555,21 @@
 /// signed packet store.
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Tables&lt;<span class="lifetime">'a</span>&gt; {
     <span class="kw">pub </span>signed_packets: redb::Table&lt;<span class="lifetime">'a</span>, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>SignedPacketsKey, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>[u8]&gt;,
+    <span class="kw">pub </span>update_time: redb::MultimapTable&lt;<span class="lifetime">'a</span>, [u8; <span class="number">8</span>], SignedPacketsKey&gt;,
 }
 
 <span class="kw">impl</span>&lt;<span class="lifetime">'txn</span>&gt; Tables&lt;<span class="lifetime">'txn</span>&gt; {
     <span class="kw">pub fn </span>new(tx: <span class="kw-2">&amp;</span><span class="lifetime">'txn </span>redb::WriteTransaction) -&gt; result::Result&lt;<span class="self">Self</span>, redb::TableError&gt; {
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             signed_packets: tx.open_table(SIGNED_PACKETS_TABLE)<span class="question-mark">?</span>,
+            update_time: tx.open_multimap_table(UPDATE_TIME_TABLE)<span class="question-mark">?</span>,
         })
     }
 }
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Snapshot {
     <span class="kw">pub </span>signed_packets: redb::ReadOnlyTable&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>SignedPacketsKey, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>[u8]&gt;,
+    <span class="kw">pub </span>update_time: redb::ReadOnlyMultimapTable&lt;[u8; <span class="number">8</span>], SignedPacketsKey&gt;,
 }
 
 <span class="kw">impl </span>Snapshot {
@@ -548,6 +577,7 @@
         <span class="kw">let </span>tx = db.begin_read()<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             signed_packets: tx.open_table(SIGNED_PACKETS_TABLE)<span class="question-mark">?</span>,
+            update_time: tx.open_multimap_table(UPDATE_TIME_TABLE)<span class="question-mark">?</span>,
         })
     }
 }
@@ -663,16 +693,14 @@
         };
         <span class="macro">debug!</span>(<span class="string">"got snapshot"</span>);
         <span class="kw">let </span>expired = system_time() - expiry_ms;
-        <span class="kw">for </span>item <span class="kw">in </span>snapshot.signed_packets.iter()<span class="question-mark">? </span>{
-            <span class="kw">let </span>(<span class="kw">_</span>, value) = item<span class="question-mark">?</span>;
-            <span class="kw">let </span>value = Bytes::copy_from_slice(value.value());
-            <span class="kw">let </span>packet = SignedPacket::from_bytes(<span class="kw-2">&amp;</span>value)<span class="question-mark">?</span>;
-            <span class="kw">if </span>packet.timestamp() &lt; expired {
-                <span class="macro">debug!</span>(<span class="string">"evicting expired packet {}"</span>, packet.public_key());
-                send.send(Message::CheckExpired {
-                    key: PublicKeyBytes::from_signed_packet(<span class="kw-2">&amp;</span>packet),
-                })
-                .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">for </span>item <span class="kw">in </span>snapshot.update_time.range(..expired.to_be_bytes())<span class="question-mark">? </span>{
+            <span class="kw">let </span>(time, keys) = item<span class="question-mark">?</span>;
+            <span class="kw">for </span>item <span class="kw">in </span>keys {
+                <span class="kw">let </span>key = item<span class="question-mark">?</span>;
+                <span class="kw">let </span>time = time.value();
+                <span class="kw">let </span>key = PublicKeyBytes::new(key.value());
+                <span class="macro">debug!</span>(<span class="string">"evicting expired packet {:?} {}"</span>, time, key);
+                send.send(Message::CheckExpired { time, key }).<span class="kw">await</span><span class="question-mark">?</span>;
             }
         }
         <span class="comment">// sleep for the eviction interval so we don't constantly check
