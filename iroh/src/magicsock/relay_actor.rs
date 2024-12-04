@@ -5,7 +5,6 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    future::Future,
     net::{IpAddr, SocketAddr},
     sync::{atomic::Ordering, Arc},
     time::{Duration, Instant},
@@ -326,8 +325,8 @@ impl RelayActor {
                     match task_result {
                         Ok((url, ping_success)) => {
                             if !ping_success {
-                                with_cancel(
-                                    self.cancel_token.child_token(),
+                                let token = self.cancel_token.child_token();
+                                token.run_until_cancelled(
                                     self.close_or_reconnect_relay(&url, "rebind-ping-fail")
                                 ).await;
                             }
@@ -349,7 +348,8 @@ impl RelayActor {
                 }
                 _ = cleanup_timer.tick() => {
                     trace!("tick: cleanup");
-                    with_cancel(self.cancel_token.child_token(), self.clean_stale_relay()).await;
+                    let cancel_token = self.cancel_token.child_token();
+                    cancel_token.run_until_cancelled(self.clean_stale_relay()).await;
                 }
             }
         }
@@ -829,19 +829,6 @@ impl Iterator for PacketSplitIter {
             Some(Ok(item))
         } else {
             None
-        }
-    }
-}
-
-async fn with_cancel<F>(token: CancellationToken, f: F)
-where
-    F: Future<Output = ()>,
-{
-    tokio::select! {
-        _ = token.cancelled_owned() => {
-            // abort
-        }
-        _ = f => {
         }
     }
 }
