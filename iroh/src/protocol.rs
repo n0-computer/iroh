@@ -111,27 +111,27 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     /// Handle an incoming connection.
     ///
     /// This runs on a freshly spawned tokio task so this can be long-running.
-    fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>>;
+    fn accept(&self, conn: Connecting) -> BoxedFuture<Result<()>>;
 
     /// Called when the node shuts down.
-    fn shutdown(self: Arc<Self>) -> BoxedFuture<()> {
+    fn shutdown(&self) -> BoxedFuture<()> {
         Box::pin(async move {})
     }
 }
 
 /// A typed map of protocol handlers, mapping them from ALPNs.
-#[derive(Debug, Clone, Default)]
-pub struct ProtocolMap(BTreeMap<Vec<u8>, Arc<dyn ProtocolHandler>>);
+#[derive(Debug, Default)]
+pub struct ProtocolMap(BTreeMap<Vec<u8>, Box<dyn ProtocolHandler>>);
 
 impl ProtocolMap {
     /// Returns the registered protocol handler for an ALPN as a [`Arc<dyn ProtocolHandler>`].
-    pub fn get(&self, alpn: &[u8]) -> Option<Arc<dyn ProtocolHandler>> {
-        self.0.get(alpn).cloned()
+    pub fn get(&self, alpn: &[u8]) -> Option<&dyn ProtocolHandler> {
+        self.0.get(alpn).map(|p| &**p)
     }
 
     /// Inserts a protocol handler.
-    pub fn insert(&mut self, alpn: Vec<u8>, handler: Arc<dyn ProtocolHandler>) {
-        self.0.insert(alpn, handler);
+    pub fn insert(&mut self, alpn: Vec<u8>, handler: impl ProtocolHandler) {
+        self.0.insert(alpn, Box::new(handler));
     }
 
     /// Returns an iterator of all registered ALPN protocol identifiers.
@@ -143,7 +143,7 @@ impl ProtocolMap {
     ///
     /// Calls and awaits [`ProtocolHandler::shutdown`] for all registered handlers concurrently.
     pub async fn shutdown(&self) {
-        let handlers = self.0.values().cloned().map(ProtocolHandler::shutdown);
+        let handlers = self.0.values().map(|p| p.shutdown());
         join_all(handlers).await;
     }
 }
@@ -201,7 +201,7 @@ impl RouterBuilder {
 
     /// Configures the router to accept the [`ProtocolHandler`] when receiving a connection
     /// with this `alpn`.
-    pub fn accept(mut self, alpn: impl AsRef<[u8]>, handler: Arc<dyn ProtocolHandler>) -> Self {
+    pub fn accept(mut self, alpn: impl AsRef<[u8]>, handler: impl ProtocolHandler) -> Self {
         self.protocols.insert(alpn.as_ref().to_vec(), handler);
         self
     }

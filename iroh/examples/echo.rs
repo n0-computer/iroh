@@ -6,8 +6,6 @@
 //!
 //!     cargo run --example echo --features=examples
 
-use std::sync::Arc;
-
 use anyhow::Result;
 use futures_lite::future::Boxed as BoxedFuture;
 use iroh::{
@@ -60,10 +58,7 @@ async fn accept_side() -> Result<Router> {
     let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
     // Build our protocol handler and add our protocol, identified by its ALPN, and spawn the node.
-    let router = Router::builder(endpoint)
-        .accept(ALPN, Arc::new(Echo))
-        .spawn()
-        .await?;
+    let router = Router::builder(endpoint).accept(ALPN, Echo).spawn().await?;
 
     Ok(router)
 }
@@ -76,7 +71,7 @@ impl ProtocolHandler for Echo {
     ///
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
     /// the connection lasts.
-    fn accept(self: Arc<Self>, connecting: Connecting) -> BoxedFuture<Result<()>> {
+    fn accept(&self, connecting: Connecting) -> BoxedFuture<Result<()>> {
         // We have to return a boxed future from the handler.
         Box::pin(async move {
             // Wait for the connection to be fully established.
