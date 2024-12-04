@@ -297,7 +297,7 @@ jobs:
       branch: ${{ github.ref }}
       max_workers: 4
       netsim_branch: "main"
-      sim_paths: "sims/iroh_v2/iroh.json,sims/integration_v2"
+      sim_paths: "sims/iroh/iroh.json,sims/integration"
       pr_number: ${{ github.event.pull_request.number || '' }}
 
   codespell:

@@ -308,8 +308,7 @@ mod tests {
 
         // write message from b to a
         let msg = b"hello world!";
-        crate::client::conn::send_packet(&mut b_io, &None, node_id_a, Bytes::from_static(msg))
-            .await?;
+        crate::client::conn::send_packet(&mut b_io, node_id_a, Bytes::from_static(msg)).await?;
 
         // get message on a's reader
         let frame = recv_frame(FrameType::RecvPacket, &mut a_io).await?;
