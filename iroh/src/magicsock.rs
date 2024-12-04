@@ -2989,7 +2989,7 @@ mod tests {
     }
 
     #[instrument(skip_all, fields(me = %ep.endpoint.node_id().fmt_short()))]
-    async fn echo_receiver(ep: MagicStack) -> Result<()> {
+    async fn echo_receiver(ep: MagicStack, loss: ExpectedLoss) -> Result<()> {
         info!("accepting conn");
         let conn = ep.endpoint.accept().await.expect("no conn");
 
@@ -3020,10 +3020,12 @@ mod tests {
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
         // TODO: ensure panics in this function are reported ok
-        assert!(
-            stats.path.lost_packets < 10,
-            "[receiver] should not loose many packets",
-        );
+        if matches!(loss, ExpectedLoss::AlmostNone) {
+            assert!(
+                stats.path.lost_packets < 10,
+                "[receiver] should not loose many packets",
+            );
+        }
 
         info!("close");
         conn.close(0u32.into(), b"done");
@@ -3034,7 +3036,12 @@ mod tests {
     }
 
     #[instrument(skip_all, fields(me = %ep.endpoint.node_id().fmt_short()))]
-    async fn echo_sender(ep: MagicStack, dest_id: PublicKey, msg: &[u8]) -> Result<()> {
+    async fn echo_sender(
+        ep: MagicStack,
+        dest_id: PublicKey,
+        msg: &[u8],
+        loss: ExpectedLoss,
+    ) -> Result<()> {
         info!("connecting to {}", dest_id.fmt_short());
         let dest = NodeAddr::new(dest_id);
         let conn = ep
@@ -3065,10 +3072,12 @@ mod tests {
 
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
-        assert!(
-            stats.path.lost_packets < 10,
-            "[sender] should not loose many packets",
-        );
+        if matches!(loss, ExpectedLoss::AlmostNone) {
+            assert!(
+                stats.path.lost_packets < 10,
+                "[sender] should not loose many packets",
+            );
+        }
 
         info!("close");
         conn.close(0u32.into(), b"done");
@@ -3077,14 +3086,25 @@ mod tests {
         Ok(())
     }
 
+    #[derive(Debug, Copy, Clone)]
+    enum ExpectedLoss {
+        AlmostNone,
+        YeahSure,
+    }
+
     /// Runs a roundtrip between the [`echo_sender`] and [`echo_receiver`].
-    async fn run_roundtrip(sender: MagicStack, receiver: MagicStack, payload: &[u8]) {
+    async fn run_roundtrip(
+        sender: MagicStack,
+        receiver: MagicStack,
+        payload: &[u8],
+        loss: ExpectedLoss,
+    ) {
         let send_node_id = sender.endpoint.node_id();
         let recv_node_id = receiver.endpoint.node_id();
         info!("\nroundtrip: {send_node_id:#} -> {recv_node_id:#}");
 
-        let receiver_task = tokio::spawn(echo_receiver(receiver));
-        let sender_res = echo_sender(sender, recv_node_id, payload).await;
+        let receiver_task = tokio::spawn(echo_receiver(receiver, loss));
+        let sender_res = echo_sender(sender, recv_node_id, payload, loss).await;
         let sender_is_err = match sender_res {
             Ok(()) => false,
             Err(err) => {
@@ -3123,14 +3143,26 @@ mod tests {
 
         for i in 0..5 {
             info!("\n-- round {i}");
-            run_roundtrip(m1.clone(), m2.clone(), b"hello m1").await;
-            run_roundtrip(m2.clone(), m1.clone(), b"hello m2").await;
+            run_roundtrip(
+                m1.clone(),
+                m2.clone(),
+                b"hello m1",
+                ExpectedLoss::AlmostNone,
+            )
+            .await;
+            run_roundtrip(
+                m2.clone(),
+                m1.clone(),
+                b"hello m2",
+                ExpectedLoss::AlmostNone,
+            )
+            .await;
 
             info!("\n-- larger data");
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), &data).await;
-            run_roundtrip(m2.clone(), m1.clone(), &data).await;
+            run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::AlmostNone).await;
+            run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::AlmostNone).await;
         }
 
         Ok(())
@@ -3217,14 +3249,14 @@ mod tests {
 
         for i in 0..rounds {
             println!("-- [m1 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), b"hello m1").await;
-            run_roundtrip(m2.clone(), m1.clone(), b"hello m2").await;
+            run_roundtrip(m1.clone(), m2.clone(), b"hello m1", ExpectedLoss::YeahSure).await;
+            run_roundtrip(m2.clone(), m1.clone(), b"hello m2", ExpectedLoss::YeahSure).await;
 
             println!("-- [m1 changes] larger data");
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), &data).await;
-            run_roundtrip(m2.clone(), m1.clone(), &data).await;
+            run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
+            run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await;
         }
 
         std::mem::drop(m1_network_change_guard);
@@ -3246,14 +3278,14 @@ mod tests {
 
         for i in 0..rounds {
             println!("-- [m2 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), b"hello m1").await;
-            run_roundtrip(m2.clone(), m1.clone(), b"hello m2").await;
+            run_roundtrip(m1.clone(), m2.clone(), b"hello m1", ExpectedLoss::YeahSure).await;
+            run_roundtrip(m2.clone(), m1.clone(), b"hello m2", ExpectedLoss::YeahSure).await;
 
             println!("-- [m2 changes] larger data");
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), &data).await;
-            run_roundtrip(m2.clone(), m1.clone(), &data).await;
+            run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
+            run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await;
         }
 
         std::mem::drop(m2_network_change_guard);
@@ -3276,14 +3308,14 @@ mod tests {
 
         for i in 0..rounds {
             println!("-- [m1 & m2 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), b"hello m1").await;
-            run_roundtrip(m2.clone(), m1.clone(), b"hello m2").await;
+            run_roundtrip(m1.clone(), m2.clone(), b"hello m1", ExpectedLoss::YeahSure).await;
+            run_roundtrip(m2.clone(), m1.clone(), b"hello m2", ExpectedLoss::YeahSure).await;
 
             println!("-- [m1 & m2 changes] larger data");
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), &data).await;
-            run_roundtrip(m2.clone(), m1.clone(), &data).await;
+            run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
+            run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await;
         }
 
         std::mem::drop(m1_m2_network_change_guard);
