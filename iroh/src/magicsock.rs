@@ -1713,6 +1713,15 @@ enum DiscoBoxError {
     Parse(anyhow::Error),
 }
 
+/// A queue holding [`RelayRecvDatagram`]s that can be polled in async
+/// contexts, and wakes up tasks when something adds items using [`try_send`].
+///
+/// This is used to transfer relay datagrams between the [`RelayActor`]
+/// and [`MagicSock`].
+///
+/// [`try_send`]: Self::try_send
+/// [`RelayActor`]: crate::magicsock::RelayActor
+/// [`MagicSock`]: crate::magicsock::MagicSock
 #[derive(Debug)]
 struct RelayDatagramsQueue {
     queue: ConcurrentQueue<RelayRecvDatagram>,
@@ -1720,6 +1729,7 @@ struct RelayDatagramsQueue {
 }
 
 impl RelayDatagramsQueue {
+    /// Creates a new, empty queue with a fixed size bound of 128 items.
     fn new() -> Self {
         Self {
             queue: ConcurrentQueue::bounded(128),
@@ -1727,6 +1737,10 @@ impl RelayDatagramsQueue {
         }
     }
 
+    /// Sends an item into this queue and wakes a potential task
+    /// that's registered its waker with a [`poll_recv`] call.
+    ///
+    /// [`poll_recv`]: Self::poll_recv
     fn try_send(
         &self,
         item: RelayRecvDatagram,
@@ -1736,6 +1750,18 @@ impl RelayDatagramsQueue {
         })
     }
 
+    /// Polls for new items in the queue.
+    ///
+    /// Although this method is available from `&self`, it must not be
+    /// polled concurrently between tasks.
+    ///
+    /// Calling this will replace the current waker used. So if another task
+    /// waits for this, that task's waker will be replaced and it won't be
+    /// woken up for new items.
+    ///
+    /// The reason this method is made available as `&self` is because
+    /// the interface for quinn's [`AsyncUdpSocket::poll_recv`] requires us
+    /// to be able to poll from `&self`.
     fn poll_recv(&self, cx: &mut Context) -> Poll<Result<RelayRecvDatagram>> {
         match self.queue.pop() {
             Ok(value) => Poll::Ready(Ok(value)),
