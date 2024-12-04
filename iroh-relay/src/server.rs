@@ -914,8 +914,12 @@ mod tests {
         client_a.send(b_key, msg.clone()).await.unwrap();
 
         let res = client_b_receiver.recv().await.unwrap().unwrap();
-        if let ReceivedMessage::ReceivedPacket { source, data } = res {
-            assert_eq!(a_key, source);
+        if let ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            assert_eq!(a_key, remote_node_id);
             assert_eq!(msg, data);
         } else {
             panic!("client_b received unexpected message {res:?}");
@@ -926,8 +930,12 @@ mod tests {
         client_b.send(a_key, msg.clone()).await.unwrap();
 
         let res = client_a_receiver.recv().await.unwrap().unwrap();
-        if let ReceivedMessage::ReceivedPacket { source, data } = res {
-            assert_eq!(b_key, source);
+        if let ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            assert_eq!(b_key, remote_node_id);
             assert_eq!(msg, data);
         } else {
             panic!("client_a received unexpected message {res:?}");
@@ -982,8 +990,12 @@ mod tests {
         client_a.send(b_key, msg.clone()).await.unwrap();
 
         let res = client_b_receiver.recv().await.unwrap().unwrap();
-        if let ReceivedMessage::ReceivedPacket { source, data } = res {
-            assert_eq!(a_key, source);
+        if let ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            assert_eq!(a_key, remote_node_id);
             assert_eq!(msg, data);
         } else {
             panic!("client_b received unexpected message {res:?}");
@@ -994,8 +1006,12 @@ mod tests {
         client_b.send(a_key, msg.clone()).await.unwrap();
 
         let res = client_a_receiver.recv().await.unwrap().unwrap();
-        if let ReceivedMessage::ReceivedPacket { source, data } = res {
-            assert_eq!(b_key, source);
+        if let ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            assert_eq!(b_key, remote_node_id);
             assert_eq!(msg, data);
         } else {
             panic!("client_a received unexpected message {res:?}");
@@ -1049,8 +1065,12 @@ mod tests {
         client_a.send(b_key, msg.clone()).await.unwrap();
 
         let res = client_b_receiver.recv().await.unwrap().unwrap();
-        if let ReceivedMessage::ReceivedPacket { source, data } = res {
-            assert_eq!(a_key, source);
+        if let ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            assert_eq!(a_key, remote_node_id);
             assert_eq!(msg, data);
         } else {
             panic!("client_b received unexpected message {res:?}");
@@ -1061,8 +1081,12 @@ mod tests {
         client_b.send(a_key, msg.clone()).await.unwrap();
 
         let res = client_a_receiver.recv().await.unwrap().unwrap();
-        if let ReceivedMessage::ReceivedPacket { source, data } = res {
-            assert_eq!(b_key, source);
+        if let ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            assert_eq!(b_key, remote_node_id);
             assert_eq!(msg, data);
         } else {
             panic!("client_a received unexpected message {res:?}");
