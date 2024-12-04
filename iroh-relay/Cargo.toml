@@ -83,7 +83,7 @@ tokio-rustls = { version = "0.26", default-features = false, features = [
     "ring",
 ] }
 tokio-rustls-acme = { version = "0.6", optional = true }
-tokio-tungstenite = "0.24"
+tokio-tungstenite = "0.21" # avoid duplicating this dependency as long as tokio-tungstenite-wasm isn't updated
 tokio-tungstenite-wasm = "0.3"
 tokio-util = { version = "0.7", features = ["io-util", "io", "codec", "rt"] }
 toml = { version = "0.8", optional = true }
