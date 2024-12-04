@@ -31,8 +31,9 @@ use std::{
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
+use concurrent_queue::ConcurrentQueue;
 use futures_lite::{FutureExt, Stream, StreamExt};
-use futures_util::stream::BoxStream;
+use futures_util::{stream::BoxStream, task::AtomicWaker};
 use iroh_base::key::NodeId;
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::protos::stun;
@@ -180,12 +181,12 @@ pub(crate) struct MagicSock {
     me: String,
     /// Proxy
     proxy_url: Option<Url>,
-    /// Channel to receive datagrams from relays for [`AsyncUdpSocket::poll_recv`].
+    /// Queue to receive datagrams from relays for [`AsyncUdpSocket::poll_recv`].
     ///
-    /// QUIC datagrams received by relays are put on this channel and consumed by
-    /// [`AsyncUdpSocket`].  This channel takes care of the wakers needed by
+    /// Relay datagrams received by relays are put into this queue and consumed by
+    /// [`AsyncUdpSocket`].  This queue takes care of the wakers needed by
     /// [`AsyncUdpSocket::poll_recv`].
-    relay_recv_channel: RelayRecvReceiver,
+    relay_datagrams_queue: Arc<RelayDatagramsQueue>,
 
     network_send_wakers: Arc<parking_lot::Mutex<Option<Waker>>>,
     /// Counter for ordering of [`MagicSock::poll_recv`] polling order.
@@ -860,7 +861,7 @@ impl MagicSock {
             // For each output buffer keep polling the datagrams from the relay until one is
             // a QUIC datagram to be placed into the output buffer.  Or the channel is empty.
             loop {
-                let recv = match self.relay_recv_channel.poll_recv(cx) {
+                let recv = match self.relay_datagrams_queue.poll_recv(cx) {
                     Poll::Ready(Ok(recv)) => recv,
                     Poll::Ready(Err(err)) => {
                         error!("relay_recv_channel closed: {err:#}");
@@ -1510,7 +1511,7 @@ impl Handle {
             insecure_skip_relay_cert_verify,
         } = opts;
 
-        let (relay_recv_tx, relay_recv_rx) = relay_recv_channel();
+        let relay_datagrams_queue = Arc::new(RelayDatagramsQueue::new());
 
         let (pconn4, pconn6) = bind(addr_v4, addr_v6)?;
         let port = pconn4.port();
@@ -1547,7 +1548,7 @@ impl Handle {
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
-            relay_recv_channel: relay_recv_rx,
+            relay_datagrams_queue: relay_datagrams_queue.clone(),
             network_send_wakers: Arc::new(parking_lot::Mutex::new(None)),
             poll_recv_counter: AtomicUsize::new(0),
             actor_sender: actor_sender.clone(),
@@ -1572,7 +1573,7 @@ impl Handle {
 
         let mut actor_tasks = JoinSet::default();
 
-        let relay_actor = RelayActor::new(inner.clone(), relay_recv_tx);
+        let relay_actor = RelayActor::new(inner.clone(), relay_datagrams_queue);
         let relay_actor_cancel_token = relay_actor.cancel_token();
         actor_tasks.spawn(
             async move {
@@ -1712,64 +1713,74 @@ enum DiscoBoxError {
     Parse(anyhow::Error),
 }
 
-/// Channel for [`MagicSock::poll_recv_relay`] to receive datagrams from relays.
+/// A queue holding [`RelayRecvDatagram`]s that can be polled in async
+/// contexts, and wakes up tasks when something adds items using [`try_send`].
 ///
-/// The sender and receiver will take care of the required wakers needed for
-/// [`AsyncUdpSocket::poll_recv`].
-// TODO: This channel should possibly be implemented with concurrent-queue and atomic-waker.
-// Or maybe async-channel.
-fn relay_recv_channel() -> (RelayRecvSender, RelayRecvReceiver) {
-    let (tx, rx) = mpsc::channel(128);
-    let waker = Arc::new(parking_lot::Mutex::new(None));
-    let sender = RelayRecvSender {
-        sender: tx,
-        waker: waker.clone(),
-    };
-    let receiver = RelayRecvReceiver {
-        receiver: parking_lot::Mutex::new(rx),
-        waker,
-    };
-    (sender, receiver)
+/// This is used to transfer relay datagrams between the [`RelayActor`]
+/// and [`MagicSock`].
+///
+/// [`try_send`]: Self::try_send
+/// [`RelayActor`]: crate::magicsock::RelayActor
+/// [`MagicSock`]: crate::magicsock::MagicSock
+#[derive(Debug)]
+struct RelayDatagramsQueue {
+    queue: ConcurrentQueue<RelayRecvDatagram>,
+    waker: AtomicWaker,
 }
 
-#[derive(Debug, Clone)]
-struct RelayRecvSender {
-    sender: mpsc::Sender<RelayRecvDatagram>,
-    waker: Arc<parking_lot::Mutex<Option<Waker>>>,
-}
+impl RelayDatagramsQueue {
+    /// Creates a new, empty queue with a fixed size bound of 128 items.
+    fn new() -> Self {
+        Self {
+            queue: ConcurrentQueue::bounded(128),
+            waker: AtomicWaker::new(),
+        }
+    }
 
-impl RelayRecvSender {
+    /// Sends an item into this queue and wakes a potential task
+    /// that's registered its waker with a [`poll_recv`] call.
+    ///
+    /// [`poll_recv`]: Self::poll_recv
     fn try_send(
         &self,
         item: RelayRecvDatagram,
-    ) -> Result<(), mpsc::error::TrySendError<RelayRecvDatagram>> {
-        self.sender.try_send(item).inspect(|_| {
-            if let Some(waker) = self.waker.lock().take() {
-                waker.wake();
-            }
+    ) -> Result<(), concurrent_queue::PushError<RelayRecvDatagram>> {
+        self.queue.push(item).inspect(|_| {
+            self.waker.wake();
         })
     }
-}
 
-#[derive(Debug)]
-struct RelayRecvReceiver {
-    receiver: parking_lot::Mutex<mpsc::Receiver<RelayRecvDatagram>>,
-    waker: Arc<parking_lot::Mutex<Option<Waker>>>,
-}
-
-impl RelayRecvReceiver {
+    /// Polls for new items in the queue.
+    ///
+    /// Although this method is available from `&self`, it must not be
+    /// polled concurrently between tasks.
+    ///
+    /// Calling this will replace the current waker used. So if another task
+    /// waits for this, that task's waker will be replaced and it won't be
+    /// woken up for new items.
+    ///
+    /// The reason this method is made available as `&self` is because
+    /// the interface for quinn's [`AsyncUdpSocket::poll_recv`] requires us
+    /// to be able to poll from `&self`.
     fn poll_recv(&self, cx: &mut Context) -> Poll<Result<RelayRecvDatagram>> {
-        let mut receiver = self.receiver.lock();
-        self.waker.lock().replace(cx.waker().clone());
-        match receiver.try_recv() {
-            Ok(item) => {
-                self.waker.lock().take();
-                Poll::Ready(Ok(item))
+        match self.queue.pop() {
+            Ok(value) => Poll::Ready(Ok(value)),
+            Err(concurrent_queue::PopError::Empty) => {
+                self.waker.register(cx.waker());
+
+                match self.queue.pop() {
+                    Ok(value) => {
+                        self.waker.take();
+                        Poll::Ready(Ok(value))
+                    }
+                    Err(concurrent_queue::PopError::Empty) => Poll::Pending,
+                    Err(concurrent_queue::PopError::Closed) => {
+                        self.waker.take();
+                        Poll::Ready(Err(anyhow!("Queue closed")))
+                    }
+                }
             }
-            Err(mpsc::error::TryRecvError::Empty) => Poll::Pending,
-            Err(mpsc::error::TryRecvError::Disconnected) => {
-                Poll::Ready(Err(anyhow!("All RelayRecvSenders disconnected")))
-            }
+            Err(concurrent_queue::PopError::Closed) => Poll::Ready(Err(anyhow!("Queue closed"))),
         }
     }
 }
@@ -2857,7 +2868,10 @@ mod tests {
     use tokio_util::task::AbortOnDropHandle;
 
     use super::*;
-    use crate::{defaults::staging::EU_RELAY_HOSTNAME, tls, Endpoint, RelayMode};
+    use crate::{
+        defaults::staging::{self, EU_RELAY_HOSTNAME},
+        tls, Endpoint, RelayMode,
+    };
 
     const ALPN: &[u8] = b"n0/test/1";
 
@@ -4019,5 +4033,58 @@ mod tests {
 
         // TODO: could remove the addresses again, send, add it back and see it recover.
         // But we don't have that much private access to the NodeMap.  This will do for now.
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_relay_datagram_queue() {
+        let queue = Arc::new(RelayDatagramsQueue::new());
+        let url = staging::default_na_relay_node().url;
+        let capacity = queue.queue.capacity().unwrap();
+
+        let mut tasks = JoinSet::new();
+
+        tasks.spawn({
+            let queue = queue.clone();
+            async move {
+                let mut expected_msgs = vec![false; capacity];
+
+                while let Ok(datagram) = tokio::time::timeout(
+                    Duration::from_millis(100),
+                    futures_lite::future::poll_fn(|cx| {
+                        queue.poll_recv(cx).map(|result| result.unwrap())
+                    }),
+                )
+                .await
+                {
+                    let msg_num = usize::from_le_bytes(datagram.buf.as_ref().try_into().unwrap());
+
+                    if expected_msgs[msg_num] {
+                        panic!("Received message number {msg_num} more than once (duplicated)");
+                    }
+
+                    expected_msgs[msg_num] = true;
+                }
+
+                assert!(expected_msgs.into_iter().all(|is_set| is_set));
+            }
+        });
+
+        for i in 0..capacity {
+            tasks.spawn({
+                let queue = queue.clone();
+                let url = url.clone();
+                async move {
+                    queue
+                        .try_send(RelayRecvDatagram {
+                            url,
+                            src: PublicKey::from_bytes(&[0u8; 32]).unwrap(),
+                            buf: Bytes::copy_from_slice(&i.to_le_bytes()),
+                        })
+                        .unwrap();
+                }
+            });
+        }
+
+        tasks.join_all().await;
     }
 }
