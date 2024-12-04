@@ -799,7 +799,11 @@ mod tests {
                         }
                         Some(Ok(msg)) => {
                             info!("got message on {:?}: {msg:?}", key.public());
-                            if let ReceivedMessage::ReceivedPacket { source, data } = msg {
+                            if let ReceivedMessage::ReceivedPacket {
+                                remote_node_id: source,
+                                data,
+                            } = msg
+                            {
                                 received_msg_s
                                     .send((source, data))
                                     .await
@@ -947,8 +951,11 @@ mod tests {
         let msg = Bytes::from_static(b"hello client b!!");
         client_a.send(public_key_b, msg.clone()).await?;
         match client_receiver_b.recv().await? {
-            ReceivedMessage::ReceivedPacket { source, data } => {
-                assert_eq!(public_key_a, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } => {
+                assert_eq!(public_key_a, remote_node_id);
                 assert_eq!(&msg[..], data);
             }
             msg => {
@@ -960,8 +967,11 @@ mod tests {
         let msg = Bytes::from_static(b"nice to meet you client a!!");
         client_b.send(public_key_a, msg.clone()).await?;
         match client_receiver_a.recv().await? {
-            ReceivedMessage::ReceivedPacket { source, data } => {
-                assert_eq!(public_key_b, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } => {
+                assert_eq!(public_key_b, remote_node_id);
                 assert_eq!(&msg[..], data);
             }
             msg => {
@@ -1027,8 +1037,11 @@ mod tests {
         let msg = Bytes::from_static(b"hello client b!!");
         client_a.send(public_key_b, msg.clone()).await?;
         match client_receiver_b.recv().await? {
-            ReceivedMessage::ReceivedPacket { source, data } => {
-                assert_eq!(public_key_a, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } => {
+                assert_eq!(public_key_a, remote_node_id);
                 assert_eq!(&msg[..], data);
             }
             msg => {
@@ -1040,8 +1053,11 @@ mod tests {
         let msg = Bytes::from_static(b"nice to meet you client a!!");
         client_b.send(public_key_a, msg.clone()).await?;
         match client_receiver_a.recv().await? {
-            ReceivedMessage::ReceivedPacket { source, data } => {
-                assert_eq!(public_key_b, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } => {
+                assert_eq!(public_key_b, remote_node_id);
                 assert_eq!(&msg[..], data);
             }
             msg => {
@@ -1065,8 +1081,11 @@ mod tests {
         let msg = Bytes::from_static(b"are you still there, b?!");
         client_a.send(public_key_b, msg.clone()).await?;
         match new_client_receiver_b.recv().await? {
-            ReceivedMessage::ReceivedPacket { source, data } => {
-                assert_eq!(public_key_a, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } => {
+                assert_eq!(public_key_a, remote_node_id);
                 assert_eq!(&msg[..], data);
             }
             msg => {
@@ -1078,8 +1097,11 @@ mod tests {
         let msg = Bytes::from_static(b"just had a spot of trouble but I'm back now,a!!");
         new_client_b.send(public_key_a, msg.clone()).await?;
         match client_receiver_a.recv().await? {
-            ReceivedMessage::ReceivedPacket { source, data } => {
-                assert_eq!(public_key_b, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } => {
+                assert_eq!(public_key_b, remote_node_id);
                 assert_eq!(&msg[..], data);
             }
             msg => {
