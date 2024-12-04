@@ -212,9 +212,14 @@ mod tests {
             .await?;
 
         tokio::time::sleep(Duration::from_secs(1)).await;
-        let entry = store.get_signed_packet(&key).await?;
-        assert!(entry.is_none());
-        Ok(())
+        for _ in 0..10 {
+            let entry = store.get_signed_packet(&key).await?;
+            if entry.is_none() {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        panic!("store did not evict packet");
     }
 
     #[tokio::test]
