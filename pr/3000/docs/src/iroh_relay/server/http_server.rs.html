@@ -1099,6 +1099,28 @@
 <a href="#1099" id="1099">1099</a>
 <a href="#1100" id="1100">1100</a>
 <a href="#1101" id="1101">1101</a>
+<a href="#1102" id="1102">1102</a>
+<a href="#1103" id="1103">1103</a>
+<a href="#1104" id="1104">1104</a>
+<a href="#1105" id="1105">1105</a>
+<a href="#1106" id="1106">1106</a>
+<a href="#1107" id="1107">1107</a>
+<a href="#1108" id="1108">1108</a>
+<a href="#1109" id="1109">1109</a>
+<a href="#1110" id="1110">1110</a>
+<a href="#1111" id="1111">1111</a>
+<a href="#1112" id="1112">1112</a>
+<a href="#1113" id="1113">1113</a>
+<a href="#1114" id="1114">1114</a>
+<a href="#1115" id="1115">1115</a>
+<a href="#1116" id="1116">1116</a>
+<a href="#1117" id="1117">1117</a>
+<a href="#1118" id="1118">1118</a>
+<a href="#1119" id="1119">1119</a>
+<a href="#1120" id="1120">1120</a>
+<a href="#1121" id="1121">1121</a>
+<a href="#1122" id="1122">1122</a>
+<a href="#1123" id="1123">1123</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
@@ -1900,7 +1922,11 @@
                         }
                         <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg)) =&gt; {
                             <span class="macro">info!</span>(<span class="string">"got message on {:?}: {msg:?}"</span>, key.public());
-                            <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = msg {
+                            <span class="kw">if let </span>ReceivedMessage::ReceivedPacket {
+                                remote_node_id: source,
+                                data,
+                            } = msg
+                            {
                                 received_msg_s
                                     .send((source, data))
                                     .<span class="kw">await
@@ -2048,8 +2074,11 @@
         </span><span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"hello client b!!"</span>);
         client_a.send(public_key_b, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">match </span>client_receiver_b.recv().<span class="kw">await</span><span class="question-mark">? </span>{
-            ReceivedMessage::ReceivedPacket { source, data } =&gt; {
-                <span class="macro">assert_eq!</span>(public_key_a, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } =&gt; {
+                <span class="macro">assert_eq!</span>(public_key_a, remote_node_id);
                 <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>msg[..], data);
             }
             msg =&gt; {
@@ -2061,8 +2090,11 @@
         </span><span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"nice to meet you client a!!"</span>);
         client_b.send(public_key_a, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">match </span>client_receiver_a.recv().<span class="kw">await</span><span class="question-mark">? </span>{
-            ReceivedMessage::ReceivedPacket { source, data } =&gt; {
-                <span class="macro">assert_eq!</span>(public_key_b, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } =&gt; {
+                <span class="macro">assert_eq!</span>(public_key_b, remote_node_id);
                 <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>msg[..], data);
             }
             msg =&gt; {
@@ -2128,8 +2160,11 @@
         </span><span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"hello client b!!"</span>);
         client_a.send(public_key_b, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">match </span>client_receiver_b.recv().<span class="kw">await</span><span class="question-mark">? </span>{
-            ReceivedMessage::ReceivedPacket { source, data } =&gt; {
-                <span class="macro">assert_eq!</span>(public_key_a, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } =&gt; {
+                <span class="macro">assert_eq!</span>(public_key_a, remote_node_id);
                 <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>msg[..], data);
             }
             msg =&gt; {
@@ -2141,8 +2176,11 @@
         </span><span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"nice to meet you client a!!"</span>);
         client_b.send(public_key_a, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">match </span>client_receiver_a.recv().<span class="kw">await</span><span class="question-mark">? </span>{
-            ReceivedMessage::ReceivedPacket { source, data } =&gt; {
-                <span class="macro">assert_eq!</span>(public_key_b, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } =&gt; {
+                <span class="macro">assert_eq!</span>(public_key_b, remote_node_id);
                 <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>msg[..], data);
             }
             msg =&gt; {
@@ -2166,8 +2204,11 @@
         </span><span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"are you still there, b?!"</span>);
         client_a.send(public_key_b, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">match </span>new_client_receiver_b.recv().<span class="kw">await</span><span class="question-mark">? </span>{
-            ReceivedMessage::ReceivedPacket { source, data } =&gt; {
-                <span class="macro">assert_eq!</span>(public_key_a, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } =&gt; {
+                <span class="macro">assert_eq!</span>(public_key_a, remote_node_id);
                 <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>msg[..], data);
             }
             msg =&gt; {
@@ -2179,8 +2220,11 @@
         </span><span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"just had a spot of trouble but I'm back now,a!!"</span>);
         new_client_b.send(public_key_a, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">match </span>client_receiver_a.recv().<span class="kw">await</span><span class="question-mark">? </span>{
-            ReceivedMessage::ReceivedPacket { source, data } =&gt; {
-                <span class="macro">assert_eq!</span>(public_key_b, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } =&gt; {
+                <span class="macro">assert_eq!</span>(public_key_b, remote_node_id);
                 <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>msg[..], data);
             }
             msg =&gt; {

@@ -3983,6 +3983,12 @@
 <a href="#3983" id="3983">3983</a>
 <a href="#3984" id="3984">3984</a>
 <a href="#3985" id="3985">3985</a>
+<a href="#3986" id="3986">3986</a>
+<a href="#3987" id="3987">3987</a>
+<a href="#3988" id="3988">3988</a>
+<a href="#3989" id="3989">3989</a>
+<a href="#3990" id="3990">3990</a>
+<a href="#3991" id="3991">3991</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -4041,7 +4047,7 @@
 <span class="kw">use </span><span class="self">self</span>::{
     metrics::Metrics <span class="kw">as </span>MagicsockMetrics,
     node_map::{NodeMap, PingAction, PingRole, SendPing},
-    relay_actor::{RelayActor, RelayActorMessage, RelayReadResult},
+    relay_actor::{RelayActor, RelayActorMessage, RelayRecvDatagram},
     udp_conn::UdpConn,
 };
 <span class="kw">use crate</span>::{
@@ -4165,11 +4171,13 @@
     </span>me: String,
     <span class="doccomment">/// Proxy
     </span>proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
+    <span class="doccomment">/// Channel to receive datagrams from relays for [`AsyncUdpSocket::poll_recv`].
+    ///
+    /// QUIC datagrams received by relays are put on this channel and consumed by
+    /// [`AsyncUdpSocket`].  This channel takes care of the wakers needed by
+    /// [`AsyncUdpSocket::poll_recv`].
+    </span>relay_recv_channel: RelayRecvReceiver,
 
-    <span class="doccomment">/// Used for receiving relay messages.
-    </span>relay_recv_receiver: parking_lot::Mutex&lt;mpsc::Receiver&lt;RelayRecvResult&gt;&gt;,
-    <span class="doccomment">/// Stores wakers, to be called when relay_recv_ch receives new data.
-    </span>network_recv_wakers: parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;,
     network_send_wakers: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
     <span class="doccomment">/// Counter for ordering of [`MagicSock::poll_recv`] polling order.
     </span>poll_recv_counter: AtomicUsize,
@@ -4835,29 +4843,46 @@
         metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
     ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>num_msgs = <span class="number">0</span>;
-        <span class="kw">for </span>(buf_out, meta_out) <span class="kw">in </span>bufs.iter_mut().zip(metas.iter_mut()) {
+        <span class="lifetime">'outer</span>: <span class="kw">for </span>(buf_out, meta_out) <span class="kw">in </span>bufs.iter_mut().zip(metas.iter_mut()) {
             <span class="kw">if </span><span class="self">self</span>.is_closed() {
                 <span class="kw">break</span>;
             }
-            <span class="kw">let </span><span class="kw-2">mut </span>relay_recv_receiver = <span class="self">self</span>.relay_recv_receiver.lock();
-            <span class="kw">match </span>relay_recv_receiver.try_recv() {
-                <span class="prelude-val">Err</span>(mpsc::error::TryRecvError::Empty) =&gt; {
-                    <span class="self">self</span>.network_recv_wakers.lock().replace(cx.waker().clone());
-                    <span class="kw">break</span>;
-                }
-                <span class="prelude-val">Err</span>(mpsc::error::TryRecvError::Disconnected) =&gt; {
-                    <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(io::Error::new(
-                        io::ErrorKind::NotConnected,
-                        <span class="string">"connection closed"</span>,
-                    )));
-                }
-                <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err)),
-                <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>((node_id, meta, bytes))) =&gt; {
-                    <span class="macro">inc_by!</span>(MagicsockMetrics, recv_data_relay, bytes.len() <span class="kw">as _</span>);
-                    <span class="macro">trace!</span>(src = %meta.addr, node = %node_id.fmt_short(), count = meta.len / meta.stride, len = meta.len, <span class="string">"recv quic packets from relay"</span>);
-                    buf_out[..bytes.len()].copy_from_slice(<span class="kw-2">&amp;</span>bytes);
-                    <span class="kw-2">*</span>meta_out = meta;
-                    num_msgs += <span class="number">1</span>;
+
+            <span class="comment">// For each output buffer keep polling the datagrams from the relay until one is
+            // a QUIC datagram to be placed into the output buffer.  Or the channel is empty.
+            </span><span class="kw">loop </span>{
+                <span class="kw">let </span>recv = <span class="kw">match </span><span class="self">self</span>.relay_recv_channel.poll_recv(cx) {
+                    Poll::Ready(<span class="prelude-val">Ok</span>(recv)) =&gt; recv,
+                    Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; {
+                        <span class="macro">error!</span>(<span class="string">"relay_recv_channel closed: {err:#}"</span>);
+                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(io::Error::new(
+                            io::ErrorKind::NotConnected,
+                            <span class="string">"connection closed"</span>,
+                        )));
+                    }
+                    Poll::Pending =&gt; {
+                        <span class="kw">break </span><span class="lifetime">'outer</span>;
+                    }
+                };
+                <span class="kw">match </span><span class="self">self</span>.process_relay_read_result(recv) {
+                    <span class="prelude-val">None </span>=&gt; {
+                        <span class="comment">// Received a DISCO or STUN datagram that was handled internally.
+                        </span><span class="kw">continue</span>;
+                    }
+                    <span class="prelude-val">Some</span>((node_id, meta, buf)) =&gt; {
+                        <span class="macro">inc_by!</span>(MagicsockMetrics, recv_data_relay, buf.len() <span class="kw">as _</span>);
+                        <span class="macro">trace!</span>(
+                            src = %meta.addr,
+                            node = %node_id.fmt_short(),
+                            count = meta.len / meta.stride,
+                            len = meta.len,
+                            <span class="string">"recv quic packets from relay"</span>,
+                        );
+                        buf_out[..buf.len()].copy_from_slice(<span class="kw-2">&amp;</span>buf);
+                        <span class="kw-2">*</span>meta_out = meta;
+                        num_msgs += <span class="number">1</span>;
+                        <span class="kw">break</span>;
+                    }
                 }
             }
         }
@@ -4868,6 +4893,74 @@
             Poll::Ready(<span class="prelude-val">Ok</span>(num_msgs))
         } <span class="kw">else </span>{
             Poll::Pending
+        }
+    }
+
+    <span class="doccomment">/// Process datagrams received from the relay server into incoming Quinn datagrams.
+    ///
+    /// This will transform datagrams received from the relay server into Quinn datagrams to
+    /// receive, adding the [`quinn_udp::RecvMeta`].
+    ///
+    /// If the incoming datagram is a DISCO packet it will be handled internally and `None`
+    /// is returned.
+    </span><span class="kw">fn </span>process_relay_read_result(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        dm: RelayRecvDatagram,
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;(NodeId, quinn_udp::RecvMeta, Bytes)&gt; {
+        <span class="macro">trace!</span>(<span class="string">"process_relay_read {} bytes"</span>, dm.buf.len());
+        <span class="kw">if </span>dm.buf.is_empty() {
+            <span class="macro">warn!</span>(<span class="string">"received empty relay packet"</span>);
+            <span class="kw">return </span><span class="prelude-val">None</span>;
+        }
+
+        <span class="kw">if </span><span class="self">self</span>.handle_relay_disco_message(<span class="kw-2">&amp;</span>dm.buf, <span class="kw-2">&amp;</span>dm.url, dm.src) {
+            <span class="comment">// DISCO messages are handled internally in the MagicSock, do not pass to Quinn.
+            </span><span class="kw">return </span><span class="prelude-val">None</span>;
+        }
+
+        <span class="kw">let </span>quic_mapped_addr = <span class="self">self</span>.node_map.receive_relay(<span class="kw-2">&amp;</span>dm.url, dm.src);
+
+        <span class="comment">// Normalize local_ip
+        </span><span class="attr">#[cfg(not(windows))]
+        </span><span class="kw">let </span>dst_ip = <span class="self">self</span>.normalized_local_addr().ok().map(|addr| addr.ip());
+        <span class="comment">// Reasoning for this here:
+        // https://github.com/n0-computer/iroh/pull/2595#issuecomment-2290947319
+        </span><span class="attr">#[cfg(windows)]
+        </span><span class="kw">let </span>dst_ip = <span class="prelude-val">None</span>;
+
+        <span class="kw">let </span>meta = quinn_udp::RecvMeta {
+            len: dm.buf.len(),
+            stride: dm.buf.len(),
+            addr: quic_mapped_addr.<span class="number">0</span>,
+            dst_ip,
+            ecn: <span class="prelude-val">None</span>,
+        };
+        <span class="prelude-val">Some</span>((dm.src, meta, dm.buf))
+    }
+
+    <span class="kw">fn </span>handle_relay_disco_message(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        msg: <span class="kw-2">&amp;</span>[u8],
+        url: <span class="kw-2">&amp;</span>RelayUrl,
+        relay_node_src: PublicKey,
+    ) -&gt; bool {
+        <span class="kw">match </span>disco::source_and_box(msg) {
+            <span class="prelude-val">Some</span>((source, sealed_box)) =&gt; {
+                <span class="kw">if </span>relay_node_src != source {
+                    <span class="comment">// TODO: return here?
+                    </span><span class="macro">warn!</span>(<span class="string">"Received relay disco message from connection for {}, but with message from {}"</span>, relay_node_src.fmt_short(), source.fmt_short());
+                }
+                <span class="self">self</span>.handle_disco_message(
+                    source,
+                    sealed_box,
+                    DiscoMessageSource::Relay {
+                        url: url.clone(),
+                        key: relay_node_src,
+                    },
+                );
+                <span class="bool-val">true
+            </span>}
+            <span class="prelude-val">None </span>=&gt; <span class="bool-val">false</span>,
         }
     }
 
@@ -5408,7 +5501,7 @@
             </span>insecure_skip_relay_cert_verify,
         } = opts;
 
-        <span class="kw">let </span>(relay_recv_sender, relay_recv_receiver) = mpsc::channel(<span class="number">128</span>);
+        <span class="kw">let </span>(relay_recv_tx, relay_recv_rx) = relay_recv_channel();
 
         <span class="kw">let </span>(pconn4, pconn6) = bind(addr_v4, addr_v6)<span class="question-mark">?</span>;
         <span class="kw">let </span>port = pconn4.port();
@@ -5445,8 +5538,7 @@
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(<span class="bool-val">false</span>),
             closed: AtomicBool::new(<span class="bool-val">false</span>),
-            relay_recv_receiver: parking_lot::Mutex::new(relay_recv_receiver),
-            network_recv_wakers: parking_lot::Mutex::new(<span class="prelude-val">None</span>),
+            relay_recv_channel: relay_recv_rx,
             network_send_wakers: Arc::new(parking_lot::Mutex::new(<span class="prelude-val">None</span>)),
             poll_recv_counter: AtomicUsize::new(<span class="number">0</span>),
             actor_sender: actor_sender.clone(),
@@ -5471,7 +5563,7 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>actor_tasks = JoinSet::default();
 
-        <span class="kw">let </span>relay_actor = RelayActor::new(inner.clone(), actor_sender.clone());
+        <span class="kw">let </span>relay_actor = RelayActor::new(inner.clone(), relay_recv_tx);
         <span class="kw">let </span>relay_actor_cancel_token = relay_actor.cancel_token();
         actor_tasks.spawn(
             <span class="kw">async move </span>{
@@ -5499,7 +5591,6 @@
                     relay_actor_sender,
                     relay_actor_cancel_token,
                     msock: inner2,
-                    relay_recv_sender,
                     periodic_re_stun_timer: new_re_stun_timer(<span class="bool-val">false</span>),
                     net_info_last: <span class="prelude-val">None</span>,
                     port_mapper,
@@ -5612,7 +5703,67 @@
     </span>Parse(anyhow::Error),
 }
 
-<span class="kw">type </span>RelayRecvResult = <span class="prelude-ty">Result</span>&lt;(PublicKey, quinn_udp::RecvMeta, Bytes), io::Error&gt;;
+<span class="doccomment">/// Channel for [`MagicSock::poll_recv_relay`] to receive datagrams from relays.
+///
+/// The sender and receiver will take care of the required wakers needed for
+/// [`AsyncUdpSocket::poll_recv`].
+</span><span class="comment">// TODO: This channel should possibly be implemented with concurrent-queue and atomic-waker.
+// Or maybe async-channel.
+</span><span class="kw">fn </span>relay_recv_channel() -&gt; (RelayRecvSender, RelayRecvReceiver) {
+    <span class="kw">let </span>(tx, rx) = mpsc::channel(<span class="number">128</span>);
+    <span class="kw">let </span>waker = Arc::new(parking_lot::Mutex::new(<span class="prelude-val">None</span>));
+    <span class="kw">let </span>sender = RelayRecvSender {
+        sender: tx,
+        waker: waker.clone(),
+    };
+    <span class="kw">let </span>receiver = RelayRecvReceiver {
+        receiver: parking_lot::Mutex::new(rx),
+        waker,
+    };
+    (sender, receiver)
+}
+
+<span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">struct </span>RelayRecvSender {
+    sender: mpsc::Sender&lt;RelayRecvDatagram&gt;,
+    waker: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
+}
+
+<span class="kw">impl </span>RelayRecvSender {
+    <span class="kw">fn </span>try_send(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        item: RelayRecvDatagram,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), mpsc::error::TrySendError&lt;RelayRecvDatagram&gt;&gt; {
+        <span class="self">self</span>.sender.try_send(item).inspect(|<span class="kw">_</span>| {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(waker) = <span class="self">self</span>.waker.lock().take() {
+                waker.wake();
+            }
+        })
+    }
+}
+
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">struct </span>RelayRecvReceiver {
+    receiver: parking_lot::Mutex&lt;mpsc::Receiver&lt;RelayRecvDatagram&gt;&gt;,
+    waker: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
+}
+
+<span class="kw">impl </span>RelayRecvReceiver {
+    <span class="kw">fn </span>poll_recv(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;RelayRecvDatagram&gt;&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>receiver = <span class="self">self</span>.receiver.lock();
+        <span class="self">self</span>.waker.lock().replace(cx.waker().clone());
+        <span class="kw">match </span>receiver.try_recv() {
+            <span class="prelude-val">Ok</span>(item) =&gt; {
+                <span class="self">self</span>.waker.lock().take();
+                Poll::Ready(<span class="prelude-val">Ok</span>(item))
+            }
+            <span class="prelude-val">Err</span>(mpsc::error::TryRecvError::Empty) =&gt; Poll::Pending,
+            <span class="prelude-val">Err</span>(mpsc::error::TryRecvError::Disconnected) =&gt; {
+                Poll::Ready(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"All RelayRecvSenders disconnected"</span>)))
+            }
+        }
+    }
+}
 
 <span class="kw">impl </span>AsyncUdpSocket <span class="kw">for </span>Handle {
     <span class="kw">fn </span>create_io_poller(<span class="self">self</span>: Arc&lt;<span class="self">Self</span>&gt;) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt; {
@@ -5720,7 +5871,6 @@
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">enum </span>ActorMessage {
     Shutdown,
-    ReceiveRelay(RelayReadResult),
     EndpointPingExpired(usize, stun_rs::TransactionId),
     NetReport(<span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;net_report::Report&gt;&gt;&gt;, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str),
     NetworkChange,
@@ -5734,8 +5884,6 @@
     msg_sender: mpsc::Sender&lt;ActorMessage&gt;,
     relay_actor_sender: mpsc::Sender&lt;RelayActorMessage&gt;,
     relay_actor_cancel_token: CancellationToken,
-    <span class="doccomment">/// Channel to send received relay messages on, for processing.
-    </span>relay_recv_sender: mpsc::Sender&lt;RelayRecvResult&gt;,
     <span class="doccomment">/// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
     </span>periodic_re_stun_timer: time::Interval,
     <span class="doccomment">/// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
@@ -5926,19 +6074,6 @@
                 <span class="macro">debug!</span>(<span class="string">"shutdown complete"</span>);
                 <span class="kw">return </span><span class="bool-val">true</span>;
             }
-            ActorMessage::ReceiveRelay(read_result) =&gt; {
-                <span class="kw">let </span>passthroughs = <span class="self">self</span>.process_relay_read_result(read_result);
-                <span class="kw">for </span>passthrough <span class="kw">in </span>passthroughs {
-                    <span class="self">self</span>.relay_recv_sender
-                        .send(passthrough)
-                        .<span class="kw">await
-                        </span>.expect(<span class="string">"missing recv sender"</span>);
-                    <span class="kw">let </span><span class="kw-2">mut </span>wakers = <span class="self">self</span>.msock.network_recv_wakers.lock();
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(waker) = wakers.take() {
-                        waker.wake();
-                    }
-                }
-            }
             ActorMessage::EndpointPingExpired(id, txid) =&gt; {
                 <span class="self">self</span>.msock.node_map.notify_ping_timeout(id, txid);
             }
@@ -5967,59 +6102,6 @@
 
         <span class="bool-val">false
     </span>}
-
-    <span class="attr">#[cfg_attr(windows, allow(dead_code))]
-    </span><span class="kw">fn </span>normalized_local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;SocketAddr&gt; {
-        <span class="self">self</span>.msock.normalized_local_addr()
-    }
-
-    <span class="kw">fn </span>process_relay_read_result(<span class="kw-2">&amp;mut </span><span class="self">self</span>, dm: RelayReadResult) -&gt; Vec&lt;RelayRecvResult&gt; {
-        <span class="macro">trace!</span>(<span class="string">"process_relay_read {} bytes"</span>, dm.buf.len());
-        <span class="kw">if </span>dm.buf.is_empty() {
-            <span class="macro">warn!</span>(<span class="string">"received empty relay packet"</span>);
-            <span class="kw">return </span>Vec::new();
-        }
-        <span class="kw">let </span>url = <span class="kw-2">&amp;</span>dm.url;
-
-        <span class="kw">let </span>quic_mapped_addr = <span class="self">self</span>.msock.node_map.receive_relay(url, dm.src);
-
-        <span class="comment">// the relay packet is made up of multiple udp packets, prefixed by a u16 be length prefix
-        //
-        // split the packet into these parts
-        </span><span class="kw">let </span>parts = PacketSplitIter::new(dm.buf);
-        <span class="comment">// Normalize local_ip
-        </span><span class="attr">#[cfg(not(windows))]
-        </span><span class="kw">let </span>dst_ip = <span class="self">self</span>.normalized_local_addr().ok().map(|addr| addr.ip());
-        <span class="comment">// Reasoning for this here: https://github.com/n0-computer/iroh/pull/2595#issuecomment-2290947319
-        </span><span class="attr">#[cfg(windows)]
-        </span><span class="kw">let </span>dst_ip = <span class="prelude-val">None</span>;
-
-        <span class="kw">let </span><span class="kw-2">mut </span>out = Vec::new();
-        <span class="kw">for </span>part <span class="kw">in </span>parts {
-            <span class="kw">match </span>part {
-                <span class="prelude-val">Ok</span>(part) =&gt; {
-                    <span class="kw">if </span><span class="self">self</span>.handle_relay_disco_message(<span class="kw-2">&amp;</span>part, url, dm.src) {
-                        <span class="comment">// Message was internal, do not bubble up.
-                        </span><span class="kw">continue</span>;
-                    }
-
-                    <span class="kw">let </span>meta = quinn_udp::RecvMeta {
-                        len: part.len(),
-                        stride: part.len(),
-                        addr: quic_mapped_addr.<span class="number">0</span>,
-                        dst_ip,
-                        ecn: <span class="prelude-val">None</span>,
-                    };
-                    out.push(<span class="prelude-val">Ok</span>((dm.src, meta, part)));
-                }
-                <span class="prelude-val">Err</span>(e) =&gt; {
-                    out.push(<span class="prelude-val">Err</span>(e));
-                }
-            }
-        }
-
-        out
-    }
 
     <span class="doccomment">/// Refreshes knowledge about our direct addresses.
     ///
@@ -6397,32 +6479,6 @@
             }
         }
     }
-
-    <span class="kw">fn </span>handle_relay_disco_message(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        msg: <span class="kw-2">&amp;</span>[u8],
-        url: <span class="kw-2">&amp;</span>RelayUrl,
-        relay_node_src: PublicKey,
-    ) -&gt; bool {
-        <span class="kw">match </span>disco::source_and_box(msg) {
-            <span class="prelude-val">Some</span>((source, sealed_box)) =&gt; {
-                <span class="kw">if </span>relay_node_src != source {
-                    <span class="comment">// TODO: return here?
-                    </span><span class="macro">warn!</span>(<span class="string">"Received relay disco message from connection for {}, but with message from {}"</span>, relay_node_src.fmt_short(), source.fmt_short());
-                }
-                <span class="self">self</span>.msock.handle_disco_message(
-                    source,
-                    sealed_box,
-                    DiscoMessageSource::Relay {
-                        url: url.clone(),
-                        key: relay_node_src,
-                    },
-                );
-                <span class="bool-val">true
-            </span>}
-            <span class="prelude-val">None </span>=&gt; <span class="bool-val">false</span>,
-        }
-    }
 }
 
 <span class="kw">fn </span>new_re_stun_timer(initial_delay: bool) -&gt; time::Interval {
@@ -6595,50 +6651,6 @@
         res.push(Bytes::from(contents.to_vec()));
     }
     res
-}
-
-<span class="doccomment">/// Splits a packet into its component items.
-</span><span class="attr">#[derive(Debug)]
-</span><span class="kw">struct </span>PacketSplitIter {
-    bytes: Bytes,
-}
-
-<span class="kw">impl </span>PacketSplitIter {
-    <span class="doccomment">/// Create a new PacketSplitIter from a packet.
-    ///
-    /// Returns an error if the packet is too big.
-    </span><span class="kw">fn </span>new(bytes: Bytes) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{ bytes }
-    }
-
-    <span class="kw">fn </span>fail(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;std::io::Result&lt;Bytes&gt;&gt; {
-        <span class="self">self</span>.bytes.clear();
-        <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            <span class="string">""</span>,
-        )))
-    }
-}
-
-<span class="kw">impl </span>Iterator <span class="kw">for </span>PacketSplitIter {
-    <span class="kw">type </span>Item = std::io::Result&lt;Bytes&gt;;
-
-    <span class="kw">fn </span>next(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt; {
-        <span class="kw">use </span>bytes::Buf;
-        <span class="kw">if </span><span class="self">self</span>.bytes.has_remaining() {
-            <span class="kw">if </span><span class="self">self</span>.bytes.remaining() &lt; <span class="number">2 </span>{
-                <span class="kw">return </span><span class="self">self</span>.fail();
-            }
-            <span class="kw">let </span>len = <span class="self">self</span>.bytes.get_u16_le() <span class="kw">as </span>usize;
-            <span class="kw">if </span><span class="self">self</span>.bytes.remaining() &lt; len {
-                <span class="kw">return </span><span class="self">self</span>.fail();
-            }
-            <span class="kw">let </span>item = <span class="self">self</span>.bytes.split_to(len);
-            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(item))
-        } <span class="kw">else </span>{
-            <span class="prelude-val">None
-        </span>}
-    }
 }
 
 <span class="doccomment">/// The fake address used by the QUIC layer to address a node.

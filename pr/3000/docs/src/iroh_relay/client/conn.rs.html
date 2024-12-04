@@ -729,7 +729,7 @@
         Frame::NodeGone { node_id } =&gt; <span class="prelude-val">Ok</span>(ReceivedMessage::NodeGone(node_id)),
         Frame::RecvPacket { src_key, content } =&gt; {
             <span class="kw">let </span>packet = ReceivedMessage::ReceivedPacket {
-                source: src_key,
+                remote_node_id: src_key,
                 data: content,
             };
             <span class="prelude-val">Ok</span>(packet)
@@ -1001,7 +1001,7 @@
     <span class="doccomment">/// Represents an incoming packet.
     </span>ReceivedPacket {
         <span class="doccomment">/// The [`NodeId`] of the packet sender.
-        </span>source: NodeId,
+        </span>remote_node_id: NodeId,
         <span class="doccomment">/// The received packet bytes.
         </span><span class="attr">#[debug(skip)]
         </span>data: Bytes, <span class="comment">// TODO: ref

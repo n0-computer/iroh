@@ -1101,6 +1101,30 @@
 <a href="#1101" id="1101">1101</a>
 <a href="#1102" id="1102">1102</a>
 <a href="#1103" id="1103">1103</a>
+<a href="#1104" id="1104">1104</a>
+<a href="#1105" id="1105">1105</a>
+<a href="#1106" id="1106">1106</a>
+<a href="#1107" id="1107">1107</a>
+<a href="#1108" id="1108">1108</a>
+<a href="#1109" id="1109">1109</a>
+<a href="#1110" id="1110">1110</a>
+<a href="#1111" id="1111">1111</a>
+<a href="#1112" id="1112">1112</a>
+<a href="#1113" id="1113">1113</a>
+<a href="#1114" id="1114">1114</a>
+<a href="#1115" id="1115">1115</a>
+<a href="#1116" id="1116">1116</a>
+<a href="#1117" id="1117">1117</a>
+<a href="#1118" id="1118">1118</a>
+<a href="#1119" id="1119">1119</a>
+<a href="#1120" id="1120">1120</a>
+<a href="#1121" id="1121">1121</a>
+<a href="#1122" id="1122">1122</a>
+<a href="#1123" id="1123">1123</a>
+<a href="#1124" id="1124">1124</a>
+<a href="#1125" id="1125">1125</a>
+<a href="#1126" id="1126">1126</a>
+<a href="#1127" id="1127">1127</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
@@ -2017,8 +2041,12 @@
         client_a.send(b_key, msg.clone()).<span class="kw">await</span>.unwrap();
 
         <span class="kw">let </span>res = client_b_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
-        <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = res {
-            <span class="macro">assert_eq!</span>(a_key, source);
+        <span class="kw">if let </span>ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            <span class="macro">assert_eq!</span>(a_key, remote_node_id);
             <span class="macro">assert_eq!</span>(msg, data);
         } <span class="kw">else </span>{
             <span class="macro">panic!</span>(<span class="string">"client_b received unexpected message {res:?}"</span>);
@@ -2029,8 +2057,12 @@
         client_b.send(a_key, msg.clone()).<span class="kw">await</span>.unwrap();
 
         <span class="kw">let </span>res = client_a_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
-        <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = res {
-            <span class="macro">assert_eq!</span>(b_key, source);
+        <span class="kw">if let </span>ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            <span class="macro">assert_eq!</span>(b_key, remote_node_id);
             <span class="macro">assert_eq!</span>(msg, data);
         } <span class="kw">else </span>{
             <span class="macro">panic!</span>(<span class="string">"client_a received unexpected message {res:?}"</span>);
@@ -2085,8 +2117,12 @@
         client_a.send(b_key, msg.clone()).<span class="kw">await</span>.unwrap();
 
         <span class="kw">let </span>res = client_b_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
-        <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = res {
-            <span class="macro">assert_eq!</span>(a_key, source);
+        <span class="kw">if let </span>ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            <span class="macro">assert_eq!</span>(a_key, remote_node_id);
             <span class="macro">assert_eq!</span>(msg, data);
         } <span class="kw">else </span>{
             <span class="macro">panic!</span>(<span class="string">"client_b received unexpected message {res:?}"</span>);
@@ -2097,8 +2133,12 @@
         client_b.send(a_key, msg.clone()).<span class="kw">await</span>.unwrap();
 
         <span class="kw">let </span>res = client_a_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
-        <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = res {
-            <span class="macro">assert_eq!</span>(b_key, source);
+        <span class="kw">if let </span>ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            <span class="macro">assert_eq!</span>(b_key, remote_node_id);
             <span class="macro">assert_eq!</span>(msg, data);
         } <span class="kw">else </span>{
             <span class="macro">panic!</span>(<span class="string">"client_a received unexpected message {res:?}"</span>);
@@ -2152,8 +2192,12 @@
         client_a.send(b_key, msg.clone()).<span class="kw">await</span>.unwrap();
 
         <span class="kw">let </span>res = client_b_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
-        <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = res {
-            <span class="macro">assert_eq!</span>(a_key, source);
+        <span class="kw">if let </span>ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            <span class="macro">assert_eq!</span>(a_key, remote_node_id);
             <span class="macro">assert_eq!</span>(msg, data);
         } <span class="kw">else </span>{
             <span class="macro">panic!</span>(<span class="string">"client_b received unexpected message {res:?}"</span>);
@@ -2164,8 +2208,12 @@
         client_b.send(a_key, msg.clone()).<span class="kw">await</span>.unwrap();
 
         <span class="kw">let </span>res = client_a_receiver.recv().<span class="kw">await</span>.unwrap().unwrap();
-        <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = res {
-            <span class="macro">assert_eq!</span>(b_key, source);
+        <span class="kw">if let </span>ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            <span class="macro">assert_eq!</span>(b_key, remote_node_id);
             <span class="macro">assert_eq!</span>(msg, data);
         } <span class="kw">else </span>{
             <span class="macro">panic!</span>(<span class="string">"client_a received unexpected message {res:?}"</span>);
