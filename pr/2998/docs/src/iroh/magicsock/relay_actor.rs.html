@@ -865,12 +865,6 @@
 <a href="#865" id="865">865</a>
 <a href="#866" id="866">866</a>
 <a href="#867" id="867">867</a>
-<a href="#868" id="868">868</a>
-<a href="#869" id="869">869</a>
-<a href="#870" id="870">870</a>
-<a href="#871" id="871">871</a>
-<a href="#872" id="872">872</a>
-<a href="#873" id="873">873</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
@@ -878,7 +872,6 @@
 
 </span><span class="kw">use </span>std::{
     collections::{BTreeMap, BTreeSet},
-    future::Future,
     net::{IpAddr, SocketAddr},
     sync::{atomic::Ordering, Arc},
     time::{Duration, Instant},
@@ -926,8 +919,8 @@
     <span class="doccomment">/// The time of the last request for its write
     /// channel (currently even if there was no write).
     </span>last_write: Instant,
-    <span class="doccomment">/// Channel to send received QUIC datagrams on.
-    </span>relay_recv_channel: Arc&lt;RelayDatagramsQueue&gt;,
+    <span class="doccomment">/// Queue to send received relay datagrams on.
+    </span>relay_datagrams_queue: Arc&lt;RelayDatagramsQueue&gt;,
     url: RelayUrl,
     relay_client: relay::client::Client,
     relay_client_receiver: relay::client::ClientReceiver,
@@ -958,11 +951,11 @@
         url: RelayUrl,
         relay_client: relay::client::Client,
         relay_client_receiver: relay::client::ClientReceiver,
-        relay_recv_channel: Arc&lt;RelayDatagramsQueue&gt;,
+        relay_datagrams_queue: Arc&lt;RelayDatagramsQueue&gt;,
     ) -&gt; <span class="self">Self </span>{
         ConnectedRelayActor {
             last_write: Instant::now(),
-            relay_recv_channel,
+            relay_datagrams_queue,
             url,
             node_present: BTreeSet::new(),
             backoff: backoff::exponential::ExponentialBackoffBuilder::new()
@@ -1120,7 +1113,7 @@
                                 src: remote_node_id,
                                 buf: datagram,
                             };
-                            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.relay_recv_channel.try_send(res) {
+                            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.relay_datagrams_queue.try_send(res) {
                                 <span class="macro">warn!</span>(<span class="string">"dropping received relay packet: {err:#}"</span>);
                             }
                         }
@@ -1156,7 +1149,7 @@
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>RelayActor {
     msock: Arc&lt;MagicSock&gt;,
-    relay_recv_channel: Arc&lt;RelayDatagramsQueue&gt;,
+    relay_datagrams_queue: Arc&lt;RelayDatagramsQueue&gt;,
     <span class="doccomment">/// relay Url -&gt; connection to the node
     </span>connected_relays: BTreeMap&lt;RelayUrl, (mpsc::Sender&lt;ConnectedRelayMessage&gt;, JoinHandle&lt;()&gt;)&gt;,
     ping_tasks: JoinSet&lt;(RelayUrl, bool)&gt;,
@@ -1164,11 +1157,14 @@
 }
 
 <span class="kw">impl </span>RelayActor {
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(msock: Arc&lt;MagicSock&gt;, recv_channel: Arc&lt;RelayDatagramsQueue&gt;) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
+        msock: Arc&lt;MagicSock&gt;,
+        relay_datagrams_queue: Arc&lt;RelayDatagramsQueue&gt;,
+    ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>cancel_token = CancellationToken::new();
         <span class="self">Self </span>{
             msock,
-            relay_recv_channel: recv_channel,
+            relay_datagrams_queue,
             connected_relays: Default::default(),
             ping_tasks: Default::default(),
             cancel_token,
@@ -1199,8 +1195,8 @@
                     <span class="kw">match </span>task_result {
                         <span class="prelude-val">Ok</span>((url, ping_success)) =&gt; {
                             <span class="kw">if </span>!ping_success {
-                                with_cancel(
-                                    <span class="self">self</span>.cancel_token.child_token(),
+                                <span class="kw">let </span>token = <span class="self">self</span>.cancel_token.child_token();
+                                token.run_until_cancelled(
                                     <span class="self">self</span>.close_or_reconnect_relay(<span class="kw-2">&amp;</span>url, <span class="string">"rebind-ping-fail"</span>)
                                 ).<span class="kw">await</span>;
                             }
@@ -1222,7 +1218,8 @@
                 }
                 <span class="kw">_ </span>= cleanup_timer.tick() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: cleanup"</span>);
-                    with_cancel(<span class="self">self</span>.cancel_token.child_token(), <span class="self">self</span>.clean_stale_relay()).<span class="kw">await</span>;
+                    <span class="kw">let </span>cancel_token = <span class="self">self</span>.cancel_token.child_token();
+                    cancel_token.run_until_cancelled(<span class="self">self</span>.clean_stale_relay()).<span class="kw">await</span>;
                 }
             }
         }
@@ -1409,11 +1406,15 @@
         <span class="kw">let </span>handle = tokio::task::spawn({
             <span class="kw">let </span>url = url.clone();
             <span class="kw">let </span>relay_client = relay_client.clone();
-            <span class="kw">let </span>relay_recv_channel = <span class="self">self</span>.relay_recv_channel.clone();
+            <span class="kw">let </span>relay_datagrams_queue = <span class="self">self</span>.relay_datagrams_queue.clone();
             <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">"conn-relay-actor"</span>, %url);
             <span class="kw">async move </span>{
-                <span class="kw">let </span>conn_actor =
-                    ConnectedRelayActor::new(url, relay_client, relay_receiver, relay_recv_channel);
+                <span class="kw">let </span>conn_actor = ConnectedRelayActor::new(
+                    url,
+                    relay_client,
+                    relay_receiver,
+                    relay_datagrams_queue,
+                );
 
                 <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = conn_actor.run(conn_actor_inbox_rx).<span class="kw">await </span>{
                     <span class="macro">warn!</span>(<span class="string">"connection error: {:?}"</span>, err);
@@ -1703,19 +1704,6 @@
         } <span class="kw">else </span>{
             <span class="prelude-val">None
         </span>}
-    }
-}
-
-<span class="kw">async fn </span>with_cancel&lt;F&gt;(token: CancellationToken, f: F)
-<span class="kw">where
-    </span>F: Future&lt;Output = ()&gt;,
-{
-    <span class="macro">tokio::select!</span> {
-        <span class="kw">_ </span>= token.cancelled_owned() =&gt; {
-            <span class="comment">// abort
-        </span>}
-        <span class="kw">_ </span>= f =&gt; {
-        }
     }
 }
 
