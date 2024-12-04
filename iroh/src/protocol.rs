@@ -40,7 +40,7 @@
 //!     }
 //! }
 //! ```
-use std::{any::Any, collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
 use anyhow::Result;
 use futures_buffered::join_all;
@@ -86,7 +86,6 @@ use crate::{endpoint::Connecting, Endpoint};
 #[derive(Clone, Debug)]
 pub struct Router {
     endpoint: Endpoint,
-    protocols: Arc<ProtocolMap>,
     // `Router` needs to be `Clone + Send`, and we need to `task.await` in its `shutdown()` impl.
     task: Arc<Mutex<Option<AbortOnDropHandle<()>>>>,
     cancel_token: CancellationToken,
@@ -108,7 +107,7 @@ pub struct RouterBuilder {
 /// Implement this trait on a struct that should handle incoming connections.
 /// The protocol handler must then be registered on the node for an ALPN protocol with
 /// [`crate::protocol::RouterBuilder::accept`].
-pub trait ProtocolHandler: Send + Sync + IntoArcAny + std::fmt::Debug + 'static {
+pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     /// Handle an incoming connection.
     ///
     /// This runs on a freshly spawned tokio task so this can be long-running.
@@ -120,33 +119,11 @@ pub trait ProtocolHandler: Send + Sync + IntoArcAny + std::fmt::Debug + 'static 
     }
 }
 
-/// Helper trait to facilite casting from `Arc<dyn T>` to `Arc<dyn Any>`.
-///
-/// This trait has a blanket implementation so there is no need to implement this yourself.
-pub trait IntoArcAny {
-    /// Casts `Arc<Self>` into `Arc<dyn Any + Send + Sync>`.
-    fn into_arc_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
-}
-
-impl<T: Send + Sync + 'static> IntoArcAny for T {
-    fn into_arc_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
-        self
-    }
-}
-
 /// A typed map of protocol handlers, mapping them from ALPNs.
 #[derive(Debug, Clone, Default)]
 pub struct ProtocolMap(BTreeMap<Vec<u8>, Arc<dyn ProtocolHandler>>);
 
 impl ProtocolMap {
-    /// Returns the registered protocol handler for an ALPN as a concrete type.
-    pub fn get_typed<P: ProtocolHandler>(&self, alpn: &[u8]) -> Option<Arc<P>> {
-        let protocol: Arc<dyn ProtocolHandler> = self.0.get(alpn)?.clone();
-        let protocol_any: Arc<dyn Any + Send + Sync> = protocol.into_arc_any();
-        let protocol_ref = Arc::downcast(protocol_any).ok()?;
-        Some(protocol_ref)
-    }
-
     /// Returns the registered protocol handler for an ALPN as a [`Arc<dyn ProtocolHandler>`].
     pub fn get(&self, alpn: &[u8]) -> Option<Arc<dyn ProtocolHandler>> {
         self.0.get(alpn).cloned()
@@ -175,14 +152,6 @@ impl Router {
     /// Creates a new [`Router`] using given [`Endpoint`].
     pub fn builder(endpoint: Endpoint) -> RouterBuilder {
         RouterBuilder::new(endpoint)
-    }
-
-    /// Returns a protocol handler for an ALPN.
-    ///
-    /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
-    /// does not match the passed type.
-    pub fn get_protocol<P: ProtocolHandler>(&self, alpn: &[u8]) -> Option<Arc<P>> {
-        self.protocols.get_typed(alpn)
     }
 
     /// Returns the [`Endpoint`] stored in this router.
@@ -242,14 +211,6 @@ impl RouterBuilder {
         &self.endpoint
     }
 
-    /// Returns a protocol handler for an ALPN.
-    ///
-    /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
-    /// does not match the passed type.
-    pub fn get_protocol<P: ProtocolHandler>(&self, alpn: &[u8]) -> Option<Arc<P>> {
-        self.protocols.get_typed(alpn)
-    }
-
     /// Spawns an accept loop and returns a handle to it encapsulated as the [`Router`].
     pub async fn spawn(self) -> Result<Router> {
         // Update the endpoint with our alpns.
@@ -267,7 +228,6 @@ impl RouterBuilder {
 
         let mut join_set = JoinSet::new();
         let endpoint = self.endpoint.clone();
-        let protos = protocols.clone();
 
         // We use a child token of the endpoint, to ensure that this is shutdown
         // when the endpoint is shutdown, but that we can shutdown ourselves independently.
@@ -278,7 +238,6 @@ impl RouterBuilder {
             // Make sure to cancel the token, if this future ever exits.
             let _cancel_guard = cancel_token.clone().drop_guard();
 
-            let protocols = protos;
             loop {
                 tokio::select! {
                     biased;
@@ -335,7 +294,6 @@ impl RouterBuilder {
 
         Ok(Router {
             endpoint: self.endpoint,
-            protocols,
             task: Arc::new(Mutex::new(Some(task))),
             cancel_token: cancel,
         })
