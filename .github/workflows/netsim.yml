@@ -39,7 +39,7 @@ jobs:
       branch: "main"
       max_workers: 1
       netsim_branch: "main"
-      sim_paths: "sims/iroh_v2,sims/integration_v2"
+      sim_paths: "sims/iroh,sims/integration"
       pr_number: ""
       publish_metrics: true
       build_profile: "optimized-release"
@@ -53,7 +53,7 @@ jobs:
       branch: ${{inputs.branch}}
       max_workers: 1
       netsim_branch: ${{inputs.netsim_branch}}
-      sim_paths: "sims/iroh_v2"
+      sim_paths: "sims/iroh"
       pr_number: ${{inputs.pr_number}}
       publish_metrics: false
       build_profile: "optimized-release"
