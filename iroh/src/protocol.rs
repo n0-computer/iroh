@@ -3,7 +3,6 @@
 //! ## Example
 //!
 //! ```no_run
-//! # use std::sync::Arc;
 //! # use anyhow::Result;
 //! # use futures_lite::future::Boxed as BoxedFuture;
 //! # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
@@ -11,9 +10,8 @@
 //! # async fn test_compile() -> Result<()> {
 //! let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 //!
-//! const ALPN: &[u8] = b"/my/alpn";
 //! let router = Router::builder(endpoint)
-//!     .accept(&ALPN, Arc::new(Echo))
+//!     .accept(b"/my/alpn", Echo)
 //!     .spawn()
 //!     .await?;
 //! # Ok(())
@@ -24,7 +22,7 @@
 //! struct Echo;
 //!
 //! impl ProtocolHandler for Echo {
-//!     fn accept(self: Arc<Self>, connecting: Connecting) -> BoxedFuture<Result<()>> {
+//!     fn accept(&self, connecting: Connecting) -> BoxedFuture<Result<()>> {
 //!         Box::pin(async move {
 //!             let connection = connecting.await?;
 //!             let (mut send, mut recv) = connection.accept_bi().await?;
