@@ -353,14 +353,11 @@
 <a href="#353" id="353">353</a>
 <a href="#354" id="354">354</a>
 <a href="#355" id="355">355</a>
-<a href="#356" id="356">356</a>
-<a href="#357" id="357">357</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
 //!
 //! ```no_run
-//! # use std::sync::Arc;
 //! # use anyhow::Result;
 //! # use futures_lite::future::Boxed as BoxedFuture;
 //! # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
@@ -368,9 +365,8 @@
 //! # async fn test_compile() -&gt; Result&lt;()&gt; {
 //! let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 //!
-//! const ALPN: &amp;[u8] = b"/my/alpn";
 //! let router = Router::builder(endpoint)
-//!     .accept(&amp;ALPN, Arc::new(Echo))
+//!     .accept(b"/my/alpn", Echo)
 //!     .spawn()
 //!     .await?;
 //! # Ok(())
@@ -381,7 +377,7 @@
 //! struct Echo;
 //!
 //! impl ProtocolHandler for Echo {
-//!     fn accept(self: Arc&lt;Self&gt;, connecting: Connecting) -&gt; BoxedFuture&lt;Result&lt;()&gt;&gt; {
+//!     fn accept(&amp;self, connecting: Connecting) -&gt; BoxedFuture&lt;Result&lt;()&gt;&gt; {
 //!         Box::pin(async move {
 //!             let connection = connecting.await?;
 //!             let (mut send, mut recv) = connection.accept_bi().await?;
