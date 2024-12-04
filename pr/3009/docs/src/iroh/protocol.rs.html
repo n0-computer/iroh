@@ -355,8 +355,6 @@
 <a href="#355" id="355">355</a>
 <a href="#356" id="356">356</a>
 <a href="#357" id="357">357</a>
-<a href="#358" id="358">358</a>
-<a href="#359" id="359">359</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
@@ -587,7 +585,6 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>join_set = JoinSet::new();
         <span class="kw">let </span>endpoint = <span class="self">self</span>.endpoint.clone();
-        <span class="kw">let </span>protos = protocols.clone();
 
         <span class="comment">// We use a child token of the endpoint, to ensure that this is shutdown
         // when the endpoint is shutdown, but that we can shutdown ourselves independently.
@@ -598,7 +595,6 @@
             <span class="comment">// Make sure to cancel the token, if this future ever exits.
             </span><span class="kw">let </span>_cancel_guard = cancel_token.clone().drop_guard();
 
-            <span class="kw">let </span>protocols = protos;
             <span class="kw">loop </span>{
                 <span class="macro">tokio::select!</span> {
                     biased;
