@@ -372,6 +372,7 @@
 <a href="#372" id="372">372</a>
 <a href="#373" id="373">373</a>
 <a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{future::Future, path::Path, result, time::Duration};
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
@@ -568,7 +569,8 @@
 }
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Snapshot {
-    <span class="kw">pub </span>signed_packets: redb::ReadOnlyTable&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>SignedPacketsKey, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>[u8]&gt;,
+    <span class="attr">#[allow(dead_code)]
+    </span><span class="kw">pub </span>signed_packets: redb::ReadOnlyTable&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>SignedPacketsKey, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>[u8]&gt;,
     <span class="kw">pub </span>update_time: redb::ReadOnlyMultimapTable&lt;[u8; <span class="number">8</span>], SignedPacketsKey&gt;,
 }
 
