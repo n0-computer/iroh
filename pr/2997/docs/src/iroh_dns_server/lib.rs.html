@@ -488,7 +488,7 @@
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
         tokio::time::sleep(Duration::from_secs(<span class="number">1</span>)).<span class="kw">await</span>;
-        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">10 </span>{
+        <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">10 </span>{
             <span class="kw">let </span>entry = store.get_signed_packet(<span class="kw-2">&amp;</span>key).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">if </span>entry.is_none() {
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(());
