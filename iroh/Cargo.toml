@@ -58,7 +58,7 @@ pkarr = { version = "2", default-features = false, features = [
     "async",
     "relay",
 ] }
-portmapper = { version = "0.2.0" }
+portmapper = { version = "0.2.0", default-features = false }
 postcard = { version = "1", default-features = false, features = [
     "alloc",
     "use-std",
@@ -178,7 +178,7 @@ harness = false
 
 [features]
 default = ["metrics", "discovery-pkarr-dht"]
-metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "net-report/metrics"]
+metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "net-report/metrics", "portmapper/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 discovery-local-network = ["dep:swarm-discovery"]
 discovery-pkarr-dht = ["pkarr/dht", "dep:genawaiter"]
