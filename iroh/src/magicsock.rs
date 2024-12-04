@@ -181,12 +181,12 @@ pub(crate) struct MagicSock {
     me: String,
     /// Proxy
     proxy_url: Option<Url>,
-    /// Channel to receive datagrams from relays for [`AsyncUdpSocket::poll_recv`].
+    /// Queue to receive datagrams from relays for [`AsyncUdpSocket::poll_recv`].
     ///
-    /// QUIC datagrams received by relays are put on this channel and consumed by
-    /// [`AsyncUdpSocket`].  This channel takes care of the wakers needed by
+    /// Relay datagrams received by relays are put into this queue and consumed by
+    /// [`AsyncUdpSocket`].  This queue takes care of the wakers needed by
     /// [`AsyncUdpSocket::poll_recv`].
-    relay_recv_channel: Arc<RelayDatagramsQueue>,
+    relay_datagrams_queue: Arc<RelayDatagramsQueue>,
 
     network_send_wakers: Arc<parking_lot::Mutex<Option<Waker>>>,
     /// Counter for ordering of [`MagicSock::poll_recv`] polling order.
@@ -861,7 +861,7 @@ impl MagicSock {
             // For each output buffer keep polling the datagrams from the relay until one is
             // a QUIC datagram to be placed into the output buffer.  Or the channel is empty.
             loop {
-                let recv = match self.relay_recv_channel.poll_recv(cx) {
+                let recv = match self.relay_datagrams_queue.poll_recv(cx) {
                     Poll::Ready(Ok(recv)) => recv,
                     Poll::Ready(Err(err)) => {
                         error!("relay_recv_channel closed: {err:#}");
@@ -1548,7 +1548,7 @@ impl Handle {
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
-            relay_recv_channel: relay_datagrams_queue.clone(),
+            relay_datagrams_queue: relay_datagrams_queue.clone(),
             network_send_wakers: Arc::new(parking_lot::Mutex::new(None)),
             poll_recv_counter: AtomicUsize::new(0),
             actor_sender: actor_sender.clone(),
