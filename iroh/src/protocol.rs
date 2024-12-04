@@ -228,7 +228,6 @@ impl RouterBuilder {
 
         let mut join_set = JoinSet::new();
         let endpoint = self.endpoint.clone();
-        let protos = protocols.clone();
 
         // We use a child token of the endpoint, to ensure that this is shutdown
         // when the endpoint is shutdown, but that we can shutdown ourselves independently.
@@ -239,7 +238,6 @@ impl RouterBuilder {
             // Make sure to cancel the token, if this future ever exits.
             let _cancel_guard = cancel_token.clone().drop_guard();
 
-            let protocols = protos;
             loop {
                 tokio::select! {
                     biased;
