@@ -1293,8 +1293,6 @@
 <a href="#1293" id="1293">1293</a>
 <a href="#1294" id="1294">1294</a>
 <a href="#1295" id="1295">1295</a>
-<a href="#1296" id="1296">1296</a>
-<a href="#1297" id="1297">1297</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
@@ -1326,13 +1324,11 @@
 
 <span class="kw">mod </span>defaults;
 <span class="kw">mod </span>dns;
-<span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-</span><span class="kw">mod </span>metrics;
+<span class="kw">mod </span>metrics;
 <span class="kw">mod </span>ping;
 <span class="kw">mod </span>reportgen;
 
-<span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-</span><span class="kw">pub use </span>metrics::Metrics;
+<span class="kw">pub use </span>metrics::Metrics;
 
 <span class="kw">const </span>FULL_REPORT_INTERVAL: Duration = Duration::from_secs(<span class="number">5 </span>* <span class="number">60</span>);
 
