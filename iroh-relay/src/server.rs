@@ -340,21 +340,11 @@ impl Server {
                                     acceptor,
                                 })
                             }
-                            CertConfig::Manual { .. } => {
+                            CertConfig::Manual { .. } | CertConfig::Reloading { .. } => {
                                 let server_config = Arc::new(tls_config.server_config);
                                 let acceptor =
                                     tokio_rustls::TlsAcceptor::from(server_config.clone());
                                 let acceptor = http_server::TlsAcceptor::Manual(acceptor);
-                                Some(http_server::TlsConfig {
-                                    config: server_config,
-                                    acceptor,
-                                })
-                            }
-                            CertConfig::Reloading { .. } => {
-                                let server_config = Arc::new(tls_config.server_config);
-                                let acceptor =
-                                    tokio_rustls::TlsAcceptor::from(server_config.clone());
-                                let acceptor = http_server::TlsAcceptor::Reloading(acceptor);
                                 Some(http_server::TlsConfig {
                                     config: server_config,
                                     acceptor,

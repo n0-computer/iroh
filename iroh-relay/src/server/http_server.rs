@@ -539,8 +539,6 @@ pub(super) enum TlsAcceptor {
     /// Manually added tls acceptor. Generally used for tests or for when we've passed in
     /// a certificate via a file.
     Manual(#[debug("tokio_rustls::TlsAcceptor")] tokio_rustls::TlsAcceptor),
-    /// Reloading tls acceptor. This is used when we want to externally manage certificates and live reload them.
-    Reloading(#[debug("tokio_rustls::TlsAcceptor")] tokio_rustls::TlsAcceptor),
 }
 
 impl RelayService {
@@ -612,13 +610,6 @@ impl RelayService {
                 self.serve_connection(MaybeTlsStream::Tls(tls_stream))
                     .await
                     .context("TLS[manual] serve connection")?;
-            }
-            TlsAcceptor::Reloading(a) => {
-                debug!("TLS[reloading]: accept");
-                let tls_stream = a.accept(stream).await.context("TLS[reloading] accept")?;
-                self.serve_connection(MaybeTlsStream::Tls(tls_stream))
-                    .await
-                    .context("TLS[reloading] serve connection")?;
             }
         }
         Ok(())

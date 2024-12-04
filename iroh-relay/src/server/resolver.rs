@@ -21,7 +21,7 @@ impl<Loader> ReloadingResolver<Loader>
 where
     Loader: Send + reloadable_state::core::Loader<Value = CertifiedKey> + 'static,
 {
-    /// Perform the initial load and construct the [`ReloadableResolver`].
+    /// Perform the initial load and construct the [`ReloadingResolver`].
     pub async fn init(loader: Loader, interval: Duration) -> Result<Self> {
         let (reloadable, _) = Reloadable::init_load(loader)
             .await
