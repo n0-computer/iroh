@@ -17,7 +17,7 @@ workspace = true
 rustls-cert-reloadable-resolver = "0.6.0"
 reloadable-state = "0.1.0"
 rustls-cert-file-reader = "0.4.0"
-aws-lc-rs = { version = "1", features = ["bindgen"] }
+# aws-lc-rs = { version = "1", default-features = false, features = ["bindgen"] }
 
 anyhow = { version = "1" }
 base64 = "0.22.1"
