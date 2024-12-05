@@ -2204,6 +2204,7 @@ dependencies = [
  "base64",
  "bytes",
  "clap",
+ "concurrent-queue",
  "criterion",
  "crypto_box",
  "der",

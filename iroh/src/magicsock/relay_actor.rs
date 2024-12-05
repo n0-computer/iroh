@@ -25,7 +25,7 @@ use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
 use crate::{
     key::{NodeId, PUBLIC_KEY_LENGTH},
-    magicsock::{MagicSock, Metrics as MagicsockMetrics, RelayContents, RelayRecvSender},
+    magicsock::{MagicSock, Metrics as MagicsockMetrics, RelayContents, RelayDatagramsQueue},
 };
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
@@ -52,8 +52,8 @@ struct ConnectedRelayActor {
     /// The time of the last request for its write
     /// channel (currently even if there was no write).
     last_write: Instant,
-    /// Channel to send received QUIC datagrams on.
-    relay_recv_channel: RelayRecvSender,
+    /// Queue to send received relay datagrams on.
+    relay_datagrams_queue: Arc<RelayDatagramsQueue>,
     url: RelayUrl,
     relay_client: relay::client::Client,
     relay_client_receiver: relay::client::ClientReceiver,
@@ -84,11 +84,11 @@ impl ConnectedRelayActor {
         url: RelayUrl,
         relay_client: relay::client::Client,
         relay_client_receiver: relay::client::ClientReceiver,
-        relay_recv_channel: RelayRecvSender,
+        relay_datagrams_queue: Arc<RelayDatagramsQueue>,
     ) -> Self {
         ConnectedRelayActor {
             last_write: Instant::now(),
-            relay_recv_channel,
+            relay_datagrams_queue,
             url,
             node_present: BTreeSet::new(),
             backoff: backoff::exponential::ExponentialBackoffBuilder::new()
@@ -246,7 +246,7 @@ impl ConnectedRelayActor {
                                 src: remote_node_id,
                                 buf: datagram,
                             };
-                            if let Err(err) = self.relay_recv_channel.try_send(res) {
+                            if let Err(err) = self.relay_datagrams_queue.try_send(res) {
                                 warn!("dropping received relay packet: {err:#}");
                             }
                         }
@@ -282,7 +282,7 @@ impl ConnectedRelayActor {
 
 pub(super) struct RelayActor {
     msock: Arc<MagicSock>,
-    relay_recv_channel: RelayRecvSender,
+    relay_datagrams_queue: Arc<RelayDatagramsQueue>,
     /// relay Url -> connection to the node
     connected_relays: BTreeMap<RelayUrl, (mpsc::Sender<ConnectedRelayMessage>, JoinHandle<()>)>,
     ping_tasks: JoinSet<(RelayUrl, bool)>,
@@ -290,11 +290,14 @@ pub(super) struct RelayActor {
 }
 
 impl RelayActor {
-    pub(super) fn new(msock: Arc<MagicSock>, recv_channel: RelayRecvSender) -> Self {
+    pub(super) fn new(
+        msock: Arc<MagicSock>,
+        relay_datagrams_queue: Arc<RelayDatagramsQueue>,
+    ) -> Self {
         let cancel_token = CancellationToken::new();
         Self {
             msock,
-            relay_recv_channel: recv_channel,
+            relay_datagrams_queue,
             connected_relays: Default::default(),
             ping_tasks: Default::default(),
             cancel_token,
@@ -536,11 +539,15 @@ impl RelayActor {
         let handle = tokio::task::spawn({
             let url = url.clone();
             let relay_client = relay_client.clone();
-            let relay_recv_channel = self.relay_recv_channel.clone();
+            let relay_datagrams_queue = self.relay_datagrams_queue.clone();
             let span = info_span!("conn-relay-actor", %url);
             async move {
-                let conn_actor =
-                    ConnectedRelayActor::new(url, relay_client, relay_receiver, relay_recv_channel);
+                let conn_actor = ConnectedRelayActor::new(
+                    url,
+                    relay_client,
+                    relay_receiver,
+                    relay_datagrams_queue,
+                );
 
                 if let Err(err) = conn_actor.run(conn_actor_inbox_rx).await {
                     warn!("connection error: {:?}", err);
