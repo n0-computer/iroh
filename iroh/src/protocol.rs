@@ -3,7 +3,6 @@
 //! ## Example
 //!
 //! ```no_run
-//! # use std::sync::Arc;
 //! # use anyhow::Result;
 //! # use futures_lite::future::Boxed as BoxedFuture;
 //! # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
@@ -11,9 +10,8 @@
 //! # async fn test_compile() -> Result<()> {
 //! let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 //!
-//! const ALPN: &[u8] = b"/my/alpn";
 //! let router = Router::builder(endpoint)
-//!     .accept(&ALPN, Arc::new(Echo))
+//!     .accept(b"/my/alpn", Echo)
 //!     .spawn()
 //!     .await?;
 //! # Ok(())
@@ -24,7 +22,7 @@
 //! struct Echo;
 //!
 //! impl ProtocolHandler for Echo {
-//!     fn accept(self: Arc<Self>, connecting: Connecting) -> BoxedFuture<Result<()>> {
+//!     fn accept(&self, connecting: Connecting) -> BoxedFuture<Result<()>> {
 //!         Box::pin(async move {
 //!             let connection = connecting.await?;
 //!             let (mut send, mut recv) = connection.accept_bi().await?;
@@ -111,39 +109,59 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     /// Handle an incoming connection.
     ///
     /// This runs on a freshly spawned tokio task so this can be long-running.
-    fn accept(self: Arc<Self>, conn: Connecting) -> BoxedFuture<Result<()>>;
+    fn accept(&self, conn: Connecting) -> BoxedFuture<Result<()>>;
 
     /// Called when the node shuts down.
-    fn shutdown(self: Arc<Self>) -> BoxedFuture<()> {
+    fn shutdown(&self) -> BoxedFuture<()> {
         Box::pin(async move {})
     }
 }
 
+impl<T: ProtocolHandler> ProtocolHandler for Arc<T> {
+    fn accept(&self, conn: Connecting) -> BoxedFuture<Result<()>> {
+        self.as_ref().accept(conn)
+    }
+
+    fn shutdown(&self) -> BoxedFuture<()> {
+        self.as_ref().shutdown()
+    }
+}
+
+impl<T: ProtocolHandler> ProtocolHandler for Box<T> {
+    fn accept(&self, conn: Connecting) -> BoxedFuture<Result<()>> {
+        self.as_ref().accept(conn)
+    }
+
+    fn shutdown(&self) -> BoxedFuture<()> {
+        self.as_ref().shutdown()
+    }
+}
+
 /// A typed map of protocol handlers, mapping them from ALPNs.
-#[derive(Debug, Clone, Default)]
-pub struct ProtocolMap(BTreeMap<Vec<u8>, Arc<dyn ProtocolHandler>>);
+#[derive(Debug, Default)]
+pub(crate) struct ProtocolMap(BTreeMap<Vec<u8>, Box<dyn ProtocolHandler>>);
 
 impl ProtocolMap {
     /// Returns the registered protocol handler for an ALPN as a [`Arc<dyn ProtocolHandler>`].
-    pub fn get(&self, alpn: &[u8]) -> Option<Arc<dyn ProtocolHandler>> {
-        self.0.get(alpn).cloned()
+    pub(crate) fn get(&self, alpn: &[u8]) -> Option<&dyn ProtocolHandler> {
+        self.0.get(alpn).map(|p| &**p)
     }
 
     /// Inserts a protocol handler.
-    pub fn insert(&mut self, alpn: Vec<u8>, handler: Arc<dyn ProtocolHandler>) {
+    pub(crate) fn insert(&mut self, alpn: Vec<u8>, handler: Box<dyn ProtocolHandler>) {
         self.0.insert(alpn, handler);
     }
 
     /// Returns an iterator of all registered ALPN protocol identifiers.
-    pub fn alpns(&self) -> impl Iterator<Item = &Vec<u8>> {
+    pub(crate) fn alpns(&self) -> impl Iterator<Item = &Vec<u8>> {
         self.0.keys()
     }
 
     /// Shuts down all protocol handlers.
     ///
     /// Calls and awaits [`ProtocolHandler::shutdown`] for all registered handlers concurrently.
-    pub async fn shutdown(&self) {
-        let handlers = self.0.values().cloned().map(ProtocolHandler::shutdown);
+    pub(crate) async fn shutdown(&self) {
+        let handlers = self.0.values().map(|p| p.shutdown());
         join_all(handlers).await;
     }
 }
@@ -201,7 +219,8 @@ impl RouterBuilder {
 
     /// Configures the router to accept the [`ProtocolHandler`] when receiving a connection
     /// with this `alpn`.
-    pub fn accept(mut self, alpn: impl AsRef<[u8]>, handler: Arc<dyn ProtocolHandler>) -> Self {
+    pub fn accept<T: ProtocolHandler>(mut self, alpn: impl AsRef<[u8]>, handler: T) -> Self {
+        let handler = Box::new(handler);
         self.protocols.insert(alpn.as_ref().to_vec(), handler);
         self
     }
