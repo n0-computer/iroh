@@ -1,6 +1,7 @@
 use std::{future::Future, path::Path, result, time::Duration};
 
 use anyhow::{Context, Result};
+use bytes::Bytes;
 use iroh_metrics::inc;
 use pkarr::{system_time, SignedPacket};
 use redb::{
@@ -8,7 +9,7 @@ use redb::{
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 use crate::{metrics::Metrics, util::PublicKeyBytes};
 
@@ -78,10 +79,14 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            // 64k packets
             max_batch_size: 1024 * 64,
+            // this means we lose at most 1 second of data in case of a crash
             max_batch_time: Duration::from_secs(1),
+            // 7 days
             eviction: Duration::from_secs(3600 * 24 * 7),
-            eviction_interval: Duration::from_secs(3600 * 24),
+            // eviction can run frequently since it does not do a full scan
+            eviction_interval: Duration::from_secs(10),
         }
     }
 }
@@ -91,19 +96,20 @@ impl Actor {
         match self.run0().await {
             Ok(()) => {}
             Err(e) => {
-                self.cancel.cancel();
                 tracing::error!("packet store actor failed: {:?}", e);
+                self.cancel.cancel();
             }
         }
     }
 
     async fn run0(&mut self) -> anyhow::Result<()> {
-        let expired_us = self.options.eviction.as_micros() as u64;
+        let expiry_us = self.options.eviction.as_micros() as u64;
         loop {
+            trace!("batch");
             let transaction = self.db.begin_write()?;
             let mut tables = Tables::new(&transaction)?;
             let timeout = tokio::time::sleep(self.options.max_batch_time);
-            let expired = system_time() - expired_us;
+            let expired = system_time() - expiry_us;
             tokio::pin!(timeout);
             for _ in 0..self.options.max_batch_size {
                 tokio::select! {
@@ -116,21 +122,25 @@ impl Actor {
                     Some(msg) = self.recv.recv() => {
                         match msg {
                             Message::Get { key, res } => {
+                                trace!("get {}", key);
                                 let packet = get_packet(&tables.signed_packets, &key)?;
                                 res.send(packet).ok();
                             }
                             Message::Upsert { packet, res } => {
                                 let key = PublicKeyBytes::from_signed_packet(&packet);
-                                let mut replaced = false;
-                                if let Some(existing) = get_packet(&tables.signed_packets, &key)? {
+                                trace!("upsert {}", key);
+                                let replaced = if let Some(existing) = get_packet(&tables.signed_packets, &key)? {
                                     if existing.more_recent_than(&packet) {
                                         res.send(false).ok();
                                         continue;
                                     } else {
+                                        // remove the packet from the update time index
                                         tables.update_time.remove(&packet.timestamp().to_be_bytes(), key.as_bytes())?;
-                                        replaced = true;
+                                        true
                                     }
-                                }
+                                } else {
+                                    false
+                                };
                                 let value = packet.as_bytes();
                                 tables.signed_packets.insert(key.as_bytes(), &value[..])?;
                                 tables.update_time.insert(&packet.timestamp().to_be_bytes(), key.as_bytes())?;
@@ -142,8 +152,9 @@ impl Actor {
                                 res.send(true).ok();
                             }
                             Message::Remove { key, res } => {
+                                trace!("remove {}", key);
                                 let updated = if let Some(row) = tables.signed_packets.remove(key.as_bytes())? {
-                                    let packet = SignedPacket::from_bytes(&row.value().to_vec().into())?;
+                                    let packet = SignedPacket::from_bytes(&Bytes::copy_from_slice(row.value()))?;
                                     tables.update_time.remove(&packet.timestamp().to_be_bytes(), key.as_bytes())?;
                                     inc!(Metrics, store_packets_removed);
                                     true
@@ -156,9 +167,11 @@ impl Actor {
                                 res.send(updated).ok();
                             }
                             Message::Snapshot { res } => {
+                                trace!("snapshot");
                                 res.send(Snapshot::new(&self.db)?).ok();
                             }
                             Message::CheckExpired { key, time } => {
+                                trace!("check expired {} at {}", key, u64::from_be_bytes(time));
                                 tables.update_time.remove_all(&time)?;
                                 if let Some(packet) = get_packet(&tables.signed_packets, &key)? {
                                     if packet.timestamp() < expired {
@@ -311,22 +324,46 @@ async fn evict_task(send: mpsc::Sender<Message>, options: Options, cancel: Cance
 
 /// Periodically check for expired packets and remove them.
 async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> anyhow::Result<()> {
-    let expiry_ms = options.eviction.as_micros() as u64;
+    let expiry_us = options.eviction.as_micros() as u64;
     loop {
         let (tx, rx) = oneshot::channel();
         let _ = send.send(Message::Snapshot { res: tx }).await.ok();
+        // if we can't get the snapshot we exit the loop, main actor dead
         let Ok(snapshot) = rx.await else {
             anyhow::bail!("failed to get snapshot");
         };
-        debug!("got snapshot");
-        let expired = system_time() - expiry_ms;
+        let expired = system_time() - expiry_us;
+        trace!("evicting packets older than {}", expired);
+        // if getting the range fails we exit the loop and shut down
+        // if individual reads fail we log the error and limp on
         for item in snapshot.update_time.range(..expired.to_be_bytes())? {
-            let (time, keys) = item?;
+            let (time, keys) = match item {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("failed to read update_time row {:?}", e);
+                    continue;
+                }
+            };
+            let time = time.value();
+            trace!("evicting expired packets at {}", u64::from_be_bytes(time));
             for item in keys {
-                let key = item?;
-                let time = time.value();
+                let key = match item {
+                    Ok(v) => v,
+                    Err(e) => {
+                        error!(
+                            "failed to read update_time item at {}: {:?}",
+                            u64::from_be_bytes(time),
+                            e
+                        );
+                        continue;
+                    }
+                };
                 let key = PublicKeyBytes::new(key.value());
-                debug!("evicting expired packet {:?} {}", time, key);
+                debug!(
+                    "evicting expired packet {} {}",
+                    u64::from_be_bytes(time),
+                    key
+                );
                 send.send(Message::CheckExpired { time, key }).await?;
             }
         }

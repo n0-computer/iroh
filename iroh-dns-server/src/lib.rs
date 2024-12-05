@@ -200,11 +200,7 @@ mod tests {
         let store = ZoneStore::in_memory(options)?;
 
         // create a signed packet
-        let secret_key = SecretKey::generate();
-        let node_id = secret_key.public();
-        let relay_url: Url = "https://relay.example.".parse()?;
-        let node_info = NodeInfo::new(node_id, Some(relay_url.clone()), Default::default());
-        let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
+        let signed_packet = random_signed_packet()?;
         let key = PublicKeyBytes::from_signed_packet(&signed_packet);
 
         store
@@ -272,5 +268,13 @@ mod tests {
         let nameserver_config = NameServerConfig::new(nameserver, Protocol::Udp);
         config.add_name_server(nameserver_config);
         AsyncResolver::tokio(config, Default::default())
+    }
+
+    fn random_signed_packet() -> Result<SignedPacket> {
+        let secret_key = SecretKey::generate();
+        let node_id = secret_key.public();
+        let relay_url: Url = "https://relay.example.".parse()?;
+        let node_info = NodeInfo::new(node_id, Some(relay_url.clone()), Default::default());
+        Ok(node_info.to_pkarr_signed_packet(&secret_key, 30)?)
     }
 }
