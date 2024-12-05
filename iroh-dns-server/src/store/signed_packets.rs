@@ -107,6 +107,14 @@ impl Actor {
     async fn run0(&mut self) -> anyhow::Result<()> {
         let expiry_us = self.options.eviction.as_micros() as u64;
         while let Some(msg) = self.recv.recv().await {
+            // if we get a snapshot message here we don't need to do a write transaction
+            let msg = if let Message::Snapshot { res } = msg {
+                let snapshot = Snapshot::new(&self.db)?;
+                res.send(snapshot).ok();
+                continue;
+            } else {
+                msg
+            };
             trace!("batch");
             self.recv.push_back(msg).unwrap();
             let transaction = self.db.begin_write()?;
