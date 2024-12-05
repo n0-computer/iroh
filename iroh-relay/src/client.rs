@@ -169,7 +169,6 @@ pub struct ClientReceiver {
 #[derive(derive_more::Debug)]
 struct Actor {
     secret_key: SecretKey,
-    can_ack_pings: bool,
     is_preferred: bool,
     relay_conn: Option<(Conn, ConnReceiver)>,
     is_closed: bool,
@@ -211,8 +210,6 @@ impl PingTracker {
 #[derive(derive_more::Debug)]
 pub struct ClientBuilder {
     /// Default is false
-    can_ack_pings: bool,
-    /// Default is false
     is_preferred: bool,
     /// Default is None
     #[debug("address family selector callback")]
@@ -237,7 +234,6 @@ impl ClientBuilder {
     /// Create a new [`ClientBuilder`]
     pub fn new(url: impl Into<RelayUrl>) -> Self {
         ClientBuilder {
-            can_ack_pings: false,
             is_preferred: false,
             address_family_selector: None,
             is_prober: false,
@@ -274,12 +270,6 @@ impl ClientBuilder {
         S: Fn() -> BoxFuture<bool> + Send + Sync + 'static,
     {
         self.address_family_selector = Some(Box::new(selector));
-        self
-    }
-
-    /// Enable this [`Client`] to acknowledge pings.
-    pub fn can_ack_pings(mut self, can: bool) -> Self {
-        self.can_ack_pings = can;
         self
     }
 
@@ -340,7 +330,6 @@ impl ClientBuilder {
 
         let inner = Actor {
             secret_key: key,
-            can_ack_pings: self.can_ack_pings,
             is_preferred: self.is_preferred,
             relay_conn: None,
             is_closed: false,
@@ -829,16 +818,12 @@ impl Actor {
 
     async fn send_pong(&mut self, data: [u8; 8]) -> Result<(), ClientError> {
         debug!("send_pong");
-        if self.can_ack_pings {
-            let (conn, _) = self.connect("send_pong").await?;
-            if conn.send_pong(data).await.is_err() {
-                self.close_for_reconnect().await;
-                return Err(ClientError::Send);
-            }
-            Ok(())
-        } else {
-            Err(ClientError::CannotAckPings)
+        let (conn, _) = self.connect("send_pong").await?;
+        if conn.send_pong(data).await.is_err() {
+            self.close_for_reconnect().await;
+            return Err(ClientError::Send);
         }
+        Ok(())
     }
 
     async fn close(mut self) {
