@@ -116,9 +116,6 @@ pub enum ClientError {
     /// The ping request was aborted
     #[error("ping aborted")]
     PingAborted,
-    /// This [`Client`] cannot acknowledge pings
-    #[error("cannot acknowledge pings")]
-    CannotAckPings,
     /// The given [`Url`] is invalid
     #[error("invalid url: {0}")]
     InvalidUrl(String),
