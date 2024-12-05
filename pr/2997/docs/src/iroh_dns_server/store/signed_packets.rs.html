@@ -410,6 +410,46 @@
 <a href="#410" id="410">410</a>
 <a href="#411" id="411">411</a>
 <a href="#412" id="412">412</a>
+<a href="#413" id="413">413</a>
+<a href="#414" id="414">414</a>
+<a href="#415" id="415">415</a>
+<a href="#416" id="416">416</a>
+<a href="#417" id="417">417</a>
+<a href="#418" id="418">418</a>
+<a href="#419" id="419">419</a>
+<a href="#420" id="420">420</a>
+<a href="#421" id="421">421</a>
+<a href="#422" id="422">422</a>
+<a href="#423" id="423">423</a>
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a>
+<a href="#430" id="430">430</a>
+<a href="#431" id="431">431</a>
+<a href="#432" id="432">432</a>
+<a href="#433" id="433">433</a>
+<a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
+<a href="#436" id="436">436</a>
+<a href="#437" id="437">437</a>
+<a href="#438" id="438">438</a>
+<a href="#439" id="439">439</a>
+<a href="#440" id="440">440</a>
+<a href="#441" id="441">441</a>
+<a href="#442" id="442">442</a>
+<a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{future::Future, path::Path, result, time::Duration};
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
@@ -447,7 +487,8 @@
     </span>}
 }
 
-<span class="kw">enum </span>Message {
+<span class="attr">#[derive(derive_more::Debug)]
+</span><span class="kw">enum </span>Message {
     Upsert {
         packet: SignedPacket,
         res: oneshot::Sender&lt;bool&gt;,
@@ -461,7 +502,8 @@
         res: oneshot::Sender&lt;bool&gt;,
     },
     Snapshot {
-        res: oneshot::Sender&lt;Snapshot&gt;,
+        <span class="attr">#[debug(skip)]
+        </span>res: oneshot::Sender&lt;Snapshot&gt;,
     },
     CheckExpired {
         time: [u8; <span class="number">8</span>],
@@ -471,7 +513,7 @@
 
 <span class="kw">struct </span>Actor {
     db: Database,
-    recv: mpsc::Receiver&lt;Message&gt;,
+    recv: PeekableReceiver&lt;Message&gt;,
     cancel: CancellationToken,
     options: Options,
 }
@@ -516,8 +558,9 @@
 
     <span class="kw">async fn </span>run0(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>expiry_us = <span class="self">self</span>.options.eviction.as_micros() <span class="kw">as </span>u64;
-        <span class="kw">loop </span>{
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(msg) = <span class="self">self</span>.recv.recv().<span class="kw">await </span>{
             <span class="macro">trace!</span>(<span class="string">"batch"</span>);
+            <span class="self">self</span>.recv.push_back(msg).unwrap();
             <span class="kw">let </span>transaction = <span class="self">self</span>.db.begin_write()<span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>tables = Tables::new(<span class="kw-2">&amp;</span>transaction)<span class="question-mark">?</span>;
             <span class="kw">let </span>timeout = tokio::time::sleep(<span class="self">self</span>.options.max_batch_time);
@@ -599,6 +642,7 @@
             drop(tables);
             transaction.commit()<span class="question-mark">?</span>;
         }
+        <span class="prelude-val">Ok</span>(())
     }
 }
 
@@ -670,7 +714,7 @@
         <span class="kw">let </span>cancel3 = cancel.clone();
         <span class="kw">let </span>actor = Actor {
             db,
-            recv,
+            recv: PeekableReceiver::new(recv),
             cancel: cancel2,
             options,
         };
@@ -819,6 +863,42 @@
     <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(handle) = <span class="self">self</span>.handle.take() {
             <span class="kw">let _ </span>= handle.join();
+        }
+    }
+}
+
+<span class="doccomment">/// A wrapper for a tokio mpsc receiver that allows peeking at the next message.
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>PeekableReceiver&lt;T&gt; {
+    msg: <span class="prelude-ty">Option</span>&lt;T&gt;,
+    recv: tokio::sync::mpsc::Receiver&lt;T&gt;,
+}
+
+<span class="attr">#[allow(dead_code)]
+</span><span class="kw">impl</span>&lt;T&gt; PeekableReceiver&lt;T&gt; {
+    <span class="kw">pub fn </span>new(recv: tokio::sync::mpsc::Receiver&lt;T&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{ msg: <span class="prelude-val">None</span>, recv }
+    }
+
+    <span class="doccomment">/// Receive the next message.
+    ///
+    /// Will block if there are no messages.
+    /// Returns None only if there are no more messages (sender is dropped).
+    </span><span class="kw">pub async fn </span>recv(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(msg) = <span class="self">self</span>.msg.take() {
+            <span class="kw">return </span><span class="prelude-val">Some</span>(msg);
+        }
+        <span class="self">self</span>.recv.recv().<span class="kw">await
+    </span>}
+
+    <span class="doccomment">/// Push back a message. This will only work if there is room for it.
+    /// Otherwise, it will fail and return the message.
+    </span><span class="kw">pub fn </span>push_back(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: T) -&gt; std::result::Result&lt;(), T&gt; {
+        <span class="kw">if </span><span class="self">self</span>.msg.is_none() {
+            <span class="self">self</span>.msg = <span class="prelude-val">Some</span>(msg);
+            <span class="prelude-val">Ok</span>(())
+        } <span class="kw">else </span>{
+            <span class="prelude-val">Err</span>(msg)
         }
     }
 }
