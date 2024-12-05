@@ -35,6 +35,7 @@ impl Drop for SignedPacketStore {
     }
 }
 
+#[derive(derive_more::Debug)]
 enum Message {
     Upsert {
         packet: SignedPacket,
@@ -49,6 +50,7 @@ enum Message {
         res: oneshot::Sender<bool>,
     },
     Snapshot {
+        #[debug(skip)]
         res: oneshot::Sender<Snapshot>,
     },
     CheckExpired {
@@ -59,7 +61,7 @@ enum Message {
 
 struct Actor {
     db: Database,
-    recv: mpsc::Receiver<Message>,
+    recv: PeekableReceiver<Message>,
     cancel: CancellationToken,
     options: Options,
 }
@@ -104,8 +106,9 @@ impl Actor {
 
     async fn run0(&mut self) -> anyhow::Result<()> {
         let expiry_us = self.options.eviction.as_micros() as u64;
-        loop {
+        while let Some(msg) = self.recv.recv().await {
             trace!("batch");
+            self.recv.push_back(msg).unwrap();
             let transaction = self.db.begin_write()?;
             let mut tables = Tables::new(&transaction)?;
             let timeout = tokio::time::sleep(self.options.max_batch_time);
@@ -187,6 +190,7 @@ impl Actor {
             drop(tables);
             transaction.commit()?;
         }
+        Ok(())
     }
 }
 
@@ -258,7 +262,7 @@ impl SignedPacketStore {
         let cancel3 = cancel.clone();
         let actor = Actor {
             db,
-            recv,
+            recv: PeekableReceiver::new(recv),
             cancel: cancel2,
             options,
         };
@@ -407,6 +411,42 @@ impl Drop for IoThread {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
+        }
+    }
+}
+
+/// A wrapper for a tokio mpsc receiver that allows peeking at the next message.
+#[derive(Debug)]
+pub(super) struct PeekableReceiver<T> {
+    msg: Option<T>,
+    recv: tokio::sync::mpsc::Receiver<T>,
+}
+
+#[allow(dead_code)]
+impl<T> PeekableReceiver<T> {
+    pub fn new(recv: tokio::sync::mpsc::Receiver<T>) -> Self {
+        Self { msg: None, recv }
+    }
+
+    /// Receive the next message.
+    ///
+    /// Will block if there are no messages.
+    /// Returns None only if there are no more messages (sender is dropped).
+    pub async fn recv(&mut self) -> Option<T> {
+        if let Some(msg) = self.msg.take() {
+            return Some(msg);
+        }
+        self.recv.recv().await
+    }
+
+    /// Push back a message. This will only work if there is room for it.
+    /// Otherwise, it will fail and return the message.
+    pub fn push_back(&mut self, msg: T) -> std::result::Result<(), T> {
+        if self.msg.is_none() {
+            self.msg = Some(msg);
+            Ok(())
+        } else {
+            Err(msg)
         }
     }
 }
