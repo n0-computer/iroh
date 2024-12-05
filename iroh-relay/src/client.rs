@@ -59,9 +59,6 @@ pub enum ClientError {
     /// The client is closed
     #[error("client is closed")]
     Closed,
-    /// There no underlying relay [`super::client::Client`] client exists for this http relay [`Client`]
-    #[error("no relay client")]
-    NoClient,
     /// There was an error sending a packet
     #[error("error sending a packet")]
     Send,
@@ -71,21 +68,9 @@ pub enum ClientError {
     /// There was a connection timeout error
     #[error("connect timeout")]
     ConnectTimeout,
-    /// No relay nodes are available
-    #[error("Relay node is not available")]
-    RelayNodeNotAvail,
-    /// No relay nodes are available with that name
-    #[error("no nodes available for {0}")]
-    NoNodeForTarget(String),
-    /// The relay node specified only allows STUN requests
-    #[error("no relay nodes found for {0}, only are stun_only nodes")]
-    StunOnlyNodesFound(String),
     /// There was an error dialing
     #[error("dial error")]
     DialIO(#[from] std::io::Error),
-    /// There was an error from the task doing the dialing
-    #[error("dial error")]
-    DialTask(#[from] tokio::task::JoinError),
     /// Both IPv4 and IPv6 are disabled for this relay node
     #[error("both IPv4 and IPv6 are explicitly disabled for this node")]
     IPDisabled,
@@ -122,9 +107,6 @@ pub enum ClientError {
     /// There was an error with DNS resolution
     #[error("dns: {0:?}")]
     Dns(Option<anyhow::Error>),
-    /// There was a timeout resolving DNS.
-    #[error("dns timeout")]
-    DnsTimeout,
     /// The inner actor is gone, likely means things are shutdown.
     #[error("actor gone")]
     ActorGone,
