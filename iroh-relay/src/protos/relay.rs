@@ -289,6 +289,7 @@ impl Frame {
 
     /// Serialized length with frame header.
     #[cfg(feature = "server")]
+    #[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]
     pub(crate) fn len_with_header(&self) -> usize {
         self.len() + HEADER_LEN
     }

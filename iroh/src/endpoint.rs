@@ -307,6 +307,7 @@ impl Builder {
     }
 
     #[cfg(feature = "discovery-pkarr-dht")]
+    #[cfg_attr(iroh_docsrs, doc(cfg(feature = "discovery-pkarr-dht")))]
     /// Configures the endpoint to also use the mainline DHT with default settings.
     ///
     /// This is equivalent to adding a [`crate::discovery::pkarr::dht::DhtDiscovery`]
@@ -327,6 +328,7 @@ impl Builder {
     }
 
     #[cfg(feature = "discovery-local-network")]
+    #[cfg_attr(iroh_docsrs, doc(cfg(feature = "discovery-local-network")))]
     /// Configures the endpoint to also use local network discovery.
     ///
     /// This is equivalent to adding a [`crate::discovery::local_swarm_discovery::LocalSwarmDiscovery`]
