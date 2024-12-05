@@ -48,6 +48,7 @@ mod http_server;
 mod metrics;
 pub(crate) mod streams;
 #[cfg(feature = "test-utils")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "test-utils")))]
 pub mod testing;
 
 pub use self::{
@@ -447,6 +448,7 @@ impl Server {
     ///
     /// This uses [`Self::https_addr`] so it's mostly useful for local development.
     #[cfg(feature = "test-utils")]
+    #[cfg_attr(iroh_docsrs, doc(cfg(feature = "test-utils")))]
     pub fn https_url(&self) -> Option<RelayUrl> {
         self.https_addr.map(|addr| {
             url::Url::parse(&format!("https://{addr}"))
@@ -459,6 +461,7 @@ impl Server {
     ///
     /// This uses [`Self::http_addr`] so it's mostly useful for local development.
     #[cfg(feature = "test-utils")]
+    #[cfg_attr(iroh_docsrs, doc(cfg(feature = "test-utils")))]
     pub fn http_url(&self) -> Option<RelayUrl> {
         self.http_addr.map(|addr| {
             url::Url::parse(&format!("http://{addr}"))

@@ -307,6 +307,7 @@ impl Builder {
     }
 
     #[cfg(feature = "discovery-pkarr-dht")]
+    #[cfg_attr(iroh_docsrs, doc(cfg(feature = "discovery-pkarr-dht")))]
     /// Configures the endpoint to also use the mainline DHT with default settings.
     ///
     /// This is equivalent to adding a [`crate::discovery::pkarr::dht::DhtDiscovery`]
@@ -327,6 +328,7 @@ impl Builder {
     }
 
     #[cfg(feature = "discovery-local-network")]
+    #[cfg_attr(iroh_docsrs, doc(cfg(feature = "discovery-local-network")))]
     /// Configures the endpoint to also use local network discovery.
     ///
     /// This is equivalent to adding a [`crate::discovery::local_swarm_discovery::LocalSwarmDiscovery`]
@@ -618,21 +620,6 @@ impl Endpoint {
         }
 
         conn
-    }
-
-    /// Connects to a remote endpoint, using just the nodes's [`NodeId`].
-    ///
-    /// This is a convenience function for [`Endpoint::connect`].  It relies on addressing
-    /// information being provided by either the discovery service or using
-    /// [`Endpoint::add_node_addr`].  See [`Endpoint::connect`] for the details of how it
-    /// uses the discovery service to establish a connection to a remote node.
-    #[deprecated(
-        since = "0.27.0",
-        note = "Please use `connect` directly with a NodeId. This fn will be removed in 0.28.0."
-    )]
-    pub async fn connect_by_node_id(&self, node_id: NodeId, alpn: &[u8]) -> Result<Connection> {
-        let addr = NodeAddr::new(node_id);
-        self.connect(addr, alpn).await
     }
 
     #[instrument(
