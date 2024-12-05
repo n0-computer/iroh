@@ -274,6 +274,10 @@
 <a href="#274" id="274">274</a>
 <a href="#275" id="275">275</a>
 <a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A DNS server and pkarr relay
 
 </span><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
@@ -476,11 +480,7 @@
         <span class="kw">let </span>store = ZoneStore::in_memory(options)<span class="question-mark">?</span>;
 
         <span class="comment">// create a signed packet
-        </span><span class="kw">let </span>secret_key = SecretKey::generate();
-        <span class="kw">let </span>node_id = secret_key.public();
-        <span class="kw">let </span>relay_url: Url = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;
-        <span class="kw">let </span>node_info = NodeInfo::new(node_id, <span class="prelude-val">Some</span>(relay_url.clone()), Default::default());
-        <span class="kw">let </span>signed_packet = node_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>signed_packet = random_signed_packet()<span class="question-mark">?</span>;
         <span class="kw">let </span>key = PublicKeyBytes::from_signed_packet(<span class="kw-2">&amp;</span>signed_packet);
 
         store
@@ -548,6 +548,14 @@
         <span class="kw">let </span>nameserver_config = NameServerConfig::new(nameserver, Protocol::Udp);
         config.add_name_server(nameserver_config);
         AsyncResolver::tokio(config, Default::default())
+    }
+
+    <span class="kw">fn </span>random_signed_packet() -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket&gt; {
+        <span class="kw">let </span>secret_key = SecretKey::generate();
+        <span class="kw">let </span>node_id = secret_key.public();
+        <span class="kw">let </span>relay_url: Url = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;
+        <span class="kw">let </span>node_info = NodeInfo::new(node_id, <span class="prelude-val">Some</span>(relay_url.clone()), Default::default());
+        <span class="prelude-val">Ok</span>(node_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>)
     }
 }
 </code></pre></div></section></main></body></html>
