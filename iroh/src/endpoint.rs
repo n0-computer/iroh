@@ -620,21 +620,6 @@ impl Endpoint {
         conn
     }
 
-    /// Connects to a remote endpoint, using just the nodes's [`NodeId`].
-    ///
-    /// This is a convenience function for [`Endpoint::connect`].  It relies on addressing
-    /// information being provided by either the discovery service or using
-    /// [`Endpoint::add_node_addr`].  See [`Endpoint::connect`] for the details of how it
-    /// uses the discovery service to establish a connection to a remote node.
-    #[deprecated(
-        since = "0.27.0",
-        note = "Please use `connect` directly with a NodeId. This fn will be removed in 0.28.0."
-    )]
-    pub async fn connect_by_node_id(&self, node_id: NodeId, alpn: &[u8]) -> Result<Connection> {
-        let addr = NodeAddr::new(node_id);
-        self.connect(addr, alpn).await
-    }
-
     #[instrument(
         skip_all,
         fields(remote_node = node_id.fmt_short(), alpn = %String::from_utf8_lossy(alpn))
