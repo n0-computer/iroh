@@ -187,8 +187,11 @@ pub(crate) struct MagicSock {
     /// [`AsyncUdpSocket`].  This queue takes care of the wakers needed by
     /// [`AsyncUdpSocket::poll_recv`].
     relay_datagrams_queue: Arc<RelayDatagramsQueue>,
-
-    network_send_wakers: Arc<parking_lot::Mutex<Option<Waker>>>,
+    /// Waker to wake the [`AsyncUdpSocket`] when more data can be sent to the relay server.
+    ///
+    /// This waker is used by [`IoPoller`] and the [`RelayActor`] to signal when more
+    /// datagrams can be sent to the relays.
+    relay_send_waker: Arc<parking_lot::Mutex<Option<Waker>>>,
     /// Counter for ordering of [`MagicSock::poll_recv`] polling order.
     poll_recv_counter: AtomicUsize,
 
@@ -453,7 +456,7 @@ impl MagicSock {
             ipv4_poller,
             ipv6_poller,
             relay_sender,
-            relay_send_waker: self.network_send_wakers.clone(),
+            relay_send_waker: self.relay_send_waker.clone(),
         })
     }
 
@@ -1549,7 +1552,7 @@ impl Handle {
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             relay_datagrams_queue: relay_datagrams_queue.clone(),
-            network_send_wakers: Arc::new(parking_lot::Mutex::new(None)),
+            relay_send_waker: Arc::new(parking_lot::Mutex::new(None)),
             poll_recv_counter: AtomicUsize::new(0),
             actor_sender: actor_sender.clone(),
             ipv6_reported: Arc::new(AtomicBool::new(false)),

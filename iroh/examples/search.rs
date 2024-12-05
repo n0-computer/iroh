@@ -127,7 +127,8 @@ impl ProtocolHandler for BlobSearch {
     ///
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
     /// the connection lasts.
-    fn accept(self: Arc<Self>, connecting: Connecting) -> BoxedFuture<Result<()>> {
+    fn accept(&self, connecting: Connecting) -> BoxedFuture<Result<()>> {
+        let this = self.clone();
         // We have to return a boxed future from the handler.
         Box::pin(async move {
             // Wait for the connection to be fully established.
@@ -145,7 +146,7 @@ impl ProtocolHandler for BlobSearch {
 
             // Now, we can perform the actual query on our local database.
             let query = String::from_utf8(query_bytes)?;
-            let num_matches = self.query_local(&query).await;
+            let num_matches = this.query_local(&query).await;
 
             // We want to return a list of hashes. We do the simplest thing possible, and just send
             // one hash after the other. Because the hashes have a fixed size of 32 bytes, this is
@@ -167,11 +168,11 @@ impl ProtocolHandler for BlobSearch {
 
 impl BlobSearch {
     /// Create a new protocol handler.
-    pub fn new(endpoint: Endpoint) -> Arc<Self> {
-        Arc::new(Self {
+    pub fn new(endpoint: Endpoint) -> Self {
+        Self {
             endpoint,
             blobs: Default::default(),
-        })
+        }
     }
 
     /// Query a remote node, download all matching blobs and print the results.
