@@ -1213,9 +1213,6 @@
 <a href="#1213" id="1213">1213</a>
 <a href="#1214" id="1214">1214</a>
 <a href="#1215" id="1215">1215</a>
-<a href="#1216" id="1216">1216</a>
-<a href="#1217" id="1217">1217</a>
-<a href="#1218" id="1218">1218</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
@@ -1334,9 +1331,6 @@
     <span class="doccomment">/// The ping request was aborted
     </span><span class="attr">#[error(<span class="string">"ping aborted"</span>)]
     </span>PingAborted,
-    <span class="doccomment">/// This [`Client`] cannot acknowledge pings
-    </span><span class="attr">#[error(<span class="string">"cannot acknowledge pings"</span>)]
-    </span>CannotAckPings,
     <span class="doccomment">/// The given [`Url`] is invalid
     </span><span class="attr">#[error(<span class="string">"invalid url: {0}"</span>)]
     </span>InvalidUrl(String),
