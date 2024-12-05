@@ -864,7 +864,6 @@
 <a href="#864" id="864">864</a>
 <a href="#865" id="865">865</a>
 <a href="#866" id="866">866</a>
-<a href="#867" id="867">867</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
@@ -1392,7 +1391,6 @@
                 <span class="kw">let </span>ipv6_reported = ipv6_reported.clone();
                 Box::pin(<span class="kw">async move </span>{ ipv6_reported.load(Ordering::Relaxed) })
             })
-            .can_ack_pings(<span class="bool-val">true</span>)
             .is_preferred(my_relay.as_ref() == <span class="prelude-val">Some</span>(url));
 
         <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
