@@ -22,6 +22,10 @@ use pkarr::SignedPacket;
 pub struct PublicKeyBytes([u8; 32]);
 
 impl PublicKeyBytes {
+    pub fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
     pub fn from_z32(s: &str) -> Result<Self> {
         let bytes = z32::decode(s.as_bytes())?;
         let bytes: [u8; 32] = bytes.try_into().map_err(|_| anyhow!("invalid length"))?;

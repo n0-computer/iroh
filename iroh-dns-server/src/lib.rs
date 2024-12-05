@@ -16,7 +16,10 @@ pub use store::ZoneStore;
 
 #[cfg(test)]
 mod tests {
-    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+    use std::{
+        net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+        time::Duration,
+    };
 
     use anyhow::Result;
     use hickory_resolver::{
@@ -29,9 +32,16 @@ mod tests {
         key::SecretKey,
     };
     use pkarr::{PkarrClient, SignedPacket};
+    use testresult::TestResult;
     use url::Url;
 
-    use crate::{config::BootstrapOption, server::Server};
+    use crate::{
+        config::BootstrapOption,
+        server::Server,
+        store::{PacketSource, ZoneStoreOptions},
+        util::PublicKeyBytes,
+        ZoneStore,
+    };
 
     #[tokio::test]
     async fn pkarr_publish_dns_resolve() -> Result<()> {
@@ -179,6 +189,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn store_eviction() -> TestResult<()> {
+        iroh_test::logging::setup_multithreaded();
+        let options = ZoneStoreOptions {
+            eviction: Duration::from_millis(100),
+            eviction_interval: Duration::from_millis(100),
+            max_batch_time: Duration::from_millis(100),
+            ..Default::default()
+        };
+        let store = ZoneStore::in_memory(options)?;
+
+        // create a signed packet
+        let signed_packet = random_signed_packet()?;
+        let key = PublicKeyBytes::from_signed_packet(&signed_packet);
+
+        store
+            .insert(signed_packet, PacketSource::PkarrPublish)
+            .await?;
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        for _ in 0..10 {
+            let entry = store.get_signed_packet(&key).await?;
+            if entry.is_none() {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        panic!("store did not evict packet");
+    }
+
+    #[tokio::test]
     async fn integration_mainline() -> Result<()> {
         iroh_test::logging::setup_multithreaded();
 
@@ -188,7 +228,8 @@ mod tests {
 
         // spawn our server with mainline support
         let (server, nameserver, _http_url) =
-            Server::spawn_for_tests_with_mainline(Some(BootstrapOption::Custom(bootstrap))).await?;
+            Server::spawn_for_tests_with_options(Some(BootstrapOption::Custom(bootstrap)), None)
+                .await?;
 
         let origin = "irohdns.example.";
 
@@ -227,5 +268,13 @@ mod tests {
         let nameserver_config = NameServerConfig::new(nameserver, Protocol::Udp);
         config.add_name_server(nameserver_config);
         AsyncResolver::tokio(config, Default::default())
+    }
+
+    fn random_signed_packet() -> Result<SignedPacket> {
+        let secret_key = SecretKey::generate();
+        let node_id = secret_key.public();
+        let relay_url: Url = "https://relay.example.".parse()?;
+        let node_info = NodeInfo::new(node_id, Some(relay_url.clone()), Default::default());
+        node_info.to_pkarr_signed_packet(&secret_key, 30)
     }
 }

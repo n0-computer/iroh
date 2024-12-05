@@ -7,7 +7,7 @@ use tokio::runtime::Runtime;
 const LOCALHOST_PKARR: &str = "http://localhost:8080/pkarr";
 
 async fn start_dns_server(config: Config) -> Result<Server> {
-    let store = ZoneStore::persistent(Config::signed_packet_store_path()?)?;
+    let store = ZoneStore::persistent(Config::signed_packet_store_path()?, Default::default())?;
     Server::spawn(config, store).await
 }
 
