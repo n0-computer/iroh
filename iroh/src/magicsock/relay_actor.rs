@@ -525,7 +525,6 @@ impl RelayActor {
                 let ipv6_reported = ipv6_reported.clone();
                 Box::pin(async move { ipv6_reported.load(Ordering::Relaxed) })
             })
-            .can_ack_pings(true)
             .is_preferred(my_relay.as_ref() == Some(url));
 
         #[cfg(any(test, feature = "test-utils"))]
