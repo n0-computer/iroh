@@ -4088,6 +4088,9 @@
 <a href="#4088" id="4088">4088</a>
 <a href="#4089" id="4089">4089</a>
 <a href="#4090" id="4090">4090</a>
+<a href="#4091" id="4091">4091</a>
+<a href="#4092" id="4092">4092</a>
+<a href="#4093" id="4093">4093</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -4277,8 +4280,11 @@
     /// [`AsyncUdpSocket`].  This queue takes care of the wakers needed by
     /// [`AsyncUdpSocket::poll_recv`].
     </span>relay_datagrams_queue: Arc&lt;RelayDatagramsQueue&gt;,
-
-    network_send_wakers: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
+    <span class="doccomment">/// Waker to wake the [`AsyncUdpSocket`] when more data can be sent to the relay server.
+    ///
+    /// This waker is used by [`IoPoller`] and the [`RelayActor`] to signal when more
+    /// datagrams can be sent to the relays.
+    </span>relay_send_waker: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
     <span class="doccomment">/// Counter for ordering of [`MagicSock::poll_recv`] polling order.
     </span>poll_recv_counter: AtomicUsize,
 
@@ -4543,7 +4549,7 @@
             ipv4_poller,
             ipv6_poller,
             relay_sender,
-            relay_send_waker: <span class="self">self</span>.network_send_wakers.clone(),
+            relay_send_waker: <span class="self">self</span>.relay_send_waker.clone(),
         })
     }
 
@@ -5639,7 +5645,7 @@
             closing: AtomicBool::new(<span class="bool-val">false</span>),
             closed: AtomicBool::new(<span class="bool-val">false</span>),
             relay_datagrams_queue: relay_datagrams_queue.clone(),
-            network_send_wakers: Arc::new(parking_lot::Mutex::new(<span class="prelude-val">None</span>)),
+            relay_send_waker: Arc::new(parking_lot::Mutex::new(<span class="prelude-val">None</span>)),
             poll_recv_counter: AtomicUsize::new(<span class="number">0</span>),
             actor_sender: actor_sender.clone(),
             ipv6_reported: Arc::new(AtomicBool::new(<span class="bool-val">false</span>)),
