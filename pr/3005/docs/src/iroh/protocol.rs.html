@@ -374,35 +374,11 @@
 <a href="#374" id="374">374</a>
 <a href="#375" id="375">375</a>
 <a href="#376" id="376">376</a>
-<a href="#377" id="377">377</a>
-<a href="#378" id="378">378</a>
-<a href="#379" id="379">379</a>
-<a href="#380" id="380">380</a>
-<a href="#381" id="381">381</a>
-<a href="#382" id="382">382</a>
-<a href="#383" id="383">383</a>
-<a href="#384" id="384">384</a>
-<a href="#385" id="385">385</a>
-<a href="#386" id="386">386</a>
-<a href="#387" id="387">387</a>
-<a href="#388" id="388">388</a>
-<a href="#389" id="389">389</a>
-<a href="#390" id="390">390</a>
-<a href="#391" id="391">391</a>
-<a href="#392" id="392">392</a>
-<a href="#393" id="393">393</a>
-<a href="#394" id="394">394</a>
-<a href="#395" id="395">395</a>
-<a href="#396" id="396">396</a>
-<a href="#397" id="397">397</a>
-<a href="#398" id="398">398</a>
-<a href="#399" id="399">399</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
 //!
 //! ```no_run
-//! # use std::sync::Arc;
 //! # use anyhow::Result;
 //! # use futures_lite::future::Boxed as BoxedFuture;
 //! # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
@@ -410,9 +386,8 @@
 //! # async fn test_compile() -&gt; Result&lt;()&gt; {
 //! let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 //!
-//! const ALPN: &amp;[u8] = b"/my/alpn";
 //! let router = Router::builder(endpoint)
-//!     .accept(&amp;ALPN, Arc::new(Echo))
+//!     .accept(b"/my/alpn", Echo)
 //!     .spawn()
 //!     .await?;
 //! # Ok(())
@@ -423,7 +398,7 @@
 //! struct Echo;
 //!
 //! impl ProtocolHandler for Echo {
-//!     fn accept(self: Arc&lt;Self&gt;, connecting: Connecting) -&gt; BoxedFuture&lt;Result&lt;()&gt;&gt; {
+//!     fn accept(&amp;self, connecting: Connecting) -&gt; BoxedFuture&lt;Result&lt;()&gt;&gt; {
 //!         Box::pin(async move {
 //!             let connection = connecting.await?;
 //!             let (mut send, mut recv) = connection.accept_bi().await?;
@@ -439,7 +414,7 @@
 //!     }
 //! }
 //! ```
-</span><span class="kw">use </span>std::{any::Any, collections::BTreeMap, sync::Arc};
+</span><span class="kw">use </span>std::{collections::BTreeMap, sync::Arc};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_buffered::join_all;
@@ -485,7 +460,6 @@
 </span><span class="attr">#[derive(Clone, Debug)]
 </span><span class="kw">pub struct </span>Router {
     endpoint: Endpoint,
-    protocols: Arc&lt;ProtocolMap&gt;,
     <span class="comment">// `Router` needs to be `Clone + Send`, and we need to `task.await` in its `shutdown()` impl.
     </span>task: Arc&lt;Mutex&lt;<span class="prelude-ty">Option</span>&lt;AbortOnDropHandle&lt;()&gt;&gt;&gt;&gt;,
     cancel_token: CancellationToken,
@@ -507,65 +481,63 @@
 /// Implement this trait on a struct that should handle incoming connections.
 /// The protocol handler must then be registered on the node for an ALPN protocol with
 /// [`crate::protocol::RouterBuilder::accept`].
-</span><span class="kw">pub trait </span>ProtocolHandler: Send + Sync + IntoArcAny + std::fmt::Debug + <span class="lifetime">'static </span>{
+</span><span class="kw">pub trait </span>ProtocolHandler: Send + Sync + std::fmt::Debug + <span class="lifetime">'static </span>{
     <span class="doccomment">/// Handle an incoming connection.
     ///
     /// This runs on a freshly spawned tokio task so this can be long-running.
-    </span><span class="kw">fn </span>accept(<span class="self">self</span>: Arc&lt;<span class="self">Self</span>&gt;, conn: Connecting) -&gt; BoxedFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;;
+    </span><span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxedFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;;
 
     <span class="doccomment">/// Called when the node shuts down.
-    </span><span class="kw">fn </span>shutdown(<span class="self">self</span>: Arc&lt;<span class="self">Self</span>&gt;) -&gt; BoxedFuture&lt;()&gt; {
+    </span><span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxedFuture&lt;()&gt; {
         Box::pin(<span class="kw">async move </span>{})
     }
 }
 
-<span class="doccomment">/// Helper trait to facilite casting from `Arc&lt;dyn T&gt;` to `Arc&lt;dyn Any&gt;`.
-///
-/// This trait has a blanket implementation so there is no need to implement this yourself.
-</span><span class="kw">pub trait </span>IntoArcAny {
-    <span class="doccomment">/// Casts `Arc&lt;Self&gt;` into `Arc&lt;dyn Any + Send + Sync&gt;`.
-    </span><span class="kw">fn </span>into_arc_any(<span class="self">self</span>: Arc&lt;<span class="self">Self</span>&gt;) -&gt; Arc&lt;<span class="kw">dyn </span>Any + Send + Sync&gt;;
+<span class="kw">impl</span>&lt;T: ProtocolHandler&gt; ProtocolHandler <span class="kw">for </span>Arc&lt;T&gt; {
+    <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxedFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
+        <span class="self">self</span>.as_ref().accept(conn)
+    }
+
+    <span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxedFuture&lt;()&gt; {
+        <span class="self">self</span>.as_ref().shutdown()
+    }
 }
 
-<span class="kw">impl</span>&lt;T: Send + Sync + <span class="lifetime">'static</span>&gt; IntoArcAny <span class="kw">for </span>T {
-    <span class="kw">fn </span>into_arc_any(<span class="self">self</span>: Arc&lt;<span class="self">Self</span>&gt;) -&gt; Arc&lt;<span class="kw">dyn </span>Any + Send + Sync&gt; {
-        <span class="self">self
-    </span>}
+<span class="kw">impl</span>&lt;T: ProtocolHandler&gt; ProtocolHandler <span class="kw">for </span>Box&lt;T&gt; {
+    <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxedFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
+        <span class="self">self</span>.as_ref().accept(conn)
+    }
+
+    <span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxedFuture&lt;()&gt; {
+        <span class="self">self</span>.as_ref().shutdown()
+    }
 }
 
 <span class="doccomment">/// A typed map of protocol handlers, mapping them from ALPNs.
-</span><span class="attr">#[derive(Debug, Clone, Default)]
-</span><span class="kw">pub struct </span>ProtocolMap(BTreeMap&lt;Vec&lt;u8&gt;, Arc&lt;<span class="kw">dyn </span>ProtocolHandler&gt;&gt;);
+</span><span class="attr">#[derive(Debug, Default)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ProtocolMap(BTreeMap&lt;Vec&lt;u8&gt;, Box&lt;<span class="kw">dyn </span>ProtocolHandler&gt;&gt;);
 
 <span class="kw">impl </span>ProtocolMap {
-    <span class="doccomment">/// Returns the registered protocol handler for an ALPN as a concrete type.
-    </span><span class="kw">pub fn </span>get_typed&lt;P: ProtocolHandler&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, alpn: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;P&gt;&gt; {
-        <span class="kw">let </span>protocol: Arc&lt;<span class="kw">dyn </span>ProtocolHandler&gt; = <span class="self">self</span>.<span class="number">0</span>.get(alpn)<span class="question-mark">?</span>.clone();
-        <span class="kw">let </span>protocol_any: Arc&lt;<span class="kw">dyn </span>Any + Send + Sync&gt; = protocol.into_arc_any();
-        <span class="kw">let </span>protocol_ref = Arc::downcast(protocol_any).ok()<span class="question-mark">?</span>;
-        <span class="prelude-val">Some</span>(protocol_ref)
-    }
-
     <span class="doccomment">/// Returns the registered protocol handler for an ALPN as a [`Arc&lt;dyn ProtocolHandler&gt;`].
-    </span><span class="kw">pub fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, alpn: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;<span class="kw">dyn </span>ProtocolHandler&gt;&gt; {
-        <span class="self">self</span>.<span class="number">0</span>.get(alpn).cloned()
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, alpn: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="kw">dyn </span>ProtocolHandler&gt; {
+        <span class="self">self</span>.<span class="number">0</span>.get(alpn).map(|p| <span class="kw-2">&amp;**</span>p)
     }
 
     <span class="doccomment">/// Inserts a protocol handler.
-    </span><span class="kw">pub fn </span>insert(<span class="kw-2">&amp;mut </span><span class="self">self</span>, alpn: Vec&lt;u8&gt;, handler: Arc&lt;<span class="kw">dyn </span>ProtocolHandler&gt;) {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>insert(<span class="kw-2">&amp;mut </span><span class="self">self</span>, alpn: Vec&lt;u8&gt;, handler: Box&lt;<span class="kw">dyn </span>ProtocolHandler&gt;) {
         <span class="self">self</span>.<span class="number">0</span>.insert(alpn, handler);
     }
 
     <span class="doccomment">/// Returns an iterator of all registered ALPN protocol identifiers.
-    </span><span class="kw">pub fn </span>alpns(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>Vec&lt;u8&gt;&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>alpns(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>Vec&lt;u8&gt;&gt; {
         <span class="self">self</span>.<span class="number">0</span>.keys()
     }
 
     <span class="doccomment">/// Shuts down all protocol handlers.
     ///
     /// Calls and awaits [`ProtocolHandler::shutdown`] for all registered handlers concurrently.
-    </span><span class="kw">pub async fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="kw">let </span>handlers = <span class="self">self</span>.<span class="number">0</span>.values().cloned().map(ProtocolHandler::shutdown);
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+        <span class="kw">let </span>handlers = <span class="self">self</span>.<span class="number">0</span>.values().map(|p| p.shutdown());
         join_all(handlers).<span class="kw">await</span>;
     }
 }
@@ -574,14 +546,6 @@
     <span class="doccomment">/// Creates a new [`Router`] using given [`Endpoint`].
     </span><span class="kw">pub fn </span>builder(endpoint: Endpoint) -&gt; RouterBuilder {
         RouterBuilder::new(endpoint)
-    }
-
-    <span class="doccomment">/// Returns a protocol handler for an ALPN.
-    ///
-    /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
-    /// does not match the passed type.
-    </span><span class="kw">pub fn </span>get_protocol&lt;P: ProtocolHandler&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, alpn: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;P&gt;&gt; {
-        <span class="self">self</span>.protocols.get_typed(alpn)
     }
 
     <span class="doccomment">/// Returns the [`Endpoint`] stored in this router.
@@ -631,7 +595,8 @@
 
     <span class="doccomment">/// Configures the router to accept the [`ProtocolHandler`] when receiving a connection
     /// with this `alpn`.
-    </span><span class="kw">pub fn </span>accept(<span class="kw-2">mut </span><span class="self">self</span>, alpn: <span class="kw">impl </span>AsRef&lt;[u8]&gt;, handler: Arc&lt;<span class="kw">dyn </span>ProtocolHandler&gt;) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>accept&lt;T: ProtocolHandler&gt;(<span class="kw-2">mut </span><span class="self">self</span>, alpn: <span class="kw">impl </span>AsRef&lt;[u8]&gt;, handler: T) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>handler = Box::new(handler);
         <span class="self">self</span>.protocols.insert(alpn.as_ref().to_vec(), handler);
         <span class="self">self
     </span>}
@@ -639,14 +604,6 @@
     <span class="doccomment">/// Returns the [`Endpoint`] of the node.
     </span><span class="kw">pub fn </span>endpoint(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Endpoint {
         <span class="kw-2">&amp;</span><span class="self">self</span>.endpoint
-    }
-
-    <span class="doccomment">/// Returns a protocol handler for an ALPN.
-    ///
-    /// This downcasts to the concrete type and returns `None` if the handler registered for `alpn`
-    /// does not match the passed type.
-    </span><span class="kw">pub fn </span>get_protocol&lt;P: ProtocolHandler&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, alpn: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;P&gt;&gt; {
-        <span class="self">self</span>.protocols.get_typed(alpn)
     }
 
     <span class="doccomment">/// Spawns an accept loop and returns a handle to it encapsulated as the [`Router`].
@@ -666,7 +623,6 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>join_set = JoinSet::new();
         <span class="kw">let </span>endpoint = <span class="self">self</span>.endpoint.clone();
-        <span class="kw">let </span>protos = protocols.clone();
 
         <span class="comment">// We use a child token of the endpoint, to ensure that this is shutdown
         // when the endpoint is shutdown, but that we can shutdown ourselves independently.
@@ -677,7 +633,6 @@
             <span class="comment">// Make sure to cancel the token, if this future ever exits.
             </span><span class="kw">let </span>_cancel_guard = cancel_token.clone().drop_guard();
 
-            <span class="kw">let </span>protocols = protos;
             <span class="kw">loop </span>{
                 <span class="macro">tokio::select!</span> {
                     biased;
@@ -734,7 +689,6 @@
 
         <span class="prelude-val">Ok</span>(Router {
             endpoint: <span class="self">self</span>.endpoint,
-            protocols,
             task: Arc::new(Mutex::new(<span class="prelude-val">Some</span>(task))),
             cancel_token: cancel,
         })
