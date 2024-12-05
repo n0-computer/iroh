@@ -555,7 +555,7 @@
         <span class="kw">let </span>node_id = secret_key.public();
         <span class="kw">let </span>relay_url: Url = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;
         <span class="kw">let </span>node_info = NodeInfo::new(node_id, <span class="prelude-val">Some</span>(relay_url.clone()), Default::default());
-        <span class="prelude-val">Ok</span>(node_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>)
+        node_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)
     }
 }
 </code></pre></div></section></main></body></html>
