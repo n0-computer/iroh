@@ -1,4 +1,4 @@
-//! This module implements the relaying protocol used the [`crate::server`] and [`crate::client`].
+//! This module implements the relaying protocol used by the `server` and `client`.
 //!
 //! Protocol flow:
 //!
