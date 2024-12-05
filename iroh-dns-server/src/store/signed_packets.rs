@@ -183,9 +183,9 @@ impl Actor {
                             }
                             Message::CheckExpired { key, time } => {
                                 trace!("check expired {} at {}", key, u64::from_be_bytes(time));
-                                tables.update_time.remove_all(&time)?;
                                 if let Some(packet) = get_packet(&tables.signed_packets, &key)? {
                                     if packet.timestamp() < expired {
+                                        tables.update_time.remove(&time, key.as_bytes())?;
                                         let _ = tables.signed_packets.remove(key.as_bytes())?;
                                         inc!(Metrics, store_packets_expired);
                                     }
