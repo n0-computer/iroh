@@ -156,6 +156,17 @@
 <a href="#156" id="156">156</a>
 <a href="#157" id="157">157</a>
 <a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>iroh_metrics::{
     core::{Counter, Metric},
     struct_iterable::Iterable,
@@ -199,6 +210,11 @@
     </span><span class="kw">pub </span>sent_pong: Counter,
     <span class="doccomment">/// Number of `FrameType::Unknown` received
     </span><span class="kw">pub </span>unknown_frames: Counter,
+
+    <span class="doccomment">/// Number of frames received from client connection which have been rate-limited.
+    </span><span class="kw">pub </span>frames_rx_ratelimited_total: Counter,
+    <span class="doccomment">/// Number of client connections which have had any frames rate-limited.
+    </span><span class="kw">pub </span>conns_rx_ratelimited_total: Counter,
 
     <span class="comment">/*
      * Metrics about peers
@@ -249,6 +265,12 @@
             got_ping: Counter::new(<span class="string">"Number of times the server has received a Ping from a client."</span>),
             sent_pong: Counter::new(<span class="string">"Number of times the server has sent a Pong to a client."</span>),
             unknown_frames: Counter::new(<span class="string">"Number of unknown frames sent to this server."</span>),
+            frames_rx_ratelimited_total: Counter::new(
+                <span class="string">"Number of frames received from client connection which have been rate-limited."</span>,
+            ),
+            conns_rx_ratelimited_total: Counter::new(
+                <span class="string">"Number of client connections which have had any frames rate-limited."</span>,
+            ),
 
             <span class="comment">/*
              * Metrics about peers

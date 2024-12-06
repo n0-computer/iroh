@@ -60,6 +60,8 @@
 <a href="#60" id="60">60</a>
 <a href="#61" id="61">61</a>
 <a href="#62" id="62">62</a>
+<a href="#63" id="63">63</a>
+<a href="#64" id="64">64</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Metrics support for the server
 
 </span><span class="kw">use </span>iroh_metrics::core::{Core, Counter, Metric};
@@ -84,6 +86,7 @@
     <span class="kw">pub </span>store_packets_inserted: Counter,
     <span class="kw">pub </span>store_packets_removed: Counter,
     <span class="kw">pub </span>store_packets_updated: Counter,
+    <span class="kw">pub </span>store_packets_expired: Counter,
 }
 
 <span class="kw">impl </span>Default <span class="kw">for </span>Metrics {
@@ -106,6 +109,7 @@
             store_packets_inserted: Counter::new(<span class="string">"Signed packets inserted into the store"</span>),
             store_packets_removed: Counter::new(<span class="string">"Signed packets removed from the store"</span>),
             store_packets_updated: Counter::new(<span class="string">"Number of updates to existing packets"</span>),
+            store_packets_expired: Counter::new(<span class="string">"Number of expired packets"</span>),
         }
     }
 }

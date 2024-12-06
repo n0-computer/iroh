@@ -81,11 +81,7 @@
 <a href="#81" id="81">81</a>
 <a href="#82" id="82">82</a>
 <a href="#83" id="83">83</a>
-<a href="#84" id="84">84</a>
-<a href="#85" id="85">85</a>
-<a href="#86" id="86">86</a>
-<a href="#87" id="87">87</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::time::Duration;
+</pre></div><pre class="rust"><code><span class="kw">use </span>std::{sync::Arc, time::Duration};
 
 <span class="kw">use </span>governor::{clock::QuantaInstant, middleware::NoOpMiddleware};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
@@ -125,7 +121,7 @@
 /// This spawns a background thread to clean up the rate limiting cache.
 </span><span class="kw">pub fn </span>create(
     rate_limit_config: <span class="kw-2">&amp;</span>RateLimitConfig,
-) -&gt; <span class="prelude-ty">Option</span>&lt;GovernorLayer&lt;<span class="lifetime">'static</span>, PeerIpKeyExtractor, NoOpMiddleware&lt;QuantaInstant&gt;&gt;&gt; {
+) -&gt; <span class="prelude-ty">Option</span>&lt;GovernorLayer&lt;PeerIpKeyExtractor, NoOpMiddleware&lt;QuantaInstant&gt;&gt;&gt; {
     <span class="kw">let </span>use_smart_extractor = <span class="kw">match </span>rate_limit_config {
         RateLimitConfig::Disabled =&gt; {
             <span class="macro">tracing::info!</span>(<span class="string">"Rate limiting disabled"</span>);
@@ -153,11 +149,7 @@
         .finish()
         .expect(<span class="string">"failed to build rate-limiting governor"</span>);
 
-    <span class="comment">// The governor layer needs a reference that outlives the layer.
-    // The tower_governor crate recommends in its examples to use Box::leak here.
-    // In the unreleased v0.4 of tower_governor this was changed to use an Arc instead.
-    // https://github.com/benwis/tower-governor/pull/27
-    </span><span class="kw">let </span>governor_conf = Box::leak(Box::new(governor_conf));
+    <span class="kw">let </span>governor_conf = Arc::new(governor_conf);
 
     <span class="comment">// The governor needs a background task for garbage collection (to clear expired records)
     </span><span class="kw">let </span>gc_interval = Duration::from_secs(<span class="number">60</span>);
@@ -169,7 +161,7 @@
     });
 
     <span class="prelude-val">Some</span>(GovernorLayer {
-        config: <span class="kw-2">&amp;*</span>governor_conf,
+        config: governor_conf,
     })
 }
 </code></pre></div></section></main></body></html>
