@@ -9,11 +9,14 @@ use anyhow::Result;
 use futures_lite::Stream;
 use futures_sink::Sink;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::{tungstenite, WebSocketStream};
 use tokio_util::codec::Framed;
 
 use crate::protos::relay::{DerpCodec, Frame};
 
+/// A Stream and Sink for [`Frame`]s connected to a single relay client.
+///
+/// The stream receives message from the client while the sink sends them to the client.
 #[derive(Debug)]
 pub(crate) enum RelayedStream {
     Derp(Framed<MaybeTlsStream, DerpCodec>),

@@ -12,13 +12,14 @@
 //! The relay server hosts the following services:
 //!
 //! - HTTPS `/relay`: The main URL endpoint to which clients connect and sends traffic over.
-//! - HTTPS `/ping`: Used for netcheck probes.
-//! - HTTPS `/generate_204`: Used for netcheck probes.
+//! - HTTPS `/ping`: Used for net_report probes.
+//! - HTTPS `/generate_204`: Used for net_report probes.
 //! - STUN: UDP port for STUN requests/responses.
 
-use std::{fmt, future::Future, net::SocketAddr, pin::Pin, sync::Arc};
+use std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync::Arc};
 
 use anyhow::{anyhow, bail, Context, Result};
+use derive_more::Debug;
 use futures_lite::StreamExt;
 use http::{
     response::Builder as ResponseBuilder, HeaderMap, Method, Request, Response, StatusCode,
@@ -34,7 +35,11 @@ use tokio::{
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
-use crate::{http::RELAY_PROBE_PATH, protos};
+use crate::{
+    http::RELAY_PROBE_PATH,
+    protos,
+    quic::server::{QuicServer, ServerHandle as QuicServerHandle},
+};
 
 pub(crate) mod actor;
 pub(crate) mod client_conn;
@@ -43,6 +48,7 @@ mod http_server;
 mod metrics;
 pub(crate) mod streams;
 #[cfg(feature = "test-utils")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "test-utils")))]
 pub mod testing;
 
 pub use self::{
@@ -84,6 +90,8 @@ pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     pub relay: Option<RelayConfig<EC, EA>>,
     /// Configuration for the STUN server, disabled if `None`.
     pub stun: Option<StunConfig>,
+    /// Configuration for the QUIC server, disabled if `None`.
+    pub quic: Option<QuicConfig>,
     /// Socket to serve metrics on.
     #[cfg(feature = "metrics")]
     #[cfg_attr(iroh_docsrs, doc(cfg(feature = "metrics")))]
@@ -122,6 +130,20 @@ pub struct StunConfig {
     pub bind_addr: SocketAddr,
 }
 
+/// Configuration for the QUIC server.
+#[derive(Debug)]
+pub struct QuicConfig {
+    /// The socket address on which the QUIC server should bind.
+    ///
+    /// Normally you'd chose port `7842`, see [`crate::defaults::DEFAULT_RELAY_QUIC_PORT`].
+    pub bind_addr: SocketAddr,
+    /// The TLS server configuration for the QUIC server.
+    ///
+    /// If this [`rustls::ServerConfig`] does not support TLS 1.3, the QUIC server will fail
+    /// to spawn.
+    pub server_config: rustls::ServerConfig,
+}
+
 /// TLS configuration for Relay server.
 ///
 /// Normally the Relay server accepts connections on both HTTPS and HTTP.
@@ -135,17 +157,33 @@ pub struct TlsConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     ///
     /// Normally you'd choose port `80`.
     pub https_bind_addr: SocketAddr,
+    /// The socket address on which to server the QUIC server is QUIC is enabled.
+    pub quic_bind_addr: SocketAddr,
     /// Mode for getting a cert.
     pub cert: CertConfig<EC, EA>,
+    /// The server configuration.
+    pub server_config: rustls::ServerConfig,
 }
 
 /// Rate limits.
+// TODO: accept_conn_limit and accept_conn_burst are not currently implemented.
 #[derive(Debug, Default)]
 pub struct Limits {
     /// Rate limit for accepting new connection. Unlimited if not set.
     pub accept_conn_limit: Option<f64>,
     /// Burst limit for accepting new connection. Unlimited if not set.
     pub accept_conn_burst: Option<usize>,
+    /// Rate limits for incoming traffic from a client connection.
+    pub client_rx: Option<ClientConnRateLimit>,
+}
+
+/// Per-client rate limit configuration.
+#[derive(Debug, Copy, Clone)]
+pub struct ClientConnRateLimit {
+    /// Max number of bytes per second to read from the client connection.
+    pub bytes_per_second: NonZeroU32,
+    /// Max number of bytes to read in a single burst.
+    pub max_burst_bytes: Option<NonZeroU32>,
 }
 
 /// TLS certificate configuration.
@@ -153,14 +191,12 @@ pub struct Limits {
 pub enum CertConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     /// Use Let's Encrypt.
     LetsEncrypt {
-        /// Configuration for Let's Encrypt certificates.
+        /// State for Let's Encrypt certificates.
         #[debug("AcmeConfig")]
-        config: tokio_rustls_acme::AcmeConfig<EC, EA>,
+        state: tokio_rustls_acme::AcmeState<EC, EA>,
     },
     /// Use a static TLS key and certificate chain.
     Manual {
-        /// The TLS private key.
-        private_key: rustls::pki_types::PrivateKeyDer<'static>,
         /// The TLS certificate chain.
         certs: Vec<rustls::pki_types::CertificateDer<'static>>,
     },
@@ -182,8 +218,12 @@ pub struct Server {
     /// If the Relay server is not using TLS then it is served from the
     /// [`Server::http_addr`].
     https_addr: Option<SocketAddr>,
+    /// The address of the QUIC server, if configured.
+    quic_addr: Option<SocketAddr>,
     /// Handle to the relay server.
     relay_handle: Option<http_server::ServerHandle>,
+    /// Handle to the quic server.
+    quic_handle: Option<QuicServerHandle>,
     /// The main task running the server.
     supervisor: AbortOnDropHandle<Result<()>>,
     /// The certificate for the server.
@@ -224,7 +264,7 @@ impl Server {
                 match UdpSocket::bind(stun.bind_addr).await {
                     Ok(sock) => {
                         let addr = sock.local_addr()?;
-                        info!("STUN server bound on {addr}");
+                        info!("STUN server listening on {addr}");
                         tasks.spawn(
                             server_stun_listener(sock).instrument(info_span!("stun-server", %addr)),
                         );
@@ -243,6 +283,17 @@ impl Server {
                 CertConfig::Manual { ref certs, .. } => Some(certs.clone()),
             })
         });
+
+        let quic_server = match config.quic {
+            Some(quic_config) => {
+                debug!("Starting QUIC server {}", quic_config.bind_addr);
+                Some(QuicServer::spawn(quic_config)?)
+            }
+            None => None,
+        };
+        let quic_addr = quic_server.as_ref().map(|srv| srv.bind_addr());
+        let quic_handle = quic_server.as_ref().map(|srv| srv.handle());
+
         let (relay_server, http_addr) = match config.relay {
             Some(relay_config) => {
                 debug!("Starting Relay server");
@@ -260,19 +311,13 @@ impl Server {
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
                     .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
                     .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler));
+                if let Some(cfg) = relay_config.limits.client_rx {
+                    builder = builder.client_rx_ratelimit(cfg);
+                }
                 let http_addr = match relay_config.tls {
                     Some(tls_config) => {
-                        let server_config = rustls::ServerConfig::builder_with_provider(Arc::new(
-                            rustls::crypto::ring::default_provider(),
-                        ))
-                        .with_safe_default_protocol_versions()
-                        .expect("protocols supported by ring")
-                        .with_no_client_auth();
                         let server_tls_config = match tls_config.cert {
-                            CertConfig::LetsEncrypt { config } => {
-                                let mut state = config.state();
-                                let server_config =
-                                    server_config.with_cert_resolver(state.resolver());
+                            CertConfig::LetsEncrypt { mut state } => {
                                 let acceptor =
                                     http_server::TlsAcceptor::LetsEncrypt(state.acceptor());
                                 tasks.spawn(
@@ -288,14 +333,12 @@ impl Server {
                                     .instrument(info_span!("acme")),
                                 );
                                 Some(http_server::TlsConfig {
-                                    config: Arc::new(server_config),
+                                    config: Arc::new(tls_config.server_config),
                                     acceptor,
                                 })
                             }
-                            CertConfig::Manual { private_key, certs } => {
-                                let server_config =
-                                    server_config.with_single_cert(certs, private_key)?;
-                                let server_config = Arc::new(server_config);
+                            CertConfig::Manual { .. } => {
+                                let server_config = Arc::new(tls_config.server_config);
                                 let acceptor =
                                     tokio_rustls::TlsAcceptor::from(server_config.clone());
                                 let acceptor = http_server::TlsAcceptor::Manual(acceptor);
@@ -339,12 +382,15 @@ impl Server {
         // relay_server is serving HTTP, including the /generate_204 service.
         let relay_addr = relay_server.as_ref().map(|srv| srv.addr());
         let relay_handle = relay_server.as_ref().map(|srv| srv.handle());
-        let task = tokio::spawn(relay_supervisor(tasks, relay_server));
+        let task = tokio::spawn(relay_supervisor(tasks, relay_server, quic_server));
+
         Ok(Self {
             http_addr: http_addr.or(relay_addr),
             stun_addr,
             https_addr: http_addr.and(relay_addr),
+            quic_addr,
             relay_handle,
+            quic_handle,
             supervisor: AbortOnDropHandle::new(task),
             certificates,
         })
@@ -354,9 +400,12 @@ impl Server {
     ///
     /// Returns once all server tasks have stopped.
     pub async fn shutdown(self) -> Result<()> {
-        // Only the Relay server needs shutting down, the supervisor will abort the tasks in
+        // Only the Relay server and QUIC server need shutting down, the supervisor will abort the tasks in
         // the JoinSet when the server terminates.
         if let Some(handle) = self.relay_handle {
+            handle.shutdown();
+        }
+        if let Some(handle) = self.quic_handle {
             handle.shutdown();
         }
         self.supervisor.await?
@@ -380,6 +429,11 @@ impl Server {
         self.http_addr
     }
 
+    /// The socket address the QUIC server is listening on.
+    pub fn quic_addr(&self) -> Option<SocketAddr> {
+        self.quic_addr
+    }
+
     /// The socket address the STUN server is listening on.
     pub fn stun_addr(&self) -> Option<SocketAddr> {
         self.stun_addr
@@ -394,6 +448,7 @@ impl Server {
     ///
     /// This uses [`Self::https_addr`] so it's mostly useful for local development.
     #[cfg(feature = "test-utils")]
+    #[cfg_attr(iroh_docsrs, doc(cfg(feature = "test-utils")))]
     pub fn https_url(&self) -> Option<RelayUrl> {
         self.https_addr.map(|addr| {
             url::Url::parse(&format!("https://{addr}"))
@@ -406,6 +461,7 @@ impl Server {
     ///
     /// This uses [`Self::http_addr`] so it's mostly useful for local development.
     #[cfg(feature = "test-utils")]
+    #[cfg_attr(iroh_docsrs, doc(cfg(feature = "test-utils")))]
     pub fn http_url(&self) -> Option<RelayUrl> {
         self.http_addr.map(|addr| {
             url::Url::parse(&format!("http://{addr}"))
@@ -423,19 +479,24 @@ impl Server {
 async fn relay_supervisor(
     mut tasks: JoinSet<Result<()>>,
     mut relay_http_server: Option<http_server::Server>,
+    mut quic_server: Option<QuicServer>,
 ) -> Result<()> {
-    let res = match (relay_http_server.as_mut(), tasks.len()) {
-        (None, 0) => Ok(Err(anyhow!("Nothing to supervise"))),
-        (None, _) => tasks.join_next().await.expect("checked"),
-        (Some(relay), 0) => relay.task_handle().await.map(anyhow::Ok),
-        (Some(relay), _) => {
-            tokio::select! {
-                biased;
-
-                ret = tasks.join_next() => ret.expect("checked"),
-                ret = relay.task_handle() => ret.map(anyhow::Ok),
-            }
-        }
+    let quic_enabled = quic_server.is_some();
+    let mut quic_fut = match quic_server {
+        Some(ref mut server) => futures_util::future::Either::Left(server.task_handle()),
+        None => futures_util::future::Either::Right(futures_lite::future::pending()),
+    };
+    let relay_enabled = relay_http_server.is_some();
+    let mut relay_fut = match relay_http_server {
+        Some(ref mut server) => futures_util::future::Either::Left(server.task_handle()),
+        None => futures_util::future::Either::Right(futures_lite::future::pending()),
+    };
+    let res = tokio::select! {
+        biased;
+        ret = tasks.join_next(), if !tasks.is_empty() => ret.expect("checked"),
+        ret = &mut quic_fut, if quic_enabled => ret.map(anyhow::Ok),
+        ret = &mut relay_fut, if relay_enabled => ret.map(anyhow::Ok),
+        else => Ok(Err(anyhow!("No relay services are enabled."))),
     };
     let ret = match res {
         Ok(Ok(())) => {
@@ -460,6 +521,11 @@ async fn relay_supervisor(
     // already shut down.
     if let Some(server) = relay_http_server {
         server.shutdown();
+    }
+
+    // Ensure the QUIC server is closed
+    if let Some(server) = quic_server {
+        server.shutdown().await?;
     }
 
     // Stop all remaining tasks
@@ -708,11 +774,12 @@ mod tests {
 
     async fn spawn_local_relay() -> Result<Server> {
         Server::spawn(ServerConfig::<(), ()> {
-            relay: Some(RelayConfig {
+            relay: Some(RelayConfig::<(), ()> {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
                 tls: None,
                 limits: Default::default(),
             }),
+            quic: None,
             stun: None,
             metrics_addr: None,
         })
@@ -742,6 +809,7 @@ mod tests {
                 limits: Default::default(),
             }),
             stun: None,
+            quic: None,
             metrics_addr: Some((Ipv4Addr::LOCALHOST, 1234).into()),
         })
         .await
@@ -849,8 +917,12 @@ mod tests {
         client_a.send(b_key, msg.clone()).await.unwrap();
 
         let res = client_b_receiver.recv().await.unwrap().unwrap();
-        if let ReceivedMessage::ReceivedPacket { source, data } = res {
-            assert_eq!(a_key, source);
+        if let ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            assert_eq!(a_key, remote_node_id);
             assert_eq!(msg, data);
         } else {
             panic!("client_b received unexpected message {res:?}");
@@ -861,8 +933,12 @@ mod tests {
         client_b.send(a_key, msg.clone()).await.unwrap();
 
         let res = client_a_receiver.recv().await.unwrap().unwrap();
-        if let ReceivedMessage::ReceivedPacket { source, data } = res {
-            assert_eq!(b_key, source);
+        if let ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            assert_eq!(b_key, remote_node_id);
             assert_eq!(msg, data);
         } else {
             panic!("client_a received unexpected message {res:?}");
@@ -917,8 +993,12 @@ mod tests {
         client_a.send(b_key, msg.clone()).await.unwrap();
 
         let res = client_b_receiver.recv().await.unwrap().unwrap();
-        if let ReceivedMessage::ReceivedPacket { source, data } = res {
-            assert_eq!(a_key, source);
+        if let ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            assert_eq!(a_key, remote_node_id);
             assert_eq!(msg, data);
         } else {
             panic!("client_b received unexpected message {res:?}");
@@ -929,8 +1009,12 @@ mod tests {
         client_b.send(a_key, msg.clone()).await.unwrap();
 
         let res = client_a_receiver.recv().await.unwrap().unwrap();
-        if let ReceivedMessage::ReceivedPacket { source, data } = res {
-            assert_eq!(b_key, source);
+        if let ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            assert_eq!(b_key, remote_node_id);
             assert_eq!(msg, data);
         } else {
             panic!("client_a received unexpected message {res:?}");
@@ -984,8 +1068,12 @@ mod tests {
         client_a.send(b_key, msg.clone()).await.unwrap();
 
         let res = client_b_receiver.recv().await.unwrap().unwrap();
-        if let ReceivedMessage::ReceivedPacket { source, data } = res {
-            assert_eq!(a_key, source);
+        if let ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            assert_eq!(a_key, remote_node_id);
             assert_eq!(msg, data);
         } else {
             panic!("client_b received unexpected message {res:?}");
@@ -996,8 +1084,12 @@ mod tests {
         client_b.send(a_key, msg.clone()).await.unwrap();
 
         let res = client_a_receiver.recv().await.unwrap().unwrap();
-        if let ReceivedMessage::ReceivedPacket { source, data } = res {
-            assert_eq!(b_key, source);
+        if let ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            assert_eq!(b_key, remote_node_id);
             assert_eq!(msg, data);
         } else {
             panic!("client_a received unexpected message {res:?}");
@@ -1012,6 +1104,7 @@ mod tests {
             stun: Some(StunConfig {
                 bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
             }),
+            quic: None,
             metrics_addr: None,
         })
         .await

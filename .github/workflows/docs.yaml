@@ -25,7 +25,7 @@ jobs:
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
-      SCCACHE_CACHE_SIZE: "50G"
+      SCCACHE_CACHE_SIZE: "10G"
       PREVIEW_PATH: pr/${{ github.event.pull_request.number || inputs.pr_number }}/docs
 
     steps:

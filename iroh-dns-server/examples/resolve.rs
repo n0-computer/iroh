@@ -5,7 +5,7 @@ use hickory_resolver::{
     config::{NameServerConfig, Protocol, ResolverConfig},
     AsyncResolver,
 };
-use iroh_net::{
+use iroh::{
     discovery::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
     dns::{node_info::TxtAttrs, DnsResolver},
     NodeId,
@@ -46,11 +46,11 @@ async fn main() -> anyhow::Result<()> {
     let args = Cli::parse();
     let (resolver, origin) = match args.env {
         Env::Staging => (
-            iroh_net::dns::default_resolver().clone(),
+            iroh::dns::default_resolver().clone(),
             N0_DNS_NODE_ORIGIN_STAGING,
         ),
         Env::Prod => (
-            iroh_net::dns::default_resolver().clone(),
+            iroh::dns::default_resolver().clone(),
             N0_DNS_NODE_ORIGIN_PROD,
         ),
         Env::Dev => (

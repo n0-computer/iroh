@@ -6,15 +6,14 @@
 //!
 //! The primary way of addressing a node is by using the [`NodeAddr`].
 
-use std::{collections::BTreeSet, fmt, net::SocketAddr, ops::Deref, str::FromStr};
+use std::{collections::BTreeSet, net::SocketAddr};
 
-use anyhow::Context;
 use serde::{Deserialize, Serialize};
-use url::Url;
 
 use crate::key::{NodeId, PublicKey};
+pub use crate::relay_url::RelayUrl;
 
-/// Network-level addressing information for an iroh-net node.
+/// Network-level addressing information for an iroh node.
 ///
 /// This combines a node's identifier with network-level addressing information of how to
 /// contact the node.
@@ -35,9 +34,9 @@ use crate::key::{NodeId, PublicKey};
 /// number of network-level addressing information.  It is a generic addressing type used
 /// whenever a connection to other nodes needs to be established.
 ///
-/// [discovery]: https://docs.rs/iroh_net/*/iroh_net/index.html#node-discovery
-/// [home relay]: https://docs.rs/iroh_net/*/iroh_net/relay/index.html
-/// [Relay server]: https://docs.rs/iroh_net/*/iroh_net/index.html#relay-servers
+/// [discovery]: https://docs.rs/iroh/*/iroh/index.html#node-discovery
+/// [home relay]: https://docs.rs/iroh/*/iroh/relay/index.html
+/// [Relay server]: https://docs.rs/iroh/*/iroh/index.html#relay-servers
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct NodeAddr {
     /// The node's identifier.
@@ -91,7 +90,7 @@ impl NodeAddr {
     /// received from another API.  E.g. to ensure a [discovery] service is used the
     /// `AddrInfoOptions::Id`] option could be used to remove all other addressing details.
     ///
-    /// [discovery]: https://docs.rs/iroh_net/*/iroh_net/index.html#node-discovery
+    /// [discovery]: https://docs.rs/iroh/*/iroh/index.html#node-discovery
     pub fn apply_options(&mut self, opts: AddrInfoOptions) {
         self.info.apply_options(opts);
     }
@@ -126,13 +125,13 @@ impl From<NodeId> for NodeAddr {
     }
 }
 
-/// Network paths to contact an iroh-net node.
+/// Network paths to contact an iroh node.
 ///
-/// This contains zero or more network paths to establish a connection to an iroh-net node.
+/// This contains zero or more network paths to establish a connection to an iroh node.
 /// Unless a [discovery service] is used at least one path is required to connect to an
 /// other node, see [`NodeAddr`] for details.
 ///
-/// [discovery]: https://docs.rs/iroh_net/*/iroh_net/index.html#node-discovery
+/// [discovery]: https://docs.rs/iroh/*/iroh/index.html#node-discovery
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, PartialOrd, Ord)]
 pub struct AddrInfo {
     /// The node's home relay url.
@@ -153,7 +152,7 @@ impl AddrInfo {
     /// received from another API.  E.g. to ensure a [discovery] service is used the
     /// `AddrInfoOptions::Id`] option could be used to remove all other addressing details.
     ///
-    /// [discovery]: https://docs.rs/iroh_net/*/iroh_net/index.html#node-discovery
+    /// [discovery]: https://docs.rs/iroh/*/iroh/index.html#node-discovery
     pub fn apply_options(&mut self, opts: AddrInfoOptions) {
         match opts {
             AddrInfoOptions::Id => {
@@ -198,121 +197,4 @@ pub enum AddrInfoOptions {
     Relay,
     /// Includes the Node ID and the direct addresses.
     Addresses,
-}
-
-/// A URL identifying a relay server.
-///
-/// This is but a wrapper around [`Url`], with a few custom tweaks:
-///
-/// - A relay URL is never a relative URL, so an implicit `.` is added at the end of the
-///   domain name if missing.
-///
-/// - [`fmt::Debug`] is implemented so it prints the URL rather than the URL struct fields.
-///   Useful when logging e.g. `Option<RelayUrl>`.
-///
-/// To create a [`RelayUrl`] use the `From<Url>` implementation.
-#[derive(
-    Clone, derive_more::Display, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
-pub struct RelayUrl(Url);
-
-impl From<Url> for RelayUrl {
-    fn from(mut url: Url) -> Self {
-        if let Some(domain) = url.domain() {
-            if !domain.ends_with('.') {
-                let domain = String::from(domain) + ".";
-
-                // This can fail, though it is unlikely the resulting URL is usable as a
-                // relay URL, probably it has the wrong scheme or is not a base URL or the
-                // like.  We don't do full URL validation however, so just silently leave
-                // this bad URL in place.  Something will fail later.
-                url.set_host(Some(&domain)).ok();
-            }
-        }
-        Self(url)
-    }
-}
-
-/// Support for parsing strings directly.
-///
-/// If you need more control over the error first create a [`Url`] and use [`RelayUrl::from`]
-/// instead.
-impl FromStr for RelayUrl {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let inner = Url::from_str(s).context("invalid URL")?;
-        Ok(RelayUrl::from(inner))
-    }
-}
-
-impl From<RelayUrl> for Url {
-    fn from(value: RelayUrl) -> Self {
-        value.0
-    }
-}
-
-/// Dereferences to the wrapped [`Url`].
-///
-/// Note that [`DerefMut`] is not implemented on purpose, so this type has more flexibility
-/// to change the inner later.
-///
-/// [`DerefMut`]: std::ops::DerefMut
-impl Deref for RelayUrl {
-    type Target = Url;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl fmt::Debug for RelayUrl {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("RelayUrl")
-            .field(&DbgStr(self.0.as_str()))
-            .finish()
-    }
-}
-
-/// Helper struct to format a &str without allocating a String.
-///
-/// Maybe this is entirely unneeded and the compiler would be smart enough to never allocate
-/// the String anyway.  Who knows.  Writing this was faster than checking the assembler
-/// output.
-struct DbgStr<'a>(&'a str);
-
-impl<'a> fmt::Debug for DbgStr<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, r#""{}""#, self.0)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_relay_url_debug_display() {
-        let url = RelayUrl::from(Url::parse("https://example.com").unwrap());
-
-        assert_eq!(format!("{url:?}"), r#"RelayUrl("https://example.com./")"#);
-
-        assert_eq!(format!("{url}"), "https://example.com./");
-    }
-
-    #[test]
-    fn test_relay_url_absolute() {
-        let url = RelayUrl::from(Url::parse("https://example.com").unwrap());
-
-        assert_eq!(url.domain(), Some("example.com."));
-
-        let url1 = RelayUrl::from(Url::parse("https://example.com.").unwrap());
-        assert_eq!(url, url1);
-
-        let url2 = RelayUrl::from(Url::parse("https://example.com./").unwrap());
-        assert_eq!(url, url2);
-
-        let url3 = RelayUrl::from(Url::parse("https://example.com/").unwrap());
-        assert_eq!(url, url3);
-    }
 }

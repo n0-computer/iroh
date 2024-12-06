@@ -6,9 +6,8 @@ use anyhow::Result;
 use hickory_proto::rr::{Name, RecordSet, RecordType, RrKey};
 use iroh_metrics::inc;
 use lru::LruCache;
-use mainline::dht::DhtSettings;
-use parking_lot::Mutex;
-use pkarr::{PkarrClient, SignedPacket};
+use pkarr::{mainline::dht::DhtSettings, PkarrClient, SignedPacket};
+use tokio::sync::Mutex;
 use tracing::{debug, trace};
 use ttl_cache::TtlCache;
 
@@ -20,6 +19,7 @@ use crate::{
 };
 
 mod signed_packets;
+pub use signed_packets::Options as ZoneStoreOptions;
 
 /// Cache up to 1 million pkarr zones by default
 pub const DEFAULT_CACHE_CAPACITY: usize = 1024 * 1024;
@@ -45,14 +45,14 @@ pub struct ZoneStore {
 
 impl ZoneStore {
     /// Create a persistent store
-    pub fn persistent(path: impl AsRef<Path>) -> Result<Self> {
-        let packet_store = SignedPacketStore::persistent(path)?;
+    pub fn persistent(path: impl AsRef<Path>, options: ZoneStoreOptions) -> Result<Self> {
+        let packet_store = SignedPacketStore::persistent(path, options)?;
         Ok(Self::new(packet_store))
     }
 
     /// Create an in-memory store.
-    pub fn in_memory() -> Result<Self> {
-        let packet_store = SignedPacketStore::in_memory()?;
+    pub fn in_memory(options: ZoneStoreOptions) -> Result<Self> {
+        let packet_store = SignedPacketStore::in_memory(options)?;
         Ok(Self::new(packet_store))
     }
 
@@ -98,14 +98,15 @@ impl ZoneStore {
         record_type: RecordType,
     ) -> Result<Option<Arc<RecordSet>>> {
         tracing::info!("{} {}", name, record_type);
-        if let Some(rset) = self.cache.lock().resolve(pubkey, name, record_type) {
+        if let Some(rset) = self.cache.lock().await.resolve(pubkey, name, record_type) {
             return Ok(Some(rset));
         }
 
-        if let Some(packet) = self.store.get(pubkey)? {
+        if let Some(packet) = self.store.get(pubkey).await? {
             return self
                 .cache
                 .lock()
+                .await
                 .insert_and_resolve(&packet, name, record_type);
         };
 
@@ -121,6 +122,7 @@ impl ZoneStore {
                 return self
                     .cache
                     .lock()
+                    .await
                     .insert_and_resolve_dht(&packet, name, record_type);
             } else {
                 debug!("DHT resolve failed");
@@ -133,7 +135,7 @@ impl ZoneStore {
     // allow unused async: this will be async soon.
     #[allow(clippy::unused_async)]
     pub async fn get_signed_packet(&self, pubkey: &PublicKeyBytes) -> Result<Option<SignedPacket>> {
-        self.store.get(pubkey)
+        self.store.get(pubkey).await
     }
 
     /// Insert a signed packet into the cache and the store.
@@ -144,9 +146,9 @@ impl ZoneStore {
     #[allow(clippy::unused_async)]
     pub async fn insert(&self, signed_packet: SignedPacket, _source: PacketSource) -> Result<bool> {
         let pubkey = PublicKeyBytes::from_signed_packet(&signed_packet);
-        if self.store.upsert(signed_packet)? {
+        if self.store.upsert(signed_packet).await? {
             inc!(Metrics, pkarr_publish_update);
-            self.cache.lock().remove(&pubkey);
+            self.cache.lock().await.remove(&pubkey);
             Ok(true)
         } else {
             inc!(Metrics, pkarr_publish_noop);

@@ -1,4 +1,16 @@
-//! This module implements the relaying protocol used the [`crate::server`] and [`crate::client`].
+//! This module implements the relaying protocol used by the `server` and `client`.
+//!
+//! Protocol flow:
+//!
+//! Login:
+//!  * client connects
+//!  * -> client sends `FrameType::ClientInfo`
+//!
+//!  Steady state:
+//!  * server occasionally sends `FrameType::KeepAlive` (or `FrameType::Ping`)
+//!  * client responds to any `FrameType::Ping` with a `FrameType::Pong`
+//!  * clients sends `FrameType::SendPacket`
+//!  * server then sends `FrameType::RecvPacket` to recipient
 
 use std::time::Duration;
 
@@ -18,6 +30,9 @@ use tokio_util::codec::{Decoder, Encoder};
 /// including its on-wire framing overhead)
 pub const MAX_PACKET_SIZE: usize = 64 * 1024;
 
+/// The maximum frame size.
+///
+/// This is also the minimum burst size that a rate-limiter has to accept.
 const MAX_FRAME_SIZE: usize = 1024 * 1024;
 
 /// The Relay magic number, sent in the FrameType::ClientInfo frame upon initial connection.
@@ -48,21 +63,9 @@ pub(crate) const PER_CLIENT_READ_QUEUE_DEPTH: usize = 512;
 /// with nodes running earlier protocol versions.
 pub(crate) const PROTOCOL_VERSION: usize = 3;
 
-///
-/// Protocol flow:
-///
-/// Login:
-///  * client connects
-///  * -> client sends FrameType::ClientInfo
-///
-///  Steady state:
-///  * server occasionally sends FrameType::KeepAlive (or FrameType::Ping)
-///  * client responds to any FrameType::Ping with a FrameType::Pong
-///  * clients sends FrameType::SendPacket
-///  * server then sends FrameType::RecvPacket to recipient
-
+/// Indicates this IS the client's home node
 const PREFERRED: u8 = 1u8;
-/// indicates this is NOT the client's home node
+/// Indicates this IS NOT the client's home node
 const NOT_PREFERRED: u8 = 0u8;
 
 /// The one byte frame type at the beginning of the frame
@@ -200,9 +203,14 @@ pub(crate) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
     }
 }
 
+/// The protocol for the relay server.
+///
+/// This is a framed protocol, using [`tokio_util::codec`] to turn the streams of bytes into
+/// [`Frame`]s.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct DerpCodec;
 
+/// The frames in the [`DerpCodec`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Frame {
     ClientInfo {
@@ -277,6 +285,13 @@ impl Frame {
             Frame::Health { problem } => problem.len(),
             Frame::Restarting { .. } => 4 + 4,
         }
+    }
+
+    /// Serialized length with frame header.
+    #[cfg(feature = "server")]
+    #[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]
+    pub(crate) fn len_with_header(&self) -> usize {
+        self.len() + HEADER_LEN
     }
 
     /// Tries to decode a frame received over websockets.

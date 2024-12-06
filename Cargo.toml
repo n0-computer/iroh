@@ -1,17 +1,12 @@
 [workspace]
 members = [
-  "iroh",
   "iroh-base",
   "iroh-dns-server",
-  "iroh-metrics",
-  "iroh-net",
+  "iroh",
   "iroh-test",
-  "iroh-net/bench",
-  "iroh-cli",
+  "iroh/bench",
   "iroh-relay",
-  "iroh-router",
-  "net-tools/netwatch",
-  "net-tools/portmapper",
+  "iroh-net-report",
 ]
 resolver = "2"
 
@@ -47,15 +42,3 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 
 [workspace.lints.clippy]
 unused-async = "warn"
-
-# Temporary fix for dependencies
-[patch.crates-io]
-iroh-base = { path = "./iroh-base" }
-iroh-net = { path = "./iroh-net" }
-iroh-metrics = { path = "./iroh-metrics" }
-iroh-test = { path = "./iroh-test" }
-iroh-router = { path = "./iroh-router" }
-
-iroh-gossip = { git = "https://github.com/n0-computer/iroh-gossip", branch = "main" }
-iroh-docs = { git = "https://github.com/n0-computer/iroh-docs", branch = "main" }
-iroh-blobs = { git = "https://github.com/n0-computer/iroh-blobs", branch = "main" }

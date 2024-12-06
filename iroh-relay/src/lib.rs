@@ -11,8 +11,16 @@
 //! - [`protos::relay`]: The protocol used to communicate between relay servers and clients. It's a
 //!   revised version of the Designated Encrypted Relay for Packets (DERP) protocol written by
 //!   Tailscale.
-//! - [`server`]: A fully-fledged iroh-relay server over HTTP or HTTPS. Optionally will also
-//!   expose a stun endpoint and metrics.
+#![cfg_attr(
+    feature = "server",
+    doc = "- [`server`]: A fully-fledged iroh-relay server over HTTP or HTTPS."
+)]
+#![cfg_attr(
+    not(feature = "server"),
+    doc = "- `server`: A fully-fledged iroh-relay server over HTTP or HTTPS."
+)]
+//!
+//!    Optionally will also expose a stun endpoint and metrics. (requires the feature flag `server`)
 //! - [`client`]: A client for establishing connections to the relay.
 //! - *Server Binary*: A CLI for running your own relay server. It can be configured to also offer
 //!   STUN support and expose metrics.
@@ -25,6 +33,7 @@ pub mod client;
 pub mod defaults;
 pub mod http;
 pub mod protos;
+pub mod quic;
 #[cfg(feature = "server")]
 #[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]
 pub mod server;

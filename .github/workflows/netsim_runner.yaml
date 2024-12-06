@@ -133,7 +133,7 @@ jobs:
     - name: Copy binaries to right location
       run: |
         cp target/${{inputs.build_profile}}/examples/* ../chuck/netsim/bins/
-        cp target/${{inputs.build_profile}}/iroh ../chuck/netsim/bins/iroh
+        cp target/${{inputs.build_profile}}/examples/transfer ../chuck/netsim/bins/iroh-transfer
         cp target/${{inputs.build_profile}}/iroh-relay ../chuck/netsim/bins/iroh-relay
         cp ../chuck/target/release/chuck ../chuck/netsim/bins/chuck
 

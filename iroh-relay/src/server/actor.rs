@@ -183,12 +183,8 @@ impl Actor {
             }
             Message::CreateClient(client_builder) => {
                 inc!(Metrics, accepts);
-
-                trace!(
-                    node_id = client_builder.node_id.fmt_short(),
-                    "create client"
-                );
                 let node_id = client_builder.node_id;
+                trace!(node_id = node_id.fmt_short(), "create client");
 
                 // build and register client, starting up read & write loops for the client
                 // connection
@@ -272,6 +268,7 @@ mod tests {
                 stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
+                rate_limit: None,
                 server_channel,
             },
             Framed::new(test_io, DerpCodec),
@@ -311,8 +308,7 @@ mod tests {
 
         // write message from b to a
         let msg = b"hello world!";
-        crate::client::conn::send_packet(&mut b_io, &None, node_id_a, Bytes::from_static(msg))
-            .await?;
+        crate::client::conn::send_packet(&mut b_io, node_id_a, Bytes::from_static(msg)).await?;
 
         // get message on a's reader
         let frame = recv_frame(FrameType::RecvPacket, &mut a_io).await?;

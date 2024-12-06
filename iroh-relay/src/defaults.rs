@@ -1,10 +1,6 @@
 //! Default values used in the relay.
 
-/// The efault STUN port used by the Relay server.
-///
-/// The STUN port as defined by [RFC
-/// 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
-pub const DEFAULT_STUN_PORT: u16 = 3478;
+pub use iroh_base::relay_map::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT};
 
 /// The default HTTP port used by the Relay server.
 pub const DEFAULT_HTTP_PORT: u16 = 80;
@@ -15,7 +11,7 @@ pub const DEFAULT_HTTPS_PORT: u16 = 443;
 /// The default metrics port used by the Relay server.
 pub const DEFAULT_METRICS_PORT: u16 = 9090;
 
-/// Contains all timeouts that we use in `iroh-net`.
+/// Contains all timeouts that we use in `iroh`.
 pub(crate) mod timeouts {
     use std::time::Duration;
 

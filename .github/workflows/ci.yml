@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [ 'labeled', 'unlabeled', 'opened', 'synchronize', 'reopened' ]
+    types: ["labeled", "unlabeled", "opened", "synchronize", "reopened"]
   merge_group:
   push:
     branches:
@@ -17,14 +17,14 @@ env:
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
   MSRV: "1.76"
-  SCCACHE_CACHE_SIZE: "50G"
+  SCCACHE_CACHE_SIZE: "10G"
   IROH_FORCE_STAGING_RELAYS: "1"
 
 jobs:
   tests:
     name: CI Test Suite
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
-    uses: './.github/workflows/tests.yaml'
+    uses: "./.github/workflows/tests.yaml"
 
   cross_build:
     name: Cross Build Only
@@ -35,8 +35,8 @@ jobs:
       fail-fast: false
       matrix:
         target:
-           # cross tests are currently broken vor armv7 and aarch64
-           # see https://github.com/cross-rs/cross/issues/1311
+          # cross tests are currently broken vor armv7 and aarch64
+          # see https://github.com/cross-rs/cross/issues/1311
           # - armv7-linux-androideabi
           # - aarch64-linux-android
           # Freebsd execution fails in cross
@@ -45,29 +45,29 @@ jobs:
           # Netbsd execution fails to link in cross
           # - x86_64-unknown-netbsd
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-    - name: Install rust stable
-      uses: dtolnay/rust-toolchain@stable
+      - name: Install rust stable
+        uses: dtolnay/rust-toolchain@stable
 
-    - name: Cleanup Docker
-      continue-on-error: true
-      run: |
-        docker kill $(docker ps -q)
+      - name: Cleanup Docker
+        continue-on-error: true
+        run: |
+          docker kill $(docker ps -q)
 
-      # See https://github.com/cross-rs/cross/issues/1222
-    - uses: taiki-e/install-action@cross
+        # See https://github.com/cross-rs/cross/issues/1222
+      - uses: taiki-e/install-action@cross
 
-    - name: build
-      # cross tests are currently broken vor armv7 and aarch64
-      # see https://github.com/cross-rs/cross/issues/1311.  So on
-      # those platforms we only build but do not run tests.
-      run: cross build --all --target ${{ matrix.target }}
-      env:
-        RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
+      - name: build
+        # cross tests are currently broken vor armv7 and aarch64
+        # see https://github.com/cross-rs/cross/issues/1311.  So on
+        # those platforms we only build but do not run tests.
+        run: cross build --all --target ${{ matrix.target }}
+        env:
+          RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
 
   android_build:
     name: Android Build Only
@@ -82,38 +82,38 @@ jobs:
           - aarch64-linux-android
           - armv7-linux-androideabi
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        target: ${{ matrix.target }}
-    - name: Install rustup target
-      run: rustup target add ${{ matrix.target }}
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.target }}
+      - name: Install rustup target
+        run: rustup target add ${{ matrix.target }}
 
-    - name: Setup Java
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'temurin'
-        java-version: '17'
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
 
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v3
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-    - name: Setup Android NDK
-      uses: arqu/setup-ndk@main
-      id: setup-ndk
-      with:
-        ndk-version: r23
-        add-to-path: true
+      - name: Setup Android NDK
+        uses: arqu/setup-ndk@main
+        id: setup-ndk
+        with:
+          ndk-version: r23
+          add-to-path: true
 
-    - name: Build
-      env:
-        ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-      run: |
-        cargo install --version 3.5.4 cargo-ndk
-        cargo ndk --target ${{ matrix.target }} build
+      - name: Build
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          cargo install --version 3.5.4 cargo-ndk
+          cargo ndk --target ${{ matrix.target }} build
 
   cross_test:
     name: Cross Test
@@ -126,27 +126,26 @@ jobs:
         target:
           - i686-unknown-linux-gnu
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-    - name: Install rust stable
-      uses: dtolnay/rust-toolchain@stable
+      - name: Install rust stable
+        uses: dtolnay/rust-toolchain@stable
 
-    - name: Cleanup Docker
-      continue-on-error: true
-      run: |
-        docker kill $(docker ps -q)
+      - name: Cleanup Docker
+        continue-on-error: true
+        run: |
+          docker kill $(docker ps -q)
 
-      # See https://github.com/cross-rs/cross/issues/1222
-    - uses: taiki-e/install-action@cross
+        # See https://github.com/cross-rs/cross/issues/1222
+      - uses: taiki-e/install-action@cross
 
-    - name: test
-      run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
-      env:
-        RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
-
+      - name: test
+        run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
+        env:
+          RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
 
   wasm_build:
     name: Build wasm32
@@ -190,7 +189,7 @@ jobs:
         # uses: obi1kenobi/cargo-semver-checks-action@v2
         uses: n0-computer/cargo-semver-checks-action@feat-baseline
         with:
-          package: iroh, iroh-base, iroh-cli, iroh-dns-server, iroh-metrics, iroh-net, iroh-net-bench, iroh-router, netwatch, portmapper, iroh-relay
+          package: iroh, iroh-base, iroh-dns-server, iroh-net-bench, iroh-relay, iroh-net-report
           baseline-rev: ${{ env.HEAD_COMMIT_SHA }}
           use-cache: false
 
@@ -202,13 +201,13 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-    - uses: actions/checkout@v4
-    - uses: dtolnay/rust-toolchain@stable
-      with:
-        components: rustfmt
-    - uses: mozilla-actions/sccache-action@v0.0.6
-    - uses: taiki-e/install-action@cargo-make
-    - run: cargo make format-check
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: mozilla-actions/sccache-action@v0.0.6
+      - uses: taiki-e/install-action@cargo-make
+      - run: cargo make format-check
 
   check_docs:
     timeout-minutes: 30
@@ -217,18 +216,20 @@ jobs:
     env:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
+      RUSTDOCFLAGS: --cfg docsrs
     steps:
-    - uses: actions/checkout@v4
-    - uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: nightly-2024-05-02
-    - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.6
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-05-02
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
 
-    - name: Docs
-      run: cargo doc --workspace --all-features --no-deps --document-private-items
-      env:
-        RUSTDOCFLAGS: --cfg docsrs
+      - name: Docs
+        run: cargo doc --workspace --all-features --no-deps --document-private-items
+
+      - name: Docs (default features)
+        run: cargo doc --workspace --no-deps
 
   clippy_check:
     timeout-minutes: 30
@@ -237,23 +238,23 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-    - uses: actions/checkout@v4
-    - uses: dtolnay/rust-toolchain@stable
-      with:
-        components: clippy
-    - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.6
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
 
-    # TODO: We have a bunch of platform-dependent code so should
-    #    probably run this job on the full platform matrix
-    - name: clippy check (all features)
-      run: cargo clippy --workspace --all-features --all-targets --bins --tests --benches
+      # TODO: We have a bunch of platform-dependent code so should
+      #    probably run this job on the full platform matrix
+      - name: clippy check (all features)
+        run: cargo clippy --workspace --all-features --all-targets --lib --bins --tests --benches --examples
 
-    - name: clippy check (no features)
-      run: cargo clippy --workspace --no-default-features --lib --bins --tests
+      - name: clippy check (no features)
+        run: cargo clippy --workspace --no-default-features --all-targets --lib --bins --tests --benches --examples
 
-    - name: clippy check (default features)
-      run: cargo clippy --workspace --all-targets
+      - name: clippy check (default features)
+        run: cargo clippy --workspace --all-targets --lib --bins --tests --benches --examples
 
   msrv:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
@@ -264,16 +265,16 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-    - uses: actions/checkout@v4
-    - uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: ${{ env.MSRV }}
-    - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.6
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.MSRV }}
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
 
-    - name: Check MSRV all features
-      run: |
-        cargo +$MSRV check --workspace --all-targets
+      - name: Check MSRV all features
+        run: |
+          cargo +$MSRV check --workspace --all-targets
 
   cargo_deny:
     timeout-minutes: 30
@@ -290,7 +291,7 @@ jobs:
   netsim-integration-tests:
     permissions: write-all
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
-    uses: './.github/workflows/netsim_runner.yaml'
+    uses: "./.github/workflows/netsim_runner.yaml"
     secrets: inherit
     with:
       branch: ${{ github.ref }}
@@ -299,64 +300,10 @@ jobs:
       sim_paths: "sims/iroh/iroh.json,sims/integration"
       pr_number: ${{ github.event.pull_request.number || '' }}
 
-  docker_build_and_test:
-    name: Docker Test
-    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
-    timeout-minutes: 30
-    runs-on: [self-hosted, linux, X64]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
-
-      - name: Prep
-        run: sudo apt-get install musl-tools -y
-
-      - name: Build iroh
-        run: cargo build --profile=dev-ci --all-features --bin iroh --target x86_64-unknown-linux-musl
-
-      - name: Prep bins
-        run: |
-          mkdir -p bins/linux/amd64
-          cp target/x86_64-unknown-linux-musl/dev-ci/iroh bins/linux/amd64/iroh
-
-      - name: Cleanup Docker
-        continue-on-error: true
-        run: |
-          docker kill $(docker ps -q)
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: false
-          load: true
-          tags: n0computer/iroh-test:latest
-          target: iroh
-          platforms: linux/amd64
-          file: docker/Dockerfile.ci
-
-      - name: Run Docker image & stats test
-        run: |
-          docker run -p 9090:9090 -p 4919:4919/udp -Pd n0computer/iroh-test:latest --rpc-addr 0.0.0.0:4919 start
-          # Give the server time to start
-          sleep 3
-          target/x86_64-unknown-linux-musl/dev-ci/iroh --rpc-addr 127.0.0.1:4919 stats
-
   codespell:
     timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - run: pip install --user codespell[toml]
-    - run: codespell --ignore-words-list=ans,atmost,crate,inout,ratatui,ser,stayin,swarmin,worl --skip=CHANGELOG.md
+      - uses: actions/checkout@v4
+      - run: pip install --user codespell[toml]
+      - run: codespell --ignore-words-list=ans,atmost,crate,inout,ratatui,ser,stayin,swarmin,worl --skip=CHANGELOG.md

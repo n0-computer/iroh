@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
-use iroh_net::{
+use iroh::{
     discovery::{
         dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
         pkarr::{PkarrRelayClient, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},

@@ -20,10 +20,12 @@ use tokio::{
     sync::mpsc,
 };
 use tokio_rustls_acme::AcmeAcceptor;
-use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::{
+    tungstenite::{handshake::derive_accept_key, protocol::Role},
+    WebSocketStream,
+};
 use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
-use tungstenite::{handshake::derive_accept_key, protocol::Role};
 
 use crate::{
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
@@ -33,6 +35,7 @@ use crate::{
         client_conn::ClientConnConfig,
         metrics::Metrics,
         streams::{MaybeTlsStream, RelayedStream},
+        ClientConnRateLimit,
     },
 };
 
@@ -73,7 +76,7 @@ fn downcast_upgrade(upgraded: Upgraded) -> Result<(MaybeTlsStream, Bytes)> {
 ///
 /// Created using [`ServerBuilder::spawn`].
 #[derive(Debug)]
-pub struct Server {
+pub(super) struct Server {
     addr: SocketAddr,
     http_server_task: AbortOnDropHandle<()>,
     cancel_server_loop: CancellationToken,
@@ -84,14 +87,14 @@ impl Server {
     ///
     /// The server runs in the background as several async tasks.  This allows controlling
     /// the server, in particular it allows gracefully shutting down the server.
-    pub fn handle(&self) -> ServerHandle {
+    pub(super) fn handle(&self) -> ServerHandle {
         ServerHandle {
             cancel_token: self.cancel_server_loop.clone(),
         }
     }
 
     /// Closes the underlying relay server and the HTTP(S) server tasks.
-    pub fn shutdown(&self) {
+    pub(super) fn shutdown(&self) {
         self.cancel_server_loop.cancel();
     }
 
@@ -100,12 +103,12 @@ impl Server {
     /// This is the root of all the tasks for the server.  Aborting it will abort all the
     /// other tasks for the server.  Awaiting it will complete when all the server tasks are
     /// completed.
-    pub fn task_handle(&mut self) -> &mut AbortOnDropHandle<()> {
+    pub(super) fn task_handle(&mut self) -> &mut AbortOnDropHandle<()> {
         &mut self.http_server_task
     }
 
     /// Returns the local address of this server.
-    pub fn addr(&self) -> SocketAddr {
+    pub(super) fn addr(&self) -> SocketAddr {
         self.addr
     }
 }
@@ -114,24 +117,24 @@ impl Server {
 ///
 /// This does not allow access to the task but can communicate with it.
 #[derive(Debug, Clone)]
-pub struct ServerHandle {
+pub(super) struct ServerHandle {
     cancel_token: CancellationToken,
 }
 
 impl ServerHandle {
     /// Gracefully shut down the server.
-    pub fn shutdown(&self) {
+    pub(super) fn shutdown(&self) {
         self.cancel_token.cancel()
     }
 }
 
 /// Configuration to use for the TLS connection
 #[derive(Debug, Clone)]
-pub struct TlsConfig {
+pub(super) struct TlsConfig {
     /// The server config
-    pub config: Arc<rustls::ServerConfig>,
+    pub(super) config: Arc<rustls::ServerConfig>,
     /// The kind
-    pub acceptor: TlsAcceptor,
+    pub(super) acceptor: TlsAcceptor,
 }
 
 /// Builder for the Relay HTTP Server.
@@ -139,7 +142,7 @@ pub struct TlsConfig {
 /// Defaults to handling relay requests on the "/relay" (and "/derp" for backwards compatibility) endpoint.
 /// Other HTTP endpoints can be added using [`ServerBuilder::request_handler`].
 #[derive(derive_more::Debug)]
-pub struct ServerBuilder {
+pub(super) struct ServerBuilder {
     /// The ip + port combination for this server.
     addr: SocketAddr,
     /// Optional tls configuration/TlsAcceptor combination.
@@ -153,27 +156,42 @@ pub struct ServerBuilder {
     handlers: Handlers,
     /// Headers to use for HTTP responses.
     headers: HeaderMap,
+    /// Rate-limiting configuration for an individual client connection.
+    ///
+    /// Rate-limiting is enforced on received traffic from individual clients.  This
+    /// configuration applies to a single client connection.
+    client_rx_ratelimit: Option<ClientConnRateLimit>,
 }
 
 impl ServerBuilder {
     /// Creates a new [ServerBuilder].
-    pub fn new(addr: SocketAddr) -> Self {
+    pub(super) fn new(addr: SocketAddr) -> Self {
         Self {
             addr,
             tls_config: None,
             handlers: Default::default(),
             headers: HeaderMap::new(),
+            client_rx_ratelimit: None,
         }
     }
 
     /// Serves all requests content using TLS.
-    pub fn tls_config(mut self, config: Option<TlsConfig>) -> Self {
+    pub(super) fn tls_config(mut self, config: Option<TlsConfig>) -> Self {
         self.tls_config = config;
         self
     }
 
+    /// Sets the per-client rate-limit configuration for incoming data.
+    ///
+    /// On each client connection the incoming data is rate-limited.  By default
+    /// no rate limit is enforced.
+    pub(super) fn client_rx_ratelimit(mut self, config: ClientConnRateLimit) -> Self {
+        self.client_rx_ratelimit = Some(config);
+        self
+    }
+
     /// Adds a custom handler for a specific Method & URI.
-    pub fn request_handler(
+    pub(super) fn request_handler(
         mut self,
         method: Method,
         uri_path: &'static str,
@@ -184,7 +202,7 @@ impl ServerBuilder {
     }
 
     /// Adds HTTP headers to responses.
-    pub fn headers(mut self, headers: HeaderMap) -> Self {
+    pub(super) fn headers(mut self, headers: HeaderMap) -> Self {
         for (k, v) in headers.iter() {
             self.headers.insert(k.clone(), v.clone());
         }
@@ -192,13 +210,14 @@ impl ServerBuilder {
     }
 
     /// Builds and spawns an HTTP(S) Relay Server.
-    pub async fn spawn(self) -> Result<Server> {
+    pub(super) async fn spawn(self) -> Result<Server> {
         let server_task = ServerActorTask::spawn();
         let service = RelayService::new(
             self.handlers,
             self.headers,
             server_task.server_channel.clone(),
             server_task.write_timeout,
+            self.client_rx_ratelimit,
         );
 
         let addr = self.addr;
@@ -270,7 +289,21 @@ impl ServerBuilder {
     }
 }
 
+/// The hyper Service that serves the actual relay endpoints.
+#[derive(Clone, Debug)]
+struct RelayService(Arc<Inner>);
+
+#[derive(Debug)]
+struct Inner {
+    handlers: Handlers,
+    headers: HeaderMap,
+    server_channel: mpsc::Sender<Message>,
+    write_timeout: Duration,
+    rate_limit: Option<ClientConnRateLimit>,
+}
+
 impl RelayService {
+    /// Upgrades the HTTP connection to the relay protocol, runs relay client.
     fn call_client_conn(
         &self,
         mut req: Request<Incoming>,
@@ -325,7 +358,7 @@ impl RelayService {
                     None
                 };
 
-                debug!("upgrading protocol: {:?}", protocol);
+                debug!(?protocol, "upgrading connection");
 
                 // Setup a future that will eventually receive the upgraded
                 // connection and talk a new protocol, and spawn the future
@@ -338,19 +371,18 @@ impl RelayService {
                     async move {
                         match hyper::upgrade::on(&mut req).await {
                             Ok(upgraded) => {
-                                if let Err(e) =
+                                if let Err(err) =
                                     this.0.relay_connection_handler(protocol, upgraded).await
                                 {
                                     warn!(
-                                        "upgrade to \"{}\": io error: {:?}",
-                                        e,
-                                        protocol.upgrade_header()
+                                        ?protocol,
+                                        "error accepting upgraded connection: {err:#}",
                                     );
                                 } else {
-                                    debug!("upgrade to \"{}\" success", protocol.upgrade_header());
+                                    debug!(?protocol, "upgraded connection completed");
                                 };
                             }
-                            Err(e) => warn!("upgrade error: {:?}", e),
+                            Err(err) => warn!("upgrade error: {err:#}"),
                         }
                     }
                     .instrument(debug_span!("handler")),
@@ -383,39 +415,26 @@ impl Service<Request<Incoming>> for RelayService {
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn call(&self, req: Request<Incoming>) -> Self::Future {
-        // if the request hits the relay endpoint
-        // or /derp for backwards compat
+        // Create a client if the request hits the relay endpoint.
         if matches!(
             (req.method(), req.uri().path()),
             (&hyper::Method::GET, LEGACY_RELAY_PATH | RELAY_PATH)
         ) {
             let this = self.clone();
-            // otherwise handle the relay connection as normal
             return Box::pin(async move { this.call_client_conn(req).await.map_err(Into::into) });
         }
+        // Otherwise handle the relay connection as normal.
 
-        // check all other possible endpoints
+        // Check all other possible endpoints.
         let uri = req.uri().clone();
         if let Some(res) = self.0.handlers.get(&(req.method().clone(), uri.path())) {
             let f = res(req, self.0.default_response());
             return Box::pin(async move { f });
         }
-        // otherwise return 404
+        // Otherwise return 404
         let res = self.0.not_found_fn(req, self.0.default_response());
         Box::pin(async move { res })
     }
-}
-
-/// The hyper Service that servers the actual relay endpoints
-#[derive(Clone, Debug)]
-struct RelayService(Arc<Inner>);
-
-#[derive(Debug)]
-struct Inner {
-    handlers: Handlers,
-    headers: HeaderMap,
-    server_channel: mpsc::Sender<Message>,
-    write_timeout: Duration,
 }
 
 impl Inner {
@@ -441,6 +460,10 @@ impl Inner {
     }
 
     /// The server HTTP handler to do HTTP upgrades.
+    ///
+    /// This handler runs while doing the connection upgrade handshake.  Once the connection
+    /// is upgraded it sends the stream to the relay server which takes it over.  After
+    /// having sent off the connection this handler returns.
     async fn relay_connection_handler(&self, protocol: Protocol, upgraded: Upgraded) -> Result<()> {
         debug!(?protocol, "relay_connection upgraded");
         let (io, read_buf) = downcast_upgrade(upgraded)?;
@@ -494,6 +517,7 @@ impl Inner {
             stream: io,
             write_timeout: self.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
+            rate_limit: self.rate_limit,
             server_channel: self.server_channel.clone(),
         };
         trace!("accept: create client");
@@ -509,7 +533,7 @@ impl Inner {
 
 /// TLS Certificate Authority acceptor.
 #[derive(Clone, derive_more::Debug)]
-pub enum TlsAcceptor {
+pub(super) enum TlsAcceptor {
     /// Uses Let's Encrypt as the Certificate Authority. This is used in production.
     LetsEncrypt(#[debug("tokio_rustls_acme::AcmeAcceptor")] AcmeAcceptor),
     /// Manually added tls acceptor. Generally used for tests or for when we've passed in
@@ -523,12 +547,14 @@ impl RelayService {
         headers: HeaderMap,
         server_channel: mpsc::Sender<Message>,
         write_timeout: Duration,
+        rate_limit: Option<ClientConnRateLimit>,
     ) -> Self {
         Self(Arc::new(Inner {
             handlers,
             headers,
             server_channel,
             write_timeout,
+            rate_limit,
         }))
     }
 
@@ -773,7 +799,11 @@ mod tests {
                         }
                         Some(Ok(msg)) => {
                             info!("got message on {:?}: {msg:?}", key.public());
-                            if let ReceivedMessage::ReceivedPacket { source, data } = msg {
+                            if let ReceivedMessage::ReceivedPacket {
+                                remote_node_id: source,
+                                data,
+                            } = msg
+                            {
                                 received_msg_s
                                     .send((source, data))
                                     .await
@@ -890,6 +920,7 @@ mod tests {
             Default::default(),
             server_task.server_channel.clone(),
             server_task.write_timeout,
+            None,
         );
 
         // create client a and connect it to the server
@@ -920,8 +951,11 @@ mod tests {
         let msg = Bytes::from_static(b"hello client b!!");
         client_a.send(public_key_b, msg.clone()).await?;
         match client_receiver_b.recv().await? {
-            ReceivedMessage::ReceivedPacket { source, data } => {
-                assert_eq!(public_key_a, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } => {
+                assert_eq!(public_key_a, remote_node_id);
                 assert_eq!(&msg[..], data);
             }
             msg => {
@@ -933,8 +967,11 @@ mod tests {
         let msg = Bytes::from_static(b"nice to meet you client a!!");
         client_b.send(public_key_a, msg.clone()).await?;
         match client_receiver_a.recv().await? {
-            ReceivedMessage::ReceivedPacket { source, data } => {
-                assert_eq!(public_key_b, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } => {
+                assert_eq!(public_key_b, remote_node_id);
                 assert_eq!(&msg[..], data);
             }
             msg => {
@@ -969,6 +1006,7 @@ mod tests {
             Default::default(),
             server_task.server_channel.clone(),
             server_task.write_timeout,
+            None,
         );
 
         // create client a and connect it to the server
@@ -999,8 +1037,11 @@ mod tests {
         let msg = Bytes::from_static(b"hello client b!!");
         client_a.send(public_key_b, msg.clone()).await?;
         match client_receiver_b.recv().await? {
-            ReceivedMessage::ReceivedPacket { source, data } => {
-                assert_eq!(public_key_a, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } => {
+                assert_eq!(public_key_a, remote_node_id);
                 assert_eq!(&msg[..], data);
             }
             msg => {
@@ -1012,8 +1053,11 @@ mod tests {
         let msg = Bytes::from_static(b"nice to meet you client a!!");
         client_b.send(public_key_a, msg.clone()).await?;
         match client_receiver_a.recv().await? {
-            ReceivedMessage::ReceivedPacket { source, data } => {
-                assert_eq!(public_key_b, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } => {
+                assert_eq!(public_key_b, remote_node_id);
                 assert_eq!(&msg[..], data);
             }
             msg => {
@@ -1037,8 +1081,11 @@ mod tests {
         let msg = Bytes::from_static(b"are you still there, b?!");
         client_a.send(public_key_b, msg.clone()).await?;
         match new_client_receiver_b.recv().await? {
-            ReceivedMessage::ReceivedPacket { source, data } => {
-                assert_eq!(public_key_a, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } => {
+                assert_eq!(public_key_a, remote_node_id);
                 assert_eq!(&msg[..], data);
             }
             msg => {
@@ -1050,8 +1097,11 @@ mod tests {
         let msg = Bytes::from_static(b"just had a spot of trouble but I'm back now,a!!");
         new_client_b.send(public_key_a, msg.clone()).await?;
         match client_receiver_a.recv().await? {
-            ReceivedMessage::ReceivedPacket { source, data } => {
-                assert_eq!(public_key_b, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } => {
+                assert_eq!(public_key_b, remote_node_id);
                 assert_eq!(&msg[..], data);
             }
             msg => {

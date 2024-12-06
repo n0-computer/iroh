@@ -4,14 +4,13 @@
 
 use std::{
     net::SocketAddr,
-    num::NonZeroU32,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
 
-use anyhow::{anyhow, bail, ensure, Context as _, Result};
+use anyhow::{anyhow, bail, ensure, Result};
 use bytes::Bytes;
 use futures_lite::Stream;
 use futures_sink::Sink;
@@ -179,7 +178,7 @@ fn process_incoming_frame(frame: Frame) -> Result<ReceivedMessage> {
         Frame::NodeGone { node_id } => Ok(ReceivedMessage::NodeGone(node_id)),
         Frame::RecvPacket { src_key, content } => {
             let packet = ReceivedMessage::ReceivedPacket {
-                source: src_key,
+                remote_node_id: src_key,
                 data: content,
             };
             Ok(packet)
@@ -229,7 +228,6 @@ enum ConnWriterMessage {
 struct ConnWriterTasks {
     recv_msgs: mpsc::Receiver<ConnWriterMessage>,
     writer: ConnWriter,
-    rate_limiter: Option<RateLimiter>,
 }
 
 impl ConnWriterTasks {
@@ -237,7 +235,7 @@ impl ConnWriterTasks {
         while let Some(msg) = self.recv_msgs.recv().await {
             match msg {
                 ConnWriterMessage::Packet((key, bytes)) => {
-                    send_packet(&mut self.writer, &self.rate_limiter, key, bytes).await?;
+                    send_packet(&mut self.writer, key, bytes).await?;
                 }
                 ConnWriterMessage::Pong(data) => {
                     write_frame(&mut self.writer, Frame::Pong { data }, None).await?;
@@ -360,7 +358,7 @@ impl ConnBuilder {
         }
     }
 
-    async fn server_handshake(&mut self) -> Result<Option<RateLimiter>> {
+    async fn server_handshake(&mut self) -> Result<()> {
         debug!("server_handshake: started");
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,
@@ -369,22 +367,18 @@ impl ConnBuilder {
         crate::protos::relay::send_client_key(&mut self.writer, &self.secret_key, &client_info)
             .await?;
 
-        // TODO: add some actual configuration
-        let rate_limiter = RateLimiter::new(0, 0)?;
-
         debug!("server_handshake: done");
-        Ok(rate_limiter)
+        Ok(())
     }
 
     pub async fn build(mut self) -> Result<(Conn, ConnReceiver)> {
         // exchange information with the server
-        let rate_limiter = self.server_handshake().await?;
+        self.server_handshake().await?;
 
         // create task to handle writing to the server
         let (writer_sender, writer_recv) = mpsc::channel(PER_CLIENT_SEND_QUEUE_DEPTH);
         let writer_task = tokio::task::spawn(
             ConnWriterTasks {
-                rate_limiter,
                 writer: self.writer,
                 recv_msgs: writer_recv,
             }
@@ -451,7 +445,7 @@ pub enum ReceivedMessage {
     /// Represents an incoming packet.
     ReceivedPacket {
         /// The [`NodeId`] of the packet sender.
-        source: NodeId,
+        remote_node_id: NodeId,
         /// The received packet bytes.
         #[debug(skip)]
         data: Bytes, // TODO: ref
@@ -494,7 +488,6 @@ pub enum ReceivedMessage {
 
 pub(crate) async fn send_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(
     mut writer: S,
-    rate_limiter: &Option<RateLimiter>,
     dst: NodeId,
     packet: Bytes,
 ) -> Result<()> {
@@ -508,48 +501,8 @@ pub(crate) async fn send_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(
         dst_key: dst,
         packet,
     };
-    if let Some(rate_limiter) = rate_limiter {
-        if rate_limiter.check_n(frame.len()).is_err() {
-            tracing::warn!("dropping send: rate limit reached");
-            return Ok(());
-        }
-    }
     writer.send(frame).await?;
     writer.flush().await?;
 
     Ok(())
-}
-
-pub(crate) struct RateLimiter {
-    inner: governor::RateLimiter<
-        governor::state::direct::NotKeyed,
-        governor::state::InMemoryState,
-        governor::clock::DefaultClock,
-        governor::middleware::NoOpMiddleware,
-    >,
-}
-
-impl RateLimiter {
-    pub(crate) fn new(bytes_per_second: usize, bytes_burst: usize) -> Result<Option<Self>> {
-        if bytes_per_second == 0 || bytes_burst == 0 {
-            return Ok(None);
-        }
-        let bytes_per_second = NonZeroU32::new(u32::try_from(bytes_per_second)?)
-            .context("bytes_per_second not non-zero")?;
-        let bytes_burst =
-            NonZeroU32::new(u32::try_from(bytes_burst)?).context("bytes_burst not non-zero")?;
-        Ok(Some(Self {
-            inner: governor::RateLimiter::direct(
-                governor::Quota::per_second(bytes_per_second).allow_burst(bytes_burst),
-            ),
-        }))
-    }
-
-    pub(crate) fn check_n(&self, n: usize) -> Result<()> {
-        let n = NonZeroU32::new(u32::try_from(n)?).context("n not non-zero")?;
-        match self.inner.check_n(n) {
-            Ok(_) => Ok(()),
-            Err(_) => bail!("batch cannot go through"),
-        }
-    }
 }

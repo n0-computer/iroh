@@ -10,6 +10,7 @@ pub(crate) const MAGIC_LEN: usize = MAGIC.as_bytes().len();
 pub(crate) const KEY_LEN: usize = 32;
 
 const MESSAGE_HEADER_LEN: usize = MAGIC_LEN + KEY_LEN;
+
 /// Reports whether p looks like it's a packet containing an encrypted disco message.
 pub fn looks_like_disco_wrapper(p: &[u8]) -> bool {
     if p.len() < MESSAGE_HEADER_LEN {

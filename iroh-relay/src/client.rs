@@ -59,9 +59,6 @@ pub enum ClientError {
     /// The client is closed
     #[error("client is closed")]
     Closed,
-    /// There no underlying relay [`super::client::Client`] client exists for this http relay [`Client`]
-    #[error("no relay client")]
-    NoClient,
     /// There was an error sending a packet
     #[error("error sending a packet")]
     Send,
@@ -71,21 +68,9 @@ pub enum ClientError {
     /// There was a connection timeout error
     #[error("connect timeout")]
     ConnectTimeout,
-    /// No relay nodes are available
-    #[error("Relay node is not available")]
-    RelayNodeNotAvail,
-    /// No relay nodes are available with that name
-    #[error("no nodes available for {0}")]
-    NoNodeForTarget(String),
-    /// The relay node specified only allows STUN requests
-    #[error("no relay nodes found for {0}, only are stun_only nodes")]
-    StunOnlyNodesFound(String),
     /// There was an error dialing
     #[error("dial error")]
     DialIO(#[from] std::io::Error),
-    /// There was an error from the task doing the dialing
-    #[error("dial error")]
-    DialTask(#[from] tokio::task::JoinError),
     /// Both IPv4 and IPv6 are disabled for this relay node
     #[error("both IPv4 and IPv6 are explicitly disabled for this node")]
     IPDisabled,
@@ -116,18 +101,12 @@ pub enum ClientError {
     /// The ping request was aborted
     #[error("ping aborted")]
     PingAborted,
-    /// This [`Client`] cannot acknowledge pings
-    #[error("cannot acknowledge pings")]
-    CannotAckPings,
     /// The given [`Url`] is invalid
     #[error("invalid url: {0}")]
     InvalidUrl(String),
     /// There was an error with DNS resolution
     #[error("dns: {0:?}")]
     Dns(Option<anyhow::Error>),
-    /// There was a timeout resolving DNS.
-    #[error("dns timeout")]
-    DnsTimeout,
     /// The inner actor is gone, likely means things are shutdown.
     #[error("actor gone")]
     ActorGone,
@@ -169,7 +148,6 @@ pub struct ClientReceiver {
 #[derive(derive_more::Debug)]
 struct Actor {
     secret_key: SecretKey,
-    can_ack_pings: bool,
     is_preferred: bool,
     relay_conn: Option<(Conn, ConnReceiver)>,
     is_closed: bool,
@@ -211,8 +189,6 @@ impl PingTracker {
 #[derive(derive_more::Debug)]
 pub struct ClientBuilder {
     /// Default is false
-    can_ack_pings: bool,
-    /// Default is false
     is_preferred: bool,
     /// Default is None
     #[debug("address family selector callback")]
@@ -237,7 +213,6 @@ impl ClientBuilder {
     /// Create a new [`ClientBuilder`]
     pub fn new(url: impl Into<RelayUrl>) -> Self {
         ClientBuilder {
-            can_ack_pings: false,
             is_preferred: false,
             address_family_selector: None,
             is_prober: false,
@@ -274,12 +249,6 @@ impl ClientBuilder {
         S: Fn() -> BoxFuture<bool> + Send + Sync + 'static,
     {
         self.address_family_selector = Some(Box::new(selector));
-        self
-    }
-
-    /// Enable this [`Client`] to acknowledge pings.
-    pub fn can_ack_pings(mut self, can: bool) -> Self {
-        self.can_ack_pings = can;
         self
     }
 
@@ -340,7 +309,6 @@ impl ClientBuilder {
 
         let inner = Actor {
             secret_key: key,
-            can_ack_pings: self.can_ack_pings,
             is_preferred: self.is_preferred,
             relay_conn: None,
             is_closed: false,
@@ -375,6 +343,24 @@ impl ClientBuilder {
         self.server_public_key = Some(server_public_key);
         self
     }
+}
+
+#[cfg(test)]
+/// Creates a client config that trusts any servers without verifying their TLS certificate.
+///
+/// Should be used for testing local relay setups only.
+pub(crate) fn make_dangerous_client_config() -> rustls::ClientConfig {
+    warn!(
+        "Insecure config: SSL certificates from relay servers will be trusted without verification"
+    );
+    rustls::client::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_protocol_versions(&[&rustls::version::TLS13])
+    .expect("protocols supported by ring")
+    .dangerous()
+    .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
+    .with_no_client_auth()
 }
 
 impl ClientReceiver {
@@ -811,16 +797,12 @@ impl Actor {
 
     async fn send_pong(&mut self, data: [u8; 8]) -> Result<(), ClientError> {
         debug!("send_pong");
-        if self.can_ack_pings {
-            let (conn, _) = self.connect("send_pong").await?;
-            if conn.send_pong(data).await.is_err() {
-                self.close_for_reconnect().await;
-                return Err(ClientError::Send);
-            }
-            Ok(())
-        } else {
-            Err(ClientError::CannotAckPings)
+        let (conn, _) = self.connect("send_pong").await?;
+        if conn.send_pong(data).await.is_err() {
+            self.close_for_reconnect().await;
+            return Err(ClientError::Send);
         }
+        Ok(())
     }
 
     async fn close(mut self) {

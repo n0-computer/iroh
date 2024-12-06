@@ -1,0 +1,54 @@
+[package]
+name = "iroh-net-report"
+version = "0.29.0"
+edition = "2021"
+readme = "README.md"
+description = "detailed reporting on network conditions"
+license = "MIT OR Apache-2.0"
+authors = ["n0 team"]
+repository = "https://github.com/n0-computer/iroh"
+keywords = ["networking"]
+
+# Sadly this also needs to be updated in .github/workflows/ci.yml
+rust-version = "1.76"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1"
+bytes = "1.7"
+derive_more = { version = "1.0.0", features = ["display"] }
+futures-buffered = "0.2.8"
+futures-lite = "2.3"
+hickory-resolver = "=0.25.0-alpha.2"
+iroh-base = { version = "0.29.0", path = "../iroh-base", default-features = false, features = ["relay"] }
+iroh-metrics = { version = "0.29.0", default-features = false }
+iroh-relay = { version = "0.29", path = "../iroh-relay" }
+netwatch = { version = "0.2.0" }
+portmapper = { version = "0.2.0", default-features = false }
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false }
+rustls = { version = "0.23", default-features = false }
+surge-ping = "0.8.0"
+thiserror = "1"
+tokio = { version = "1", default-features = false, features = ["sync", "time", "macros", "rt"] }
+tokio-util = { version = "0.7.12", default-features = false }
+tracing = "0.1"
+url = { version = "2.4" }
+
+[dev-dependencies]
+iroh-relay = { version = "0.29", path = "../iroh-relay", features = ["test-utils", "server"] }
+iroh-test = { version = "0.29.0", path = "../iroh-test" }
+once_cell = "1.18.0"
+pretty_assertions = "1.4"
+testresult = "0.4.0"
+tokio = { version = "1", default-features = false, features = ["test-util"] }
+
+[features]
+default = ["metrics"]
+metrics = ["iroh-metrics/metrics", "portmapper/metrics"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "iroh_docsrs"]
