@@ -518,8 +518,11 @@ impl MagicSock {
                             udp_sent = true;
                         }
                         Err(err) => {
-                            error!(node = %node_id.fmt_short(), dst = %addr,
-                                   "failed to send udp: {err:#}");
+                            // No need to print "WouldBlock" errors to the console
+                            if err.kind() != io::ErrorKind::WouldBlock {
+                                error!(node = %node_id.fmt_short(), dst = %addr,
+                                       "failed to send udp: {err:#}");
+                            }
                             udp_error = Some(err);
                         }
                     }
@@ -563,16 +566,16 @@ impl MagicSock {
                         // at any time so these errors should be treated as transient and
                         // are just timeouts.  Hence we opt for returning Ok.  See
                         // test_try_send_no_udp_addr_or_relay_url to explore this further.
-                        error!(
+                        trace!(
                             node = %node_id.fmt_short(),
-                            "no UDP or relay paths available for node",
+                            "no UDP or relay paths available for node, voiding transmit",
                         );
                     }
                     Ok(())
                 }
             }
             None => {
-                error!(%dest, "no NodeState for mapped address");
+                trace!(%dest, "no NodeState for mapped address, voiding transmit");
                 // Returning Ok here means we let QUIC timeout.  Returning WouldBlock
                 // triggers a hot loop.  Returning an error would immediately fail a
                 // connection.  The philosophy of quinn-udp is that a UDP connection could
