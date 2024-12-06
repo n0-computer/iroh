@@ -22,6 +22,7 @@ pub struct Metrics {
     pub store_packets_inserted: Counter,
     pub store_packets_removed: Counter,
     pub store_packets_updated: Counter,
+    pub store_packets_expired: Counter,
 }
 
 impl Default for Metrics {
@@ -44,6 +45,7 @@ impl Default for Metrics {
             store_packets_inserted: Counter::new("Signed packets inserted into the store"),
             store_packets_removed: Counter::new("Signed packets removed from the store"),
             store_packets_updated: Counter::new("Number of updates to existing packets"),
+            store_packets_expired: Counter::new("Number of expired packets"),
         }
     }
 }

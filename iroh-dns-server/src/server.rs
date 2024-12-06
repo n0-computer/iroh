@@ -14,7 +14,11 @@ use crate::{
 
 /// Spawn the server and run until the `Ctrl-C` signal is received, then shutdown.
 pub async fn run_with_config_until_ctrl_c(config: Config) -> Result<()> {
-    let mut store = ZoneStore::persistent(Config::signed_packet_store_path()?)?;
+    let zone_store_options = config.zone_store.clone().unwrap_or_default();
+    let mut store = ZoneStore::persistent(
+        Config::signed_packet_store_path()?,
+        zone_store_options.into(),
+    )?;
     if let Some(bootstrap) = config.mainline_enabled() {
         info!("mainline fallback enabled");
         store = store.with_mainline_fallback(bootstrap);
@@ -52,7 +56,13 @@ impl Server {
             }
             Ok(())
         });
-        let http_server = HttpServer::spawn(config.http, config.https, state.clone()).await?;
+        let http_server = HttpServer::spawn(
+            config.http,
+            config.https,
+            config.pkarr_put_rate_limit,
+            state.clone(),
+        )
+        .await?;
         let dns_server = DnsServer::spawn(config.dns, state.dns_handler.clone()).await?;
         Ok(Self {
             http_server,
@@ -90,17 +100,19 @@ impl Server {
     /// HTTP server.
     #[cfg(test)]
     pub async fn spawn_for_tests() -> Result<(Self, std::net::SocketAddr, url::Url)> {
-        Self::spawn_for_tests_with_mainline(None).await
+        Self::spawn_for_tests_with_options(None, None).await
     }
 
     /// Spawn a server suitable for testing, while optionally enabling mainline with custom
     /// bootstrap addresses.
     #[cfg(test)]
-    pub async fn spawn_for_tests_with_mainline(
+    pub async fn spawn_for_tests_with_options(
         mainline: Option<crate::config::BootstrapOption>,
+        options: Option<crate::store::ZoneStoreOptions>,
     ) -> Result<(Self, std::net::SocketAddr, url::Url)> {
-        use crate::config::MetricsConfig;
         use std::net::{IpAddr, Ipv4Addr};
+
+        use crate::config::MetricsConfig;
 
         let mut config = Config::default();
         config.dns.port = 0;
@@ -110,7 +122,7 @@ impl Server {
         config.https = None;
         config.metrics = Some(MetricsConfig::disabled());
 
-        let mut store = ZoneStore::in_memory()?;
+        let mut store = ZoneStore::in_memory(options.unwrap_or_default())?;
         if let Some(bootstrap) = mainline {
             info!("mainline fallback enabled");
             store = store.with_mainline_fallback(bootstrap);

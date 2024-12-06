@@ -1,4 +1,4 @@
-//! Cryptographic key handling for `iroh-net`.
+//! Cryptographic key handling for `iroh`.
 
 mod encryption;
 
@@ -10,7 +10,6 @@ use std::{
     time::Duration,
 };
 
-use crate::base32::{self, HexOrBase32ParseError};
 pub use ed25519_dalek::{Signature, PUBLIC_KEY_LENGTH};
 use ed25519_dalek::{SignatureError, SigningKey, VerifyingKey};
 use once_cell::sync::OnceCell;
@@ -21,6 +20,7 @@ use ttl_cache::TtlCache;
 
 pub use self::encryption::SharedSecret;
 use self::encryption::{public_ed_box, secret_ed_box};
+use crate::base32::{self, HexOrBase32ParseError};
 
 #[derive(Debug)]
 struct CryptoKeys {

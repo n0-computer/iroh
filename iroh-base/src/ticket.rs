@@ -1,15 +1,20 @@
 use crate::base32;
 
 #[cfg(feature = "key")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "key")))]
 mod blob;
 #[cfg(feature = "key")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "key")))]
 mod node;
 #[cfg(feature = "key")]
+#[cfg_attr(iroh_docsrs, doc(cfg(feature = "key")))]
 pub use self::{blob::BlobTicket, node::NodeTicket};
 
-/// A ticket is a serializable object that combines all information required
-/// for an operation. E.g. an iroh blob ticket would contain the hash of the
-/// data as well as information about how to reach the provider.
+/// A ticket is a serializable object combining information required for an operation.
+///
+/// Typically tickets contain all information required for an operation, e.g. an iroh blob
+/// ticket would contain the hash of the data as well as information about how to reach the
+/// provider.
 ///
 /// Tickets support serialization to a string using base32 encoding. The kind of
 /// ticket will be prepended to the string to make it somewhat self describing.

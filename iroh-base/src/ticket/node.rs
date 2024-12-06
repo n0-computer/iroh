@@ -20,9 +20,13 @@ use crate::{
 /// This allows establishing a connection to the node in most circumstances where it is
 /// possible to do so.
 ///
-/// This [`NodeTicket`] is a single item which can be easily serialized and deserialized.
+/// This [`NodeTicket`] is a single item which can be easily serialized and deserialized and
+/// implements the [`Ticket`] trait.  The [`Display`] and [`FromStr`] traits can also be
+/// used to round-trip the ticket to string.
 ///
 /// [`NodeId`]: crate::key::NodeId
+/// [`Display`]: std::fmt::Display
+/// [`FromStr`]: std::str::FromStr
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 #[display("{}", Ticket::serialize(self))]
 pub struct NodeTicket {
@@ -60,8 +64,8 @@ impl FromStr for NodeTicket {
 
 impl NodeTicket {
     /// Creates a new ticket.
-    pub fn new(node: NodeAddr) -> Result<Self> {
-        Ok(Self { node })
+    pub fn new(node: NodeAddr) -> Self {
+        Self { node }
     }
 
     /// The [`NodeAddr`] of the provider for this ticket.
@@ -102,7 +106,7 @@ impl<'de> Deserialize<'de> for NodeTicket {
             Self::from_str(&s).map_err(serde::de::Error::custom)
         } else {
             let peer = Deserialize::deserialize(deserializer)?;
-            Self::new(peer).map_err(serde::de::Error::custom)
+            Ok(Self::new(peer))
         }
     }
 }
@@ -113,17 +117,18 @@ mod tests {
 
     use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
-    use crate::base32;
-    use crate::key::{PublicKey, SecretKey};
-
     use super::*;
+    use crate::{
+        base32,
+        key::{PublicKey, SecretKey},
+    };
 
     fn make_ticket() -> NodeTicket {
         let peer = SecretKey::generate().public();
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 1234));
         let relay_url = None;
         NodeTicket {
-            node: NodeAddr::from_parts(peer, relay_url, vec![addr]),
+            node: NodeAddr::from_parts(peer, relay_url, [addr]),
         }
     }
 
@@ -153,7 +158,7 @@ mod tests {
             node: NodeAddr::from_parts(
                 node_id,
                 Some("http://derp.me./".parse().unwrap()),
-                vec!["127.0.0.1:1024".parse().unwrap()],
+                ["127.0.0.1:1024".parse().unwrap()],
             ),
         };
         let base32 = base32::parse_vec(ticket.to_string().strip_prefix("node").unwrap()).unwrap();
