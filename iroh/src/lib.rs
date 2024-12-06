@@ -242,7 +242,7 @@ pub mod endpoint;
 mod magicsock;
 pub mod metrics;
 pub mod protocol;
-pub mod tls;
+mod tls;
 
 pub(crate) mod util;
 
