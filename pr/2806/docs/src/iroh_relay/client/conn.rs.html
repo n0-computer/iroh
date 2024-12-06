@@ -506,67 +506,19 @@
 <a href="#506" id="506">506</a>
 <a href="#507" id="507">507</a>
 <a href="#508" id="508">508</a>
-<a href="#509" id="509">509</a>
-<a href="#510" id="510">510</a>
-<a href="#511" id="511">511</a>
-<a href="#512" id="512">512</a>
-<a href="#513" id="513">513</a>
-<a href="#514" id="514">514</a>
-<a href="#515" id="515">515</a>
-<a href="#516" id="516">516</a>
-<a href="#517" id="517">517</a>
-<a href="#518" id="518">518</a>
-<a href="#519" id="519">519</a>
-<a href="#520" id="520">520</a>
-<a href="#521" id="521">521</a>
-<a href="#522" id="522">522</a>
-<a href="#523" id="523">523</a>
-<a href="#524" id="524">524</a>
-<a href="#525" id="525">525</a>
-<a href="#526" id="526">526</a>
-<a href="#527" id="527">527</a>
-<a href="#528" id="528">528</a>
-<a href="#529" id="529">529</a>
-<a href="#530" id="530">530</a>
-<a href="#531" id="531">531</a>
-<a href="#532" id="532">532</a>
-<a href="#533" id="533">533</a>
-<a href="#534" id="534">534</a>
-<a href="#535" id="535">535</a>
-<a href="#536" id="536">536</a>
-<a href="#537" id="537">537</a>
-<a href="#538" id="538">538</a>
-<a href="#539" id="539">539</a>
-<a href="#540" id="540">540</a>
-<a href="#541" id="541">541</a>
-<a href="#542" id="542">542</a>
-<a href="#543" id="543">543</a>
-<a href="#544" id="544">544</a>
-<a href="#545" id="545">545</a>
-<a href="#546" id="546">546</a>
-<a href="#547" id="547">547</a>
-<a href="#548" id="548">548</a>
-<a href="#549" id="549">549</a>
-<a href="#550" id="550">550</a>
-<a href="#551" id="551">551</a>
-<a href="#552" id="552">552</a>
-<a href="#553" id="553">553</a>
-<a href="#554" id="554">554</a>
-<a href="#555" id="555">555</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
 //!
 //! based on tailscale/derp/derp_client.go
 
 </span><span class="kw">use </span>std::{
     net::SocketAddr,
-    num::NonZeroU32,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
 
-<span class="kw">use </span>anyhow::{anyhow, bail, ensure, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>anyhow::{anyhow, bail, ensure, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>futures_lite::Stream;
 <span class="kw">use </span>futures_sink::Sink;
@@ -734,7 +686,7 @@
         Frame::NodeGone { node_id } =&gt; <span class="prelude-val">Ok</span>(ReceivedMessage::NodeGone(node_id)),
         Frame::RecvPacket { src_key, content } =&gt; {
             <span class="kw">let </span>packet = ReceivedMessage::ReceivedPacket {
-                source: src_key,
+                remote_node_id: src_key,
                 data: content,
             };
             <span class="prelude-val">Ok</span>(packet)
@@ -784,7 +736,6 @@
 </span><span class="kw">struct </span>ConnWriterTasks {
     recv_msgs: mpsc::Receiver&lt;ConnWriterMessage&gt;,
     writer: ConnWriter,
-    rate_limiter: <span class="prelude-ty">Option</span>&lt;RateLimiter&gt;,
 }
 
 <span class="kw">impl </span>ConnWriterTasks {
@@ -792,7 +743,7 @@
         <span class="kw">while let </span><span class="prelude-val">Some</span>(msg) = <span class="self">self</span>.recv_msgs.recv().<span class="kw">await </span>{
             <span class="kw">match </span>msg {
                 ConnWriterMessage::Packet((key, bytes)) =&gt; {
-                    send_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>.writer, <span class="kw-2">&amp;</span><span class="self">self</span>.rate_limiter, key, bytes).<span class="kw">await</span><span class="question-mark">?</span>;
+                    send_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>.writer, key, bytes).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
                 ConnWriterMessage::Pong(data) =&gt; {
                     write_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>.writer, Frame::Pong { data }, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -915,7 +866,7 @@
         }
     }
 
-    <span class="kw">async fn </span>server_handshake(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;RateLimiter&gt;&gt; {
+    <span class="kw">async fn </span>server_handshake(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="macro">debug!</span>(<span class="string">"server_handshake: started"</span>);
         <span class="kw">let </span>client_info = ClientInfo {
             version: PROTOCOL_VERSION,
@@ -924,22 +875,18 @@
         <span class="kw">crate</span>::protos::relay::send_client_key(<span class="kw-2">&amp;mut </span><span class="self">self</span>.writer, <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key, <span class="kw-2">&amp;</span>client_info)
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="comment">// TODO: add some actual configuration
-        </span><span class="kw">let </span>rate_limiter = RateLimiter::new(<span class="number">0</span>, <span class="number">0</span>)<span class="question-mark">?</span>;
-
         <span class="macro">debug!</span>(<span class="string">"server_handshake: done"</span>);
-        <span class="prelude-val">Ok</span>(rate_limiter)
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="kw">pub async fn </span>build(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(Conn, ConnReceiver)&gt; {
         <span class="comment">// exchange information with the server
-        </span><span class="kw">let </span>rate_limiter = <span class="self">self</span>.server_handshake().<span class="kw">await</span><span class="question-mark">?</span>;
+        </span><span class="self">self</span>.server_handshake().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// create task to handle writing to the server
         </span><span class="kw">let </span>(writer_sender, writer_recv) = mpsc::channel(PER_CLIENT_SEND_QUEUE_DEPTH);
         <span class="kw">let </span>writer_task = tokio::task::spawn(
             ConnWriterTasks {
-                rate_limiter,
                 writer: <span class="self">self</span>.writer,
                 recv_msgs: writer_recv,
             }
@@ -1006,7 +953,7 @@
     <span class="doccomment">/// Represents an incoming packet.
     </span>ReceivedPacket {
         <span class="doccomment">/// The [`NodeId`] of the packet sender.
-        </span>source: NodeId,
+        </span>remote_node_id: NodeId,
         <span class="doccomment">/// The received packet bytes.
         </span><span class="attr">#[debug(skip)]
         </span>data: Bytes, <span class="comment">// TODO: ref
@@ -1049,7 +996,6 @@
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>send_packet&lt;S: Sink&lt;Frame, Error = std::io::Error&gt; + Unpin&gt;(
     <span class="kw-2">mut </span>writer: S,
-    rate_limiter: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;RateLimiter&gt;,
     dst: NodeId,
     packet: Bytes,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
@@ -1063,49 +1009,9 @@
         dst_key: dst,
         packet,
     };
-    <span class="kw">if let </span><span class="prelude-val">Some</span>(rate_limiter) = rate_limiter {
-        <span class="kw">if </span>rate_limiter.check_n(frame.len()).is_err() {
-            <span class="macro">tracing::warn!</span>(<span class="string">"dropping send: rate limit reached"</span>);
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-        }
-    }
     writer.send(frame).<span class="kw">await</span><span class="question-mark">?</span>;
     writer.flush().<span class="kw">await</span><span class="question-mark">?</span>;
 
     <span class="prelude-val">Ok</span>(())
-}
-
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>RateLimiter {
-    inner: governor::RateLimiter&lt;
-        governor::state::direct::NotKeyed,
-        governor::state::InMemoryState,
-        governor::clock::DefaultClock,
-        governor::middleware::NoOpMiddleware,
-    &gt;,
-}
-
-<span class="kw">impl </span>RateLimiter {
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(bytes_per_second: usize, bytes_burst: usize) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt;&gt; {
-        <span class="kw">if </span>bytes_per_second == <span class="number">0 </span>|| bytes_burst == <span class="number">0 </span>{
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-        }
-        <span class="kw">let </span>bytes_per_second = NonZeroU32::new(u32::try_from(bytes_per_second)<span class="question-mark">?</span>)
-            .context(<span class="string">"bytes_per_second not non-zero"</span>)<span class="question-mark">?</span>;
-        <span class="kw">let </span>bytes_burst =
-            NonZeroU32::new(u32::try_from(bytes_burst)<span class="question-mark">?</span>).context(<span class="string">"bytes_burst not non-zero"</span>)<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="self">Self </span>{
-            inner: governor::RateLimiter::direct(
-                governor::Quota::per_second(bytes_per_second).allow_burst(bytes_burst),
-            ),
-        }))
-    }
-
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>check_n(<span class="kw-2">&amp;</span><span class="self">self</span>, n: usize) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>n = NonZeroU32::new(u32::try_from(n)<span class="question-mark">?</span>).context(<span class="string">"n not non-zero"</span>)<span class="question-mark">?</span>;
-        <span class="kw">match </span><span class="self">self</span>.inner.check_n(n) {
-            <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Ok</span>(()),
-            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="macro">bail!</span>(<span class="string">"batch cannot go through"</span>),
-        }
-    }
 }
 </code></pre></div></section></main></body></html>

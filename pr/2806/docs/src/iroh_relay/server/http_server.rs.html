@@ -1071,6 +1071,56 @@
 <a href="#1071" id="1071">1071</a>
 <a href="#1072" id="1072">1072</a>
 <a href="#1073" id="1073">1073</a>
+<a href="#1074" id="1074">1074</a>
+<a href="#1075" id="1075">1075</a>
+<a href="#1076" id="1076">1076</a>
+<a href="#1077" id="1077">1077</a>
+<a href="#1078" id="1078">1078</a>
+<a href="#1079" id="1079">1079</a>
+<a href="#1080" id="1080">1080</a>
+<a href="#1081" id="1081">1081</a>
+<a href="#1082" id="1082">1082</a>
+<a href="#1083" id="1083">1083</a>
+<a href="#1084" id="1084">1084</a>
+<a href="#1085" id="1085">1085</a>
+<a href="#1086" id="1086">1086</a>
+<a href="#1087" id="1087">1087</a>
+<a href="#1088" id="1088">1088</a>
+<a href="#1089" id="1089">1089</a>
+<a href="#1090" id="1090">1090</a>
+<a href="#1091" id="1091">1091</a>
+<a href="#1092" id="1092">1092</a>
+<a href="#1093" id="1093">1093</a>
+<a href="#1094" id="1094">1094</a>
+<a href="#1095" id="1095">1095</a>
+<a href="#1096" id="1096">1096</a>
+<a href="#1097" id="1097">1097</a>
+<a href="#1098" id="1098">1098</a>
+<a href="#1099" id="1099">1099</a>
+<a href="#1100" id="1100">1100</a>
+<a href="#1101" id="1101">1101</a>
+<a href="#1102" id="1102">1102</a>
+<a href="#1103" id="1103">1103</a>
+<a href="#1104" id="1104">1104</a>
+<a href="#1105" id="1105">1105</a>
+<a href="#1106" id="1106">1106</a>
+<a href="#1107" id="1107">1107</a>
+<a href="#1108" id="1108">1108</a>
+<a href="#1109" id="1109">1109</a>
+<a href="#1110" id="1110">1110</a>
+<a href="#1111" id="1111">1111</a>
+<a href="#1112" id="1112">1112</a>
+<a href="#1113" id="1113">1113</a>
+<a href="#1114" id="1114">1114</a>
+<a href="#1115" id="1115">1115</a>
+<a href="#1116" id="1116">1116</a>
+<a href="#1117" id="1117">1117</a>
+<a href="#1118" id="1118">1118</a>
+<a href="#1119" id="1119">1119</a>
+<a href="#1120" id="1120">1120</a>
+<a href="#1121" id="1121">1121</a>
+<a href="#1122" id="1122">1122</a>
+<a href="#1123" id="1123">1123</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
@@ -1093,10 +1143,12 @@
     sync::mpsc,
 };
 <span class="kw">use </span>tokio_rustls_acme::AcmeAcceptor;
-<span class="kw">use </span>tokio_tungstenite::WebSocketStream;
+<span class="kw">use </span>tokio_tungstenite::{
+    tungstenite::{handshake::derive_accept_key, protocol::Role},
+    WebSocketStream,
+};
 <span class="kw">use </span>tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
-<span class="kw">use </span>tungstenite::{handshake::derive_accept_key, protocol::Role};
 
 <span class="kw">use crate</span>::{
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
@@ -1106,6 +1158,7 @@
         client_conn::ClientConnConfig,
         metrics::Metrics,
         streams::{MaybeTlsStream, RelayedStream},
+        ClientConnRateLimit,
     },
 };
 
@@ -1146,7 +1199,7 @@
 ///
 /// Created using [`ServerBuilder::spawn`].
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>Server {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Server {
     addr: SocketAddr,
     http_server_task: AbortOnDropHandle&lt;()&gt;,
     cancel_server_loop: CancellationToken,
@@ -1157,14 +1210,14 @@
     ///
     /// The server runs in the background as several async tasks.  This allows controlling
     /// the server, in particular it allows gracefully shutting down the server.
-    </span><span class="kw">pub fn </span>handle(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ServerHandle {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>handle(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ServerHandle {
         ServerHandle {
             cancel_token: <span class="self">self</span>.cancel_server_loop.clone(),
         }
     }
 
     <span class="doccomment">/// Closes the underlying relay server and the HTTP(S) server tasks.
-    </span><span class="kw">pub fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="self">self</span>.cancel_server_loop.cancel();
     }
 
@@ -1173,12 +1226,12 @@
     /// This is the root of all the tasks for the server.  Aborting it will abort all the
     /// other tasks for the server.  Awaiting it will complete when all the server tasks are
     /// completed.
-    </span><span class="kw">pub fn </span>task_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>AbortOnDropHandle&lt;()&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>task_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>AbortOnDropHandle&lt;()&gt; {
         <span class="kw-2">&amp;mut </span><span class="self">self</span>.http_server_task
     }
 
     <span class="doccomment">/// Returns the local address of this server.
-    </span><span class="kw">pub fn </span>addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
         <span class="self">self</span>.addr
     }
 }
@@ -1187,24 +1240,24 @@
 ///
 /// This does not allow access to the task but can communicate with it.
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>ServerHandle {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ServerHandle {
     cancel_token: CancellationToken,
 }
 
 <span class="kw">impl </span>ServerHandle {
     <span class="doccomment">/// Gracefully shut down the server.
-    </span><span class="kw">pub fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="self">self</span>.cancel_token.cancel()
     }
 }
 
 <span class="doccomment">/// Configuration to use for the TLS connection
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>TlsConfig {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>TlsConfig {
     <span class="doccomment">/// The server config
-    </span><span class="kw">pub </span>config: Arc&lt;rustls::ServerConfig&gt;,
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) config: Arc&lt;rustls::ServerConfig&gt;,
     <span class="doccomment">/// The kind
-    </span><span class="kw">pub </span>acceptor: TlsAcceptor,
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) acceptor: TlsAcceptor,
 }
 
 <span class="doccomment">/// Builder for the Relay HTTP Server.
@@ -1212,7 +1265,7 @@
 /// Defaults to handling relay requests on the "/relay" (and "/derp" for backwards compatibility) endpoint.
 /// Other HTTP endpoints can be added using [`ServerBuilder::request_handler`].
 </span><span class="attr">#[derive(derive_more::Debug)]
-</span><span class="kw">pub struct </span>ServerBuilder {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ServerBuilder {
     <span class="doccomment">/// The ip + port combination for this server.
     </span>addr: SocketAddr,
     <span class="doccomment">/// Optional tls configuration/TlsAcceptor combination.
@@ -1226,27 +1279,42 @@
     </span>handlers: Handlers,
     <span class="doccomment">/// Headers to use for HTTP responses.
     </span>headers: HeaderMap,
+    <span class="doccomment">/// Rate-limiting configuration for an individual client connection.
+    ///
+    /// Rate-limiting is enforced on received traffic from individual clients.  This
+    /// configuration applies to a single client connection.
+    </span>client_rx_ratelimit: <span class="prelude-ty">Option</span>&lt;ClientConnRateLimit&gt;,
 }
 
 <span class="kw">impl </span>ServerBuilder {
     <span class="doccomment">/// Creates a new [ServerBuilder].
-    </span><span class="kw">pub fn </span>new(addr: SocketAddr) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(addr: SocketAddr) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             addr,
             tls_config: <span class="prelude-val">None</span>,
             handlers: Default::default(),
             headers: HeaderMap::new(),
+            client_rx_ratelimit: <span class="prelude-val">None</span>,
         }
     }
 
     <span class="doccomment">/// Serves all requests content using TLS.
-    </span><span class="kw">pub fn </span>tls_config(<span class="kw-2">mut </span><span class="self">self</span>, config: <span class="prelude-ty">Option</span>&lt;TlsConfig&gt;) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>tls_config(<span class="kw-2">mut </span><span class="self">self</span>, config: <span class="prelude-ty">Option</span>&lt;TlsConfig&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.tls_config = config;
         <span class="self">self
     </span>}
 
+    <span class="doccomment">/// Sets the per-client rate-limit configuration for incoming data.
+    ///
+    /// On each client connection the incoming data is rate-limited.  By default
+    /// no rate limit is enforced.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>client_rx_ratelimit(<span class="kw-2">mut </span><span class="self">self</span>, config: ClientConnRateLimit) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.client_rx_ratelimit = <span class="prelude-val">Some</span>(config);
+        <span class="self">self
+    </span>}
+
     <span class="doccomment">/// Adds a custom handler for a specific Method &amp; URI.
-    </span><span class="kw">pub fn </span>request_handler(
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>request_handler(
         <span class="kw-2">mut </span><span class="self">self</span>,
         method: Method,
         uri_path: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
@@ -1257,7 +1325,7 @@
     </span>}
 
     <span class="doccomment">/// Adds HTTP headers to responses.
-    </span><span class="kw">pub fn </span>headers(<span class="kw-2">mut </span><span class="self">self</span>, headers: HeaderMap) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>headers(<span class="kw-2">mut </span><span class="self">self</span>, headers: HeaderMap) -&gt; <span class="self">Self </span>{
         <span class="kw">for </span>(k, v) <span class="kw">in </span>headers.iter() {
             <span class="self">self</span>.headers.insert(k.clone(), v.clone());
         }
@@ -1265,13 +1333,14 @@
     </span>}
 
     <span class="doccomment">/// Builds and spawns an HTTP(S) Relay Server.
-    </span><span class="kw">pub async fn </span>spawn(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Server&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>spawn(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Server&gt; {
         <span class="kw">let </span>server_task = ServerActorTask::spawn();
         <span class="kw">let </span>service = RelayService::new(
             <span class="self">self</span>.handlers,
             <span class="self">self</span>.headers,
             server_task.server_channel.clone(),
             server_task.write_timeout,
+            <span class="self">self</span>.client_rx_ratelimit,
         );
 
         <span class="kw">let </span>addr = <span class="self">self</span>.addr;
@@ -1343,8 +1412,22 @@
     }
 }
 
+<span class="doccomment">/// The hyper Service that serves the actual relay endpoints.
+</span><span class="attr">#[derive(Clone, Debug)]
+</span><span class="kw">struct </span>RelayService(Arc&lt;Inner&gt;);
+
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">struct </span>Inner {
+    handlers: Handlers,
+    headers: HeaderMap,
+    server_channel: mpsc::Sender&lt;Message&gt;,
+    write_timeout: Duration,
+    rate_limit: <span class="prelude-ty">Option</span>&lt;ClientConnRateLimit&gt;,
+}
+
 <span class="kw">impl </span>RelayService {
-    <span class="kw">fn </span>call_client_conn(
+    <span class="doccomment">/// Upgrades the HTTP connection to the relay protocol, runs relay client.
+    </span><span class="kw">fn </span>call_client_conn(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         <span class="kw-2">mut </span>req: Request&lt;Incoming&gt;,
     ) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Response&lt;BytesBody&gt;, hyper::Error&gt;&gt; + Send&gt;&gt; {
@@ -1398,7 +1481,7 @@
                     <span class="prelude-val">None
                 </span>};
 
-                <span class="macro">debug!</span>(<span class="string">"upgrading protocol: {:?}"</span>, protocol);
+                <span class="macro">debug!</span>(<span class="question-mark">?</span>protocol, <span class="string">"upgrading connection"</span>);
 
                 <span class="comment">// Setup a future that will eventually receive the upgraded
                 // connection and talk a new protocol, and spawn the future
@@ -1411,19 +1494,18 @@
                     <span class="kw">async move </span>{
                         <span class="kw">match </span>hyper::upgrade::on(<span class="kw-2">&amp;mut </span>req).<span class="kw">await </span>{
                             <span class="prelude-val">Ok</span>(upgraded) =&gt; {
-                                <span class="kw">if let </span><span class="prelude-val">Err</span>(e) =
+                                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) =
                                     this.<span class="number">0</span>.relay_connection_handler(protocol, upgraded).<span class="kw">await
                                 </span>{
                                     <span class="macro">warn!</span>(
-                                        <span class="string">"upgrade to \"{}\": io error: {:?}"</span>,
-                                        e,
-                                        protocol.upgrade_header()
+                                        <span class="question-mark">?</span>protocol,
+                                        <span class="string">"error accepting upgraded connection: {err:#}"</span>,
                                     );
                                 } <span class="kw">else </span>{
-                                    <span class="macro">debug!</span>(<span class="string">"upgrade to \"{}\" success"</span>, protocol.upgrade_header());
+                                    <span class="macro">debug!</span>(<span class="question-mark">?</span>protocol, <span class="string">"upgraded connection completed"</span>);
                                 };
                             }
-                            <span class="prelude-val">Err</span>(e) =&gt; <span class="macro">warn!</span>(<span class="string">"upgrade error: {:?}"</span>, e),
+                            <span class="prelude-val">Err</span>(err) =&gt; <span class="macro">warn!</span>(<span class="string">"upgrade error: {err:#}"</span>),
                         }
                     }
                     .instrument(<span class="macro">debug_span!</span>(<span class="string">"handler"</span>)),
@@ -1456,39 +1538,26 @@
     <span class="kw">type </span>Future = Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Response, <span class="self">Self</span>::Error&gt;&gt; + Send&gt;&gt;;
 
     <span class="kw">fn </span>call(<span class="kw-2">&amp;</span><span class="self">self</span>, req: Request&lt;Incoming&gt;) -&gt; <span class="self">Self</span>::Future {
-        <span class="comment">// if the request hits the relay endpoint
-        // or /derp for backwards compat
+        <span class="comment">// Create a client if the request hits the relay endpoint.
         </span><span class="kw">if </span><span class="macro">matches!</span>(
             (req.method(), req.uri().path()),
             (<span class="kw-2">&amp;</span>hyper::Method::GET, LEGACY_RELAY_PATH | RELAY_PATH)
         ) {
             <span class="kw">let </span>this = <span class="self">self</span>.clone();
-            <span class="comment">// otherwise handle the relay connection as normal
-            </span><span class="kw">return </span>Box::pin(<span class="kw">async move </span>{ this.call_client_conn(req).<span class="kw">await</span>.map_err(Into::into) });
+            <span class="kw">return </span>Box::pin(<span class="kw">async move </span>{ this.call_client_conn(req).<span class="kw">await</span>.map_err(Into::into) });
         }
+        <span class="comment">// Otherwise handle the relay connection as normal.
 
-        <span class="comment">// check all other possible endpoints
+        // Check all other possible endpoints.
         </span><span class="kw">let </span>uri = req.uri().clone();
         <span class="kw">if let </span><span class="prelude-val">Some</span>(res) = <span class="self">self</span>.<span class="number">0</span>.handlers.get(<span class="kw-2">&amp;</span>(req.method().clone(), uri.path())) {
             <span class="kw">let </span>f = res(req, <span class="self">self</span>.<span class="number">0</span>.default_response());
             <span class="kw">return </span>Box::pin(<span class="kw">async move </span>{ f });
         }
-        <span class="comment">// otherwise return 404
+        <span class="comment">// Otherwise return 404
         </span><span class="kw">let </span>res = <span class="self">self</span>.<span class="number">0</span>.not_found_fn(req, <span class="self">self</span>.<span class="number">0</span>.default_response());
         Box::pin(<span class="kw">async move </span>{ res })
     }
-}
-
-<span class="doccomment">/// The hyper Service that servers the actual relay endpoints
-</span><span class="attr">#[derive(Clone, Debug)]
-</span><span class="kw">struct </span>RelayService(Arc&lt;Inner&gt;);
-
-<span class="attr">#[derive(Debug)]
-</span><span class="kw">struct </span>Inner {
-    handlers: Handlers,
-    headers: HeaderMap,
-    server_channel: mpsc::Sender&lt;Message&gt;,
-    write_timeout: Duration,
 }
 
 <span class="kw">impl </span>Inner {
@@ -1514,6 +1583,10 @@
     }
 
     <span class="doccomment">/// The server HTTP handler to do HTTP upgrades.
+    ///
+    /// This handler runs while doing the connection upgrade handshake.  Once the connection
+    /// is upgraded it sends the stream to the relay server which takes it over.  After
+    /// having sent off the connection this handler returns.
     </span><span class="kw">async fn </span>relay_connection_handler(<span class="kw-2">&amp;</span><span class="self">self</span>, protocol: Protocol, upgraded: Upgraded) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="macro">debug!</span>(<span class="question-mark">?</span>protocol, <span class="string">"relay_connection upgraded"</span>);
         <span class="kw">let </span>(io, read_buf) = downcast_upgrade(upgraded)<span class="question-mark">?</span>;
@@ -1567,6 +1640,7 @@
             stream: io,
             write_timeout: <span class="self">self</span>.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
+            rate_limit: <span class="self">self</span>.rate_limit,
             server_channel: <span class="self">self</span>.server_channel.clone(),
         };
         <span class="macro">trace!</span>(<span class="string">"accept: create client"</span>);
@@ -1582,7 +1656,7 @@
 
 <span class="doccomment">/// TLS Certificate Authority acceptor.
 </span><span class="attr">#[derive(Clone, derive_more::Debug)]
-</span><span class="kw">pub enum </span>TlsAcceptor {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>TlsAcceptor {
     <span class="doccomment">/// Uses Let's Encrypt as the Certificate Authority. This is used in production.
     </span>LetsEncrypt(<span class="attr">#[debug(<span class="string">"tokio_rustls_acme::AcmeAcceptor"</span>)] </span>AcmeAcceptor),
     <span class="doccomment">/// Manually added tls acceptor. Generally used for tests or for when we've passed in
@@ -1596,12 +1670,14 @@
         headers: HeaderMap,
         server_channel: mpsc::Sender&lt;Message&gt;,
         write_timeout: Duration,
+        rate_limit: <span class="prelude-ty">Option</span>&lt;ClientConnRateLimit&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>(Arc::new(Inner {
             handlers,
             headers,
             server_channel,
             write_timeout,
+            rate_limit,
         }))
     }
 
@@ -1846,7 +1922,11 @@
                         }
                         <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg)) =&gt; {
                             <span class="macro">info!</span>(<span class="string">"got message on {:?}: {msg:?}"</span>, key.public());
-                            <span class="kw">if let </span>ReceivedMessage::ReceivedPacket { source, data } = msg {
+                            <span class="kw">if let </span>ReceivedMessage::ReceivedPacket {
+                                remote_node_id: source,
+                                data,
+                            } = msg
+                            {
                                 received_msg_s
                                     .send((source, data))
                                     .<span class="kw">await
@@ -1963,6 +2043,7 @@
             Default::default(),
             server_task.server_channel.clone(),
             server_task.write_timeout,
+            <span class="prelude-val">None</span>,
         );
 
         <span class="comment">// create client a and connect it to the server
@@ -1993,8 +2074,11 @@
         </span><span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"hello client b!!"</span>);
         client_a.send(public_key_b, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">match </span>client_receiver_b.recv().<span class="kw">await</span><span class="question-mark">? </span>{
-            ReceivedMessage::ReceivedPacket { source, data } =&gt; {
-                <span class="macro">assert_eq!</span>(public_key_a, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } =&gt; {
+                <span class="macro">assert_eq!</span>(public_key_a, remote_node_id);
                 <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>msg[..], data);
             }
             msg =&gt; {
@@ -2006,8 +2090,11 @@
         </span><span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"nice to meet you client a!!"</span>);
         client_b.send(public_key_a, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">match </span>client_receiver_a.recv().<span class="kw">await</span><span class="question-mark">? </span>{
-            ReceivedMessage::ReceivedPacket { source, data } =&gt; {
-                <span class="macro">assert_eq!</span>(public_key_b, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } =&gt; {
+                <span class="macro">assert_eq!</span>(public_key_b, remote_node_id);
                 <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>msg[..], data);
             }
             msg =&gt; {
@@ -2042,6 +2129,7 @@
             Default::default(),
             server_task.server_channel.clone(),
             server_task.write_timeout,
+            <span class="prelude-val">None</span>,
         );
 
         <span class="comment">// create client a and connect it to the server
@@ -2072,8 +2160,11 @@
         </span><span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"hello client b!!"</span>);
         client_a.send(public_key_b, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">match </span>client_receiver_b.recv().<span class="kw">await</span><span class="question-mark">? </span>{
-            ReceivedMessage::ReceivedPacket { source, data } =&gt; {
-                <span class="macro">assert_eq!</span>(public_key_a, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } =&gt; {
+                <span class="macro">assert_eq!</span>(public_key_a, remote_node_id);
                 <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>msg[..], data);
             }
             msg =&gt; {
@@ -2085,8 +2176,11 @@
         </span><span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"nice to meet you client a!!"</span>);
         client_b.send(public_key_a, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">match </span>client_receiver_a.recv().<span class="kw">await</span><span class="question-mark">? </span>{
-            ReceivedMessage::ReceivedPacket { source, data } =&gt; {
-                <span class="macro">assert_eq!</span>(public_key_b, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } =&gt; {
+                <span class="macro">assert_eq!</span>(public_key_b, remote_node_id);
                 <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>msg[..], data);
             }
             msg =&gt; {
@@ -2110,8 +2204,11 @@
         </span><span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"are you still there, b?!"</span>);
         client_a.send(public_key_b, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">match </span>new_client_receiver_b.recv().<span class="kw">await</span><span class="question-mark">? </span>{
-            ReceivedMessage::ReceivedPacket { source, data } =&gt; {
-                <span class="macro">assert_eq!</span>(public_key_a, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } =&gt; {
+                <span class="macro">assert_eq!</span>(public_key_a, remote_node_id);
                 <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>msg[..], data);
             }
             msg =&gt; {
@@ -2123,8 +2220,11 @@
         </span><span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"just had a spot of trouble but I'm back now,a!!"</span>);
         new_client_b.send(public_key_a, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">match </span>client_receiver_a.recv().<span class="kw">await</span><span class="question-mark">? </span>{
-            ReceivedMessage::ReceivedPacket { source, data } =&gt; {
-                <span class="macro">assert_eq!</span>(public_key_b, source);
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } =&gt; {
+                <span class="macro">assert_eq!</span>(public_key_b, remote_node_id);
                 <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>msg[..], data);
             }
             msg =&gt; {

@@ -811,7 +811,34 @@
 <a href="#811" id="811">811</a>
 <a href="#812" id="812">812</a>
 <a href="#813" id="813">813</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used the [`crate::server`] and [`crate::client`].
+<a href="#814" id="814">814</a>
+<a href="#815" id="815">815</a>
+<a href="#816" id="816">816</a>
+<a href="#817" id="817">817</a>
+<a href="#818" id="818">818</a>
+<a href="#819" id="819">819</a>
+<a href="#820" id="820">820</a>
+<a href="#821" id="821">821</a>
+<a href="#822" id="822">822</a>
+<a href="#823" id="823">823</a>
+<a href="#824" id="824">824</a>
+<a href="#825" id="825">825</a>
+<a href="#826" id="826">826</a>
+<a href="#827" id="827">827</a>
+<a href="#828" id="828">828</a>
+</pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
+//!
+//! Protocol flow:
+//!
+//! Login:
+//!  * client connects
+//!  * -&gt; client sends `FrameType::ClientInfo`
+//!
+//!  Steady state:
+//!  * server occasionally sends `FrameType::KeepAlive` (or `FrameType::Ping`)
+//!  * client responds to any `FrameType::Ping` with a `FrameType::Pong`
+//!  * clients sends `FrameType::SendPacket`
+//!  * server then sends `FrameType::RecvPacket` to recipient
 
 </span><span class="kw">use </span>std::time::Duration;
 
@@ -831,7 +858,10 @@
 /// including its on-wire framing overhead)
 </span><span class="kw">pub const </span>MAX_PACKET_SIZE: usize = <span class="number">64 </span>* <span class="number">1024</span>;
 
-<span class="kw">const </span>MAX_FRAME_SIZE: usize = <span class="number">1024 </span>* <span class="number">1024</span>;
+<span class="doccomment">/// The maximum frame size.
+///
+/// This is also the minimum burst size that a rate-limiter has to accept.
+</span><span class="kw">const </span>MAX_FRAME_SIZE: usize = <span class="number">1024 </span>* <span class="number">1024</span>;
 
 <span class="doccomment">/// The Relay magic number, sent in the FrameType::ClientInfo frame upon initial connection.
 </span><span class="kw">const </span>MAGIC: <span class="kw-2">&amp;</span>str = <span class="string">"RELAY🔑"</span>;
@@ -861,21 +891,9 @@
 /// with nodes running earlier protocol versions.
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>PROTOCOL_VERSION: usize = <span class="number">3</span>;
 
-<span class="doccomment">///
-/// Protocol flow:
-///
-/// Login:
-///  * client connects
-///  * -&gt; client sends FrameType::ClientInfo
-///
-///  Steady state:
-///  * server occasionally sends FrameType::KeepAlive (or FrameType::Ping)
-///  * client responds to any FrameType::Ping with a FrameType::Pong
-///  * clients sends FrameType::SendPacket
-///  * server then sends FrameType::RecvPacket to recipient
-
+<span class="doccomment">/// Indicates this IS the client's home node
 </span><span class="kw">const </span>PREFERRED: u8 = <span class="number">1u8</span>;
-<span class="doccomment">/// indicates this is NOT the client's home node
+<span class="doccomment">/// Indicates this IS NOT the client's home node
 </span><span class="kw">const </span>NOT_PREFERRED: u8 = <span class="number">0u8</span>;
 
 <span class="doccomment">/// The one byte frame type at the beginning of the frame
@@ -1013,10 +1031,15 @@
     }
 }
 
-<span class="attr">#[derive(Debug, Default, Clone)]
+<span class="doccomment">/// The protocol for the relay server.
+///
+/// This is a framed protocol, using [`tokio_util::codec`] to turn the streams of bytes into
+/// [`Frame`]s.
+</span><span class="attr">#[derive(Debug, Default, Clone)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>DerpCodec;
 
-<span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
+<span class="doccomment">/// The frames in the [`DerpCodec`].
+</span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>Frame {
     ClientInfo {
         client_public_key: PublicKey,
@@ -1090,6 +1113,13 @@
             Frame::Health { problem } =&gt; problem.len(),
             Frame::Restarting { .. } =&gt; <span class="number">4 </span>+ <span class="number">4</span>,
         }
+    }
+
+    <span class="doccomment">/// Serialized length with frame header.
+    </span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
+    #[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"server"</span>)))]
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>len_with_header(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+        <span class="self">self</span>.len() + HEADER_LEN
     }
 
     <span class="doccomment">/// Tries to decode a frame received over websockets.

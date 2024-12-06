@@ -18,6 +18,7 @@
 <a href="#18" id="18">18</a>
 <a href="#19" id="19">19</a>
 <a href="#20" id="20">20</a>
+<a href="#21" id="21">21</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! This module exports [`looks_like_disco_wrapper`] as the only disco-related relay
 //! functionality.
 //!
@@ -30,6 +31,7 @@
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>KEY_LEN: usize = <span class="number">32</span>;
 
 <span class="kw">const </span>MESSAGE_HEADER_LEN: usize = MAGIC_LEN + KEY_LEN;
+
 <span class="doccomment">/// Reports whether p looks like it's a packet containing an encrypted disco message.
 </span><span class="kw">pub fn </span>looks_like_disco_wrapper(p: <span class="kw-2">&amp;</span>[u8]) -&gt; bool {
     <span class="kw">if </span>p.len() &lt; MESSAGE_HEADER_LEN {

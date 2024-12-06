@@ -340,10 +340,6 @@
 <a href="#340" id="340">340</a>
 <a href="#341" id="341">341</a>
 <a href="#342" id="342">342</a>
-<a href="#343" id="343">343</a>
-<a href="#344" id="344">344</a>
-<a href="#345" id="345">345</a>
-<a href="#346" id="346">346</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The main event loop for the relay server.
 //!
 //! based on tailscale/derp/derp_server.go
@@ -529,12 +525,8 @@
             }
             Message::CreateClient(client_builder) =&gt; {
                 <span class="macro">inc!</span>(Metrics, accepts);
-
-                <span class="macro">trace!</span>(
-                    node_id = client_builder.node_id.fmt_short(),
-                    <span class="string">"create client"
-                </span>);
                 <span class="kw">let </span>node_id = client_builder.node_id;
+                <span class="macro">trace!</span>(node_id = node_id.fmt_short(), <span class="string">"create client"</span>);
 
                 <span class="comment">// build and register client, starting up read &amp; write loops for the client
                 // connection
@@ -618,6 +610,7 @@
                 stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
                 write_timeout: Duration::from_secs(<span class="number">1</span>),
                 channel_capacity: <span class="number">10</span>,
+                rate_limit: <span class="prelude-val">None</span>,
                 server_channel,
             },
             Framed::new(test_io, DerpCodec),
@@ -657,8 +650,7 @@
 
         <span class="comment">// write message from b to a
         </span><span class="kw">let </span>msg = <span class="string">b"hello world!"</span>;
-        <span class="kw">crate</span>::client::conn::send_packet(<span class="kw-2">&amp;mut </span>b_io, <span class="kw-2">&amp;</span><span class="prelude-val">None</span>, node_id_a, Bytes::from_static(msg))
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">crate</span>::client::conn::send_packet(<span class="kw-2">&amp;mut </span>b_io, node_id_a, Bytes::from_static(msg)).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// get message on a's reader
         </span><span class="kw">let </span>frame = recv_frame(FrameType::RecvPacket, <span class="kw-2">&amp;mut </span>a_io).<span class="kw">await</span><span class="question-mark">?</span>;

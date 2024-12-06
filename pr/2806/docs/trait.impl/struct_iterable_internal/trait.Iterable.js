@@ -1,7 +1,6 @@
 (function() {var implementors = {
-"iroh":[["impl Iterable for <a class=\"struct\" href=\"iroh/metrics/struct.Metrics.html\" title=\"struct iroh::metrics::Metrics\">Metrics</a>"]],
+"iroh":[["impl Iterable for <a class=\"struct\" href=\"iroh/metrics/struct.MagicsockMetrics.html\" title=\"struct iroh::metrics::MagicsockMetrics\">Metrics</a>"]],
 "iroh_dns_server":[["impl Iterable for <a class=\"struct\" href=\"iroh_dns_server/metrics/struct.Metrics.html\" title=\"struct iroh_dns_server::metrics::Metrics\">Metrics</a>"]],
-"iroh_net":[["impl Iterable for <a class=\"struct\" href=\"iroh_net/metrics/struct.MagicsockMetrics.html\" title=\"struct iroh_net::metrics::MagicsockMetrics\">Metrics</a>"],["impl Iterable for <a class=\"struct\" href=\"iroh_net/netcheck/struct.Metrics.html\" title=\"struct iroh_net::netcheck::Metrics\">Metrics</a>"]],
-"iroh_relay":[["impl Iterable for <a class=\"struct\" href=\"iroh_relay/server/struct.Metrics.html\" title=\"struct iroh_relay::server::Metrics\">Metrics</a>"],["impl Iterable for <a class=\"struct\" href=\"iroh_relay/server/struct.StunMetrics.html\" title=\"struct iroh_relay::server::StunMetrics\">StunMetrics</a>"]],
-"portmapper":[["impl Iterable for <a class=\"struct\" href=\"portmapper/struct.Metrics.html\" title=\"struct portmapper::Metrics\">Metrics</a>"]]
+"iroh_net_report":[["impl Iterable for <a class=\"struct\" href=\"iroh_net_report/struct.Metrics.html\" title=\"struct iroh_net_report::Metrics\">Metrics</a>"]],
+"iroh_relay":[["impl Iterable for <a class=\"struct\" href=\"iroh_relay/server/struct.Metrics.html\" title=\"struct iroh_relay::server::Metrics\">Metrics</a>"],["impl Iterable for <a class=\"struct\" href=\"iroh_relay/server/struct.StunMetrics.html\" title=\"struct iroh_relay::server::StunMetrics\">StunMetrics</a>"]]
 };if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

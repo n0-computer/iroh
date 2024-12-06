@@ -129,6 +129,11 @@
 <a href="#129" id="129">129</a>
 <a href="#130" id="130">130</a>
 <a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The main server which combines the DNS and HTTP(S) servers.
 
 </span><span class="kw">use </span>anyhow::Result;
@@ -145,7 +150,11 @@
 
 <span class="doccomment">/// Spawn the server and run until the `Ctrl-C` signal is received, then shutdown.
 </span><span class="kw">pub async fn </span>run_with_config_until_ctrl_c(config: Config) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-    <span class="kw">let </span><span class="kw-2">mut </span>store = ZoneStore::persistent(Config::signed_packet_store_path()<span class="question-mark">?</span>)<span class="question-mark">?</span>;
+    <span class="kw">let </span>zone_store_options = config.zone_store.clone().unwrap_or_default();
+    <span class="kw">let </span><span class="kw-2">mut </span>store = ZoneStore::persistent(
+        Config::signed_packet_store_path()<span class="question-mark">?</span>,
+        zone_store_options.into(),
+    )<span class="question-mark">?</span>;
     <span class="kw">if let </span><span class="prelude-val">Some</span>(bootstrap) = config.mainline_enabled() {
         <span class="macro">info!</span>(<span class="string">"mainline fallback enabled"</span>);
         store = store.with_mainline_fallback(bootstrap);
@@ -227,14 +236,15 @@
     /// HTTP server.
     </span><span class="attr">#[cfg(test)]
     </span><span class="kw">pub async fn </span>spawn_for_tests() -&gt; <span class="prelude-ty">Result</span>&lt;(<span class="self">Self</span>, std::net::SocketAddr, url::Url)&gt; {
-        <span class="self">Self</span>::spawn_for_tests_with_mainline(<span class="prelude-val">None</span>).<span class="kw">await
+        <span class="self">Self</span>::spawn_for_tests_with_options(<span class="prelude-val">None</span>, <span class="prelude-val">None</span>).<span class="kw">await
     </span>}
 
     <span class="doccomment">/// Spawn a server suitable for testing, while optionally enabling mainline with custom
     /// bootstrap addresses.
     </span><span class="attr">#[cfg(test)]
-    </span><span class="kw">pub async fn </span>spawn_for_tests_with_mainline(
+    </span><span class="kw">pub async fn </span>spawn_for_tests_with_options(
         mainline: <span class="prelude-ty">Option</span>&lt;<span class="kw">crate</span>::config::BootstrapOption&gt;,
+        options: <span class="prelude-ty">Option</span>&lt;<span class="kw">crate</span>::store::ZoneStoreOptions&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(<span class="self">Self</span>, std::net::SocketAddr, url::Url)&gt; {
         <span class="kw">use </span>std::net::{IpAddr, Ipv4Addr};
 
@@ -248,7 +258,7 @@
         config.https = <span class="prelude-val">None</span>;
         config.metrics = <span class="prelude-val">Some</span>(MetricsConfig::disabled());
 
-        <span class="kw">let </span><span class="kw-2">mut </span>store = ZoneStore::in_memory()<span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>store = ZoneStore::in_memory(options.unwrap_or_default())<span class="question-mark">?</span>;
         <span class="kw">if let </span><span class="prelude-val">Some</span>(bootstrap) = mainline {
             <span class="macro">info!</span>(<span class="string">"mainline fallback enabled"</span>);
             store = store.with_mainline_fallback(bootstrap);
