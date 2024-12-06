@@ -169,7 +169,7 @@ impl<T: Clone + Eq> Watchable<T> {
     /// Watchers are only notified if the value is changed.
     pub(crate) fn set(&self, value: T) -> Option<T> {
         let mut state = self.shared.state.write().unwrap();
-        let changed = state.value.as_ref() == Some(&value);
+        let changed = state.value.as_ref() != Some(&value);
         let old = std::mem::replace(&mut state.value, Some(value));
         state.epoch += 1;
         drop(state);
