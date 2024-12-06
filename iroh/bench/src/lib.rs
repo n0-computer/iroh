@@ -21,7 +21,7 @@ pub mod s2n;
 pub mod stats;
 
 #[derive(Parser, Debug, Clone, Copy)]
-#[clap(name = "iroh-net-bench")]
+#[clap(name = "iroh-bench")]
 pub enum Commands {
     Iroh(Opt),
     #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
