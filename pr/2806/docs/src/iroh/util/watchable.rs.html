@@ -637,7 +637,7 @@
     /// Watchers are only notified if the value is changed.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>set(<span class="kw-2">&amp;</span><span class="self">self</span>, value: T) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>state = <span class="self">self</span>.shared.state.write().unwrap();
-        <span class="kw">let </span>changed = state.value.as_ref() == <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>value);
+        <span class="kw">let </span>changed = state.value.as_ref() != <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>value);
         <span class="kw">let </span>old = std::mem::replace(<span class="kw-2">&amp;mut </span>state.value, <span class="prelude-val">Some</span>(value));
         state.epoch += <span class="number">1</span>;
         drop(state);
