@@ -159,8 +159,8 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 [iroh-blobs]: https://github.com/n0-computer/iroh-blobs
 [iroh-gossip]: https://github.com/n0-computer/iroh-gossip
 [iroh-docs]: https://github.com/n0-computer/iroh-docs
-[iroh-willow]: github.com/n0-computer/iroh-willow
-[iroh-doctor]: github.com/n0-computer/iroh-doctor
+[iroh-willow]: https://github.com/n0-computer/iroh-willow
+[iroh-doctor]: https://github.com/n0-computer/iroh-doctor
 [willow protocol]: https://willowprotocol.org
 [iroh-ffi]: https://github.com/n0-computer/iroh-ffi
 [iroh-yt-video]: https://www.youtube.com/watch?v=RwAt36Xe3UI_
