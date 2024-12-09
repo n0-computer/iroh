@@ -8,9 +8,8 @@ use std::{
 };
 
 use futures_lite::stream::Stream;
-use iroh_base::{key::NodeId, node_addr::NodeAddr};
+use iroh_base::{key::NodeId, node_addr::NodeAddr, relay_map::RelayUrl};
 use iroh_metrics::inc;
-use iroh_relay::RelayUrl;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;

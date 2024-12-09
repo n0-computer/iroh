@@ -37,10 +37,10 @@ use futures_util::{stream::BoxStream, task::AtomicWaker};
 use iroh_base::{
     key::NodeId,
     node_addr::{AddrInfo, NodeAddr},
-    relay_map::RelayMap,
+    relay_map::{RelayMap, RelayUrl},
 };
 use iroh_metrics::{inc, inc_by};
-use iroh_relay::{protos::stun, RelayUrl};
+use iroh_relay::protos::stun;
 use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
