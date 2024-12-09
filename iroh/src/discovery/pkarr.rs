@@ -44,10 +44,11 @@
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
 //! [`DhtDiscovery`]: dht::DhtDiscovery
 
-use std::sync::Arc;
+use std::{collections::BTreeSet, net::SocketAddr, sync::Arc};
 
 use anyhow::{anyhow, bail, Result};
 use futures_util::stream::BoxStream;
+use iroh_relay::RelayUrl;
 use pkarr::SignedPacket;
 use tokio::{
     task::JoinHandle,
@@ -62,7 +63,7 @@ use crate::{
     dns::node_info::NodeInfo,
     endpoint::force_staging_infra,
     key::SecretKey,
-    AddrInfo, Endpoint, NodeId,
+    Endpoint, NodeId,
 };
 
 #[cfg(feature = "discovery-pkarr-dht")]
@@ -195,20 +196,15 @@ impl PkarrPublisher {
     /// Publishes [`AddrInfo`] about this node to a pkarr relay.
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
-    pub fn update_addr_info(&self, info: &AddrInfo) {
-        let (relay_url, direct_addresses) = if let Some(relay_url) = info.relay_url.as_ref() {
-            (Some(relay_url.clone().into()), Default::default())
-        } else {
-            (None, info.direct_addresses.clone())
-        };
-        let info = NodeInfo::new(self.node_id, relay_url, direct_addresses);
+    pub fn update_addr_info(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
+        let info = NodeInfo::new(self.node_id, url.cloned().map(Into::into), addrs.clone());
         self.watchable.update(Some(info)).ok();
     }
 }
 
 impl Discovery for PkarrPublisher {
-    fn publish(&self, info: &AddrInfo) {
-        self.update_addr_info(info);
+    fn publish(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
+        self.update_addr_info(url, addrs);
     }
 }
 
@@ -343,10 +339,9 @@ impl Discovery for PkarrResolver {
             let signed_packet = pkarr_client.resolve(node_id).await?;
             let info = NodeInfo::from_pkarr_signed_packet(&signed_packet)?;
             let item = DiscoveryItem {
-                node_id,
+                node_addr: info.into(),
                 provenance: "pkarr",
                 last_updated: None,
-                addr_info: info.into(),
             };
             Ok(item)
         };
