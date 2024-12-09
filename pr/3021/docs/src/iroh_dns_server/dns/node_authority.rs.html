@@ -208,14 +208,14 @@
 
 <span class="kw">use </span>anyhow::{bail, ensure, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>async_trait::async_trait;
-<span class="kw">use </span>hickory_proto::{
-    op::ResponseCode,
-    rr::{LowerName, Name, RecordType},
-};
 <span class="kw">use </span>hickory_server::{
     authority::{
         AuthLookup, Authority, LookupControlFlow, LookupError, LookupOptions, LookupRecords,
         MessageRequest, UpdateResult, ZoneType,
+    },
+    proto::{
+        op::ResponseCode,
+        rr::{LowerName, Name, RecordType},
     },
     server::RequestInfo,
     store::in_memory::InMemoryAuthority,

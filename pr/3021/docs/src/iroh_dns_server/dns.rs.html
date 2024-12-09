@@ -269,6 +269,7 @@
 <a href="#269" id="269">269</a>
 <a href="#270" id="270">270</a>
 <a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implementation of a DNS name server for iroh node announces
 
 </span><span class="kw">use </span>std::{
@@ -292,6 +293,7 @@
             LowerName, Name, RData, Record, RecordSet, RecordType, RrKey,
         },
         serialize::{binary::BinEncoder, txt::RDataParser},
+        xfer::Protocol,
     },
     server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
     store::in_memory::InMemoryAuthority,
@@ -436,8 +438,8 @@
     ) -&gt; ResponseInfo {
         <span class="macro">inc!</span>(Metrics, dns_requests);
         <span class="kw">match </span>request.protocol() {
-            hickory_proto::xfer::Protocol::Udp =&gt; <span class="macro">inc!</span>(Metrics, dns_requests_udp),
-            hickory_proto::xfer::Protocol::Https =&gt; <span class="macro">inc!</span>(Metrics, dns_requests_https),
+            Protocol::Udp =&gt; <span class="macro">inc!</span>(Metrics, dns_requests_udp),
+            Protocol::Https =&gt; <span class="macro">inc!</span>(Metrics, dns_requests_https),
             <span class="kw">_ </span>=&gt; {}
         }
         <span class="macro">debug!</span>(protocol=%request.protocol(), query=%request.query(), <span class="string">"incoming DNS request"</span>);

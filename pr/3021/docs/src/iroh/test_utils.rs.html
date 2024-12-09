@@ -487,6 +487,9 @@
 <a href="#487" id="487">487</a>
 <a href="#488" id="488">488</a>
 <a href="#489" id="489">489</a>
+<a href="#490" id="490">490</a>
+<a href="#491" id="491">491</a>
+<a href="#492" id="492">492</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
@@ -681,11 +684,14 @@
 
     <span class="kw">use </span>anyhow::{ensure, <span class="prelude-ty">Result</span>};
     <span class="kw">use </span>futures_lite::future::Boxed <span class="kw">as </span>BoxFuture;
-    <span class="kw">use </span>hickory_proto::{
-        op::{header::MessageType, Message},
-        serialize::binary::BinDecodable,
+    <span class="kw">use </span>hickory_resolver::{
+        config::NameServerConfig,
+        proto::{
+            op::{header::MessageType, Message},
+            serialize::binary::BinDecodable,
+        },
+        TokioResolver,
     };
-    <span class="kw">use </span>hickory_resolver::{config::NameServerConfig, TokioResolver};
     <span class="kw">use </span>tokio::{net::UdpSocket, sync::oneshot};
     <span class="kw">use </span>tracing::{debug, error, warn};
 
@@ -743,7 +749,7 @@
     </span><span class="kw">pub fn </span>create_dns_resolver(nameserver: SocketAddr) -&gt; <span class="prelude-ty">Result</span>&lt;TokioResolver&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>config = hickory_resolver::config::ResolverConfig::new();
         <span class="kw">let </span>nameserver_config =
-            NameServerConfig::new(nameserver, hickory_proto::xfer::Protocol::Udp);
+            NameServerConfig::new(nameserver, hickory_resolver::proto::xfer::Protocol::Udp);
         config.add_name_server(nameserver_config);
         <span class="kw">let </span>resolver = hickory_resolver::Resolver::tokio(config, Default::default());
         <span class="prelude-val">Ok</span>(resolver)
@@ -943,8 +949,8 @@
 
         <span class="kw">pub fn </span>resolve_dns(
             <span class="kw-2">&amp;</span><span class="self">self</span>,
-            query: <span class="kw-2">&amp;</span>hickory_proto::op::Message,
-            reply: <span class="kw-2">&amp;mut </span>hickory_proto::op::Message,
+            query: <span class="kw-2">&amp;</span>hickory_resolver::proto::op::Message,
+            reply: <span class="kw-2">&amp;mut </span>hickory_resolver::proto::op::Message,
             ttl: u32,
         ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
             <span class="kw">for </span>query <span class="kw">in </span>query.queries() {
@@ -967,8 +973,8 @@
     <span class="kw">impl </span>QueryHandler <span class="kw">for </span>State {
         <span class="kw">fn </span>resolve(
             <span class="kw-2">&amp;</span><span class="self">self</span>,
-            query: <span class="kw-2">&amp;</span>hickory_proto::op::Message,
-            reply: <span class="kw-2">&amp;mut </span>hickory_proto::op::Message,
+            query: <span class="kw-2">&amp;</span>hickory_resolver::proto::op::Message,
+            reply: <span class="kw-2">&amp;mut </span>hickory_resolver::proto::op::Message,
         ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;()&gt;&gt; + Send {
             <span class="kw">const </span>TTL: u32 = <span class="number">30</span>;
             <span class="kw">let </span>res = <span class="self">self</span>.resolve_dns(query, reply, TTL);

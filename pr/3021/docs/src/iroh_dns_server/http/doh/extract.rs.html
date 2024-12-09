@@ -267,11 +267,11 @@
     http::Request,
 };
 <span class="kw">use </span>bytes::Bytes;
-<span class="kw">use </span>hickory_proto::xfer::Protocol;
 <span class="kw">use </span>hickory_server::{
     authority::MessageRequest,
     proto::{
         serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder},
+        xfer::Protocol,
         {<span class="self">self</span>},
     },
     server::Request <span class="kw">as </span>DNSRequest,

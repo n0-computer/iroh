@@ -303,11 +303,11 @@
     };
 
     <span class="kw">use </span>anyhow::Result;
-    <span class="kw">use </span>hickory_proto::xfer::Protocol;
     <span class="kw">use </span>hickory_resolver::{
         config::{NameServerConfig, ResolverConfig},
         Resolver,
     };
+    <span class="kw">use </span>hickory_server::proto::xfer::Protocol;
     <span class="kw">use </span>iroh::{
         discovery::pkarr::PkarrRelayClient,
         dns::{node_info::NodeInfo, DnsResolver, ResolverExt},
@@ -394,7 +394,7 @@
         })<span class="question-mark">?</span>;
         pkarr_client.as_async().publish(<span class="kw-2">&amp;</span>signed_packet).<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">use </span>hickory_proto::rr::Name;
+        <span class="kw">use </span>hickory_server::proto::rr::Name;
         <span class="kw">let </span>pubkey = signed_packet.public_key().to_z32();
         <span class="kw">let </span>resolver = test_resolver(nameserver);
 
