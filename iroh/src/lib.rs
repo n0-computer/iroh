@@ -234,7 +234,6 @@
 #![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 
 pub mod defaults;
-pub mod dialer;
 mod disco;
 pub mod discovery;
 pub mod dns;
