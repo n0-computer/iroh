@@ -1,15 +1,14 @@
 //! A static discovery implementation that allows adding info for nodes manually.
 use std::{
-    collections::{btree_map::Entry, BTreeMap},
+    collections::{btree_map::Entry, BTreeMap, BTreeSet},
+    net::SocketAddr,
     sync::{Arc, RwLock},
     time::SystemTime,
 };
 
 use futures_lite::stream::{self, StreamExt};
-use iroh_base::{
-    key::NodeId,
-    node_addr::{AddrInfo, NodeAddr},
-};
+use iroh_base::{key::NodeId, node_addr::NodeAddr};
+use iroh_relay::RelayUrl;
 
 use super::{Discovery, DiscoveryItem};
 
@@ -22,7 +21,8 @@ pub struct StaticProvider {
 
 #[derive(Debug)]
 struct NodeInfo {
-    info: AddrInfo,
+    relay_url: Option<RelayUrl>,
+    direct_addresses: BTreeSet<SocketAddr>,
     last_updated: SystemTime,
 }
 
@@ -76,13 +76,15 @@ impl StaticProvider {
         let previous = guard.insert(
             info.node_id,
             NodeInfo {
-                info: info.info,
+                relay_url: info.relay_url,
+                direct_addresses: info.direct_addresses,
                 last_updated,
             },
         );
         previous.map(|x| NodeAddr {
             node_id: info.node_id,
-            info: x.info,
+            relay_url: x.relay_url,
+            direct_addresses: x.direct_addresses,
         })
     }
 
@@ -96,16 +98,14 @@ impl StaticProvider {
         match guard.entry(info.node_id) {
             Entry::Occupied(mut entry) => {
                 let existing = entry.get_mut();
-                existing
-                    .info
-                    .direct_addresses
-                    .extend(info.info.direct_addresses);
-                existing.info.relay_url = info.info.relay_url;
+                existing.direct_addresses.extend(info.direct_addresses);
+                existing.relay_url = info.relay_url;
                 existing.last_updated = last_updated;
             }
             Entry::Vacant(entry) => {
                 entry.insert(NodeInfo {
-                    info: info.info,
+                    relay_url: info.relay_url,
+                    direct_addresses: info.direct_addresses,
                     last_updated,
                 });
             }
@@ -115,23 +115,28 @@ impl StaticProvider {
     /// Get node info for the given node id.
     pub fn get_node_addr(&self, node_id: NodeId) -> Option<NodeAddr> {
         let guard = self.nodes.read().unwrap();
-        let info = guard.get(&node_id).map(|x| x.info.clone())?;
-        Some(NodeAddr { node_id, info })
+        let info = guard.get(&node_id)?;
+        Some(NodeAddr {
+            node_id,
+            relay_url: info.relay_url.clone(),
+            direct_addresses: info.direct_addresses.clone(),
+        })
     }
 
     /// Remove node info for the given node id.
     pub fn remove_node_addr(&self, node_id: NodeId) -> Option<NodeAddr> {
         let mut guard = self.nodes.write().unwrap();
-        let res = guard.remove(&node_id)?;
+        let info = guard.remove(&node_id)?;
         Some(NodeAddr {
             node_id,
-            info: res.info,
+            relay_url: info.relay_url,
+            direct_addresses: info.direct_addresses,
         })
     }
 }
 
 impl Discovery for StaticProvider {
-    fn publish(&self, _info: &AddrInfo) {}
+    fn publish(&self, _url: Option<&RelayUrl>, _addrs: &BTreeSet<SocketAddr>) {}
 
     fn resolve(
         &self,
@@ -143,7 +148,11 @@ impl Discovery for StaticProvider {
         match info {
             Some(addr_info) => {
                 let item = DiscoveryItem {
-                    node_id,
+                    node_addr: NodeAddr {
+                        node_id,
+                        relay_url: addr_info.relay_url.clone(),
+                        direct_addresses: addr_info.direct_addresses.clone(),
+                    },
                     provenance: Self::PROVENANCE,
                     last_updated: Some(
                         addr_info
@@ -152,7 +161,6 @@ impl Discovery for StaticProvider {
                             .expect("time drift")
                             .as_micros() as u64,
                     ),
-                    addr_info: addr_info.info.clone(),
                 };
                 Some(stream::iter(Some(Ok(item))).boxed())
             }
