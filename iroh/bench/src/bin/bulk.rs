@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use anyhow::Result;
 use clap::Parser;
 #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
-use iroh_net_bench::quinn;
-use iroh_net_bench::{configure_tracing_subscriber, iroh, rt, s2n, Commands, Opt};
+use iroh_bench::quinn;
+use iroh_bench::{configure_tracing_subscriber, iroh, rt, s2n, Commands, Opt};
 
 fn main() {
     let cmd = Commands::parse();
@@ -135,11 +135,17 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
 
 #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
 pub fn run_quinn(opt: Opt) -> Result<()> {
+    use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
+
     let server_span = tracing::error_span!("server");
     let runtime = rt();
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+    let cert = CertificateDer::from(cert.cert);
+
     let (server_addr, endpoint) = {
         let _guard = server_span.enter();
-        quinn::server_endpoint(&runtime, &opt)
+        quinn::server_endpoint(&runtime, cert.clone(), key.into(), &opt)
     };
 
     let server_thread = std::thread::spawn(move || {
@@ -151,10 +157,11 @@ pub fn run_quinn(opt: Opt) -> Result<()> {
 
     let mut handles = Vec::new();
     for id in 0..opt.clients {
+        let cert = cert.clone();
         handles.push(std::thread::spawn(move || {
             let _guard = tracing::error_span!("client", id).entered();
             let runtime = rt();
-            match runtime.block_on(quinn::client(server_addr, opt)) {
+            match runtime.block_on(quinn::client(server_addr, cert, opt)) {
                 Ok(stats) => Ok(stats),
                 Err(e) => {
                     eprintln!("client failed: {e:#}");
