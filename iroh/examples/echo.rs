@@ -10,8 +10,9 @@ use anyhow::Result;
 use futures_lite::future::Boxed as BoxedFuture;
 use iroh::{
     endpoint::Connecting,
+    node_addr::NodeAddr,
     protocol::{ProtocolHandler, Router},
-    Endpoint, NodeAddr,
+    Endpoint,
 };
 
 /// Each protocol is identified by its ALPN string.

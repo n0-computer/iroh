@@ -116,12 +116,12 @@ use std::{collections::BTreeSet, net::SocketAddr, time::Duration};
 
 use anyhow::{anyhow, ensure, Result};
 use futures_lite::stream::{Boxed as BoxStream, StreamExt};
-use iroh_base::node_addr::NodeAddr;
+use iroh_base::{key::NodeId, node_addr::NodeAddr};
 use iroh_relay::RelayUrl;
 use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{debug, error_span, warn, Instrument};
 
-use crate::{Endpoint, NodeId};
+use crate::Endpoint;
 
 pub mod dns;
 
@@ -738,7 +738,7 @@ mod test_dns_pkarr {
     use std::time::Duration;
 
     use anyhow::Result;
-    use iroh_base::key::SecretKey;
+    use iroh_base::{key::SecretKey, node_addr::NodeAddr, relay_map::RelayMap};
     use tokio_util::task::AbortOnDropHandle;
 
     use crate::{
@@ -749,7 +749,7 @@ mod test_dns_pkarr {
             pkarr_dns_state::State,
             run_relay_server, DnsPkarrServer,
         },
-        Endpoint, NodeAddr, RelayMap, RelayMode,
+        Endpoint, RelayMode,
     };
 
     const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);

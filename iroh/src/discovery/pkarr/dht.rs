@@ -29,8 +29,8 @@ use crate::{
         Discovery, DiscoveryItem,
     },
     dns::node_info::NodeInfo,
-    key::SecretKey,
-    Endpoint, NodeId,
+    key::{NodeId, SecretKey},
+    Endpoint,
 };
 
 /// Republish delay for the DHT.

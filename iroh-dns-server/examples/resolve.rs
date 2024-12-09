@@ -9,7 +9,7 @@ use hickory_resolver::{
 use iroh::{
     discovery::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
     dns::{node_info::TxtAttrs, DnsResolver},
-    NodeId,
+    key::NodeId,
 };
 
 const LOCALHOST_DNS: &str = "127.0.0.1:5300";

@@ -2,12 +2,13 @@
 
 use anyhow::Result;
 use futures_lite::stream::Boxed as BoxStream;
+use iroh_base::key::NodeId;
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
     dns::ResolverExt,
     endpoint::force_staging_infra,
-    Endpoint, NodeId,
+    Endpoint,
 };
 
 /// The n0 testing DNS node origin, for production.

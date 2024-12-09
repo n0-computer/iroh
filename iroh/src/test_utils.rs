@@ -4,12 +4,14 @@ use std::net::Ipv4Addr;
 use anyhow::Result;
 pub use dns_and_pkarr_servers::DnsPkarrServer;
 pub use dns_server::create_dns_resolver;
-use iroh_relay::server::{
-    CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig,
+use iroh_base::relay_map::{RelayMap, RelayNode};
+use iroh_relay::{
+    server::{CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
+    RelayUrl,
 };
 use tokio::sync::oneshot;
 
-use crate::{defaults::DEFAULT_STUN_PORT, RelayMap, RelayNode, RelayUrl};
+use crate::defaults::DEFAULT_STUN_PORT;
 
 /// A drop guard to clean up test infrastructure.
 ///
@@ -380,13 +382,13 @@ pub(crate) mod pkarr_dns_state {
     };
 
     use anyhow::{bail, Result};
+    use iroh_base::key::NodeId;
     use parking_lot::{Mutex, MutexGuard};
     use pkarr::SignedPacket;
 
     use crate::{
         dns::node_info::{node_id_from_hickory_name, NodeInfo},
         test_utils::dns_server::QueryHandler,
-        NodeId,
     };
 
     #[derive(Debug, Clone)]

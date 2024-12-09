@@ -9,8 +9,12 @@ use clap::{Parser, Subcommand};
 use futures_lite::StreamExt;
 use indicatif::HumanBytes;
 use iroh::{
-    endpoint::ConnectionError, key::SecretKey, ticket::NodeTicket, Endpoint, NodeAddr, RelayMap,
-    RelayMode, RelayUrl,
+    endpoint::ConnectionError,
+    key::SecretKey,
+    node_addr::NodeAddr,
+    relay_map::{RelayMap, RelayUrl},
+    ticket::NodeTicket,
+    Endpoint, RelayMode,
 };
 use tracing::info;
 // Transfer ALPN that we are using to communicate over the `Endpoint`

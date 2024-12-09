@@ -56,7 +56,8 @@ use watchable::Watchable;
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
-    Endpoint, NodeId,
+    key::NodeId,
+    Endpoint,
 };
 
 /// The n0 local swarm node discovery name

@@ -5,6 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use iroh_base::{key::NodeId, node_addr::NodeAddr};
 use iroh_metrics::inc;
 use iroh_relay::{protos::stun, RelayUrl};
 use netwatch::ip::is_unicast_link_local;
@@ -24,7 +25,6 @@ use crate::{
     key::PublicKey,
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
     util::relay_only_mode,
-    NodeAddr, NodeId,
 };
 
 /// Number of addresses that are not active that we keep around per node.
