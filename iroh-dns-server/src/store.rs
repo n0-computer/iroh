@@ -3,7 +3,7 @@
 use std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time::Duration};
 
 use anyhow::Result;
-use hickory_proto::rr::{Name, RecordSet, RecordType, RrKey};
+use hickory_server::proto::rr::{Name, RecordSet, RecordType, RrKey};
 use iroh_metrics::inc;
 use lru::LruCache;
 use pkarr::{mainline::dht::DhtSettings, PkarrClient, SignedPacket};

@@ -15,7 +15,7 @@ use bytes::Bytes;
 use conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMessage};
 use futures_lite::future::Boxed as BoxFuture;
 use futures_util::StreamExt;
-use hickory_resolver::TokioAsyncResolver as DnsResolver;
+use hickory_resolver::TokioResolver as DnsResolver;
 use http_body_util::Empty;
 use hyper::{
     body::Incoming,

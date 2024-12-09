@@ -26,4 +26,5 @@ license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 ignore = [
     "RUSTSEC-2024-0370", # unmaintained, no upgrade available
     "RUSTSEC-2024-0384", # unmaintained, no upgrade available
+    "RUSTSEC-2024-0421", # dependency from swarm-discovery, see https://github.com/rkuhn/swarm-discovery/issues/9
 ]

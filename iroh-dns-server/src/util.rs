@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use hickory_proto::{
+use hickory_server::proto::{
     op::Message,
     rr::{
         domain::{IntoLabel, Label},
@@ -146,7 +146,7 @@ pub fn record_set_append_origin(
     serial: u32,
 ) -> Result<RecordSet> {
     let new_name = input.name().clone().append_name(origin)?;
-    let mut output = RecordSet::new(&new_name, input.record_type(), serial);
+    let mut output = RecordSet::new(new_name.clone(), input.record_type(), serial);
     // TODO: less clones
     for record in input.records_without_rrsigs() {
         let mut record = record.clone();
