@@ -14,8 +14,7 @@ use std::{
 
 use futures_lite::{stream::Boxed, StreamExt};
 use genawaiter::sync::{Co, Gen};
-use iroh_base::node_addr::NodeAddr;
-use iroh_relay::RelayUrl;
+use iroh_base::{node_addr::NodeAddr, relay_map::RelayUrl};
 use pkarr::{
     PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
     RelaySettings, SignedPacket,
@@ -405,7 +404,7 @@ impl Discovery for DhtDiscovery {
 mod tests {
     use std::collections::BTreeSet;
 
-    use iroh_base::node_addr::RelayUrl;
+    use iroh_base::relay_map::RelayUrl;
     use pkarr::mainline::dht::DhtSettings;
     use testresult::TestResult;
 

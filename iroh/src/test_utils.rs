@@ -4,10 +4,9 @@ use std::net::Ipv4Addr;
 use anyhow::Result;
 pub use dns_and_pkarr_servers::DnsPkarrServer;
 pub use dns_server::create_dns_resolver;
-use iroh_base::relay_map::{RelayMap, RelayNode};
-use iroh_relay::{
-    server::{CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
-    RelayUrl,
+use iroh_base::relay_map::{RelayMap, RelayNode, RelayUrl};
+use iroh_relay::server::{
+    CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig,
 };
 use tokio::sync::oneshot;
 

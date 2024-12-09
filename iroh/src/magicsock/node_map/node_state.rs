@@ -5,9 +5,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use iroh_base::{key::NodeId, node_addr::NodeAddr};
+use iroh_base::{key::NodeId, node_addr::NodeAddr, relay_map::RelayUrl};
 use iroh_metrics::inc;
-use iroh_relay::{protos::stun, RelayUrl};
+use iroh_relay::protos::stun;
 use netwatch::ip::is_unicast_link_local;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;

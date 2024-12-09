@@ -10,8 +10,7 @@ use std::net::SocketAddr;
 use anyhow::Context;
 use clap::Parser;
 use futures_lite::StreamExt;
-use iroh::{key::SecretKey, node_addr::NodeAddr, Endpoint, RelayMode};
-use iroh_relay::RelayUrl;
+use iroh::{key::SecretKey, node_addr::NodeAddr, relay_map::RelayUrl, Endpoint, RelayMode};
 use tracing::info;
 
 // An example ALPN that we are using to communicate over the `Endpoint`

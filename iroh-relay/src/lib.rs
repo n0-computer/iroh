@@ -40,7 +40,6 @@ pub mod server;
 #[cfg(test)]
 mod dns;
 
-pub use iroh_base::node_addr::RelayUrl;
 pub use protos::relay::MAX_PACKET_SIZE;
 
 pub use self::client::{

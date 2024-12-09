@@ -7,8 +7,7 @@ use std::{
 };
 
 use futures_lite::stream::{self, StreamExt};
-use iroh_base::{key::NodeId, node_addr::NodeAddr};
-use iroh_relay::RelayUrl;
+use iroh_base::{key::NodeId, node_addr::NodeAddr, relay_map::RelayUrl};
 
 use super::{Discovery, DiscoveryItem};
 

@@ -26,7 +26,7 @@ use http::{
 };
 use hyper::body::Incoming;
 #[cfg(feature = "test-utils")]
-use iroh_base::node_addr::RelayUrl;
+use iroh_base::relay_map::RelayUrl;
 use iroh_metrics::inc;
 use tokio::{
     net::{TcpListener, UdpSocket},
@@ -760,7 +760,7 @@ mod tests {
 
     use bytes::Bytes;
     use http::header::UPGRADE;
-    use iroh_base::{key::SecretKey, node_addr::RelayUrl};
+    use iroh_base::key::SecretKey;
 
     use super::*;
     use crate::{

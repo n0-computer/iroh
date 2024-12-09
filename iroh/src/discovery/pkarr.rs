@@ -48,8 +48,7 @@ use std::{collections::BTreeSet, net::SocketAddr, sync::Arc};
 
 use anyhow::{anyhow, bail, Result};
 use futures_util::stream::BoxStream;
-use iroh_base::key::NodeId;
-use iroh_relay::RelayUrl;
+use iroh_base::{key::NodeId, relay_map::RelayUrl};
 use pkarr::SignedPacket;
 use tokio::{
     task::JoinHandle,

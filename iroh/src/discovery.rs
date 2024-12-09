@@ -116,8 +116,7 @@ use std::{collections::BTreeSet, net::SocketAddr, time::Duration};
 
 use anyhow::{anyhow, ensure, Result};
 use futures_lite::stream::{Boxed as BoxStream, StreamExt};
-use iroh_base::{key::NodeId, node_addr::NodeAddr};
-use iroh_relay::RelayUrl;
+use iroh_base::{key::NodeId, node_addr::NodeAddr, relay_map::RelayUrl};
 use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{debug, error_span, warn, Instrument};
 
