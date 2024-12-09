@@ -15,11 +15,11 @@ use axum::{
     http::Request,
 };
 use bytes::Bytes;
-use hickory_proto::xfer::Protocol;
 use hickory_server::{
     authority::MessageRequest,
     proto::{
         serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder},
+        xfer::Protocol,
         {self},
     },
     server::Request as DNSRequest,

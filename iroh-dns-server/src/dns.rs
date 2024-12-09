@@ -21,6 +21,7 @@ use hickory_server::{
             LowerName, Name, RData, Record, RecordSet, RecordType, RrKey,
         },
         serialize::{binary::BinEncoder, txt::RDataParser},
+        xfer::Protocol,
     },
     server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
     store::in_memory::InMemoryAuthority,
@@ -165,8 +166,8 @@ impl RequestHandler for DnsHandler {
     ) -> ResponseInfo {
         inc!(Metrics, dns_requests);
         match request.protocol() {
-            hickory_proto::xfer::Protocol::Udp => inc!(Metrics, dns_requests_udp),
-            hickory_proto::xfer::Protocol::Https => inc!(Metrics, dns_requests_https),
+            Protocol::Udp => inc!(Metrics, dns_requests_udp),
+            Protocol::Https => inc!(Metrics, dns_requests_https),
             _ => {}
         }
         debug!(protocol=%request.protocol(), query=%request.query(), "incoming DNS request");

@@ -22,11 +22,11 @@ mod tests {
     };
 
     use anyhow::Result;
-    use hickory_proto::xfer::Protocol;
     use hickory_resolver::{
         config::{NameServerConfig, ResolverConfig},
         Resolver,
     };
+    use hickory_server::proto::xfer::Protocol;
     use iroh::{
         discovery::pkarr::PkarrRelayClient,
         dns::{node_info::NodeInfo, DnsResolver, ResolverExt},
@@ -113,7 +113,7 @@ mod tests {
         })?;
         pkarr_client.as_async().publish(&signed_packet).await?;
 
-        use hickory_proto::rr::Name;
+        use hickory_server::proto::rr::Name;
         let pubkey = signed_packet.public_key().to_z32();
         let resolver = test_resolver(nameserver);
 

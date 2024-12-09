@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use hickory_proto::{
+use hickory_server::proto::{
     op::Message,
     rr::{
         domain::{IntoLabel, Label},

@@ -2,14 +2,14 @@ use std::{fmt, sync::Arc};
 
 use anyhow::{bail, ensure, Context, Result};
 use async_trait::async_trait;
-use hickory_proto::{
-    op::ResponseCode,
-    rr::{LowerName, Name, RecordType},
-};
 use hickory_server::{
     authority::{
         AuthLookup, Authority, LookupControlFlow, LookupError, LookupOptions, LookupRecords,
         MessageRequest, UpdateResult, ZoneType,
+    },
+    proto::{
+        op::ResponseCode,
+        rr::{LowerName, Name, RecordType},
     },
     server::RequestInfo,
     store::in_memory::InMemoryAuthority,

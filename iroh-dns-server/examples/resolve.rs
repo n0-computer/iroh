@@ -1,9 +1,9 @@
 use std::net::SocketAddr;
 
 use clap::{Parser, ValueEnum};
-use hickory_proto::xfer::Protocol;
 use hickory_resolver::{
     config::{NameServerConfig, ResolverConfig},
+    proto::xfer::Protocol,
     Resolver,
 };
 use iroh::{
