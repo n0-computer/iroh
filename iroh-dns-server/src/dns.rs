@@ -135,8 +135,12 @@ impl DnsHandler {
             .collect::<Result<Vec<_>, _>>()?;
 
         let (static_authority, serial) = create_static_authority(&origins, config)?;
-        let authority = NodeAuthority::new(zone_store, static_authority, origins, serial)?;
-        let authority: Arc<NodeAuthority> = Arc::new(authority);
+        let authority = Arc::new(NodeAuthority::new(
+            zone_store,
+            static_authority,
+            origins,
+            serial,
+        )?);
 
         let mut catalog = Catalog::new();
         for origin in authority.origins() {
