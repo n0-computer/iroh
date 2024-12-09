@@ -33,10 +33,9 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use anyhow::Result;
 use clap::Parser;
-use futures_lite::future::Boxed as BoxedFuture;
 use iroh::{
     endpoint::{get_remote_node_id, Connecting},
-    protocol::{ProtocolHandler, Router},
+    protocol::{Router, UnboxedProtocolHandler},
     Endpoint, NodeId,
 };
 use tokio::sync::Mutex;
@@ -122,47 +121,43 @@ struct BlobSearch {
     blobs: Arc<Mutex<BTreeSet<String>>>,
 }
 
-impl ProtocolHandler for BlobSearch {
+impl UnboxedProtocolHandler for BlobSearch {
     /// The `accept` method is called for each incoming connection for our ALPN.
     ///
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
     /// the connection lasts.
-    fn accept(&self, connecting: Connecting) -> BoxedFuture<Result<()>> {
-        let this = self.clone();
-        // We have to return a boxed future from the handler.
-        Box::pin(async move {
-            // Wait for the connection to be fully established.
-            let connection = connecting.await?;
-            // We can get the remote's node id from the connection.
-            let node_id = get_remote_node_id(&connection)?;
-            println!("accepted connection from {node_id}");
+    async fn accept(self, connecting: Connecting) -> Result<()> {
+        // Wait for the connection to be fully established.
+        let connection = connecting.await?;
+        // We can get the remote's node id from the connection.
+        let node_id = get_remote_node_id(&connection)?;
+        println!("accepted connection from {node_id}");
 
-            // Our protocol is a simple request-response protocol, so we expect the
-            // connecting peer to open a single bi-directional stream.
-            let (mut send, mut recv) = connection.accept_bi().await?;
+        // Our protocol is a simple request-response protocol, so we expect the
+        // connecting peer to open a single bi-directional stream.
+        let (mut send, mut recv) = connection.accept_bi().await?;
 
-            // We read the query from the receive stream, while enforcing a max query length.
-            let query_bytes = recv.read_to_end(64).await?;
+        // We read the query from the receive stream, while enforcing a max query length.
+        let query_bytes = recv.read_to_end(64).await?;
 
-            // Now, we can perform the actual query on our local database.
-            let query = String::from_utf8(query_bytes)?;
-            let num_matches = this.query_local(&query).await;
+        // Now, we can perform the actual query on our local database.
+        let query = String::from_utf8(query_bytes)?;
+        let num_matches = self.query_local(&query).await;
 
-            // We want to return a list of hashes. We do the simplest thing possible, and just send
-            // one hash after the other. Because the hashes have a fixed size of 32 bytes, this is
-            // very easy to parse on the other end.
-            send.write_all(&num_matches.to_le_bytes()).await?;
+        // We want to return a list of hashes. We do the simplest thing possible, and just send
+        // one hash after the other. Because the hashes have a fixed size of 32 bytes, this is
+        // very easy to parse on the other end.
+        send.write_all(&num_matches.to_le_bytes()).await?;
 
-            // By calling `finish` on the send stream we signal that we will not send anything
-            // further, which makes the receive stream on the other end terminate.
-            send.finish()?;
+        // By calling `finish` on the send stream we signal that we will not send anything
+        // further, which makes the receive stream on the other end terminate.
+        send.finish()?;
 
-            // Wait until the remote closes the connection, which it does once it
-            // received the response.
-            connection.closed().await;
+        // Wait until the remote closes the connection, which it does once it
+        // received the response.
+        connection.closed().await;
 
-            Ok(())
-        })
+        Ok(())
     }
 }
 
