@@ -13,8 +13,9 @@ use std::{
 use anyhow::Context;
 use backoff::backoff::Backoff;
 use bytes::{Bytes, BytesMut};
+use iroh_base::relay_map::RelayUrl;
 use iroh_metrics::{inc, inc_by};
-use iroh_relay::{self as relay, client::ClientError, ReceivedMessage, RelayUrl, MAX_PACKET_SIZE};
+use iroh_relay::{self as relay, client::ClientError, ReceivedMessage, MAX_PACKET_SIZE};
 use tokio::{
     sync::{mpsc, oneshot},
     task::{JoinHandle, JoinSet},

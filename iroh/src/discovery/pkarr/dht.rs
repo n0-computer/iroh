@@ -12,6 +12,7 @@ use std::{
 
 use futures_lite::{stream::Boxed, StreamExt};
 use genawaiter::sync::{Co, Gen};
+use iroh_base::{key::NodeId, node_addr::AddrInfo};
 use pkarr::{
     PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
     RelaySettings, SignedPacket,
@@ -26,7 +27,7 @@ use crate::{
     },
     dns::node_info::NodeInfo,
     key::SecretKey,
-    AddrInfo, Endpoint, NodeId,
+    Endpoint,
 };
 
 /// Republish delay for the DHT.
@@ -404,7 +405,7 @@ impl Discovery for DhtDiscovery {
 mod tests {
     use std::collections::BTreeSet;
 
-    use iroh_base::node_addr::RelayUrl;
+    use iroh_base::relay_map::RelayUrl;
     use pkarr::mainline::dht::DhtSettings;
     use testresult::TestResult;
 

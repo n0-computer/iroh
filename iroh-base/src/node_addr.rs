@@ -10,8 +10,10 @@ use std::{collections::BTreeSet, net::SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::key::{NodeId, PublicKey};
-pub use crate::relay_url::RelayUrl;
+use crate::{
+    key::{NodeId, PublicKey},
+    relay_map::RelayUrl,
+};
 
 /// Network-level addressing information for an iroh node.
 ///

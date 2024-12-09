@@ -5,8 +5,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+use iroh_base::{
+    key::NodeId,
+    node_addr::{AddrInfo, NodeAddr},
+    relay_map::RelayUrl,
+};
 use iroh_metrics::inc;
-use iroh_relay::{protos::stun, RelayUrl};
+use iroh_relay::protos::stun;
 use netwatch::ip::is_unicast_link_local;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -21,11 +26,9 @@ use super::{
 };
 use crate::{
     disco::{self, SendAddr},
-    endpoint::AddrInfo,
     key::PublicKey,
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
     util::relay_only_mode,
-    NodeAddr, NodeId,
 };
 
 /// Number of addresses that are not active that we keep around per node.

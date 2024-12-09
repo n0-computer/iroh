@@ -233,27 +233,22 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 
+mod disco;
+mod magicsock;
+
+pub(crate) mod util;
+
 pub mod defaults;
 pub mod dialer;
-mod disco;
 pub mod discovery;
 pub mod dns;
 pub mod endpoint;
-mod magicsock;
 pub mod metrics;
 pub mod protocol;
 pub mod tls;
 
-pub(crate) mod util;
-
-pub use endpoint::{AddrInfo, AddrInfoOptions, Endpoint, NodeAddr, RelayMode};
-pub use iroh_base::{
-    hash, key,
-    key::NodeId,
-    relay_map::{RelayMap, RelayNode, RelayUrl},
-    ticket,
-};
-pub use iroh_relay as relay;
+pub use endpoint::{Endpoint, RelayMode};
+pub use iroh_base::{hash, key, node_addr, relay_map, ticket};
 
 #[cfg(any(test, feature = "test-utils"))]
 #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]

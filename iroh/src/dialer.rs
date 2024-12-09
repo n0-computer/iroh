@@ -4,11 +4,12 @@ use std::{collections::HashMap, pin::Pin, task::Poll};
 
 use anyhow::anyhow;
 use futures_lite::Stream;
+use iroh_base::key::NodeId;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
-use crate::{Endpoint, NodeId};
+use crate::Endpoint;
 
 /// Dials nodes and maintains a queue of pending dials.
 ///

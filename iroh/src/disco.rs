@@ -24,7 +24,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
-use iroh_relay::RelayUrl;
+use iroh_base::relay_map::RelayUrl;
 use serde::{Deserialize, Serialize};
 use url::Url;
 

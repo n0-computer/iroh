@@ -13,8 +13,6 @@ pub use iroh_base::relay_map::DEFAULT_RELAY_QUIC_PORT;
 pub use iroh_base::relay_map::DEFAULT_STUN_PORT;
 use url::Url;
 
-use crate::{RelayMap, RelayNode};
-
 /// The default HTTP port used by the Relay server.
 pub const DEFAULT_HTTP_PORT: u16 = 80;
 
@@ -26,7 +24,7 @@ pub const DEFAULT_METRICS_PORT: u16 = 9090;
 
 /// Production configuration.
 pub mod prod {
-    use iroh_base::relay_map::QuicConfig;
+    use iroh_base::relay_map::{QuicConfig, RelayMap, RelayNode};
 
     use super::*;
 
@@ -96,6 +94,8 @@ pub mod prod {
 ///
 /// Note: we have staging servers in EU and NA, but no corresponding staging server for AP at this time.
 pub mod staging {
+    use iroh_base::relay_map::{RelayMap, RelayNode};
+
     use super::*;
 
     /// Hostname of the default NA relay.

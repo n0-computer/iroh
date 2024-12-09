@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use clap::Parser;
-use iroh::NodeId;
+use iroh::key::NodeId;
 
 #[derive(Debug, Parser)]
 struct Cli {
