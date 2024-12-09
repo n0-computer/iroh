@@ -1,9 +1,10 @@
 use std::net::SocketAddr;
 
 use clap::{Parser, ValueEnum};
+use hickory_proto::xfer::Protocol;
 use hickory_resolver::{
-    config::{NameServerConfig, Protocol, ResolverConfig},
-    AsyncResolver,
+    config::{NameServerConfig, ResolverConfig},
+    Resolver,
 };
 use iroh::{
     discovery::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
@@ -79,5 +80,5 @@ fn resolver_with_nameserver(nameserver: SocketAddr) -> DnsResolver {
     let mut config = ResolverConfig::new();
     let nameserver_config = NameServerConfig::new(nameserver, Protocol::Udp);
     config.add_name_server(nameserver_config);
-    AsyncResolver::tokio(config, Default::default())
+    Resolver::tokio(config, Default::default())
 }

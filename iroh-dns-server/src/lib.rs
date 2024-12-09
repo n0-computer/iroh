@@ -22,9 +22,10 @@ mod tests {
     };
 
     use anyhow::Result;
+    use hickory_proto::xfer::Protocol;
     use hickory_resolver::{
-        config::{NameServerConfig, Protocol, ResolverConfig},
-        AsyncResolver,
+        config::{NameServerConfig, ResolverConfig},
+        Resolver,
     };
     use iroh::{
         discovery::pkarr::PkarrRelayClient,
@@ -267,7 +268,7 @@ mod tests {
         let mut config = ResolverConfig::new();
         let nameserver_config = NameServerConfig::new(nameserver, Protocol::Udp);
         config.add_name_server(nameserver_config);
-        AsyncResolver::tokio(config, Default::default())
+        Resolver::tokio(config, Default::default())
     }
 
     fn random_signed_packet() -> Result<SignedPacket> {

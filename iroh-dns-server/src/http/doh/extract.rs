@@ -15,13 +15,14 @@ use axum::{
     http::Request,
 };
 use bytes::Bytes;
+use hickory_proto::xfer::Protocol;
 use hickory_server::{
     authority::MessageRequest,
     proto::{
         serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder},
         {self},
     },
-    server::{Protocol, Request as DNSRequest},
+    server::Request as DNSRequest,
 };
 use http::{header, request::Parts, HeaderValue, StatusCode};
 use serde::Deserialize;

@@ -8,8 +8,8 @@ use hickory_proto::{
 };
 use hickory_server::{
     authority::{
-        AuthLookup, Authority, LookupError, LookupOptions, LookupRecords, MessageRequest,
-        UpdateResult, ZoneType,
+        AuthLookup, Authority, LookupControlFlow, LookupError, LookupOptions, LookupRecords,
+        MessageRequest, UpdateResult, ZoneType,
     },
     server::RequestInfo,
     store::in_memory::InMemoryAuthority,
@@ -85,7 +85,7 @@ impl Authority for NodeAuthority {
         name: &LowerName,
         record_type: RecordType,
         lookup_options: LookupOptions,
-    ) -> Result<Self::Lookup, LookupError> {
+    ) -> LookupControlFlow<Self::Lookup> {
         debug!(name=%name, "lookup in node authority");
         match record_type {
             RecordType::SOA | RecordType::NS => {
@@ -106,20 +106,23 @@ impl Authority for NodeAuthority {
                         .zones
                         .resolve(&pubkey, &name, record_type)
                         .await
-                        .map_err(err_refused)?
+                        .map_err(err_refused)
+                        .unwrap()
                     {
                         Some(pkarr_set) => {
                             debug!(%origin, %pubkey, %name, "found {} records in pkarr zone", pkarr_set.records_without_rrsigs().count());
                             let new_origin = Name::parse(&pubkey.to_z32(), Some(&origin))
-                                .map_err(err_refused)?;
+                                .map_err(err_refused)
+                                .unwrap();
                             let record_set =
                                 record_set_append_origin(&pkarr_set, &new_origin, self.serial())
-                                    .map_err(err_refused)?;
+                                    .map_err(err_refused)
+                                    .unwrap();
                             let records = LookupRecords::new(lookup_options, Arc::new(record_set));
                             let answers = AuthLookup::answers(records, None);
-                            Ok(answers)
+                            LookupControlFlow::Break(Ok(answers))
                         }
-                        None => Err(err_nx_domain("not found")),
+                        None => LookupControlFlow::Break(Err(err_nx_domain("not found"))),
                     }
                 }
             },
@@ -130,7 +133,7 @@ impl Authority for NodeAuthority {
         &self,
         request_info: RequestInfo<'_>,
         lookup_options: LookupOptions,
-    ) -> Result<Self::Lookup, LookupError> {
+    ) -> LookupControlFlow<Self::Lookup> {
         debug!("search in node authority for {}", request_info.query);
         let lookup_name = request_info.query.name();
         let record_type: RecordType = request_info.query.query_type();
@@ -140,7 +143,9 @@ impl Authority for NodeAuthority {
                     .lookup(self.origin(), record_type, lookup_options)
                     .await
             }
-            RecordType::AXFR => Err(LookupError::from(ResponseCode::Refused)),
+            RecordType::AXFR => {
+                LookupControlFlow::Break(Err(LookupError::from(ResponseCode::Refused)))
+            }
             _ => self.lookup(lookup_name, record_type, lookup_options).await,
         }
     }
@@ -149,8 +154,8 @@ impl Authority for NodeAuthority {
         &self,
         _name: &LowerName,
         _lookup_options: LookupOptions,
-    ) -> Result<Self::Lookup, LookupError> {
-        Ok(AuthLookup::default())
+    ) -> LookupControlFlow<Self::Lookup> {
+        LookupControlFlow::Skip
     }
 }
 

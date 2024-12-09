@@ -2,14 +2,14 @@ use std::{fmt::Write, net::IpAddr};
 
 use anyhow::Result;
 use futures_lite::{Future, StreamExt};
-use hickory_resolver::{IntoName, TokioAsyncResolver};
+use hickory_resolver::{IntoName, TokioResolver};
 
 use crate::defaults::timeouts::DNS_TIMEOUT;
 
 /// Delay used to perform staggered dns queries.
 pub(crate) const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 
-/// Extension trait to [`TokioAsyncResolver`].
+/// Extension trait to [`TokioResolver`].
 pub(crate) trait ResolverExt {
     /// Perform an ipv4 lookup.
     fn lookup_ipv4<N: IntoName>(
@@ -64,7 +64,7 @@ pub(crate) trait ResolverExt {
     ) -> impl Future<Output = Result<impl Iterator<Item = IpAddr>>>;
 }
 
-impl ResolverExt for TokioAsyncResolver {
+impl ResolverExt for TokioResolver {
     async fn lookup_ipv4<N: IntoName>(&self, host: N) -> Result<impl Iterator<Item = IpAddr>> {
         let addrs = tokio::time::timeout(DNS_TIMEOUT, self.ipv4_lookup(host)).await??;
         Ok(addrs.into_iter().map(|ip| IpAddr::V4(ip.0)))
@@ -188,11 +188,11 @@ pub(crate) mod tests {
 
     use super::*;
 
-    static DNS_RESOLVER: Lazy<TokioAsyncResolver> =
+    static DNS_RESOLVER: Lazy<TokioResolver> =
         Lazy::new(|| create_default_resolver().expect("unable to create DNS resolver"));
 
     /// Get a DNS resolver suitable for testing.
-    pub fn resolver() -> &'static TokioAsyncResolver {
+    pub fn resolver() -> &'static TokioResolver {
         Lazy::force(&DNS_RESOLVER)
     }
 
@@ -215,7 +215,7 @@ pub(crate) mod tests {
     /// We first try to read the system's resolver from `/etc/resolv.conf`.
     /// This does not work at least on some Androids, therefore we fallback
     /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
-    fn create_default_resolver() -> Result<TokioAsyncResolver> {
+    fn create_default_resolver() -> Result<TokioResolver> {
         let (system_config, mut options) =
             hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
 
@@ -237,7 +237,7 @@ pub(crate) mod tests {
         // see [`ResolverExt::lookup_ipv4_ipv6`] for info on why we avoid `LookupIpStrategy::Ipv4AndIpv6`
         options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
 
-        let resolver = hickory_resolver::AsyncResolver::tokio(config, options);
+        let resolver = hickory_resolver::Resolver::tokio(config, options);
         Ok(resolver)
     }
 

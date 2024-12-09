@@ -41,8 +41,8 @@ use std::{
 };
 
 use anyhow::{anyhow, ensure, Result};
-use hickory_proto::error::ProtoError;
-use hickory_resolver::{Name, TokioAsyncResolver};
+use hickory_proto::ProtoError;
+use hickory_resolver::{Name, TokioResolver};
 use url::Url;
 
 use crate::{key::SecretKey, AddrInfo, NodeAddr, NodeId};
@@ -263,7 +263,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         Ok(Self { attrs, node_id })
     }
 
-    async fn lookup(resolver: &TokioAsyncResolver, name: Name) -> Result<Self> {
+    async fn lookup(resolver: &TokioResolver, name: Name) -> Result<Self> {
         let name = ensure_iroh_txt_label(name)?;
         let lookup = resolver.txt_lookup(name).await?;
         let attrs = Self::from_hickory_records(lookup.as_lookup().records())?;
@@ -272,7 +272,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
 
     /// Looks up attributes by [`NodeId`] and origin domain.
     pub async fn lookup_by_id(
-        resolver: &TokioAsyncResolver,
+        resolver: &TokioResolver,
         node_id: &NodeId,
         origin: &str,
     ) -> Result<Self> {
@@ -281,7 +281,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Looks up attributes by DNS name.
-    pub async fn lookup_by_name(resolver: &TokioAsyncResolver, name: &str) -> Result<Self> {
+    pub async fn lookup_by_name(resolver: &TokioResolver, name: &str) -> Result<Self> {
         let name = Name::from_str(name)?;
         TxtAttrs::lookup(resolver, name).await
     }

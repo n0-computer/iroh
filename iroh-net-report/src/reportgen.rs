@@ -26,7 +26,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context as _, Result};
-use hickory_resolver::TokioAsyncResolver as DnsResolver;
+use hickory_resolver::TokioResolver as DnsResolver;
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
 use iroh_relay::{http::RELAY_PROBE_PATH, protos::stun};
