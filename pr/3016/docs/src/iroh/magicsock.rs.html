@@ -4102,6 +4102,10 @@
 <a href="#4102" id="4102">4102</a>
 <a href="#4103" id="4103">4103</a>
 <a href="#4104" id="4104">4104</a>
+<a href="#4105" id="4105">4105</a>
+<a href="#4106" id="4106">4106</a>
+<a href="#4107" id="4107">4107</a>
+<a href="#4108" id="4108">4108</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -4680,6 +4684,10 @@
                         <span class="comment">// We log this as debug instead of error, because this is a
                         // situation that comes up under normal operation. If this were an
                         // error log, it would unnecessarily pollute logs.
+                        // This situation happens essentially when `pings_sent` is false,
+                        // `relay_url` is `None`, so `relay_sent` is false, and the UDP
+                        // path is blocking, so `udp_sent` is false and `udp_pending` is
+                        // true.
                         // Alternatively returning a WouldBlock error here would needlessly
                         // block sending on the relay path.
                     </span>}
