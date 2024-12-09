@@ -194,6 +194,16 @@
 <a href="#194" id="194">194</a>
 <a href="#195" id="195">195</a>
 <a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a>
+<a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
+<a href="#206" id="206">206</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt, sync::Arc};
 
 <span class="kw">use </span>anyhow::{bail, ensure, Context, <span class="prelude-ty">Result</span>};
@@ -254,6 +264,35 @@
     <span class="kw">pub fn </span>serial(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u32 {
         <span class="self">self</span>.serial
     }
+
+    <span class="kw">async fn </span>resolve_pkarr(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        name: Name,
+        pubkey: PublicKeyBytes,
+        origin: Name,
+        record_type: RecordType,
+        lookup_options: LookupOptions,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;AuthLookup, LookupError&gt; {
+        <span class="macro">debug!</span>(%origin, %pubkey, %name, <span class="string">"resolve in pkarr zones"</span>);
+        <span class="kw">match </span><span class="self">self
+            </span>.zones
+            .resolve(<span class="kw-2">&amp;</span>pubkey, <span class="kw-2">&amp;</span>name, record_type)
+            .<span class="kw">await
+            </span>.map_err(err_refused)<span class="question-mark">?
+        </span>{
+            <span class="prelude-val">Some</span>(pkarr_set) =&gt; {
+                <span class="macro">debug!</span>(%origin, %pubkey, %name, <span class="string">"found {} records in pkarr zone"</span>, pkarr_set.records_without_rrsigs().count());
+                <span class="kw">let </span>new_origin =
+                    Name::parse(<span class="kw-2">&amp;</span>pubkey.to_z32(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>origin)).map_err(err_refused)<span class="question-mark">?</span>;
+                <span class="kw">let </span>record_set = record_set_append_origin(<span class="kw-2">&amp;</span>pkarr_set, <span class="kw-2">&amp;</span>new_origin, <span class="self">self</span>.serial())
+                    .map_err(err_refused)<span class="question-mark">?</span>;
+                <span class="kw">let </span>records = LookupRecords::new(lookup_options, Arc::new(record_set));
+                <span class="kw">let </span>answers = AuthLookup::answers(records, <span class="prelude-val">None</span>);
+                <span class="prelude-val">Ok</span>(answers)
+            }
+            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(err_nx_domain(<span class="string">"not found"</span>)),
+        }
+    }
 }
 
 <span class="attr">#[async_trait]
@@ -290,37 +329,18 @@
                     .<span class="kw">await
             </span>}
             <span class="kw">_ </span>=&gt; <span class="kw">match </span>parse_name_as_pkarr_with_origin(name, <span class="kw-2">&amp;</span><span class="self">self</span>.origins) {
+                <span class="prelude-val">Ok</span>((name, pubkey, origin)) =&gt; {
+                    <span class="kw">let </span>res = <span class="self">self
+                        </span>.resolve_pkarr(name, pubkey, origin, record_type, lookup_options)
+                        .<span class="kw">await</span>;
+                    LookupControlFlow::Continue(res)
+                }
                 <span class="prelude-val">Err</span>(err) =&gt; {
                     <span class="macro">debug!</span>(%name, failed_with=%err, <span class="string">"not a pkarr name, resolve in static authority"</span>);
                     <span class="self">self</span>.static_authority
                         .lookup(name, record_type, lookup_options)
                         .<span class="kw">await
                 </span>}
-                <span class="prelude-val">Ok</span>((name, pubkey, origin)) =&gt; {
-                    <span class="macro">debug!</span>(%origin, %pubkey, %name, <span class="string">"resolve in pkarr zones"</span>);
-                    <span class="kw">match </span><span class="self">self
-                        </span>.zones
-                        .resolve(<span class="kw-2">&amp;</span>pubkey, <span class="kw-2">&amp;</span>name, record_type)
-                        .<span class="kw">await
-                        </span>.map_err(err_refused)
-                        .unwrap()
-                    {
-                        <span class="prelude-val">Some</span>(pkarr_set) =&gt; {
-                            <span class="macro">debug!</span>(%origin, %pubkey, %name, <span class="string">"found {} records in pkarr zone"</span>, pkarr_set.records_without_rrsigs().count());
-                            <span class="kw">let </span>new_origin = Name::parse(<span class="kw-2">&amp;</span>pubkey.to_z32(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>origin))
-                                .map_err(err_refused)
-                                .unwrap();
-                            <span class="kw">let </span>record_set =
-                                record_set_append_origin(<span class="kw-2">&amp;</span>pkarr_set, <span class="kw-2">&amp;</span>new_origin, <span class="self">self</span>.serial())
-                                    .map_err(err_refused)
-                                    .unwrap();
-                            <span class="kw">let </span>records = LookupRecords::new(lookup_options, Arc::new(record_set));
-                            <span class="kw">let </span>answers = AuthLookup::answers(records, <span class="prelude-val">None</span>);
-                            LookupControlFlow::Break(<span class="prelude-val">Ok</span>(answers))
-                        }
-                        <span class="prelude-val">None </span>=&gt; LookupControlFlow::Break(<span class="prelude-val">Err</span>(err_nx_domain(<span class="string">"not found"</span>))),
-                    }
-                }
             },
         }
     }
@@ -340,7 +360,7 @@
                     .<span class="kw">await
             </span>}
             RecordType::AXFR =&gt; {
-                LookupControlFlow::Break(<span class="prelude-val">Err</span>(LookupError::from(ResponseCode::Refused)))
+                LookupControlFlow::Continue(<span class="prelude-val">Err</span>(LookupError::from(ResponseCode::Refused)))
             }
             <span class="kw">_ </span>=&gt; <span class="self">self</span>.lookup(lookup_name, record_type, lookup_options).<span class="kw">await</span>,
         }
