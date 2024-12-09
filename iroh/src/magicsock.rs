@@ -576,6 +576,10 @@ impl MagicSock {
                         // We log this as debug instead of error, because this is a
                         // situation that comes up under normal operation. If this were an
                         // error log, it would unnecessarily pollute logs.
+                        // This situation happens essentially when `pings_sent` is false,
+                        // `relay_url` is `None`, so `relay_sent` is false, and the UDP
+                        // path is blocking, so `udp_sent` is false and `udp_pending` is
+                        // true.
                         // Alternatively returning a WouldBlock error here would needlessly
                         // block sending on the relay path.
                     }
