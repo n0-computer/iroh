@@ -10,7 +10,8 @@ use std::net::SocketAddr;
 use anyhow::Context;
 use clap::Parser;
 use futures_lite::StreamExt;
-use iroh::{key::SecretKey, Endpoint, NodeAddr, RelayMode, RelayUrl};
+use iroh::{key::SecretKey, node_addr::NodeAddr, Endpoint, RelayMode};
+use iroh_relay::RelayUrl;
 use tracing::info;
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -20,7 +21,7 @@ const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/magic/0";
 struct Cli {
     /// The id of the remote node.
     #[clap(long)]
-    node_id: iroh::NodeId,
+    node_id: iroh::key::NodeId,
     /// The list of direct UDP addresses for the remote node.
     #[clap(long, value_parser, num_args = 1.., value_delimiter = ' ')]
     addrs: Vec<SocketAddr>,

@@ -43,9 +43,13 @@ use std::{
 use anyhow::{anyhow, ensure, Result};
 use hickory_proto::error::ProtoError;
 use hickory_resolver::{Name, TokioAsyncResolver};
+use iroh_base::{
+    key::NodeId,
+    node_addr::{AddrInfo, NodeAddr},
+};
 use url::Url;
 
-use crate::{key::SecretKey, AddrInfo, NodeAddr, NodeId};
+use crate::key::SecretKey;
 
 /// The DNS name for the iroh TXT record.
 pub const IROH_TXT_NAME: &str = "_iroh";

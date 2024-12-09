@@ -48,6 +48,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
 use futures_util::stream::BoxStream;
+use iroh_base::{key::NodeId, node_addr::AddrInfo};
 use pkarr::SignedPacket;
 use tokio::{
     task::JoinHandle,
@@ -62,7 +63,7 @@ use crate::{
     dns::node_info::NodeInfo,
     endpoint::force_staging_infra,
     key::SecretKey,
-    AddrInfo, Endpoint, NodeId,
+    Endpoint,
 };
 
 #[cfg(feature = "discovery-pkarr-dht")]

@@ -34,9 +34,13 @@ use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
 use futures_lite::{FutureExt, Stream, StreamExt};
 use futures_util::{stream::BoxStream, task::AtomicWaker};
-use iroh_base::key::NodeId;
+use iroh_base::{
+    key::NodeId,
+    node_addr::{AddrInfo, NodeAddr},
+    relay_map::RelayMap,
+};
 use iroh_metrics::{inc, inc_by};
-use iroh_relay::protos::stun;
+use iroh_relay::{protos::stun, RelayUrl};
 use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -65,9 +69,7 @@ use crate::{
     disco::{self, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
-    endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
-    AddrInfo, RelayMap, RelayUrl,
 };
 
 mod metrics;
@@ -2957,7 +2959,7 @@ mod tests {
 
                 let addr = NodeAddr {
                     node_id: me.public(),
-                    info: crate::AddrInfo {
+                    info: AddrInfo {
                         relay_url: None,
                         direct_addresses: new_addrs.iter().map(|ep| ep.addr).collect(),
                     },

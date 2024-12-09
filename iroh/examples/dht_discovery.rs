@@ -11,7 +11,7 @@
 use std::str::FromStr;
 
 use clap::Parser;
-use iroh::{endpoint::get_remote_node_id, Endpoint, NodeId};
+use iroh::{endpoint::get_remote_node_id, key::NodeId, Endpoint};
 use tracing::warn;
 use url::Url;
 

@@ -8,7 +8,7 @@ use std::{
 };
 
 use futures_lite::stream::Stream;
-use iroh_base::key::NodeId;
+use iroh_base::{key::NodeId, node_addr::NodeAddr};
 use iroh_metrics::inc;
 use iroh_relay::RelayUrl;
 use parking_lot::Mutex;
@@ -26,7 +26,6 @@ use super::{
 use crate::{
     disco::{CallMeMaybe, Pong, SendAddr},
     key::PublicKey,
-    NodeAddr,
 };
 
 mod best_addr;

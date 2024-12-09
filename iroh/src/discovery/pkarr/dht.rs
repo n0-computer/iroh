@@ -12,6 +12,7 @@ use std::{
 
 use futures_lite::{stream::Boxed, StreamExt};
 use genawaiter::sync::{Co, Gen};
+use iroh_base::{key::NodeId, node_addr::AddrInfo};
 use pkarr::{
     PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
     RelaySettings, SignedPacket,
@@ -26,7 +27,7 @@ use crate::{
     },
     dns::node_info::NodeInfo,
     key::SecretKey,
-    AddrInfo, Endpoint, NodeId,
+    Endpoint,
 };
 
 /// Republish delay for the DHT.
