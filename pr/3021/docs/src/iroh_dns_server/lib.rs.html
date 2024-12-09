@@ -306,7 +306,7 @@
     <span class="kw">use </span>hickory_proto::xfer::Protocol;
     <span class="kw">use </span>hickory_resolver::{
         config::{NameServerConfig, ResolverConfig},
-        AsyncResolver,
+        Resolver,
     };
     <span class="kw">use </span>iroh::{
         discovery::pkarr::PkarrRelayClient,
@@ -549,7 +549,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>config = ResolverConfig::new();
         <span class="kw">let </span>nameserver_config = NameServerConfig::new(nameserver, Protocol::Udp);
         config.add_name_server(nameserver_config);
-        AsyncResolver::tokio(config, Default::default())
+        Resolver::tokio(config, Default::default())
     }
 
     <span class="kw">fn </span>random_signed_packet() -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket&gt; {

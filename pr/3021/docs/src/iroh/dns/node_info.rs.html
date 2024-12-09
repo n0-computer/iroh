@@ -491,7 +491,7 @@
 
 <span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>hickory_proto::ProtoError;
-<span class="kw">use </span>hickory_resolver::{Name, TokioAsyncResolver};
+<span class="kw">use </span>hickory_resolver::{Name, TokioResolver};
 <span class="kw">use </span>url::Url;
 
 <span class="kw">use crate</span>::{key::SecretKey, AddrInfo, NodeAddr, NodeId};
@@ -712,7 +712,7 @@
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{ attrs, node_id })
     }
 
-    <span class="kw">async fn </span>lookup(resolver: <span class="kw-2">&amp;</span>TokioAsyncResolver, name: Name) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    <span class="kw">async fn </span>lookup(resolver: <span class="kw-2">&amp;</span>TokioResolver, name: Name) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>name = ensure_iroh_txt_label(name)<span class="question-mark">?</span>;
         <span class="kw">let </span>lookup = resolver.txt_lookup(name).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>attrs = <span class="self">Self</span>::from_hickory_records(lookup.as_lookup().records())<span class="question-mark">?</span>;
@@ -721,7 +721,7 @@
 
     <span class="doccomment">/// Looks up attributes by [`NodeId`] and origin domain.
     </span><span class="kw">pub async fn </span>lookup_by_id(
-        resolver: <span class="kw-2">&amp;</span>TokioAsyncResolver,
+        resolver: <span class="kw-2">&amp;</span>TokioResolver,
         node_id: <span class="kw-2">&amp;</span>NodeId,
         origin: <span class="kw-2">&amp;</span>str,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
@@ -730,7 +730,7 @@
     </span>}
 
     <span class="doccomment">/// Looks up attributes by DNS name.
-    </span><span class="kw">pub async fn </span>lookup_by_name(resolver: <span class="kw-2">&amp;</span>TokioAsyncResolver, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub async fn </span>lookup_by_name(resolver: <span class="kw-2">&amp;</span>TokioResolver, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>name = Name::from_str(name)<span class="question-mark">?</span>;
         TxtAttrs::lookup(resolver, name).<span class="kw">await
     </span>}

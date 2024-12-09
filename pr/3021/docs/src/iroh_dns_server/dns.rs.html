@@ -269,11 +269,6 @@
 <a href="#269" id="269">269</a>
 <a href="#270" id="270">270</a>
 <a href="#271" id="271">271</a>
-<a href="#272" id="272">272</a>
-<a href="#273" id="273">273</a>
-<a href="#274" id="274">274</a>
-<a href="#275" id="275">275</a>
-<a href="#276" id="276">276</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implementation of a DNS name server for iroh node announces
 
 </span><span class="kw">use </span>std::{
@@ -288,12 +283,13 @@
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>hickory_server::{
-    authority::{AuthorityObject, Catalog, MessageResponse, ZoneType},
+    authority::{Catalog, MessageResponse, ZoneType},
     proto::{
         <span class="self">self</span>,
+        op::ResponseCode,
         rr::{
             rdata::{<span class="self">self</span>},
-            RData, Record, RecordSet, RecordType, RrKey,
+            LowerName, Name, RData, Record, RecordSet, RecordType, RrKey,
         },
         serialize::{binary::BinEncoder, txt::RDataParser},
     },
@@ -301,7 +297,6 @@
     store::in_memory::InMemoryAuthority,
 };
 <span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>proto::{op::ResponseCode, rr::LowerName};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::{
     net::{TcpListener, UdpSocket},
@@ -406,7 +401,7 @@
         <span class="kw">let </span>origins = config
             .origins
             .iter()
-            .map(hickory_proto::rr::Name::from_utf8)
+            .map(Name::from_utf8)
             .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
 
         <span class="kw">let </span>(static_authority, serial) = create_static_authority(<span class="kw-2">&amp;</span>origins, config)<span class="question-mark">?</span>;
@@ -491,7 +486,7 @@
 }
 
 <span class="kw">fn </span>create_static_authority(
-    origins: <span class="kw-2">&amp;</span>[hickory_proto::rr::Name],
+    origins: <span class="kw-2">&amp;</span>[Name],
     config: <span class="kw-2">&amp;</span>DnsConfig,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(InMemoryAuthority, u32)&gt; {
     <span class="kw">let </span>soa = RData::parse(
@@ -524,7 +519,7 @@
             );
         }
         <span class="kw">if let </span><span class="prelude-val">Some</span>(ns) = <span class="kw-2">&amp;</span>config.rr_ns {
-            <span class="kw">let </span>ns = hickory_proto::rr::Name::parse(ns, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>hickory_proto::rr::Name::root()))<span class="question-mark">?</span>;
+            <span class="kw">let </span>ns = Name::parse(ns, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Name::root()))<span class="question-mark">?</span>;
             push_record(
                 <span class="kw-2">&amp;mut </span>records,
                 serial,
@@ -533,13 +528,8 @@
         }
     }
 
-    <span class="kw">let </span>static_authority = InMemoryAuthority::new(
-        hickory_proto::rr::Name::root(),
-        records,
-        ZoneType::Primary,
-        <span class="bool-val">false</span>,
-    )
-    .map_err(|e| <span class="macro">anyhow!</span>(e))<span class="question-mark">?</span>;
+    <span class="kw">let </span>static_authority = InMemoryAuthority::new(Name::root(), records, ZoneType::Primary, <span class="bool-val">false</span>)
+        .map_err(|e| <span class="macro">anyhow!</span>(e))<span class="question-mark">?</span>;
 
     <span class="prelude-val">Ok</span>((static_authority, serial))
 }

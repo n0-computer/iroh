@@ -685,7 +685,7 @@
         op::{header::MessageType, Message},
         serialize::binary::BinDecodable,
     };
-    <span class="kw">use </span>hickory_resolver::{config::NameServerConfig, TokioAsyncResolver};
+    <span class="kw">use </span>hickory_resolver::{config::NameServerConfig, TokioResolver};
     <span class="kw">use </span>tokio::{net::UdpSocket, sync::oneshot};
     <span class="kw">use </span>tracing::{debug, error, warn};
 
@@ -740,12 +740,12 @@
     }
 
     <span class="doccomment">/// Create a DNS resolver with a single nameserver.
-    </span><span class="kw">pub fn </span>create_dns_resolver(nameserver: SocketAddr) -&gt; <span class="prelude-ty">Result</span>&lt;TokioAsyncResolver&gt; {
+    </span><span class="kw">pub fn </span>create_dns_resolver(nameserver: SocketAddr) -&gt; <span class="prelude-ty">Result</span>&lt;TokioResolver&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>config = hickory_resolver::config::ResolverConfig::new();
         <span class="kw">let </span>nameserver_config =
             NameServerConfig::new(nameserver, hickory_proto::xfer::Protocol::Udp);
         config.add_name_server(nameserver_config);
-        <span class="kw">let </span>resolver = hickory_resolver::AsyncResolver::tokio(config, Default::default());
+        <span class="kw">let </span>resolver = hickory_resolver::Resolver::tokio(config, Default::default());
         <span class="prelude-val">Ok</span>(resolver)
     }
 
