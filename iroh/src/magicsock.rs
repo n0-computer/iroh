@@ -580,8 +580,9 @@ impl MagicSock {
                         // `relay_url` is `None`, so `relay_sent` is false, and the UDP
                         // path is blocking, so `udp_sent` is false and `udp_pending` is
                         // true.
-                        // Alternatively returning a WouldBlock error here would needlessly
-                        // block sending on the relay path.
+                        // Alternatively returning a WouldBlock error here would
+                        // potentially needlessly block sending on the relay path for the
+                        // next datagram.
                     }
                     Ok(())
                 }
