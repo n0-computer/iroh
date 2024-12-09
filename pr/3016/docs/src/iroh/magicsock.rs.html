@@ -4094,6 +4094,14 @@
 <a href="#4094" id="4094">4094</a>
 <a href="#4095" id="4095">4095</a>
 <a href="#4096" id="4096">4096</a>
+<a href="#4097" id="4097">4097</a>
+<a href="#4098" id="4098">4098</a>
+<a href="#4099" id="4099">4099</a>
+<a href="#4100" id="4100">4100</a>
+<a href="#4101" id="4101">4101</a>
+<a href="#4102" id="4102">4102</a>
+<a href="#4103" id="4103">4103</a>
+<a href="#4104" id="4104">4104</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -4616,8 +4624,11 @@
                         <span class="prelude-val">Err</span>(err) =&gt; {
                             <span class="comment">// No need to print "WouldBlock" errors to the console
                             </span><span class="kw">if </span>err.kind() != io::ErrorKind::WouldBlock {
-                                <span class="macro">error!</span>(node = %node_id.fmt_short(), dst = %addr,
-                                       <span class="string">"failed to send udp: {err:#}"</span>);
+                                <span class="macro">warn!</span>(
+                                    node = %node_id.fmt_short(),
+                                    dst = %addr,
+                                    <span class="string">"failed to send udp: {err:#}"
+                                </span>);
                             }
                             udp_error = <span class="prelude-val">Some</span>(err);
                         }
@@ -4666,12 +4677,17 @@
                             node = %node_id.fmt_short(),
                             <span class="string">"no UDP or relay paths available for node, voiding transmit"</span>,
                         );
-                    }
+                        <span class="comment">// We log this as debug instead of error, because this is a
+                        // situation that comes up under normal operation. If this were an
+                        // error log, it would unnecessarily pollute logs.
+                        // Alternatively returning a WouldBlock error here would needlessly
+                        // block sending on the relay path.
+                    </span>}
                     <span class="prelude-val">Ok</span>(())
                 }
             }
             <span class="prelude-val">None </span>=&gt; {
-                <span class="macro">debug!</span>(%dest, <span class="string">"no NodeState for mapped address, voiding transmit"</span>);
+                <span class="macro">error!</span>(%dest, <span class="string">"no NodeState for mapped address, voiding transmit"</span>);
                 <span class="comment">// Returning Ok here means we let QUIC timeout.  Returning WouldBlock
                 // triggers a hot loop.  Returning an error would immediately fail a
                 // connection.  The philosophy of quinn-udp is that a UDP connection could
