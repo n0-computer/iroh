@@ -21,7 +21,6 @@ use super::{
 };
 use crate::{
     disco::{self, SendAddr},
-    endpoint::AddrInfo,
     key::PublicKey,
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
     util::relay_only_mode,
@@ -637,14 +636,19 @@ impl NodeState {
         ping_msgs
     }
 
-    pub(super) fn update_from_node_addr(&mut self, n: &AddrInfo, source: super::Source) {
+    pub(super) fn update_from_node_addr(
+        &mut self,
+        relay_url: Option<&RelayUrl>,
+        addrs: &BTreeSet<SocketAddr>,
+        source: super::Source,
+    ) {
         if self.udp_paths.best_addr.is_empty() {
             // we do not have a direct connection, so changing the relay information may
             // have an effect on our connection status
-            if self.relay_url.is_none() && n.relay_url.is_some() {
+            if self.relay_url.is_none() && relay_url.is_some() {
                 // we did not have a relay connection before, but now we do
                 inc!(MagicsockMetrics, num_relay_conns_added)
-            } else if self.relay_url.is_some() && n.relay_url.is_none() {
+            } else if self.relay_url.is_some() && relay_url.is_none() {
                 // we had a relay connection before but do not have one now
                 inc!(MagicsockMetrics, num_relay_conns_removed)
             }
@@ -652,12 +656,12 @@ impl NodeState {
 
         let now = Instant::now();
 
-        if n.relay_url.is_some() && n.relay_url != self.relay_url() {
+        if relay_url.is_some() && relay_url != self.relay_url().as_ref() {
             debug!(
                 "Changing relay node from {:?} to {:?}",
-                self.relay_url, n.relay_url
+                self.relay_url, relay_url
             );
-            self.relay_url = n.relay_url.as_ref().map(|url| {
+            self.relay_url = relay_url.map(|url| {
                 (
                     url.clone(),
                     PathState::new(self.node_id, url.clone().into(), source.clone(), now),
@@ -665,7 +669,7 @@ impl NodeState {
             });
         }
 
-        for &addr in n.direct_addresses.iter() {
+        for &addr in addrs.iter() {
             self.udp_paths
                 .paths
                 .entry(addr.into())
@@ -677,7 +681,7 @@ impl NodeState {
                 });
         }
         let paths = summarize_node_paths(&self.udp_paths.paths);
-        debug!(new = ?n.direct_addresses , %paths, "added new direct paths for endpoint");
+        debug!(new = ?addrs , %paths, "added new direct paths for endpoint");
     }
 
     /// Clears all the endpoint's p2p state, reverting it to a relay-only endpoint.
@@ -1187,10 +1191,8 @@ impl From<RemoteInfo> for NodeAddr {
 
         NodeAddr {
             node_id: info.node_id,
-            info: AddrInfo {
-                relay_url: info.relay_url.map(Into::into),
-                direct_addresses,
-            },
+            relay_url: info.relay_url.map(Into::into),
+            direct_addresses,
         }
     }
 }

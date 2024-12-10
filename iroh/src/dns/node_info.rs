@@ -44,7 +44,7 @@ use anyhow::{anyhow, ensure, Result};
 use hickory_resolver::{proto::ProtoError, Name, TokioResolver};
 use url::Url;
 
-use crate::{key::SecretKey, AddrInfo, NodeAddr, NodeId};
+use crate::{key::SecretKey, NodeAddr, NodeId};
 
 /// The DNS name for the iroh TXT record.
 pub const IROH_TXT_NAME: &str = "_iroh";
@@ -139,15 +139,7 @@ impl From<NodeInfo> for NodeAddr {
     fn from(value: NodeInfo) -> Self {
         NodeAddr {
             node_id: value.node_id,
-            info: value.into(),
-        }
-    }
-}
-
-impl From<NodeInfo> for AddrInfo {
-    fn from(value: NodeInfo) -> Self {
-        AddrInfo {
-            relay_url: value.relay_url.map(|u| u.into()),
+            relay_url: value.relay_url.map(Into::into),
             direct_addresses: value.direct_addresses,
         }
     }
