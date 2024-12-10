@@ -156,7 +156,7 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     /// These tasks will be run on the runtime of the [`super::Endpoint`].
     fn publish(&self, _url: Option<&RelayUrl>, _addrs: &BTreeSet<SocketAddr>) {}
 
-    /// Resolves the [`AddrInfo`] for the given [`NodeId`].
+    /// Resolves the [`DiscoveryItem`] for the given [`NodeId`].
     ///
     /// Once the returned [`BoxStream`] is dropped, the service should stop any pending
     /// work.
@@ -182,7 +182,7 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     /// to the `subscribe` stream.
     ///
     /// Discovery systems that are capable of receiving information about [`NodeId`]s
-    /// and their [`AddrInfo`]s without explicitly calling `resolve`, i.e.,
+    /// and their addressing information without explicitly calling `resolve`, i.e.,
     /// systems that do "passive" discovery, should implement this method. If
     /// `subscribe` is called multiple times, the passively discovered addresses
     /// should be sent on all streams.
