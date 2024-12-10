@@ -275,7 +275,11 @@ impl MagicSock {
     ///
     /// If we are not connected to any relay nodes, set this to `None`.
     fn set_my_relay(&self, my_relay: Option<RelayUrl>) -> Option<RelayUrl> {
-        self.my_relay.set(my_relay).flatten()
+        match self.my_relay.set(my_relay) {
+            Ok(Some(value)) => value,
+            Ok(None) => None,
+            Err(v) => v,
+        }
     }
 
     fn is_closing(&self) -> bool {
@@ -2557,7 +2561,7 @@ impl DiscoveredDirectAddrs {
     /// Updates the direct addresses, returns `true` if they changed, `false` if not.
     fn update(&self, addrs: BTreeSet<DirectAddr>) -> bool {
         *self.updated_at.write().unwrap() = Some(Instant::now());
-        let updated = self.addrs.set(addrs).is_some();
+        let updated = self.addrs.set(addrs).is_ok();
         if updated {
             event!(
                 target: "iroh::_events::direct_addrs",

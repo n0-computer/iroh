@@ -310,7 +310,8 @@ impl NodeState {
             self.has_been_direct = true;
             inc!(MagicsockMetrics, nodes_contacted_directly);
         }
-        if let Some(prev_typ) = self.conn_type.set(typ.clone()) {
+        if let Ok(prev_typ) = self.conn_type.set(typ.clone()) {
+            let prev_typ = prev_typ.unwrap_or_default();
             // The connection type has changed.
             event!(
                 target: "iroh::_events::conn_type::changed",

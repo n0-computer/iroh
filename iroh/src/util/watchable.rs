@@ -161,23 +161,34 @@ impl<T: Clone + Eq> Watchable<T> {
 
     /// Sets a new value.
     ///
-    /// Returns the previous value if it is different from the one set.  If the value was
-    /// uninitialized before, or the previous value is the same as the one being set this
-    /// returns `None`.
+    /// Returns
+    /// - `Ok(Some(previous_value))` if the value was set before and changed,
+    /// - `Ok(None)` if the value wasn't set before,
+    /// - `Err(value)` if the value currently set is the same as `value`.
+    ///
+    /// Generally, `Ok` indicates the value changed, and `Err` indicates the
+    /// value didn't change. And any value that's not in the watchable after
+    /// the operation is returned.
     ///
     /// Watchers are only notified if the value is changed.
-    pub fn set(&self, value: T) -> Option<T> {
-        let mut state = self.shared.state.write().unwrap();
-        let changed = state.value.as_ref() != Some(&value);
-        let old = std::mem::replace(&mut state.value, Some(value));
-        state.epoch += 1;
-        drop(state);
+    pub fn set(&self, value: T) -> std::result::Result<Option<T>, T> {
+        let changed = self.shared.state.read().unwrap().value.as_ref() != Some(&value);
+
+        let ret = if changed {
+            let mut state = self.shared.state.write().unwrap();
+            let old = std::mem::replace(&mut state.value, Some(value));
+            state.epoch += 1;
+            Ok(old)
+        } else {
+            Err(value)
+        };
+
         if changed {
             for watcher in self.shared.watchers.lock().unwrap().drain(..) {
                 watcher.wake();
             }
         }
-        old
+        ret
     }
 
     /// Creates a watcher allowing the value to be observed.
@@ -415,7 +426,7 @@ mod tests {
         let watchable = Watchable::new();
         assert!(watchable.get().is_none());
 
-        watchable.set(1u8);
+        watchable.set(1u8).ok();
         assert_eq!(watchable.get(), Some(1u8));
     }
 
@@ -428,7 +439,7 @@ mod tests {
         let poll = futures_lite::future::poll_once(&mut initialized).await;
         assert!(poll.is_none());
 
-        watchable.set(1u8);
+        watchable.set(1u8).ok();
 
         let poll = futures_lite::future::poll_once(&mut initialized).await;
         assert_eq!(poll, Some(1u8));
@@ -457,7 +468,7 @@ mod tests {
             let mut watch = watchable.watch();
             let thread = thread::spawn(move || futures_lite::future::block_on(watch.initialized()));
 
-            watchable.set(42);
+            watchable.set(42).ok();
 
             thread::yield_now();
 

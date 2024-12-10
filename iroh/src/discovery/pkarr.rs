@@ -203,7 +203,7 @@ impl PkarrPublisher {
             (None, info.direct_addresses.clone())
         };
         let info = NodeInfo::new(self.node_id, relay_url, direct_addresses);
-        self.watchable.set(info);
+        self.watchable.set(info).ok();
     }
 }
 
