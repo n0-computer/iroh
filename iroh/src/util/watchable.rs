@@ -21,27 +21,26 @@ use futures_lite::stream::Stream;
 const INITIAL_EPOCH: u64 = 1;
 const PRE_INITIAL_EPOCH: u64 = 0;
 
-type Result<T> = std::result::Result<T, Error>;
+type Result<T> = std::result::Result<T, Disconnected>;
 
+/// The error for when a [`Watcher`] is disconnected from its underlying
+/// [`Watchable`] value, because that value was dropped.
 #[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error("Watch lost connection to underlying Watchable, it was dropped")]
-    WatchableClosed,
-}
+#[error("Watch lost connection to underlying Watchable, it was dropped")]
+pub struct Disconnected;
 
 /// The shared state for a [`Watchable`].
 #[derive(Debug)]
 struct Shared<T> {
     /// The value to be watched and its current epoch.
-    ///
-    /// Note that the `Option` is only there to allow initialization.
-    /// Once initialized the value can never be cleared again.
     state: RwLock<State<T>>,
     watchers: Mutex<VecDeque<Waker>>,
 }
 
 #[derive(Debug)]
 struct State<T> {
+    /// Note that the `Option` is only there to allow initialization.
+    /// Once initialized the value can never be cleared again.
     value: Option<T>,
     epoch: u64,
 }
@@ -66,7 +65,7 @@ impl<T: Clone> Shared<T> {
 
     /// Returns a future completing once the value is initialized.
     ///
-    /// If the value is already initialized the future will complete immediately.
+    /// The future will complete immediately if the value was already initialized.
     fn initialized(&self) -> impl Future<Output = T> + '_ {
         future::poll_fn(|cx| self.poll_next(cx, PRE_INITIAL_EPOCH).map(|(_, t)| t))
     }
@@ -83,7 +82,7 @@ impl<T: Clone> Shared<T> {
 
             if last_epoch < epoch {
                 if let Some(value) = state.value.clone() {
-                    // Once initialized our Option is never set back to None, but nevertheless
+                    // Once initialized, our Option is never set back to None, but nevertheless
                     // this code is safer without relying on that invariant.
                     return Poll::Ready((epoch, value));
                 }
@@ -120,7 +119,7 @@ impl<T: Clone> Shared<T> {
 /// Only the most recent value is available to any observer, but but observer is guaranteed
 /// to be notified of the most recent value.
 #[derive(Debug)]
-pub(crate) struct Watchable<T> {
+pub struct Watchable<T> {
     shared: Arc<Shared<T>>,
 }
 
@@ -142,12 +141,12 @@ impl<T> Clone for Watchable<T> {
 
 impl<T: Clone + Eq> Watchable<T> {
     /// Creates an uninitialized observable value.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
     /// Creates an initialized observable value.
-    pub(crate) fn new_initialized(value: T) -> Self {
+    pub fn new_initialized(value: T) -> Self {
         let shared = Shared {
             state: RwLock::new(State {
                 value: Some(value),
@@ -167,7 +166,7 @@ impl<T: Clone + Eq> Watchable<T> {
     /// returns `None`.
     ///
     /// Watchers are only notified if the value is changed.
-    pub(crate) fn set(&self, value: T) -> Option<T> {
+    pub fn set(&self, value: T) -> Option<T> {
         let mut state = self.shared.state.write().unwrap();
         let changed = state.value.as_ref() != Some(&value);
         let old = std::mem::replace(&mut state.value, Some(value));
@@ -182,7 +181,7 @@ impl<T: Clone + Eq> Watchable<T> {
     }
 
     /// Creates a watcher allowing the value to be observed.
-    pub(crate) fn watch(&self) -> Watcher<T> {
+    pub fn watch(&self) -> Watcher<T> {
         Watcher {
             epoch: self.shared.state.read().unwrap().epoch,
             shared: Arc::downgrade(&self.shared),
@@ -190,17 +189,21 @@ impl<T: Clone + Eq> Watchable<T> {
     }
 
     /// Returns the currently held value.
-    pub(crate) fn get(&self) -> Option<T> {
+    ///
+    /// Returns `None` if the value was not yet initialized.
+    pub fn get(&self) -> Option<T> {
         self.shared.get()
     }
 
     /// Returns a future completing once the value is initialized.
-    pub(crate) fn initialized(&self) -> impl Future<Output = T> + '_ {
+    ///
+    /// The future will complete immediately if the value was already initialized.
+    pub fn initialized(&self) -> impl Future<Output = T> + '_ {
         self.shared.initialized()
     }
 
     /// Returns a future completing once a new value is set.
-    pub(crate) fn updated(&self) -> impl Future<Output = T> + '_ {
+    pub fn updated(&self) -> impl Future<Output = T> + '_ {
         self.shared.updated()
     }
 }
@@ -218,16 +221,15 @@ pub struct Watcher<T> {
 impl<T: Clone + Eq> Watcher<T> {
     /// Returns the currently held value.
     ///
-    /// Returns `None` if the value was not set yet.
+    /// Returns `None` if the value was not yet initialized.
     pub fn get(&self) -> Result<Option<T>> {
-        let shared = self
-            .shared
-            .upgrade()
-            .ok_or_else(|| Error::WatchableClosed)?;
+        let shared = self.shared.upgrade().ok_or_else(|| Disconnected)?;
         Ok(shared.get())
     }
 
     /// Returns a future completing once the value is initialized.
+    ///
+    /// The future will complete immediately if the value was already initialized.
     pub fn initialized(&mut self) -> WatchNextFut<T> {
         self.epoch = PRE_INITIAL_EPOCH;
         WatchNextFut { watcher: self }
@@ -238,13 +240,13 @@ impl<T: Clone + Eq> Watcher<T> {
         WatchNextFut { watcher: self }
     }
 
-    /// Returns a stream which will yield an items for the most recent value.
+    /// Returns a stream which will yield the most recent values as items.
     ///
     /// The first item of the stream is the current value, so that this stream can be easily
     /// used to operate on the most recent value.  If the stream is not yet initialized the
     /// first item of the stream will not be readily available.
     ///
-    /// Note however that only the last item is stored.  If the stream is not polled when an
+    /// Note however, that only the last item is stored.  If the stream is not polled when an
     /// item is available it can be replaced with another item by the time it is polled.
     pub fn stream(mut self) -> WatcherStream<T> {
         debug_assert!(self.epoch > 0);
@@ -252,20 +254,22 @@ impl<T: Clone + Eq> Watcher<T> {
         WatcherStream { watcher: self }
     }
 
-    /// Returns a stream which will yield an item for changes to the watched value.
+    /// Returns a stream which will yield the most recent values as items.
     ///
     /// This stream will only yield values when the watched value changes, the value stored
     /// at the time the stream is created is not yielded.
     ///
-    /// Note however that only the last item is stored.  If the stream is not polled when an
+    /// Note however, that only the last item is stored.  If the stream is not polled when an
     /// item is available it can be replaced with another item by the time it is polled.
     pub fn stream_updates_only(self) -> WatcherStream<T> {
         WatcherStream { watcher: self }
     }
 }
 
+/// Future returning another item from a [`Watcher`].
+///
+/// See [`Watcher::initialized`] and [`Watcher::updated`].
 #[derive(Debug)]
-#[repr(transparent)]
 pub struct WatchNextFut<'a, T> {
     watcher: &'a mut Watcher<T>,
 }
@@ -275,7 +279,7 @@ impl<'a, T: Clone + Eq> Future for WatchNextFut<'a, T> {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         let Some(shared) = self.watcher.shared.upgrade() else {
-            return Poll::Ready(Err(Error::WatchableClosed));
+            return Poll::Ready(Err(Disconnected));
         };
         match shared.poll_next(cx, self.watcher.epoch) {
             Poll::Pending => Poll::Pending,
@@ -287,8 +291,10 @@ impl<'a, T: Clone + Eq> Future for WatchNextFut<'a, T> {
     }
 }
 
+/// A stream for a [`Watcher`]'s next values.
+///
+/// See [`Watcher::stream`] and [`Watcher::stream_updates_only`].
 #[derive(Debug, Clone)]
-#[repr(transparent)]
 pub struct WatcherStream<T> {
     watcher: Watcher<T>,
 }

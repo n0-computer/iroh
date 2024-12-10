@@ -243,8 +243,7 @@ mod magicsock;
 pub mod metrics;
 pub mod protocol;
 pub mod tls;
-
-pub(crate) mod util;
+pub mod util;
 
 pub use endpoint::{AddrInfo, AddrInfoOptions, Endpoint, NodeAddr, RelayMode};
 pub use iroh_base::{

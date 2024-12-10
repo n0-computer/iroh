@@ -2,12 +2,9 @@ use std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
-    pin::Pin,
-    task::{Context, Poll},
     time::Instant,
 };
 
-use futures_lite::stream::Stream;
 use iroh_base::key::NodeId;
 use iroh_metrics::inc;
 use iroh_relay::RelayUrl;
@@ -26,7 +23,7 @@ use super::{
 use crate::{
     disco::{CallMeMaybe, Pong, SendAddr},
     key::PublicKey,
-    util::watchable::{Watcher, WatcherStream},
+    util::watchable::Watcher,
     NodeAddr,
 };
 

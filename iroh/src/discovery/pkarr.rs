@@ -61,7 +61,7 @@ use crate::{
     dns::node_info::NodeInfo,
     endpoint::force_staging_infra,
     key::SecretKey,
-    util::watchable::{Error, Watchable, Watcher},
+    util::watchable::{Disconnected, Watchable, Watcher},
     AddrInfo, Endpoint, NodeId,
 };
 
@@ -268,7 +268,7 @@ impl PublisherService {
             tokio::select! {
                 res = self.watcher.updated() => match res {
                     Ok(_) => debug!("Publish node info to pkarr (info changed)"),
-                    Err(Error::WatchableClosed) => break,
+                    Err(Disconnected) => break,
                 },
                 _ = &mut republish => debug!("Publish node info to pkarr (interval elapsed)"),
             }
