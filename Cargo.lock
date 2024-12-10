@@ -2262,6 +2262,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-bench"
+version = "0.29.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "futures-lite 2.5.0",
+ "hdrhistogram",
+ "iroh",
+ "iroh-metrics",
+ "iroh-quinn",
+ "rcgen",
+ "rustls",
+ "socket2",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "iroh-blake3"
 version = "1.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2343,26 +2363,6 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "iroh-net-bench"
-version = "0.29.0"
-dependencies = [
- "anyhow",
- "bytes",
- "clap",
- "futures-lite 2.5.0",
- "hdrhistogram",
- "iroh",
- "iroh-metrics",
- "iroh-quinn",
- "rcgen",
- "rustls",
- "socket2",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
