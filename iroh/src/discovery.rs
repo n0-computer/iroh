@@ -454,10 +454,13 @@ mod tests {
     use super::*;
     use crate::{key::SecretKey, RelayMode};
 
+    type InfoStore = HashMap<NodeId, (Option<RelayUrl>, BTreeSet<SocketAddr>, u64)>;
+
     #[derive(Debug, Clone, Default)]
     struct TestDiscoveryShared {
-        nodes: Arc<Mutex<HashMap<NodeId, (Option<RelayUrl>, BTreeSet<SocketAddr>, u64)>>>,
+        nodes: Arc<Mutex<InfoStore>>,
     }
+
     impl TestDiscoveryShared {
         pub fn create_discovery(&self, node_id: NodeId) -> TestDiscovery {
             TestDiscovery {
