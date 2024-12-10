@@ -466,6 +466,12 @@
 <a href="#466" id="466">466</a>
 <a href="#467" id="467">467</a>
 <a href="#468" id="468">468</a>
+<a href="#469" id="469">469</a>
+<a href="#470" id="470">470</a>
+<a href="#471" id="471">471</a>
+<a href="#472" id="472">472</a>
+<a href="#473" id="473">473</a>
+<a href="#474" id="474">474</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Watchable values.
 //!
 //! A [`Watchable`] exists to keep track of a value which may change over time.  It allows
@@ -489,28 +495,27 @@
 <span class="kw">const </span>INITIAL_EPOCH: u64 = <span class="number">1</span>;
 <span class="kw">const </span>PRE_INITIAL_EPOCH: u64 = <span class="number">0</span>;
 
-<span class="kw">type </span><span class="prelude-ty">Result</span>&lt;T&gt; = std::result::Result&lt;T, Error&gt;;
+<span class="kw">type </span><span class="prelude-ty">Result</span>&lt;T&gt; = std::result::Result&lt;T, Disconnected&gt;;
 
-<span class="attr">#[derive(thiserror::Error, Debug)]
-</span><span class="kw">pub enum </span>Error {
-    <span class="attr">#[error(<span class="string">"Watch lost connection to underlying Watchable, it was dropped"</span>)]
-    </span>WatchableClosed,
-}
+<span class="doccomment">/// The error for when a [`Watcher`] is disconnected from its underlying
+/// [`Watchable`] value, because that value was dropped.
+</span><span class="attr">#[derive(thiserror::Error, Debug)]
+#[error(<span class="string">"Watch lost connection to underlying Watchable, it was dropped"</span>)]
+</span><span class="kw">pub struct </span>Disconnected;
 
 <span class="doccomment">/// The shared state for a [`Watchable`].
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>Shared&lt;T&gt; {
     <span class="doccomment">/// The value to be watched and its current epoch.
-    ///
-    /// Note that the `Option` is only there to allow initialization.
-    /// Once initialized the value can never be cleared again.
     </span>state: RwLock&lt;State&lt;T&gt;&gt;,
     watchers: Mutex&lt;VecDeque&lt;Waker&gt;&gt;,
 }
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>State&lt;T&gt; {
-    value: <span class="prelude-ty">Option</span>&lt;T&gt;,
+    <span class="doccomment">/// Note that the `Option` is only there to allow initialization.
+    /// Once initialized the value can never be cleared again.
+    </span>value: <span class="prelude-ty">Option</span>&lt;T&gt;,
     epoch: u64,
 }
 
@@ -534,7 +539,7 @@
 
     <span class="doccomment">/// Returns a future completing once the value is initialized.
     ///
-    /// If the value is already initialized the future will complete immediately.
+    /// The future will complete immediately if the value was already initialized.
     </span><span class="kw">fn </span>initialized(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = T&gt; + <span class="lifetime">'_ </span>{
         future::poll_fn(|cx| <span class="self">self</span>.poll_next(cx, PRE_INITIAL_EPOCH).map(|(<span class="kw">_</span>, t)| t))
     }
@@ -551,7 +556,7 @@
 
             <span class="kw">if </span>last_epoch &lt; epoch {
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = state.value.clone() {
-                    <span class="comment">// Once initialized our Option is never set back to None, but nevertheless
+                    <span class="comment">// Once initialized, our Option is never set back to None, but nevertheless
                     // this code is safer without relying on that invariant.
                     </span><span class="kw">return </span>Poll::Ready((epoch, value));
                 }
@@ -588,7 +593,7 @@
 /// Only the most recent value is available to any observer, but but observer is guaranteed
 /// to be notified of the most recent value.
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Watchable&lt;T&gt; {
+</span><span class="kw">pub struct </span>Watchable&lt;T&gt; {
     shared: Arc&lt;Shared&lt;T&gt;&gt;,
 }
 
@@ -610,12 +615,12 @@
 
 <span class="kw">impl</span>&lt;T: Clone + Eq&gt; Watchable&lt;T&gt; {
     <span class="doccomment">/// Creates an uninitialized observable value.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::default()
     }
 
     <span class="doccomment">/// Creates an initialized observable value.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new_initialized(value: T) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>new_initialized(value: T) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>shared = Shared {
             state: RwLock::new(State {
                 value: <span class="prelude-val">Some</span>(value),
@@ -635,7 +640,7 @@
     /// returns `None`.
     ///
     /// Watchers are only notified if the value is changed.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>set(<span class="kw-2">&amp;</span><span class="self">self</span>, value: T) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
+    </span><span class="kw">pub fn </span>set(<span class="kw-2">&amp;</span><span class="self">self</span>, value: T) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>state = <span class="self">self</span>.shared.state.write().unwrap();
         <span class="kw">let </span>changed = state.value.as_ref() != <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>value);
         <span class="kw">let </span>old = std::mem::replace(<span class="kw-2">&amp;mut </span>state.value, <span class="prelude-val">Some</span>(value));
@@ -650,7 +655,7 @@
     }
 
     <span class="doccomment">/// Creates a watcher allowing the value to be observed.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;T&gt; {
+    </span><span class="kw">pub fn </span>watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;T&gt; {
         Watcher {
             epoch: <span class="self">self</span>.shared.state.read().unwrap().epoch,
             shared: Arc::downgrade(<span class="kw-2">&amp;</span><span class="self">self</span>.shared),
@@ -658,17 +663,21 @@
     }
 
     <span class="doccomment">/// Returns the currently held value.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
+    ///
+    /// Returns `None` if the value was not yet initialized.
+    </span><span class="kw">pub fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
         <span class="self">self</span>.shared.get()
     }
 
     <span class="doccomment">/// Returns a future completing once the value is initialized.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>initialized(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = T&gt; + <span class="lifetime">'_ </span>{
+    ///
+    /// The future will complete immediately if the value was already initialized.
+    </span><span class="kw">pub fn </span>initialized(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = T&gt; + <span class="lifetime">'_ </span>{
         <span class="self">self</span>.shared.initialized()
     }
 
     <span class="doccomment">/// Returns a future completing once a new value is set.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>updated(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = T&gt; + <span class="lifetime">'_ </span>{
+    </span><span class="kw">pub fn </span>updated(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = T&gt; + <span class="lifetime">'_ </span>{
         <span class="self">self</span>.shared.updated()
     }
 }
@@ -686,16 +695,15 @@
 <span class="kw">impl</span>&lt;T: Clone + Eq&gt; Watcher&lt;T&gt; {
     <span class="doccomment">/// Returns the currently held value.
     ///
-    /// Returns `None` if the value was not set yet.
+    /// Returns `None` if the value was not yet initialized.
     </span><span class="kw">pub fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;T&gt;&gt; {
-        <span class="kw">let </span>shared = <span class="self">self
-            </span>.shared
-            .upgrade()
-            .ok_or_else(|| Error::WatchableClosed)<span class="question-mark">?</span>;
+        <span class="kw">let </span>shared = <span class="self">self</span>.shared.upgrade().ok_or_else(|| Disconnected)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(shared.get())
     }
 
     <span class="doccomment">/// Returns a future completing once the value is initialized.
+    ///
+    /// The future will complete immediately if the value was already initialized.
     </span><span class="kw">pub fn </span>initialized(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; WatchNextFut&lt;T&gt; {
         <span class="self">self</span>.epoch = PRE_INITIAL_EPOCH;
         WatchNextFut { watcher: <span class="self">self </span>}
@@ -706,13 +714,13 @@
         WatchNextFut { watcher: <span class="self">self </span>}
     }
 
-    <span class="doccomment">/// Returns a stream which will yield an items for the most recent value.
+    <span class="doccomment">/// Returns a stream which will yield the most recent values as items.
     ///
     /// The first item of the stream is the current value, so that this stream can be easily
     /// used to operate on the most recent value.  If the stream is not yet initialized the
     /// first item of the stream will not be readily available.
     ///
-    /// Note however that only the last item is stored.  If the stream is not polled when an
+    /// Note however, that only the last item is stored.  If the stream is not polled when an
     /// item is available it can be replaced with another item by the time it is polled.
     </span><span class="kw">pub fn </span>stream(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; WatcherStream&lt;T&gt; {
         <span class="macro">debug_assert!</span>(<span class="self">self</span>.epoch &gt; <span class="number">0</span>);
@@ -720,20 +728,22 @@
         WatcherStream { watcher: <span class="self">self </span>}
     }
 
-    <span class="doccomment">/// Returns a stream which will yield an item for changes to the watched value.
+    <span class="doccomment">/// Returns a stream which will yield the most recent values as items.
     ///
     /// This stream will only yield values when the watched value changes, the value stored
     /// at the time the stream is created is not yielded.
     ///
-    /// Note however that only the last item is stored.  If the stream is not polled when an
+    /// Note however, that only the last item is stored.  If the stream is not polled when an
     /// item is available it can be replaced with another item by the time it is polled.
     </span><span class="kw">pub fn </span>stream_updates_only(<span class="self">self</span>) -&gt; WatcherStream&lt;T&gt; {
         WatcherStream { watcher: <span class="self">self </span>}
     }
 }
 
-<span class="attr">#[derive(Debug)]
-#[repr(transparent)]
+<span class="doccomment">/// Future returning another item from a [`Watcher`].
+///
+/// See [`Watcher::initialized`] and [`Watcher::updated`].
+</span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>WatchNextFut&lt;<span class="lifetime">'a</span>, T&gt; {
     watcher: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>Watcher&lt;T&gt;,
 }
@@ -743,7 +753,7 @@
 
     <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
         <span class="kw">let </span><span class="prelude-val">Some</span>(shared) = <span class="self">self</span>.watcher.shared.upgrade() <span class="kw">else </span>{
-            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(Error::WatchableClosed));
+            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(Disconnected));
         };
         <span class="kw">match </span>shared.poll_next(cx, <span class="self">self</span>.watcher.epoch) {
             Poll::Pending =&gt; Poll::Pending,
@@ -755,8 +765,10 @@
     }
 }
 
-<span class="attr">#[derive(Debug, Clone)]
-#[repr(transparent)]
+<span class="doccomment">/// A stream for a [`Watcher`]'s next values.
+///
+/// See [`Watcher::stream`] and [`Watcher::stream_updates_only`].
+</span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>WatcherStream&lt;T&gt; {
     watcher: Watcher&lt;T&gt;,
 }

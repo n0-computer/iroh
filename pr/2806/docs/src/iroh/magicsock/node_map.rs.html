@@ -804,19 +804,13 @@
 <a href="#804" id="804">804</a>
 <a href="#805" id="805">805</a>
 <a href="#806" id="806">806</a>
-<a href="#807" id="807">807</a>
-<a href="#808" id="808">808</a>
-<a href="#809" id="809">809</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
-    pin::Pin,
-    task::{Context, Poll},
     time::Instant,
 };
 
-<span class="kw">use </span>futures_lite::stream::Stream;
 <span class="kw">use </span>iroh_base::key::NodeId;
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>iroh_relay::RelayUrl;
@@ -835,7 +829,7 @@
 <span class="kw">use crate</span>::{
     disco::{CallMeMaybe, Pong, SendAddr},
     key::PublicKey,
-    util::watchable::{Watcher, WatcherStream},
+    util::watchable::Watcher,
     NodeAddr,
 };
 

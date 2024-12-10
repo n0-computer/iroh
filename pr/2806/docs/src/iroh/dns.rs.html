@@ -433,16 +433,16 @@
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::{Future, StreamExt};
-<span class="kw">use </span>hickory_resolver::{AsyncResolver, IntoName, TokioAsyncResolver};
+<span class="kw">use </span>hickory_resolver::{IntoName, Resolver, TokioResolver};
 <span class="kw">use </span>iroh_base::{key::NodeId, node_addr::NodeAddr};
 <span class="kw">use </span>once_cell::sync::Lazy;
 
 <span class="kw">pub mod </span>node_info;
 
 <span class="doccomment">/// The DNS resolver type used throughout `iroh`.
-</span><span class="kw">pub type </span>DnsResolver = TokioAsyncResolver;
+</span><span class="kw">pub type </span>DnsResolver = TokioResolver;
 
-<span class="kw">static </span>DNS_RESOLVER: Lazy&lt;TokioAsyncResolver&gt; =
+<span class="kw">static </span>DNS_RESOLVER: Lazy&lt;TokioResolver&gt; =
     Lazy::new(|| create_default_resolver().expect(<span class="string">"unable to create DNS resolver"</span>));
 
 <span class="doccomment">/// Get a reference to the default DNS resolver.
@@ -454,7 +454,7 @@
 }
 
 <span class="doccomment">/// Get the DNS resolver used within iroh.
-</span><span class="kw">pub fn </span>resolver() -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>TokioAsyncResolver {
+</span><span class="kw">pub fn </span>resolver() -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>TokioResolver {
     Lazy::force(<span class="kw-2">&amp;</span>DNS_RESOLVER)
 }
 
@@ -477,7 +477,7 @@
 /// We first try to read the system's resolver from `/etc/resolv.conf`.
 /// This does not work at least on some Androids, therefore we fallback
 /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
-</span><span class="kw">fn </span>create_default_resolver() -&gt; <span class="prelude-ty">Result</span>&lt;TokioAsyncResolver&gt; {
+</span><span class="kw">fn </span>create_default_resolver() -&gt; <span class="prelude-ty">Result</span>&lt;TokioResolver&gt; {
     <span class="kw">let </span>(system_config, <span class="kw-2">mut </span>options) =
         hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
 
@@ -499,7 +499,7 @@
     <span class="comment">// see [`ResolverExt::lookup_ipv4_ipv6`] for info on why we avoid `LookupIpStrategy::Ipv4AndIpv6`
     </span>options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
 
-    <span class="kw">let </span>resolver = AsyncResolver::tokio(config, options);
+    <span class="kw">let </span>resolver = Resolver::tokio(config, options);
     <span class="prelude-val">Ok</span>(resolver)
 }
 
