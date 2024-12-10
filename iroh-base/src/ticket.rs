@@ -1,4 +1,8 @@
-use crate::base32;
+use std::{collections::BTreeSet, net::SocketAddr};
+
+use serde::{Deserialize, Serialize};
+
+use crate::{base32, key::NodeId, node_addr::RelayUrl};
 
 #[cfg(feature = "key")]
 mod blob;
@@ -69,4 +73,16 @@ pub enum Error {
     /// Verification of the deserialized bytes failed.
     #[error("verification failed: {_0}")]
     Verify(&'static str),
+}
+
+#[derive(Serialize, Deserialize)]
+struct Variant0NodeAddr {
+    node_id: NodeId,
+    info: Variant0AddrInfo,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Variant0AddrInfo {
+    relay_url: Option<RelayUrl>,
+    direct_addresses: BTreeSet<SocketAddr>,
 }
