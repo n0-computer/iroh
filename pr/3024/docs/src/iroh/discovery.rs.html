@@ -883,6 +883,9 @@
 <a href="#883" id="883">883</a>
 <a href="#884" id="884">884</a>
 <a href="#885" id="885">885</a>
+<a href="#886" id="886">886</a>
+<a href="#887" id="887">887</a>
+<a href="#888" id="888">888</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
@@ -1340,10 +1343,13 @@
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{key::SecretKey, RelayMode};
 
+    <span class="kw">type </span>InfoStore = HashMap&lt;NodeId, (<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;, BTreeSet&lt;SocketAddr&gt;, u64)&gt;;
+
     <span class="attr">#[derive(Debug, Clone, Default)]
     </span><span class="kw">struct </span>TestDiscoveryShared {
-        nodes: Arc&lt;Mutex&lt;HashMap&lt;NodeId, (<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;, BTreeSet&lt;SocketAddr&gt;, u64)&gt;&gt;&gt;,
+        nodes: Arc&lt;Mutex&lt;InfoStore&gt;&gt;,
     }
+
     <span class="kw">impl </span>TestDiscoveryShared {
         <span class="kw">pub fn </span>create_discovery(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; TestDiscovery {
             TestDiscovery {
