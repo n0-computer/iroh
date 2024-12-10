@@ -85,6 +85,11 @@ impl NodeAddr {
         }
     }
 
+    /// Returns true, if only a [`NodeId`] is present.
+    pub fn is_empty(&self) -> bool {
+        self.relay_url.is_none() && self.direct_addresses.is_empty()
+    }
+
     /// Applies the options to `self`.
     ///
     /// This is used to more tightly control the information stored in a [`NodeAddr`]
