@@ -14,19 +14,19 @@ use bytes::Bytes;
 use hickory_server::{
     authority::{Catalog, MessageResponse, ZoneType},
     proto::{
+        self,
+        op::ResponseCode,
         rr::{
             rdata::{self},
-            RData, Record, RecordSet, RecordType, RrKey,
+            LowerName, Name, RData, Record, RecordSet, RecordType, RrKey,
         },
         serialize::{binary::BinEncoder, txt::RDataParser},
-        {self},
+        xfer::Protocol,
     },
-    resolver::Name,
     server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
     store::in_memory::InMemoryAuthority,
 };
 use iroh_metrics::inc;
-use proto::{op::ResponseCode, rr::LowerName};
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpListener, UdpSocket},
@@ -135,12 +135,16 @@ impl DnsHandler {
             .collect::<Result<Vec<_>, _>>()?;
 
         let (static_authority, serial) = create_static_authority(&origins, config)?;
-        let authority = NodeAuthority::new(zone_store, static_authority, origins, serial)?;
-        let authority = Arc::new(authority);
+        let authority = Arc::new(NodeAuthority::new(
+            zone_store,
+            static_authority,
+            origins,
+            serial,
+        )?);
 
         let mut catalog = Catalog::new();
         for origin in authority.origins() {
-            catalog.upsert(LowerName::from(origin), Box::new(Arc::clone(&authority)));
+            catalog.upsert(LowerName::from(origin), vec![authority.clone()]);
         }
 
         Ok(Self {
@@ -166,8 +170,8 @@ impl RequestHandler for DnsHandler {
     ) -> ResponseInfo {
         inc!(Metrics, dns_requests);
         match request.protocol() {
-            hickory_server::server::Protocol::Udp => inc!(Metrics, dns_requests_udp),
-            hickory_server::server::Protocol::Https => inc!(Metrics, dns_requests_https),
+            Protocol::Udp => inc!(Metrics, dns_requests_udp),
+            Protocol::Https => inc!(Metrics, dns_requests_https),
             _ => {}
         }
         debug!(protocol=%request.protocol(), query=%request.query(), "incoming DNS request");
@@ -266,7 +270,7 @@ fn create_static_authority(
 
 fn push_record(records: &mut BTreeMap<RrKey, RecordSet>, serial: u32, record: Record) {
     let key = RrKey::new(record.name().clone().into(), record.record_type());
-    let mut record_set = RecordSet::new(record.name(), record.record_type(), serial);
+    let mut record_set = RecordSet::new(record.name().clone(), record.record_type(), serial);
     record_set.insert(record, serial);
     records.insert(key, record_set);
 }

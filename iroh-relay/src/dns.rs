@@ -1,13 +1,13 @@
 use std::net::{IpAddr, Ipv6Addr};
 
 use anyhow::Result;
-use hickory_resolver::{AsyncResolver, TokioAsyncResolver};
+use hickory_resolver::{Resolver, TokioResolver};
 use once_cell::sync::Lazy;
 
 /// The DNS resolver type used throughout `iroh`.
-pub(crate) type DnsResolver = TokioAsyncResolver;
+pub(crate) type DnsResolver = TokioResolver;
 
-static DNS_RESOLVER: Lazy<TokioAsyncResolver> =
+static DNS_RESOLVER: Lazy<TokioResolver> =
     Lazy::new(|| create_default_resolver().expect("unable to create DNS resolver"));
 
 /// Get a reference to the default DNS resolver.
@@ -37,7 +37,7 @@ const WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS: [IpAddr; 3] = [
 /// We first try to read the system's resolver from `/etc/resolv.conf`.
 /// This does not work at least on some Androids, therefore we fallback
 /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
-fn create_default_resolver() -> Result<TokioAsyncResolver> {
+fn create_default_resolver() -> Result<TokioResolver> {
     let (system_config, mut options) =
         hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
 
@@ -59,6 +59,6 @@ fn create_default_resolver() -> Result<TokioAsyncResolver> {
     // see [`ResolverExt::lookup_ipv4_ipv6`] for info on why we avoid `LookupIpStrategy::Ipv4AndIpv6`
     options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
 
-    let resolver = AsyncResolver::tokio(config, options);
+    let resolver = Resolver::tokio(config, options);
     Ok(resolver)
 }
