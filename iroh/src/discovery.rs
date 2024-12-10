@@ -408,8 +408,7 @@ impl DiscoveryTask {
             };
             match next {
                 Some(Ok(r)) => {
-                    if r.node_addr.direct_addresses.is_empty() && r.node_addr.relay_url().is_none()
-                    {
+                    if r.node_addr.is_empty() {
                         debug!(provenance = %r.provenance, "discovery: empty address found");
                         continue;
                     }

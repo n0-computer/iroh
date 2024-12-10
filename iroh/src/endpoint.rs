@@ -582,7 +582,7 @@ impl Endpoint {
             );
         }
 
-        if !(node_addr.direct_addresses.is_empty()) && node_addr.relay_url.is_none() {
+        if !node_addr.is_empty() {
             self.add_node_addr(node_addr.clone())?;
         }
         let node_id = node_addr.node_id;
@@ -1014,9 +1014,7 @@ impl Endpoint {
                 // If the user provided addresses in this connect call, we will add a delay
                 // followed by a recheck before starting the discovery, to give the magicsocket a
                 // chance to test the newly provided addresses.
-                let delay = (!node_addr.direct_addresses.is_empty()
-                    || node_addr.relay_url.is_some())
-                .then_some(DISCOVERY_WAIT_PERIOD);
+                let delay = (!node_addr.is_empty()).then_some(DISCOVERY_WAIT_PERIOD);
                 let discovery = DiscoveryTask::maybe_start_after_delay(self, node_id, delay)
                     .ok()
                     .flatten();
