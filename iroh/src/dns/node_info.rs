@@ -41,8 +41,7 @@ use std::{
 };
 
 use anyhow::{anyhow, ensure, Result};
-use hickory_proto::error::ProtoError;
-use hickory_resolver::{Name, TokioAsyncResolver};
+use hickory_resolver::{proto::ProtoError, Name, TokioResolver};
 use url::Url;
 
 use crate::{key::SecretKey, AddrInfo, NodeAddr, NodeId};
@@ -173,7 +172,7 @@ impl NodeInfo {
     }
 
     /// Parses a [`NodeInfo`] from a set of DNS records.
-    pub fn from_hickory_records(records: &[hickory_proto::rr::Record]) -> Result<Self> {
+    pub fn from_hickory_records(records: &[hickory_resolver::proto::rr::Record]) -> Result<Self> {
         let attrs = TxtAttrs::from_hickory_records(records)?;
         Ok(attrs.into())
     }
@@ -195,12 +194,12 @@ impl NodeInfo {
         self.to_attrs().to_pkarr_signed_packet(secret_key, ttl)
     }
 
-    /// Converts into a [`hickory_proto::rr::Record`] DNS record.
+    /// Converts into a [`hickory_resolver::proto::rr::Record`] DNS record.
     pub fn to_hickory_records(
         &self,
         origin: &str,
         ttl: u32,
-    ) -> Result<impl Iterator<Item = hickory_proto::rr::Record> + 'static> {
+    ) -> Result<impl Iterator<Item = hickory_resolver::proto::rr::Record> + 'static> {
         let attrs = self.to_attrs();
         let records = attrs.to_hickory_records(origin, ttl)?;
         Ok(records.collect::<Vec<_>>().into_iter())
@@ -209,10 +208,12 @@ impl NodeInfo {
 
 /// Parses a [`NodeId`] from iroh DNS name.
 ///
-/// Takes a [`hickory_proto::rr::Name`] DNS name and expects the first label to be
+/// Takes a [`hickory_resolver::proto::rr::Name`] DNS name and expects the first label to be
 /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
 /// subsequent labels.
-pub(crate) fn node_id_from_hickory_name(name: &hickory_proto::rr::Name) -> Option<NodeId> {
+pub(crate) fn node_id_from_hickory_name(
+    name: &hickory_resolver::proto::rr::Name,
+) -> Option<NodeId> {
     if name.num_labels() < 2 {
         return None;
     }
@@ -263,7 +264,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         Ok(Self { attrs, node_id })
     }
 
-    async fn lookup(resolver: &TokioAsyncResolver, name: Name) -> Result<Self> {
+    async fn lookup(resolver: &TokioResolver, name: Name) -> Result<Self> {
         let name = ensure_iroh_txt_label(name)?;
         let lookup = resolver.txt_lookup(name).await?;
         let attrs = Self::from_hickory_records(lookup.as_lookup().records())?;
@@ -272,7 +273,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
 
     /// Looks up attributes by [`NodeId`] and origin domain.
     pub async fn lookup_by_id(
-        resolver: &TokioAsyncResolver,
+        resolver: &TokioResolver,
         node_id: &NodeId,
         origin: &str,
     ) -> Result<Self> {
@@ -281,7 +282,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Looks up attributes by DNS name.
-    pub async fn lookup_by_name(resolver: &TokioAsyncResolver, name: &str) -> Result<Self> {
+    pub async fn lookup_by_name(resolver: &TokioResolver, name: &str) -> Result<Self> {
         let name = Name::from_str(name)?;
         TxtAttrs::lookup(resolver, name).await
     }
@@ -320,8 +321,8 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Parses a set of DNS resource records.
-    pub fn from_hickory_records(records: &[hickory_proto::rr::Record]) -> Result<Self> {
-        use hickory_proto::rr;
+    pub fn from_hickory_records(records: &[hickory_resolver::proto::rr::Record]) -> Result<Self> {
+        use hickory_resolver::proto::rr;
         let mut records = records.iter().filter_map(|rr| match rr.data() {
             rr::RData::TXT(txt) => {
                 node_id_from_hickory_name(rr.name()).map(|node_id| (node_id, txt))
@@ -346,13 +347,13 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
             .flat_map(move |(k, vs)| vs.iter().map(move |v| format!("{k}={v}")))
     }
 
-    /// Converts to a list of [`hickory_proto::rr::Record`] resource records.
+    /// Converts to a list of [`hickory_resolver::proto::rr::Record`] resource records.
     pub fn to_hickory_records(
         &self,
         origin: &str,
         ttl: u32,
-    ) -> Result<impl Iterator<Item = hickory_proto::rr::Record> + '_> {
-        use hickory_proto::rr;
+    ) -> Result<impl Iterator<Item = hickory_resolver::proto::rr::Record> + '_> {
+        use hickory_resolver::proto::rr;
         let name = format!("{}.{}.{}", IROH_TXT_NAME, to_z32(&self.node_id), origin);
         let name = rr::Name::from_utf8(name)?;
         let records = self.to_txt_strings().map(move |s| {

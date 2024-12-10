@@ -192,11 +192,14 @@ pub(crate) mod dns_server {
 
     use anyhow::{ensure, Result};
     use futures_lite::future::Boxed as BoxFuture;
-    use hickory_proto::{
-        op::{header::MessageType, Message},
-        serialize::binary::BinDecodable,
+    use hickory_resolver::{
+        config::NameServerConfig,
+        proto::{
+            op::{header::MessageType, Message},
+            serialize::binary::BinDecodable,
+        },
+        TokioResolver,
     };
-    use hickory_resolver::{config::NameServerConfig, TokioAsyncResolver};
     use tokio::{net::UdpSocket, sync::oneshot};
     use tracing::{debug, error, warn};
 
@@ -251,12 +254,12 @@ pub(crate) mod dns_server {
     }
 
     /// Create a DNS resolver with a single nameserver.
-    pub fn create_dns_resolver(nameserver: SocketAddr) -> Result<TokioAsyncResolver> {
+    pub fn create_dns_resolver(nameserver: SocketAddr) -> Result<TokioResolver> {
         let mut config = hickory_resolver::config::ResolverConfig::new();
         let nameserver_config =
-            NameServerConfig::new(nameserver, hickory_resolver::config::Protocol::Udp);
+            NameServerConfig::new(nameserver, hickory_resolver::proto::xfer::Protocol::Udp);
         config.add_name_server(nameserver_config);
-        let resolver = hickory_resolver::AsyncResolver::tokio(config, Default::default());
+        let resolver = hickory_resolver::Resolver::tokio(config, Default::default());
         Ok(resolver)
     }
 
@@ -454,8 +457,8 @@ pub(crate) mod pkarr_dns_state {
 
         pub fn resolve_dns(
             &self,
-            query: &hickory_proto::op::Message,
-            reply: &mut hickory_proto::op::Message,
+            query: &hickory_resolver::proto::op::Message,
+            reply: &mut hickory_resolver::proto::op::Message,
             ttl: u32,
         ) -> Result<()> {
             for query in query.queries() {
@@ -478,8 +481,8 @@ pub(crate) mod pkarr_dns_state {
     impl QueryHandler for State {
         fn resolve(
             &self,
-            query: &hickory_proto::op::Message,
-            reply: &mut hickory_proto::op::Message,
+            query: &hickory_resolver::proto::op::Message,
+            reply: &mut hickory_resolver::proto::op::Message,
         ) -> impl Future<Output = Result<()>> + Send {
             const TTL: u32 = 30;
             let res = self.resolve_dns(query, reply, TTL);

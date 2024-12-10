@@ -14,7 +14,7 @@ use std::{
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
-use hickory_resolver::TokioAsyncResolver as DnsResolver;
+use hickory_resolver::TokioResolver as DnsResolver;
 use iroh_base::relay_map::{RelayMap, RelayNode, RelayUrl};
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
