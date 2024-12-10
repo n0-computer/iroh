@@ -4,6 +4,7 @@ use std::str::FromStr;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use super::{Variant0AddrInfo, Variant0NodeAddr};
 use crate::{
     hash::{BlobFormat, Hash},
     node_addr::NodeAddr,
@@ -31,21 +32,47 @@ pub struct BlobTicket {
 /// postcard to add a discriminator.
 #[derive(Serialize, Deserialize)]
 enum TicketWireFormat {
-    Variant0(BlobTicket),
+    Variant0(Variant0BlobTicket),
+}
+
+// Legacy
+#[derive(Serialize, Deserialize)]
+struct Variant0BlobTicket {
+    node: Variant0NodeAddr,
+    format: BlobFormat,
+    hash: Hash,
 }
 
 impl Ticket for BlobTicket {
     const KIND: &'static str = "blob";
 
     fn to_bytes(&self) -> Vec<u8> {
-        let data = TicketWireFormat::Variant0(self.clone());
+        let data = TicketWireFormat::Variant0(Variant0BlobTicket {
+            node: Variant0NodeAddr {
+                node_id: self.node.node_id,
+                info: Variant0AddrInfo {
+                    relay_url: self.node.relay_url.clone(),
+                    direct_addresses: self.node.direct_addresses.clone(),
+                },
+            },
+            format: self.format,
+            hash: self.hash,
+        });
         postcard::to_stdvec(&data).expect("postcard serialization failed")
     }
 
     fn from_bytes(bytes: &[u8]) -> std::result::Result<Self, ticket::Error> {
         let res: TicketWireFormat = postcard::from_bytes(bytes).map_err(ticket::Error::Postcard)?;
-        let TicketWireFormat::Variant0(res) = res;
-        Ok(res)
+        let TicketWireFormat::Variant0(Variant0BlobTicket { node, format, hash }) = res;
+        Ok(Self {
+            node: NodeAddr {
+                node_id: node.node_id,
+                relay_url: node.info.relay_url,
+                direct_addresses: node.info.direct_addresses,
+            },
+            format,
+            hash,
+        })
     }
 }
 
