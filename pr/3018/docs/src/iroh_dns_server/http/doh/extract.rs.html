@@ -249,6 +249,7 @@
 <a href="#249" id="249">249</a>
 <a href="#250" id="250">250</a>
 <a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Extractors for DNS-over-HTTPS requests
 
 </span><span class="comment">// This module is mostly copied from
@@ -270,9 +271,10 @@
     authority::MessageRequest,
     proto::{
         serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder},
+        xfer::Protocol,
         {<span class="self">self</span>},
     },
-    server::{Protocol, Request <span class="kw">as </span>DNSRequest},
+    server::Request <span class="kw">as </span>DNSRequest,
 };
 <span class="kw">use </span>http::{header, request::Parts, HeaderValue, StatusCode};
 <span class="kw">use </span>serde::Deserialize;

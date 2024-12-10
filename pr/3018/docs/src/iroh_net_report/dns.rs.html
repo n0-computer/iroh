@@ -263,14 +263,14 @@
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::{Future, StreamExt};
-<span class="kw">use </span>hickory_resolver::{IntoName, TokioAsyncResolver};
+<span class="kw">use </span>hickory_resolver::{IntoName, TokioResolver};
 
 <span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::DNS_TIMEOUT;
 
 <span class="doccomment">/// Delay used to perform staggered dns queries.
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>DNS_STAGGERING_MS: <span class="kw-2">&amp;</span>[u64] = <span class="kw-2">&amp;</span>[<span class="number">200</span>, <span class="number">300</span>];
 
-<span class="doccomment">/// Extension trait to [`TokioAsyncResolver`].
+<span class="doccomment">/// Extension trait to [`TokioResolver`].
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">trait </span>ResolverExt {
     <span class="doccomment">/// Perform an ipv4 lookup.
     </span><span class="kw">fn </span>lookup_ipv4&lt;N: IntoName&gt;(
@@ -325,7 +325,7 @@
     ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;&gt;&gt;;
 }
 
-<span class="kw">impl </span>ResolverExt <span class="kw">for </span>TokioAsyncResolver {
+<span class="kw">impl </span>ResolverExt <span class="kw">for </span>TokioResolver {
     <span class="kw">async fn </span>lookup_ipv4&lt;N: IntoName&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, host: N) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;&gt; {
         <span class="kw">let </span>addrs = tokio::time::timeout(DNS_TIMEOUT, <span class="self">self</span>.ipv4_lookup(host)).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(addrs.into_iter().map(|ip| IpAddr::V4(ip.<span class="number">0</span>)))
@@ -449,11 +449,11 @@
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
-    <span class="kw">static </span>DNS_RESOLVER: Lazy&lt;TokioAsyncResolver&gt; =
+    <span class="kw">static </span>DNS_RESOLVER: Lazy&lt;TokioResolver&gt; =
         Lazy::new(|| create_default_resolver().expect(<span class="string">"unable to create DNS resolver"</span>));
 
     <span class="doccomment">/// Get a DNS resolver suitable for testing.
-    </span><span class="kw">pub fn </span>resolver() -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>TokioAsyncResolver {
+    </span><span class="kw">pub fn </span>resolver() -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>TokioResolver {
         Lazy::force(<span class="kw-2">&amp;</span>DNS_RESOLVER)
     }
 
@@ -476,7 +476,7 @@
     /// We first try to read the system's resolver from `/etc/resolv.conf`.
     /// This does not work at least on some Androids, therefore we fallback
     /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
-    </span><span class="kw">fn </span>create_default_resolver() -&gt; <span class="prelude-ty">Result</span>&lt;TokioAsyncResolver&gt; {
+    </span><span class="kw">fn </span>create_default_resolver() -&gt; <span class="prelude-ty">Result</span>&lt;TokioResolver&gt; {
         <span class="kw">let </span>(system_config, <span class="kw-2">mut </span>options) =
             hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
 
@@ -498,7 +498,7 @@
         <span class="comment">// see [`ResolverExt::lookup_ipv4_ipv6`] for info on why we avoid `LookupIpStrategy::Ipv4AndIpv6`
         </span>options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
 
-        <span class="kw">let </span>resolver = hickory_resolver::AsyncResolver::tokio(config, options);
+        <span class="kw">let </span>resolver = hickory_resolver::Resolver::tokio(config, options);
         <span class="prelude-val">Ok</span>(resolver)
     }
 

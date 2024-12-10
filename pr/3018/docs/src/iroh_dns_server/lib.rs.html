@@ -278,6 +278,7 @@
 <a href="#278" id="278">278</a>
 <a href="#279" id="279">279</a>
 <a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A DNS server and pkarr relay
 
 </span><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
@@ -303,9 +304,10 @@
 
     <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>hickory_resolver::{
-        config::{NameServerConfig, Protocol, ResolverConfig},
-        AsyncResolver,
+        config::{NameServerConfig, ResolverConfig},
+        Resolver,
     };
+    <span class="kw">use </span>hickory_server::proto::xfer::Protocol;
     <span class="kw">use </span>iroh::{
         discovery::pkarr::PkarrRelayClient,
         dns::{node_info::NodeInfo, DnsResolver, ResolverExt},
@@ -392,7 +394,7 @@
         })<span class="question-mark">?</span>;
         pkarr_client.as_async().publish(<span class="kw-2">&amp;</span>signed_packet).<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">use </span>hickory_proto::rr::Name;
+        <span class="kw">use </span>hickory_server::proto::rr::Name;
         <span class="kw">let </span>pubkey = signed_packet.public_key().to_z32();
         <span class="kw">let </span>resolver = test_resolver(nameserver);
 
@@ -547,7 +549,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>config = ResolverConfig::new();
         <span class="kw">let </span>nameserver_config = NameServerConfig::new(nameserver, Protocol::Udp);
         config.add_name_server(nameserver_config);
-        AsyncResolver::tokio(config, Default::default())
+        Resolver::tokio(config, Default::default())
     }
 
     <span class="kw">fn </span>random_signed_packet() -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket&gt; {

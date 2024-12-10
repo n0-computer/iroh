@@ -270,6 +270,10 @@
 <a href="#270" id="270">270</a>
 <a href="#271" id="271">271</a>
 <a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implementation of a DNS name server for iroh node announces
 
 </span><span class="kw">use </span>std::{
@@ -286,19 +290,19 @@
 <span class="kw">use </span>hickory_server::{
     authority::{Catalog, MessageResponse, ZoneType},
     proto::{
+        <span class="self">self</span>,
+        op::ResponseCode,
         rr::{
             rdata::{<span class="self">self</span>},
-            RData, Record, RecordSet, RecordType, RrKey,
+            LowerName, Name, RData, Record, RecordSet, RecordType, RrKey,
         },
         serialize::{binary::BinEncoder, txt::RDataParser},
-        {<span class="self">self</span>},
+        xfer::Protocol,
     },
-    resolver::Name,
     server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
     store::in_memory::InMemoryAuthority,
 };
 <span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>proto::{op::ResponseCode, rr::LowerName};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::{
     net::{TcpListener, UdpSocket},
@@ -407,12 +411,16 @@
             .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
 
         <span class="kw">let </span>(static_authority, serial) = create_static_authority(<span class="kw-2">&amp;</span>origins, config)<span class="question-mark">?</span>;
-        <span class="kw">let </span>authority = NodeAuthority::new(zone_store, static_authority, origins, serial)<span class="question-mark">?</span>;
-        <span class="kw">let </span>authority = Arc::new(authority);
+        <span class="kw">let </span>authority = Arc::new(NodeAuthority::new(
+            zone_store,
+            static_authority,
+            origins,
+            serial,
+        )<span class="question-mark">?</span>);
 
         <span class="kw">let </span><span class="kw-2">mut </span>catalog = Catalog::new();
         <span class="kw">for </span>origin <span class="kw">in </span>authority.origins() {
-            catalog.upsert(LowerName::from(origin), Box::new(Arc::clone(<span class="kw-2">&amp;</span>authority)));
+            catalog.upsert(LowerName::from(origin), <span class="macro">vec!</span>[authority.clone()]);
         }
 
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
@@ -438,8 +446,8 @@
     ) -&gt; ResponseInfo {
         <span class="macro">inc!</span>(Metrics, dns_requests);
         <span class="kw">match </span>request.protocol() {
-            hickory_server::server::Protocol::Udp =&gt; <span class="macro">inc!</span>(Metrics, dns_requests_udp),
-            hickory_server::server::Protocol::Https =&gt; <span class="macro">inc!</span>(Metrics, dns_requests_https),
+            Protocol::Udp =&gt; <span class="macro">inc!</span>(Metrics, dns_requests_udp),
+            Protocol::Https =&gt; <span class="macro">inc!</span>(Metrics, dns_requests_https),
             <span class="kw">_ </span>=&gt; {}
         }
         <span class="macro">debug!</span>(protocol=%request.protocol(), query=%request.query(), <span class="string">"incoming DNS request"</span>);
@@ -538,7 +546,7 @@
 
 <span class="kw">fn </span>push_record(records: <span class="kw-2">&amp;mut </span>BTreeMap&lt;RrKey, RecordSet&gt;, serial: u32, record: Record) {
     <span class="kw">let </span>key = RrKey::new(record.name().clone().into(), record.record_type());
-    <span class="kw">let </span><span class="kw-2">mut </span>record_set = RecordSet::new(record.name(), record.record_type(), serial);
+    <span class="kw">let </span><span class="kw-2">mut </span>record_set = RecordSet::new(record.name().clone(), record.record_type(), serial);
     record_set.insert(record, serial);
     records.insert(key, record_set);
 }
