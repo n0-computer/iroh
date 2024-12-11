@@ -10,7 +10,7 @@ use loom::sync;
 use std::sync;
 
 use std::collections::VecDeque;
-use std::future::{self, Future};
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Weak};
 use std::task::{self, Poll, Waker};
@@ -21,8 +21,6 @@ use futures_lite::stream::Stream;
 const INITIAL_EPOCH: u64 = 1;
 const PRE_INITIAL_EPOCH: u64 = 0;
 
-type Result<T> = std::result::Result<T, Disconnected>;
-
 /// The error for when a [`Watcher`] is disconnected from its underlying
 /// [`Watchable`] value, because that value was dropped.
 #[derive(thiserror::Error, Debug)]
@@ -30,7 +28,7 @@ type Result<T> = std::result::Result<T, Disconnected>;
 pub struct Disconnected;
 
 /// The shared state for a [`Watchable`].
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct Shared<T> {
     /// The value to be watched and its current epoch.
     state: RwLock<State<T>>,
@@ -39,40 +37,23 @@ struct Shared<T> {
 
 #[derive(Debug)]
 struct State<T> {
-    /// Note that the `Option` is only there to allow initialization.
-    /// Once initialized the value can never be cleared again.
-    value: Option<T>,
+    value: T,
     epoch: u64,
 }
 
-impl<T> Default for Shared<T> {
+impl<T: Default> Default for State<T> {
     fn default() -> Self {
-        Shared {
-            state: RwLock::new(State {
-                value: None,
-                epoch: INITIAL_EPOCH,
-            }),
-            watchers: Default::default(),
+        Self {
+            value: Default::default(),
+            epoch: INITIAL_EPOCH,
         }
     }
 }
 
 impl<T: Clone> Shared<T> {
     /// Returns the value, initialized or not.
-    fn get(&self) -> Option<T> {
+    fn get(&self) -> T {
         self.state.read().expect("poisoned").value.clone()
-    }
-
-    /// Returns a future completing once the value is initialized.
-    ///
-    /// The future will complete immediately if the value was already initialized.
-    fn initialized(&self) -> impl Future<Output = T> + '_ {
-        future::poll_fn(|cx| self.poll_next(cx, PRE_INITIAL_EPOCH).map(|(_, t)| t))
-    }
-
-    fn updated(&self) -> impl Future<Output = T> + '_ {
-        let epoch = self.state.read().unwrap().epoch;
-        future::poll_fn(move |cx| self.poll_next(cx, epoch).map(|(_, t)| t))
     }
 
     fn poll_next(&self, cx: &mut task::Context<'_>, last_epoch: u64) -> Poll<(u64, T)> {
@@ -81,11 +62,9 @@ impl<T: Clone> Shared<T> {
             let epoch = state.epoch;
 
             if last_epoch < epoch {
-                if let Some(value) = state.value.clone() {
-                    // Once initialized, our Option is never set back to None, but nevertheless
-                    // this code is safer without relying on that invariant.
-                    return Poll::Ready((epoch, value));
-                }
+                // Once initialized, our Option is never set back to None, but nevertheless
+                // this code is safer without relying on that invariant.
+                return Poll::Ready((epoch, state.value.clone()));
             }
         }
 
@@ -102,11 +81,9 @@ impl<T: Clone> Shared<T> {
             let epoch = state.epoch;
 
             if last_epoch < epoch {
-                if let Some(value) = state.value.clone() {
-                    // Once initialized our Option is never set back to None, but nevertheless
-                    // this code is safer without relying on that invariant.
-                    return Poll::Ready((epoch, value));
-                }
+                // Once initialized our Option is never set back to None, but nevertheless
+                // this code is safer without relying on that invariant.
+                return Poll::Ready((epoch, state.value.clone()));
             }
         }
 
@@ -118,17 +95,9 @@ impl<T: Clone> Shared<T> {
 ///
 /// Only the most recent value is available to any observer, but but observer is guaranteed
 /// to be notified of the most recent value.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Watchable<T> {
     shared: Arc<Shared<T>>,
-}
-
-impl<T> Default for Watchable<T> {
-    fn default() -> Self {
-        Self {
-            shared: Default::default(),
-        }
-    }
 }
 
 impl<T> Clone for Watchable<T> {
@@ -140,44 +109,45 @@ impl<T> Clone for Watchable<T> {
 }
 
 impl<T: Clone + Eq> Watchable<T> {
-    /// Creates an uninitialized observable value.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// Creates an initialized observable value.
-    pub fn new_initialized(value: T) -> Self {
-        let shared = Shared {
-            state: RwLock::new(State {
-                value: Some(value),
-                epoch: INITIAL_EPOCH,
-            }),
-            watchers: Default::default(),
-        };
+    pub fn new(value: T) -> Self {
         Self {
-            shared: Arc::new(shared),
+            shared: Arc::new(Shared {
+                state: RwLock::new(State {
+                    value,
+                    epoch: INITIAL_EPOCH,
+                }),
+                watchers: Default::default(),
+            }),
         }
     }
 
     /// Sets a new value.
     ///
-    /// Returns the previous value if it is different from the one set.  If the value was
-    /// uninitialized before, or the previous value is the same as the one being set this
-    /// returns `None`.
+    /// Returns `Ok(previous_value)` if the value was different from the one set and
+    /// returns the provided value back as `Err(value)` if the value didn't change.
     ///
     /// Watchers are only notified if the value is changed.
-    pub fn set(&self, value: T) -> Option<T> {
-        let mut state = self.shared.state.write().unwrap();
-        let changed = state.value.as_ref() != Some(&value);
-        let old = std::mem::replace(&mut state.value, Some(value));
-        state.epoch += 1;
-        drop(state);
+    pub fn set(&self, value: T) -> Result<T, T> {
+        // Find out if the value changed
+        let changed = { self.shared.state.read().unwrap().value != value };
+
+        let ret = if changed {
+            let mut state = self.shared.state.write().unwrap();
+            let old = std::mem::replace(&mut state.value, value);
+            state.epoch += 1;
+            Ok(old)
+        } else {
+            Err(value)
+        };
+
+        // Notify watchers
         if changed {
             for watcher in self.shared.watchers.lock().unwrap().drain(..) {
                 watcher.wake();
             }
         }
-        old
+        ret
     }
 
     /// Creates a watcher allowing the value to be observed.
@@ -189,22 +159,8 @@ impl<T: Clone + Eq> Watchable<T> {
     }
 
     /// Returns the currently held value.
-    ///
-    /// Returns `None` if the value was not yet initialized.
-    pub fn get(&self) -> Option<T> {
+    pub fn get(&self) -> T {
         self.shared.get()
-    }
-
-    /// Returns a future completing once the value is initialized.
-    ///
-    /// The future will complete immediately if the value was already initialized.
-    pub fn initialized(&self) -> impl Future<Output = T> + '_ {
-        self.shared.initialized()
-    }
-
-    /// Returns a future completing once a new value is set.
-    pub fn updated(&self) -> impl Future<Output = T> + '_ {
-        self.shared.updated()
     }
 }
 
@@ -222,17 +178,9 @@ impl<T: Clone + Eq> Watcher<T> {
     /// Returns the currently held value.
     ///
     /// Returns `None` if the value was not yet initialized.
-    pub fn get(&self) -> Result<Option<T>> {
+    pub fn get(&self) -> Result<T, Disconnected> {
         let shared = self.shared.upgrade().ok_or_else(|| Disconnected)?;
         Ok(shared.get())
-    }
-
-    /// Returns a future completing once the value is initialized.
-    ///
-    /// The future will complete immediately if the value was already initialized.
-    pub fn initialized(&mut self) -> WatchNextFut<T> {
-        self.epoch = PRE_INITIAL_EPOCH;
-        WatchNextFut { watcher: self }
     }
 
     /// Returns a future completing once a new value is set.
@@ -266,16 +214,26 @@ impl<T: Clone + Eq> Watcher<T> {
     }
 }
 
-/// Future returning another item from a [`Watcher`].
+impl<T: Clone + Eq> Watcher<Option<T>> {
+    /// Returns a future completing once the value is initialized.
+    ///
+    /// The future will complete immediately if the value was already initialized.
+    pub fn initialized(&mut self) -> WatchInitializedFut<T> {
+        self.epoch = PRE_INITIAL_EPOCH;
+        WatchInitializedFut { watcher: self }
+    }
+}
+
+/// Future the next item after the current one in a [`Watcher`].
 ///
-/// See [`Watcher::initialized`] and [`Watcher::updated`].
+/// See [`Watcher::updated`].
 #[derive(Debug)]
 pub struct WatchNextFut<'a, T> {
     watcher: &'a mut Watcher<T>,
 }
 
 impl<'a, T: Clone + Eq> Future for WatchNextFut<'a, T> {
-    type Output = Result<T>;
+    type Output = Result<T, Disconnected>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         let Some(shared) = self.watcher.shared.upgrade() else {
@@ -288,6 +246,36 @@ impl<'a, T: Clone + Eq> Future for WatchNextFut<'a, T> {
                 Poll::Ready(Ok(value))
             }
         }
+    }
+}
+
+/// Future returning the current or next value that's `Some(value)`
+/// in a [`Watcher`].
+///
+/// See [`Watcher::initialized`].
+#[derive(Debug)]
+pub struct WatchInitializedFut<'a, T> {
+    watcher: &'a mut Watcher<Option<T>>,
+}
+
+impl<'a, T: Clone + Eq> Future for WatchInitializedFut<'a, T> {
+    type Output = Result<T, Disconnected>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
+        let Some(shared) = self.watcher.shared.upgrade() else {
+            return Poll::Ready(Err(Disconnected));
+        };
+
+        let value = loop {
+            let (epoch, value) = futures_lite::ready!(shared.poll_next(cx, self.watcher.epoch));
+            self.watcher.epoch = epoch;
+
+            if let Some(value) = value {
+                break value;
+            }
+        };
+
+        Poll::Ready(Ok(value))
     }
 }
 
@@ -330,9 +318,8 @@ mod tests {
     #[tokio::test]
     async fn test_watcher() {
         let cancel = CancellationToken::new();
-        let watchable = Watchable::new_initialized(17);
+        let watchable = Watchable::new(17);
 
-        assert_eq!(watchable.watch().initialized().await.unwrap(), 17);
         assert_eq!(watchable.watch().stream().next().await.unwrap(), 17);
 
         let start = Instant::now();
@@ -347,8 +334,7 @@ mod tests {
                 loop {
                     tokio::select! {
                         biased;
-                        value = &mut watch.next() => {
-                            let value = value.unwrap();
+                        Some(value) = &mut watch.next() => {
                             println!("{:?} [{i}] update: {value}", start.elapsed());
                             assert_eq!(value, expected_value);
                             if expected_value == 17 {
@@ -412,36 +398,38 @@ mod tests {
 
     #[test]
     fn test_get() {
-        let watchable = Watchable::new();
+        let watchable = Watchable::new(None);
         assert!(watchable.get().is_none());
 
-        watchable.set(1u8);
+        watchable.set(Some(1u8)).ok();
         assert_eq!(watchable.get(), Some(1u8));
     }
 
     #[tokio::test]
     async fn test_initialize() {
-        let watchable = Watchable::new();
+        let watchable = Watchable::new(None);
 
-        let mut initialized = watchable.initialized();
+        let mut watcher = watchable.watch();
+        let mut initialized = watcher.initialized();
 
         let poll = futures_lite::future::poll_once(&mut initialized).await;
         assert!(poll.is_none());
 
-        watchable.set(1u8);
+        watchable.set(Some(1u8)).ok();
 
         let poll = futures_lite::future::poll_once(&mut initialized).await;
-        assert_eq!(poll, Some(1u8));
+        assert_eq!(poll.unwrap().unwrap(), 1u8);
     }
 
     #[tokio::test]
     async fn test_initialize_already_init() {
-        let watchable = Watchable::new_initialized(1u8);
+        let watchable = Watchable::new(Some(1u8));
 
-        let mut initialized = watchable.initialized();
+        let mut watcher = watchable.watch();
+        let mut initialized = watcher.initialized();
 
         let poll = futures_lite::future::poll_once(&mut initialized).await;
-        assert_eq!(poll, Some(1u8));
+        assert_eq!(poll.unwrap().unwrap(), 1u8);
     }
 
     #[test]
@@ -452,12 +440,12 @@ mod tests {
         use std::thread;
 
         let test_case = || {
-            let watchable = Watchable::<u8>::new();
+            let watchable = Watchable::<Option<u8>>::new(None);
 
             let mut watch = watchable.watch();
             let thread = thread::spawn(move || futures_lite::future::block_on(watch.initialized()));
 
-            watchable.set(42);
+            watchable.set(Some(42)).ok();
 
             thread::yield_now();
 

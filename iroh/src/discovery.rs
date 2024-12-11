@@ -464,6 +464,7 @@ mod tests {
     struct TestDiscoveryShared {
         nodes: Arc<Mutex<HashMap<NodeId, (AddrInfo, u64)>>>,
     }
+
     impl TestDiscoveryShared {
         pub fn create_discovery(&self, node_id: NodeId) -> TestDiscovery {
             TestDiscovery {
@@ -485,6 +486,7 @@ mod tests {
             }
         }
     }
+
     #[derive(Debug)]
     struct TestDiscovery {
         node_id: NodeId,
@@ -583,7 +585,7 @@ mod tests {
             new_endpoint(secret, disco).await
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
-        // wait for out address to be updated and thus published at least once
+        // wait for our address to be updated and thus published at least once
         ep1.node_addr().await?;
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())

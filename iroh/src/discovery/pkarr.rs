@@ -118,7 +118,7 @@ pub const DEFAULT_REPUBLISH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrPublisher {
     node_id: NodeId,
-    watchable: Watchable<NodeInfo>,
+    watchable: Watchable<Option<NodeInfo>>,
     join_handle: Arc<JoinHandle<()>>,
 }
 
@@ -153,7 +153,7 @@ impl PkarrPublisher {
         debug!("creating pkarr publisher that publishes to {pkarr_relay}");
         let node_id = secret_key.public();
         let pkarr_client = PkarrRelayClient::new(pkarr_relay);
-        let watchable = Watchable::new();
+        let watchable = Watchable::new(None);
         let service = PublisherService {
             ttl,
             watcher: watchable.watch(),
@@ -203,7 +203,7 @@ impl PkarrPublisher {
             (None, info.direct_addresses.clone())
         };
         let info = NodeInfo::new(self.node_id, relay_url, direct_addresses);
-        self.watchable.set(info);
+        self.watchable.set(Some(info)).ok();
     }
 }
 
@@ -229,7 +229,7 @@ struct PublisherService {
     secret_key: SecretKey,
     #[debug("PkarrClient")]
     pkarr_client: PkarrRelayClient,
-    watcher: Watcher<NodeInfo>,
+    watcher: Watcher<Option<NodeInfo>>,
     ttl: u32,
     republish_interval: Duration,
 }

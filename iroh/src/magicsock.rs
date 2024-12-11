@@ -263,7 +263,7 @@ impl MagicSock {
     ///
     /// If `None`, then we are not connected to any relay nodes.
     pub(crate) fn my_relay(&self) -> Option<RelayUrl> {
-        self.my_relay.get().flatten()
+        self.my_relay.get()
     }
 
     /// Get the current proxy configuration.
@@ -275,7 +275,7 @@ impl MagicSock {
     ///
     /// If we are not connected to any relay nodes, set this to `None`.
     fn set_my_relay(&self, my_relay: Option<RelayUrl>) -> Option<RelayUrl> {
-        self.my_relay.set(my_relay).flatten()
+        self.my_relay.set(my_relay).unwrap_or_else(|e| e)
     }
 
     fn is_closing(&self) -> bool {
@@ -2545,7 +2545,7 @@ fn bind(
 #[derive(derive_more::Debug, Default, Clone)]
 struct DiscoveredDirectAddrs {
     /// The last set of discovered direct addresses.
-    addrs: Watchable<BTreeSet<DirectAddr>>,
+    addrs: Watchable<Option<BTreeSet<DirectAddr>>>,
 
     /// The last time the direct addresses were updated, even if there was no change.
     ///
@@ -2557,7 +2557,7 @@ impl DiscoveredDirectAddrs {
     /// Updates the direct addresses, returns `true` if they changed, `false` if not.
     fn update(&self, addrs: BTreeSet<DirectAddr>) -> bool {
         *self.updated_at.write().unwrap() = Some(Instant::now());
-        let updated = self.addrs.set(addrs).is_some();
+        let updated = self.addrs.set(Some(addrs)).is_ok();
         if updated {
             event!(
                 target: "iroh::_events::direct_addrs",
@@ -2611,30 +2611,41 @@ impl DiscoveredDirectAddrs {
     }
 
     fn updates_stream(&self) -> DirectAddrsStream {
-        fn non_empty(set: &BTreeSet<DirectAddr>) -> bool {
-            !set.is_empty()
-        }
-
         DirectAddrsStream {
-            inner: self.addrs.watch().stream().filter(non_empty),
+            inner: self.addrs.watch().stream(),
         }
     }
 }
 
 /// Stream returning local endpoints as they change.
+///
+/// This stream only ends when the assicated [`MagicSock`] is
+/// dropped.
+///
+/// Returned items in this stream will only be non-empty sets of
+/// direct addresses.
 #[derive(Debug)]
 pub struct DirectAddrsStream {
-    inner: futures_lite::stream::Filter<
-        WatcherStream<BTreeSet<DirectAddr>>,
-        fn(&BTreeSet<DirectAddr>) -> bool,
-    >,
+    inner: WatcherStream<Option<BTreeSet<DirectAddr>>>,
 }
 
 impl Stream for DirectAddrsStream {
     type Item = BTreeSet<DirectAddr>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.as_mut().inner).poll_next(cx)
+        loop {
+            let Some(item) = futures_lite::ready!(Pin::new(&mut self.as_mut().inner).poll_next(cx))
+            else {
+                return Poll::Ready(None);
+            };
+
+            match item {
+                Some(addr_set) if !addr_set.is_empty() => {
+                    return Poll::Ready(Some(addr_set));
+                }
+                _ => continue,
+            }
+        }
     }
 }
 

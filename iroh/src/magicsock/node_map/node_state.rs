@@ -177,7 +177,7 @@ impl NodeState {
             sent_pings: HashMap::new(),
             last_used: options.active.then(Instant::now),
             last_call_me_maybe: None,
-            conn_type: Watchable::new(),
+            conn_type: Watchable::new(ConnectionType::None),
             has_been_direct: false,
         }
     }
@@ -200,7 +200,7 @@ impl NodeState {
 
     /// Returns info about this node.
     pub(super) fn info(&self, now: Instant) -> RemoteInfo {
-        let conn_type = self.conn_type.get().unwrap_or_default();
+        let conn_type = self.conn_type.get();
         let latency = match conn_type {
             ConnectionType::Direct(addr) => self
                 .udp_paths
@@ -310,7 +310,7 @@ impl NodeState {
             self.has_been_direct = true;
             inc!(MagicsockMetrics, nodes_contacted_directly);
         }
-        if let Some(prev_typ) = self.conn_type.set(typ.clone()) {
+        if let Ok(prev_typ) = self.conn_type.set(typ.clone()) {
             // The connection type has changed.
             event!(
                 target: "iroh::_events::conn_type::changed",
@@ -1495,7 +1495,7 @@ mod tests {
                     sent_pings: HashMap::new(),
                     last_used: Some(now),
                     last_call_me_maybe: None,
-                    conn_type: Watchable::new_initialized(ConnectionType::Direct(ip_port.into())),
+                    conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
                     has_been_direct: true,
                 },
                 ip_port.into(),
@@ -1515,7 +1515,7 @@ mod tests {
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
                 last_call_me_maybe: None,
-                conn_type: Watchable::new_initialized(ConnectionType::Relay(send_addr.clone())),
+                conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
                 has_been_direct: false,
             }
         };
@@ -1542,7 +1542,7 @@ mod tests {
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
                 last_call_me_maybe: None,
-                conn_type: Watchable::new_initialized(ConnectionType::Relay(send_addr.clone())),
+                conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
                 has_been_direct: false,
             }
         };
@@ -1579,7 +1579,7 @@ mod tests {
                     sent_pings: HashMap::new(),
                     last_used: Some(now),
                     last_call_me_maybe: None,
-                    conn_type: Watchable::new_initialized(ConnectionType::Mixed(
+                    conn_type: Watchable::new(ConnectionType::Mixed(
                         socket_addr,
                         send_addr.clone(),
                     )),
