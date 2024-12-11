@@ -41,31 +41,34 @@ pub use crate::relay_url::RelayUrl;
 pub struct NodeAddr {
     /// The node's identifier.
     pub node_id: NodeId,
-    /// Addressing information to connect to [`Self::node_id`].
-    pub info: AddrInfo,
+    /// The node's home relay url.
+    pub relay_url: Option<RelayUrl>,
+    /// Socket addresses where the peer might be reached directly.
+    pub direct_addresses: BTreeSet<SocketAddr>,
 }
 
 impl NodeAddr {
-    /// Creates a new [`NodeAddr`] with empty [`AddrInfo`].
+    /// Creates a new [`NodeAddr`] with no `relay_url` and no `direct_addresses`.
     pub fn new(node_id: PublicKey) -> Self {
         NodeAddr {
             node_id,
-            info: Default::default(),
+            relay_url: None,
+            direct_addresses: Default::default(),
         }
     }
 
-    /// Adds a relay url to the node's [`AddrInfo`].
+    /// Adds a relay url.
     pub fn with_relay_url(mut self, relay_url: RelayUrl) -> Self {
-        self.info.relay_url = Some(relay_url);
+        self.relay_url = Some(relay_url);
         self
     }
 
-    /// Adds the given direct addresses to the peer's [`AddrInfo`].
+    /// Adds the given direct addresses.
     pub fn with_direct_addresses(
         mut self,
         addresses: impl IntoIterator<Item = SocketAddr>,
     ) -> Self {
-        self.info.direct_addresses = addresses.into_iter().collect();
+        self.direct_addresses = addresses.into_iter().collect();
         self
     }
 
@@ -77,32 +80,24 @@ impl NodeAddr {
     ) -> Self {
         Self {
             node_id,
-            info: AddrInfo {
-                relay_url,
-                direct_addresses: direct_addresses.into_iter().collect(),
-            },
+            relay_url,
+            direct_addresses: direct_addresses.into_iter().collect(),
         }
     }
 
-    /// Applies the options to `self`.
-    ///
-    /// This is used to more tightly control the information stored in a [`NodeAddr`]
-    /// received from another API.  E.g. to ensure a [discovery] service is used the
-    /// `AddrInfoOptions::Id`] option could be used to remove all other addressing details.
-    ///
-    /// [discovery]: https://docs.rs/iroh/*/iroh/index.html#node-discovery
-    pub fn apply_options(&mut self, opts: AddrInfoOptions) {
-        self.info.apply_options(opts);
+    /// Returns true, if only a [`NodeId`] is present.
+    pub fn is_empty(&self) -> bool {
+        self.relay_url.is_none() && self.direct_addresses.is_empty()
     }
 
     /// Returns the direct addresses of this peer.
     pub fn direct_addresses(&self) -> impl Iterator<Item = &SocketAddr> {
-        self.info.direct_addresses.iter()
+        self.direct_addresses.iter()
     }
 
     /// Returns the relay url of this peer.
     pub fn relay_url(&self) -> Option<&RelayUrl> {
-        self.info.relay_url.as_ref()
+        self.relay_url.as_ref()
     }
 }
 
@@ -111,10 +106,8 @@ impl From<(PublicKey, Option<RelayUrl>, &[SocketAddr])> for NodeAddr {
         let (node_id, relay_url, direct_addresses_iter) = value;
         NodeAddr {
             node_id,
-            info: AddrInfo {
-                relay_url,
-                direct_addresses: direct_addresses_iter.iter().copied().collect(),
-            },
+            relay_url,
+            direct_addresses: direct_addresses_iter.iter().copied().collect(),
         }
     }
 }
@@ -123,78 +116,4 @@ impl From<NodeId> for NodeAddr {
     fn from(node_id: NodeId) -> Self {
         NodeAddr::new(node_id)
     }
-}
-
-/// Network paths to contact an iroh node.
-///
-/// This contains zero or more network paths to establish a connection to an iroh node.
-/// Unless a [discovery service] is used at least one path is required to connect to an
-/// other node, see [`NodeAddr`] for details.
-///
-/// [discovery]: https://docs.rs/iroh/*/iroh/index.html#node-discovery
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, PartialOrd, Ord)]
-pub struct AddrInfo {
-    /// The node's home relay url.
-    pub relay_url: Option<RelayUrl>,
-    /// Socket addresses where the peer might be reached directly.
-    pub direct_addresses: BTreeSet<SocketAddr>,
-}
-
-impl AddrInfo {
-    /// Returns whether this addressing information is empty.
-    pub fn is_empty(&self) -> bool {
-        self.relay_url.is_none() && self.direct_addresses.is_empty()
-    }
-
-    /// Applies the options to `self`.
-    ///
-    /// This is used to more tightly control the information stored in ab [`AddrInfo`]
-    /// received from another API.  E.g. to ensure a [discovery] service is used the
-    /// `AddrInfoOptions::Id`] option could be used to remove all other addressing details.
-    ///
-    /// [discovery]: https://docs.rs/iroh/*/iroh/index.html#node-discovery
-    pub fn apply_options(&mut self, opts: AddrInfoOptions) {
-        match opts {
-            AddrInfoOptions::Id => {
-                self.direct_addresses.clear();
-                self.relay_url = None;
-            }
-            AddrInfoOptions::RelayAndAddresses => {
-                // nothing to do
-            }
-            AddrInfoOptions::Relay => {
-                self.direct_addresses.clear();
-            }
-            AddrInfoOptions::Addresses => {
-                self.relay_url = None;
-            }
-        }
-    }
-}
-
-/// Options to configure what is included in a [`NodeAddr`] and [`AddrInfo`].
-#[derive(
-    Copy,
-    Clone,
-    PartialEq,
-    Eq,
-    Default,
-    Debug,
-    derive_more::Display,
-    derive_more::FromStr,
-    Serialize,
-    Deserialize,
-)]
-pub enum AddrInfoOptions {
-    /// Only the Node ID is added.
-    ///
-    /// This usually means that iroh-dns discovery is used to find address information.
-    #[default]
-    Id,
-    /// Includes the Node ID and both the relay URL, and the direct addresses.
-    RelayAndAddresses,
-    /// Includes the Node ID and the relay URL.
-    Relay,
-    /// Includes the Node ID and the direct addresses.
-    Addresses,
 }
