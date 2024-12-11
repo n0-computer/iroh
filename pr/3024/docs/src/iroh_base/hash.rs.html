@@ -563,7 +563,6 @@
 <a href="#563" id="563">563</a>
 <a href="#564" id="564">564</a>
 <a href="#565" id="565">565</a>
-<a href="#566" id="566">566</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The blake3 hash used in Iroh.
 
 </span><span class="kw">use </span>std::{borrow::Borrow, fmt, str::FromStr};
@@ -796,7 +795,6 @@
 }
 
 <span class="attr">#[cfg(feature = <span class="string">"redb"</span>)]
-#[cfg_attr(iroh_docsrs, cfg(feature = <span class="string">"redb"</span>))]
 </span><span class="kw">mod </span>redb_support {
     <span class="kw">use </span>postcard::experimental::max_size::MaxSize;
     <span class="kw">use </span>redb::{Key <span class="kw">as </span>RedbKey, Value <span class="kw">as </span>RedbValue};

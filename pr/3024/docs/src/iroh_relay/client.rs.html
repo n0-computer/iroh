@@ -1192,9 +1192,6 @@
 <a href="#1192" id="1192">1192</a>
 <a href="#1193" id="1193">1193</a>
 <a href="#1194" id="1194">1194</a>
-<a href="#1195" id="1195">1195</a>
-<a href="#1196" id="1196">1196</a>
-<a href="#1197" id="1197">1197</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
@@ -1400,7 +1397,6 @@
     </span>protocol: Protocol,
     <span class="doccomment">/// Allow self-signed certificates from relay servers
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = <span class="string">"test-utils"</span>))))]
     </span>insecure_skip_cert_verify: bool,
     <span class="doccomment">/// HTTP Proxy
     </span>proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
@@ -1466,7 +1462,6 @@
     ///
     /// May only be used in tests.
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = <span class="string">"test-utils"</span>))))]
     </span><span class="kw">pub fn </span>insecure_skip_cert_verify(<span class="kw-2">mut </span><span class="self">self</span>, skip: bool) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.insecure_skip_cert_verify = skip;
         <span class="self">self
@@ -2290,7 +2285,6 @@
 
 <span class="doccomment">/// Used to allow self signed certificates in tests
 </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-#[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = <span class="string">"test-utils"</span>))))]
 #[derive(Debug)]
 </span><span class="kw">struct </span>NoCertVerifier;
 

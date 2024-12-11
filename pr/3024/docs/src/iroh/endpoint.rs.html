@@ -1886,11 +1886,6 @@
 <a href="#1886" id="1886">1886</a>
 <a href="#1887" id="1887">1887</a>
 <a href="#1888" id="1888">1888</a>
-<a href="#1889" id="1889">1889</a>
-<a href="#1890" id="1890">1890</a>
-<a href="#1891" id="1891">1891</a>
-<a href="#1892" id="1892">1892</a>
-<a href="#1893" id="1893">1893</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
@@ -1989,7 +1984,6 @@
     </span>node_map: <span class="prelude-ty">Option</span>&lt;Vec&lt;NodeAddr&gt;&gt;,
     dns_resolver: <span class="prelude-ty">Option</span>&lt;DnsResolver&gt;,
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = <span class="string">"test-utils"</span>))))]
     </span>insecure_skip_relay_cert_verify: bool,
     addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;,
     addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
@@ -2200,7 +2194,6 @@
     </span>}
 
     <span class="attr">#[cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)]
-    #[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)))]
     </span><span class="doccomment">/// Configures the endpoint to also use the mainline DHT with default settings.
     ///
     /// This is equivalent to adding a [`crate::discovery::pkarr::dht::DhtDiscovery`]
@@ -2221,7 +2214,6 @@
     </span>}
 
     <span class="attr">#[cfg(feature = <span class="string">"discovery-local-network"</span>)]
-    #[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"discovery-local-network"</span>)))]
     </span><span class="doccomment">/// Configures the endpoint to also use local network discovery.
     ///
     /// This is equivalent to adding a [`crate::discovery::local_swarm_discovery::LocalSwarmDiscovery`]
@@ -2305,7 +2297,6 @@
     ///
     /// May only be used in tests.
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = <span class="string">"test-utils"</span>))))]
     </span><span class="kw">pub fn </span>insecure_skip_relay_cert_verify(<span class="kw-2">mut </span><span class="self">self</span>, skip_verify: bool) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.insecure_skip_relay_cert_verify = skip_verify;
         <span class="self">self
@@ -3272,7 +3263,6 @@
 }
 
 <span class="doccomment">/// Environment variable to force the use of staging relays.
-</span><span class="attr">#[cfg_attr(iroh_docsrs, doc(cfg(not(test))))]
 </span><span class="kw">pub const </span>ENV_FORCE_STAGING_RELAYS: <span class="kw-2">&amp;</span>str = <span class="string">"IROH_FORCE_STAGING_RELAYS"</span>;
 
 <span class="doccomment">/// Returns `true` if the use of staging relays is forced.
