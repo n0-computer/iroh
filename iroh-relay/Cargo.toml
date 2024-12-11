@@ -139,3 +139,6 @@ required-features = ["server"]
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "iroh_docsrs"]
+
+[patch.crates-io]
+rustls-cert-reloadable-resolver = { git = "https://github.com/arqu/rustls-cert-utils" }
