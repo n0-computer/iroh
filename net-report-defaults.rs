@@ -1,8 +1,17 @@
 //! Default values used in net_report.
 
-pub(crate) use iroh_base::relay_map::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT};
+/// The default STUN port used by the Relay server.
+///
+/// The STUN port as defined by [RFC 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
+pub use iroh_base::relay_map::DEFAULT_STUN_PORT;
 
-/// Contains all timeouts that we use in `iroh-net-report`.
+/// The default QUIC port used by the Relay server to accept QUIC connections
+/// for QUIC address discovery
+///
+/// The port is "QUIC" typed on a phone keypad.
+pub use iroh_base::relay_map::DEFAULT_QUIC_PORT;
+
+/// Contains all timeouts that we use in `iroh-net_report`.
 pub(crate) mod timeouts {
     use std::time::Duration;
 

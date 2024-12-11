@@ -54,10 +54,10 @@ pub(super) enum ProbeProto {
     IcmpV4,
     /// ICMP IPv6
     IcmpV6,
-    /// QUIC Address Discovery Ipv4
-    QuicIpv4,
-    /// QUIC Address Discovery Ipv6
-    QuicIpv6,
+    /// QUIC Address Discovery IPv4
+    QuicAddrIpv4,
+    /// QUIC Address Discovery IPv6
+    QuicAddrIpv6,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
@@ -92,13 +92,13 @@ pub(super) enum Probe {
         delay: Duration,
         node: Arc<RelayNode>,
     },
-    #[display("QUIC Address Discovery Ivp4 after {delay:?} to {node}")]
-    QuicIpv4 {
+    #[display("QUIC Addr Ivp4 after {delay:?} to {node}")]
+    QuicAddrIpv4 {
         delay: Duration,
         node: Arc<RelayNode>,
     },
-    #[display("QUIC Address Discovery Ivp6 after {delay:?} to {node}")]
-    QuicIpv6 {
+    #[display("QUIC Addr Ivp6 after {delay:?} to {node}")]
+    QuicAddrIpv6 {
         delay: Duration,
         node: Arc<RelayNode>,
     },
@@ -112,8 +112,8 @@ impl Probe {
             | Probe::Https { delay, .. }
             | Probe::IcmpV4 { delay, .. }
             | Probe::IcmpV6 { delay, .. }
-            | Probe::QuicIpv4 { delay, .. }
-            | Probe::QuicIpv6 { delay, .. } => *delay,
+            | Probe::QuicAddrIpv4 { delay, .. }
+            | Probe::QuicAddrIpv6 { delay, .. } => *delay,
         }
     }
 
@@ -124,8 +124,8 @@ impl Probe {
             Probe::Https { .. } => ProbeProto::Https,
             Probe::IcmpV4 { .. } => ProbeProto::IcmpV4,
             Probe::IcmpV6 { .. } => ProbeProto::IcmpV6,
-            Probe::QuicIpv4 { .. } => ProbeProto::QuicIpv4,
-            Probe::QuicIpv6 { .. } => ProbeProto::QuicIpv6,
+            Probe::QuicAddrIpv4 { .. } => ProbeProto::QuicAddrIpv4,
+            Probe::QuicAddrIpv6 { .. } => ProbeProto::QuicAddrIpv6,
         }
     }
 
@@ -136,8 +136,8 @@ impl Probe {
             | Probe::Https { node, .. }
             | Probe::IcmpV4 { node, .. }
             | Probe::IcmpV6 { node, .. }
-            | Probe::QuicIpv4 { node, .. }
-            | Probe::QuicIpv6 { node, .. } => node,
+            | Probe::QuicAddrIpv4 { node, .. }
+            | Probe::QuicAddrIpv6 { node, .. } => node,
         }
     }
 }
@@ -226,8 +226,8 @@ impl ProbePlan {
         for relay_node in relay_map.nodes() {
             let mut stun_ipv4_probes = ProbeSet::new(ProbeProto::StunIpv4);
             let mut stun_ipv6_probes = ProbeSet::new(ProbeProto::StunIpv6);
-            let mut quic_ipv4_probes = ProbeSet::new(ProbeProto::QuicIpv4);
-            let mut quic_ipv6_probes = ProbeSet::new(ProbeProto::QuicIpv6);
+            let mut quic_ipv4_probes = ProbeSet::new(ProbeProto::QuicAddrIpv4);
+            let mut quic_ipv6_probes = ProbeSet::new(ProbeProto::QuicAddrIpv6);
 
             for attempt in 0..3 {
                 let delay = DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
@@ -240,11 +240,11 @@ impl ProbePlan {
                         })
                         .expect("adding StunIpv4 probe to a StunIpv4 probe set");
                     quic_ipv4_probes
-                        .push(Probe::QuicIpv4 {
+                        .push(Probe::QuicAddrIpv4 {
                             delay,
                             node: relay_node.clone(),
                         })
-                        .expect("adding QuicIpv4 probe to a QuicIpv4 probe set");
+                        .expect("adding QuicAddrIpv4 probe to a QuicAddrIpv4 probe set");
                 }
                 if if_state.have_v6 {
                     stun_ipv6_probes
@@ -253,20 +253,20 @@ impl ProbePlan {
                             node: relay_node.clone(),
                         })
                         .expect("adding StunIpv6 probe to a StunIpv6 probe set");
+                    quic_ipv6_probes
+                        .push(Probe::QuicAddrIpv6 {
+                            delay,
+                            node: relay_node.clone(),
+                        })
+                        .expect("adding QuicAddrIpv6 probe to a QuicAddrIpv6 probe set");
                 }
-                quic_ipv6_probes
-                    .push(Probe::QuicIpv6 {
-                        delay,
-                        node: relay_node.clone(),
-                    })
-                    .expect("adding QuicIpv6 probe to a QuicAddrIpv6 probe set");
             }
             plan.add(stun_ipv4_probes);
             plan.add(stun_ipv6_probes);
             plan.add(quic_ipv4_probes);
             plan.add(quic_ipv6_probes);
 
-            // The HTTP and ICMP probes only start after the STUN probes have had a chance.
+            // The HTTP and ICMP probes only start after the STUN and QUIC probes have had a chance.
             let mut https_probes = ProbeSet::new(ProbeProto::Https);
             let mut icmp_probes_ipv4 = ProbeSet::new(ProbeProto::IcmpV4);
             let mut icmp_probes_ipv6 = ProbeSet::new(ProbeProto::IcmpV6);
@@ -320,9 +320,9 @@ impl ProbePlan {
         // further relay servers can reuse this delay.
         let mut max_stun_delay: Option<Duration> = None;
 
-        let had_stun_ipv4 = !last_report.relay_v4_latency.is_empty();
-        let had_stun_ipv6 = !last_report.relay_v6_latency.is_empty();
-        let had_both = if_state.have_v6 && had_stun_ipv4 && had_stun_ipv6;
+        let had_ipv4 = !last_report.relay_v4_latency.is_empty();
+        let had_ipv6 = !last_report.relay_v6_latency.is_empty();
+        let had_both = if_state.have_v6 && had_ipv4 && had_ipv6;
         let sorted_relays = sort_relays(relay_map, last_report);
         for (ri, (url, relay_node)) in sorted_relays.into_iter().enumerate() {
             if ri == NUM_INCREMENTAL_RELAYS {
@@ -347,7 +347,7 @@ impl ProbePlan {
                     (do4, do6) = (false, true);
                 }
             }
-            if !is_fastest_two && !had_stun_ipv6 {
+            if !is_fastest_two && !had_ipv6 {
                 do6 = false;
             }
             if Some(url) == last_report.preferred_relay.as_ref() {
@@ -363,8 +363,8 @@ impl ProbePlan {
 
             let mut stun_ipv4_probes = ProbeSet::new(ProbeProto::StunIpv4);
             let mut stun_ipv6_probes = ProbeSet::new(ProbeProto::StunIpv6);
-            let mut quic_ipv4_probes = ProbeSet::new(ProbeProto::QuicIpv4);
-            let mut quic_ipv6_probes = ProbeSet::new(ProbeProto::QuicIpv6);
+            let mut quic_ipv4_probes = ProbeSet::new(ProbeProto::QuicAddrIpv4);
+            let mut quic_ipv6_probes = ProbeSet::new(ProbeProto::QuicAddrIpv6);
 
             for attempt in 0..attempts {
                 let delay = (retransmit_delay * attempt as u32)
@@ -377,11 +377,11 @@ impl ProbePlan {
                         })
                         .expect("Pushing StunIpv4 Probe to StunIpv4 ProbeSet");
                     quic_ipv4_probes
-                        .push(Probe::QuicIpv4 {
+                        .push(Probe::QuicAddrIpv4 {
                             delay,
                             node: relay_node.clone(),
                         })
-                        .expect("adding QuicIpv4 probe to a QuicAddrIpv4 probe set");
+                        .expect("adding QuicAddrIpv4 probe to a QuicAddrIpv4 probe set");
                 }
                 if do6 {
                     stun_ipv6_probes
@@ -391,11 +391,11 @@ impl ProbePlan {
                         })
                         .expect("Pushing StunIpv6 Probe to StunIpv6 ProbeSet");
                     quic_ipv6_probes
-                        .push(Probe::QuicIpv6 {
+                        .push(Probe::QuicAddrIpv6 {
                             delay,
                             node: relay_node.clone(),
                         })
-                        .expect("adding QuicIpv6 probe to a QuicAddrIpv6 probe set");
+                        .expect("adding QuicAddrIpv6 probe to a QuicAddrIpv6 probe set");
                 }
             }
             plan.add(stun_ipv4_probes);

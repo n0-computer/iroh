@@ -14,13 +14,13 @@ use std::{
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
-use hickory_resolver::TokioResolver as DnsResolver;
+use hickory_resolver::TokioAsyncResolver as DnsResolver;
 use iroh_base::relay_map::{RelayMap, RelayNode, RelayUrl};
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
 use iroh_relay::protos::stun;
 use netwatch::{IpFamily, UdpSocket};
-use reportgen::QuicConfig;
+pub use reportgen::QuicAddressDiscovery;
 use tokio::{
     sync::{self, mpsc, oneshot},
     time::{Duration, Instant},
@@ -30,10 +30,12 @@ use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 mod defaults;
 mod dns;
+#[cfg(feature = "metrics")]
 mod metrics;
 mod ping;
 mod reportgen;
 
+#[cfg(feature = "metrics")]
 pub use metrics::Metrics;
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
@@ -246,10 +248,10 @@ impl Client {
         dm: RelayMap,
         stun_conn4: Option<Arc<UdpSocket>>,
         stun_conn6: Option<Arc<UdpSocket>>,
-        quic_config: Option<QuicConfig>,
+        quic_addr_disc: Option<QuicAddressDiscovery>,
     ) -> Result<Arc<Report>> {
         let rx = self
-            .get_report_channel(dm, stun_conn4, stun_conn6, quic_config)
+            .get_report_channel(dm, stun_conn4, stun_conn6, quic_addr_disc)
             .await?;
         match rx.await {
             Ok(res) => res,
@@ -263,7 +265,7 @@ impl Client {
         dm: RelayMap,
         stun_conn4: Option<Arc<UdpSocket>>,
         stun_conn6: Option<Arc<UdpSocket>>,
-        quic_config: Option<QuicConfig>,
+        quic_addr_disc: Option<QuicAddressDiscovery>,
     ) -> Result<oneshot::Receiver<Result<Arc<Report>>>> {
         // TODO: consider if RelayMap should be made to easily clone?  It seems expensive
         // right now.
@@ -273,7 +275,7 @@ impl Client {
                 relay_map: dm,
                 stun_sock_v4: stun_conn4,
                 stun_sock_v6: stun_conn6,
-                quic_config,
+                quic_addr_disc,
                 response_tx: tx,
             })
             .await?;
@@ -317,7 +319,7 @@ pub(crate) enum Message {
         /// connection to do QUIC address discovery.
         ///
         /// If not provided, will not do QUIC address discovery.
-        quic_config: Option<QuicConfig>,
+        quic_addr_disc: Option<QuicAddressDiscovery>,
         /// Channel to receive the response.
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     },
@@ -457,14 +459,14 @@ impl Actor {
                     relay_map,
                     stun_sock_v4,
                     stun_sock_v6,
-                    quic_config,
+                    quic_addr_disc,
                     response_tx,
                 } => {
                     self.handle_run_check(
                         relay_map,
                         stun_sock_v4,
                         stun_sock_v6,
-                        quic_config,
+                        quic_addr_disc,
                         response_tx,
                     );
                 }
@@ -494,7 +496,7 @@ impl Actor {
         relay_map: RelayMap,
         stun_sock_v4: Option<Arc<UdpSocket>>,
         stun_sock_v6: Option<Arc<UdpSocket>>,
-        quic_config: Option<QuicConfig>,
+        quic_addr_disc: Option<QuicAddressDiscovery>,
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     ) {
         if self.current_report_run.is_some() {
@@ -545,7 +547,7 @@ impl Actor {
             relay_map,
             stun_sock_v4,
             stun_sock_v6,
-            quic_config,
+            quic_addr_disc,
             self.dns_resolver.clone(),
         );
 
@@ -801,8 +803,11 @@ mod test_utils {
 
     use std::sync::Arc;
 
-    use iroh_base::relay_map::QuicConfig;
-    use iroh_relay::server;
+    use iroh_relay::server::{
+        self,
+        testing::{quic_config, relay_config},
+        ServerConfig,
+    };
 
     use crate::RelayNode;
 
@@ -810,14 +815,39 @@ mod test_utils {
         let server = server::Server::spawn(server::testing::server_config())
             .await
             .expect("should serve relay");
-        let quic = Some(QuicConfig {
-            port: server.quic_addr().expect("server should run quic").port(),
-        });
         let node_desc = RelayNode {
             url: server.https_url().expect("should work as relay"),
             stun_only: false, // the checks above and below guarantee both stun and relay
             stun_port: server.stun_addr().expect("server should serve stun").port(),
-            quic,
+            quic_only: false,
+            quic_port: server
+                .quic_addr()
+                .expect("server should serve quic address discovery")
+                .port(),
+        };
+
+        (server, Arc::new(node_desc))
+    }
+
+    pub(crate) async fn relay_with_quic() -> (server::Server, Arc<RelayNode>) {
+        let server_config = ServerConfig {
+            relay: Some(relay_config()),
+            stun: None,
+            quic: Some(quic_config()),
+            metrics_addr: None,
+        };
+        let server = server::Server::spawn(server_config)
+            .await
+            .expect("should serve relay");
+        let node_desc = RelayNode {
+            url: server.https_url().expect("should work as relay"),
+            stun_only: false,
+            stun_port: 0,
+            quic_only: false,
+            quic_port: server
+                .quic_addr()
+                .expect("server should serve quic address discovery")
+                .port(),
         };
 
         (server, Arc::new(node_desc))
@@ -902,7 +932,8 @@ mod tests {
                     url,
                     stun_port: port,
                     stun_only,
-                    quic: None,
+                    quic_only: false,
+                    quic_port: 0,
                 }
             });
             RelayMap::from_nodes(nodes).expect("generated invalid nodes")
@@ -1310,6 +1341,43 @@ mod tests {
         assert_eq!(r.hair_pinning, Some(true));
 
         task.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_quic_basic() -> Result<()> {
+        let _logging_guard = iroh_test::logging::setup();
+        // set up relay server that has quic enabled, but not stun
+        let (server, relay) = test_utils::relay_with_quic().await;
+
+        // set up quic client endpoint to use in the report
+        let client_config = iroh_relay::client::make_dangerous_client_config();
+        let client_config = quinn::ClientConfig::new(Arc::new(client_config));
+        let ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))?;
+        let addr = match ep.local_addr()? {
+            SocketAddr::V4(ipp) => ipp,
+            SocketAddr::V6(_) => unreachable!(),
+        };
+        let quic_addr_disc = QuicAddressDiscovery {
+            ep: ep.clone(),
+            client_config,
+        };
+
+        // create a net report client
+        let resolver = crate::dns::tests::resolver();
+        let mut client = Client::new(None, resolver.clone())?;
+
+        let relay_map = RelayMap::from_nodes(vec![relay])?;
+        let r = client
+            .get_report(relay_map, None, None, Some(quic_addr_disc))
+            .await?;
+        assert!(r.ipv4);
+        assert!(r.ipv4_can_send);
+        assert_eq!(r.global_v4, Some(addr));
+
+        // cleanup
+        ep.wait_idle().await;
+        server.shutdown().await?;
         Ok(())
     }
 }
