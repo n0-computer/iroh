@@ -43,4 +43,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)"] }
 unused-async = "warn"
 
 [patch.crates-io]
+reloadable-state = { git = "https://github.com/arqu/rustls-cert-utils", branch = "default-features" }
+rustls-cert-file-reader = { git = "https://github.com/arqu/rustls-cert-utils", branch = "default-features" }
 rustls-cert-reloadable-resolver = { git = "https://github.com/arqu/rustls-cert-utils", branch = "default-features" }

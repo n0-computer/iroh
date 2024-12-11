@@ -2480,7 +2480,7 @@ dependencies = [
  "rand_chacha",
  "rcgen",
  "regex",
- "reloadable-state 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "reloadable-state",
  "reqwest",
  "ring",
  "rustls",
@@ -3952,24 +3952,7 @@ checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 [[package]]
 name = "reloadable-core"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1dc20ac1418988b60072d783c9f68e28a173fb63493c127952f6face3b40c6e0"
-
-[[package]]
-name = "reloadable-core"
-version = "0.1.0"
 source = "git+https://github.com/arqu/rustls-cert-utils?branch=default-features#46c56f7dce2b43f72eb4214ce2ff6f030781c6f8"
-
-[[package]]
-name = "reloadable-state"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3853ef78d45b50f8b989896304a85239539d39b7f866a000e8846b9b72d74ce8"
-dependencies = [
- "arc-swap",
- "reloadable-core 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "tokio",
-]
 
 [[package]]
 name = "reloadable-state"
@@ -3977,7 +3960,7 @@ version = "0.1.0"
 source = "git+https://github.com/arqu/rustls-cert-utils?branch=default-features#46c56f7dce2b43f72eb4214ce2ff6f030781c6f8"
 dependencies = [
  "arc-swap",
- "reloadable-core 0.1.0 (git+https://github.com/arqu/rustls-cert-utils?branch=default-features)",
+ "reloadable-core",
  "tokio",
 ]
 
@@ -4176,23 +4159,13 @@ dependencies = [
 [[package]]
 name = "rustls-cert-file-reader"
 version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f351eaf1dd003022222d2b1399caac198fefeab45c46b0f98bb03fc7cda9bb27"
+source = "git+https://github.com/arqu/rustls-cert-utils?branch=default-features#46c56f7dce2b43f72eb4214ce2ff6f030781c6f8"
 dependencies = [
- "rustls-cert-read 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rustls-cert-read",
  "rustls-pemfile",
  "rustls-pki-types",
  "thiserror 2.0.6",
  "tokio",
-]
-
-[[package]]
-name = "rustls-cert-read"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd46e8c5ae4de3345c4786a83f99ec7aff287209b9e26fa883c473aeb28f19d5"
-dependencies = [
- "rustls-pki-types",
 ]
 
 [[package]]
@@ -4210,9 +4183,9 @@ source = "git+https://github.com/arqu/rustls-cert-utils?branch=default-features#
 dependencies = [
  "async-trait",
  "futures-util",
- "reloadable-state 0.1.0 (git+https://github.com/arqu/rustls-cert-utils?branch=default-features)",
+ "reloadable-state",
  "rustls",
- "rustls-cert-read 0.3.0 (git+https://github.com/arqu/rustls-cert-utils?branch=default-features)",
+ "rustls-cert-read",
  "thiserror 2.0.6",
 ]
 
