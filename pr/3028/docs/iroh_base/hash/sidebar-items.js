@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["BlobFormat"],"struct":["Hash","HashAndFormat"]};
