@@ -257,7 +257,6 @@
 <a href="#257" id="257">257</a>
 <a href="#258" id="258">258</a>
 <a href="#259" id="259">259</a>
-<a href="#260" id="260">260</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Peer-to-peer QUIC connections.
 //!
 //! iroh is a library to establish direct connectivity between peers.  It exposes an
@@ -494,7 +493,6 @@
 #![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 
 </span><span class="kw">pub mod </span>defaults;
-<span class="kw">pub mod </span>dialer;
 <span class="kw">mod </span>disco;
 <span class="kw">pub mod </span>discovery;
 <span class="kw">pub mod </span>dns;
@@ -502,7 +500,7 @@
 <span class="kw">mod </span>magicsock;
 <span class="kw">pub mod </span>metrics;
 <span class="kw">pub mod </span>protocol;
-<span class="kw">pub mod </span>tls;
+<span class="kw">mod </span>tls;
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>util;
 

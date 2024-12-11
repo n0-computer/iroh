@@ -1212,7 +1212,7 @@
 <span class="kw">use </span>conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMessage};
 <span class="kw">use </span>futures_lite::future::Boxed <span class="kw">as </span>BoxFuture;
 <span class="kw">use </span>futures_util::StreamExt;
-<span class="kw">use </span>hickory_resolver::TokioAsyncResolver <span class="kw">as </span>DnsResolver;
+<span class="kw">use </span>hickory_resolver::TokioResolver <span class="kw">as </span>DnsResolver;
 <span class="kw">use </span>http_body_util::Empty;
 <span class="kw">use </span>hyper::{
     body::Incoming,

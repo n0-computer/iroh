@@ -163,7 +163,7 @@
 };
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>hickory_proto::{
+<span class="kw">use </span>hickory_server::proto::{
     op::Message,
     rr::{
         domain::{IntoLabel, Label},
@@ -303,7 +303,7 @@
     serial: u32,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;RecordSet&gt; {
     <span class="kw">let </span>new_name = input.name().clone().append_name(origin)<span class="question-mark">?</span>;
-    <span class="kw">let </span><span class="kw-2">mut </span>output = RecordSet::new(<span class="kw-2">&amp;</span>new_name, input.record_type(), serial);
+    <span class="kw">let </span><span class="kw-2">mut </span>output = RecordSet::new(new_name.clone(), input.record_type(), serial);
     <span class="comment">// TODO: less clones
     </span><span class="kw">for </span>record <span class="kw">in </span>input.records_without_rrsigs() {
         <span class="kw">let </span><span class="kw-2">mut </span>record = record.clone();
