@@ -571,6 +571,20 @@ mod tests {
                          Duration::from_millis(200)],
             },
             probeset! {
+                proto: ProbeProto::QuicIpv4,
+                relay: relay_node_1.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(100),
+                         Duration::from_millis(200)],
+            },
+            probeset! {
+                proto: ProbeProto::QuicIpv6,
+                relay: relay_node_1.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(100),
+                         Duration::from_millis(200)],
+            },
+            probeset! {
                 proto: ProbeProto::Https,
                 relay: relay_node_1.clone(),
                 delays: [Duration::from_millis(300),
@@ -600,6 +614,20 @@ mod tests {
             },
             probeset! {
                 proto: ProbeProto::StunIpv6,
+                relay: relay_node_2.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(100),
+                         Duration::from_millis(200)],
+            },
+            probeset! {
+                proto: ProbeProto::QuicIpv4,
+                relay: relay_node_2.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(100),
+                         Duration::from_millis(200)],
+            },
+            probeset! {
+                proto: ProbeProto::QuicIpv6,
                 relay: relay_node_2.clone(),
                 delays: [Duration::ZERO,
                          Duration::from_millis(100),
@@ -693,6 +721,22 @@ mod tests {
                              Duration::from_micros(157_200)],
                 },
                 probeset! {
+                    proto: ProbeProto::QuicIpv4,
+                    relay: relay_node_1.clone(),
+                    delays: [Duration::ZERO,
+                             Duration::from_micros(52_400),
+                             Duration::from_micros(104_800),
+                             Duration::from_micros(157_200)],
+                },
+                probeset! {
+                    proto: ProbeProto::QuicIpv6,
+                    relay: relay_node_1.clone(),
+                    delays: [Duration::ZERO,
+                             Duration::from_micros(52_400),
+                             Duration::from_micros(104_800),
+                             Duration::from_micros(157_200)],
+                },
+                probeset! {
                     proto: ProbeProto::Https,
                     relay: relay_node_1.clone(),
                     delays: [Duration::from_micros(207_200),
@@ -724,6 +768,18 @@ mod tests {
                 },
                 probeset! {
                     proto: ProbeProto::StunIpv6,
+                    relay: relay_node_2.clone(),
+                    delays: [Duration::ZERO,
+                             Duration::from_micros(52_400)],
+                },
+                probeset! {
+                    proto: ProbeProto::QuicIpv4,
+                    relay: relay_node_2.clone(),
+                    delays: [Duration::ZERO,
+                             Duration::from_micros(52_400)],
+                },
+                probeset! {
+                    proto: ProbeProto::QuicIpv6,
                     relay: relay_node_2.clone(),
                     delays: [Duration::ZERO,
                              Duration::from_micros(52_400)],

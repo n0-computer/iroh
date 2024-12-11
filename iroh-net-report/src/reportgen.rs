@@ -72,6 +72,7 @@ pub(super) struct Client {
 }
 
 impl Client {
+    #[allow(clippy::too_many_arguments)]
     /// Creates a new actor generating a single report.
     ///
     /// The actor starts running immediately and only generates a single report, after which
@@ -900,11 +901,11 @@ async fn run_quic_probe(
     // TODO(ramfox): what to put here if no host is given?
     let host = url.host_str().unwrap_or("localhost");
     let quic_client = iroh_relay::quic::QuicClient::new(quic_config.ep, quic_config.client_config)
-        .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
+        .map_err(|e| ProbeError::Error(e, probe.clone()))?;
     let (addr, latency) = quic_client
         .get_addr_and_latency(relay_addr, host)
         .await
-        .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
+        .map_err(|e| ProbeError::Error(e, probe.clone()))?;
     let mut result = ProbeReport::new(probe.clone());
     if matches!(probe, Probe::QuicIpv4 { .. }) {
         result.ipv4_can_send = true;
