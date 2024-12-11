@@ -41,3 +41,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)"] }
 
 [workspace.lints.clippy]
 unused-async = "warn"
+
+[patch.crates-io]
+rustls-cert-reloadable-resolver = { git = "https://github.com/arqu/rustls-cert-utils", branch = "default-features" }
