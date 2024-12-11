@@ -231,7 +231,7 @@
 
 #![recursion_limit = "256"]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
-#![cfg_attr(iroh_docsrs, feature(doc_cfg))]
+#![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
 
 pub mod defaults;
 mod disco;
@@ -255,5 +255,4 @@ pub use iroh_base::{
 pub use iroh_relay as relay;
 
 #[cfg(any(test, feature = "test-utils"))]
-#[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
 pub mod test_utils;

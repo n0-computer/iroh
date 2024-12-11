@@ -66,7 +66,6 @@ use crate::{
 };
 
 #[cfg(feature = "discovery-pkarr-dht")]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = "discovery-pkarr-dht")))]
 pub mod dht;
 
 /// The production pkarr relay run by [number 0].

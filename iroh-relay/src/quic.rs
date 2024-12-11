@@ -13,7 +13,6 @@ pub const QUIC_ADDR_DISC_CLOSE_CODE: VarInt = VarInt::from_u32(1);
 pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 
 #[cfg(feature = "server")]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = "server")))]
 pub(crate) mod server {
     use quinn::{crypto::rustls::QuicServerConfig, ApplicationClose};
     use tokio::task::JoinSet;
