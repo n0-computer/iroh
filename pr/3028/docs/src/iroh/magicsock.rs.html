@@ -4093,6 +4093,14 @@
 <a href="#4093" id="4093">4093</a>
 <a href="#4094" id="4094">4094</a>
 <a href="#4095" id="4095">4095</a>
+<a href="#4096" id="4096">4096</a>
+<a href="#4097" id="4097">4097</a>
+<a href="#4098" id="4098">4098</a>
+<a href="#4099" id="4099">4099</a>
+<a href="#4100" id="4100">4100</a>
+<a href="#4101" id="4101">4101</a>
+<a href="#4102" id="4102">4102</a>
+<a href="#4103" id="4103">4103</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -4162,7 +4170,7 @@
     dns::DnsResolver,
     endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
-    AddrInfo, RelayMap, RelayUrl,
+    RelayMap, RelayUrl,
 };
 
 <span class="kw">mod </span>metrics;
@@ -4222,7 +4230,6 @@
     ///
     /// May only be used in tests.
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = <span class="string">"test-utils"</span>))))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) insecure_skip_relay_cert_verify: bool,
 }
 
@@ -4344,7 +4351,6 @@
     ///
     /// May only be used in tests.
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = <span class="string">"test-utils"</span>))))]
     </span>insecure_skip_relay_cert_verify: bool,
 }
 
@@ -4466,12 +4472,12 @@
     </span><span class="kw">pub fn </span>add_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="kw-2">mut </span>addr: NodeAddr, source: node_map::Source) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>pruned = <span class="number">0</span>;
         <span class="kw">for </span>my_addr <span class="kw">in </span><span class="self">self</span>.direct_addrs.sockaddrs() {
-            <span class="kw">if </span>addr.info.direct_addresses.remove(<span class="kw-2">&amp;</span>my_addr) {
+            <span class="kw">if </span>addr.direct_addresses.remove(<span class="kw-2">&amp;</span>my_addr) {
                 <span class="macro">warn!</span>( node_id=addr.node_id.fmt_short(), %my_addr, %source, <span class="string">"not adding our addr for node"</span>);
                 pruned += <span class="number">1</span>;
             }
         }
-        <span class="kw">if </span>!addr.info.is_empty() {
+        <span class="kw">if </span>!addr.direct_addresses.is_empty() || addr.relay_url.is_some() {
             <span class="self">self</span>.node_map.add_node_addr(addr, source);
             <span class="prelude-val">Ok</span>(())
         } <span class="kw">else if </span>pruned != <span class="number">0 </span>{
@@ -4613,8 +4619,14 @@
                             udp_sent = <span class="bool-val">true</span>;
                         }
                         <span class="prelude-val">Err</span>(err) =&gt; {
-                            <span class="macro">error!</span>(node = %node_id.fmt_short(), dst = %addr,
-                                   <span class="string">"failed to send udp: {err:#}"</span>);
+                            <span class="comment">// No need to print "WouldBlock" errors to the console
+                            </span><span class="kw">if </span>err.kind() != io::ErrorKind::WouldBlock {
+                                <span class="macro">warn!</span>(
+                                    node = %node_id.fmt_short(),
+                                    dst = %addr,
+                                    <span class="string">"failed to send udp: {err:#}"
+                                </span>);
+                            }
                             udp_error = <span class="prelude-val">Some</span>(err);
                         }
                     }
@@ -4658,16 +4670,26 @@
                         // at any time so these errors should be treated as transient and
                         // are just timeouts.  Hence we opt for returning Ok.  See
                         // test_try_send_no_udp_addr_or_relay_url to explore this further.
-                        </span><span class="macro">error!</span>(
+                        </span><span class="macro">debug!</span>(
                             node = %node_id.fmt_short(),
-                            <span class="string">"no UDP or relay paths available for node"</span>,
+                            <span class="string">"no UDP or relay paths available for node, voiding transmit"</span>,
                         );
-                    }
+                        <span class="comment">// We log this as debug instead of error, because this is a
+                        // situation that comes up under normal operation. If this were an
+                        // error log, it would unnecessarily pollute logs.
+                        // This situation happens essentially when `pings_sent` is false,
+                        // `relay_url` is `None`, so `relay_sent` is false, and the UDP
+                        // path is blocking, so `udp_sent` is false and `udp_pending` is
+                        // true.
+                        // Alternatively returning a WouldBlock error here would
+                        // potentially needlessly block sending on the relay path for the
+                        // next datagram.
+                    </span>}
                     <span class="prelude-val">Ok</span>(())
                 }
             }
             <span class="prelude-val">None </span>=&gt; {
-                <span class="macro">error!</span>(%dest, <span class="string">"no NodeState for mapped address"</span>);
+                <span class="macro">error!</span>(%dest, <span class="string">"no NodeState for mapped address, voiding transmit"</span>);
                 <span class="comment">// Returning Ok here means we let QUIC timeout.  Returning WouldBlock
                 // triggers a hot loop.  Returning an error would immediately fail a
                 // connection.  The philosophy of quinn-udp is that a UDP connection could
@@ -5476,11 +5498,7 @@
     /// Called whenever our addresses or home relay node changes.
     </span><span class="kw">fn </span>publish_my_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>discovery) = <span class="self">self</span>.discovery {
-            <span class="kw">let </span>info = AddrInfo {
-                relay_url: <span class="self">self</span>.my_relay(),
-                direct_addresses: <span class="self">self</span>.direct_addrs.sockaddrs(),
-            };
-            discovery.publish(<span class="kw-2">&amp;</span>info);
+            discovery.publish(<span class="self">self</span>.my_relay().as_ref(), <span class="kw-2">&amp;</span><span class="self">self</span>.direct_addrs.sockaddrs());
         }
     }
 }
@@ -6136,9 +6154,12 @@
                 // forever like we do with the other branches that yield `Option`s
                 </span><span class="prelude-val">Some</span>(discovery_item) = discovery_events.next() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: discovery event, address discovered: {discovery_item:?}"</span>);
-                    <span class="kw">let </span>node_addr = NodeAddr {node_id: discovery_item.node_id, info: discovery_item.addr_info};
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.msock.add_node_addr(node_addr.clone(), Source::Discovery { name: discovery_item.provenance.into() }) {
-                        <span class="macro">warn!</span>(<span class="question-mark">?</span>node_addr, <span class="string">"unable to add discovered node address to the node map: {e:?}"</span>);
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.msock.add_node_addr(
+                        discovery_item.node_addr.clone(),
+                        Source::Discovery {
+                            name: discovery_item.provenance.into()
+                        }) {
+                        <span class="macro">warn!</span>(<span class="question-mark">?</span>discovery_item.node_addr, <span class="string">"unable to add discovered node address to the node map: {e:?}"</span>);
                     }
                 }
             }
@@ -7054,10 +7075,8 @@
 
                 <span class="kw">let </span>addr = NodeAddr {
                     node_id: me.public(),
-                    info: <span class="kw">crate</span>::AddrInfo {
-                        relay_url: <span class="prelude-val">None</span>,
-                        direct_addresses: new_addrs.iter().map(|ep| ep.addr).collect(),
-                    },
+                    relay_url: <span class="prelude-val">None</span>,
+                    direct_addresses: new_addrs.iter().map(|ep| ep.addr).collect(),
                 };
                 m.endpoint.magic_sock().add_test_addr(addr);
             }
@@ -7991,17 +8010,15 @@
 
         <span class="kw">let </span>node_addr_2 = NodeAddr {
             node_id: node_id_2,
-            info: AddrInfo {
-                relay_url: <span class="prelude-val">None</span>,
-                direct_addresses: msock_2
-                    .direct_addresses()
-                    .next()
-                    .<span class="kw">await
-                    </span>.expect(<span class="string">"no direct addrs"</span>)
-                    .into_iter()
-                    .map(|x| x.addr)
-                    .collect(),
-            },
+            relay_url: <span class="prelude-val">None</span>,
+            direct_addresses: msock_2
+                .direct_addresses()
+                .next()
+                .<span class="kw">await
+                </span>.expect(<span class="string">"no direct addrs"</span>)
+                .into_iter()
+                .map(|x| x.addr)
+                .collect(),
         };
         msock_1
             .add_node_addr(
@@ -8063,7 +8080,8 @@
         </span>msock_1.node_map.add_node_addr(
             NodeAddr {
                 node_id: node_id_2,
-                info: AddrInfo::default(),
+                relay_url: <span class="prelude-val">None</span>,
+                direct_addresses: Default::default(),
             },
             Source::NamedApp {
                 name: <span class="string">"test"</span>.into(),
@@ -8098,17 +8116,15 @@
         </span>msock_1.node_map.add_node_addr(
             NodeAddr {
                 node_id: node_id_2,
-                info: AddrInfo {
-                    relay_url: <span class="prelude-val">None</span>,
-                    direct_addresses: msock_2
-                        .direct_addresses()
-                        .next()
-                        .<span class="kw">await
-                        </span>.expect(<span class="string">"no direct addrs"</span>)
-                        .into_iter()
-                        .map(|x| x.addr)
-                        .collect(),
-                },
+                relay_url: <span class="prelude-val">None</span>,
+                direct_addresses: msock_2
+                    .direct_addresses()
+                    .next()
+                    .<span class="kw">await
+                    </span>.expect(<span class="string">"no direct addrs"</span>)
+                    .into_iter()
+                    .map(|x| x.addr)
+                    .collect(),
             },
             Source::NamedApp {
                 name: <span class="string">"test"</span>.into(),

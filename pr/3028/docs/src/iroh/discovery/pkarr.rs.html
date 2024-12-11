@@ -411,14 +411,6 @@
 <a href="#411" id="411">411</a>
 <a href="#412" id="412">412</a>
 <a href="#413" id="413">413</a>
-<a href="#414" id="414">414</a>
-<a href="#415" id="415">415</a>
-<a href="#416" id="416">416</a>
-<a href="#417" id="417">417</a>
-<a href="#418" id="418">418</a>
-<a href="#419" id="419">419</a>
-<a href="#420" id="420">420</a>
-<a href="#421" id="421">421</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
@@ -440,8 +432,8 @@
 //!   the Mainline DHT on behalf on the client as well as cache lookups performed on the DHT
 //!   to improve performance.
 //!
-//! For node discovery in iroh the pkarr Resource Records contain the [`AddrInfo`]
-//! information, providing nodes which retrieve the pkarr Resource Record with enough detail
+//! For node discovery in iroh the pkarr Resource Records contain the addressing information,
+//! providing nodes which retrieve the pkarr Resource Record with enough detail
 //! to contact the iroh node.
 //!
 //! There are several node discovery services built on top of pkarr, which can be composed
@@ -465,10 +457,11 @@
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
 //! [`DhtDiscovery`]: dht::DhtDiscovery
 
-</span><span class="kw">use </span>std::sync::Arc;
+</span><span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr, sync::Arc};
 
 <span class="kw">use </span>anyhow::{anyhow, bail, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_util::stream::BoxStream;
+<span class="kw">use </span>iroh_relay::RelayUrl;
 <span class="kw">use </span>pkarr::SignedPacket;
 <span class="kw">use </span>tokio::{
     task::JoinHandle,
@@ -483,11 +476,10 @@
     dns::node_info::NodeInfo,
     endpoint::force_staging_infra,
     key::SecretKey,
-    AddrInfo, Endpoint, NodeId,
+    Endpoint, NodeId,
 };
 
 <span class="attr">#[cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)))]
 </span><span class="kw">pub mod </span>dht;
 
 <span class="doccomment">/// The production pkarr relay run by [number 0].
@@ -528,9 +520,7 @@
 /// that it only publishes node discovery information, for the corresponding resolver use
 /// the [`PkarrResolver`] together with [`ConcurrentDiscovery`].
 ///
-/// This publisher will **only** publish the [`RelayUrl`] if the [`AddrInfo`] contains a
-/// [`RelayUrl`].  If the [`AddrInfo`] does not contain a [`RelayUrl`] the *direct
-/// addresses* are published instead.
+/// This publisher will **only** publish the [`RelayUrl`] if it is set, otherwise the *direct addresses* are published instead.
 ///
 /// [pkarr]: https://pkarr.org
 /// [module docs]: crate::discovery::pkarr
@@ -614,23 +604,18 @@
         <span class="self">Self</span>::new(secret_key, pkarr_relay)
     }
 
-    <span class="doccomment">/// Publishes [`AddrInfo`] about this node to a pkarr relay.
+    <span class="doccomment">/// Publishes the addressing information about this node to a pkarr relay.
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
-    </span><span class="kw">pub fn </span>update_addr_info(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span>AddrInfo) {
-        <span class="kw">let </span>(relay_url, direct_addresses) = <span class="kw">if let </span><span class="prelude-val">Some</span>(relay_url) = info.relay_url.as_ref() {
-            (<span class="prelude-val">Some</span>(relay_url.clone().into()), Default::default())
-        } <span class="kw">else </span>{
-            (<span class="prelude-val">None</span>, info.direct_addresses.clone())
-        };
-        <span class="kw">let </span>info = NodeInfo::new(<span class="self">self</span>.node_id, relay_url, direct_addresses);
+    </span><span class="kw">pub fn </span>update_addr_info(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {
+        <span class="kw">let </span>info = NodeInfo::new(<span class="self">self</span>.node_id, url.cloned().map(Into::into), addrs.clone());
         <span class="self">self</span>.watchable.update(<span class="prelude-val">Some</span>(info)).ok();
     }
 }
 
 <span class="kw">impl </span>Discovery <span class="kw">for </span>PkarrPublisher {
-    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span>AddrInfo) {
-        <span class="self">self</span>.update_addr_info(info);
+    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {
+        <span class="self">self</span>.update_addr_info(url, addrs);
     }
 }
 
@@ -765,10 +750,9 @@
             <span class="kw">let </span>signed_packet = pkarr_client.resolve(node_id).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">let </span>info = NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet)<span class="question-mark">?</span>;
             <span class="kw">let </span>item = DiscoveryItem {
-                node_id,
+                node_addr: info.into(),
                 provenance: <span class="string">"pkarr"</span>,
                 last_updated: <span class="prelude-val">None</span>,
-                addr_info: info.into(),
             };
             <span class="prelude-val">Ok</span>(item)
         };

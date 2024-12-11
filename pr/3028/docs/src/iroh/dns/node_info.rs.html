@@ -440,14 +440,6 @@
 <a href="#440" id="440">440</a>
 <a href="#441" id="441">441</a>
 <a href="#442" id="442">442</a>
-<a href="#443" id="443">443</a>
-<a href="#444" id="444">444</a>
-<a href="#445" id="445">445</a>
-<a href="#446" id="446">446</a>
-<a href="#447" id="447">447</a>
-<a href="#448" id="448">448</a>
-<a href="#449" id="449">449</a>
-<a href="#450" id="450">450</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
@@ -494,7 +486,7 @@
 <span class="kw">use </span>hickory_resolver::{proto::ProtoError, Name, TokioResolver};
 <span class="kw">use </span>url::Url;
 
-<span class="kw">use crate</span>::{key::SecretKey, AddrInfo, NodeAddr, NodeId};
+<span class="kw">use crate</span>::{key::SecretKey, NodeAddr, NodeId};
 
 <span class="doccomment">/// The DNS name for the iroh TXT record.
 </span><span class="kw">pub const </span>IROH_TXT_NAME: <span class="kw-2">&amp;</span>str = <span class="string">"_iroh"</span>;
@@ -589,15 +581,7 @@
     <span class="kw">fn </span>from(value: NodeInfo) -&gt; <span class="self">Self </span>{
         NodeAddr {
             node_id: value.node_id,
-            info: value.into(),
-        }
-    }
-}
-
-<span class="kw">impl </span>From&lt;NodeInfo&gt; <span class="kw">for </span>AddrInfo {
-    <span class="kw">fn </span>from(value: NodeInfo) -&gt; <span class="self">Self </span>{
-        AddrInfo {
-            relay_url: value.relay_url.map(|u| u.into()),
+            relay_url: value.relay_url.map(Into::into),
             direct_addresses: value.direct_addresses,
         }
     }

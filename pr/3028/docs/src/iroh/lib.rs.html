@@ -256,7 +256,6 @@
 <a href="#256" id="256">256</a>
 <a href="#257" id="257">257</a>
 <a href="#258" id="258">258</a>
-<a href="#259" id="259">259</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Peer-to-peer QUIC connections.
 //!
 //! iroh is a library to establish direct connectivity between peers.  It exposes an
@@ -490,7 +489,7 @@
 
 </span><span class="attr">#![recursion_limit = <span class="string">"256"</span>]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
-#![cfg_attr(iroh_docsrs, feature(doc_cfg))]
+#![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
 
 </span><span class="kw">pub mod </span>defaults;
 <span class="kw">mod </span>disco;
@@ -504,7 +503,7 @@
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>util;
 
-<span class="kw">pub use </span>endpoint::{AddrInfo, AddrInfoOptions, Endpoint, NodeAddr, RelayMode};
+<span class="kw">pub use </span>endpoint::{Endpoint, NodeAddr, RelayMode};
 <span class="kw">pub use </span>iroh_base::{
     hash, key,
     key::NodeId,
@@ -514,6 +513,5 @@
 <span class="kw">pub use </span>iroh_relay <span class="kw">as </span>relay;
 
 <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-#[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = <span class="string">"test-utils"</span>))))]
 </span><span class="kw">pub mod </span>test_utils;
 </code></pre></div></section></main></body></html>

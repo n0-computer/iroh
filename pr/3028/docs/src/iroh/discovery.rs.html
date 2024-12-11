@@ -885,14 +885,6 @@
 <a href="#885" id="885">885</a>
 <a href="#886" id="886">886</a>
 <a href="#887" id="887">887</a>
-<a href="#888" id="888">888</a>
-<a href="#889" id="889">889</a>
-<a href="#890" id="890">890</a>
-<a href="#891" id="891">891</a>
-<a href="#892" id="892">892</a>
-<a href="#893" id="893">893</a>
-<a href="#894" id="894">894</a>
-<a href="#895" id="895">895</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
@@ -1007,20 +999,20 @@
     doc = <span class="string">"[`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery"
 </span>)]
 
-</span><span class="kw">use </span>std::time::Duration;
+</span><span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr, time::Duration};
 
 <span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::stream::{Boxed <span class="kw">as </span>BoxStream, StreamExt};
 <span class="kw">use </span>iroh_base::node_addr::NodeAddr;
+<span class="kw">use </span>iroh_relay::RelayUrl;
 <span class="kw">use </span>tokio::{sync::oneshot, task::JoinHandle};
 <span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
 
-<span class="kw">use crate</span>::{AddrInfo, Endpoint, NodeId};
+<span class="kw">use crate</span>::{Endpoint, NodeId};
 
 <span class="kw">pub mod </span>dns;
 
 <span class="attr">#[cfg(feature = <span class="string">"discovery-local-network"</span>)]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"discovery-local-network"</span>)))]
 </span><span class="kw">pub mod </span>local_swarm_discovery;
 <span class="kw">pub mod </span>pkarr;
 <span class="kw">pub mod </span>static_provider;
@@ -1042,16 +1034,16 @@
 ///
 /// [`RelayUrl`]: crate::relay::RelayUrl
 </span><span class="kw">pub trait </span>Discovery: std::fmt::Debug + Send + Sync {
-    <span class="doccomment">/// Publishes the given [`AddrInfo`] to the discovery mechanism.
+    <span class="doccomment">/// Publishes the given [`RelayUrl`] and direct addreesses to the discovery mechanism.
     ///
     /// This is fire and forget, since the [`Endpoint`] can not wait for successful
     /// publishing. If publishing is async, the implementation should start it's own task.
     ///
     /// This will be called from a tokio task, so it is safe to spawn new tasks.
     /// These tasks will be run on the runtime of the [`super::Endpoint`].
-    </span><span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, _info: <span class="kw-2">&amp;</span>AddrInfo) {}
+    </span><span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, _url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, _addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {}
 
-    <span class="doccomment">/// Resolves the [`AddrInfo`] for the given [`NodeId`].
+    <span class="doccomment">/// Resolves the [`DiscoveryItem`] for the given [`NodeId`].
     ///
     /// Once the returned [`BoxStream`] is dropped, the service should stop any pending
     /// work.
@@ -1077,7 +1069,7 @@
     /// to the `subscribe` stream.
     ///
     /// Discovery systems that are capable of receiving information about [`NodeId`]s
-    /// and their [`AddrInfo`]s without explicitly calling `resolve`, i.e.,
+    /// and their addressing information without explicitly calling `resolve`, i.e.,
     /// systems that do "passive" discovery, should implement this method. If
     /// `subscribe` is called multiple times, the passively discovered addresses
     /// should be sent on all streams.
@@ -1094,7 +1086,7 @@
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>DiscoveryItem {
     <span class="doccomment">/// The [`NodeId`] whose address we have discovered
-    </span><span class="kw">pub </span>node_id: NodeId,
+    </span><span class="kw">pub </span>node_addr: NodeAddr,
     <span class="doccomment">/// A static string to identify the discovery source.
     ///
     /// Should be uniform per discovery service.
@@ -1104,8 +1096,6 @@
     /// Must be microseconds since the unix epoch.
     </span><span class="comment">// TODO(ramfox): this is currently unused. As we develop more `DiscoveryService`s, we may discover that we do not need this. It is only truly relevant when comparing `relay_urls`, since we can attempt to dial any number of socket addresses, but expect each node to have one "home relay" that we will attempt to contact them on. This means we would need some way to determine which relay url to choose between, if more than one relay url is reported.
     </span><span class="kw">pub </span>last_updated: <span class="prelude-ty">Option</span>&lt;u64&gt;,
-    <span class="doccomment">/// The address info for the node being resolved.
-    </span><span class="kw">pub </span>addr_info: AddrInfo,
 }
 
 <span class="doccomment">/// A discovery service that combines multiple discovery sources.
@@ -1144,9 +1134,9 @@
 }
 
 <span class="kw">impl </span>Discovery <span class="kw">for </span>ConcurrentDiscovery {
-    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span>AddrInfo) {
+    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {
         <span class="kw">for </span>service <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.services {
-            service.publish(info);
+            service.publish(url, addrs);
         }
     }
 
@@ -1305,16 +1295,12 @@
             };
             <span class="kw">match </span>next {
                 <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(r)) =&gt; {
-                    <span class="kw">if </span>r.addr_info.is_empty() {
-                        <span class="macro">debug!</span>(provenance = %r.provenance, addr = <span class="question-mark">?</span>r.addr_info, <span class="string">"discovery: empty address found"</span>);
+                    <span class="kw">if </span>r.node_addr.is_empty() {
+                        <span class="macro">debug!</span>(provenance = %r.provenance, <span class="string">"discovery: empty address found"</span>);
                         <span class="kw">continue</span>;
                     }
-                    <span class="macro">debug!</span>(provenance = %r.provenance, addr = <span class="question-mark">?</span>r.addr_info, <span class="string">"discovery: new address found"</span>);
-                    <span class="kw">let </span>addr = NodeAddr {
-                        info: r.addr_info,
-                        node_id,
-                    };
-                    ep.add_node_addr_with_source(addr, r.provenance).ok();
+                    <span class="macro">debug!</span>(provenance = %r.provenance, addr = <span class="question-mark">?</span>r.node_addr, <span class="string">"discovery: new address found"</span>);
+                    ep.add_node_addr_with_source(r.node_addr, r.provenance).ok();
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(tx) = on_first_tx.take() {
                         tx.send(<span class="prelude-val">Ok</span>(())).ok();
                     }
@@ -1355,10 +1341,13 @@
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{key::SecretKey, RelayMode};
 
+    <span class="kw">type </span>InfoStore = HashMap&lt;NodeId, (<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;, BTreeSet&lt;SocketAddr&gt;, u64)&gt;;
+
     <span class="attr">#[derive(Debug, Clone, Default)]
     </span><span class="kw">struct </span>TestDiscoveryShared {
-        nodes: Arc&lt;Mutex&lt;HashMap&lt;NodeId, (AddrInfo, u64)&gt;&gt;&gt;,
+        nodes: Arc&lt;Mutex&lt;InfoStore&gt;&gt;,
     }
+
     <span class="kw">impl </span>TestDiscoveryShared {
         <span class="kw">pub fn </span>create_discovery(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; TestDiscovery {
             TestDiscovery {
@@ -1390,7 +1379,7 @@
     }
 
     <span class="kw">impl </span>Discovery <span class="kw">for </span>TestDiscovery {
-        <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span>AddrInfo) {
+        <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {
             <span class="kw">if </span>!<span class="self">self</span>.publish {
                 <span class="kw">return</span>;
             }
@@ -1398,7 +1387,7 @@
             <span class="self">self</span>.shared
                 .nodes
                 .lock()
-                .insert(<span class="self">self</span>.node_id, (info.clone(), now));
+                .insert(<span class="self">self</span>.node_id, (url.cloned(), addrs.clone(), now));
         }
 
         <span class="kw">fn </span>resolve(
@@ -1413,20 +1402,19 @@
                     <span class="kw">let </span>port: u16 = rand::thread_rng().gen_range(<span class="number">10_000</span>..<span class="number">20_000</span>);
                     <span class="comment">// "240.0.0.0/4" is reserved and unreachable
                     </span><span class="kw">let </span>addr: SocketAddr = <span class="macro">format!</span>(<span class="string">"240.0.0.1:{port}"</span>).parse().unwrap();
-                    <span class="kw">let </span>addr_info = AddrInfo {
-                        relay_url: <span class="prelude-val">None</span>,
-                        direct_addresses: BTreeSet::from([addr]),
-                    };
-                    <span class="prelude-val">Some</span>((addr_info, ts))
+                    <span class="prelude-val">Some</span>((<span class="prelude-val">None</span>, BTreeSet::from([addr]), ts))
                 }
             };
             <span class="kw">let </span>stream = <span class="kw">match </span>addr_info {
-                <span class="prelude-val">Some</span>((addr_info, ts)) =&gt; {
+                <span class="prelude-val">Some</span>((url, addrs, ts)) =&gt; {
                     <span class="kw">let </span>item = DiscoveryItem {
-                        node_id,
+                        node_addr: NodeAddr {
+                            node_id,
+                            relay_url: url,
+                            direct_addresses: addrs,
+                        },
                         provenance: <span class="string">"test-disco"</span>,
                         last_updated: <span class="prelude-val">Some</span>(ts),
-                        addr_info,
                     };
                     <span class="kw">let </span>delay = <span class="self">self</span>.delay;
                     <span class="kw">let </span>fut = <span class="kw">async move </span>{
@@ -1449,7 +1437,7 @@
     <span class="attr">#[derive(Debug)]
     </span><span class="kw">struct </span>EmptyDiscovery;
     <span class="kw">impl </span>Discovery <span class="kw">for </span>EmptyDiscovery {
-        <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, _info: <span class="kw-2">&amp;</span>AddrInfo) {}
+        <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, _url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, _addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {}
 
         <span class="kw">fn </span>resolve(
             <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -1584,10 +1572,8 @@
         </span>ep1.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>ep1_wrong_addr = NodeAddr {
             node_id: ep1.node_id(),
-            info: AddrInfo {
-                relay_url: <span class="prelude-val">None</span>,
-                direct_addresses: BTreeSet::from([<span class="string">"240.0.0.1:1000"</span>.parse().unwrap()]),
-            },
+            relay_url: <span class="prelude-val">None</span>,
+            direct_addresses: BTreeSet::from([<span class="string">"240.0.0.1:1000"</span>.parse().unwrap()]),
         };
         <span class="kw">let </span>_conn = ep2.connect(ep1_wrong_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
@@ -1650,7 +1636,7 @@
             pkarr_dns_state::State,
             run_relay_server, DnsPkarrServer,
         },
-        AddrInfo, Endpoint, NodeAddr, RelayMap, RelayMode,
+        Endpoint, NodeAddr, RelayMap, RelayMode,
     };
 
     <span class="kw">const </span>PUBLISH_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
@@ -1691,22 +1677,20 @@
         <span class="kw">let </span>secret_key = SecretKey::generate();
         <span class="kw">let </span>node_id = secret_key.public();
 
-        <span class="kw">let </span>addr_info = AddrInfo {
-            relay_url: <span class="prelude-val">Some</span>(<span class="string">"https://relay.example"</span>.parse().unwrap()),
-            ..Default::default()
-        };
+        <span class="kw">let </span>relay_url = <span class="prelude-val">Some</span>(<span class="string">"https://relay.example"</span>.parse().unwrap());
 
         <span class="kw">let </span>resolver = create_dns_resolver(dns_pkarr_server.nameserver)<span class="question-mark">?</span>;
         <span class="kw">let </span>publisher = PkarrPublisher::new(secret_key, dns_pkarr_server.pkarr_url.clone());
         <span class="comment">// does not block, update happens in background task
-        </span>publisher.update_addr_info(<span class="kw-2">&amp;</span>addr_info);
+        </span>publisher.update_addr_info(relay_url.as_ref(), <span class="kw-2">&amp;</span>Default::default());
         <span class="comment">// wait until our shared state received the update from pkarr publishing
         </span>dns_pkarr_server.on_node(<span class="kw-2">&amp;</span>node_id, PUBLISH_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>resolved = resolver.lookup_by_id(<span class="kw-2">&amp;</span>node_id, <span class="kw-2">&amp;</span>origin).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>expected = NodeAddr {
-            info: addr_info,
             node_id,
+            relay_url,
+            direct_addresses: Default::default(),
         };
 
         <span class="macro">assert_eq!</span>(resolved, expected);

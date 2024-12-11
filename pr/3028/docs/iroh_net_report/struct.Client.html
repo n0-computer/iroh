@@ -5,7 +5,7 @@ it is idle unless <a href="struct.Client.html#method.get_report" title="method i
 If all <a href="struct.Client.html" title="struct iroh_net_report::Client"><code>Client</code></a>s are dropped the actor stops running.</p>
 <p>While running the net_report actor expects to be passed all received stun packets using
 <code>Addr::receive_stun_packet</code>.</p>
-</div></details><h2 id="implementations" class="section-header">Implementations<a href="#implementations" class="anchor">§</a></h2><div id="implementations-list"><details class="toggle implementors-toggle" open><summary><section id="impl-Client" class="impl"><a class="src rightside" href="../src/iroh_net_report/lib.rs.html#205-282">source</a><a href="#impl-Client" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.Client.html" title="struct iroh_net_report::Client">Client</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.new" class="method"><a class="src rightside" href="../src/iroh_net_report/lib.rs.html#210-221">source</a><h4 class="code-header">pub fn <a href="#method.new" class="fn">new</a>(
+</div></details><h2 id="implementations" class="section-header">Implementations<a href="#implementations" class="anchor">§</a></h2><div id="implementations-list"><details class="toggle implementors-toggle" open><summary><section id="impl-Client" class="impl"><a class="src rightside" href="../src/iroh_net_report/lib.rs.html#205-289">source</a><a href="#impl-Client" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.Client.html" title="struct iroh_net_report::Client">Client</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.new" class="method"><a class="src rightside" href="../src/iroh_net_report/lib.rs.html#210-221">source</a><h4 class="code-header">pub fn <a href="#method.new" class="fn">new</a>(
     port_mapper: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;Client&gt;,
     dns_resolver: DnsResolver
 ) -&gt; <a class="type" href="https://docs.rs/anyhow/1.0.93/anyhow/type.Result.html" title="type anyhow::Result">Result</a>&lt;Self&gt;</h4></section></summary><div class="docblock"><p>Creates a new net_report client.</p>
@@ -14,9 +14,9 @@ stop running.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.addr" class="method"><a class="src rightside" href="../src/iroh_net_report/lib.rs.html#227-229">source</a><h4 class="code-header">pub fn <a href="#method.addr" class="fn">addr</a>(&amp;self) -&gt; <a class="struct" href="struct.Addr.html" title="struct iroh_net_report::Addr">Addr</a></h4></section></summary><div class="docblock"><p>Returns a new address to send messages to this actor.</p>
 <p>Unlike the client itself the returned <a href="struct.Addr.html" title="struct iroh_net_report::Addr"><code>Addr</code></a> does not own the actor task, it only
 allows sending messages to the actor.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.get_report" class="method"><a class="src rightside" href="../src/iroh_net_report/lib.rs.html#244-258">source</a><h4 class="code-header">pub async fn <a href="#method.get_report" class="fn">get_report</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.get_report" class="method"><a class="src rightside" href="../src/iroh_net_report/lib.rs.html#251-265">source</a><h4 class="code-header">pub async fn <a href="#method.get_report" class="fn">get_report</a>(
     &amp;mut self,
-    dm: <a class="struct" href="../iroh_base/relay_map/struct.RelayMap.html" title="struct iroh_base::relay_map::RelayMap">RelayMap</a>,
+    dm: RelayMap,
     stun_conn4: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;UdpSocket&gt;&gt;,
     stun_conn6: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;UdpSocket&gt;&gt;,
     quic_config: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="struct.QuicConfig.html" title="struct iroh_net_report::QuicConfig">QuicConfig</a>&gt;
@@ -30,9 +30,14 @@ traffic. Thus all stun packets received on those sockets should be passed to
 responses and function correctly.</p>
 <p>If these are not passed in this will bind sockets for STUN itself, though results
 may not be as reliable.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.get_report_channel" class="method"><a class="src rightside" href="../src/iroh_net_report/lib.rs.html#261-281">source</a><h4 class="code-header">pub async fn <a href="#method.get_report_channel" class="fn">get_report_channel</a>(
+<p>The <em>quic_config</em> takes a <a href="struct.QuicConfig.html" title="struct iroh_net_report::QuicConfig"><code>QuicConfig</code></a>, a combination of a QUIC endpoint and
+a client configuration that can be use for verifying the relay server connection.
+When available, the report will attempt to get an observed public address
+using QUIC address discovery.</p>
+<p>When <code>None</code>, it will disable the QUIC address discovery probes.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.get_report_channel" class="method"><a class="src rightside" href="../src/iroh_net_report/lib.rs.html#268-288">source</a><h4 class="code-header">pub async fn <a href="#method.get_report_channel" class="fn">get_report_channel</a>(
     &amp;mut self,
-    dm: <a class="struct" href="../iroh_base/relay_map/struct.RelayMap.html" title="struct iroh_base::relay_map::RelayMap">RelayMap</a>,
+    dm: RelayMap,
     stun_conn4: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;UdpSocket&gt;&gt;,
     stun_conn6: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;UdpSocket&gt;&gt;,
     quic_config: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="struct.QuicConfig.html" title="struct iroh_net_report::QuicConfig">QuicConfig</a>&gt;

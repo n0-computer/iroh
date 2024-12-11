@@ -1596,6 +1596,11 @@
 <a href="#1596" id="1596">1596</a>
 <a href="#1597" id="1597">1597</a>
 <a href="#1598" id="1598">1598</a>
+<a href="#1599" id="1599">1599</a>
+<a href="#1600" id="1600">1600</a>
+<a href="#1601" id="1601">1601</a>
+<a href="#1602" id="1602">1602</a>
+<a href="#1603" id="1603">1603</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
@@ -2483,8 +2488,6 @@
 }
 
 <span class="doccomment">/// Run a QUIC address discovery probe.
-</span><span class="comment">// TODO(ramfox): if this probe is aborted, then the connection will never be
-// properly closed, possibly causing errors on the server.
 </span><span class="kw">async fn </span>run_quic_probe(
     quic_config: QuicConfig,
     url: RelayUrl,
@@ -2496,8 +2499,15 @@
         ProbeProto::QuicIpv6 =&gt; <span class="macro">debug_assert!</span>(relay_addr.is_ipv6()),
         <span class="kw">_ </span>=&gt; <span class="macro">debug_assert!</span>(<span class="bool-val">false</span>, <span class="string">"wrong probe"</span>),
     }
-    <span class="comment">// TODO(ramfox): what to put here if no host is given?
-    </span><span class="kw">let </span>host = url.host_str().unwrap_or(<span class="string">"localhost"</span>);
+    <span class="kw">let </span>host = <span class="kw">match </span>url.host_str() {
+        <span class="prelude-val">Some</span>(host) =&gt; host,
+        <span class="prelude-val">None </span>=&gt; {
+            <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeError::Error(
+                <span class="macro">anyhow!</span>(<span class="string">"URL must have 'host' to use QUIC address discovery probes"</span>),
+                probe.clone(),
+            ));
+        }
+    };
     <span class="kw">let </span>quic_client = iroh_relay::quic::QuicClient::new(quic_config.ep, quic_config.client_config)
         .map_err(|e| ProbeError::Error(e, probe.clone()))<span class="question-mark">?</span>;
     <span class="kw">let </span>(addr, latency) = quic_client

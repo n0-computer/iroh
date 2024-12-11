@@ -1313,6 +1313,13 @@
 <a href="#1313" id="1313">1313</a>
 <a href="#1314" id="1314">1314</a>
 <a href="#1315" id="1315">1315</a>
+<a href="#1316" id="1316">1316</a>
+<a href="#1317" id="1317">1317</a>
+<a href="#1318" id="1318">1318</a>
+<a href="#1319" id="1319">1319</a>
+<a href="#1320" id="1320">1320</a>
+<a href="#1321" id="1321">1321</a>
+<a href="#1322" id="1322">1322</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
@@ -1556,6 +1563,13 @@
     ///
     /// If these are not passed in this will bind sockets for STUN itself, though results
     /// may not be as reliable.
+    ///
+    /// The *quic_config* takes a [`QuicConfig`], a combination of a QUIC endpoint and
+    /// a client configuration that can be use for verifying the relay server connection.
+    /// When available, the report will attempt to get an observed public address
+    /// using QUIC address discovery.
+    ///
+    /// When `None`, it will disable the QUIC address discovery probes.
     </span><span class="kw">pub async fn </span>get_report(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         dm: RelayMap,

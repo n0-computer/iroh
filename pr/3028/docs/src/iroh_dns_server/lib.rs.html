@@ -464,7 +464,7 @@
         <span class="kw">let </span>res = resolver.lookup_by_id(<span class="kw-2">&amp;</span>node_id, origin).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">assert_eq!</span>(res.node_id, node_id);
-        <span class="macro">assert_eq!</span>(res.info.relay_url.map(Url::from), <span class="prelude-val">Some</span>(relay_url));
+        <span class="macro">assert_eq!</span>(res.relay_url.map(Url::from), <span class="prelude-val">Some</span>(relay_url));
 
         server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
@@ -536,7 +536,7 @@
         <span class="kw">let </span>res = resolver.lookup_by_id(<span class="kw-2">&amp;</span>node_id, origin).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">assert_eq!</span>(res.node_id, node_id);
-        <span class="macro">assert_eq!</span>(res.info.relay_url.map(Url::from), <span class="prelude-val">Some</span>(relay_url));
+        <span class="macro">assert_eq!</span>(res.relay_url.map(Url::from), <span class="prelude-val">Some</span>(relay_url));
 
         server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">for </span><span class="kw-2">mut </span>node <span class="kw">in </span>testnet.nodes {

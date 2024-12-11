@@ -1886,25 +1886,6 @@
 <a href="#1886" id="1886">1886</a>
 <a href="#1887" id="1887">1887</a>
 <a href="#1888" id="1888">1888</a>
-<a href="#1889" id="1889">1889</a>
-<a href="#1890" id="1890">1890</a>
-<a href="#1891" id="1891">1891</a>
-<a href="#1892" id="1892">1892</a>
-<a href="#1893" id="1893">1893</a>
-<a href="#1894" id="1894">1894</a>
-<a href="#1895" id="1895">1895</a>
-<a href="#1896" id="1896">1896</a>
-<a href="#1897" id="1897">1897</a>
-<a href="#1898" id="1898">1898</a>
-<a href="#1899" id="1899">1899</a>
-<a href="#1900" id="1900">1900</a>
-<a href="#1901" id="1901">1901</a>
-<a href="#1902" id="1902">1902</a>
-<a href="#1903" id="1903">1903</a>
-<a href="#1904" id="1904">1904</a>
-<a href="#1905" id="1905">1905</a>
-<a href="#1906" id="1906">1906</a>
-<a href="#1907" id="1907">1907</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
@@ -1950,7 +1931,7 @@
 <span class="kw">mod </span>rtt_actor;
 
 <span class="kw">pub use </span>bytes::Bytes;
-<span class="kw">pub use </span>iroh_base::node_addr::{AddrInfo, AddrInfoOptions, NodeAddr};
+<span class="kw">pub use </span>iroh_base::node_addr::NodeAddr;
 <span class="comment">// Missing still: SendDatagram and ConnectionClose::frame_type's Type.
 </span><span class="kw">pub use </span>quinn::{
     AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream, Connection,
@@ -2003,7 +1984,6 @@
     </span>node_map: <span class="prelude-ty">Option</span>&lt;Vec&lt;NodeAddr&gt;&gt;,
     dns_resolver: <span class="prelude-ty">Option</span>&lt;DnsResolver&gt;,
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = <span class="string">"test-utils"</span>))))]
     </span>insecure_skip_relay_cert_verify: bool,
     addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;,
     addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
@@ -2214,7 +2194,6 @@
     </span>}
 
     <span class="attr">#[cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)]
-    #[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)))]
     </span><span class="doccomment">/// Configures the endpoint to also use the mainline DHT with default settings.
     ///
     /// This is equivalent to adding a [`crate::discovery::pkarr::dht::DhtDiscovery`]
@@ -2235,7 +2214,6 @@
     </span>}
 
     <span class="attr">#[cfg(feature = <span class="string">"discovery-local-network"</span>)]
-    #[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"discovery-local-network"</span>)))]
     </span><span class="doccomment">/// Configures the endpoint to also use local network discovery.
     ///
     /// This is equivalent to adding a [`crate::discovery::local_swarm_discovery::LocalSwarmDiscovery`]
@@ -2319,7 +2297,6 @@
     ///
     /// May only be used in tests.
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = <span class="string">"test-utils"</span>))))]
     </span><span class="kw">pub fn </span>insecure_skip_relay_cert_verify(<span class="kw-2">mut </span><span class="self">self</span>, skip_verify: bool) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.insecure_skip_relay_cert_verify = skip_verify;
         <span class="self">self
@@ -2483,7 +2460,7 @@
     /// an error.
     </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.node_id().fmt_short(), alpn = <span class="question-mark">?</span>String::from_utf8_lossy(alpn)))]
     </span><span class="kw">pub async fn </span>connect(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: <span class="kw">impl </span>Into&lt;NodeAddr&gt;, alpn: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;Connection&gt; {
-        <span class="kw">let </span>node_addr = node_addr.into();
+        <span class="kw">let </span>node_addr: NodeAddr = node_addr.into();
         tracing::Span::current().record(<span class="string">"remote"</span>, node_addr.node_id.fmt_short());
         <span class="comment">// Connecting to ourselves is not supported.
         </span><span class="kw">if </span>node_addr.node_id == <span class="self">self</span>.node_id() {
@@ -2493,11 +2470,11 @@
             );
         }
 
-        <span class="kw">if </span>!node_addr.info.is_empty() {
+        <span class="kw">if </span>!node_addr.is_empty() {
             <span class="self">self</span>.add_node_addr(node_addr.clone())<span class="question-mark">?</span>;
         }
-
-        <span class="kw">let </span>NodeAddr { node_id, info } = node_addr.clone();
+        <span class="kw">let </span>node_id = node_addr.node_id;
+        <span class="kw">let </span>direct_addresses = node_addr.direct_addresses.clone();
 
         <span class="comment">// Get the mapped IPv6 address from the magic socket. Quinn will connect to this address.
         // Start discovery for this node if it's enabled and we have no valid or verified
@@ -2514,7 +2491,7 @@
 
         <span class="macro">debug!</span>(
             <span class="string">"connecting to {}: (via {} - {:?})"</span>,
-            node_id, addr, info.direct_addresses
+            node_id, addr, direct_addresses
         );
 
         <span class="comment">// Start connecting via quinn. This will time out after 10 seconds if no reachable address
@@ -2925,7 +2902,7 @@
                 // If the user provided addresses in this connect call, we will add a delay
                 // followed by a recheck before starting the discovery, to give the magicsocket a
                 // chance to test the newly provided addresses.
-                </span><span class="kw">let </span>delay = (!node_addr.info.is_empty()).then_some(DISCOVERY_WAIT_PERIOD);
+                </span><span class="kw">let </span>delay = (!node_addr.is_empty()).then_some(DISCOVERY_WAIT_PERIOD);
                 <span class="kw">let </span>discovery = DiscoveryTask::maybe_start_after_delay(<span class="self">self</span>, node_id, delay)
                     .ok()
                     .flatten();
@@ -3286,7 +3263,6 @@
 }
 
 <span class="doccomment">/// Environment variable to force the use of staging relays.
-</span><span class="attr">#[cfg_attr(iroh_docsrs, doc(cfg(not(test))))]
 </span><span class="kw">pub const </span>ENV_FORCE_STAGING_RELAYS: <span class="kw-2">&amp;</span>str = <span class="string">"IROH_FORCE_STAGING_RELAYS"</span>;
 
 <span class="doccomment">/// Returns `true` if the use of staging relays is forced.
@@ -3329,20 +3305,6 @@
     <span class="kw">use </span><span class="kw">crate</span>::test_utils::{run_relay_server, run_relay_server_with};
 
     <span class="kw">const </span>TEST_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/iroh/test"</span>;
-
-    <span class="attr">#[test]
-    </span><span class="kw">fn </span>test_addr_info_debug() {
-        <span class="kw">let </span>info = AddrInfo {
-            relay_url: <span class="prelude-val">Some</span>(<span class="string">"https://relay.example.com"</span>.parse().unwrap()),
-            direct_addresses: <span class="macro">vec!</span>[SocketAddr::from(([<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>], <span class="number">1234</span>))]
-                .into_iter()
-                .collect(),
-        };
-        <span class="macro">assert_eq!</span>(
-            <span class="macro">format!</span>(<span class="string">"{:?}"</span>, info),
-            <span class="string">r#"AddrInfo { relay_url: Some(RelayUrl("https://relay.example.com./")), direct_addresses: {1.2.3.4:1234} }"#
-        </span>);
-    }
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_connect_self() {
