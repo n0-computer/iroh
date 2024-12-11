@@ -196,13 +196,20 @@
 <a href="#196" id="196">196</a>
 <a href="#197" id="197">197</a>
 <a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a>
+<a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::BTreeMap;
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>clap::Parser;
 <span class="attr">#[cfg(not(any(target_os = <span class="string">"freebsd"</span>, target_os = <span class="string">"openbsd"</span>, target_os = <span class="string">"netbsd"</span>)))]
-</span><span class="kw">use </span>iroh_net_bench::quinn;
-<span class="kw">use </span>iroh_net_bench::{configure_tracing_subscriber, iroh, rt, s2n, Commands, Opt};
+</span><span class="kw">use </span>iroh_bench::quinn;
+<span class="kw">use </span>iroh_bench::{configure_tracing_subscriber, iroh, rt, s2n, Commands, Opt};
 
 <span class="kw">fn </span>main() {
     <span class="kw">let </span>cmd = Commands::parse();
@@ -333,11 +340,17 @@
 
 <span class="attr">#[cfg(not(any(target_os = <span class="string">"freebsd"</span>, target_os = <span class="string">"openbsd"</span>, target_os = <span class="string">"netbsd"</span>)))]
 </span><span class="kw">pub fn </span>run_quinn(opt: Opt) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">use </span>rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
+
     <span class="kw">let </span>server_span = <span class="macro">tracing::error_span!</span>(<span class="string">"server"</span>);
     <span class="kw">let </span>runtime = rt();
+    <span class="kw">let </span>cert = rcgen::generate_simple_self_signed(<span class="macro">vec!</span>[<span class="string">"localhost"</span>.into()]).unwrap();
+    <span class="kw">let </span>key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+    <span class="kw">let </span>cert = CertificateDer::from(cert.cert);
+
     <span class="kw">let </span>(server_addr, endpoint) = {
         <span class="kw">let </span>_guard = server_span.enter();
-        quinn::server_endpoint(<span class="kw-2">&amp;</span>runtime, <span class="kw-2">&amp;</span>opt)
+        quinn::server_endpoint(<span class="kw-2">&amp;</span>runtime, cert.clone(), key.into(), <span class="kw-2">&amp;</span>opt)
     };
 
     <span class="kw">let </span>server_thread = std::thread::spawn(<span class="kw">move </span>|| {
@@ -349,10 +362,11 @@
 
     <span class="kw">let </span><span class="kw-2">mut </span>handles = Vec::new();
     <span class="kw">for </span>id <span class="kw">in </span><span class="number">0</span>..opt.clients {
+        <span class="kw">let </span>cert = cert.clone();
         handles.push(std::thread::spawn(<span class="kw">move </span>|| {
             <span class="kw">let </span>_guard = <span class="macro">tracing::error_span!</span>(<span class="string">"client"</span>, id).entered();
             <span class="kw">let </span>runtime = rt();
-            <span class="kw">match </span>runtime.block_on(quinn::client(server_addr, opt)) {
+            <span class="kw">match </span>runtime.block_on(quinn::client(server_addr, cert, opt)) {
                 <span class="prelude-val">Ok</span>(stats) =&gt; <span class="prelude-val">Ok</span>(stats),
                 <span class="prelude-val">Err</span>(e) =&gt; {
                     <span class="macro">eprintln!</span>(<span class="string">"client failed: {e:#}"</span>);

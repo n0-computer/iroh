@@ -264,12 +264,13 @@
 <a href="#264" id="264">264</a>
 <a href="#265" id="265">265</a>
 <a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr packet store used to resolve DNS queries.
 
 </span><span class="kw">use </span>std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time::Duration};
 
 <span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>hickory_proto::rr::{Name, RecordSet, RecordType, RrKey};
+<span class="kw">use </span>hickory_server::proto::rr::{Name, RecordSet, RecordType, RrKey};
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>lru::LruCache;
 <span class="kw">use </span>pkarr::{mainline::dht::DhtSettings, PkarrClient, SignedPacket};
@@ -285,6 +286,7 @@
 };
 
 <span class="kw">mod </span>signed_packets;
+<span class="kw">pub use </span>signed_packets::Options <span class="kw">as </span>ZoneStoreOptions;
 
 <span class="doccomment">/// Cache up to 1 million pkarr zones by default
 </span><span class="kw">pub const </span>DEFAULT_CACHE_CAPACITY: usize = <span class="number">1024 </span>* <span class="number">1024</span>;
@@ -310,14 +312,14 @@
 
 <span class="kw">impl </span>ZoneStore {
     <span class="doccomment">/// Create a persistent store
-    </span><span class="kw">pub fn </span>persistent(path: <span class="kw">impl </span>AsRef&lt;Path&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>packet_store = SignedPacketStore::persistent(path)<span class="question-mark">?</span>;
+    </span><span class="kw">pub fn </span>persistent(path: <span class="kw">impl </span>AsRef&lt;Path&gt;, options: ZoneStoreOptions) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">let </span>packet_store = SignedPacketStore::persistent(path, options)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(<span class="self">Self</span>::new(packet_store))
     }
 
     <span class="doccomment">/// Create an in-memory store.
-    </span><span class="kw">pub fn </span>in_memory() -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>packet_store = SignedPacketStore::in_memory()<span class="question-mark">?</span>;
+    </span><span class="kw">pub fn </span>in_memory(options: ZoneStoreOptions) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">let </span>packet_store = SignedPacketStore::in_memory(options)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(<span class="self">Self</span>::new(packet_store))
     }
 

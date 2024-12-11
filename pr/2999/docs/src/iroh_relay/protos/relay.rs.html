@@ -821,11 +821,7 @@
 <a href="#821" id="821">821</a>
 <a href="#822" id="822">822</a>
 <a href="#823" id="823">823</a>
-<a href="#824" id="824">824</a>
-<a href="#825" id="825">825</a>
-<a href="#826" id="826">826</a>
-<a href="#827" id="827">827</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used the [`crate::server`] and [`crate::client`].
+</pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
 //!
 //! Protocol flow:
 //!
@@ -866,11 +862,9 @@
 </span><span class="kw">const </span>MAGIC: <span class="kw-2">&amp;</span>str = <span class="string">"RELAY🔑"</span>;
 
 <span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"server"</span>)))]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>KEEP_ALIVE: Duration = Duration::from_secs(<span class="number">60</span>);
 <span class="comment">// TODO: what should this be?
 </span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"server"</span>)))]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>SERVER_CHANNEL_SIZE: usize = <span class="number">1024 </span>* <span class="number">100</span>;
 <span class="doccomment">/// The number of packets buffered for sending per client
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>PER_CLIENT_SEND_QUEUE_DEPTH: usize = <span class="number">512</span>; <span class="comment">//32;
@@ -997,7 +991,6 @@
 <span class="doccomment">/// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
 </span><span class="attr">#[cfg(any(test, feature = <span class="string">"server"</span>))]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"server"</span>)))]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>recv_client_key&lt;S: Stream&lt;Item = anyhow::Result&lt;Frame&gt;&gt; + Unpin&gt;(
     stream: S,
 ) -&gt; anyhow::Result&lt;(PublicKey, ClientInfo)&gt; {
@@ -1379,7 +1372,6 @@
 <span class="doccomment">/// Receives the next frame and matches the frame type. If the correct type is found returns the content,
 /// otherwise an error.
 </span><span class="attr">#[cfg(any(test, feature = <span class="string">"server"</span>))]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"server"</span>)))]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>recv_frame&lt;S: Stream&lt;Item = anyhow::Result&lt;Frame&gt;&gt; + Unpin&gt;(
     frame_type: FrameType,
     <span class="kw-2">mut </span>stream: S,

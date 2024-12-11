@@ -1295,6 +1295,31 @@
 <a href="#1295" id="1295">1295</a>
 <a href="#1296" id="1296">1296</a>
 <a href="#1297" id="1297">1297</a>
+<a href="#1298" id="1298">1298</a>
+<a href="#1299" id="1299">1299</a>
+<a href="#1300" id="1300">1300</a>
+<a href="#1301" id="1301">1301</a>
+<a href="#1302" id="1302">1302</a>
+<a href="#1303" id="1303">1303</a>
+<a href="#1304" id="1304">1304</a>
+<a href="#1305" id="1305">1305</a>
+<a href="#1306" id="1306">1306</a>
+<a href="#1307" id="1307">1307</a>
+<a href="#1308" id="1308">1308</a>
+<a href="#1309" id="1309">1309</a>
+<a href="#1310" id="1310">1310</a>
+<a href="#1311" id="1311">1311</a>
+<a href="#1312" id="1312">1312</a>
+<a href="#1313" id="1313">1313</a>
+<a href="#1314" id="1314">1314</a>
+<a href="#1315" id="1315">1315</a>
+<a href="#1316" id="1316">1316</a>
+<a href="#1317" id="1317">1317</a>
+<a href="#1318" id="1318">1318</a>
+<a href="#1319" id="1319">1319</a>
+<a href="#1320" id="1320">1320</a>
+<a href="#1321" id="1321">1321</a>
+<a href="#1322" id="1322">1322</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
@@ -1311,7 +1336,7 @@
 
 <span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
-<span class="kw">use </span>hickory_resolver::TokioAsyncResolver <span class="kw">as </span>DnsResolver;
+<span class="kw">use </span>hickory_resolver::TokioResolver <span class="kw">as </span>DnsResolver;
 <span class="kw">use </span>iroh_base::relay_map::{RelayMap, RelayNode, RelayUrl};
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span>iroh_metrics::inc;
@@ -1326,13 +1351,12 @@
 
 <span class="kw">mod </span>defaults;
 <span class="kw">mod </span>dns;
-<span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-</span><span class="kw">mod </span>metrics;
+<span class="kw">mod </span>metrics;
 <span class="kw">mod </span>ping;
 <span class="kw">mod </span>reportgen;
 
-<span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-</span><span class="kw">pub use </span>metrics::Metrics;
+<span class="kw">pub use </span>metrics::Metrics;
+<span class="kw">pub use </span>reportgen::QuicConfig;
 
 <span class="kw">const </span>FULL_REPORT_INTERVAL: Duration = Duration::from_secs(<span class="number">5 </span>* <span class="number">60</span>);
 
@@ -1539,13 +1563,23 @@
     ///
     /// If these are not passed in this will bind sockets for STUN itself, though results
     /// may not be as reliable.
+    ///
+    /// The *quic_config* takes a [`QuicConfig`], a combination of a QUIC endpoint and
+    /// a client configuration that can be use for verifying the relay server connection.
+    /// When available, the report will attempt to get an observed public address
+    /// using QUIC address discovery.
+    ///
+    /// When `None`, it will disable the QUIC address discovery probes.
     </span><span class="kw">pub async fn </span>get_report(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         dm: RelayMap,
         stun_conn4: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
         stun_conn6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
+        quic_config: <span class="prelude-ty">Option</span>&lt;QuicConfig&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt; {
-        <span class="kw">let </span>rx = <span class="self">self</span>.get_report_channel(dm, stun_conn4, stun_conn6).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>rx = <span class="self">self
+            </span>.get_report_channel(dm, stun_conn4, stun_conn6, quic_config)
+            .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">match </span>rx.<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(res) =&gt; res,
             <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"channel closed, actor awol"</span>)),
@@ -1558,6 +1592,7 @@
         dm: RelayMap,
         stun_conn4: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
         stun_conn6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
+        quic_config: <span class="prelude-ty">Option</span>&lt;QuicConfig&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;oneshot::Receiver&lt;<span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt;&gt;&gt; {
         <span class="comment">// TODO: consider if RelayMap should be made to easily clone?  It seems expensive
         // right now.
@@ -1567,6 +1602,7 @@
                 relay_map: dm,
                 stun_sock_v4: stun_conn4,
                 stun_sock_v6: stun_conn6,
+                quic_config,
                 response_tx: tx,
             })
             .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1606,6 +1642,11 @@
         ///
         /// Like `stun_sock_v4` but for IPv6.
         </span>stun_sock_v6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
+        <span class="doccomment">/// Endpoint and client configuration to create a QUIC
+        /// connection to do QUIC address discovery.
+        ///
+        /// If not provided, will not do QUIC address discovery.
+        </span>quic_config: <span class="prelude-ty">Option</span>&lt;QuicConfig&gt;,
         <span class="doccomment">/// Channel to receive the response.
         </span>response_tx: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt;&gt;,
     },
@@ -1745,9 +1786,16 @@
                     relay_map,
                     stun_sock_v4,
                     stun_sock_v6,
+                    quic_config,
                     response_tx,
                 } =&gt; {
-                    <span class="self">self</span>.handle_run_check(relay_map, stun_sock_v4, stun_sock_v6, response_tx);
+                    <span class="self">self</span>.handle_run_check(
+                        relay_map,
+                        stun_sock_v4,
+                        stun_sock_v6,
+                        quic_config,
+                        response_tx,
+                    );
                 }
                 Message::ReportReady { report } =&gt; {
                     <span class="self">self</span>.handle_report_ready(report);
@@ -1775,6 +1823,7 @@
         relay_map: RelayMap,
         stun_sock_v4: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
         stun_sock_v6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
+        quic_config: <span class="prelude-ty">Option</span>&lt;QuicConfig&gt;,
         response_tx: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt;&gt;,
     ) {
         <span class="kw">if </span><span class="self">self</span>.current_report_run.is_some() {
@@ -1825,6 +1874,7 @@
             relay_map,
             stun_sock_v4,
             stun_sock_v6,
+            quic_config,
             <span class="self">self</span>.dns_resolver.clone(),
         );
 
@@ -2274,7 +2324,7 @@
         <span class="comment">// Note that the ProbePlan will change with each iteration.
         </span><span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">5 </span>{
             <span class="macro">println!</span>(<span class="string">"--round {}"</span>, i);
-            <span class="kw">let </span>r = client.get_report(dm.clone(), <span class="prelude-val">None</span>, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>r = client.get_report(dm.clone(), <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
             <span class="macro">assert!</span>(r.udp, <span class="string">"want UDP"</span>);
             <span class="macro">assert_eq!</span>(
@@ -2315,7 +2365,7 @@
         </span><span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::tests::resolver();
         <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(<span class="prelude-val">None</span>, resolver.clone())<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>r = client.get_report(dm, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>r = client.get_report(dm, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>r: Report = (<span class="kw-2">*</span>r).clone();
         r.portmap_probe = <span class="prelude-val">None</span>;
 
@@ -2584,7 +2634,7 @@
             )
         };
 
-        <span class="kw">let </span>r = client.get_report(dm, <span class="prelude-val">Some</span>(sock), <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>r = client.get_report(dm, <span class="prelude-val">Some</span>(sock), <span class="prelude-val">None</span>, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>r);
         <span class="macro">assert_eq!</span>(r.hair_pinning, <span class="prelude-val">Some</span>(<span class="bool-val">true</span>));
 

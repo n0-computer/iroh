@@ -4021,6 +4021,86 @@
 <a href="#4021" id="4021">4021</a>
 <a href="#4022" id="4022">4022</a>
 <a href="#4023" id="4023">4023</a>
+<a href="#4024" id="4024">4024</a>
+<a href="#4025" id="4025">4025</a>
+<a href="#4026" id="4026">4026</a>
+<a href="#4027" id="4027">4027</a>
+<a href="#4028" id="4028">4028</a>
+<a href="#4029" id="4029">4029</a>
+<a href="#4030" id="4030">4030</a>
+<a href="#4031" id="4031">4031</a>
+<a href="#4032" id="4032">4032</a>
+<a href="#4033" id="4033">4033</a>
+<a href="#4034" id="4034">4034</a>
+<a href="#4035" id="4035">4035</a>
+<a href="#4036" id="4036">4036</a>
+<a href="#4037" id="4037">4037</a>
+<a href="#4038" id="4038">4038</a>
+<a href="#4039" id="4039">4039</a>
+<a href="#4040" id="4040">4040</a>
+<a href="#4041" id="4041">4041</a>
+<a href="#4042" id="4042">4042</a>
+<a href="#4043" id="4043">4043</a>
+<a href="#4044" id="4044">4044</a>
+<a href="#4045" id="4045">4045</a>
+<a href="#4046" id="4046">4046</a>
+<a href="#4047" id="4047">4047</a>
+<a href="#4048" id="4048">4048</a>
+<a href="#4049" id="4049">4049</a>
+<a href="#4050" id="4050">4050</a>
+<a href="#4051" id="4051">4051</a>
+<a href="#4052" id="4052">4052</a>
+<a href="#4053" id="4053">4053</a>
+<a href="#4054" id="4054">4054</a>
+<a href="#4055" id="4055">4055</a>
+<a href="#4056" id="4056">4056</a>
+<a href="#4057" id="4057">4057</a>
+<a href="#4058" id="4058">4058</a>
+<a href="#4059" id="4059">4059</a>
+<a href="#4060" id="4060">4060</a>
+<a href="#4061" id="4061">4061</a>
+<a href="#4062" id="4062">4062</a>
+<a href="#4063" id="4063">4063</a>
+<a href="#4064" id="4064">4064</a>
+<a href="#4065" id="4065">4065</a>
+<a href="#4066" id="4066">4066</a>
+<a href="#4067" id="4067">4067</a>
+<a href="#4068" id="4068">4068</a>
+<a href="#4069" id="4069">4069</a>
+<a href="#4070" id="4070">4070</a>
+<a href="#4071" id="4071">4071</a>
+<a href="#4072" id="4072">4072</a>
+<a href="#4073" id="4073">4073</a>
+<a href="#4074" id="4074">4074</a>
+<a href="#4075" id="4075">4075</a>
+<a href="#4076" id="4076">4076</a>
+<a href="#4077" id="4077">4077</a>
+<a href="#4078" id="4078">4078</a>
+<a href="#4079" id="4079">4079</a>
+<a href="#4080" id="4080">4080</a>
+<a href="#4081" id="4081">4081</a>
+<a href="#4082" id="4082">4082</a>
+<a href="#4083" id="4083">4083</a>
+<a href="#4084" id="4084">4084</a>
+<a href="#4085" id="4085">4085</a>
+<a href="#4086" id="4086">4086</a>
+<a href="#4087" id="4087">4087</a>
+<a href="#4088" id="4088">4088</a>
+<a href="#4089" id="4089">4089</a>
+<a href="#4090" id="4090">4090</a>
+<a href="#4091" id="4091">4091</a>
+<a href="#4092" id="4092">4092</a>
+<a href="#4093" id="4093">4093</a>
+<a href="#4094" id="4094">4094</a>
+<a href="#4095" id="4095">4095</a>
+<a href="#4096" id="4096">4096</a>
+<a href="#4097" id="4097">4097</a>
+<a href="#4098" id="4098">4098</a>
+<a href="#4099" id="4099">4099</a>
+<a href="#4100" id="4100">4100</a>
+<a href="#4101" id="4101">4101</a>
+<a href="#4102" id="4102">4102</a>
+<a href="#4103" id="4103">4103</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -4054,8 +4134,9 @@
 
 <span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
+<span class="kw">use </span>concurrent_queue::ConcurrentQueue;
 <span class="kw">use </span>futures_lite::{FutureExt, Stream, StreamExt};
-<span class="kw">use </span>futures_util::stream::BoxStream;
+<span class="kw">use </span>futures_util::{stream::BoxStream, task::AtomicWaker};
 <span class="kw">use </span>iroh_base::key::NodeId;
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>iroh_relay::protos::stun;
@@ -4089,7 +4170,7 @@
     dns::DnsResolver,
     endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
-    AddrInfo, RelayMap, RelayUrl,
+    RelayMap, RelayUrl,
 };
 
 <span class="kw">mod </span>metrics;
@@ -4149,7 +4230,6 @@
     ///
     /// May only be used in tests.
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = <span class="string">"test-utils"</span>))))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) insecure_skip_relay_cert_verify: bool,
 }
 
@@ -4203,14 +4283,17 @@
     </span>me: String,
     <span class="doccomment">/// Proxy
     </span>proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
-    <span class="doccomment">/// Channel to receive datagrams from relays for [`AsyncUdpSocket::poll_recv`].
+    <span class="doccomment">/// Queue to receive datagrams from relays for [`AsyncUdpSocket::poll_recv`].
     ///
-    /// QUIC datagrams received by relays are put on this channel and consumed by
-    /// [`AsyncUdpSocket`].  This channel takes care of the wakers needed by
+    /// Relay datagrams received by relays are put into this queue and consumed by
+    /// [`AsyncUdpSocket`].  This queue takes care of the wakers needed by
     /// [`AsyncUdpSocket::poll_recv`].
-    </span>relay_recv_channel: RelayRecvReceiver,
-
-    network_send_wakers: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
+    </span>relay_datagrams_queue: Arc&lt;RelayDatagramsQueue&gt;,
+    <span class="doccomment">/// Waker to wake the [`AsyncUdpSocket`] when more data can be sent to the relay server.
+    ///
+    /// This waker is used by [`IoPoller`] and the [`RelayActor`] to signal when more
+    /// datagrams can be sent to the relays.
+    </span>relay_send_waker: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
     <span class="doccomment">/// Counter for ordering of [`MagicSock::poll_recv`] polling order.
     </span>poll_recv_counter: AtomicUsize,
 
@@ -4268,7 +4351,6 @@
     ///
     /// May only be used in tests.
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = <span class="string">"test-utils"</span>))))]
     </span>insecure_skip_relay_cert_verify: bool,
 }
 
@@ -4390,12 +4472,12 @@
     </span><span class="kw">pub fn </span>add_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="kw-2">mut </span>addr: NodeAddr, source: node_map::Source) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>pruned = <span class="number">0</span>;
         <span class="kw">for </span>my_addr <span class="kw">in </span><span class="self">self</span>.direct_addrs.sockaddrs() {
-            <span class="kw">if </span>addr.info.direct_addresses.remove(<span class="kw-2">&amp;</span>my_addr) {
+            <span class="kw">if </span>addr.direct_addresses.remove(<span class="kw-2">&amp;</span>my_addr) {
                 <span class="macro">warn!</span>( node_id=addr.node_id.fmt_short(), %my_addr, %source, <span class="string">"not adding our addr for node"</span>);
                 pruned += <span class="number">1</span>;
             }
         }
-        <span class="kw">if </span>!addr.info.is_empty() {
+        <span class="kw">if </span>!addr.direct_addresses.is_empty() || addr.relay_url.is_some() {
             <span class="self">self</span>.node_map.add_node_addr(addr, source);
             <span class="prelude-val">Ok</span>(())
         } <span class="kw">else if </span>pruned != <span class="number">0 </span>{
@@ -4475,7 +4557,7 @@
             ipv4_poller,
             ipv6_poller,
             relay_sender,
-            relay_send_waker: <span class="self">self</span>.network_send_wakers.clone(),
+            relay_send_waker: <span class="self">self</span>.relay_send_waker.clone(),
         })
     }
 
@@ -4537,8 +4619,14 @@
                             udp_sent = <span class="bool-val">true</span>;
                         }
                         <span class="prelude-val">Err</span>(err) =&gt; {
-                            <span class="macro">error!</span>(node = %node_id.fmt_short(), dst = %addr,
-                                   <span class="string">"failed to send udp: {err:#}"</span>);
+                            <span class="comment">// No need to print "WouldBlock" errors to the console
+                            </span><span class="kw">if </span>err.kind() != io::ErrorKind::WouldBlock {
+                                <span class="macro">warn!</span>(
+                                    node = %node_id.fmt_short(),
+                                    dst = %addr,
+                                    <span class="string">"failed to send udp: {err:#}"
+                                </span>);
+                            }
                             udp_error = <span class="prelude-val">Some</span>(err);
                         }
                     }
@@ -4582,16 +4670,26 @@
                         // at any time so these errors should be treated as transient and
                         // are just timeouts.  Hence we opt for returning Ok.  See
                         // test_try_send_no_udp_addr_or_relay_url to explore this further.
-                        </span><span class="macro">error!</span>(
+                        </span><span class="macro">debug!</span>(
                             node = %node_id.fmt_short(),
-                            <span class="string">"no UDP or relay paths available for node"</span>,
+                            <span class="string">"no UDP or relay paths available for node, voiding transmit"</span>,
                         );
-                    }
+                        <span class="comment">// We log this as debug instead of error, because this is a
+                        // situation that comes up under normal operation. If this were an
+                        // error log, it would unnecessarily pollute logs.
+                        // This situation happens essentially when `pings_sent` is false,
+                        // `relay_url` is `None`, so `relay_sent` is false, and the UDP
+                        // path is blocking, so `udp_sent` is false and `udp_pending` is
+                        // true.
+                        // Alternatively returning a WouldBlock error here would
+                        // potentially needlessly block sending on the relay path for the
+                        // next datagram.
+                    </span>}
                     <span class="prelude-val">Ok</span>(())
                 }
             }
             <span class="prelude-val">None </span>=&gt; {
-                <span class="macro">error!</span>(%dest, <span class="string">"no NodeState for mapped address"</span>);
+                <span class="macro">error!</span>(%dest, <span class="string">"no NodeState for mapped address, voiding transmit"</span>);
                 <span class="comment">// Returning Ok here means we let QUIC timeout.  Returning WouldBlock
                 // triggers a hot loop.  Returning an error would immediately fail a
                 // connection.  The philosophy of quinn-udp is that a UDP connection could
@@ -4883,7 +4981,7 @@
             <span class="comment">// For each output buffer keep polling the datagrams from the relay until one is
             // a QUIC datagram to be placed into the output buffer.  Or the channel is empty.
             </span><span class="kw">loop </span>{
-                <span class="kw">let </span>recv = <span class="kw">match </span><span class="self">self</span>.relay_recv_channel.poll_recv(cx) {
+                <span class="kw">let </span>recv = <span class="kw">match </span><span class="self">self</span>.relay_datagrams_queue.poll_recv(cx) {
                     Poll::Ready(<span class="prelude-val">Ok</span>(recv)) =&gt; recv,
                     Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; {
                         <span class="macro">error!</span>(<span class="string">"relay_recv_channel closed: {err:#}"</span>);
@@ -5400,11 +5498,7 @@
     /// Called whenever our addresses or home relay node changes.
     </span><span class="kw">fn </span>publish_my_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>discovery) = <span class="self">self</span>.discovery {
-            <span class="kw">let </span>info = AddrInfo {
-                relay_url: <span class="self">self</span>.my_relay(),
-                direct_addresses: <span class="self">self</span>.direct_addrs.sockaddrs(),
-            };
-            discovery.publish(<span class="kw-2">&amp;</span>info);
+            discovery.publish(<span class="self">self</span>.my_relay().as_ref(), <span class="kw-2">&amp;</span><span class="self">self</span>.direct_addrs.sockaddrs());
         }
     }
 }
@@ -5533,7 +5627,7 @@
             </span>insecure_skip_relay_cert_verify,
         } = opts;
 
-        <span class="kw">let </span>(relay_recv_tx, relay_recv_rx) = relay_recv_channel();
+        <span class="kw">let </span>relay_datagrams_queue = Arc::new(RelayDatagramsQueue::new());
 
         <span class="kw">let </span>(pconn4, pconn6) = bind(addr_v4, addr_v6)<span class="question-mark">?</span>;
         <span class="kw">let </span>port = pconn4.port();
@@ -5570,8 +5664,8 @@
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(<span class="bool-val">false</span>),
             closed: AtomicBool::new(<span class="bool-val">false</span>),
-            relay_recv_channel: relay_recv_rx,
-            network_send_wakers: Arc::new(parking_lot::Mutex::new(<span class="prelude-val">None</span>)),
+            relay_datagrams_queue: relay_datagrams_queue.clone(),
+            relay_send_waker: Arc::new(parking_lot::Mutex::new(<span class="prelude-val">None</span>)),
             poll_recv_counter: AtomicUsize::new(<span class="number">0</span>),
             actor_sender: actor_sender.clone(),
             ipv6_reported: Arc::new(AtomicBool::new(<span class="bool-val">false</span>)),
@@ -5595,7 +5689,7 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>actor_tasks = JoinSet::default();
 
-        <span class="kw">let </span>relay_actor = RelayActor::new(inner.clone(), relay_recv_tx);
+        <span class="kw">let </span>relay_actor = RelayActor::new(inner.clone(), relay_datagrams_queue);
         <span class="kw">let </span>relay_actor_cancel_token = relay_actor.cancel_token();
         actor_tasks.spawn(
             <span class="kw">async move </span>{
@@ -5735,64 +5829,74 @@
     </span>Parse(anyhow::Error),
 }
 
-<span class="doccomment">/// Channel for [`MagicSock::poll_recv_relay`] to receive datagrams from relays.
+<span class="doccomment">/// A queue holding [`RelayRecvDatagram`]s that can be polled in async
+/// contexts, and wakes up tasks when something adds items using [`try_send`].
 ///
-/// The sender and receiver will take care of the required wakers needed for
-/// [`AsyncUdpSocket::poll_recv`].
-</span><span class="comment">// TODO: This channel should possibly be implemented with concurrent-queue and atomic-waker.
-// Or maybe async-channel.
-</span><span class="kw">fn </span>relay_recv_channel() -&gt; (RelayRecvSender, RelayRecvReceiver) {
-    <span class="kw">let </span>(tx, rx) = mpsc::channel(<span class="number">128</span>);
-    <span class="kw">let </span>waker = Arc::new(parking_lot::Mutex::new(<span class="prelude-val">None</span>));
-    <span class="kw">let </span>sender = RelayRecvSender {
-        sender: tx,
-        waker: waker.clone(),
-    };
-    <span class="kw">let </span>receiver = RelayRecvReceiver {
-        receiver: parking_lot::Mutex::new(rx),
-        waker,
-    };
-    (sender, receiver)
+/// This is used to transfer relay datagrams between the [`RelayActor`]
+/// and [`MagicSock`].
+///
+/// [`try_send`]: Self::try_send
+/// [`RelayActor`]: crate::magicsock::RelayActor
+/// [`MagicSock`]: crate::magicsock::MagicSock
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">struct </span>RelayDatagramsQueue {
+    queue: ConcurrentQueue&lt;RelayRecvDatagram&gt;,
+    waker: AtomicWaker,
 }
 
-<span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">struct </span>RelayRecvSender {
-    sender: mpsc::Sender&lt;RelayRecvDatagram&gt;,
-    waker: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
-}
+<span class="kw">impl </span>RelayDatagramsQueue {
+    <span class="doccomment">/// Creates a new, empty queue with a fixed size bound of 128 items.
+    </span><span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            queue: ConcurrentQueue::bounded(<span class="number">128</span>),
+            waker: AtomicWaker::new(),
+        }
+    }
 
-<span class="kw">impl </span>RelayRecvSender {
-    <span class="kw">fn </span>try_send(
+    <span class="doccomment">/// Sends an item into this queue and wakes a potential task
+    /// that's registered its waker with a [`poll_recv`] call.
+    ///
+    /// [`poll_recv`]: Self::poll_recv
+    </span><span class="kw">fn </span>try_send(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         item: RelayRecvDatagram,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), mpsc::error::TrySendError&lt;RelayRecvDatagram&gt;&gt; {
-        <span class="self">self</span>.sender.try_send(item).inspect(|<span class="kw">_</span>| {
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(waker) = <span class="self">self</span>.waker.lock().take() {
-                waker.wake();
-            }
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), concurrent_queue::PushError&lt;RelayRecvDatagram&gt;&gt; {
+        <span class="self">self</span>.queue.push(item).inspect(|<span class="kw">_</span>| {
+            <span class="self">self</span>.waker.wake();
         })
     }
-}
 
-<span class="attr">#[derive(Debug)]
-</span><span class="kw">struct </span>RelayRecvReceiver {
-    receiver: parking_lot::Mutex&lt;mpsc::Receiver&lt;RelayRecvDatagram&gt;&gt;,
-    waker: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
-}
+    <span class="doccomment">/// Polls for new items in the queue.
+    ///
+    /// Although this method is available from `&amp;self`, it must not be
+    /// polled concurrently between tasks.
+    ///
+    /// Calling this will replace the current waker used. So if another task
+    /// waits for this, that task's waker will be replaced and it won't be
+    /// woken up for new items.
+    ///
+    /// The reason this method is made available as `&amp;self` is because
+    /// the interface for quinn's [`AsyncUdpSocket::poll_recv`] requires us
+    /// to be able to poll from `&amp;self`.
+    </span><span class="kw">fn </span>poll_recv(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;RelayRecvDatagram&gt;&gt; {
+        <span class="kw">match </span><span class="self">self</span>.queue.pop() {
+            <span class="prelude-val">Ok</span>(value) =&gt; Poll::Ready(<span class="prelude-val">Ok</span>(value)),
+            <span class="prelude-val">Err</span>(concurrent_queue::PopError::Empty) =&gt; {
+                <span class="self">self</span>.waker.register(cx.waker());
 
-<span class="kw">impl </span>RelayRecvReceiver {
-    <span class="kw">fn </span>poll_recv(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;RelayRecvDatagram&gt;&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>receiver = <span class="self">self</span>.receiver.lock();
-        <span class="self">self</span>.waker.lock().replace(cx.waker().clone());
-        <span class="kw">match </span>receiver.try_recv() {
-            <span class="prelude-val">Ok</span>(item) =&gt; {
-                <span class="self">self</span>.waker.lock().take();
-                Poll::Ready(<span class="prelude-val">Ok</span>(item))
+                <span class="kw">match </span><span class="self">self</span>.queue.pop() {
+                    <span class="prelude-val">Ok</span>(value) =&gt; {
+                        <span class="self">self</span>.waker.take();
+                        Poll::Ready(<span class="prelude-val">Ok</span>(value))
+                    }
+                    <span class="prelude-val">Err</span>(concurrent_queue::PopError::Empty) =&gt; Poll::Pending,
+                    <span class="prelude-val">Err</span>(concurrent_queue::PopError::Closed) =&gt; {
+                        <span class="self">self</span>.waker.take();
+                        Poll::Ready(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Queue closed"</span>)))
+                    }
+                }
             }
-            <span class="prelude-val">Err</span>(mpsc::error::TryRecvError::Empty) =&gt; Poll::Pending,
-            <span class="prelude-val">Err</span>(mpsc::error::TryRecvError::Disconnected) =&gt; {
-                Poll::Ready(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"All RelayRecvSenders disconnected"</span>)))
-            }
+            <span class="prelude-val">Err</span>(concurrent_queue::PopError::Closed) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Queue closed"</span>))),
         }
     }
 }
@@ -6050,9 +6154,12 @@
                 // forever like we do with the other branches that yield `Option`s
                 </span><span class="prelude-val">Some</span>(discovery_item) = discovery_events.next() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: discovery event, address discovered: {discovery_item:?}"</span>);
-                    <span class="kw">let </span>node_addr = NodeAddr {node_id: discovery_item.node_id, info: discovery_item.addr_info};
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.msock.add_node_addr(node_addr.clone(), Source::Discovery { name: discovery_item.provenance.into() }) {
-                        <span class="macro">warn!</span>(<span class="question-mark">?</span>node_addr, <span class="string">"unable to add discovered node address to the node map: {e:?}"</span>);
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.msock.add_node_addr(
+                        discovery_item.node_addr.clone(),
+                        Source::Discovery {
+                            name: discovery_item.provenance.into()
+                        }) {
+                        <span class="macro">warn!</span>(<span class="question-mark">?</span>discovery_item.node_addr, <span class="string">"unable to add discovered node address to the node map: {e:?}"</span>);
                     }
                 }
             }
@@ -6345,10 +6452,12 @@
         <span class="kw">let </span>pconn4 = <span class="prelude-val">Some</span>(<span class="self">self</span>.pconn4.clone());
         <span class="kw">let </span>pconn6 = <span class="self">self</span>.pconn6.clone();
 
+        <span class="kw">let </span>quic_config = <span class="prelude-val">None</span>;
+
         <span class="macro">debug!</span>(<span class="string">"requesting net_report report"</span>);
         <span class="kw">match </span><span class="self">self
             </span>.net_reporter
-            .get_report_channel(relay_map, pconn4, pconn6)
+            .get_report_channel(relay_map, pconn4, pconn6, quic_config)
             .<span class="kw">await
         </span>{
             <span class="prelude-val">Ok</span>(rx) =&gt; {
@@ -6880,7 +6989,10 @@
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use crate</span>::{defaults::staging::EU_RELAY_HOSTNAME, tls, Endpoint, RelayMode};
+    <span class="kw">use crate</span>::{
+        defaults::staging::{<span class="self">self</span>, EU_RELAY_HOSTNAME},
+        tls, Endpoint, RelayMode,
+    };
 
     <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/test/1"</span>;
 
@@ -6963,10 +7075,8 @@
 
                 <span class="kw">let </span>addr = NodeAddr {
                     node_id: me.public(),
-                    info: <span class="kw">crate</span>::AddrInfo {
-                        relay_url: <span class="prelude-val">None</span>,
-                        direct_addresses: new_addrs.iter().map(|ep| ep.addr).collect(),
-                    },
+                    relay_url: <span class="prelude-val">None</span>,
+                    direct_addresses: new_addrs.iter().map(|ep| ep.addr).collect(),
                 };
                 m.endpoint.magic_sock().add_test_addr(addr);
             }
@@ -7900,17 +8010,15 @@
 
         <span class="kw">let </span>node_addr_2 = NodeAddr {
             node_id: node_id_2,
-            info: AddrInfo {
-                relay_url: <span class="prelude-val">None</span>,
-                direct_addresses: msock_2
-                    .direct_addresses()
-                    .next()
-                    .<span class="kw">await
-                    </span>.expect(<span class="string">"no direct addrs"</span>)
-                    .into_iter()
-                    .map(|x| x.addr)
-                    .collect(),
-            },
+            relay_url: <span class="prelude-val">None</span>,
+            direct_addresses: msock_2
+                .direct_addresses()
+                .next()
+                .<span class="kw">await
+                </span>.expect(<span class="string">"no direct addrs"</span>)
+                .into_iter()
+                .map(|x| x.addr)
+                .collect(),
         };
         msock_1
             .add_node_addr(
@@ -7972,7 +8080,8 @@
         </span>msock_1.node_map.add_node_addr(
             NodeAddr {
                 node_id: node_id_2,
-                info: AddrInfo::default(),
+                relay_url: <span class="prelude-val">None</span>,
+                direct_addresses: Default::default(),
             },
             Source::NamedApp {
                 name: <span class="string">"test"</span>.into(),
@@ -8007,17 +8116,15 @@
         </span>msock_1.node_map.add_node_addr(
             NodeAddr {
                 node_id: node_id_2,
-                info: AddrInfo {
-                    relay_url: <span class="prelude-val">None</span>,
-                    direct_addresses: msock_2
-                        .direct_addresses()
-                        .next()
-                        .<span class="kw">await
-                        </span>.expect(<span class="string">"no direct addrs"</span>)
-                        .into_iter()
-                        .map(|x| x.addr)
-                        .collect(),
-                },
+                relay_url: <span class="prelude-val">None</span>,
+                direct_addresses: msock_2
+                    .direct_addresses()
+                    .next()
+                    .<span class="kw">await
+                    </span>.expect(<span class="string">"no direct addrs"</span>)
+                    .into_iter()
+                    .map(|x| x.addr)
+                    .collect(),
             },
             Source::NamedApp {
                 name: <span class="string">"test"</span>.into(),
@@ -8043,5 +8150,58 @@
         <span class="comment">// TODO: could remove the addresses again, send, add it back and see it recover.
         // But we don't have that much private access to the NodeMap.  This will do for now.
     </span>}
+
+    <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
+    </span><span class="kw">async fn </span>test_relay_datagram_queue() {
+        <span class="kw">let </span>queue = Arc::new(RelayDatagramsQueue::new());
+        <span class="kw">let </span>url = staging::default_na_relay_node().url;
+        <span class="kw">let </span>capacity = queue.queue.capacity().unwrap();
+
+        <span class="kw">let </span><span class="kw-2">mut </span>tasks = JoinSet::new();
+
+        tasks.spawn({
+            <span class="kw">let </span>queue = queue.clone();
+            <span class="kw">async move </span>{
+                <span class="kw">let </span><span class="kw-2">mut </span>expected_msgs = <span class="macro">vec!</span>[<span class="bool-val">false</span>; capacity];
+
+                <span class="kw">while let </span><span class="prelude-val">Ok</span>(datagram) = tokio::time::timeout(
+                    Duration::from_millis(<span class="number">100</span>),
+                    futures_lite::future::poll_fn(|cx| {
+                        queue.poll_recv(cx).map(|result| result.unwrap())
+                    }),
+                )
+                .<span class="kw">await
+                </span>{
+                    <span class="kw">let </span>msg_num = usize::from_le_bytes(datagram.buf.as_ref().try_into().unwrap());
+
+                    <span class="kw">if </span>expected_msgs[msg_num] {
+                        <span class="macro">panic!</span>(<span class="string">"Received message number {msg_num} more than once (duplicated)"</span>);
+                    }
+
+                    expected_msgs[msg_num] = <span class="bool-val">true</span>;
+                }
+
+                <span class="macro">assert!</span>(expected_msgs.into_iter().all(|is_set| is_set));
+            }
+        });
+
+        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..capacity {
+            tasks.spawn({
+                <span class="kw">let </span>queue = queue.clone();
+                <span class="kw">let </span>url = url.clone();
+                <span class="kw">async move </span>{
+                    queue
+                        .try_send(RelayRecvDatagram {
+                            url,
+                            src: PublicKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]).unwrap(),
+                            buf: Bytes::copy_from_slice(<span class="kw-2">&amp;</span>i.to_le_bytes()),
+                        })
+                        .unwrap();
+                }
+            });
+        }
+
+        tasks.join_all().<span class="kw">await</span>;
+    }
 }
 </code></pre></div></section></main></body></html>

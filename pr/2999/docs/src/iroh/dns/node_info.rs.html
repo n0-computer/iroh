@@ -440,13 +440,6 @@
 <a href="#440" id="440">440</a>
 <a href="#441" id="441">441</a>
 <a href="#442" id="442">442</a>
-<a href="#443" id="443">443</a>
-<a href="#444" id="444">444</a>
-<a href="#445" id="445">445</a>
-<a href="#446" id="446">446</a>
-<a href="#447" id="447">447</a>
-<a href="#448" id="448">448</a>
-<a href="#449" id="449">449</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
@@ -490,11 +483,10 @@
 };
 
 <span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>hickory_proto::error::ProtoError;
-<span class="kw">use </span>hickory_resolver::{Name, TokioAsyncResolver};
+<span class="kw">use </span>hickory_resolver::{proto::ProtoError, Name, TokioResolver};
 <span class="kw">use </span>url::Url;
 
-<span class="kw">use crate</span>::{key::SecretKey, AddrInfo, NodeAddr, NodeId};
+<span class="kw">use crate</span>::{key::SecretKey, NodeAddr, NodeId};
 
 <span class="doccomment">/// The DNS name for the iroh TXT record.
 </span><span class="kw">pub const </span>IROH_TXT_NAME: <span class="kw-2">&amp;</span>str = <span class="string">"_iroh"</span>;
@@ -589,15 +581,7 @@
     <span class="kw">fn </span>from(value: NodeInfo) -&gt; <span class="self">Self </span>{
         NodeAddr {
             node_id: value.node_id,
-            info: value.into(),
-        }
-    }
-}
-
-<span class="kw">impl </span>From&lt;NodeInfo&gt; <span class="kw">for </span>AddrInfo {
-    <span class="kw">fn </span>from(value: NodeInfo) -&gt; <span class="self">Self </span>{
-        AddrInfo {
-            relay_url: value.relay_url.map(|u| u.into()),
+            relay_url: value.relay_url.map(Into::into),
             direct_addresses: value.direct_addresses,
         }
     }
@@ -622,7 +606,7 @@
     }
 
     <span class="doccomment">/// Parses a [`NodeInfo`] from a set of DNS records.
-    </span><span class="kw">pub fn </span>from_hickory_records(records: <span class="kw-2">&amp;</span>[hickory_proto::rr::Record]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub fn </span>from_hickory_records(records: <span class="kw-2">&amp;</span>[hickory_resolver::proto::rr::Record]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>attrs = TxtAttrs::from_hickory_records(records)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(attrs.into())
     }
@@ -644,12 +628,12 @@
         <span class="self">self</span>.to_attrs().to_pkarr_signed_packet(secret_key, ttl)
     }
 
-    <span class="doccomment">/// Converts into a [`hickory_proto::rr::Record`] DNS record.
+    <span class="doccomment">/// Converts into a [`hickory_resolver::proto::rr::Record`] DNS record.
     </span><span class="kw">pub fn </span>to_hickory_records(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         origin: <span class="kw-2">&amp;</span>str,
         ttl: u32,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = hickory_proto::rr::Record&gt; + <span class="lifetime">'static</span>&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = hickory_resolver::proto::rr::Record&gt; + <span class="lifetime">'static</span>&gt; {
         <span class="kw">let </span>attrs = <span class="self">self</span>.to_attrs();
         <span class="kw">let </span>records = attrs.to_hickory_records(origin, ttl)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(records.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().into_iter())
@@ -658,10 +642,12 @@
 
 <span class="doccomment">/// Parses a [`NodeId`] from iroh DNS name.
 ///
-/// Takes a [`hickory_proto::rr::Name`] DNS name and expects the first label to be
+/// Takes a [`hickory_resolver::proto::rr::Name`] DNS name and expects the first label to be
 /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
 /// subsequent labels.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>node_id_from_hickory_name(name: <span class="kw-2">&amp;</span>hickory_proto::rr::Name) -&gt; <span class="prelude-ty">Option</span>&lt;NodeId&gt; {
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>node_id_from_hickory_name(
+    name: <span class="kw-2">&amp;</span>hickory_resolver::proto::rr::Name,
+) -&gt; <span class="prelude-ty">Option</span>&lt;NodeId&gt; {
     <span class="kw">if </span>name.num_labels() &lt; <span class="number">2 </span>{
         <span class="kw">return </span><span class="prelude-val">None</span>;
     }
@@ -712,7 +698,7 @@
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{ attrs, node_id })
     }
 
-    <span class="kw">async fn </span>lookup(resolver: <span class="kw-2">&amp;</span>TokioAsyncResolver, name: Name) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    <span class="kw">async fn </span>lookup(resolver: <span class="kw-2">&amp;</span>TokioResolver, name: Name) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>name = ensure_iroh_txt_label(name)<span class="question-mark">?</span>;
         <span class="kw">let </span>lookup = resolver.txt_lookup(name).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>attrs = <span class="self">Self</span>::from_hickory_records(lookup.as_lookup().records())<span class="question-mark">?</span>;
@@ -721,7 +707,7 @@
 
     <span class="doccomment">/// Looks up attributes by [`NodeId`] and origin domain.
     </span><span class="kw">pub async fn </span>lookup_by_id(
-        resolver: <span class="kw-2">&amp;</span>TokioAsyncResolver,
+        resolver: <span class="kw-2">&amp;</span>TokioResolver,
         node_id: <span class="kw-2">&amp;</span>NodeId,
         origin: <span class="kw-2">&amp;</span>str,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
@@ -730,7 +716,7 @@
     </span>}
 
     <span class="doccomment">/// Looks up attributes by DNS name.
-    </span><span class="kw">pub async fn </span>lookup_by_name(resolver: <span class="kw-2">&amp;</span>TokioAsyncResolver, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub async fn </span>lookup_by_name(resolver: <span class="kw-2">&amp;</span>TokioResolver, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>name = Name::from_str(name)<span class="question-mark">?</span>;
         TxtAttrs::lookup(resolver, name).<span class="kw">await
     </span>}
@@ -769,8 +755,8 @@
     }
 
     <span class="doccomment">/// Parses a set of DNS resource records.
-    </span><span class="kw">pub fn </span>from_hickory_records(records: <span class="kw-2">&amp;</span>[hickory_proto::rr::Record]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">use </span>hickory_proto::rr;
+    </span><span class="kw">pub fn </span>from_hickory_records(records: <span class="kw-2">&amp;</span>[hickory_resolver::proto::rr::Record]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">use </span>hickory_resolver::proto::rr;
         <span class="kw">let </span><span class="kw-2">mut </span>records = records.iter().filter_map(|rr| <span class="kw">match </span>rr.data() {
             rr::RData::TXT(txt) =&gt; {
                 node_id_from_hickory_name(rr.name()).map(|node_id| (node_id, txt))
@@ -795,13 +781,13 @@
             .flat_map(<span class="kw">move </span>|(k, vs)| vs.iter().map(<span class="kw">move </span>|v| <span class="macro">format!</span>(<span class="string">"{k}={v}"</span>)))
     }
 
-    <span class="doccomment">/// Converts to a list of [`hickory_proto::rr::Record`] resource records.
+    <span class="doccomment">/// Converts to a list of [`hickory_resolver::proto::rr::Record`] resource records.
     </span><span class="kw">pub fn </span>to_hickory_records(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         origin: <span class="kw-2">&amp;</span>str,
         ttl: u32,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = hickory_proto::rr::Record&gt; + <span class="lifetime">'_</span>&gt; {
-        <span class="kw">use </span>hickory_proto::rr;
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = hickory_resolver::proto::rr::Record&gt; + <span class="lifetime">'_</span>&gt; {
+        <span class="kw">use </span>hickory_resolver::proto::rr;
         <span class="kw">let </span>name = <span class="macro">format!</span>(<span class="string">"{}.{}.{}"</span>, IROH_TXT_NAME, to_z32(<span class="kw-2">&amp;</span><span class="self">self</span>.node_id), origin);
         <span class="kw">let </span>name = rr::Name::from_utf8(name)<span class="question-mark">?</span>;
         <span class="kw">let </span>records = <span class="self">self</span>.to_txt_strings().map(<span class="kw">move </span>|s| {

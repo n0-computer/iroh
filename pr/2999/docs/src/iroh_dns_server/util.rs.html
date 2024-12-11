@@ -151,6 +151,10 @@
 <a href="#151" id="151">151</a>
 <a href="#152" id="152">152</a>
 <a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>core::fmt;
 <span class="kw">use </span>std::{
     collections::{btree_map, BTreeMap},
@@ -159,7 +163,7 @@
 };
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>hickory_proto::{
+<span class="kw">use </span>hickory_server::proto::{
     op::Message,
     rr::{
         domain::{IntoLabel, Label},
@@ -175,6 +179,10 @@
 </span><span class="kw">pub struct </span>PublicKeyBytes([u8; <span class="number">32</span>]);
 
 <span class="kw">impl </span>PublicKeyBytes {
+    <span class="kw">pub fn </span>new(bytes: [u8; <span class="number">32</span>]) -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>(bytes)
+    }
+
     <span class="kw">pub fn </span>from_z32(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>bytes = z32::decode(s.as_bytes())<span class="question-mark">?</span>;
         <span class="kw">let </span>bytes: [u8; <span class="number">32</span>] = bytes.try_into().map_err(|<span class="kw">_</span>| <span class="macro">anyhow!</span>(<span class="string">"invalid length"</span>))<span class="question-mark">?</span>;
@@ -295,7 +303,7 @@
     serial: u32,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;RecordSet&gt; {
     <span class="kw">let </span>new_name = input.name().clone().append_name(origin)<span class="question-mark">?</span>;
-    <span class="kw">let </span><span class="kw-2">mut </span>output = RecordSet::new(<span class="kw-2">&amp;</span>new_name, input.record_type(), serial);
+    <span class="kw">let </span><span class="kw-2">mut </span>output = RecordSet::new(new_name.clone(), input.record_type(), serial);
     <span class="comment">// TODO: less clones
     </span><span class="kw">for </span>record <span class="kw">in </span>input.records_without_rrsigs() {
         <span class="kw">let </span><span class="kw-2">mut </span>record = record.clone();

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["AddrInfoOptions"],"mod":["defaults","dialer","discovery","dns","endpoint","hash","key","metrics","protocol","test_utils","ticket","tls"],"struct":["AddrInfo","NodeAddr","RelayMap","RelayNode","RelayUrl"],"type":["NodeId"]};
+window.SIDEBAR_ITEMS = {"mod":["defaults","discovery","dns","endpoint","hash","key","metrics","protocol","test_utils","ticket"],"struct":["NodeAddr","RelayMap","RelayNode","RelayUrl"],"type":["NodeId"]};

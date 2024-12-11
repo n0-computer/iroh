@@ -858,6 +858,12 @@
 <a href="#858" id="858">858</a>
 <a href="#859" id="859">859</a>
 <a href="#860" id="860">860</a>
+<a href="#861" id="861">861</a>
+<a href="#862" id="862">862</a>
+<a href="#863" id="863">863</a>
+<a href="#864" id="864">864</a>
+<a href="#865" id="865">865</a>
+<a href="#866" id="866">866</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
@@ -885,7 +891,7 @@
 
 <span class="kw">use crate</span>::{
     key::{NodeId, PUBLIC_KEY_LENGTH},
-    magicsock::{MagicSock, Metrics <span class="kw">as </span>MagicsockMetrics, RelayContents, RelayRecvSender},
+    magicsock::{MagicSock, Metrics <span class="kw">as </span>MagicsockMetrics, RelayContents, RelayDatagramsQueue},
 };
 
 <span class="doccomment">/// How long a non-home relay connection needs to be idle (last written to) before we close it.
@@ -912,8 +918,8 @@
     <span class="doccomment">/// The time of the last request for its write
     /// channel (currently even if there was no write).
     </span>last_write: Instant,
-    <span class="doccomment">/// Channel to send received QUIC datagrams on.
-    </span>relay_recv_channel: RelayRecvSender,
+    <span class="doccomment">/// Queue to send received relay datagrams on.
+    </span>relay_datagrams_queue: Arc&lt;RelayDatagramsQueue&gt;,
     url: RelayUrl,
     relay_client: relay::client::Client,
     relay_client_receiver: relay::client::ClientReceiver,
@@ -944,11 +950,11 @@
         url: RelayUrl,
         relay_client: relay::client::Client,
         relay_client_receiver: relay::client::ClientReceiver,
-        relay_recv_channel: RelayRecvSender,
+        relay_datagrams_queue: Arc&lt;RelayDatagramsQueue&gt;,
     ) -&gt; <span class="self">Self </span>{
         ConnectedRelayActor {
             last_write: Instant::now(),
-            relay_recv_channel,
+            relay_datagrams_queue,
             url,
             node_present: BTreeSet::new(),
             backoff: backoff::exponential::ExponentialBackoffBuilder::new()
@@ -1106,7 +1112,7 @@
                                 src: remote_node_id,
                                 buf: datagram,
                             };
-                            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.relay_recv_channel.try_send(res) {
+                            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.relay_datagrams_queue.try_send(res) {
                                 <span class="macro">warn!</span>(<span class="string">"dropping received relay packet: {err:#}"</span>);
                             }
                         }
@@ -1142,7 +1148,7 @@
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>RelayActor {
     msock: Arc&lt;MagicSock&gt;,
-    relay_recv_channel: RelayRecvSender,
+    relay_datagrams_queue: Arc&lt;RelayDatagramsQueue&gt;,
     <span class="doccomment">/// relay Url -&gt; connection to the node
     </span>connected_relays: BTreeMap&lt;RelayUrl, (mpsc::Sender&lt;ConnectedRelayMessage&gt;, JoinHandle&lt;()&gt;)&gt;,
     ping_tasks: JoinSet&lt;(RelayUrl, bool)&gt;,
@@ -1150,11 +1156,14 @@
 }
 
 <span class="kw">impl </span>RelayActor {
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(msock: Arc&lt;MagicSock&gt;, recv_channel: RelayRecvSender) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
+        msock: Arc&lt;MagicSock&gt;,
+        relay_datagrams_queue: Arc&lt;RelayDatagramsQueue&gt;,
+    ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>cancel_token = CancellationToken::new();
         <span class="self">Self </span>{
             msock,
-            relay_recv_channel: recv_channel,
+            relay_datagrams_queue,
             connected_relays: Default::default(),
             ping_tasks: Default::default(),
             cancel_token,
@@ -1284,7 +1293,7 @@
         }
 
         <span class="comment">// Wake up the send waker if one is waiting for space in the channel
-        </span><span class="kw">let </span><span class="kw-2">mut </span>wakers = <span class="self">self</span>.msock.network_send_wakers.lock();
+        </span><span class="kw">let </span><span class="kw-2">mut </span>wakers = <span class="self">self</span>.msock.relay_send_waker.lock();
         <span class="kw">if let </span><span class="prelude-val">Some</span>(waker) = wakers.take() {
             waker.wake();
         }
@@ -1382,7 +1391,6 @@
                 <span class="kw">let </span>ipv6_reported = ipv6_reported.clone();
                 Box::pin(<span class="kw">async move </span>{ ipv6_reported.load(Ordering::Relaxed) })
             })
-            .can_ack_pings(<span class="bool-val">true</span>)
             .is_preferred(my_relay.as_ref() == <span class="prelude-val">Some</span>(url));
 
         <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
@@ -1396,11 +1404,15 @@
         <span class="kw">let </span>handle = tokio::task::spawn({
             <span class="kw">let </span>url = url.clone();
             <span class="kw">let </span>relay_client = relay_client.clone();
-            <span class="kw">let </span>relay_recv_channel = <span class="self">self</span>.relay_recv_channel.clone();
+            <span class="kw">let </span>relay_datagrams_queue = <span class="self">self</span>.relay_datagrams_queue.clone();
             <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">"conn-relay-actor"</span>, %url);
             <span class="kw">async move </span>{
-                <span class="kw">let </span>conn_actor =
-                    ConnectedRelayActor::new(url, relay_client, relay_receiver, relay_recv_channel);
+                <span class="kw">let </span>conn_actor = ConnectedRelayActor::new(
+                    url,
+                    relay_client,
+                    relay_receiver,
+                    relay_datagrams_queue,
+                );
 
                 <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = conn_actor.run(conn_actor_inbox_rx).<span class="kw">await </span>{
                     <span class="macro">warn!</span>(<span class="string">"connection error: {:?}"</span>, err);

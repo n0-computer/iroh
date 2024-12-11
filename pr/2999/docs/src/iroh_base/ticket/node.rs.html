@@ -174,6 +174,27 @@
 <a href="#174" id="174">174</a>
 <a href="#175" id="175">175</a>
 <a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Tickets for nodes.
 
 </span><span class="kw">use </span>std::str::FromStr;
@@ -181,6 +202,7 @@
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
+<span class="kw">use super</span>::{Variant0AddrInfo, Variant0NodeAddr};
 <span class="kw">use crate</span>::{
     node_addr::NodeAddr,
     ticket::{<span class="self">self</span>, Ticket},
@@ -212,21 +234,41 @@
 <span class="doccomment">/// Wire format for [`NodeTicket`].
 </span><span class="attr">#[derive(Serialize, Deserialize)]
 </span><span class="kw">enum </span>TicketWireFormat {
-    Variant0(NodeTicket),
+    Variant0(Variant0NodeTicket),
+}
+
+<span class="comment">// Legacy
+</span><span class="attr">#[derive(Serialize, Deserialize)]
+</span><span class="kw">struct </span>Variant0NodeTicket {
+    node: Variant0NodeAddr,
 }
 
 <span class="kw">impl </span>Ticket <span class="kw">for </span>NodeTicket {
     <span class="kw">const </span>KIND: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str = <span class="string">"node"</span>;
 
     <span class="kw">fn </span>to_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;u8&gt; {
-        <span class="kw">let </span>data = TicketWireFormat::Variant0(<span class="self">self</span>.clone());
+        <span class="kw">let </span>data = TicketWireFormat::Variant0(Variant0NodeTicket {
+            node: Variant0NodeAddr {
+                node_id: <span class="self">self</span>.node.node_id,
+                info: Variant0AddrInfo {
+                    relay_url: <span class="self">self</span>.node.relay_url.clone(),
+                    direct_addresses: <span class="self">self</span>.node.direct_addresses.clone(),
+                },
+            },
+        });
         postcard::to_stdvec(<span class="kw-2">&amp;</span>data).expect(<span class="string">"postcard serialization failed"</span>)
     }
 
     <span class="kw">fn </span>from_bytes(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; std::result::Result&lt;<span class="self">Self</span>, ticket::Error&gt; {
         <span class="kw">let </span>res: TicketWireFormat = postcard::from_bytes(bytes).map_err(ticket::Error::Postcard)<span class="question-mark">?</span>;
-        <span class="kw">let </span>TicketWireFormat::Variant0(res) = res;
-        <span class="prelude-val">Ok</span>(res)
+        <span class="kw">let </span>TicketWireFormat::Variant0(Variant0NodeTicket { node }) = res;
+        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+            node: NodeAddr {
+                node_id: node.node_id,
+                relay_url: node.info.relay_url,
+                direct_addresses: node.info.direct_addresses,
+            },
+        })
     }
 }
 

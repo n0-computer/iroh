@@ -1129,7 +1129,6 @@
 <a href="#1129" id="1129">1129</a>
 <a href="#1130" id="1130">1130</a>
 <a href="#1131" id="1131">1131</a>
-<a href="#1132" id="1132">1132</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
@@ -1227,7 +1226,6 @@
     </span><span class="kw">pub </span>quic: <span class="prelude-ty">Option</span>&lt;QuicConfig&gt;,
     <span class="doccomment">/// Socket to serve metrics on.
     </span><span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-    #[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"metrics"</span>)))]
     </span><span class="kw">pub </span>metrics_addr: <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;,
 }
 

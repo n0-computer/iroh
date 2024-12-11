@@ -828,6 +828,10 @@
 <a href="#828" id="828">828</a>
 <a href="#829" id="829">829</a>
 <a href="#830" id="830">830</a>
+<a href="#831" id="831">831</a>
+<a href="#832" id="832">832</a>
+<a href="#833" id="833">833</a>
+<a href="#834" id="834">834</a>
 </pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
@@ -1131,18 +1135,22 @@
     <span class="doccomment">/// Add the contact information for a node.
     </span><span class="attr">#[instrument(skip_all, fields(node = %node_addr.node_id.fmt_short()))]
     </span><span class="kw">fn </span>add_node_addr(<span class="kw-2">&amp;mut </span><span class="self">self</span>, node_addr: NodeAddr, source: Source) {
-        <span class="kw">let </span>NodeAddr { node_id, info } = node_addr;
-
         <span class="kw">let </span>source0 = source.clone();
+        <span class="kw">let </span>node_id = node_addr.node_id;
+        <span class="kw">let </span>relay_url = node_addr.relay_url.clone();
         <span class="kw">let </span>node_state = <span class="self">self</span>.get_or_insert_with(NodeStateKey::NodeId(node_id), || Options {
             node_id,
-            relay_url: info.relay_url.clone(),
+            relay_url,
             active: <span class="bool-val">false</span>,
             source,
         });
-        node_state.update_from_node_addr(<span class="kw-2">&amp;</span>info, source0);
+        node_state.update_from_node_addr(
+            node_addr.relay_url.as_ref(),
+            <span class="kw-2">&amp;</span>node_addr.direct_addresses,
+            source0,
+        );
         <span class="kw">let </span>id = node_state.id();
-        <span class="kw">for </span>addr <span class="kw">in </span><span class="kw-2">&amp;</span>info.direct_addresses {
+        <span class="kw">for </span>addr <span class="kw">in </span>node_addr.direct_addresses() {
             <span class="self">self</span>.set_node_state_for_ip_port(<span class="kw-2">*</span>addr, id);
         }
     }
@@ -1530,7 +1538,7 @@
             .into_iter()
             .filter_map(|info| {
                 <span class="kw">let </span>addr: NodeAddr = info.into();
-                <span class="kw">if </span>addr.info.is_empty() {
+                <span class="kw">if </span>addr.direct_addresses.is_empty() &amp;&amp; addr.relay_url.is_none() {
                     <span class="kw">return </span><span class="prelude-val">None</span>;
                 }
                 <span class="prelude-val">Some</span>(addr)
@@ -1543,7 +1551,7 @@
             .into_iter()
             .filter_map(|info| {
                 <span class="kw">let </span>addr: NodeAddr = info.into();
-                <span class="kw">if </span>addr.info.is_empty() {
+                <span class="kw">if </span>addr.direct_addresses.is_empty() &amp;&amp; addr.relay_url.is_none() {
                     <span class="kw">return </span><span class="prelude-val">None</span>;
                 }
                 <span class="prelude-val">Some</span>(addr)
