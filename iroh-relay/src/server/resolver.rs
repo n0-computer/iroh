@@ -33,7 +33,7 @@ where
         // create a channel to send the shutdown signal
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
 
-        // Spwan a task to reload the certificate every interval.
+        // Spawn a task to reload the certificate every interval.
         let _reloadable = reloadable.clone();
         let _handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(interval);
@@ -60,7 +60,7 @@ where
     }
 
     /// Shutdown the resolver.
-    pub async fn shutdown(self) {
+    pub fn shutdown(self) {
         let _ = self._shutdown_tx.send(());
     }
 

@@ -49,19 +49,19 @@ postcard = { version = "1", default-features = false, features = [
     "use-std",
     "experimental-derive",
 ] }
-rustls-cert-reloadable-resolver = "0.6"
-reloadable-state = "0.1"
-rustls-cert-file-reader = "0.4"
 quinn = { package = "iroh-quinn", version = "0.12.0" }
 quinn-proto = { package = "iroh-quinn-proto", version = "0.12.0" }
 rand = "0.8"
 rcgen = { version = "0.13", optional = true }
 regex = { version = "1.7.1", optional = true }
+reloadable-state = "0.1"
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
 ] }
 ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
+rustls-cert-reloadable-resolver = "0.6.1"
+rustls-cert-file-reader = "0.4.1"
 rustls-pemfile = { version = "2.1", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
 smallvec = "1.11.1"
