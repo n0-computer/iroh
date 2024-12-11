@@ -27,6 +27,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use hickory_resolver::TokioResolver as DnsResolver;
+use iroh_base::{RelayMap, RelayNode, RelayUrl};
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
 use iroh_relay::{http::RELAY_PROBE_PATH, protos::stun};
@@ -48,7 +49,7 @@ use crate::{
     defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT},
     dns::ResolverExt,
     ping::{PingError, Pinger},
-    RelayMap, RelayNode, RelayUrl, Report,
+    Report,
 };
 
 mod hairpin;

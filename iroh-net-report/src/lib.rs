@@ -15,7 +15,7 @@ use std::{
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use hickory_resolver::TokioResolver as DnsResolver;
-use iroh_base::relay_map::{RelayMap, RelayNode, RelayUrl};
+use iroh_base::{RelayMap, RelayUrl};
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
 use iroh_relay::protos::stun;
@@ -808,16 +808,14 @@ mod test_utils {
 
     use std::sync::Arc;
 
-    use iroh_base::relay_map::QuicConfig;
+    use iroh_base::{RelayNode, RelayQuicConfig};
     use iroh_relay::server;
-
-    use crate::RelayNode;
 
     pub(crate) async fn relay() -> (server::Server, Arc<RelayNode>) {
         let server = server::Server::spawn(server::testing::server_config())
             .await
             .expect("should serve relay");
-        let quic = Some(QuicConfig {
+        let quic = Some(RelayQuicConfig {
             port: server.quic_addr().expect("server should run quic").port(),
         });
         let node_desc = RelayNode {
@@ -864,6 +862,7 @@ mod tests {
         use std::{net::IpAddr, sync::Arc};
 
         use anyhow::Result;
+        use iroh_base::{RelayMap, RelayNode, RelayUrl};
         use tokio::{
             net,
             sync::{oneshot, Mutex},
@@ -871,7 +870,6 @@ mod tests {
         use tracing::{debug, trace};
 
         use super::*;
-        use crate::{RelayMap, RelayNode, RelayUrl};
 
         /// A drop guard to clean up test infrastructure.
         ///
