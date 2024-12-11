@@ -1,6 +1,6 @@
 use anyhow::Result;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use iroh::{discovery::pkarr::PkarrRelayClient, dns::node_info::NodeInfo::SecretKey};
+use iroh::{discovery::pkarr::PkarrRelayClient, dns::node_info::NodeInfo, SecretKey};
 use iroh_dns_server::{config::Config, server::Server, ZoneStore};
 use tokio::runtime::Runtime;
 
