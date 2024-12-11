@@ -14,11 +14,6 @@ rust-version = "1.81"
 workspace = true
 
 [dependencies]
-rustls-cert-reloadable-resolver = "0.6.0"
-reloadable-state = "0.1.0"
-rustls-cert-file-reader = "0.4.0"
-# aws-lc-rs = { version = "1", default-features = false, features = ["bindgen"] }
-
 anyhow = { version = "1" }
 base64 = "0.22.1"
 bytes = "1.7"
@@ -54,6 +49,9 @@ postcard = { version = "1", default-features = false, features = [
     "use-std",
     "experimental-derive",
 ] }
+rustls-cert-reloadable-resolver = "0.6"
+reloadable-state = "0.1"
+rustls-cert-file-reader = "0.4"
 quinn = { package = "iroh-quinn", version = "0.12.0" }
 quinn-proto = { package = "iroh-quinn-proto", version = "0.12.0" }
 rand = "0.8"
