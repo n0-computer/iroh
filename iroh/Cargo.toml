@@ -176,7 +176,7 @@ name = "key"
 harness = false
 
 [features]
-default = ["metrics", "discovery-pkarr-dht", "discovery-local-network"]
+default = ["metrics", "discovery-pkarr-dht"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "net-report/metrics", "portmapper/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 discovery-local-network = ["dep:swarm-discovery"]
