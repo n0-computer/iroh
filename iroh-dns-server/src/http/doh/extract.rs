@@ -19,9 +19,10 @@ use hickory_server::{
     authority::MessageRequest,
     proto::{
         serialize::binary::{BinDecodable, BinDecoder, BinEncodable, BinEncoder},
+        xfer::Protocol,
         {self},
     },
-    server::{Protocol, Request as DNSRequest},
+    server::Request as DNSRequest,
 };
 use http::{header, request::Parts, HeaderValue, StatusCode};
 use serde::Deserialize;

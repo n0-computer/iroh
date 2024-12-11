@@ -21,7 +21,7 @@ bytes = "1.7"
 derive_more = { version = "1.0.0", features = ["display"] }
 futures-buffered = "0.2.8"
 futures-lite = "2.3"
-hickory-resolver = "=0.25.0-alpha.2"
+hickory-resolver = "=0.25.0-alpha.4"
 iroh-base = { version = "0.29.0", path = "../iroh-base", default-features = false, features = ["relay"] }
 iroh-metrics = { version = "0.29.0", default-features = false }
 iroh-relay = { version = "0.29", path = "../iroh-relay" }
