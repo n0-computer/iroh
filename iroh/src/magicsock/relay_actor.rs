@@ -113,6 +113,10 @@ impl ConnectedRelayActor {
         let relay_client = self.relay_client.clone();
         relay_client.connect().await.context("initial connection")?;
 
+        // When this future is Either::Right this is a future which is currently sending
+        // something to the relay server.  Nothing else can be sent to the relay server at
+        // the same time.  If this future is Either::Left nothing is being sent to the
+        // relay server.
         let mut relay_send_fut = Either::Left(future::pending());
 
         loop {
@@ -133,9 +137,11 @@ impl ConnectedRelayActor {
                         break;
                     }
                 }
+                // Only poll relay_send_fut if it is sending to the future.
                 _ = &mut relay_send_fut, if matches!(relay_send_fut, Either::Right(_)) => {
                     relay_send_fut = Either::Left(future::pending());
                 }
+                // Only poll for new datagrams if relay_send_fut is not busy.
                 Some(msg) = self.relay_datagrams_send.recv(), if matches!(relay_send_fut, Either::Left(_)) => {
                     relay_send_fut = Either::Right(Box::pin(relay_client.send(msg.0, msg.1)));
                     self.last_write = Instant::now();
