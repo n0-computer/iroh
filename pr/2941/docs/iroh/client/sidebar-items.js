@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["authors","blobs","docs","gossip","net","tags"],"struct":["Doc","Iroh","RpcService"],"type":["RpcClient"]};

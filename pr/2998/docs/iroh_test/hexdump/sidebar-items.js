@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["parse_hexdump","print_hexdump"]};

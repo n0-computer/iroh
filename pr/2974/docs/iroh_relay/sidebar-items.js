@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["ReceivedMessage"],"mod":["client","defaults","http","protos","server"],"struct":["RelayConn","RelayUrl"]};

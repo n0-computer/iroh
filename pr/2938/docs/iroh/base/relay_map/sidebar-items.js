@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["DEFAULT_QUIC_PORT","DEFAULT_STUN_PORT"],"struct":["RelayMap","RelayNode","RelayUrl"]};

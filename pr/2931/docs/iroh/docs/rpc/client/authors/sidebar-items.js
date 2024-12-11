@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["Origin","SyncReason"],"struct":["Client","SyncEvent"]};

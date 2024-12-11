@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["get_metrics","try_init_metrics_collection"],"struct":["Metrics"]};

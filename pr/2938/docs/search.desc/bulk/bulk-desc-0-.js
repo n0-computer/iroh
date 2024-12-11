@@ -1,1 +1,0 @@
-searchState.loadedDescShard("bulk", 0, "")

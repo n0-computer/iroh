@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["chain"],"struct":["AbortingJoinHandle","CancelOnDrop","MaybeFuture","SharedAbortingJoinHandle"]};

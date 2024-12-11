@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["ImportProgress","LiveEvent","Origin","ShareMode","SyncReason"],"struct":["Client","Doc","Entry","ExportFileOutcome","ExportFileProgress","ImportFileOutcome","ImportFileProgress","SyncEvent"]};

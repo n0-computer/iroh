@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["PanicMode","SpawnError"],"struct":["Config","LocalPool","LocalPoolHandle","Run"]};

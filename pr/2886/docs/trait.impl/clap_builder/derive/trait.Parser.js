@@ -1,4 +1,0 @@
-(function() {var implementors = {
-"iroh_net_bench":[["impl Parser for <a class=\"enum\" href=\"iroh_net_bench/enum.Commands.html\" title=\"enum iroh_net_bench::Commands\">Commands</a>"],["impl Parser for <a class=\"struct\" href=\"iroh_net_bench/s2n/struct.Opt.html\" title=\"struct iroh_net_bench::s2n::Opt\">Opt</a>"],["impl Parser for <a class=\"struct\" href=\"iroh_net_bench/struct.Opt.html\" title=\"struct iroh_net_bench::Opt\">Opt</a>"]],
-"iroh_relay":[["impl Parser for <a class=\"struct\" href=\"iroh_relay/struct.Cli.html\" title=\"struct iroh_relay::Cli\">Cli</a>"]]
-};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

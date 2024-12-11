@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["CreateConfigError"],"fn":["make_client_config","make_server_config"],"mod":["certificate"]};

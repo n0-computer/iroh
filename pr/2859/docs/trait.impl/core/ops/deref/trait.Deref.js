@@ -1,5 +1,0 @@
-(function() {var implementors = {
-"iroh":[["impl&lt;D&gt; <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/ops/deref/trait.Deref.html\" title=\"trait core::ops::deref::Deref\">Deref</a> for <a class=\"struct\" href=\"iroh/node/struct.Node.html\" title=\"struct iroh::node::Node\">Node</a>&lt;D&gt;"]],
-"iroh_base":[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/ops/deref/trait.Deref.html\" title=\"trait core::ops::deref::Deref\">Deref</a> for <a class=\"struct\" href=\"iroh_base/node_addr/struct.RelayUrl.html\" title=\"struct iroh_base::node_addr::RelayUrl\">RelayUrl</a>"]],
-"iroh_net":[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/core/ops/deref/trait.Deref.html\" title=\"trait core::ops::deref::Deref\">Deref</a> for <a class=\"struct\" href=\"iroh_net/net/struct.UdpSocket.html\" title=\"struct iroh_net::net::UdpSocket\">UdpSocket</a>"]]
-};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

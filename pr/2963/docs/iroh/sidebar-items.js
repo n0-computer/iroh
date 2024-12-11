@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["base","client","metrics","net","node","router","util"]};

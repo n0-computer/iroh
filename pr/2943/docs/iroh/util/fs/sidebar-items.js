@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["canonicalized_path_to_string","key_to_path","load_secret_key","path_content_info","path_to_key"],"struct":["PathContent"]};

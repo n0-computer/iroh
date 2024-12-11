@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["DeliveryScope","Scope"],"mod":["state","topic","util"],"struct":["PeerData"],"trait":["PeerIdentity"]};

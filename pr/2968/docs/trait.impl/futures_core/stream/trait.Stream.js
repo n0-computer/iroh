@@ -1,3 +1,0 @@
-(function() {var implementors = {
-"iroh_net":[["impl Stream for <a class=\"struct\" href=\"iroh_net/dialer/struct.Dialer.html\" title=\"struct iroh_net::dialer::Dialer\">Dialer</a>"],["impl Stream for <a class=\"struct\" href=\"iroh_net/endpoint/struct.ConnectionTypeStream.html\" title=\"struct iroh_net::endpoint::ConnectionTypeStream\">ConnectionTypeStream</a>"],["impl Stream for <a class=\"struct\" href=\"iroh_net/endpoint/struct.DirectAddrsStream.html\" title=\"struct iroh_net::endpoint::DirectAddrsStream\">DirectAddrsStream</a>"]]
-};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

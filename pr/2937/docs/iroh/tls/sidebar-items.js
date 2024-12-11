@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["Authentication","CreateConfigError"],"mod":["certificate"]};

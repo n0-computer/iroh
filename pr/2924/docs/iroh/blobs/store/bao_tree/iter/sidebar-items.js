@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["BaoChunk"],"struct":["PostOrderChunkIter","PostOrderNodeIter","PreOrderNodeIter","PreOrderPartialChunkIterRef","ResponseIter","ResponseIterRef"]};

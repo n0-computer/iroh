@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["defaults","dialer","discovery","dns","endpoint","key","metrics","net","netcheck","ping","portmapper","relay","stun","test_utils","ticket","tls"],"struct":["AddrInfo","NodeAddr"],"type":["NodeId"]};

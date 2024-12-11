@@ -1,3 +1,0 @@
-(function() {var implementors = {
-"iroh_net":[["impl&lt;T, U&gt; AsyncBufRead for <a class=\"struct\" href=\"iroh_net/util/chain/struct.Chain.html\" title=\"struct iroh_net::util::chain::Chain\">Chain</a>&lt;T, U&gt;<div class=\"where\">where\n    T: AsyncBufRead,\n    U: AsyncBufRead,</div>"]]
-};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

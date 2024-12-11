@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["copy","decode_ranges","encode_ranges","encode_ranges_validated","outboard","outboard_post_order","valid_outboard_ranges","valid_ranges"],"struct":["DecodeResponseIter"],"trait":["CreateOutboard","Outboard","OutboardMut","ReadAt","Size","WriteAt"]};

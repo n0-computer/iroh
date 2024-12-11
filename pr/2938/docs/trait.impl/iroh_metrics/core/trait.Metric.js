@@ -1,8 +1,0 @@
-(function() {var implementors = {
-"iroh":[["impl <a class=\"trait\" href=\"iroh_metrics/core/trait.Metric.html\" title=\"trait iroh_metrics::core::Metric\">Metric</a> for <a class=\"struct\" href=\"iroh/metrics/struct.Metrics.html\" title=\"struct iroh::metrics::Metrics\">Metrics</a>"]],
-"iroh_dns_server":[["impl Metric for <a class=\"struct\" href=\"iroh_dns_server/metrics/struct.Metrics.html\" title=\"struct iroh_dns_server::metrics::Metrics\">Metrics</a>"]],
-"iroh_net":[["impl Metric for <a class=\"struct\" href=\"iroh_net/metrics/struct.MagicsockMetrics.html\" title=\"struct iroh_net::metrics::MagicsockMetrics\">Metrics</a>"]],
-"iroh_net_report":[["impl Metric for <a class=\"struct\" href=\"iroh_net_report/struct.Metrics.html\" title=\"struct iroh_net_report::Metrics\">Metrics</a>"]],
-"iroh_relay":[["impl Metric for <a class=\"struct\" href=\"iroh_relay/server/struct.Metrics.html\" title=\"struct iroh_relay::server::Metrics\">Metrics</a>"],["impl Metric for <a class=\"struct\" href=\"iroh_relay/server/struct.StunMetrics.html\" title=\"struct iroh_relay::server::StunMetrics\">StunMetrics</a>"]],
-"portmapper":[["impl Metric for <a class=\"struct\" href=\"portmapper/struct.Metrics.html\" title=\"struct portmapper::Metrics\">Metrics</a>"]]
-};if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

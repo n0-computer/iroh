@@ -1,1 +1,0 @@
-window.ALL_CRATES = ["bulk","iroh","iroh_base","iroh_dns_server","iroh_metrics","iroh_net","iroh_net_bench","iroh_net_report","iroh_node_util","iroh_relay","iroh_router","iroh_test","netwatch","portmapper"];

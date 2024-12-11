@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["PUBLIC_KEY_LENGTH","SECRET_KEY_LENGTH","SIGNATURE_LENGTH"],"enum":["NamespaceKind"],"struct":["NamespaceId","NamespacePublicKey","NamespaceSecretKey","NamespaceSignature","UserId","UserPublicKey","UserSecretKey","UserSignature"]};

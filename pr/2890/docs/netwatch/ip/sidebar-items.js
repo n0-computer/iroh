@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["is_unicast_link_local"],"struct":["LocalAddresses"]};

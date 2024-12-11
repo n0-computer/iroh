@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["EntryChannel","EntryOrigin","KeyScope","SecretStoreError","SplitAction","StoreEvent"],"struct":["PruneEvent","SplitOpts","SubscribeParams"],"trait":["CapsStorage","EntryReader","EntryStorage","SecretStorage","Storage"],"type":["RangeSplit"]};

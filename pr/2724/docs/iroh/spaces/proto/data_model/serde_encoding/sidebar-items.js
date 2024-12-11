@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["authorised_entry","entry","path"],"struct":["SerdeAuthorisedEntry","SerdeEntry"]};
