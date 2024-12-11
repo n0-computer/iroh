@@ -2349,10 +2349,12 @@ impl Actor {
         let pconn4 = Some(self.pconn4.clone());
         let pconn6 = self.pconn6.clone();
 
+        let quic_config = None;
+
         debug!("requesting net_report report");
         match self
             .net_reporter
-            .get_report_channel(relay_map, pconn4, pconn6)
+            .get_report_channel(relay_map, pconn4, pconn6, quic_config)
             .await
         {
             Ok(rx) => {
