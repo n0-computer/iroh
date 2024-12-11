@@ -20,7 +20,6 @@ use iroh_base::relay_map::{RelayMap, RelayNode, RelayUrl};
 use iroh_metrics::inc;
 use iroh_relay::protos::stun;
 use netwatch::{IpFamily, UdpSocket};
-use reportgen::QuicConfig;
 use tokio::{
     sync::{self, mpsc, oneshot},
     time::{Duration, Instant},
@@ -35,6 +34,7 @@ mod ping;
 mod reportgen;
 
 pub use metrics::Metrics;
+pub use reportgen::QuicConfig;
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
