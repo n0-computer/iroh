@@ -6,7 +6,6 @@
 use std::time::Duration;
 
 use anyhow::Context;
-use futures_lite::StreamExt;
 use iroh::{endpoint::ConnectionError, key::SecretKey, Endpoint, RelayMode};
 use tracing::{debug, info, warn};
 
@@ -41,9 +40,9 @@ async fn main() -> anyhow::Result<()> {
 
     let local_addrs = endpoint
         .direct_addresses()
-        .next()
+        .initialized()
         .await
-        .context("no endpoints")?
+        .context("no direct addresses")?
         .into_iter()
         .map(|endpoint| {
             let addr = endpoint.addr.to_string();

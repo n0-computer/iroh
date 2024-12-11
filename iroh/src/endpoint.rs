@@ -13,6 +13,7 @@
 
 use std::{
     any::Any,
+    collections::BTreeSet,
     future::{Future, IntoFuture},
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
@@ -21,7 +22,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use derive_more::Debug;
 use futures_lite::{Stream, StreamExt};
 use iroh_base::relay_map::RelayMap;
@@ -65,8 +66,7 @@ pub use quinn_proto::{
 
 use self::rtt_actor::RttMessage;
 pub use super::magicsock::{
-    ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType, DirectAddrsStream,
-    RemoteInfo, Source,
+    ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType, RemoteInfo, Source,
 };
 
 /// The delay to fall back to discovery when direct addresses fail.
@@ -760,11 +760,7 @@ impl Endpoint {
     /// as they would be returned by [`Endpoint::home_relay`] and
     /// [`Endpoint::direct_addresses`].
     pub async fn node_addr(&self) -> Result<NodeAddr> {
-        let addrs = self
-            .direct_addresses()
-            .next()
-            .await
-            .ok_or(anyhow!("No IP endpoints found"))?;
+        let addrs = self.direct_addresses().initialized().await?;
         let relay = self.home_relay();
         Ok(NodeAddr::from_parts(
             self.node_id(),
@@ -802,7 +798,7 @@ impl Endpoint {
         self.msock.home_relay().stream().filter_map(|r| r)
     }
 
-    /// Returns the direct addresses of this [`Endpoint`].
+    /// Returns a [`Watcher`] for the direct addresses of this [`Endpoint`].
     ///
     /// The direct addresses of the [`Endpoint`] are those that could be used by other
     /// iroh nodes to establish direct connectivity, depending on the network
@@ -816,14 +812,14 @@ impl Endpoint {
     /// will yield a new list of direct addresses.
     ///
     /// When issuing the first call to this method the first direct address discovery might
-    /// still be underway, in this case the first item of the returned stream will not be
-    /// immediately available.  Once this first set of local IP endpoints are discovered the
-    /// stream will always return the first set of IP endpoints immediately, which are the
-    /// most recently discovered IP endpoints.
+    /// still be underway, in this case the [`Watcher`] might not be initialized with [`Some`]
+    /// value yet.  Once the first set of local direct addresses are discovered the [`Watcher`]
+    /// will always return [`Some`] set of direct addresses immediately, which are the most
+    /// recently discovered direct addresses.
     ///
     /// # Examples
     ///
-    /// To get the current endpoints, drop the stream after the first item was received:
+    /// To get the current endpoints use [`Watcher::initialized`]:
     /// ```
     /// use futures_lite::StreamExt;
     /// use iroh::Endpoint;
@@ -831,12 +827,12 @@ impl Endpoint {
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
     /// let mep = Endpoint::builder().bind().await.unwrap();
-    /// let _addrs = mep.direct_addresses().next().await;
+    /// let _addrs = mep.direct_addresses().initialized().await.unwrap();
     /// # });
     /// ```
     ///
     /// [STUN]: https://en.wikipedia.org/wiki/STUN
-    pub fn direct_addresses(&self) -> DirectAddrsStream {
+    pub fn direct_addresses(&self) -> Watcher<Option<BTreeSet<DirectAddr>>> {
         self.msock.direct_addresses()
     }
 
@@ -1903,7 +1899,7 @@ mod tests {
             .await
             .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(10), ep.direct_addresses().next())
+        tokio::time::timeout(Duration::from_secs(10), ep.direct_addresses().initialized())
             .await
             .unwrap()
             .unwrap();

@@ -32,7 +32,7 @@ use std::{
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
-use futures_lite::{FutureExt, Stream, StreamExt};
+use futures_lite::{FutureExt, StreamExt};
 use futures_util::{stream::BoxStream, task::AtomicWaker};
 use iroh_base::key::NodeId;
 use iroh_metrics::{inc, inc_by};
@@ -66,7 +66,7 @@ use crate::{
     dns::DnsResolver,
     endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
-    util::watchable::{Watchable, Watcher, WatcherStream},
+    util::watchable::{Watchable, Watcher},
     AddrInfo, RelayMap, RelayUrl,
 };
 
@@ -310,22 +310,20 @@ impl MagicSock {
         self.node_map.remote_info(node_id)
     }
 
-    /// Returns the direct addresses as a stream.
+    /// Returns a [`Watcher`] for this socket's direct addresses.
     ///
     /// The [`MagicSock`] continuously monitors the direct addresses, the network addresses
     /// it might be able to be contacted on, for changes.  Whenever changes are detected
-    /// this stream will yield a new list of addresses.
+    /// this [`Watcher`] will yield a new list of addresses.
     ///
     /// Upon the first creation on the [`MagicSock`] it may not yet have completed a first
-    /// direct addresses discovery, in this case the first item of the stream will not be
-    /// immediately available.  Once this first set of direct addresses are discovered the
-    /// stream will always return the first set of addresses immediately, which are the most
-    /// recently discovered addresses.
+    /// direct addresses discovery, in this case the current item in this [`Watcher`] will be
+    /// [`None`].  Once the first set of direct addresses are discovered the [`Watcher`] will
+    /// store [`Some`] set of addresses.
     ///
-    /// To get the current direct addresses, drop the stream after the first item was
-    /// received.
-    pub(crate) fn direct_addresses(&self) -> DirectAddrsStream {
-        self.direct_addrs.updates_stream()
+    /// To get the current direct addresses, use [`Watcher::initialized`].
+    pub(crate) fn direct_addresses(&self) -> Watcher<Option<BTreeSet<DirectAddr>>> {
+        self.direct_addrs.addrs.watch()
     }
 
     /// Watch for changes to the home relay.
@@ -2620,44 +2618,6 @@ impl DiscoveredDirectAddrs {
             .collect();
         disco::CallMeMaybe { my_numbers }
     }
-
-    fn updates_stream(&self) -> DirectAddrsStream {
-        DirectAddrsStream {
-            inner: self.addrs.watch().stream(),
-        }
-    }
-}
-
-/// Stream returning local endpoints as they change.
-///
-/// This stream only ends when the assicated [`MagicSock`] is
-/// dropped.
-///
-/// Returned items in this stream will only be non-empty sets of
-/// direct addresses.
-#[derive(Debug)]
-pub struct DirectAddrsStream {
-    inner: WatcherStream<Option<BTreeSet<DirectAddr>>>,
-}
-
-impl Stream for DirectAddrsStream {
-    type Item = BTreeSet<DirectAddr>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        loop {
-            let Some(item) = futures_lite::ready!(Pin::new(&mut self.as_mut().inner).poll_next(cx))
-            else {
-                return Poll::Ready(None);
-            };
-
-            match item {
-                Some(addr_set) if !addr_set.is_empty() => {
-                    return Poll::Ready(Some(addr_set));
-                }
-                _ => continue,
-            }
-        }
-    }
 }
 
 /// Split a transmit containing a GSO payload into individual packets.
@@ -2980,7 +2940,7 @@ mod tests {
             let stacks = stacks.clone();
             tasks.spawn(async move {
                 let me = m.endpoint.node_id().fmt_short();
-                let mut stream = m.endpoint.direct_addresses();
+                let mut stream = m.endpoint.direct_addresses().stream().filter_map(|i| i);
                 while let Some(new_eps) = stream.next().await {
                     info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, new_eps);
                     update_direct_addrs(&stacks, my_idx, new_eps);
@@ -3722,12 +3682,12 @@ mod tests {
         let ms = Handle::new(Default::default()).await.unwrap();
 
         // See if we can get endpoints.
-        let eps0 = ms.direct_addresses().next().await.unwrap();
+        let eps0 = ms.direct_addresses().initialized().await.unwrap();
         println!("{eps0:?}");
         assert!(!eps0.is_empty());
 
         // Getting the endpoints again immediately should give the same results.
-        let eps1 = ms.direct_addresses().next().await.unwrap();
+        let eps1 = ms.direct_addresses().initialized().await.unwrap();
         println!("{eps1:?}");
         assert_eq!(eps0, eps1);
     }
@@ -3904,7 +3864,7 @@ mod tests {
                 relay_url: None,
                 direct_addresses: msock_2
                     .direct_addresses()
-                    .next()
+                    .initialized()
                     .await
                     .expect("no direct addrs")
                     .into_iter()
@@ -4011,7 +3971,7 @@ mod tests {
                     relay_url: None,
                     direct_addresses: msock_2
                         .direct_addresses()
-                        .next()
+                        .initialized()
                         .await
                         .expect("no direct addrs")
                         .into_iter()

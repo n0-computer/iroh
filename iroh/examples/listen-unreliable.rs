@@ -4,7 +4,6 @@
 //! run this example from the project root:
 //!     $ cargo run --example listen-unreliable
 use anyhow::Context;
-use futures_lite::StreamExt;
 use iroh::{key::SecretKey, Endpoint, RelayMode};
 use tracing::{info, warn};
 
@@ -39,9 +38,9 @@ async fn main() -> anyhow::Result<()> {
 
     let local_addrs = endpoint
         .direct_addresses()
-        .next()
+        .initialized()
         .await
-        .context("no endpoints")?
+        .context("no direct addresses")?
         .into_iter()
         .map(|endpoint| {
             let addr = endpoint.addr.to_string();

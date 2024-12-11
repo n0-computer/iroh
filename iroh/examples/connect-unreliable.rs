@@ -9,7 +9,6 @@ use std::net::SocketAddr;
 
 use anyhow::Context;
 use clap::Parser;
-use futures_lite::StreamExt;
 use iroh::{key::SecretKey, Endpoint, NodeAddr, RelayMode, RelayUrl};
 use tracing::info;
 
@@ -57,9 +56,9 @@ async fn main() -> anyhow::Result<()> {
     println!("node listening addresses:");
     for local_endpoint in endpoint
         .direct_addresses()
-        .next()
+        .initialized()
         .await
-        .context("no endpoints")?
+        .context("no direct addresses")?
     {
         println!("\t{}", local_endpoint.addr)
     }

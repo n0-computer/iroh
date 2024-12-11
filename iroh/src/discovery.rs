@@ -842,27 +842,6 @@ mod test_dns_pkarr {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn pkarr_publish_dns_discover_empty_node_addr() -> Result<()> {
-        let _logging_guard = iroh_test::logging::setup();
-
-        let dns_pkarr_server = DnsPkarrServer::run().await?;
-        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
-
-        let (ep1, _guard1) = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
-        let (ep2, _guard2) = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
-
-        // wait until our shared state received the update from pkarr publishing
-        dns_pkarr_server
-            .on_node(&ep1.node_id(), PUBLISH_TIMEOUT)
-            .await?;
-
-        // we connect only by node id!
-        let res = ep2.connect(ep1.node_id(), TEST_ALPN).await;
-        assert!(res.is_ok(), "connection established");
-        Ok(())
-    }
-
     async fn ep_with_discovery(
         relay_map: &RelayMap,
         dns_pkarr_server: &DnsPkarrServer,
