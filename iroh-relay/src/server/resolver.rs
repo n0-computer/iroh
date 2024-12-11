@@ -6,7 +6,7 @@ use rustls::{
     server::{ClientHello, ResolvesServerCert},
     sign::CertifiedKey,
 };
-use tokio::task::JoinHandle;
+use tokio_util::task::AbortOnDropHandle;
 
 /// A Certificate resolver that reloads the certificate every interval
 #[derive(Debug)]
@@ -14,7 +14,9 @@ pub struct ReloadingResolver<Loader: Send + 'static> {
     /// The inner reloadable value.
     reloadable: Arc<Reloadable<CertifiedKey, Loader>>,
     /// The handle to the task that reloads the certificate.
-    _handle: JoinHandle<()>,
+    _handle: AbortOnDropHandle<()>,
+    /// Shutdown signal sender
+    _shutdown_tx: tokio::sync::oneshot::Sender<()>,
 }
 
 impl<Loader> ReloadingResolver<Loader>
@@ -28,20 +30,43 @@ where
             .map_err(|_| anyhow!("Failed to load the certificate"))?;
         let reloadable = Arc::new(reloadable);
 
+        // create a channel to send the shutdown signal
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+
         // Spwan a task to reload the certificate every interval.
         let _reloadable = reloadable.clone();
         let _handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(interval);
-            loop {
-                interval.tick().await;
-                let _ = _reloadable.reload().await;
+            tokio::select! {
+                _ = async {
+                    loop {
+                        interval.tick().await;
+                        let _ = _reloadable.reload().await;
+                        tracing::info!("Reloaded the certificate");
+                    }
+                } => {},
+                _ = shutdown_rx => {
+                    tracing::info!("Shutdown signal received");
+                }
             }
         });
+        let _handle = AbortOnDropHandle::new(_handle);
 
         Ok(Self {
             reloadable,
             _handle,
+            _shutdown_tx: shutdown_tx,
         })
+    }
+
+    /// Shutdown the resolver.
+    pub async fn shutdown(self) {
+        let _ = self._shutdown_tx.send(());
+    }
+
+    /// Reload the certificate.
+    pub async fn reload(&self) {
+        let _ = self.reloadable.reload().await;
     }
 }
 

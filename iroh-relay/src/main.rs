@@ -26,6 +26,9 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 /// The default `http_bind_port` when using `--dev`.
 const DEV_MODE_HTTP_PORT: u16 = 3340;
 
+/// The default certificate reload interval.
+const DEFAULT_CERT_RELOAD_INTERVAL: u64 = 60 * 60 * 24;
+
 /// A relay server for iroh.
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None)]
@@ -477,7 +480,7 @@ async fn maybe_load_tls(
 
             let cert_path = tls.cert_path();
             let key_path = tls.key_path();
-            let interval = std::time::Duration::from_secs(60 * 60 * 24);
+            let interval = std::time::Duration::from_secs(DEFAULT_CERT_RELOAD_INTERVAL);
 
             let key_reader = rustls_cert_file_reader::FileReader::new(
                 key_path,
