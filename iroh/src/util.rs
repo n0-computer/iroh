@@ -6,8 +6,6 @@ use std::{
     task::{Context, Poll},
 };
 
-pub mod watchable;
-
 /// Resolves to pending if the inner is `None`.
 #[derive(Debug)]
 pub(crate) struct MaybeFuture<T> {
