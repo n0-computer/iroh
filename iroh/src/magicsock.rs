@@ -518,8 +518,14 @@ impl MagicSock {
                             udp_sent = true;
                         }
                         Err(err) => {
-                            error!(node = %node_id.fmt_short(), dst = %addr,
-                                   "failed to send udp: {err:#}");
+                            // No need to print "WouldBlock" errors to the console
+                            if err.kind() != io::ErrorKind::WouldBlock {
+                                warn!(
+                                    node = %node_id.fmt_short(),
+                                    dst = %addr,
+                                    "failed to send udp: {err:#}"
+                                );
+                            }
                             udp_error = Some(err);
                         }
                     }
@@ -563,16 +569,26 @@ impl MagicSock {
                         // at any time so these errors should be treated as transient and
                         // are just timeouts.  Hence we opt for returning Ok.  See
                         // test_try_send_no_udp_addr_or_relay_url to explore this further.
-                        error!(
+                        debug!(
                             node = %node_id.fmt_short(),
-                            "no UDP or relay paths available for node",
+                            "no UDP or relay paths available for node, voiding transmit",
                         );
+                        // We log this as debug instead of error, because this is a
+                        // situation that comes up under normal operation. If this were an
+                        // error log, it would unnecessarily pollute logs.
+                        // This situation happens essentially when `pings_sent` is false,
+                        // `relay_url` is `None`, so `relay_sent` is false, and the UDP
+                        // path is blocking, so `udp_sent` is false and `udp_pending` is
+                        // true.
+                        // Alternatively returning a WouldBlock error here would
+                        // potentially needlessly block sending on the relay path for the
+                        // next datagram.
                     }
                     Ok(())
                 }
             }
             None => {
-                error!(%dest, "no NodeState for mapped address");
+                error!(%dest, "no NodeState for mapped address, voiding transmit");
                 // Returning Ok here means we let QUIC timeout.  Returning WouldBlock
                 // triggers a hot loop.  Returning an error would immediately fail a
                 // connection.  The philosophy of quinn-udp is that a UDP connection could
