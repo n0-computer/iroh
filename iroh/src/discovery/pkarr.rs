@@ -48,7 +48,7 @@ use std::{collections::BTreeSet, net::SocketAddr, sync::Arc};
 
 use anyhow::{anyhow, bail, Result};
 use futures_util::stream::BoxStream;
-use iroh_base::{key::NodeId, relay_map::RelayUrl};
+use iroh_base::{NodeId, RelayUrl, SecretKey};
 use pkarr::SignedPacket;
 use tokio::{
     task::JoinHandle,
@@ -62,7 +62,6 @@ use crate::{
     discovery::{Discovery, DiscoveryItem},
     dns::node_info::NodeInfo,
     endpoint::force_staging_infra,
-    key::SecretKey,
     Endpoint,
 };
 

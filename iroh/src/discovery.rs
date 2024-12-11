@@ -116,7 +116,7 @@ use std::{collections::BTreeSet, net::SocketAddr, time::Duration};
 
 use anyhow::{anyhow, ensure, Result};
 use futures_lite::stream::{Boxed as BoxStream, StreamExt};
-use iroh_base::{key::NodeId, node_addr::NodeAddr, relay_map::RelayUrl};
+use iroh_base::{NodeAddr, NodeId, RelayUrl};
 use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{debug, error_span, warn, Instrument};
 
@@ -446,12 +446,13 @@ mod tests {
         time::SystemTime,
     };
 
+    use iroh_base::SecretKey;
     use parking_lot::Mutex;
     use rand::Rng;
     use tokio_util::task::AbortOnDropHandle;
 
     use super::*;
-    use crate::{key::SecretKey, RelayMode};
+    use crate::RelayMode;
 
     type InfoStore = HashMap<NodeId, (Option<RelayUrl>, BTreeSet<SocketAddr>, u64)>;
 
@@ -737,7 +738,7 @@ mod test_dns_pkarr {
     use std::time::Duration;
 
     use anyhow::Result;
-    use iroh_base::{key::SecretKey, node_addr::NodeAddr, relay_map::RelayMap};
+    use iroh_base::{NodeAddr, RelayMap, SecretKey};
     use tokio_util::task::AbortOnDropHandle;
 
     use crate::{

@@ -14,7 +14,7 @@ use std::{
 
 use futures_lite::{stream::Boxed, StreamExt};
 use genawaiter::sync::{Co, Gen};
-use iroh_base::{node_addr::NodeAddr, relay_map::RelayUrl};
+use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use pkarr::{
     PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
     RelaySettings, SignedPacket,
@@ -28,7 +28,6 @@ use crate::{
         Discovery, DiscoveryItem,
     },
     dns::node_info::NodeInfo,
-    key::{NodeId, SecretKey},
     Endpoint,
 };
 
@@ -404,7 +403,7 @@ impl Discovery for DhtDiscovery {
 mod tests {
     use std::collections::BTreeSet;
 
-    use iroh_base::relay_map::RelayUrl;
+    use iroh_base::RelayUrl;
     use pkarr::mainline::dht::DhtSettings;
     use testresult::TestResult;
 

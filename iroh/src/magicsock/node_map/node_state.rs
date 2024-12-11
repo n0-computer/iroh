@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use iroh_base::{key::NodeId, node_addr::NodeAddr, relay_map::RelayUrl};
+use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 use iroh_metrics::inc;
 use iroh_relay::protos::stun;
 use netwatch::ip::is_unicast_link_local;
@@ -22,7 +22,6 @@ use super::{
 };
 use crate::{
     disco::{self, SendAddr},
-    key::PublicKey,
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
     util::relay_only_mode,
 };
@@ -1430,12 +1429,10 @@ mod tests {
     use std::{collections::BTreeMap, net::Ipv4Addr};
 
     use best_addr::BestAddr;
+    use iroh_base::SecretKey;
 
     use super::*;
-    use crate::{
-        key::SecretKey,
-        magicsock::node_map::{NodeMap, NodeMapInner},
-    };
+    use crate::magicsock::node_map::{NodeMap, NodeMapInner};
 
     #[test]
     fn test_remote_infos() {

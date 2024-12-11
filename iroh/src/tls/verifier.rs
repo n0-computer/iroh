@@ -7,6 +7,7 @@
 //! Technologies (UK) Ltd.
 use std::sync::Arc;
 
+use iroh_base::PublicKey;
 use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     pki_types::CertificateDer as Certificate,
@@ -16,7 +17,6 @@ use rustls::{
 };
 
 use super::certificate;
-use crate::key::PublicKey;
 
 /// The protocol versions supported by this verifier.
 ///

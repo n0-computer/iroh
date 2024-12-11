@@ -6,8 +6,7 @@
 use std::time::Duration;
 
 use iroh::{
-    discovery::local_swarm_discovery::LocalSwarmDiscovery, endpoint::Source, key::SecretKey,
-    Endpoint,
+    discovery::local_swarm_discovery::LocalSwarmDiscovery, endpoint::Source, Endpoint, SecretKey,
 };
 
 #[tokio::main]

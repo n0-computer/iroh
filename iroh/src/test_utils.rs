@@ -4,7 +4,7 @@ use std::net::Ipv4Addr;
 use anyhow::Result;
 pub use dns_and_pkarr_servers::DnsPkarrServer;
 pub use dns_server::create_dns_resolver;
-use iroh_base::relay_map::{RelayMap, RelayNode, RelayUrl};
+use iroh_base::{RelayMap, RelayNode, RelayUrl};
 use iroh_relay::server::{
     CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig,
 };
@@ -95,7 +95,7 @@ pub async fn run_relay_server_with(
         .unwrap();
     let quic = server
         .quic_addr()
-        .map(|addr| iroh_base::relay_map::QuicConfig { port: addr.port() });
+        .map(|addr| iroh_base::RelayQuicConfig { port: addr.port() });
     let m = RelayMap::from_nodes([RelayNode {
         url: url.clone(),
         stun_only: false,
@@ -110,7 +110,7 @@ pub(crate) mod dns_and_pkarr_servers {
     use std::{net::SocketAddr, time::Duration};
 
     use anyhow::Result;
-    use iroh_base::key::{NodeId, SecretKey};
+    use iroh_base::{NodeId, SecretKey};
     use url::Url;
 
     use super::{create_dns_resolver, CleanupDropGuard};
@@ -381,7 +381,7 @@ pub(crate) mod pkarr_dns_state {
     };
 
     use anyhow::{bail, Result};
-    use iroh_base::key::NodeId;
+    use iroh_base::NodeId;
     use parking_lot::{Mutex, MutexGuard};
     use pkarr::SignedPacket;
 

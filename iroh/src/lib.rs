@@ -248,8 +248,7 @@ mod tls;
 
 pub use endpoint::{Endpoint, RelayMode};
 pub use iroh_base::{
-    ticket, KeyParsingError, NodeId, PublicKey, RelayMap, RelayQuicConfig, RelayUrl,
-    RelayUrlNodeAddr, SecretKey,
+    KeyParsingError, NodeAddr, NodeId, PublicKey, RelayMap, RelayQuicConfig, RelayUrl, SecretKey,
 };
 
 #[cfg(any(test, feature = "test-utils"))]

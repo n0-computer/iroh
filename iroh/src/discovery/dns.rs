@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use futures_lite::stream::Boxed as BoxStream;
-use iroh_base::key::NodeId;
+use iroh_base::NodeId;
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},

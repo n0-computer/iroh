@@ -34,11 +34,7 @@ use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
 use futures_lite::{FutureExt, Stream, StreamExt};
 use futures_util::{stream::BoxStream, task::AtomicWaker};
-use iroh_base::{
-    key::NodeId,
-    node_addr::NodeAddr,
-    relay_map::{RelayMap, RelayUrl},
-};
+use iroh_base::{NodeAddr, NodeId, PublicKey, RelayMap, RelayUrl, SecretKey, SharedSecret};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::protos::stun;
 use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
@@ -69,7 +65,6 @@ use crate::{
     disco::{self, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
-    key::{PublicKey, SecretKey, SharedSecret},
 };
 
 mod metrics;

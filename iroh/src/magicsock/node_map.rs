@@ -8,7 +8,7 @@ use std::{
 };
 
 use futures_lite::stream::Stream;
-use iroh_base::{key::NodeId, node_addr::NodeAddr, relay_map::RelayUrl};
+use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 use iroh_metrics::inc;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -22,10 +22,7 @@ use self::{
 use super::{
     metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
 };
-use crate::{
-    disco::{CallMeMaybe, Pong, SendAddr},
-    key::PublicKey,
-};
+use crate::disco::{CallMeMaybe, Pong, SendAddr};
 
 mod best_addr;
 mod node_state;
@@ -652,8 +649,9 @@ impl IpPort {
 mod tests {
     use std::net::Ipv4Addr;
 
+    use iroh_base::SecretKey;
+
     use super::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, *};
-    use crate::key::SecretKey;
 
     impl NodeMap {
         #[track_caller]

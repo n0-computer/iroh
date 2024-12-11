@@ -8,9 +8,8 @@
 use std::sync::Arc;
 
 use der::{asn1::OctetStringRef, Decode, Encode, Sequence};
+use iroh_base::{PublicKey, SecretKey, Signature};
 use x509_parser::prelude::*;
-
-use crate::key::{PublicKey, SecretKey, Signature};
 
 /// The libp2p Public Key Extension is a X.509 extension
 /// with the Object Identifier 1.3.6.1.4.1.53594.1.1,
@@ -138,10 +137,10 @@ pub struct P2pCertificate<'a> {
 /// and a signature performed using the private host key.
 #[derive(Debug)]
 pub struct P2pExtension {
-    public_key: crate::key::PublicKey,
+    public_key: PublicKey,
     /// This signature provides cryptographic proof that the peer was
     /// in possession of the private host key at the time the certificate was signed.
-    signature: crate::key::Signature,
+    signature: Signature,
 }
 
 /// An error that occurs during certificate generation.

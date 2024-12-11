@@ -42,10 +42,7 @@ use std::{
 
 use anyhow::{anyhow, ensure, Result};
 use hickory_resolver::{proto::ProtoError, Name, TokioResolver};
-use iroh_base::{
-    key::{NodeId, SecretKey},
-    node_addr::NodeAddr,
-};
+use iroh_base::{NodeAddr, NodeId, SecretKey};
 use url::Url;
 
 /// The DNS name for the iroh TXT record.
@@ -410,7 +407,7 @@ fn node_domain(node_id: &NodeId, origin: &str) -> Result<Name> {
 mod tests {
     use std::str::FromStr;
 
-    use iroh_base::key::SecretKey;
+    use iroh_base::SecretKey;
 
     use super::NodeInfo;
 

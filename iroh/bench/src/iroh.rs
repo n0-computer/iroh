@@ -8,9 +8,7 @@ use bytes::Bytes;
 use futures_lite::StreamExt as _;
 use iroh::{
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
-    node_addr::NodeAddr,
-    relay_map::{RelayMap, RelayUrl},
-    Endpoint, RelayMode,
+    Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl,
 };
 use tracing::{trace, warn};
 
