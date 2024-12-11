@@ -2,13 +2,11 @@ use std::{collections::BTreeSet, net::SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{base32, key::NodeId, node_addr::RelayUrl};
+use crate::{base32, key::NodeId, relay_url::RelayUrl};
 
-#[cfg(feature = "key")]
 mod blob;
-#[cfg(feature = "key")]
 mod node;
-#[cfg(feature = "key")]
+
 pub use self::{blob::BlobTicket, node::NodeTicket};
 
 /// A ticket is a serializable object combining information required for an operation.

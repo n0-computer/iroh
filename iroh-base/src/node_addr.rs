@@ -90,31 +90,6 @@ impl NodeAddr {
         self.relay_url.is_none() && self.direct_addresses.is_empty()
     }
 
-    /// Applies the options to `self`.
-    ///
-    /// This is used to more tightly control the information stored in a [`NodeAddr`]
-    /// received from another API.  E.g. to ensure a [discovery] service is used the
-    /// `AddrInfoOptions::Id`] option could be used to remove all other addressing details.
-    ///
-    /// [discovery]: https://docs.rs/iroh/*/iroh/index.html#node-discovery
-    pub fn apply_options(&mut self, opts: AddrInfoOptions) {
-        match opts {
-            AddrInfoOptions::Id => {
-                self.direct_addresses.clear();
-                self.relay_url = None;
-            }
-            AddrInfoOptions::RelayAndAddresses => {
-                // nothing to do
-            }
-            AddrInfoOptions::Relay => {
-                self.direct_addresses.clear();
-            }
-            AddrInfoOptions::Addresses => {
-                self.relay_url = None;
-            }
-        }
-    }
-
     /// Returns the direct addresses of this peer.
     pub fn direct_addresses(&self) -> impl Iterator<Item = &SocketAddr> {
         self.direct_addresses.iter()
@@ -141,31 +116,4 @@ impl From<NodeId> for NodeAddr {
     fn from(node_id: NodeId) -> Self {
         NodeAddr::new(node_id)
     }
-}
-
-/// Options to configure what is included in a [`NodeAddr`].
-#[derive(
-    Copy,
-    Clone,
-    PartialEq,
-    Eq,
-    Default,
-    Debug,
-    derive_more::Display,
-    derive_more::FromStr,
-    Serialize,
-    Deserialize,
-)]
-pub enum AddrInfoOptions {
-    /// Only the Node ID is added.
-    ///
-    /// This usually means that iroh-dns discovery is used to find address information.
-    #[default]
-    Id,
-    /// Includes the Node ID and both the relay URL, and the direct addresses.
-    RelayAndAddresses,
-    /// Includes the Node ID and the relay URL.
-    Relay,
-    /// Includes the Node ID and the direct addresses.
-    Addresses,
 }

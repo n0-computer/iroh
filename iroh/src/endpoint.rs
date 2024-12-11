@@ -43,7 +43,7 @@ use crate::{
 mod rtt_actor;
 
 pub use bytes::Bytes;
-pub use iroh_base::node_addr::{AddrInfoOptions, NodeAddr};
+pub use iroh_base::node_addr::NodeAddr;
 // Missing still: SendDatagram and ConnectionClose::frame_type's Type.
 pub use quinn::{
     AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream, Connection,
