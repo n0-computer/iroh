@@ -1,6 +1,6 @@
 //! Default values used in net_report.
 
-pub(crate) use iroh_base::relay_map::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT};
+pub(crate) use iroh_base::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT};
 
 /// Contains all timeouts that we use in `iroh-net-report`.
 pub(crate) mod timeouts {
