@@ -258,15 +258,12 @@ impl NodeMap {
         self.inner.lock().remote_infos_iter(now).collect()
     }
 
-    /// Returns a stream of [`ConnectionType`].
-    ///
-    /// Sends the current [`ConnectionType`] whenever any changes to the
-    /// connection type for `public_key` has occurred.
+    /// Returns a [`Watcher`] for given node's [`ConnectionType`].
     ///
     /// # Errors
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
-    /// the `public_key`
+    /// the `node_id`
     pub(super) fn conn_type(&self, node_id: NodeId) -> anyhow::Result<Watcher<ConnectionType>> {
         self.inner.lock().conn_type(node_id)
     }

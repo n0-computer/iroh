@@ -332,20 +332,17 @@ impl MagicSock {
 
     /// Watch for changes to the home relay.
     ///
-    /// Note that this can be used to wait for the initial home relay to be known. If the home
-    /// relay is known at this point, it will be the first item in the stream.
+    /// Note that this can be used to wait for the initial home relay to be known using
+    /// [`Watcher::initialized`].
     pub(crate) fn home_relay(&self) -> Watcher<Option<RelayUrl>> {
         self.my_relay.watch()
     }
 
-    /// Returns a stream that reports the [`ConnectionType`] we have to the
+    /// Returns a [`Watcher`] that reports the [`ConnectionType`] we have to the
     /// given `node_id`.
     ///
-    /// The `NodeMap` continuously monitors the `node_id`'s endpoint for
-    /// [`ConnectionType`] changes, and sends the latest [`ConnectionType`]
-    /// on the stream.
-    ///
-    /// The current [`ConnectionType`] will the the initial entry on the stream.
+    /// This gets us a copy of the [`Watcher`] for the [`Watchable`] with a [`ConnectionType`]
+    /// that the `NodeMap` stores for each `node_id`'s endpoint.
     ///
     /// # Errors
     ///
