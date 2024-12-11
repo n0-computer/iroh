@@ -97,7 +97,7 @@
 <a href="#97" id="97">97</a>
 <a href="#98" id="98">98</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Exposes functions to quickly configure a server suitable for testing.
-</span><span class="kw">use </span>std::net::{Ipv4Addr, Ipv6Addr};
+</span><span class="kw">use </span>std::net::Ipv4Addr;
 
 <span class="kw">use super</span>::{CertConfig, QuicConfig, RelayConfig, ServerConfig, StunConfig, TlsConfig};
 
@@ -169,12 +169,12 @@
 
 <span class="doccomment">/// Creates a [`QuicConfig`] suitable for testing.
 ///
-/// - Binds to an OS assigned port on ipv6 and ipv4, if dual stack is enabled.
+/// - Binds to an OS assigned port on ipv4
 /// - Uses [`self_signed_tls_certs_and_config`] to create tls certificates
 </span><span class="kw">pub fn </span>quic_config() -&gt; QuicConfig {
     <span class="kw">let </span>(<span class="kw">_</span>, server_config) = self_signed_tls_certs_and_config();
     QuicConfig {
-        bind_addr: (Ipv6Addr::UNSPECIFIED, <span class="number">0</span>).into(),
+        bind_addr: (Ipv4Addr::UNSPECIFIED, <span class="number">0</span>).into(),
         server_config,
     }
 }

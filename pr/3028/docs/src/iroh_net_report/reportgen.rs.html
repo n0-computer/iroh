@@ -1595,6 +1595,7 @@
 <a href="#1595" id="1595">1595</a>
 <a href="#1596" id="1596">1596</a>
 <a href="#1597" id="1597">1597</a>
+<a href="#1598" id="1598">1598</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
@@ -1669,7 +1670,8 @@
 }
 
 <span class="kw">impl </span>Client {
-    <span class="doccomment">/// Creates a new actor generating a single report.
+    <span class="attr">#[allow(clippy::too_many_arguments)]
+    </span><span class="doccomment">/// Creates a new actor generating a single report.
     ///
     /// The actor starts running immediately and only generates a single report, after which
     /// it shuts down.  Dropping this handle will abort the actor.
@@ -2497,11 +2499,11 @@
     <span class="comment">// TODO(ramfox): what to put here if no host is given?
     </span><span class="kw">let </span>host = url.host_str().unwrap_or(<span class="string">"localhost"</span>);
     <span class="kw">let </span>quic_client = iroh_relay::quic::QuicClient::new(quic_config.ep, quic_config.client_config)
-        .map_err(|e| ProbeError::Error(e.into(), probe.clone()))<span class="question-mark">?</span>;
+        .map_err(|e| ProbeError::Error(e, probe.clone()))<span class="question-mark">?</span>;
     <span class="kw">let </span>(addr, latency) = quic_client
         .get_addr_and_latency(relay_addr, host)
         .<span class="kw">await
-        </span>.map_err(|e| ProbeError::Error(e.into(), probe.clone()))<span class="question-mark">?</span>;
+        </span>.map_err(|e| ProbeError::Error(e, probe.clone()))<span class="question-mark">?</span>;
     <span class="kw">let </span><span class="kw-2">mut </span>result = ProbeReport::new(probe.clone());
     <span class="kw">if </span><span class="macro">matches!</span>(probe, Probe::QuicIpv4 { .. }) {
         result.ipv4_can_send = <span class="bool-val">true</span>;
