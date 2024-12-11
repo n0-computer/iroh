@@ -885,8 +885,6 @@ async fn run_stun_probe(
 }
 
 /// Run a QUIC address discovery probe.
-// TODO(ramfox): if this probe is aborted, then the connection will never be
-// properly closed, possibly causing errors on the server.
 async fn run_quic_probe(
     quic_config: QuicConfig,
     url: RelayUrl,
@@ -898,8 +896,15 @@ async fn run_quic_probe(
         ProbeProto::QuicIpv6 => debug_assert!(relay_addr.is_ipv6()),
         _ => debug_assert!(false, "wrong probe"),
     }
-    // TODO(ramfox): what to put here if no host is given?
-    let host = url.host_str().unwrap_or("localhost");
+    let host = match url.host_str() {
+        Some(host) => host,
+        None => {
+            return Err(ProbeError::Error(
+                anyhow!("URL must have 'host' to use QUIC address discovery probes"),
+                probe.clone(),
+            ));
+        }
+    };
     let quic_client = iroh_relay::quic::QuicClient::new(quic_config.ep, quic_config.client_config)
         .map_err(|e| ProbeError::Error(e, probe.clone()))?;
     let (addr, latency) = quic_client

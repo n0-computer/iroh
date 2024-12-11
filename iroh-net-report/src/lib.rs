@@ -241,6 +241,13 @@ impl Client {
     ///
     /// If these are not passed in this will bind sockets for STUN itself, though results
     /// may not be as reliable.
+    ///
+    /// The *quic_config* takes a [`QuicConfig`], a combination of a QUIC endpoint and
+    /// a client configuration that can be use for verifying the relay server connection.
+    /// When available, the report will attempt to get an observed public address
+    /// using QUIC address discovery.
+    ///
+    /// When `None`, it will disable the QUIC address discovery probes.
     pub async fn get_report(
         &mut self,
         dm: RelayMap,

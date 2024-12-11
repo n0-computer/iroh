@@ -92,12 +92,12 @@ pub(super) enum Probe {
         delay: Duration,
         node: Arc<RelayNode>,
     },
-    #[display("QUIC Address Discovery Ivp4 after {delay:?} to {node}")]
+    #[display("QAD Ipv4 after {delay:?} to {node}")]
     QuicIpv4 {
         delay: Duration,
         node: Arc<RelayNode>,
     },
-    #[display("QUIC Address Discovery Ivp6 after {delay:?} to {node}")]
+    #[display("QAD Ipv6 after {delay:?} to {node}")]
     QuicIpv6 {
         delay: Duration,
         node: Arc<RelayNode>,
