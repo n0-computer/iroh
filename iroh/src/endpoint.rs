@@ -96,7 +96,6 @@ pub struct Builder {
     node_map: Option<Vec<NodeAddr>>,
     dns_resolver: Option<DnsResolver>,
     #[cfg(any(test, feature = "test-utils"))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     insecure_skip_relay_cert_verify: bool,
     addr_v4: Option<SocketAddrV4>,
     addr_v6: Option<SocketAddrV6>,
@@ -307,7 +306,6 @@ impl Builder {
     }
 
     #[cfg(feature = "discovery-pkarr-dht")]
-    #[cfg_attr(iroh_docsrs, doc(cfg(feature = "discovery-pkarr-dht")))]
     /// Configures the endpoint to also use the mainline DHT with default settings.
     ///
     /// This is equivalent to adding a [`crate::discovery::pkarr::dht::DhtDiscovery`]
@@ -328,7 +326,6 @@ impl Builder {
     }
 
     #[cfg(feature = "discovery-local-network")]
-    #[cfg_attr(iroh_docsrs, doc(cfg(feature = "discovery-local-network")))]
     /// Configures the endpoint to also use local network discovery.
     ///
     /// This is equivalent to adding a [`crate::discovery::local_swarm_discovery::LocalSwarmDiscovery`]
@@ -412,7 +409,6 @@ impl Builder {
     ///
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
         self.insecure_skip_relay_cert_verify = skip_verify;
         self
@@ -1379,7 +1375,6 @@ impl RelayMode {
 }
 
 /// Environment variable to force the use of staging relays.
-#[cfg_attr(iroh_docsrs, doc(cfg(not(test))))]
 pub const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
 
 /// Returns `true` if the use of staging relays is forced.

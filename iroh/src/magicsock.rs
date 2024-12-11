@@ -127,7 +127,6 @@ pub(crate) struct Options {
     ///
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     pub(crate) insecure_skip_relay_cert_verify: bool,
 }
 
@@ -249,7 +248,6 @@ pub(crate) struct MagicSock {
     ///
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     insecure_skip_relay_cert_verify: bool,
 }
 

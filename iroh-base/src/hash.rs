@@ -230,7 +230,6 @@ pub struct HashAndFormat {
 }
 
 #[cfg(feature = "redb")]
-#[cfg_attr(iroh_docsrs, cfg(feature = "redb"))]
 mod redb_support {
     use postcard::experimental::max_size::MaxSize;
     use redb::{Key as RedbKey, Value as RedbValue};
