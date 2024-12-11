@@ -48,7 +48,7 @@ serde_test = "1"
 [features]
 default = ["hash", "ticket", "relay"]
 hash = ["dep:blake3", "dep:data-encoding", "dep:postcard", "dep:derive_more", "base32"]
-ticket = ["base32", "key"]
+ticket = ["base32", "key", "hash"]
 base32 = ["dep:data-encoding", "dep:postcard"]
 redb = ["dep:redb"]
 key = [
