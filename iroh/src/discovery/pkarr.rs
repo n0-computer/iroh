@@ -38,9 +38,9 @@
 //! [pkarr]: https://pkarr.org
 //! [DNS Resource Records]: https://en.wikipedia.org/wiki/Domain_Name_System#Resource_records
 //! [Mainline DHT]: https://en.wikipedia.org/wiki/Mainline_DHT
-//! [`SecretKey`]: crate::key::SecretKey
-//! [`PublicKey`]: crate::key::PublicKey
-//! [`NodeId`]: crate::key::NodeId
+//! [`SecretKey`]: crate::SecretKey
+//! [`PublicKey`]: crate::PublicKey
+//! [`NodeId`]: crate::NodeId
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
 //! [`DhtDiscovery`]: dht::DhtDiscovery
 
@@ -110,7 +110,7 @@ pub const DEFAULT_REPUBLISH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 ///
 /// [pkarr]: https://pkarr.org
 /// [module docs]: crate::discovery::pkarr
-/// [`RelayUrl`]: crate::relay::RelayUrl
+/// [`RelayUrl`]: crate::RelayUrl
 /// [`ConcurrentDiscovery`]: super::ConcurrentDiscovery
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrPublisher {

@@ -218,9 +218,9 @@
 //! [STUN]: https://en.wikipedia.org/wiki/STUN
 //! [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
 //! [HTTP3]: https://en.wikipedia.org/wiki/HTTP/3
-//! [`SecretKey`]: crate::key::SecretKey
-//! [`PublicKey`]: crate::key::PublicKey
-//! [`RelayUrl`]: crate::relay::RelayUrl
+//! [`SecretKey`]: crate::SecretKey
+//! [`PublicKey`]: crate::PublicKey
+//! [`RelayUrl`]: crate::RelayUrl
 //! [`discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
 //! [number 0]: https://n0.computer

@@ -99,7 +99,7 @@
 //! # }
 //! ```
 //!
-//! [`RelayUrl`]: crate::relay::RelayUrl
+//! [`RelayUrl`]: crate::RelayUrl
 //! [`Builder::discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: dns::DnsDiscovery
 //! [Number 0]: https://n0.computer
@@ -144,7 +144,7 @@ pub mod static_provider;
 /// discovery information changes. If a discovery mechanism requires a periodic
 /// refresh, it should start its own task.
 ///
-/// [`RelayUrl`]: crate::relay::RelayUrl
+/// [`RelayUrl`]: crate::RelayUrl
 pub trait Discovery: std::fmt::Debug + Send + Sync {
     /// Publishes the given [`RelayUrl`] and direct addreesses to the discovery mechanism.
     ///
