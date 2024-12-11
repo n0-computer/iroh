@@ -1,6 +1,6 @@
 //! Default values used in the relay.
 
-pub use iroh_base::relay_map::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT};
+pub use iroh_base::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT};
 
 /// The default HTTP port used by the Relay server.
 pub const DEFAULT_HTTP_PORT: u16 = 80;

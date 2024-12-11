@@ -51,7 +51,21 @@ hash = ["dep:blake3", "dep:data-encoding", "dep:postcard", "dep:derive_more", "b
 ticket = ["base32", "key"]
 base32 = ["dep:data-encoding", "dep:postcard"]
 redb = ["dep:redb"]
-key = ["dep:ed25519-dalek", "dep:once_cell", "dep:rand", "dep:rand_core", "dep:ssh-key", "dep:ttl_cache", "dep:aead", "dep:crypto_box", "dep:zeroize", "dep:url", "dep:derive_more", "dep:getrandom"]
+key = [
+  "dep:ed25519-dalek",
+  "dep:once_cell",
+  "dep:rand",
+  "dep:rand_core",
+  "dep:ssh-key",
+  "dep:ttl_cache",
+  "dep:aead",
+  "dep:crypto_box",
+  "dep:zeroize",
+  "dep:url",
+  "dep:derive_more",
+  "dep:getrandom",
+  "base32",
+]
 wasm = ["getrandom?/js"]
 relay = ["dep:url", "dep:derive_more"]
 

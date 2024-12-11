@@ -16,11 +16,11 @@ use std::time::Duration;
 
 use anyhow::{bail, ensure};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-#[cfg(feature = "server")]
+#[cfg(any(test, feature = "server"))]
 use futures_lite::{Stream, StreamExt};
 use futures_sink::Sink;
 use futures_util::SinkExt;
-use iroh_base::key::{PublicKey, SecretKey, Signature, PUBLIC_KEY_LENGTH};
+use iroh_base::{PublicKey, SecretKey, Signature, PUBLIC_KEY_LENGTH};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio_util::codec::{Decoder, Encoder};

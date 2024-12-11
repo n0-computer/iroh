@@ -247,7 +247,7 @@ pub mod protocol;
 mod tls;
 
 pub use endpoint::{Endpoint, RelayMode};
-pub use iroh_base::{hash, key, node_addr, relay_map, ticket};
+pub use iroh_base::{ticket, KeyParsingError, NodeId, PublicKey, RelayUrlNodeAddr, SecretKey};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

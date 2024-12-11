@@ -38,7 +38,7 @@ http = "1"
 http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
-iroh-base = { version = "0.29.0", path = "../iroh-base", features = ["key"] }
+iroh-base = { version = "0.29.0", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
 iroh-metrics = { version = "0.29.0", default-features = false }
 libc = "0.2.139"
 num_enum = "0.7"

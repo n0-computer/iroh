@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{bail, Result};
-use iroh_base::key::NodeId;
+use iroh_base::NodeId;
 use iroh_metrics::inc;
 use tokio::sync::mpsc;
 use tracing::{trace, warn};
@@ -228,7 +228,7 @@ mod tests {
     use std::time::Duration;
 
     use bytes::Bytes;
-    use iroh_base::key::SecretKey;
+    use iroh_base::SecretKey;
     use tokio::io::DuplexStream;
     use tokio_util::codec::{Framed, FramedRead};
 

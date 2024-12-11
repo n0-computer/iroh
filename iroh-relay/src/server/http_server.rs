@@ -661,7 +661,7 @@ mod tests {
 
     use anyhow::Result;
     use bytes::Bytes;
-    use iroh_base::key::{PublicKey, SecretKey};
+    use iroh_base::{PublicKey, SecretKey};
     use reqwest::Url;
     use tokio::{sync::mpsc, task::JoinHandle};
     use tokio_util::codec::{FramedRead, FramedWrite};

@@ -24,10 +24,7 @@ use hyper::{
     Request,
 };
 use hyper_util::rt::TokioIo;
-use iroh_base::{
-    key::{NodeId, PublicKey, SecretKey},
-    relay_map::RelayUrl,
-};
+use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use rand::Rng;
 use rustls::client::Resumption;
 use streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
