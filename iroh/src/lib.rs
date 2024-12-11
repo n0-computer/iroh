@@ -184,7 +184,7 @@
 //! ```no_run
 //! use anyhow::{Context, Result};
 //! use futures_lite::StreamExt;
-//! use iroh::{ticket::NodeTicket, Endpoint, NodeAddr};
+//! use iroh::{Endpoint, NodeAddr};
 //!
 //! async fn accept() -> Result<()> {
 //!     // To accept connections at least one ALPN must be configured.
@@ -212,7 +212,6 @@
 //!
 //! [QUIC]: https://quickwg.org
 //! [bi-directional streams]: crate::endpoint::Connection::open_bi
-//! [`NodeTicket`]: crate::ticket::NodeTicket
 //! [hole punching]: https://en.wikipedia.org/wiki/Hole_punching_(networking)
 //! [socket addresses]: https://doc.rust-lang.org/stable/std/net/enum.SocketAddr.html
 //! [STUN]: https://en.wikipedia.org/wiki/STUN

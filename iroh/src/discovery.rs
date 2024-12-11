@@ -50,7 +50,7 @@
 //! ```no_run
 //! use iroh::{
 //!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
-//!     key::SecretKey,
+//!     SecretKey,
 //!     Endpoint,
 //! };
 //!
@@ -85,7 +85,7 @@
 //! # use iroh::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 //! # use iroh::discovery::pkarr::PkarrPublisher;
 //! # use iroh::discovery::ConcurrentDiscovery;
-//! # use iroh::key::SecretKey;
+//! # use iroh::SecretKey;
 //! #
 //! # async fn wrapper() -> anyhow::Result<()> {
 //! # let secret_key = SecretKey::generate();
