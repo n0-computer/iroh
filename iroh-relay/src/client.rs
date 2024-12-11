@@ -345,11 +345,11 @@ impl ClientBuilder {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 /// Creates a client config that trusts any servers without verifying their TLS certificate.
 ///
 /// Should be used for testing local relay setups only.
-pub(crate) fn make_dangerous_client_config() -> rustls::ClientConfig {
+pub fn make_dangerous_client_config() -> rustls::ClientConfig {
     warn!(
         "Insecure config: SSL certificates from relay servers will be trusted without verification"
     );

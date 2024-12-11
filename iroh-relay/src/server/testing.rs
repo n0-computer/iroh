@@ -1,5 +1,5 @@
 //! Exposes functions to quickly configure a server suitable for testing.
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::Ipv4Addr;
 
 use super::{CertConfig, QuicConfig, RelayConfig, ServerConfig, StunConfig, TlsConfig};
 
@@ -71,12 +71,12 @@ pub fn relay_config() -> RelayConfig<()> {
 
 /// Creates a [`QuicConfig`] suitable for testing.
 ///
-/// - Binds to an OS assigned port on ipv6 and ipv4, if dual stack is enabled.
+/// - Binds to an OS assigned port on ipv4
 /// - Uses [`self_signed_tls_certs_and_config`] to create tls certificates
 pub fn quic_config() -> QuicConfig {
     let (_, server_config) = self_signed_tls_certs_and_config();
     QuicConfig {
-        bind_addr: (Ipv6Addr::UNSPECIFIED, 0).into(),
+        bind_addr: (Ipv4Addr::UNSPECIFIED, 0).into(),
         server_config,
     }
 }
