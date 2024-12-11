@@ -60,7 +60,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
-rustls-cert-reloadable-resolver = "0.6.1"
+rustls-cert-reloadable-resolver = "0.7.1"
 rustls-cert-file-reader = "0.4.1"
 rustls-pemfile = { version = "2.1", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }

@@ -3952,12 +3952,14 @@ checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 [[package]]
 name = "reloadable-core"
 version = "0.1.0"
-source = "git+https://github.com/arqu/rustls-cert-utils?branch=default-features#46c56f7dce2b43f72eb4214ce2ff6f030781c6f8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1dc20ac1418988b60072d783c9f68e28a173fb63493c127952f6face3b40c6e0"
 
 [[package]]
 name = "reloadable-state"
 version = "0.1.0"
-source = "git+https://github.com/arqu/rustls-cert-utils?branch=default-features#46c56f7dce2b43f72eb4214ce2ff6f030781c6f8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3853ef78d45b50f8b989896304a85239539d39b7f866a000e8846b9b72d74ce8"
 dependencies = [
  "arc-swap",
  "reloadable-core",
@@ -4159,7 +4161,8 @@ dependencies = [
 [[package]]
 name = "rustls-cert-file-reader"
 version = "0.4.1"
-source = "git+https://github.com/arqu/rustls-cert-utils?branch=default-features#46c56f7dce2b43f72eb4214ce2ff6f030781c6f8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f351eaf1dd003022222d2b1399caac198fefeab45c46b0f98bb03fc7cda9bb27"
 dependencies = [
  "rustls-cert-read",
  "rustls-pemfile",
@@ -4171,17 +4174,18 @@ dependencies = [
 [[package]]
 name = "rustls-cert-read"
 version = "0.3.0"
-source = "git+https://github.com/arqu/rustls-cert-utils?branch=default-features#46c56f7dce2b43f72eb4214ce2ff6f030781c6f8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd46e8c5ae4de3345c4786a83f99ec7aff287209b9e26fa883c473aeb28f19d5"
 dependencies = [
  "rustls-pki-types",
 ]
 
 [[package]]
 name = "rustls-cert-reloadable-resolver"
-version = "0.6.1"
-source = "git+https://github.com/arqu/rustls-cert-utils?branch=default-features#46c56f7dce2b43f72eb4214ce2ff6f030781c6f8"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe1baa8a3a1f05eaa9fc55aed4342867f70e5c170ea3bfed1b38c51a4857c0c8"
 dependencies = [
- "async-trait",
  "futures-util",
  "reloadable-state",
  "rustls",
