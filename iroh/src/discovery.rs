@@ -125,7 +125,6 @@ use crate::{AddrInfo, Endpoint, NodeId};
 pub mod dns;
 
 #[cfg(feature = "discovery-local-network")]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = "discovery-local-network")))]
 pub mod local_swarm_discovery;
 pub mod pkarr;
 pub mod static_provider;

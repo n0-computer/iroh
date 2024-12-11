@@ -1,13 +1,10 @@
 use crate::base32;
 
 #[cfg(feature = "key")]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = "key")))]
 mod blob;
 #[cfg(feature = "key")]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = "key")))]
 mod node;
 #[cfg(feature = "key")]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = "key")))]
 pub use self::{blob::BlobTicket, node::NodeTicket};
 
 /// A ticket is a serializable object combining information required for an operation.

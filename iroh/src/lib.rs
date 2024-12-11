@@ -231,10 +231,9 @@
 
 #![recursion_limit = "256"]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
-#![cfg_attr(iroh_docsrs, feature(doc_cfg))]
+#![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
 
 pub mod defaults;
-pub mod dialer;
 mod disco;
 pub mod discovery;
 pub mod dns;
@@ -242,7 +241,7 @@ pub mod endpoint;
 mod magicsock;
 pub mod metrics;
 pub mod protocol;
-pub mod tls;
+mod tls;
 pub mod util;
 
 pub use endpoint::{AddrInfo, AddrInfoOptions, Endpoint, NodeAddr, RelayMode};
@@ -255,5 +254,4 @@ pub use iroh_base::{
 pub use iroh_relay as relay;
 
 #[cfg(any(test, feature = "test-utils"))]
-#[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
 pub mod test_utils;
