@@ -16,7 +16,7 @@ use crate::{
     client_handler, stats::TransferResult, ClientStats, ConnectionSelector, EndpointSelector, Opt,
 };
 
-pub const ALPN: &[u8] = b"n0/iroh-net-bench/0";
+pub const ALPN: &[u8] = b"n0/iroh-bench/0";
 
 /// Creates a server endpoint which runs on the given runtime
 pub fn server_endpoint(
