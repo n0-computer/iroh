@@ -50,8 +50,7 @@
 //! ```no_run
 //! use iroh::{
 //!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
-//!     SecretKey,
-//!     Endpoint,
+//!     Endpoint, SecretKey,
 //! };
 //!
 //! # async fn wrapper() -> anyhow::Result<()> {

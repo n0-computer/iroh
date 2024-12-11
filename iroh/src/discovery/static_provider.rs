@@ -38,22 +38,25 @@ impl StaticProvider {
     ///
     /// Example:
     /// ```rust
-    /// use std::str::FromStr;
+    /// use std::{net::SocketAddr, str::FromStr};
     ///
-    /// use iroh_base::ticket::NodeTicket;
-    /// use iroh::{Endpoint, discovery::static_provider::StaticProvider};
+    /// use iroh::{discovery::static_provider::StaticProvider, Endpoint, NodeAddr};
     ///
-    /// # async fn example() -> anyhow::Result<()> {
-    /// # #[derive(Default)] struct Args { tickets: Vec<NodeTicket> }
-    /// # let args = Args::default();
-    /// // get tickets from command line args
-    /// let tickets: Vec<NodeTicket> = args.tickets;
-    /// // create a StaticProvider from the tickets. Ticket info will be combined if multiple tickets refer to the same node.
-    /// let discovery = StaticProvider::from_node_addrs(tickets);
+    /// # fn get_addrs() -> Vec<NodeAddr> {
+    /// #     Vec::new()
+    /// # }
+    /// # #[tokio::main]
+    /// # async fn main() -> anyhow::Result<()> {
+    /// // get addrs from somewhere
+    /// let addrs = get_addrs();
+    ///
+    /// // create a StaticProvider from the list of addrs.
+    /// let discovery = StaticProvider::from_node_addrs(addrs);
     /// // create an endpoint with the discovery
     /// let endpoint = Endpoint::builder()
     ///     .add_discovery(|_| Some(discovery))
-    ///     .bind().await?;
+    ///     .bind()
+    ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
