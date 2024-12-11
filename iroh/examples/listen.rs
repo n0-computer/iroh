@@ -5,7 +5,6 @@
 //!     $ cargo run --example listen
 use std::time::Duration;
 
-use anyhow::Context;
 use iroh::{endpoint::ConnectionError, key::SecretKey, Endpoint, RelayMode};
 use tracing::{debug, info, warn};
 
@@ -38,23 +37,22 @@ async fn main() -> anyhow::Result<()> {
     println!("node id: {me}");
     println!("node listening addresses:");
 
-    let local_addrs = endpoint
-        .direct_addresses()
-        .initialized()
-        .await
-        .context("no direct addresses")?
+    let node_addr = endpoint.node_addr().await?;
+    let local_addrs = node_addr
+        .info
+        .direct_addresses
         .into_iter()
-        .map(|endpoint| {
-            let addr = endpoint.addr.to_string();
+        .map(|addr| {
+            let addr = addr.to_string();
             println!("\t{addr}");
             addr
         })
         .collect::<Vec<_>>()
         .join(" ");
-
-    let relay_url = endpoint
-        .home_relay()
-        .expect("should be connected to a relay server, try calling `endpoint.local_endpoints()` or `endpoint.connect()` first, to ensure the endpoint has actually attempted a connection before checking for the connected relay server");
+    let relay_url = node_addr
+        .info
+        .relay_url
+        .expect("Should have a relay URL, assuming a default endpoint setup.");
     println!("node relay server url: {relay_url}");
     println!("\nin a separate terminal run:");
 

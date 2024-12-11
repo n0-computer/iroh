@@ -24,7 +24,6 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use derive_more::Debug;
-use futures_lite::{Stream, StreamExt};
 use iroh_base::relay_map::RelayMap;
 use pin_project::pin_project;
 use tokio_util::sync::CancellationToken;
@@ -761,7 +760,7 @@ impl Endpoint {
     /// [`Endpoint::direct_addresses`].
     pub async fn node_addr(&self) -> Result<NodeAddr> {
         let addrs = self.direct_addresses().initialized().await?;
-        let relay = self.home_relay();
+        let relay = self.home_relay().get()?;
         Ok(NodeAddr::from_parts(
             self.node_id(),
             relay,
@@ -769,33 +768,33 @@ impl Endpoint {
         ))
     }
 
-    /// Returns the [`RelayUrl`] of the Relay server used as home relay.
+    /// Returns a [`Watcher`] for the [`RelayUrl`] of the Relay server used as home relay.
     ///
     /// Every endpoint has a home Relay server which it chooses as the server with the
     /// lowest latency out of the configured servers provided by [`Builder::relay_mode`].
     /// This is the server other iroh nodes can use to reliably establish a connection
     /// to this node.
     ///
-    /// Returns `None` if we are not connected to any Relay server.
+    /// The watcher stores `None` if we are not connected to any Relay server.
     ///
-    /// Note that this will be `None` right after the [`Endpoint`] is created since it takes
-    /// some time to connect to find and connect to the home relay server.  Use
-    /// [`Endpoint::watch_home_relay`] to wait until the home relay server is available.
-    pub fn home_relay(&self) -> Option<RelayUrl> {
-        self.msock.my_relay()
-    }
-
-    /// Watches for changes to the home relay.
+    /// Note that this will store `None` right after the [`Endpoint`] is created since it takes
+    /// some time to connect to find and connect to the home relay server.
     ///
-    /// If there is currently a home relay it will be yielded immediately as the first item
-    /// in the stream.  This makes it possible to use this function to wait for the initial
-    /// home relay to be known.
+    /// # Examples
     ///
-    /// Note that it is not guaranteed that a home relay will ever become available.  If no
-    /// servers are configured with [`Builder::relay_mode`] this stream will never yield an
-    /// item.
-    pub fn watch_home_relay(&self) -> impl Stream<Item = RelayUrl> {
-        self.msock.home_relay().stream().filter_map(|r| r)
+    /// To wait for a home relay connection to be established, use [`Watcher::initialized`]:
+    /// ```no_run
+    /// use futures_lite::StreamExt;
+    /// use iroh::Endpoint;
+    ///
+    /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    /// # rt.block_on(async move {
+    /// let mep = Endpoint::builder().bind().await.unwrap();
+    /// let _relay_url = mep.home_relay().initialized().await.unwrap();
+    /// # });
+    /// ```
+    pub fn home_relay(&self) -> Watcher<Option<RelayUrl>> {
+        self.msock.home_relay()
     }
 
     /// Returns a [`Watcher`] for the direct addresses of this [`Endpoint`].
@@ -819,8 +818,8 @@ impl Endpoint {
     ///
     /// # Examples
     ///
-    /// To get the current endpoints use [`Watcher::initialized`]:
-    /// ```
+    /// To get the first set of direct addresses use [`Watcher::initialized`]:
+    /// ```no_run
     /// use futures_lite::StreamExt;
     /// use iroh::Endpoint;
     ///
@@ -1414,6 +1413,7 @@ mod tests {
 
     use std::time::Instant;
 
+    use futures_lite::StreamExt;
     use iroh_test::CallOnDrop;
     use rand::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};

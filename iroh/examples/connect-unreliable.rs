@@ -7,7 +7,6 @@
 //! Run the `listen-unreliable` example first (`iroh/examples/listen-unreliable.rs`), which will give you instructions on how to run this example to watch two nodes connect and exchange bytes.
 use std::net::SocketAddr;
 
-use anyhow::Context;
 use clap::Parser;
 use iroh::{key::SecretKey, Endpoint, NodeAddr, RelayMode, RelayUrl};
 use tracing::info;
@@ -51,21 +50,19 @@ async fn main() -> anyhow::Result<()> {
         .bind()
         .await?;
 
-    let me = endpoint.node_id();
+    let node_addr = endpoint.node_addr().await?;
+    let me = node_addr.node_id;
     println!("node id: {me}");
     println!("node listening addresses:");
-    for local_endpoint in endpoint
-        .direct_addresses()
-        .initialized()
-        .await
-        .context("no direct addresses")?
-    {
-        println!("\t{}", local_endpoint.addr)
-    }
-
-    let relay_url = endpoint
-        .home_relay()
-        .expect("should be connected to a relay server, try calling `endpoint.local_endpoints()` or `endpoint.connect()` first, to ensure the endpoint has actually attempted a connection before checking for the connected relay server");
+    node_addr
+        .info
+        .direct_addresses
+        .iter()
+        .for_each(|addr| println!("\t{addr}"));
+    let relay_url = node_addr
+        .info
+        .relay_url
+        .expect("Should have a relay URL, assuming a default endpoint setup.");
     println!("node relay server url: {relay_url}\n");
     // Build a `NodeAddr` from the node_id, relay url, and UDP addresses.
     let addr = NodeAddr::from_parts(args.node_id, Some(args.relay_url), args.addrs);
