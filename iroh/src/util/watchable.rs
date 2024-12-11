@@ -129,17 +129,22 @@ impl<T: Clone + Eq> Watchable<T> {
     ///
     /// Watchers are only notified if the value is changed.
     pub fn set(&self, value: T) -> Result<T, T> {
+        // We don't actually write when the value didn't change, but there's unfortunately
+        // no way to upgrade a read guard to a write guard, and locking as read first, then
+        // dropping and locking as write introduces a possible race condition.
+        let mut state = self.shared.state.write().unwrap();
+
         // Find out if the value changed
-        let changed = { self.shared.state.read().unwrap().value != value };
+        let changed = state.value != value;
 
         let ret = if changed {
-            let mut state = self.shared.state.write().unwrap();
             let old = std::mem::replace(&mut state.value, value);
             state.epoch += 1;
             Ok(old)
         } else {
             Err(value)
         };
+        drop(state); // No need to write anymore
 
         // Notify watchers
         if changed {
