@@ -252,7 +252,6 @@
 <a href="#252" id="252">252</a>
 <a href="#253" id="253">253</a>
 <a href="#254" id="254">254</a>
-<a href="#255" id="255">255</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Peer-to-peer QUIC connections.
 //!
 //! iroh is a library to establish direct connectivity between peers.  It exposes an
@@ -439,7 +438,7 @@
 //! ```no_run
 //! use anyhow::{Context, Result};
 //! use futures_lite::StreamExt;
-//! use iroh::{ticket::NodeTicket, Endpoint, NodeAddr};
+//! use iroh::{Endpoint, NodeAddr};
 //!
 //! async fn accept() -&gt; Result&lt;()&gt; {
 //!     // To accept connections at least one ALPN must be configured.
@@ -467,7 +466,6 @@
 //!
 //! [QUIC]: https://quickwg.org
 //! [bi-directional streams]: crate::endpoint::Connection::open_bi
-//! [`NodeTicket`]: crate::ticket::NodeTicket
 //! [hole punching]: https://en.wikipedia.org/wiki/Hole_punching_(networking)
 //! [socket addresses]: https://doc.rust-lang.org/stable/std/net/enum.SocketAddr.html
 //! [STUN]: https://en.wikipedia.org/wiki/STUN
