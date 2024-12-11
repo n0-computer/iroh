@@ -1535,11 +1535,11 @@
     </span>}
 }
 
-<span class="attr">#[cfg(all(test, feature = <span class="string">"server"</span>))]
+<span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 </span><span class="doccomment">/// Creates a client config that trusts any servers without verifying their TLS certificate.
 ///
 /// Should be used for testing local relay setups only.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>make_dangerous_client_config() -&gt; rustls::ClientConfig {
+</span><span class="kw">pub fn </span>make_dangerous_client_config() -&gt; rustls::ClientConfig {
     <span class="macro">warn!</span>(
         <span class="string">"Insecure config: SSL certificates from relay servers will be trusted without verification"
     </span>);

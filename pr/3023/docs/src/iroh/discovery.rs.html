@@ -884,7 +884,6 @@
 <a href="#884" id="884">884</a>
 <a href="#885" id="885">885</a>
 <a href="#886" id="886">886</a>
-<a href="#887" id="887">887</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
@@ -937,8 +936,7 @@
 //! ```no_run
 //! use iroh::{
 //!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
-//!     SecretKey,
-//!     Endpoint,
+//!     Endpoint, SecretKey,
 //! };
 //!
 //! # async fn wrapper() -&gt; anyhow::Result&lt;()&gt; {

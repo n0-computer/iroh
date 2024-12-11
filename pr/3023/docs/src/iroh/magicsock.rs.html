@@ -4096,6 +4096,8 @@
 <a href="#4096" id="4096">4096</a>
 <a href="#4097" id="4097">4097</a>
 <a href="#4098" id="4098">4098</a>
+<a href="#4099" id="4099">4099</a>
+<a href="#4100" id="4100">4100</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
@@ -6444,10 +6446,12 @@
         <span class="kw">let </span>pconn4 = <span class="prelude-val">Some</span>(<span class="self">self</span>.pconn4.clone());
         <span class="kw">let </span>pconn6 = <span class="self">self</span>.pconn6.clone();
 
+        <span class="kw">let </span>quic_config = <span class="prelude-val">None</span>;
+
         <span class="macro">debug!</span>(<span class="string">"requesting net_report report"</span>);
         <span class="kw">match </span><span class="self">self
             </span>.net_reporter
-            .get_report_channel(relay_map, pconn4, pconn6)
+            .get_report_channel(relay_map, pconn4, pconn6, quic_config)
             .<span class="kw">await
         </span>{
             <span class="prelude-val">Ok</span>(rx) =&gt; {
