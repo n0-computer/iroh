@@ -17,6 +17,7 @@
 //! - Sends the completed report to the net_report actor.
 
 use std::{
+    collections::BTreeSet,
     future::Future,
     net::{IpAddr, SocketAddr},
     pin::Pin,
@@ -59,7 +60,8 @@ use crate::{
 mod hairpin;
 mod probes;
 
-use probes::{Probe, ProbePlan, ProbeProto};
+pub use probes::ProbeProto;
+use probes::{Probe, ProbePlan};
 
 use crate::defaults::timeouts::{
     CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, OVERALL_REPORT_TIMEOUT, PROBES_TIMEOUT,
@@ -91,6 +93,7 @@ impl Client {
         stun_sock6: Option<Arc<UdpSocket>>,
         quic_config: Option<QuicConfig>,
         dns_resolver: DnsResolver,
+        protocols: BTreeSet<ProbeProto>,
     ) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(32);
         let addr = Addr {
@@ -110,6 +113,7 @@ impl Client {
             hairpin_actor: hairpin::Client::new(net_report, addr),
             outstanding_tasks: OutstandingTasks::default(),
             dns_resolver,
+            protocols,
         };
         let task = tokio::spawn(
             async move { actor.run().await }.instrument(info_span!("reportgen.actor")),
@@ -193,6 +197,9 @@ struct Actor {
     outstanding_tasks: OutstandingTasks,
     /// The DNS resolver to use for probes that need to resolve DNS records.
     dns_resolver: DnsResolver,
+    /// Protocols we should attempt to create probes for, if we have the correct
+    /// configuration for that protocol.
+    protocols: BTreeSet<ProbeProto>,
 }
 
 impl Actor {
@@ -536,8 +543,10 @@ impl Actor {
         let if_state = interfaces::State::new().await;
         debug!(%if_state, "Local interfaces");
         let plan = match self.last_report {
-            Some(ref report) => ProbePlan::with_last_report(&self.relay_map, &if_state, report),
-            None => ProbePlan::initial(&self.relay_map, &if_state),
+            Some(ref report) => {
+                ProbePlan::with_last_report(&self.relay_map, &if_state, report, &self.protocols)
+            }
+            None => ProbePlan::initial(&self.relay_map, &if_state, &self.protocols),
         };
         trace!(%plan, "probe plan");
 

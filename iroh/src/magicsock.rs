@@ -38,6 +38,7 @@ use futures_util::{stream::BoxStream, task::AtomicWaker};
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::{protos::stun, RelayMap};
+use net_report::Options as ReportOptions;
 use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -2360,7 +2361,13 @@ impl Actor {
         debug!("requesting net_report report");
         match self
             .net_reporter
-            .get_report_channel(relay_map, pconn4, pconn6, quic_config)
+            .get_report_channel(ReportOptions {
+                relay_map,
+                stun_sock_v4: pconn4,
+                stun_sock_v6: pconn6,
+                quic_config,
+                protocols: ReportOptions::default_protocols(),
+            })
             .await
         {
             Ok(rx) => {
