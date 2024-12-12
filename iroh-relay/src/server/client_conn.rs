@@ -7,7 +7,7 @@ use bytes::Bytes;
 use futures_lite::FutureExt;
 use futures_sink::Sink;
 use futures_util::{SinkExt, Stream, StreamExt};
-use iroh_base::key::NodeId;
+use iroh_base::NodeId;
 use iroh_metrics::{inc, inc_by};
 use tokio::sync::mpsc;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -511,7 +511,7 @@ impl Sink<Frame> for RateLimitedRelayedStream {
 mod tests {
     use anyhow::bail;
     use bytes::Bytes;
-    use iroh_base::key::SecretKey;
+    use iroh_base::SecretKey;
     use testresult::TestResult;
     use tokio_util::codec::Framed;
 

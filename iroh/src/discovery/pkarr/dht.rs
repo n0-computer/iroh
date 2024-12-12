@@ -6,12 +6,15 @@
 //!
 //! [pkarr module]: super
 use std::{
+    collections::BTreeSet,
+    net::SocketAddr,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use futures_lite::{stream::Boxed, StreamExt};
 use genawaiter::sync::{Co, Gen};
+use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use pkarr::{
     PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
     RelaySettings, SignedPacket,
@@ -25,8 +28,7 @@ use crate::{
         Discovery, DiscoveryItem,
     },
     dns::node_info::NodeInfo,
-    key::SecretKey,
-    AddrInfo, Endpoint, NodeId,
+    Endpoint,
 };
 
 /// Republish delay for the DHT.
@@ -290,14 +292,13 @@ impl DhtDiscovery {
         match response {
             Ok(Some(signed_packet)) => {
                 if let Ok(node_info) = NodeInfo::from_pkarr_signed_packet(&signed_packet) {
-                    let node_id = node_info.node_id;
-                    let addr_info = node_info.into();
-                    tracing::info!("discovered node info from relay {:?}", addr_info);
+                    let node_addr: NodeAddr = node_info.into();
+
+                    tracing::info!("discovered node info from relay {:?}", node_addr);
                     co.yield_(Ok(DiscoveryItem {
-                        node_id,
+                        node_addr,
                         provenance: "relay",
                         last_updated: None,
-                        addr_info,
                     }))
                     .await;
                 } else {
@@ -336,14 +337,12 @@ impl DhtDiscovery {
             return;
         };
         if let Ok(node_info) = NodeInfo::from_pkarr_signed_packet(&signed_packet) {
-            let node_id = node_info.node_id;
-            let addr_info = node_info.into();
-            tracing::info!("discovered node info from DHT {:?}", addr_info);
+            let node_addr: NodeAddr = node_info.into();
+            tracing::info!("discovered node info from DHT {:?}", node_addr);
             co.yield_(Ok(DiscoveryItem {
-                node_id,
+                node_addr,
                 provenance: "mainline",
                 last_updated: None,
-                addr_info,
             }))
             .await;
         } else {
@@ -362,17 +361,17 @@ impl DhtDiscovery {
 }
 
 impl Discovery for DhtDiscovery {
-    fn publish(&self, info: &AddrInfo) {
+    fn publish(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
         let Some(keypair) = &self.0.secret_key else {
             tracing::debug!("no keypair set, not publishing");
             return;
         };
-        tracing::debug!("publishing {:?}", info);
+        tracing::debug!("publishing {:?}, {:?}", url, addrs);
         let info = NodeInfo {
             node_id: keypair.public(),
-            relay_url: info.relay_url.clone().map(Url::from),
+            relay_url: url.cloned().map(Url::from),
             direct_addresses: if self.0.include_direct_addresses {
-                info.direct_addresses.clone()
+                addrs.clone()
             } else {
                 Default::default()
             },
@@ -404,7 +403,7 @@ impl Discovery for DhtDiscovery {
 mod tests {
     use std::collections::BTreeSet;
 
-    use iroh_base::node_addr::RelayUrl;
+    use iroh_base::RelayUrl;
     use pkarr::mainline::dht::DhtSettings;
     use testresult::TestResult;
 
@@ -432,10 +431,7 @@ mod tests {
             .build()?;
         let relay_url: RelayUrl = Url::parse("https://example.com")?.into();
 
-        discovery.publish(&AddrInfo {
-            relay_url: Some(relay_url.clone()),
-            direct_addresses: Default::default(),
-        });
+        discovery.publish(Some(&relay_url), &Default::default());
 
         // publish is fire and forget, so we have no way to wait until it is done.
         tokio::time::timeout(Duration::from_secs(30), async move {
@@ -448,7 +444,7 @@ mod tests {
                     .collect::<Vec<_>>()
                     .await;
                 for item in items.into_iter().flatten() {
-                    if let Some(url) = item.addr_info.relay_url {
+                    if let Some(url) = item.node_addr.relay_url {
                         found_relay_urls.insert(url);
                     }
                 }

@@ -28,7 +28,7 @@
 //! [Pkarr]: https://app.pkarr.org
 //! [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
 //! [RFC1464]: https://www.rfc-editor.org/rfc/rfc1464
-//! [`RelayUrl`]: iroh_base::node_addr::RelayUrl
+//! [`RelayUrl`]: crate::RelayUrl
 //! [`N0_DNS_NODE_ORIGIN_PROD`]: crate::discovery::dns::N0_DNS_NODE_ORIGIN_PROD
 //! [`N0_DNS_NODE_ORIGIN_STAGING`]: crate::discovery::dns::N0_DNS_NODE_ORIGIN_STAGING
 
@@ -42,9 +42,8 @@ use std::{
 
 use anyhow::{anyhow, ensure, Result};
 use hickory_resolver::{proto::ProtoError, Name, TokioResolver};
+use iroh_base::{NodeAddr, NodeId, SecretKey};
 use url::Url;
-
-use crate::{key::SecretKey, AddrInfo, NodeAddr, NodeId};
 
 /// The DNS name for the iroh TXT record.
 pub const IROH_TXT_NAME: &str = "_iroh";
@@ -139,15 +138,7 @@ impl From<NodeInfo> for NodeAddr {
     fn from(value: NodeInfo) -> Self {
         NodeAddr {
             node_id: value.node_id,
-            info: value.into(),
-        }
-    }
-}
-
-impl From<NodeInfo> for AddrInfo {
-    fn from(value: NodeInfo) -> Self {
-        AddrInfo {
-            relay_url: value.relay_url.map(|u| u.into()),
+            relay_url: value.relay_url.map(Into::into),
             direct_addresses: value.direct_addresses,
         }
     }
@@ -416,7 +407,7 @@ fn node_domain(node_id: &NodeId, origin: &str) -> Result<Name> {
 mod tests {
     use std::str::FromStr;
 
-    use iroh_base::key::SecretKey;
+    use iroh_base::SecretKey;
 
     use super::NodeInfo;
 

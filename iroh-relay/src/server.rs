@@ -26,7 +26,7 @@ use http::{
 };
 use hyper::body::Incoming;
 #[cfg(feature = "test-utils")]
-use iroh_base::node_addr::RelayUrl;
+use iroh_base::RelayUrl;
 use iroh_metrics::inc;
 use tokio::{
     net::{TcpListener, UdpSocket},
@@ -48,7 +48,6 @@ mod http_server;
 mod metrics;
 pub(crate) mod streams;
 #[cfg(feature = "test-utils")]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = "test-utils")))]
 pub mod testing;
 
 pub use self::{
@@ -94,7 +93,6 @@ pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     pub quic: Option<QuicConfig>,
     /// Socket to serve metrics on.
     #[cfg(feature = "metrics")]
-    #[cfg_attr(iroh_docsrs, doc(cfg(feature = "metrics")))]
     pub metrics_addr: Option<SocketAddr>,
 }
 
@@ -448,7 +446,6 @@ impl Server {
     ///
     /// This uses [`Self::https_addr`] so it's mostly useful for local development.
     #[cfg(feature = "test-utils")]
-    #[cfg_attr(iroh_docsrs, doc(cfg(feature = "test-utils")))]
     pub fn https_url(&self) -> Option<RelayUrl> {
         self.https_addr.map(|addr| {
             url::Url::parse(&format!("https://{addr}"))
@@ -461,7 +458,6 @@ impl Server {
     ///
     /// This uses [`Self::http_addr`] so it's mostly useful for local development.
     #[cfg(feature = "test-utils")]
-    #[cfg_attr(iroh_docsrs, doc(cfg(feature = "test-utils")))]
     pub fn http_url(&self) -> Option<RelayUrl> {
         self.http_addr.map(|addr| {
             url::Url::parse(&format!("http://{addr}"))
@@ -764,7 +760,7 @@ mod tests {
 
     use bytes::Bytes;
     use http::header::UPGRADE;
-    use iroh_base::{key::SecretKey, node_addr::RelayUrl};
+    use iroh_base::SecretKey;
 
     use super::*;
     use crate::{

@@ -15,10 +15,10 @@ use std::{
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use hickory_resolver::TokioResolver as DnsResolver;
-use iroh_base::relay_map::{RelayMap, RelayNode, RelayUrl};
+use iroh_base::RelayUrl;
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
-use iroh_relay::protos::stun;
+use iroh_relay::{protos::stun, RelayMap};
 use netwatch::{IpFamily, UdpSocket};
 use tokio::{
     sync::{self, mpsc, oneshot},
@@ -34,6 +34,7 @@ mod ping;
 mod reportgen;
 
 pub use metrics::Metrics;
+pub use reportgen::QuicConfig;
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
@@ -240,13 +241,23 @@ impl Client {
     ///
     /// If these are not passed in this will bind sockets for STUN itself, though results
     /// may not be as reliable.
+    ///
+    /// The *quic_config* takes a [`QuicConfig`], a combination of a QUIC endpoint and
+    /// a client configuration that can be use for verifying the relay server connection.
+    /// When available, the report will attempt to get an observed public address
+    /// using QUIC address discovery.
+    ///
+    /// When `None`, it will disable the QUIC address discovery probes.
     pub async fn get_report(
         &mut self,
         dm: RelayMap,
         stun_conn4: Option<Arc<UdpSocket>>,
         stun_conn6: Option<Arc<UdpSocket>>,
+        quic_config: Option<QuicConfig>,
     ) -> Result<Arc<Report>> {
-        let rx = self.get_report_channel(dm, stun_conn4, stun_conn6).await?;
+        let rx = self
+            .get_report_channel(dm, stun_conn4, stun_conn6, quic_config)
+            .await?;
         match rx.await {
             Ok(res) => res,
             Err(_) => Err(anyhow!("channel closed, actor awol")),
@@ -259,6 +270,7 @@ impl Client {
         dm: RelayMap,
         stun_conn4: Option<Arc<UdpSocket>>,
         stun_conn6: Option<Arc<UdpSocket>>,
+        quic_config: Option<QuicConfig>,
     ) -> Result<oneshot::Receiver<Result<Arc<Report>>>> {
         // TODO: consider if RelayMap should be made to easily clone?  It seems expensive
         // right now.
@@ -268,6 +280,7 @@ impl Client {
                 relay_map: dm,
                 stun_sock_v4: stun_conn4,
                 stun_sock_v6: stun_conn6,
+                quic_config,
                 response_tx: tx,
             })
             .await?;
@@ -307,6 +320,11 @@ pub(crate) enum Message {
         ///
         /// Like `stun_sock_v4` but for IPv6.
         stun_sock_v6: Option<Arc<UdpSocket>>,
+        /// Endpoint and client configuration to create a QUIC
+        /// connection to do QUIC address discovery.
+        ///
+        /// If not provided, will not do QUIC address discovery.
+        quic_config: Option<QuicConfig>,
         /// Channel to receive the response.
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     },
@@ -446,9 +464,16 @@ impl Actor {
                     relay_map,
                     stun_sock_v4,
                     stun_sock_v6,
+                    quic_config,
                     response_tx,
                 } => {
-                    self.handle_run_check(relay_map, stun_sock_v4, stun_sock_v6, response_tx);
+                    self.handle_run_check(
+                        relay_map,
+                        stun_sock_v4,
+                        stun_sock_v6,
+                        quic_config,
+                        response_tx,
+                    );
                 }
                 Message::ReportReady { report } => {
                     self.handle_report_ready(report);
@@ -476,6 +501,7 @@ impl Actor {
         relay_map: RelayMap,
         stun_sock_v4: Option<Arc<UdpSocket>>,
         stun_sock_v6: Option<Arc<UdpSocket>>,
+        quic_config: Option<QuicConfig>,
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     ) {
         if self.current_report_run.is_some() {
@@ -526,6 +552,7 @@ impl Actor {
             relay_map,
             stun_sock_v4,
             stun_sock_v6,
+            quic_config,
             self.dns_resolver.clone(),
         );
 
@@ -781,16 +808,13 @@ mod test_utils {
 
     use std::sync::Arc;
 
-    use iroh_base::relay_map::QuicConfig;
-    use iroh_relay::server;
-
-    use crate::RelayNode;
+    use iroh_relay::{server, RelayNode, RelayQuicConfig};
 
     pub(crate) async fn relay() -> (server::Server, Arc<RelayNode>) {
         let server = server::Server::spawn(server::testing::server_config())
             .await
             .expect("should serve relay");
-        let quic = Some(QuicConfig {
+        let quic = Some(RelayQuicConfig {
             port: server.quic_addr().expect("server should run quic").port(),
         });
         let node_desc = RelayNode {
@@ -837,6 +861,8 @@ mod tests {
         use std::{net::IpAddr, sync::Arc};
 
         use anyhow::Result;
+        use iroh_base::RelayUrl;
+        use iroh_relay::RelayNode;
         use tokio::{
             net,
             sync::{oneshot, Mutex},
@@ -844,7 +870,6 @@ mod tests {
         use tracing::{debug, trace};
 
         use super::*;
-        use crate::{RelayMap, RelayNode, RelayUrl};
 
         /// A drop guard to clean up test infrastructure.
         ///
@@ -975,7 +1000,7 @@ mod tests {
         // Note that the ProbePlan will change with each iteration.
         for i in 0..5 {
             println!("--round {}", i);
-            let r = client.get_report(dm.clone(), None, None).await?;
+            let r = client.get_report(dm.clone(), None, None, None).await?;
 
             assert!(r.udp, "want UDP");
             assert_eq!(
@@ -1016,7 +1041,7 @@ mod tests {
         let resolver = crate::dns::tests::resolver();
         let mut client = Client::new(None, resolver.clone())?;
 
-        let r = client.get_report(dm, None, None).await?;
+        let r = client.get_report(dm, None, None, None).await?;
         let mut r: Report = (*r).clone();
         r.portmap_probe = None;
 
@@ -1285,7 +1310,7 @@ mod tests {
             )
         };
 
-        let r = client.get_report(dm, Some(sock), None).await?;
+        let r = client.get_report(dm, Some(sock), None, None).await?;
         dbg!(&r);
         assert_eq!(r.hair_pinning, Some(true));
 

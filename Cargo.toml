@@ -30,13 +30,13 @@ incremental = false
 missing_debug_implementations = "warn"
 
 # We use this --cfg for documenting the cargo features on which an API
-# is available.  To preview this locally use: RUSTFLAGS="--cfg
-# iroh_docsrs cargo +nightly doc --all-features".  We use our own
+# is available.  To preview this locally use: RUSTDOCFLAGS="--cfg
+# iroh_docsrs" cargo +nightly doc --all-features.  We use our own
 # iroh_docsrs instead of the common docsrs to avoid also enabling this
 # feature in any dependencies, because some indirect dependencies
 # require a feature enabled when using `--cfg docsrs` which we can not
 # do.  To enable for a crate set `#![cfg_attr(iroh_docsrs,
-# feature(doc_cfg))]` in the crate.
+# feature(doc_auto_cfg))]` in the crate.
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)"] }
 
 [workspace.lints.clippy]

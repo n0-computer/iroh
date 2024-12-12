@@ -10,7 +10,7 @@ repository = "https://github.com/n0-computer/iroh"
 keywords = ["quic", "networking", "holepunching", "p2p"]
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.76"
+rust-version = "1.81"
 
 [lints]
 workspace = true
@@ -44,7 +44,7 @@ http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
 igd-next = { version = "0.15.1", features = ["aio_tokio"] }
-iroh-base = { version = "0.29.0", features = ["key"], path = "../iroh-base" }
+iroh-base = { version = "0.29.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 iroh-relay = { version = "0.29", path = "../iroh-relay", default-features = false }
 libc = "0.2.139"
 netdev = "0.31.0"
@@ -182,10 +182,11 @@ test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 discovery-local-network = ["dep:swarm-discovery"]
 discovery-pkarr-dht = ["pkarr/dht", "dep:genawaiter"]
 examples = [
-    "dep:clap",
-    "dep:tracing-subscriber",
-    "dep:indicatif",
-    "dep:parse-size",
+  "dep:clap",
+  "dep:tracing-subscriber",
+  "dep:indicatif",
+  "dep:parse-size",
+  "iroh-base/ticket"
 ]
 
 [package.metadata.docs.rs]

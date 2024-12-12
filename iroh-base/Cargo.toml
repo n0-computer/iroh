@@ -9,7 +9,7 @@ authors = ["n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.76"
+rust-version = "1.81"
 
 [lints]
 workspace = true
@@ -46,11 +46,26 @@ serde_json = "1"
 serde_test = "1"
 
 [features]
-default = ["hash", "base32", "relay"]
+default = ["hash", "ticket", "relay"]
 hash = ["dep:blake3", "dep:data-encoding", "dep:postcard", "dep:derive_more", "base32"]
+ticket = ["base32", "key", "hash"]
 base32 = ["dep:data-encoding", "dep:postcard"]
 redb = ["dep:redb"]
-key = ["dep:ed25519-dalek", "dep:once_cell", "dep:rand", "dep:rand_core", "dep:ssh-key", "dep:ttl_cache", "dep:aead", "dep:crypto_box", "dep:zeroize", "dep:url", "dep:derive_more", "dep:getrandom"]
+key = [
+  "dep:ed25519-dalek",
+  "dep:once_cell",
+  "dep:rand",
+  "dep:rand_core",
+  "dep:ssh-key",
+  "dep:ttl_cache",
+  "dep:aead",
+  "dep:crypto_box",
+  "dep:zeroize",
+  "dep:url",
+  "dep:derive_more",
+  "dep:getrandom",
+  "base32",
+]
 wasm = ["getrandom?/js"]
 relay = ["dep:url", "dep:derive_more"]
 

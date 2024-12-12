@@ -24,17 +24,14 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
-use iroh_relay::RelayUrl;
+use iroh_base::{PublicKey, RelayUrl};
 use serde::{Deserialize, Serialize};
 use url::Url;
-
-use super::key::PublicKey;
-use crate::key;
 
 // TODO: custom magicn
 /// The 6 byte header of all discovery messages.
 pub const MAGIC: &str = "TS💬"; // 6 bytes: 0x54 53 f0 9f 92 ac
-pub const MAGIC_LEN: usize = MAGIC.as_bytes().len();
+pub const MAGIC_LEN: usize = MAGIC.len();
 
 /// Current Version.
 const V0: u8 = 0;
@@ -47,7 +44,7 @@ const TX_LEN: usize = 12;
 /// Header: Type | Version
 const HEADER_LEN: usize = 2;
 
-const PING_LEN: usize = TX_LEN + key::PUBLIC_KEY_LENGTH;
+const PING_LEN: usize = TX_LEN + iroh_base::PUBLIC_KEY_LENGTH;
 const EP_LENGTH: usize = 16 + 2; // 16 byte IP address + 2 byte port
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -209,7 +206,7 @@ impl Ping {
         // Deliberately lax on longer-than-expected messages, for future compatibility.
         ensure!(p.len() >= PING_LEN, "message too short");
         let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().expect("length checked");
-        let raw_key = &p[TX_LEN..TX_LEN + key::PUBLIC_KEY_LENGTH];
+        let raw_key = &p[TX_LEN..TX_LEN + iroh_base::PUBLIC_KEY_LENGTH];
         let node_key = PublicKey::try_from(raw_key)?;
         let tx_id = stun_rs::TransactionId::from(tx_id);
 
@@ -404,8 +401,9 @@ const fn msg_header(t: MessageType, ver: u8) -> [u8; HEADER_LEN] {
 
 #[cfg(test)]
 mod tests {
+    use iroh_base::SecretKey;
+
     use super::*;
-    use crate::key::SecretKey;
 
     #[test]
     fn test_to_from_bytes() {

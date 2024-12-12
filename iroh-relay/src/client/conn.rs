@@ -18,7 +18,7 @@ use futures_util::{
     stream::{SplitSink, SplitStream, StreamExt},
     SinkExt,
 };
-use iroh_base::key::{NodeId, SecretKey};
+use iroh_base::{NodeId, SecretKey};
 use tokio::sync::mpsc;
 use tokio_tungstenite_wasm::WebSocketStream;
 use tokio_util::{

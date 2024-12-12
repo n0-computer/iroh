@@ -1,10 +1,5 @@
 //! Default values used in net_report.
 
-/// The default STUN port used by the Relay server.
-///
-/// The STUN port as defined by [RFC 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
-pub const DEFAULT_STUN_PORT: u16 = 3478;
-
 /// Contains all timeouts that we use in `iroh-net-report`.
 pub(crate) mod timeouts {
     use std::time::Duration;

@@ -2,12 +2,13 @@
 
 use anyhow::Result;
 use futures_lite::stream::Boxed as BoxStream;
+use iroh_base::NodeId;
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
     dns::ResolverExt,
     endpoint::force_staging_infra,
-    Endpoint, NodeId,
+    Endpoint,
 };
 
 /// The n0 testing DNS node origin, for production.
@@ -75,10 +76,9 @@ impl Discovery for DnsDiscovery {
                 .lookup_by_id_staggered(&node_id, &origin_domain, DNS_STAGGERING_MS)
                 .await?;
             Ok(DiscoveryItem {
-                node_id,
+                node_addr,
                 provenance: "dns",
                 last_updated: None,
-                addr_info: node_addr.info,
             })
         };
         let stream = futures_lite::stream::once_future(fut);

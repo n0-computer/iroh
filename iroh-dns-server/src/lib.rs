@@ -30,7 +30,7 @@ mod tests {
     use iroh::{
         discovery::pkarr::PkarrRelayClient,
         dns::{node_info::NodeInfo, DnsResolver, ResolverExt},
-        key::SecretKey,
+        SecretKey,
     };
     use pkarr::{PkarrClient, SignedPacket};
     use testresult::TestResult;
@@ -183,7 +183,7 @@ mod tests {
         let res = resolver.lookup_by_id(&node_id, origin).await?;
 
         assert_eq!(res.node_id, node_id);
-        assert_eq!(res.info.relay_url.map(Url::from), Some(relay_url));
+        assert_eq!(res.relay_url.map(Url::from), Some(relay_url));
 
         server.shutdown().await?;
         Ok(())
@@ -255,7 +255,7 @@ mod tests {
         let res = resolver.lookup_by_id(&node_id, origin).await?;
 
         assert_eq!(res.node_id, node_id);
-        assert_eq!(res.info.relay_url.map(Url::from), Some(relay_url));
+        assert_eq!(res.relay_url.map(Url::from), Some(relay_url));
 
         server.shutdown().await?;
         for mut node in testnet.nodes {

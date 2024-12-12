@@ -24,7 +24,7 @@ use hyper::{
     Request,
 };
 use hyper_util::rt::TokioIo;
-use iroh_base::key::{NodeId, PublicKey, SecretKey};
+use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use rand::Rng;
 use rustls::client::Resumption;
 use streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
@@ -46,7 +46,6 @@ use crate::{
     defaults::timeouts::*,
     http::{Protocol, RELAY_PATH},
     protos::relay::DerpCodec,
-    RelayUrl,
 };
 
 pub(crate) mod conn;
@@ -203,7 +202,6 @@ pub struct ClientBuilder {
     protocol: Protocol,
     /// Allow self-signed certificates from relay servers
     #[cfg(any(test, feature = "test-utils"))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     insecure_skip_cert_verify: bool,
     /// HTTP Proxy
     proxy_url: Option<Url>,
@@ -269,7 +267,6 @@ impl ClientBuilder {
     ///
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     pub fn insecure_skip_cert_verify(mut self, skip: bool) -> Self {
         self.insecure_skip_cert_verify = skip;
         self
@@ -345,11 +342,11 @@ impl ClientBuilder {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 /// Creates a client config that trusts any servers without verifying their TLS certificate.
 ///
 /// Should be used for testing local relay setups only.
-pub(crate) fn make_dangerous_client_config() -> rustls::ClientConfig {
+pub fn make_dangerous_client_config() -> rustls::ClientConfig {
     warn!(
         "Insecure config: SSL certificates from relay servers will be trusted without verification"
     );
@@ -1093,7 +1090,6 @@ impl DnsExt for DnsResolver {
 
 /// Used to allow self signed certificates in tests
 #[cfg(any(test, feature = "test-utils"))]
-#[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
 #[derive(Debug)]
 struct NoCertVerifier;
 

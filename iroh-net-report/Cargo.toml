@@ -10,7 +10,7 @@ repository = "https://github.com/n0-computer/iroh"
 keywords = ["networking"]
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.76"
+rust-version = "1.81"
 
 [lints]
 workspace = true
@@ -27,6 +27,7 @@ iroh-metrics = { version = "0.29.0", default-features = false }
 iroh-relay = { version = "0.29", path = "../iroh-relay" }
 netwatch = { version = "0.2.0" }
 portmapper = { version = "0.2.0", default-features = false }
+quinn = { package = "iroh-quinn", version = "0.12.0" }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false }
 rustls = { version = "0.23", default-features = false }

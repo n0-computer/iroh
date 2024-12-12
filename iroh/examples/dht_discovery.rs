@@ -61,7 +61,7 @@ fn build_discovery(args: Args) -> iroh::discovery::pkarr::dht::Builder {
 }
 
 async fn chat_server(args: Args) -> anyhow::Result<()> {
-    let secret_key = iroh::key::SecretKey::generate();
+    let secret_key = iroh::SecretKey::generate();
     let node_id = secret_key.public();
     let discovery = build_discovery(args)
         .secret_key(secret_key.clone())
@@ -107,7 +107,7 @@ async fn chat_server(args: Args) -> anyhow::Result<()> {
 
 async fn chat_client(args: Args) -> anyhow::Result<()> {
     let remote_node_id = args.node_id.unwrap();
-    let secret_key = iroh::key::SecretKey::generate();
+    let secret_key = iroh::SecretKey::generate();
     let node_id = secret_key.public();
     // note: we don't pass a secret key here, because we don't need to publish our address, don't spam the DHT
     let discovery = build_discovery(args).build()?;

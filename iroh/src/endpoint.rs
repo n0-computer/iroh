@@ -24,7 +24,8 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use derive_more::Debug;
 use futures_lite::{Stream, StreamExt};
-use iroh_base::relay_map::RelayMap;
+use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
+use iroh_relay::RelayMap;
 use pin_project::pin_project;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, instrument, trace, warn};
@@ -35,15 +36,12 @@ use crate::{
         dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
     },
     dns::{default_resolver, DnsResolver},
-    key::{PublicKey, SecretKey},
     magicsock::{self, Handle, QuicMappedAddr},
-    tls, NodeId, RelayUrl,
+    tls,
 };
 
 mod rtt_actor;
 
-pub use bytes::Bytes;
-pub use iroh_base::node_addr::{AddrInfo, AddrInfoOptions, NodeAddr};
 // Missing still: SendDatagram and ConnectionClose::frame_type's Type.
 pub use quinn::{
     AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream, Connection,
@@ -96,7 +94,6 @@ pub struct Builder {
     node_map: Option<Vec<NodeAddr>>,
     dns_resolver: Option<DnsResolver>,
     #[cfg(any(test, feature = "test-utils"))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     insecure_skip_relay_cert_verify: bool,
     addr_v4: Option<SocketAddrV4>,
     addr_v6: Option<SocketAddrV6>,
@@ -307,7 +304,6 @@ impl Builder {
     }
 
     #[cfg(feature = "discovery-pkarr-dht")]
-    #[cfg_attr(iroh_docsrs, doc(cfg(feature = "discovery-pkarr-dht")))]
     /// Configures the endpoint to also use the mainline DHT with default settings.
     ///
     /// This is equivalent to adding a [`crate::discovery::pkarr::dht::DhtDiscovery`]
@@ -328,7 +324,6 @@ impl Builder {
     }
 
     #[cfg(feature = "discovery-local-network")]
-    #[cfg_attr(iroh_docsrs, doc(cfg(feature = "discovery-local-network")))]
     /// Configures the endpoint to also use local network discovery.
     ///
     /// This is equivalent to adding a [`crate::discovery::local_swarm_discovery::LocalSwarmDiscovery`]
@@ -412,7 +407,6 @@ impl Builder {
     ///
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
-    #[cfg_attr(iroh_docsrs, doc(cfg(any(test, feature = "test-utils"))))]
     pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
         self.insecure_skip_relay_cert_verify = skip_verify;
         self
@@ -576,7 +570,7 @@ impl Endpoint {
     /// an error.
     #[instrument(skip_all, fields(me = %self.node_id().fmt_short(), alpn = ?String::from_utf8_lossy(alpn)))]
     pub async fn connect(&self, node_addr: impl Into<NodeAddr>, alpn: &[u8]) -> Result<Connection> {
-        let node_addr = node_addr.into();
+        let node_addr: NodeAddr = node_addr.into();
         tracing::Span::current().record("remote", node_addr.node_id.fmt_short());
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
@@ -586,11 +580,11 @@ impl Endpoint {
             );
         }
 
-        if !node_addr.info.is_empty() {
+        if !node_addr.is_empty() {
             self.add_node_addr(node_addr.clone())?;
         }
-
-        let NodeAddr { node_id, info } = node_addr.clone();
+        let node_id = node_addr.node_id;
+        let direct_addresses = node_addr.direct_addresses.clone();
 
         // Get the mapped IPv6 address from the magic socket. Quinn will connect to this address.
         // Start discovery for this node if it's enabled and we have no valid or verified
@@ -607,7 +601,7 @@ impl Endpoint {
 
         debug!(
             "connecting to {}: (via {} - {:?})",
-            node_id, addr, info.direct_addresses
+            node_id, addr, direct_addresses
         );
 
         // Start connecting via quinn. This will time out after 10 seconds if no reachable address
@@ -1018,7 +1012,7 @@ impl Endpoint {
                 // If the user provided addresses in this connect call, we will add a delay
                 // followed by a recheck before starting the discovery, to give the magicsocket a
                 // chance to test the newly provided addresses.
-                let delay = (!node_addr.info.is_empty()).then_some(DISCOVERY_WAIT_PERIOD);
+                let delay = (!node_addr.is_empty()).then_some(DISCOVERY_WAIT_PERIOD);
                 let discovery = DiscoveryTask::maybe_start_after_delay(self, node_id, delay)
                     .ok()
                     .flatten();
@@ -1379,7 +1373,6 @@ impl RelayMode {
 }
 
 /// Environment variable to force the use of staging relays.
-#[cfg_attr(iroh_docsrs, doc(cfg(not(test))))]
 pub const ENV_FORCE_STAGING_RELAYS: &str = "IROH_FORCE_STAGING_RELAYS";
 
 /// Returns `true` if the use of staging relays is forced.
@@ -1422,20 +1415,6 @@ mod tests {
     use crate::test_utils::{run_relay_server, run_relay_server_with};
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
-
-    #[test]
-    fn test_addr_info_debug() {
-        let info = AddrInfo {
-            relay_url: Some("https://relay.example.com".parse().unwrap()),
-            direct_addresses: vec![SocketAddr::from(([1, 2, 3, 4], 1234))]
-                .into_iter()
-                .collect(),
-        };
-        assert_eq!(
-            format!("{:?}", info),
-            r#"AddrInfo { relay_url: Some(RelayUrl("https://relay.example.com./")), direct_addresses: {1.2.3.4:1234} }"#
-        );
-    }
 
     #[tokio::test]
     async fn test_connect_self() {
