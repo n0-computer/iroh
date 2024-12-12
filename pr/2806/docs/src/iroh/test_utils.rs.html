@@ -490,18 +490,22 @@
 <a href="#489" id="489">489</a>
 <a href="#490" id="490">490</a>
 <a href="#491" id="491">491</a>
-<a href="#492" id="492">492</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
+<a href="#492" id="492">492</a>
+<a href="#493" id="493">493</a>
+<a href="#494" id="494">494</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">pub use </span>dns_and_pkarr_servers::DnsPkarrServer;
 <span class="kw">pub use </span>dns_server::create_dns_resolver;
-<span class="kw">use </span>iroh_relay::server::{
-    CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig,
+<span class="kw">use </span>iroh_base::RelayUrl;
+<span class="kw">use </span>iroh_relay::{
+    server::{CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
+    RelayMap, RelayNode, RelayQuicConfig,
 };
 <span class="kw">use </span>tokio::sync::oneshot;
 
-<span class="kw">use crate</span>::{defaults::DEFAULT_STUN_PORT, RelayMap, RelayNode, RelayUrl};
+<span class="kw">use </span><span class="kw">crate</span>::defaults::DEFAULT_STUN_PORT;
 
 <span class="doccomment">/// A drop guard to clean up test infrastructure.
 ///
@@ -586,7 +590,7 @@
         .unwrap();
     <span class="kw">let </span>quic = server
         .quic_addr()
-        .map(|addr| iroh_base::relay_map::QuicConfig { port: addr.port() });
+        .map(|addr| RelayQuicConfig { port: addr.port() });
     <span class="kw">let </span>m = RelayMap::from_nodes([RelayNode {
         url: url.clone(),
         stun_only: <span class="bool-val">false</span>,
@@ -601,7 +605,7 @@
     <span class="kw">use </span>std::{net::SocketAddr, time::Duration};
 
     <span class="kw">use </span>anyhow::Result;
-    <span class="kw">use </span>iroh_base::key::{NodeId, SecretKey};
+    <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
     <span class="kw">use </span>url::Url;
 
     <span class="kw">use super</span>::{create_dns_resolver, CleanupDropGuard};
@@ -872,13 +876,13 @@
     };
 
     <span class="kw">use </span>anyhow::{bail, <span class="prelude-ty">Result</span>};
+    <span class="kw">use </span>iroh_base::NodeId;
     <span class="kw">use </span>parking_lot::{Mutex, MutexGuard};
     <span class="kw">use </span>pkarr::SignedPacket;
 
     <span class="kw">use crate</span>::{
         dns::node_info::{node_id_from_hickory_name, NodeInfo},
         test_utils::dns_server::QueryHandler,
-        NodeId,
     };
 
     <span class="attr">#[derive(Debug, Clone)]

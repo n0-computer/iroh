@@ -803,18 +803,15 @@
 <a href="#802" id="802">802</a>
 <a href="#803" id="803">803</a>
 <a href="#804" id="804">804</a>
-<a href="#805" id="805">805</a>
-<a href="#806" id="806">806</a>
-<a href="#807" id="807">807</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#805" id="805">805</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     time::Instant,
 };
 
-<span class="kw">use </span>iroh_base::key::NodeId;
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 <span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>iroh_relay::RelayUrl;
 <span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>stun_rs::TransactionId;
@@ -829,9 +826,7 @@
 };
 <span class="kw">use crate</span>::{
     disco::{CallMeMaybe, Pong, SendAddr},
-    key::PublicKey,
     watchable::Watcher,
-    NodeAddr,
 };
 
 <span class="kw">mod </span>best_addr;
@@ -1434,8 +1429,9 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::net::Ipv4Addr;
 
+    <span class="kw">use </span>iroh_base::SecretKey;
+
     <span class="kw">use super</span>::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, <span class="kw-2">*</span>};
-    <span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
 
     <span class="kw">impl </span>NodeMap {
         <span class="attr">#[track_caller]

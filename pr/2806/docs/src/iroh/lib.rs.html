@@ -252,12 +252,7 @@
 <a href="#251" id="251">251</a>
 <a href="#252" id="252">252</a>
 <a href="#253" id="253">253</a>
-<a href="#254" id="254">254</a>
-<a href="#255" id="255">255</a>
-<a href="#256" id="256">256</a>
-<a href="#257" id="257">257</a>
-<a href="#258" id="258">258</a>
-<a href="#259" id="259">259</a></pre></div><pre class="rust"><code><span class="doccomment">//! Peer-to-peer QUIC connections.
+<a href="#254" id="254">254</a></pre></div><pre class="rust"><code><span class="doccomment">//! Peer-to-peer QUIC connections.
 //!
 //! iroh is a library to establish direct connectivity between peers.  It exposes an
 //! interface to [QUIC] connections and streams to the user, while implementing direct
@@ -443,7 +438,7 @@
 //! ```no_run
 //! use anyhow::{Context, Result};
 //! use futures_lite::StreamExt;
-//! use iroh::{ticket::NodeTicket, Endpoint, NodeAddr};
+//! use iroh::{Endpoint, NodeAddr};
 //!
 //! async fn accept() -&gt; Result&lt;()&gt; {
 //!     // To accept connections at least one ALPN must be configured.
@@ -471,15 +466,14 @@
 //!
 //! [QUIC]: https://quickwg.org
 //! [bi-directional streams]: crate::endpoint::Connection::open_bi
-//! [`NodeTicket`]: crate::ticket::NodeTicket
 //! [hole punching]: https://en.wikipedia.org/wiki/Hole_punching_(networking)
 //! [socket addresses]: https://doc.rust-lang.org/stable/std/net/enum.SocketAddr.html
 //! [STUN]: https://en.wikipedia.org/wiki/STUN
 //! [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
 //! [HTTP3]: https://en.wikipedia.org/wiki/HTTP/3
-//! [`SecretKey`]: crate::key::SecretKey
-//! [`PublicKey`]: crate::key::PublicKey
-//! [`RelayUrl`]: crate::relay::RelayUrl
+//! [`SecretKey`]: crate::SecretKey
+//! [`PublicKey`]: crate::PublicKey
+//! [`RelayUrl`]: crate::RelayUrl
 //! [`discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
 //! [number 0]: https://n0.computer
@@ -492,27 +486,23 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
 
-</span><span class="kw">pub mod </span>defaults;
-<span class="kw">mod </span>disco;
+</span><span class="kw">mod </span>disco;
+<span class="kw">mod </span>magicsock;
+
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>util;
+
+<span class="kw">pub mod </span>defaults;
 <span class="kw">pub mod </span>discovery;
 <span class="kw">pub mod </span>dns;
 <span class="kw">pub mod </span>endpoint;
-<span class="kw">mod </span>magicsock;
 <span class="kw">pub mod </span>metrics;
 <span class="kw">pub mod </span>protocol;
 <span class="kw">mod </span>tls;
 <span class="kw">pub mod </span>watchable;
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>util;
-
-<span class="kw">pub use </span>endpoint::{Endpoint, NodeAddr, RelayMode};
-<span class="kw">pub use </span>iroh_base::{
-    hash, key,
-    key::NodeId,
-    relay_map::{RelayMap, RelayNode, RelayUrl},
-    ticket,
-};
-<span class="kw">pub use </span>iroh_relay <span class="kw">as </span>relay;
+<span class="kw">pub use </span>endpoint::{Endpoint, RelayMode};
+<span class="kw">pub use </span>iroh_base::{KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
+<span class="kw">pub use </span>iroh_relay::{RelayMap, RelayNode};
 
 <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 </span><span class="kw">pub mod </span>test_utils;

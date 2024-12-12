@@ -168,7 +168,9 @@
 <a href="#167" id="167">167</a>
 <a href="#168" id="168">168</a>
 <a href="#169" id="169">169</a>
-<a href="#170" id="170">170</a></pre></div><pre class="rust"><code><span class="doccomment">//! A static discovery implementation that allows adding info for nodes manually.
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a></pre></div><pre class="rust"><code><span class="doccomment">//! A static discovery implementation that allows adding info for nodes manually.
 </span><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeMap, BTreeSet},
     net::SocketAddr,
@@ -177,8 +179,7 @@
 };
 
 <span class="kw">use </span>futures_lite::stream::{<span class="self">self</span>, StreamExt};
-<span class="kw">use </span>iroh_base::{key::NodeId, node_addr::NodeAddr};
-<span class="kw">use </span>iroh_relay::RelayUrl;
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl};
 
 <span class="kw">use super</span>::{Discovery, DiscoveryItem};
 
@@ -209,22 +210,25 @@
     ///
     /// Example:
     /// ```rust
-    /// use std::str::FromStr;
+    /// use std::{net::SocketAddr, str::FromStr};
     ///
-    /// use iroh_base::ticket::NodeTicket;
-    /// use iroh::{Endpoint, discovery::static_provider::StaticProvider};
+    /// use iroh::{discovery::static_provider::StaticProvider, Endpoint, NodeAddr};
     ///
-    /// # async fn example() -&gt; anyhow::Result&lt;()&gt; {
-    /// # #[derive(Default)] struct Args { tickets: Vec&lt;NodeTicket&gt; }
-    /// # let args = Args::default();
-    /// // get tickets from command line args
-    /// let tickets: Vec&lt;NodeTicket&gt; = args.tickets;
-    /// // create a StaticProvider from the tickets. Ticket info will be combined if multiple tickets refer to the same node.
-    /// let discovery = StaticProvider::from_node_addrs(tickets);
+    /// # fn get_addrs() -&gt; Vec&lt;NodeAddr&gt; {
+    /// #     Vec::new()
+    /// # }
+    /// # #[tokio::main]
+    /// # async fn main() -&gt; anyhow::Result&lt;()&gt; {
+    /// // get addrs from somewhere
+    /// let addrs = get_addrs();
+    ///
+    /// // create a StaticProvider from the list of addrs.
+    /// let discovery = StaticProvider::from_node_addrs(addrs);
     /// // create an endpoint with the discovery
     /// let endpoint = Endpoint::builder()
     ///     .add_discovery(|_| Some(discovery))
-    ///     .bind().await?;
+    ///     .bind()
+    ///     .await?;
     /// # Ok(())
     /// # }
     /// ```

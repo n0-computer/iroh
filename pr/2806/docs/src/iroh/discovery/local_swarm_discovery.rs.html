@@ -528,8 +528,7 @@
 <span class="kw">use </span>derive_more::FromStr;
 <span class="kw">use </span>futures_lite::stream::Boxed <span class="kw">as </span>BoxStream;
 <span class="kw">use </span>futures_util::FutureExt;
-<span class="kw">use </span>iroh_base::{key::PublicKey, node_addr::NodeAddr};
-<span class="kw">use </span>iroh_relay::RelayUrl;
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 <span class="kw">use </span>swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 <span class="kw">use </span>tokio::{
     sync::mpsc::{
@@ -544,7 +543,7 @@
 <span class="kw">use crate</span>::{
     discovery::{Discovery, DiscoveryItem},
     watchable::Watchable,
-    Endpoint, NodeId,
+    Endpoint,
 };
 
 <span class="doccomment">/// The n0 local swarm node discovery name
@@ -890,6 +889,7 @@
     /// tests)
     </span><span class="kw">mod </span>run_in_isolation {
         <span class="kw">use </span>futures_lite::StreamExt;
+        <span class="kw">use </span>iroh_base::SecretKey;
         <span class="kw">use </span>testresult::TestResult;
 
         <span class="kw">use </span><span class="kw">super</span>::<span class="kw">super</span>::<span class="kw-2">*</span>;
@@ -969,7 +969,7 @@
         }
 
         <span class="kw">fn </span>make_discoverer() -&gt; <span class="prelude-ty">Result</span>&lt;(PublicKey, LocalSwarmDiscovery)&gt; {
-            <span class="kw">let </span>node_id = <span class="kw">crate</span>::key::SecretKey::generate().public();
+            <span class="kw">let </span>node_id = SecretKey::generate().public();
             <span class="prelude-val">Ok</span>((node_id, LocalSwarmDiscovery::new(node_id)<span class="question-mark">?</span>))
         }
     }

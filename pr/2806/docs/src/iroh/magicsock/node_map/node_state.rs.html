@@ -1716,18 +1716,16 @@
 <a href="#1715" id="1715">1715</a>
 <a href="#1716" id="1716">1716</a>
 <a href="#1717" id="1717">1717</a>
-<a href="#1718" id="1718">1718</a>
-<a href="#1719" id="1719">1719</a>
-<a href="#1720" id="1720">1720</a>
-<a href="#1721" id="1721">1721</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1718" id="1718">1718</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     time::{Duration, Instant},
 };
 
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 <span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>iroh_relay::{protos::stun, RelayUrl};
+<span class="kw">use </span>iroh_relay::protos::stun;
 <span class="kw">use </span>netwatch::ip::is_unicast_link_local;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::sync::mpsc;
@@ -1741,11 +1739,9 @@
 };
 <span class="kw">use crate</span>::{
     disco::{<span class="self">self</span>, SendAddr},
-    key::PublicKey,
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
     util::relay_only_mode,
     watchable::{Watchable, Watcher},
-    NodeAddr, NodeId,
 };
 
 <span class="doccomment">/// Number of addresses that are not active that we keep around per node.
@@ -3148,12 +3144,10 @@
     <span class="kw">use </span>std::{collections::BTreeMap, net::Ipv4Addr};
 
     <span class="kw">use </span>best_addr::BestAddr;
+    <span class="kw">use </span>iroh_base::SecretKey;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use crate</span>::{
-        key::SecretKey,
-        magicsock::node_map::{NodeMap, NodeMapInner},
-    };
+    <span class="kw">use </span><span class="kw">crate</span>::magicsock::node_map::{NodeMap, NodeMapInner};
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_remote_infos() {

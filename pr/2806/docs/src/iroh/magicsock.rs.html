@@ -4050,10 +4050,7 @@
 <a href="#4049" id="4049">4049</a>
 <a href="#4050" id="4050">4050</a>
 <a href="#4051" id="4051">4051</a>
-<a href="#4052" id="4052">4052</a>
-<a href="#4053" id="4053">4053</a>
-<a href="#4054" id="4054">4054</a>
-<a href="#4055" id="4055">4055</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4052" id="4052">4052</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4089,9 +4086,9 @@
 <span class="kw">use </span>concurrent_queue::ConcurrentQueue;
 <span class="kw">use </span>futures_lite::{FutureExt, StreamExt};
 <span class="kw">use </span>futures_util::{stream::BoxStream, task::AtomicWaker};
-<span class="kw">use </span>iroh_base::key::NodeId;
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey, SharedSecret};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
-<span class="kw">use </span>iroh_relay::protos::stun;
+<span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
 <span class="kw">use </span>netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 <span class="kw">use </span>quinn::AsyncUdpSocket;
 <span class="kw">use </span>rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -4119,10 +4116,7 @@
     disco::{<span class="self">self</span>, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
-    endpoint::NodeAddr,
-    key::{PublicKey, SecretKey, SharedSecret},
     watchable::{Watchable, Watcher},
-    RelayMap, RelayUrl,
 };
 
 <span class="kw">mod </span>metrics;

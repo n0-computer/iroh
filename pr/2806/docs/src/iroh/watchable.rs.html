@@ -614,7 +614,7 @@
     }
 
     <span class="doccomment">/// Returns a future completing with `Ok(value)` once a new value is set, or with
-    /// [`Err(disconnected)`](Disconnected) if the connected [`Watchable`] was dropped.
+    /// [`Err(Disconnected)`](Disconnected) if the connected [`Watchable`] was dropped.
     </span><span class="kw">pub fn </span>updated(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; WatchNextFut&lt;T&gt; {
         WatchNextFut { watcher: <span class="self">self </span>}
     }

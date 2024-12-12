@@ -586,7 +586,7 @@
     }
 }
 
-<span class="attr">#[cfg(test)]
+<span class="attr">#[cfg(all(test, feature = <span class="string">"server"</span>))]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::net::Ipv4Addr;
 

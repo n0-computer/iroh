@@ -1888,10 +1888,7 @@
 <a href="#1887" id="1887">1887</a>
 <a href="#1888" id="1888">1888</a>
 <a href="#1889" id="1889">1889</a>
-<a href="#1890" id="1890">1890</a>
-<a href="#1891" id="1891">1891</a>
-<a href="#1892" id="1892">1892</a>
-<a href="#1893" id="1893">1893</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#1890" id="1890">1890</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -1917,7 +1914,8 @@
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>derive_more::Debug;
-<span class="kw">use </span>iroh_base::relay_map::RelayMap;
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
+<span class="kw">use </span>iroh_relay::RelayMap;
 <span class="kw">use </span>pin_project::pin_project;
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{debug, instrument, trace, warn};
@@ -1928,17 +1926,13 @@
         dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
     },
     dns::{default_resolver, DnsResolver},
-    key::{PublicKey, SecretKey},
     magicsock::{<span class="self">self</span>, Handle, QuicMappedAddr},
     tls,
     watchable::Watcher,
-    NodeId, RelayUrl,
 };
 
 <span class="kw">mod </span>rtt_actor;
 
-<span class="kw">pub use </span>bytes::Bytes;
-<span class="kw">pub use </span>iroh_base::node_addr::NodeAddr;
 <span class="comment">// Missing still: SendDatagram and ConnectionClose::frame_type's Type.
 </span><span class="kw">pub use </span>quinn::{
     AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream, Connection,

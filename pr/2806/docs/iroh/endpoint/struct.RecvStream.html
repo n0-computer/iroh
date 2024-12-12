@@ -51,7 +51,7 @@ to peer writes, and hence cannot be used as framing.</p>
 <p>This operation is cancel-safe.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.read_chunks" class="method"><h4 class="code-header">pub async fn <a href="#method.read_chunks" class="fn">read_chunks</a>(
     &amp;mut self,
-    bufs: &amp;mut [<a class="struct" href="struct.Bytes.html" title="struct iroh::endpoint::Bytes">Bytes</a>],
+    bufs: &amp;mut [Bytes],
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.usize.html">usize</a>&gt;, <a class="enum" href="enum.ReadError.html" title="enum iroh::endpoint::ReadError">ReadError</a>&gt;</h4></section></summary><div class="docblock"><p>Read the next segments of data</p>
 <p>Fills <code>bufs</code> with the segments of data beginning immediately after the
 last data yielded by <code>read</code> or <code>read_chunk</code>, or <code>None</code> if the stream was

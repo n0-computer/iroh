@@ -439,8 +439,7 @@
 <a href="#438" id="438">438</a>
 <a href="#439" id="439">439</a>
 <a href="#440" id="440">440</a>
-<a href="#441" id="441">441</a>
-<a href="#442" id="442">442</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#441" id="441">441</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -470,7 +469,7 @@
 //! [Pkarr]: https://app.pkarr.org
 //! [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
 //! [RFC1464]: https://www.rfc-editor.org/rfc/rfc1464
-//! [`RelayUrl`]: iroh_base::node_addr::RelayUrl
+//! [`RelayUrl`]: crate::RelayUrl
 //! [`N0_DNS_NODE_ORIGIN_PROD`]: crate::discovery::dns::N0_DNS_NODE_ORIGIN_PROD
 //! [`N0_DNS_NODE_ORIGIN_STAGING`]: crate::discovery::dns::N0_DNS_NODE_ORIGIN_STAGING
 
@@ -484,9 +483,8 @@
 
 <span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>hickory_resolver::{proto::ProtoError, Name, TokioResolver};
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, SecretKey};
 <span class="kw">use </span>url::Url;
-
-<span class="kw">use crate</span>::{key::SecretKey, NodeAddr, NodeId};
 
 <span class="doccomment">/// The DNS name for the iroh TXT record.
 </span><span class="kw">pub const </span>IROH_TXT_NAME: <span class="kw-2">&amp;</span>str = <span class="string">"_iroh"</span>;
@@ -850,7 +848,7 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::str::FromStr;
 
-    <span class="kw">use </span>iroh_base::key::SecretKey;
+    <span class="kw">use </span>iroh_base::SecretKey;
 
     <span class="kw">use </span><span class="kw">super</span>::NodeInfo;
 

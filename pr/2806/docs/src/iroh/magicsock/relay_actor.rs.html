@@ -879,8 +879,9 @@
 <span class="kw">use </span>anyhow::Context;
 <span class="kw">use </span>backoff::backoff::Backoff;
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
+<span class="kw">use </span>iroh_base::{NodeId, RelayUrl, PUBLIC_KEY_LENGTH};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
-<span class="kw">use </span>iroh_relay::{<span class="self">self </span><span class="kw">as </span>relay, client::ClientError, ReceivedMessage, RelayUrl, MAX_PACKET_SIZE};
+<span class="kw">use </span>iroh_relay::{<span class="self">self </span><span class="kw">as </span>relay, client::ClientError, ReceivedMessage, MAX_PACKET_SIZE};
 <span class="kw">use </span>tokio::{
     sync::{mpsc, oneshot},
     task::{JoinHandle, JoinSet},
@@ -889,9 +890,8 @@
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
-<span class="kw">use crate</span>::{
-    key::{NodeId, PUBLIC_KEY_LENGTH},
-    magicsock::{MagicSock, Metrics <span class="kw">as </span>MagicsockMetrics, RelayContents, RelayDatagramsQueue},
+<span class="kw">use </span><span class="kw">crate</span>::magicsock::{
+    MagicSock, Metrics <span class="kw">as </span>MagicsockMetrics, RelayContents, RelayDatagramsQueue,
 };
 
 <span class="doccomment">/// How long a non-home relay connection needs to be idle (last written to) before we close it.

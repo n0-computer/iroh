@@ -222,7 +222,8 @@
 <a href="#221" id="221">221</a>
 <a href="#222" id="222">222</a>
 <a href="#223" id="223">223</a>
-<a href="#224" id="224">224</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#224" id="224">224</a>
+<a href="#225" id="225">225</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     fmt::Debug,
     io,
     net::SocketAddr,
@@ -356,17 +357,18 @@
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>anyhow::Result;
+    <span class="kw">use </span>iroh_base::SecretKey;
     <span class="kw">use </span>netwatch::IpFamily;
     <span class="kw">use </span>tokio::sync::mpsc;
     <span class="kw">use </span>tracing::{info_span, Instrument};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use crate</span>::{key, tls};
+    <span class="kw">use </span><span class="kw">crate</span>::tls;
 
     <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/test/1"</span>;
 
-    <span class="kw">fn </span>wrap_socket(conn: <span class="kw">impl </span>AsyncUdpSocket) -&gt; <span class="prelude-ty">Result</span>&lt;(quinn::Endpoint, key::SecretKey)&gt; {
-        <span class="kw">let </span>key = key::SecretKey::generate();
+    <span class="kw">fn </span>wrap_socket(conn: <span class="kw">impl </span>AsyncUdpSocket) -&gt; <span class="prelude-ty">Result</span>&lt;(quinn::Endpoint, SecretKey)&gt; {
+        <span class="kw">let </span>key = SecretKey::generate();
         <span class="kw">let </span>quic_server_config = tls::make_server_config(<span class="kw-2">&amp;</span>key, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">false</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
         <span class="kw">let </span><span class="kw-2">mut </span>quic_ep = quinn::Endpoint::new_with_abstract_socket(

@@ -101,11 +101,11 @@
 
 </span><span class="kw">use </span>std::sync::Arc;
 
+<span class="kw">use </span>iroh_base::{PublicKey, SecretKey};
 <span class="kw">use </span>quinn::crypto::rustls::{NoInitialCipherSuite, QuicClientConfig, QuicServerConfig};
 <span class="kw">use </span>tracing::warn;
 
 <span class="kw">use </span><span class="self">self</span>::certificate::AlwaysResolvesCert;
-<span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
 
 <span class="kw">pub mod </span>certificate;
 <span class="kw">mod </span>verifier;

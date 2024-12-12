@@ -146,23 +146,19 @@
 <a href="#145" id="145">145</a>
 <a href="#146" id="146">146</a>
 <a href="#147" id="147">147</a>
-<a href="#148" id="148">148</a>
-<a href="#149" id="149">149</a></pre></div><pre class="rust"><code><span class="doccomment">//! Default values used in [`iroh`][`crate`]
+<a href="#148" id="148">148</a></pre></div><pre class="rust"><code><span class="doccomment">//! Default values used in [`iroh`][`crate`]
 
-</span><span class="kw">use </span>iroh_base::relay_map::QuicConfig;
-<span class="doccomment">/// The default QUIC port used by the Relay server to accept QUIC connections
+/// The default QUIC port used by the Relay server to accept QUIC connections
 /// for QUIC address discovery
 ///
 /// The port is "QUIC" typed on a phone keypad.
-</span><span class="kw">pub use </span>iroh_base::relay_map::DEFAULT_RELAY_QUIC_PORT;
+</span><span class="kw">pub use </span>iroh_relay::defaults::DEFAULT_RELAY_QUIC_PORT;
 <span class="doccomment">/// The default STUN port used by the Relay server.
 ///
 /// The STUN port as defined by [RFC
 /// 8489](&lt;https://www.rfc-editor.org/rfc/rfc8489#section-18.6&gt;)
-</span><span class="kw">pub use </span>iroh_base::relay_map::DEFAULT_STUN_PORT;
+</span><span class="kw">pub use </span>iroh_relay::defaults::DEFAULT_STUN_PORT;
 <span class="kw">use </span>url::Url;
-
-<span class="kw">use crate</span>::{RelayMap, RelayNode};
 
 <span class="doccomment">/// The default HTTP port used by the Relay server.
 </span><span class="kw">pub const </span>DEFAULT_HTTP_PORT: u16 = <span class="number">80</span>;
@@ -175,7 +171,7 @@
 
 <span class="doccomment">/// Production configuration.
 </span><span class="kw">pub mod </span>prod {
-    <span class="kw">use </span>iroh_base::relay_map::QuicConfig;
+    <span class="kw">use </span>iroh_relay::{RelayMap, RelayNode, RelayQuicConfig};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
@@ -206,7 +202,7 @@
             url: url.into(),
             stun_only: <span class="bool-val">false</span>,
             stun_port: DEFAULT_STUN_PORT,
-            quic: <span class="prelude-val">Some</span>(QuicConfig::default()),
+            quic: <span class="prelude-val">Some</span>(RelayQuicConfig::default()),
         }
     }
 
@@ -220,7 +216,7 @@
             url: url.into(),
             stun_only: <span class="bool-val">false</span>,
             stun_port: DEFAULT_STUN_PORT,
-            quic: <span class="prelude-val">Some</span>(QuicConfig::default()),
+            quic: <span class="prelude-val">Some</span>(RelayQuicConfig::default()),
         }
     }
 
@@ -234,7 +230,7 @@
             url: url.into(),
             stun_only: <span class="bool-val">false</span>,
             stun_port: DEFAULT_STUN_PORT,
-            quic: <span class="prelude-val">Some</span>(QuicConfig::default()),
+            quic: <span class="prelude-val">Some</span>(RelayQuicConfig::default()),
         }
     }
 }
@@ -245,6 +241,8 @@
 ///
 /// Note: we have staging servers in EU and NA, but no corresponding staging server for AP at this time.
 </span><span class="kw">pub mod </span>staging {
+    <span class="kw">use </span>iroh_relay::{RelayMap, RelayNode, RelayQuicConfig};
+
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="doccomment">/// Hostname of the default NA relay.
@@ -268,7 +266,7 @@
             url: url.into(),
             stun_only: <span class="bool-val">false</span>,
             stun_port: DEFAULT_STUN_PORT,
-            quic: <span class="prelude-val">Some</span>(QuicConfig::default()),
+            quic: <span class="prelude-val">Some</span>(RelayQuicConfig::default()),
         }
     }
 
@@ -282,7 +280,7 @@
             url: url.into(),
             stun_only: <span class="bool-val">false</span>,
             stun_port: DEFAULT_STUN_PORT,
-            quic: <span class="prelude-val">Some</span>(QuicConfig::default()),
+            quic: <span class="prelude-val">Some</span>(RelayQuicConfig::default()),
         }
     }
 }
