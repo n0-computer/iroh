@@ -136,20 +136,26 @@ impl NodeMap {
 
     /// Add the contact information for a node.
     pub(super) fn add_node_addr(&self, node_addr: NodeAddr, source: Source) {
-        self.inner.lock().unwrap().add_node_addr(node_addr, source)
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .add_node_addr(node_addr, source)
     }
 
     /// Number of nodes currently listed.
     pub(super) fn node_count(&self) -> usize {
-        self.inner.lock().unwrap().node_count()
+        self.inner.lock().expect("poisoned").node_count()
     }
 
     pub(super) fn receive_udp(&self, udp_addr: SocketAddr) -> Option<(PublicKey, QuicMappedAddr)> {
-        self.inner.lock().unwrap().receive_udp(udp_addr)
+        self.inner.lock().expect("poisoned").receive_udp(udp_addr)
     }
 
     pub(super) fn receive_relay(&self, relay_url: &RelayUrl, src: NodeId) -> QuicMappedAddr {
-        self.inner.lock().unwrap().receive_relay(relay_url, src)
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .receive_relay(relay_url, src)
     }
 
     pub(super) fn notify_ping_sent(
@@ -160,13 +166,23 @@ impl NodeMap {
         purpose: DiscoPingPurpose,
         msg_sender: tokio::sync::mpsc::Sender<ActorMessage>,
     ) {
-        if let Some(ep) = self.inner.lock().unwrap().get_mut(NodeStateKey::Idx(id)) {
+        if let Some(ep) = self
+            .inner
+            .lock()
+            .expect("poisoned")
+            .get_mut(NodeStateKey::Idx(id))
+        {
             ep.ping_sent(dst, tx_id, purpose, msg_sender);
         }
     }
 
     pub(super) fn notify_ping_timeout(&self, id: usize, tx_id: stun_rs::TransactionId) {
-        if let Some(ep) = self.inner.lock().unwrap().get_mut(NodeStateKey::Idx(id)) {
+        if let Some(ep) = self
+            .inner
+            .lock()
+            .expect("poisoned")
+            .get_mut(NodeStateKey::Idx(id))
+        {
             ep.ping_timeout(tx_id);
         }
     }
@@ -177,7 +193,7 @@ impl NodeMap {
     ) -> Option<QuicMappedAddr> {
         self.inner
             .lock()
-            .unwrap()
+            .expect("poisoned")
             .get(NodeStateKey::NodeId(node_key))
             .map(|ep| *ep.quic_mapped_addr())
     }
@@ -190,11 +206,17 @@ impl NodeMap {
         src: SendAddr,
         tx_id: TransactionId,
     ) -> PingHandled {
-        self.inner.lock().unwrap().handle_ping(sender, src, tx_id)
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .handle_ping(sender, src, tx_id)
     }
 
     pub(super) fn handle_pong(&self, sender: PublicKey, src: &DiscoMessageSource, pong: Pong) {
-        self.inner.lock().unwrap().handle_pong(sender, src, pong)
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .handle_pong(sender, src, pong)
     }
 
     #[must_use = "actions must be handled"]
@@ -203,7 +225,10 @@ impl NodeMap {
         sender: PublicKey,
         cm: CallMeMaybe,
     ) -> Vec<PingAction> {
-        self.inner.lock().unwrap().handle_call_me_maybe(sender, cm)
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .handle_call_me_maybe(sender, cm)
     }
 
     #[allow(clippy::type_complexity)]
@@ -217,7 +242,7 @@ impl NodeMap {
         Option<RelayUrl>,
         Vec<PingAction>,
     )> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().expect("poisoned");
         let ep = inner.get_mut(NodeStateKey::QuicMappedAddr(addr))?;
         let public_key = *ep.public_key();
         trace!(dest = %addr, node_id = %public_key.fmt_short(), "dst mapped to NodeId");
@@ -226,21 +251,21 @@ impl NodeMap {
     }
 
     pub(super) fn notify_shutdown(&self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().expect("poisoned");
         for (_, ep) in inner.node_states_mut() {
             ep.reset();
         }
     }
 
     pub(super) fn reset_node_states(&self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().expect("poisoned");
         for (_, ep) in inner.node_states_mut() {
             ep.note_connectivity_change();
         }
     }
 
     pub(super) fn nodes_stayin_alive(&self) -> Vec<PingAction> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().expect("poisoned");
         inner
             .node_states_mut()
             .flat_map(|(_idx, node_state)| node_state.stayin_alive())
@@ -253,7 +278,11 @@ impl NodeMap {
         // we can't avoid `collect` here since it would hold a lock for an indefinite time. Even if
         // we were to find this acceptable, dealing with the lifetimes of the mutex's guard and the
         // internal iterator will be a hassle, if possible at all.
-        self.inner.lock().unwrap().remote_infos_iter(now).collect()
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .remote_infos_iter(now)
+            .collect()
     }
 
     /// Returns a stream of [`ConnectionType`].
@@ -266,23 +295,26 @@ impl NodeMap {
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
     pub(super) fn conn_type_stream(&self, node_id: NodeId) -> anyhow::Result<ConnectionTypeStream> {
-        self.inner.lock().unwrap().conn_type_stream(node_id)
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .conn_type_stream(node_id)
     }
 
     /// Get the [`RemoteInfo`]s for the node identified by [`NodeId`].
     pub(super) fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
-        self.inner.lock().unwrap().remote_info(node_id)
+        self.inner.lock().expect("poisoned").remote_info(node_id)
     }
 
     /// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
     pub(super) fn prune_inactive(&self) {
-        self.inner.lock().unwrap().prune_inactive();
+        self.inner.lock().expect("poisoned").prune_inactive();
     }
 
     pub(crate) fn on_direct_addr_discovered(&self, discovered: BTreeSet<SocketAddr>) {
         self.inner
             .lock()
-            .unwrap()
+            .expect("poisoned")
             .on_direct_addr_discovered(discovered);
     }
 }

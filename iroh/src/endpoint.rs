@@ -28,7 +28,7 @@ use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use pin_project::pin_project;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, instrument, trace, warn};
+use tracing::{debug, error, instrument, trace, warn};
 use url::Url;
 
 use crate::{
@@ -144,7 +144,7 @@ impl Builder {
             .collect::<Vec<_>>();
         let discovery: Option<Box<dyn Discovery>> = match discovery.len() {
             0 => None,
-            1 => Some(discovery.into_iter().next().unwrap()),
+            1 => Some(discovery.into_iter().next().expect("checked length")),
             _ => Some(Box::new(ConcurrentDiscovery::from_services(discovery))),
         };
         let msock_opts = magicsock::Options {
@@ -313,12 +313,16 @@ impl Builder {
     pub fn discovery_dht(mut self) -> Self {
         use crate::discovery::pkarr::dht::DhtDiscovery;
         self.discovery.push(Box::new(|secret_key| {
-            Some(Box::new(
-                DhtDiscovery::builder()
-                    .secret_key(secret_key.clone())
-                    .build()
-                    .unwrap(),
-            ))
+            match DhtDiscovery::builder()
+                .secret_key(secret_key.clone())
+                .build()
+            {
+                Ok(discovery) => Some(Box::new(discovery)),
+                Err(err) => {
+                    error!("failed to build discovery: {:?}", err);
+                    None
+                }
+            }
         }));
         self
     }

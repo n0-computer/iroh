@@ -74,7 +74,7 @@ impl StaticProvider {
     pub fn set_node_addr(&self, info: impl Into<NodeAddr>) -> Option<NodeAddr> {
         let last_updated = SystemTime::now();
         let info: NodeAddr = info.into();
-        let mut guard = self.nodes.write().unwrap();
+        let mut guard = self.nodes.write().expect("poisoned");
         let previous = guard.insert(
             info.node_id,
             NodeInfo {
@@ -96,7 +96,7 @@ impl StaticProvider {
     pub fn add_node_addr(&self, info: impl Into<NodeAddr>) {
         let info: NodeAddr = info.into();
         let last_updated = SystemTime::now();
-        let mut guard = self.nodes.write().unwrap();
+        let mut guard = self.nodes.write().expect("poisoned");
         match guard.entry(info.node_id) {
             Entry::Occupied(mut entry) => {
                 let existing = entry.get_mut();
@@ -116,7 +116,7 @@ impl StaticProvider {
 
     /// Get node info for the given node id.
     pub fn get_node_addr(&self, node_id: NodeId) -> Option<NodeAddr> {
-        let guard = self.nodes.read().unwrap();
+        let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id)?;
         Some(NodeAddr {
             node_id,
@@ -127,7 +127,7 @@ impl StaticProvider {
 
     /// Remove node info for the given node id.
     pub fn remove_node_addr(&self, node_id: NodeId) -> Option<NodeAddr> {
-        let mut guard = self.nodes.write().unwrap();
+        let mut guard = self.nodes.write().expect("poisoned");
         let info = guard.remove(&node_id)?;
         Some(NodeAddr {
             node_id,
@@ -145,7 +145,7 @@ impl Discovery for StaticProvider {
         _endpoint: crate::Endpoint,
         node_id: NodeId,
     ) -> Option<futures_lite::stream::Boxed<anyhow::Result<super::DiscoveryItem>>> {
-        let guard = self.nodes.read().unwrap();
+        let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id);
         match info {
             Some(addr_info) => {

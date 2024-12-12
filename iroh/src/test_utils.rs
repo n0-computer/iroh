@@ -90,10 +90,9 @@ pub async fn run_relay_server_with(
         #[cfg(feature = "metrics")]
         metrics_addr: None,
     };
-    let server = Server::spawn(config).await.unwrap();
-    let url: RelayUrl = format!("https://{}", server.https_addr().expect("configured"))
-        .parse()
-        .unwrap();
+    let server = Server::spawn(config).await?;
+    let url: RelayUrl = format!("https://{}", server.https_addr().expect("configured")).parse()?;
+
     let quic = server
         .quic_addr()
         .map(|addr| RelayQuicConfig { port: addr.port() });
@@ -102,8 +101,7 @@ pub async fn run_relay_server_with(
         stun_only: false,
         stun_port: server.stun_addr().map_or(DEFAULT_STUN_PORT, |s| s.port()),
         quic,
-    }])
-    .unwrap();
+    }])?;
     Ok((m, url, server))
 }
 
@@ -423,7 +421,7 @@ pub(crate) mod pkarr_dns_state {
 
         pub fn upsert(&self, signed_packet: SignedPacket) -> anyhow::Result<bool> {
             let node_id = NodeId::from_bytes(&signed_packet.public_key().to_bytes())?;
-            let mut map = self.packets.lock().unwrap();
+            let mut map = self.packets.lock().expect("poisoned");
             let updated = match map.entry(node_id) {
                 hash_map::Entry::Vacant(e) => {
                     e.insert(signed_packet);
@@ -449,7 +447,7 @@ pub(crate) mod pkarr_dns_state {
         where
             F: FnOnce(Option<&mut SignedPacket>) -> T,
         {
-            let mut map = self.packets.lock().unwrap();
+            let mut map = self.packets.lock().expect("poisoned");
             let packet = map.get_mut(node_id);
             cb(packet)
         }

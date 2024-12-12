@@ -1342,7 +1342,12 @@ impl MagicSock {
     fn send_queued_call_me_maybes(&self) {
         let msg = self.direct_addrs.to_call_me_maybe_message();
         let msg = disco::Message::CallMeMaybe(msg);
-        for (public_key, url) in self.pending_call_me_maybes.lock().unwrap().drain() {
+        for (public_key, url) in self
+            .pending_call_me_maybes
+            .lock()
+            .expect("poisoned")
+            .drain()
+        {
             if !self.send_disco_message_relay(&url, public_key, msg.clone()) {
                 warn!(node = %public_key.fmt_short(), "relay channel full, dropping call-me-maybe");
             }
@@ -1369,7 +1374,7 @@ impl MagicSock {
             Err(last_refresh_ago) => {
                 self.pending_call_me_maybes
                     .lock()
-                    .unwrap()
+                    .expect("poisoned")
                     .insert(dst_node, url.clone());
                 debug!(
                     ?last_refresh_ago,
@@ -1464,7 +1469,7 @@ impl DirectAddrUpdateState {
     /// scheduling it for later.
     fn schedule_run(&self, why: &'static str) {
         if self.is_running() {
-            let _ = self.want_update.lock().unwrap().insert(why);
+            let _ = self.want_update.lock().expect("poisoned").insert(why);
         } else {
             self.run(why);
         }
@@ -1487,7 +1492,7 @@ impl DirectAddrUpdateState {
 
     /// Returns the next update, if one is set.
     fn next_update(&self) -> Option<&'static str> {
-        self.want_update.lock().unwrap().take()
+        self.want_update.lock().expect("poisoned").take()
     }
 }
 
@@ -1684,7 +1689,7 @@ impl DiscoSecrets {
     where
         F: FnOnce(&mut SharedSecret) -> T,
     {
-        let mut inner = self.0.lock().unwrap();
+        let mut inner = self.0.lock().expect("poisoned");
         let x = inner
             .entry(node_id)
             .or_insert_with(|| secret.shared(&node_id));
@@ -1892,7 +1897,7 @@ impl quinn::UdpPoller for IoPoller {
             0 => {
                 self.relay_send_waker
                     .lock()
-                    .unwrap()
+                    .expect("poisoned")
                     .replace(cx.waker().clone());
                 Poll::Pending
             }
@@ -2238,7 +2243,7 @@ impl Actor {
                         loopback,
                     } = tokio::task::spawn_blocking(LocalAddresses::new)
                         .await
-                        .unwrap();
+                        .expect("spawn paniced");
                     if ips.is_empty() && addrs.is_empty() {
                         // Include loopback addresses only if there are no other interfaces
                         // or public addresses, this allows testing offline.
@@ -2578,7 +2583,7 @@ struct DiscoveredDirectAddrs {
 impl DiscoveredDirectAddrs {
     /// Updates the direct addresses, returns `true` if they changed, `false` if not.
     fn update(&self, addrs: BTreeSet<DirectAddr>) -> bool {
-        *self.updated_at.write().unwrap() = Some(Instant::now());
+        *self.updated_at.write().expect("poisoned") = Some(Instant::now());
         let updated = self.addrs.update(addrs).is_ok();
         if updated {
             event!(
