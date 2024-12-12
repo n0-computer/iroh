@@ -84,16 +84,18 @@
 <a href="#83" id="83">83</a>
 <a href="#84" id="84">84</a>
 <a href="#85" id="85">85</a>
-<a href="#86" id="86">86</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS node discovery for iroh
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS node discovery for iroh
 
 </span><span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::stream::Boxed <span class="kw">as </span>BoxStream;
+<span class="kw">use </span>iroh_base::NodeId;
 
 <span class="kw">use crate</span>::{
     discovery::{Discovery, DiscoveryItem},
     dns::ResolverExt,
     endpoint::force_staging_infra,
-    Endpoint, NodeId,
+    Endpoint,
 };
 
 <span class="doccomment">/// The n0 testing DNS node origin, for production.

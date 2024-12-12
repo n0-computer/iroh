@@ -234,6 +234,7 @@
 //! Technologies (UK) Ltd.
 </span><span class="kw">use </span>std::sync::Arc;
 
+<span class="kw">use </span>iroh_base::PublicKey;
 <span class="kw">use </span>rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     pki_types::CertificateDer <span class="kw">as </span>Certificate,
@@ -243,7 +244,6 @@
 };
 
 <span class="kw">use </span><span class="kw">super</span>::certificate;
-<span class="kw">use </span><span class="kw">crate</span>::key::PublicKey;
 
 <span class="doccomment">/// The protocol versions supported by this verifier.
 ///

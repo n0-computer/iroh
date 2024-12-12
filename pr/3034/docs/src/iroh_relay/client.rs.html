@@ -1191,8 +1191,7 @@
 <a href="#1190" id="1190">1190</a>
 <a href="#1191" id="1191">1191</a>
 <a href="#1192" id="1192">1192</a>
-<a href="#1193" id="1193">1193</a>
-<a href="#1194" id="1194">1194</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#1193" id="1193">1193</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -1218,7 +1217,7 @@
     Request,
 };
 <span class="kw">use </span>hyper_util::rt::TokioIo;
-<span class="kw">use </span>iroh_base::key::{NodeId, PublicKey, SecretKey};
+<span class="kw">use </span>iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 <span class="kw">use </span>rand::Rng;
 <span class="kw">use </span>rustls::client::Resumption;
 <span class="kw">use </span>streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
@@ -1240,7 +1239,6 @@
     defaults::timeouts::<span class="kw-2">*</span>,
     http::{Protocol, RELAY_PATH},
     protos::relay::DerpCodec,
-    RelayUrl,
 };
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>conn;

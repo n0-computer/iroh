@@ -314,7 +314,7 @@
 </span><span class="kw">use </span>std::collections::{HashMap, HashSet};
 
 <span class="kw">use </span>anyhow::{bail, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>iroh_base::key::NodeId;
+<span class="kw">use </span>iroh_base::NodeId;
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tracing::{trace, warn};
@@ -538,7 +538,7 @@
     <span class="kw">use </span>std::time::Duration;
 
     <span class="kw">use </span>bytes::Bytes;
-    <span class="kw">use </span>iroh_base::key::SecretKey;
+    <span class="kw">use </span>iroh_base::SecretKey;
     <span class="kw">use </span>tokio::io::DuplexStream;
     <span class="kw">use </span>tokio_util::codec::{Framed, FramedRead};
 

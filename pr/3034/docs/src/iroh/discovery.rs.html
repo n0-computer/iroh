@@ -937,8 +937,7 @@
 //! ```no_run
 //! use iroh::{
 //!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
-//!     key::SecretKey,
-//!     Endpoint,
+//!     Endpoint, SecretKey,
 //! };
 //!
 //! # async fn wrapper() -&gt; anyhow::Result&lt;()&gt; {
@@ -972,7 +971,7 @@
 //! # use iroh::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 //! # use iroh::discovery::pkarr::PkarrPublisher;
 //! # use iroh::discovery::ConcurrentDiscovery;
-//! # use iroh::key::SecretKey;
+//! # use iroh::SecretKey;
 //! #
 //! # async fn wrapper() -&gt; anyhow::Result&lt;()&gt; {
 //! # let secret_key = SecretKey::generate();
@@ -986,7 +985,7 @@
 //! # }
 //! ```
 //!
-//! [`RelayUrl`]: crate::relay::RelayUrl
+//! [`RelayUrl`]: crate::RelayUrl
 //! [`Builder::discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: dns::DnsDiscovery
 //! [Number 0]: https://n0.computer
@@ -1003,12 +1002,11 @@
 
 <span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::stream::{Boxed <span class="kw">as </span>BoxStream, StreamExt};
-<span class="kw">use </span>iroh_base::node_addr::NodeAddr;
-<span class="kw">use </span>iroh_relay::RelayUrl;
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl};
 <span class="kw">use </span>tokio::{sync::oneshot, task::JoinHandle};
 <span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
 
-<span class="kw">use crate</span>::{Endpoint, NodeId};
+<span class="kw">use </span><span class="kw">crate</span>::Endpoint;
 
 <span class="kw">pub mod </span>dns;
 
@@ -1032,7 +1030,7 @@
 /// discovery information changes. If a discovery mechanism requires a periodic
 /// refresh, it should start its own task.
 ///
-/// [`RelayUrl`]: crate::relay::RelayUrl
+/// [`RelayUrl`]: crate::RelayUrl
 </span><span class="kw">pub trait </span>Discovery: std::fmt::Debug + Send + Sync {
     <span class="doccomment">/// Publishes the given [`RelayUrl`] and direct addreesses to the discovery mechanism.
     ///
@@ -1334,11 +1332,12 @@
         time::SystemTime,
     };
 
+    <span class="kw">use </span>iroh_base::SecretKey;
     <span class="kw">use </span>rand::Rng;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use crate</span>::{key::SecretKey, RelayMode};
+    <span class="kw">use </span><span class="kw">crate</span>::RelayMode;
 
     <span class="kw">type </span>InfoStore = HashMap&lt;NodeId, (<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;, BTreeSet&lt;SocketAddr&gt;, u64)&gt;;
 
@@ -1625,7 +1624,8 @@
     <span class="kw">use </span>std::time::Duration;
 
     <span class="kw">use </span>anyhow::Result;
-    <span class="kw">use </span>iroh_base::key::SecretKey;
+    <span class="kw">use </span>iroh_base::{NodeAddr, SecretKey};
+    <span class="kw">use </span>iroh_relay::RelayMap;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
     <span class="kw">use crate</span>::{
@@ -1636,7 +1636,7 @@
             pkarr_dns_state::State,
             run_relay_server, DnsPkarrServer,
         },
-        Endpoint, NodeAddr, RelayMap, RelayMode,
+        Endpoint, RelayMode,
     };
 
     <span class="kw">const </span>PUBLISH_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);

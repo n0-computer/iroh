@@ -410,8 +410,7 @@
 <a href="#409" id="409">409</a>
 <a href="#410" id="410">410</a>
 <a href="#411" id="411">411</a>
-<a href="#412" id="412">412</a>
-<a href="#413" id="413">413</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
+<a href="#412" id="412">412</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
 //! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
@@ -451,9 +450,9 @@
 //! [pkarr]: https://pkarr.org
 //! [DNS Resource Records]: https://en.wikipedia.org/wiki/Domain_Name_System#Resource_records
 //! [Mainline DHT]: https://en.wikipedia.org/wiki/Mainline_DHT
-//! [`SecretKey`]: crate::key::SecretKey
-//! [`PublicKey`]: crate::key::PublicKey
-//! [`NodeId`]: crate::key::NodeId
+//! [`SecretKey`]: crate::SecretKey
+//! [`PublicKey`]: crate::PublicKey
+//! [`NodeId`]: crate::NodeId
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
 //! [`DhtDiscovery`]: dht::DhtDiscovery
 
@@ -461,7 +460,7 @@
 
 <span class="kw">use </span>anyhow::{anyhow, bail, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_util::stream::BoxStream;
-<span class="kw">use </span>iroh_relay::RelayUrl;
+<span class="kw">use </span>iroh_base::{NodeId, RelayUrl, SecretKey};
 <span class="kw">use </span>pkarr::SignedPacket;
 <span class="kw">use </span>tokio::{
     task::JoinHandle,
@@ -475,8 +474,7 @@
     discovery::{Discovery, DiscoveryItem},
     dns::node_info::NodeInfo,
     endpoint::force_staging_infra,
-    key::SecretKey,
-    Endpoint, NodeId,
+    Endpoint,
 };
 
 <span class="attr">#[cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)]
@@ -524,7 +522,7 @@
 ///
 /// [pkarr]: https://pkarr.org
 /// [module docs]: crate::discovery::pkarr
-/// [`RelayUrl`]: crate::relay::RelayUrl
+/// [`RelayUrl`]: crate::RelayUrl
 /// [`ConcurrentDiscovery`]: super::ConcurrentDiscovery
 </span><span class="attr">#[derive(derive_more::Debug, Clone)]
 </span><span class="kw">pub struct </span>PkarrPublisher {

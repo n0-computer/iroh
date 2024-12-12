@@ -1152,7 +1152,7 @@
 };
 <span class="kw">use </span>hyper::body::Incoming;
 <span class="attr">#[cfg(feature = <span class="string">"test-utils"</span>)]
-</span><span class="kw">use </span>iroh_base::node_addr::RelayUrl;
+</span><span class="kw">use </span>iroh_base::RelayUrl;
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>tokio::{
     net::{TcpListener, UdpSocket},
@@ -1886,7 +1886,7 @@
 
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>http::header::UPGRADE;
-    <span class="kw">use </span>iroh_base::{key::SecretKey, node_addr::RelayUrl};
+    <span class="kw">use </span>iroh_base::SecretKey;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{

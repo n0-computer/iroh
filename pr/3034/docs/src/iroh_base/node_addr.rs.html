@@ -116,8 +116,7 @@
 <a href="#115" id="115">115</a>
 <a href="#116" id="116">116</a>
 <a href="#117" id="117">117</a>
-<a href="#118" id="118">118</a>
-<a href="#119" id="119">119</a></pre></div><pre class="rust"><code><span class="doccomment">//! Addressing for iroh nodes.
+<a href="#118" id="118">118</a></pre></div><pre class="rust"><code><span class="doccomment">//! Addressing for iroh nodes.
 //!
 //! This module contains some common addressing types for iroh.  A node is uniquely
 //! identified by the [`NodeId`] but that does not make it addressable on the network layer.
@@ -129,8 +128,7 @@
 
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
-<span class="kw">use </span><span class="kw">crate</span>::key::{NodeId, PublicKey};
-<span class="kw">pub use </span><span class="kw">crate</span>::relay_url::RelayUrl;
+<span class="kw">use crate</span>::{NodeId, PublicKey, RelayUrl};
 
 <span class="doccomment">/// Network-level addressing information for an iroh node.
 ///

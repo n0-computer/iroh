@@ -1318,9 +1318,7 @@
 <a href="#1317" id="1317">1317</a>
 <a href="#1318" id="1318">1318</a>
 <a href="#1319" id="1319">1319</a>
-<a href="#1320" id="1320">1320</a>
-<a href="#1321" id="1321">1321</a>
-<a href="#1322" id="1322">1322</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1320" id="1320">1320</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -1337,10 +1335,10 @@
 <span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>hickory_resolver::TokioResolver <span class="kw">as </span>DnsResolver;
-<span class="kw">use </span>iroh_base::relay_map::{RelayMap, RelayNode, RelayUrl};
+<span class="kw">use </span>iroh_base::RelayUrl;
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>iroh_relay::protos::stun;
+<span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
 <span class="kw">use </span>netwatch::{IpFamily, UdpSocket};
 <span class="kw">use </span>tokio::{
     sync::{<span class="self">self</span>, mpsc, oneshot},
@@ -2130,16 +2128,13 @@
 
     </span><span class="kw">use </span>std::sync::Arc;
 
-    <span class="kw">use </span>iroh_base::relay_map::QuicConfig;
-    <span class="kw">use </span>iroh_relay::server;
-
-    <span class="kw">use </span><span class="kw">crate</span>::RelayNode;
+    <span class="kw">use </span>iroh_relay::{server, RelayNode, RelayQuicConfig};
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>relay() -&gt; (server::Server, Arc&lt;RelayNode&gt;) {
         <span class="kw">let </span>server = server::Server::spawn(server::testing::server_config())
             .<span class="kw">await
             </span>.expect(<span class="string">"should serve relay"</span>);
-        <span class="kw">let </span>quic = <span class="prelude-val">Some</span>(QuicConfig {
+        <span class="kw">let </span>quic = <span class="prelude-val">Some</span>(RelayQuicConfig {
             port: server.quic_addr().expect(<span class="string">"server should run quic"</span>).port(),
         });
         <span class="kw">let </span>node_desc = RelayNode {
@@ -2186,6 +2181,8 @@
         </span><span class="kw">use </span>std::{net::IpAddr, sync::Arc};
 
         <span class="kw">use </span>anyhow::Result;
+        <span class="kw">use </span>iroh_base::RelayUrl;
+        <span class="kw">use </span>iroh_relay::RelayNode;
         <span class="kw">use </span>tokio::{
             net,
             sync::{oneshot, Mutex},
@@ -2193,7 +2190,6 @@
         <span class="kw">use </span>tracing::{debug, trace};
 
         <span class="kw">use super</span>::<span class="kw-2">*</span>;
-        <span class="kw">use crate</span>::{RelayMap, RelayNode, RelayUrl};
 
         <span class="doccomment">/// A drop guard to clean up test infrastructure.
         ///

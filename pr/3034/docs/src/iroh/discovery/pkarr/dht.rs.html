@@ -458,9 +458,7 @@
 <a href="#457" id="457">457</a>
 <a href="#458" id="458">458</a>
 <a href="#459" id="459">459</a>
-<a href="#460" id="460">460</a>
-<a href="#461" id="461">461</a>
-<a href="#462" id="462">462</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
+<a href="#460" id="460">460</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
 //!
 //! This module contains pkarr-based node discovery for iroh which can use both pkarr
 //! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
@@ -476,8 +474,7 @@
 
 <span class="kw">use </span>futures_lite::{stream::Boxed, StreamExt};
 <span class="kw">use </span>genawaiter::sync::{Co, Gen};
-<span class="kw">use </span>iroh_base::node_addr::NodeAddr;
-<span class="kw">use </span>iroh_relay::RelayUrl;
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 <span class="kw">use </span>pkarr::{
     PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
     RelaySettings, SignedPacket,
@@ -491,8 +488,7 @@
         Discovery, DiscoveryItem,
     },
     dns::node_info::NodeInfo,
-    key::SecretKey,
-    Endpoint, NodeId,
+    Endpoint,
 };
 
 <span class="doccomment">/// Republish delay for the DHT.
@@ -867,7 +863,7 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::collections::BTreeSet;
 
-    <span class="kw">use </span>iroh_base::node_addr::RelayUrl;
+    <span class="kw">use </span>iroh_base::RelayUrl;
     <span class="kw">use </span>pkarr::mainline::dht::DhtSettings;
     <span class="kw">use </span>testresult::TestResult;
 

@@ -838,11 +838,11 @@
 
 <span class="kw">use </span>anyhow::{bail, ensure};
 <span class="kw">use </span>bytes::{Buf, BufMut, Bytes, BytesMut};
-<span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
+<span class="attr">#[cfg(any(test, feature = <span class="string">"server"</span>))]
 </span><span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>futures_sink::Sink;
 <span class="kw">use </span>futures_util::SinkExt;
-<span class="kw">use </span>iroh_base::key::{PublicKey, SecretKey, Signature, PUBLIC_KEY_LENGTH};
+<span class="kw">use </span>iroh_base::{PublicKey, SecretKey, Signature, PUBLIC_KEY_LENGTH};
 <span class="kw">use </span>postcard::experimental::max_size::MaxSize;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio_util::codec::{Decoder, Encoder};

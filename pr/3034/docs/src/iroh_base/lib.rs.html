@@ -15,21 +15,47 @@
 <a href="#14" id="14">14</a>
 <a href="#15" id="15">15</a>
 <a href="#16" id="16">16</a>
-<a href="#17" id="17">17</a></pre></div><pre class="rust"><code><span class="doccomment">//! Base types and utilities for Iroh
+<a href="#17" id="17">17</a>
+<a href="#18" id="18">18</a>
+<a href="#19" id="19">19</a>
+<a href="#20" id="20">20</a>
+<a href="#21" id="21">21</a>
+<a href="#22" id="22">22</a>
+<a href="#23" id="23">23</a>
+<a href="#24" id="24">24</a>
+<a href="#25" id="25">25</a>
+<a href="#26" id="26">26</a>
+<a href="#27" id="27">27</a>
+<a href="#28" id="28">28</a>
+<a href="#29" id="29">29</a>
+<a href="#30" id="30">30</a></pre></div><pre class="rust"><code><span class="doccomment">//! Base types and utilities for Iroh
 </span><span class="attr">#![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
 
-#[cfg(feature = <span class="string">"base32"</span>)]
+</span><span class="comment">// TODO: remove
+</span><span class="attr">#[cfg(feature = <span class="string">"base32"</span>)]
 </span><span class="kw">pub mod </span>base32;
+
+<span class="comment">// TODO: move to own crate
+</span><span class="attr">#[cfg(feature = <span class="string">"ticket"</span>)]
+</span><span class="kw">pub mod </span>ticket;
+
 <span class="attr">#[cfg(feature = <span class="string">"hash"</span>)]
-</span><span class="kw">pub mod </span>hash;
+</span><span class="kw">mod </span>hash;
 <span class="attr">#[cfg(feature = <span class="string">"key"</span>)]
-</span><span class="kw">pub mod </span>key;
+</span><span class="kw">mod </span>key;
 <span class="attr">#[cfg(feature = <span class="string">"key"</span>)]
-</span><span class="kw">pub mod </span>node_addr;
-<span class="attr">#[cfg(feature = <span class="string">"relay"</span>)]
-</span><span class="kw">pub mod </span>relay_map;
+</span><span class="kw">mod </span>node_addr;
 <span class="attr">#[cfg(feature = <span class="string">"relay"</span>)]
 </span><span class="kw">mod </span>relay_url;
-<span class="attr">#[cfg(feature = <span class="string">"ticket"</span>)]
-</span><span class="kw">pub mod </span>ticket;
+
+<span class="attr">#[cfg(feature = <span class="string">"hash"</span>)]
+</span><span class="kw">pub use </span><span class="self">self</span>::hash::{BlobFormat, Hash, HashAndFormat};
+<span class="attr">#[cfg(feature = <span class="string">"key"</span>)]
+</span><span class="kw">pub use </span><span class="self">self</span>::key::{
+    KeyParsingError, NodeId, PublicKey, SecretKey, SharedSecret, Signature, PUBLIC_KEY_LENGTH,
+};
+<span class="attr">#[cfg(feature = <span class="string">"key"</span>)]
+</span><span class="kw">pub use </span><span class="self">self</span>::node_addr::NodeAddr;
+<span class="attr">#[cfg(feature = <span class="string">"relay"</span>)]
+</span><span class="kw">pub use </span><span class="self">self</span>::relay_url::RelayUrl;
 </code></pre></div></section></main></body></html>

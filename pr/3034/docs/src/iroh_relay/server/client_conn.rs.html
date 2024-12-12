@@ -807,7 +807,7 @@
 <span class="kw">use </span>futures_lite::FutureExt;
 <span class="kw">use </span>futures_sink::Sink;
 <span class="kw">use </span>futures_util::{SinkExt, Stream, StreamExt};
-<span class="kw">use </span>iroh_base::key::NodeId;
+<span class="kw">use </span>iroh_base::NodeId;
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -1311,7 +1311,7 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>anyhow::bail;
     <span class="kw">use </span>bytes::Bytes;
-    <span class="kw">use </span>iroh_base::key::SecretKey;
+    <span class="kw">use </span>iroh_base::SecretKey;
     <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tokio_util::codec::Framed;
 

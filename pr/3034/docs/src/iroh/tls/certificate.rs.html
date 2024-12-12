@@ -441,8 +441,7 @@
 <a href="#440" id="440">440</a>
 <a href="#441" id="441">441</a>
 <a href="#442" id="442">442</a>
-<a href="#443" id="443">443</a>
-<a href="#444" id="444">444</a></pre></div><pre class="rust"><code><span class="doccomment">//! X.509 certificate handling.
+<a href="#443" id="443">443</a></pre></div><pre class="rust"><code><span class="doccomment">//! X.509 certificate handling.
 //!
 //! This module handles generation, signing, and verification of certificates.
 //!
@@ -452,9 +451,8 @@
 </span><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>der::{asn1::OctetStringRef, Decode, Encode, Sequence};
+<span class="kw">use </span>iroh_base::{PublicKey, SecretKey, Signature};
 <span class="kw">use </span>x509_parser::prelude::<span class="kw-2">*</span>;
-
-<span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey, Signature};
 
 <span class="doccomment">/// The libp2p Public Key Extension is a X.509 extension
 /// with the Object Identifier 1.3.6.1.4.1.53594.1.1,
@@ -582,10 +580,10 @@
 /// and a signature performed using the private host key.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>P2pExtension {
-    public_key: <span class="kw">crate</span>::key::PublicKey,
+    public_key: PublicKey,
     <span class="doccomment">/// This signature provides cryptographic proof that the peer was
     /// in possession of the private host key at the time the certificate was signed.
-    </span>signature: <span class="kw">crate</span>::key::Signature,
+    </span>signature: Signature,
 }
 
 <span class="doccomment">/// An error that occurs during certificate generation.
