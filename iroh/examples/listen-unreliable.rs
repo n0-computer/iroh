@@ -5,7 +5,7 @@
 //!     $ cargo run --example listen-unreliable
 use anyhow::Context;
 use futures_lite::StreamExt;
-use iroh::{key::SecretKey, Endpoint, RelayMode};
+use iroh::{Endpoint, RelayMode, SecretKey};
 use tracing::{info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`

@@ -184,7 +184,7 @@
 //! ```no_run
 //! use anyhow::{Context, Result};
 //! use futures_lite::StreamExt;
-//! use iroh::{ticket::NodeTicket, Endpoint, NodeAddr};
+//! use iroh::{Endpoint, NodeAddr};
 //!
 //! async fn accept() -> Result<()> {
 //!     // To accept connections at least one ALPN must be configured.
@@ -212,15 +212,14 @@
 //!
 //! [QUIC]: https://quickwg.org
 //! [bi-directional streams]: crate::endpoint::Connection::open_bi
-//! [`NodeTicket`]: crate::ticket::NodeTicket
 //! [hole punching]: https://en.wikipedia.org/wiki/Hole_punching_(networking)
 //! [socket addresses]: https://doc.rust-lang.org/stable/std/net/enum.SocketAddr.html
 //! [STUN]: https://en.wikipedia.org/wiki/STUN
 //! [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
 //! [HTTP3]: https://en.wikipedia.org/wiki/HTTP/3
-//! [`SecretKey`]: crate::key::SecretKey
-//! [`PublicKey`]: crate::key::PublicKey
-//! [`RelayUrl`]: crate::relay::RelayUrl
+//! [`SecretKey`]: crate::SecretKey
+//! [`PublicKey`]: crate::PublicKey
+//! [`RelayUrl`]: crate::RelayUrl
 //! [`discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
 //! [number 0]: https://n0.computer
@@ -233,26 +232,22 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
 
-pub mod defaults;
 mod disco;
+mod magicsock;
+
+pub(crate) mod util;
+
+pub mod defaults;
 pub mod discovery;
 pub mod dns;
 pub mod endpoint;
-mod magicsock;
 pub mod metrics;
 pub mod protocol;
 mod tls;
 
-pub(crate) mod util;
-
-pub use endpoint::{Endpoint, NodeAddr, RelayMode};
-pub use iroh_base::{
-    hash, key,
-    key::NodeId,
-    relay_map::{RelayMap, RelayNode, RelayUrl},
-    ticket,
-};
-pub use iroh_relay as relay;
+pub use endpoint::{Endpoint, RelayMode};
+pub use iroh_base::{KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
+pub use iroh_relay::{RelayMap, RelayNode};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

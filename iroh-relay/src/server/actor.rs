@@ -6,7 +6,7 @@ use std::{collections::HashMap, time::Duration};
 
 use anyhow::{bail, Result};
 use bytes::Bytes;
-use iroh_base::key::NodeId;
+use iroh_base::NodeId;
 use iroh_metrics::{inc, inc_by};
 use time::{Date, OffsetDateTime};
 use tokio::sync::mpsc;
@@ -244,7 +244,7 @@ impl ClientCounter {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use iroh_base::key::SecretKey;
+    use iroh_base::SecretKey;
     use tokio::io::DuplexStream;
     use tokio_util::codec::Framed;
 

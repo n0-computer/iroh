@@ -14,7 +14,7 @@ use std::{
 use anyhow::Result;
 use futures_lite::{Future, StreamExt};
 use hickory_resolver::{IntoName, Resolver, TokioResolver};
-use iroh_base::{key::NodeId, node_addr::NodeAddr};
+use iroh_base::{NodeAddr, NodeId};
 use once_cell::sync::Lazy;
 
 pub mod node_info;

@@ -3,20 +3,10 @@
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
 use anyhow::{ensure, Result};
+use iroh_base::RelayUrl;
 use serde::{Deserialize, Serialize};
 
-pub use crate::relay_url::RelayUrl;
-
-/// The default STUN port used by the Relay server.
-///
-/// The STUN port as defined by [RFC 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
-pub const DEFAULT_STUN_PORT: u16 = 3478;
-
-/// The default QUIC port used by the Relay server to accept QUIC connections
-/// for QUIC address discovery
-///
-/// The port is "QUIC" typed on a phone keypad.
-pub const DEFAULT_RELAY_QUIC_PORT: u16 = 7842;
+use crate::defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT};
 
 /// Configuration of all the relay servers that can be used.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,7 +67,7 @@ impl RelayMap {
                 url,
                 stun_only: false,
                 stun_port,
-                quic: Some(QuicConfig::default()),
+                quic: Some(RelayQuicConfig::default()),
             }
             .into(),
         );
@@ -138,21 +128,22 @@ pub struct RelayNode {
     /// When `None`, we will not attempt to do QUIC address discovery
     /// with this relay server.
     #[serde(default = "quic_config")]
-    pub quic: Option<QuicConfig>,
+    pub quic: Option<RelayQuicConfig>,
 }
 
-fn quic_config() -> Option<QuicConfig> {
-    Some(QuicConfig::default())
+fn quic_config() -> Option<RelayQuicConfig> {
+    Some(RelayQuicConfig::default())
 }
 
 /// Configuration for speaking to the QUIC endpoint on the relay
 /// server to do QUIC address discovery.
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq, PartialOrd, Ord)]
-pub struct QuicConfig {
+pub struct RelayQuicConfig {
+    /// The port on which the connection should be bound to.
     pub port: u16,
 }
 
-impl Default for QuicConfig {
+impl Default for RelayQuicConfig {
     fn default() -> Self {
         Self {
             port: DEFAULT_RELAY_QUIC_PORT,

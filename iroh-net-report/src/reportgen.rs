@@ -27,9 +27,15 @@ use std::{
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use hickory_resolver::TokioResolver as DnsResolver;
+use iroh_base::RelayUrl;
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
-use iroh_relay::{http::RELAY_PROBE_PATH, protos::stun};
+use iroh_relay::{
+    defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT},
+    http::RELAY_PROBE_PATH,
+    protos::stun,
+    RelayMap, RelayNode,
+};
 use netwatch::{interfaces, UdpSocket};
 use rand::seq::IteratorRandom;
 use tokio::{
@@ -45,10 +51,9 @@ use url::Host;
 use crate::Metrics;
 use crate::{
     self as net_report,
-    defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT},
     dns::ResolverExt,
     ping::{PingError, Pinger},
-    RelayMap, RelayNode, RelayUrl, Report,
+    Report,
 };
 
 mod hairpin;

@@ -1,19 +1,16 @@
 //! Default values used in [`iroh`][`crate`]
 
-use iroh_base::relay_map::QuicConfig;
 /// The default QUIC port used by the Relay server to accept QUIC connections
 /// for QUIC address discovery
 ///
 /// The port is "QUIC" typed on a phone keypad.
-pub use iroh_base::relay_map::DEFAULT_RELAY_QUIC_PORT;
+pub use iroh_relay::defaults::DEFAULT_RELAY_QUIC_PORT;
 /// The default STUN port used by the Relay server.
 ///
 /// The STUN port as defined by [RFC
 /// 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
-pub use iroh_base::relay_map::DEFAULT_STUN_PORT;
+pub use iroh_relay::defaults::DEFAULT_STUN_PORT;
 use url::Url;
-
-use crate::{RelayMap, RelayNode};
 
 /// The default HTTP port used by the Relay server.
 pub const DEFAULT_HTTP_PORT: u16 = 80;
@@ -26,7 +23,7 @@ pub const DEFAULT_METRICS_PORT: u16 = 9090;
 
 /// Production configuration.
 pub mod prod {
-    use iroh_base::relay_map::QuicConfig;
+    use iroh_relay::{RelayMap, RelayNode, RelayQuicConfig};
 
     use super::*;
 
@@ -57,7 +54,7 @@ pub mod prod {
             url: url.into(),
             stun_only: false,
             stun_port: DEFAULT_STUN_PORT,
-            quic: Some(QuicConfig::default()),
+            quic: Some(RelayQuicConfig::default()),
         }
     }
 
@@ -71,7 +68,7 @@ pub mod prod {
             url: url.into(),
             stun_only: false,
             stun_port: DEFAULT_STUN_PORT,
-            quic: Some(QuicConfig::default()),
+            quic: Some(RelayQuicConfig::default()),
         }
     }
 
@@ -85,7 +82,7 @@ pub mod prod {
             url: url.into(),
             stun_only: false,
             stun_port: DEFAULT_STUN_PORT,
-            quic: Some(QuicConfig::default()),
+            quic: Some(RelayQuicConfig::default()),
         }
     }
 }
@@ -96,6 +93,8 @@ pub mod prod {
 ///
 /// Note: we have staging servers in EU and NA, but no corresponding staging server for AP at this time.
 pub mod staging {
+    use iroh_relay::{RelayMap, RelayNode, RelayQuicConfig};
+
     use super::*;
 
     /// Hostname of the default NA relay.
@@ -119,7 +118,7 @@ pub mod staging {
             url: url.into(),
             stun_only: false,
             stun_port: DEFAULT_STUN_PORT,
-            quic: Some(QuicConfig::default()),
+            quic: Some(RelayQuicConfig::default()),
         }
     }
 
@@ -133,7 +132,7 @@ pub mod staging {
             url: url.into(),
             stun_only: false,
             stun_port: DEFAULT_STUN_PORT,
-            quic: Some(QuicConfig::default()),
+            quic: Some(RelayQuicConfig::default()),
         }
     }
 }

@@ -270,7 +270,7 @@ impl QuicClient {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "server"))]
 mod tests {
     use std::net::Ipv4Addr;
 

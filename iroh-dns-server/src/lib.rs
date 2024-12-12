@@ -30,7 +30,7 @@ mod tests {
     use iroh::{
         discovery::pkarr::PkarrRelayClient,
         dns::{node_info::NodeInfo, DnsResolver, ResolverExt},
-        key::SecretKey,
+        SecretKey,
     };
     use pkarr::{PkarrClient, SignedPacket};
     use testresult::TestResult;
