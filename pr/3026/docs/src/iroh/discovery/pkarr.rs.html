@@ -1,4 +1,5 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/discovery/pkarr.rs`."><title>pkarr.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-b21aa549bf6d91ff.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.80.0-nightly (c987ad527 2024-05-01)" data-channel="nightly" data-search-js="search-bf21c90c8c1d92b1.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../static.files/storage-e32f0c247825364d.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-09095024cf37855e.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><nav class="sub"><form class="search-form"><span></span><div id="sidebar-button" tabindex="-1"><a href="../../../iroh/all.html" title="show sidebar"></a></div><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Type ‘S’ or ‘/’ to search, ‘?’ for more options…" type="search"><div id="help-button" tabindex="-1"><a href="../../../help.html" title="help">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../settings.html" title="settings">Settings</a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/discovery/pkarr.rs`."><title>pkarr.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../../../static.files/src-script-56102188.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/discovery/</div>pkarr.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -409,17 +410,7 @@
 <a href="#409" id="409">409</a>
 <a href="#410" id="410">410</a>
 <a href="#411" id="411">411</a>
-<a href="#412" id="412">412</a>
-<a href="#413" id="413">413</a>
-<a href="#414" id="414">414</a>
-<a href="#415" id="415">415</a>
-<a href="#416" id="416">416</a>
-<a href="#417" id="417">417</a>
-<a href="#418" id="418">418</a>
-<a href="#419" id="419">419</a>
-<a href="#420" id="420">420</a>
-<a href="#421" id="421">421</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
+<a href="#412" id="412">412</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
 //! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
@@ -440,8 +431,8 @@
 //!   the Mainline DHT on behalf on the client as well as cache lookups performed on the DHT
 //!   to improve performance.
 //!
-//! For node discovery in iroh the pkarr Resource Records contain the [`AddrInfo`]
-//! information, providing nodes which retrieve the pkarr Resource Record with enough detail
+//! For node discovery in iroh the pkarr Resource Records contain the addressing information,
+//! providing nodes which retrieve the pkarr Resource Record with enough detail
 //! to contact the iroh node.
 //!
 //! There are several node discovery services built on top of pkarr, which can be composed
@@ -459,16 +450,17 @@
 //! [pkarr]: https://pkarr.org
 //! [DNS Resource Records]: https://en.wikipedia.org/wiki/Domain_Name_System#Resource_records
 //! [Mainline DHT]: https://en.wikipedia.org/wiki/Mainline_DHT
-//! [`SecretKey`]: crate::key::SecretKey
-//! [`PublicKey`]: crate::key::PublicKey
-//! [`NodeId`]: crate::key::NodeId
+//! [`SecretKey`]: crate::SecretKey
+//! [`PublicKey`]: crate::PublicKey
+//! [`NodeId`]: crate::NodeId
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
 //! [`DhtDiscovery`]: dht::DhtDiscovery
 
-</span><span class="kw">use </span>std::sync::Arc;
+</span><span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr, sync::Arc};
 
 <span class="kw">use </span>anyhow::{anyhow, bail, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_util::stream::BoxStream;
+<span class="kw">use </span>iroh_base::{NodeId, RelayUrl, SecretKey};
 <span class="kw">use </span>pkarr::SignedPacket;
 <span class="kw">use </span>tokio::{
     task::JoinHandle,
@@ -482,12 +474,10 @@
     discovery::{Discovery, DiscoveryItem},
     dns::node_info::NodeInfo,
     endpoint::force_staging_infra,
-    key::SecretKey,
-    AddrInfo, Endpoint, NodeId,
+    Endpoint,
 };
 
 <span class="attr">#[cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)))]
 </span><span class="kw">pub mod </span>dht;
 
 <span class="doccomment">/// The production pkarr relay run by [number 0].
@@ -528,13 +518,11 @@
 /// that it only publishes node discovery information, for the corresponding resolver use
 /// the [`PkarrResolver`] together with [`ConcurrentDiscovery`].
 ///
-/// This publisher will **only** publish the [`RelayUrl`] if the [`AddrInfo`] contains a
-/// [`RelayUrl`].  If the [`AddrInfo`] does not contain a [`RelayUrl`] the *direct
-/// addresses* are published instead.
+/// This publisher will **only** publish the [`RelayUrl`] if it is set, otherwise the *direct addresses* are published instead.
 ///
 /// [pkarr]: https://pkarr.org
 /// [module docs]: crate::discovery::pkarr
-/// [`RelayUrl`]: crate::relay::RelayUrl
+/// [`RelayUrl`]: crate::RelayUrl
 /// [`ConcurrentDiscovery`]: super::ConcurrentDiscovery
 </span><span class="attr">#[derive(derive_more::Debug, Clone)]
 </span><span class="kw">pub struct </span>PkarrPublisher {
@@ -614,23 +602,18 @@
         <span class="self">Self</span>::new(secret_key, pkarr_relay)
     }
 
-    <span class="doccomment">/// Publishes [`AddrInfo`] about this node to a pkarr relay.
+    <span class="doccomment">/// Publishes the addressing information about this node to a pkarr relay.
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
-    </span><span class="kw">pub fn </span>update_addr_info(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span>AddrInfo) {
-        <span class="kw">let </span>(relay_url, direct_addresses) = <span class="kw">if let </span><span class="prelude-val">Some</span>(relay_url) = info.relay_url.as_ref() {
-            (<span class="prelude-val">Some</span>(relay_url.clone().into()), Default::default())
-        } <span class="kw">else </span>{
-            (<span class="prelude-val">None</span>, info.direct_addresses.clone())
-        };
-        <span class="kw">let </span>info = NodeInfo::new(<span class="self">self</span>.node_id, relay_url, direct_addresses);
+    </span><span class="kw">pub fn </span>update_addr_info(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {
+        <span class="kw">let </span>info = NodeInfo::new(<span class="self">self</span>.node_id, url.cloned().map(Into::into), addrs.clone());
         <span class="self">self</span>.watchable.update(<span class="prelude-val">Some</span>(info)).ok();
     }
 }
 
 <span class="kw">impl </span>Discovery <span class="kw">for </span>PkarrPublisher {
-    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span>AddrInfo) {
-        <span class="self">self</span>.update_addr_info(info);
+    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {
+        <span class="self">self</span>.update_addr_info(url, addrs);
     }
 }
 
@@ -765,10 +748,9 @@
             <span class="kw">let </span>signed_packet = pkarr_client.resolve(node_id).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">let </span>info = NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet)<span class="question-mark">?</span>;
             <span class="kw">let </span>item = DiscoveryItem {
-                node_id,
+                node_addr: info.into(),
                 provenance: <span class="string">"pkarr"</span>,
                 last_updated: <span class="prelude-val">None</span>,
-                addr_info: info.into(),
             };
             <span class="prelude-val">Ok</span>(item)
         };

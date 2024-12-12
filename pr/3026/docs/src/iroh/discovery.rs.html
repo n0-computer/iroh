@@ -1,4 +1,5 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/discovery.rs`."><title>discovery.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../static.files/rustdoc-b21aa549bf6d91ff.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.80.0-nightly (c987ad527 2024-05-01)" data-channel="nightly" data-search-js="search-bf21c90c8c1d92b1.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../static.files/storage-e32f0c247825364d.js"></script><script defer src="../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-09095024cf37855e.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><nav class="sub"><form class="search-form"><span></span><div id="sidebar-button" tabindex="-1"><a href="../../iroh/all.html" title="show sidebar"></a></div><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Type ‘S’ or ‘/’ to search, ‘?’ for more options…" type="search"><div id="help-button" tabindex="-1"><a href="../../help.html" title="help">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../settings.html" title="settings">Settings</a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/discovery.rs`."><title>discovery.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../../static.files/src-script-56102188.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/</div>discovery.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -884,16 +885,7 @@
 <a href="#884" id="884">884</a>
 <a href="#885" id="885">885</a>
 <a href="#886" id="886">886</a>
-<a href="#887" id="887">887</a>
-<a href="#888" id="888">888</a>
-<a href="#889" id="889">889</a>
-<a href="#890" id="890">890</a>
-<a href="#891" id="891">891</a>
-<a href="#892" id="892">892</a>
-<a href="#893" id="893">893</a>
-<a href="#894" id="894">894</a>
-<a href="#895" id="895">895</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#887" id="887">887</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -945,8 +937,7 @@
 //! ```no_run
 //! use iroh::{
 //!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
-//!     key::SecretKey,
-//!     Endpoint,
+//!     Endpoint, SecretKey,
 //! };
 //!
 //! # async fn wrapper() -&gt; anyhow::Result&lt;()&gt; {
@@ -980,7 +971,7 @@
 //! # use iroh::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 //! # use iroh::discovery::pkarr::PkarrPublisher;
 //! # use iroh::discovery::ConcurrentDiscovery;
-//! # use iroh::key::SecretKey;
+//! # use iroh::SecretKey;
 //! #
 //! # async fn wrapper() -&gt; anyhow::Result&lt;()&gt; {
 //! # let secret_key = SecretKey::generate();
@@ -994,7 +985,7 @@
 //! # }
 //! ```
 //!
-//! [`RelayUrl`]: crate::relay::RelayUrl
+//! [`RelayUrl`]: crate::RelayUrl
 //! [`Builder::discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: dns::DnsDiscovery
 //! [Number 0]: https://n0.computer
@@ -1007,20 +998,19 @@
     doc = <span class="string">"[`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery"
 </span>)]
 
-</span><span class="kw">use </span>std::time::Duration;
+</span><span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr, time::Duration};
 
 <span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::stream::{Boxed <span class="kw">as </span>BoxStream, StreamExt};
-<span class="kw">use </span>iroh_base::node_addr::NodeAddr;
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl};
 <span class="kw">use </span>tokio::{sync::oneshot, task::JoinHandle};
 <span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
 
-<span class="kw">use crate</span>::{AddrInfo, Endpoint, NodeId};
+<span class="kw">use </span><span class="kw">crate</span>::Endpoint;
 
 <span class="kw">pub mod </span>dns;
 
 <span class="attr">#[cfg(feature = <span class="string">"discovery-local-network"</span>)]
-#[cfg_attr(iroh_docsrs, doc(cfg(feature = <span class="string">"discovery-local-network"</span>)))]
 </span><span class="kw">pub mod </span>local_swarm_discovery;
 <span class="kw">pub mod </span>pkarr;
 <span class="kw">pub mod </span>static_provider;
@@ -1040,18 +1030,18 @@
 /// discovery information changes. If a discovery mechanism requires a periodic
 /// refresh, it should start its own task.
 ///
-/// [`RelayUrl`]: crate::relay::RelayUrl
+/// [`RelayUrl`]: crate::RelayUrl
 </span><span class="kw">pub trait </span>Discovery: std::fmt::Debug + Send + Sync {
-    <span class="doccomment">/// Publishes the given [`AddrInfo`] to the discovery mechanism.
+    <span class="doccomment">/// Publishes the given [`RelayUrl`] and direct addreesses to the discovery mechanism.
     ///
     /// This is fire and forget, since the [`Endpoint`] can not wait for successful
     /// publishing. If publishing is async, the implementation should start it's own task.
     ///
     /// This will be called from a tokio task, so it is safe to spawn new tasks.
     /// These tasks will be run on the runtime of the [`super::Endpoint`].
-    </span><span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, _info: <span class="kw-2">&amp;</span>AddrInfo) {}
+    </span><span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, _url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, _addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {}
 
-    <span class="doccomment">/// Resolves the [`AddrInfo`] for the given [`NodeId`].
+    <span class="doccomment">/// Resolves the [`DiscoveryItem`] for the given [`NodeId`].
     ///
     /// Once the returned [`BoxStream`] is dropped, the service should stop any pending
     /// work.
@@ -1077,7 +1067,7 @@
     /// to the `subscribe` stream.
     ///
     /// Discovery systems that are capable of receiving information about [`NodeId`]s
-    /// and their [`AddrInfo`]s without explicitly calling `resolve`, i.e.,
+    /// and their addressing information without explicitly calling `resolve`, i.e.,
     /// systems that do "passive" discovery, should implement this method. If
     /// `subscribe` is called multiple times, the passively discovered addresses
     /// should be sent on all streams.
@@ -1094,7 +1084,7 @@
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>DiscoveryItem {
     <span class="doccomment">/// The [`NodeId`] whose address we have discovered
-    </span><span class="kw">pub </span>node_id: NodeId,
+    </span><span class="kw">pub </span>node_addr: NodeAddr,
     <span class="doccomment">/// A static string to identify the discovery source.
     ///
     /// Should be uniform per discovery service.
@@ -1104,8 +1094,6 @@
     /// Must be microseconds since the unix epoch.
     </span><span class="comment">// TODO(ramfox): this is currently unused. As we develop more `DiscoveryService`s, we may discover that we do not need this. It is only truly relevant when comparing `relay_urls`, since we can attempt to dial any number of socket addresses, but expect each node to have one "home relay" that we will attempt to contact them on. This means we would need some way to determine which relay url to choose between, if more than one relay url is reported.
     </span><span class="kw">pub </span>last_updated: <span class="prelude-ty">Option</span>&lt;u64&gt;,
-    <span class="doccomment">/// The address info for the node being resolved.
-    </span><span class="kw">pub </span>addr_info: AddrInfo,
 }
 
 <span class="doccomment">/// A discovery service that combines multiple discovery sources.
@@ -1144,9 +1132,9 @@
 }
 
 <span class="kw">impl </span>Discovery <span class="kw">for </span>ConcurrentDiscovery {
-    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span>AddrInfo) {
+    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {
         <span class="kw">for </span>service <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.services {
-            service.publish(info);
+            service.publish(url, addrs);
         }
     }
 
@@ -1305,16 +1293,12 @@
             };
             <span class="kw">match </span>next {
                 <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(r)) =&gt; {
-                    <span class="kw">if </span>r.addr_info.is_empty() {
-                        <span class="macro">debug!</span>(provenance = %r.provenance, addr = <span class="question-mark">?</span>r.addr_info, <span class="string">"discovery: empty address found"</span>);
+                    <span class="kw">if </span>r.node_addr.is_empty() {
+                        <span class="macro">debug!</span>(provenance = %r.provenance, <span class="string">"discovery: empty address found"</span>);
                         <span class="kw">continue</span>;
                     }
-                    <span class="macro">debug!</span>(provenance = %r.provenance, addr = <span class="question-mark">?</span>r.addr_info, <span class="string">"discovery: new address found"</span>);
-                    <span class="kw">let </span>addr = NodeAddr {
-                        info: r.addr_info,
-                        node_id,
-                    };
-                    ep.add_node_addr_with_source(addr, r.provenance).ok();
+                    <span class="macro">debug!</span>(provenance = %r.provenance, addr = <span class="question-mark">?</span>r.node_addr, <span class="string">"discovery: new address found"</span>);
+                    ep.add_node_addr_with_source(r.node_addr, r.provenance).ok();
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(tx) = on_first_tx.take() {
                         tx.send(<span class="prelude-val">Ok</span>(())).ok();
                     }
@@ -1344,21 +1328,24 @@
     <span class="kw">use </span>std::{
         collections::{BTreeSet, HashMap},
         net::SocketAddr,
-        sync::Arc,
+        sync::{Arc, Mutex},
         time::SystemTime,
     };
 
-    <span class="kw">use </span>parking_lot::Mutex;
+    <span class="kw">use </span>iroh_base::SecretKey;
     <span class="kw">use </span>rand::Rng;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use crate</span>::{key::SecretKey, RelayMode};
+    <span class="kw">use </span><span class="kw">crate</span>::RelayMode;
+
+    <span class="kw">type </span>InfoStore = HashMap&lt;NodeId, (<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;, BTreeSet&lt;SocketAddr&gt;, u64)&gt;;
 
     <span class="attr">#[derive(Debug, Clone, Default)]
     </span><span class="kw">struct </span>TestDiscoveryShared {
-        nodes: Arc&lt;Mutex&lt;HashMap&lt;NodeId, (AddrInfo, u64)&gt;&gt;&gt;,
+        nodes: Arc&lt;Mutex&lt;InfoStore&gt;&gt;,
     }
+
     <span class="kw">impl </span>TestDiscoveryShared {
         <span class="kw">pub fn </span>create_discovery(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; TestDiscovery {
             TestDiscovery {
@@ -1390,7 +1377,7 @@
     }
 
     <span class="kw">impl </span>Discovery <span class="kw">for </span>TestDiscovery {
-        <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span>AddrInfo) {
+        <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {
             <span class="kw">if </span>!<span class="self">self</span>.publish {
                 <span class="kw">return</span>;
             }
@@ -1398,7 +1385,8 @@
             <span class="self">self</span>.shared
                 .nodes
                 .lock()
-                .insert(<span class="self">self</span>.node_id, (info.clone(), now));
+                .unwrap()
+                .insert(<span class="self">self</span>.node_id, (url.cloned(), addrs.clone(), now));
         }
 
         <span class="kw">fn </span>resolve(
@@ -1407,26 +1395,25 @@
             node_id: NodeId,
         ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
             <span class="kw">let </span>addr_info = <span class="kw">match </span><span class="self">self</span>.resolve_wrong {
-                <span class="bool-val">false </span>=&gt; <span class="self">self</span>.shared.nodes.lock().get(<span class="kw-2">&amp;</span>node_id).cloned(),
+                <span class="bool-val">false </span>=&gt; <span class="self">self</span>.shared.nodes.lock().unwrap().get(<span class="kw-2">&amp;</span>node_id).cloned(),
                 <span class="bool-val">true </span>=&gt; {
                     <span class="kw">let </span>ts = system_time_now() - <span class="number">100_000</span>;
                     <span class="kw">let </span>port: u16 = rand::thread_rng().gen_range(<span class="number">10_000</span>..<span class="number">20_000</span>);
                     <span class="comment">// "240.0.0.0/4" is reserved and unreachable
                     </span><span class="kw">let </span>addr: SocketAddr = <span class="macro">format!</span>(<span class="string">"240.0.0.1:{port}"</span>).parse().unwrap();
-                    <span class="kw">let </span>addr_info = AddrInfo {
-                        relay_url: <span class="prelude-val">None</span>,
-                        direct_addresses: BTreeSet::from([addr]),
-                    };
-                    <span class="prelude-val">Some</span>((addr_info, ts))
+                    <span class="prelude-val">Some</span>((<span class="prelude-val">None</span>, BTreeSet::from([addr]), ts))
                 }
             };
             <span class="kw">let </span>stream = <span class="kw">match </span>addr_info {
-                <span class="prelude-val">Some</span>((addr_info, ts)) =&gt; {
+                <span class="prelude-val">Some</span>((url, addrs, ts)) =&gt; {
                     <span class="kw">let </span>item = DiscoveryItem {
-                        node_id,
+                        node_addr: NodeAddr {
+                            node_id,
+                            relay_url: url,
+                            direct_addresses: addrs,
+                        },
                         provenance: <span class="string">"test-disco"</span>,
                         last_updated: <span class="prelude-val">Some</span>(ts),
-                        addr_info,
                     };
                     <span class="kw">let </span>delay = <span class="self">self</span>.delay;
                     <span class="kw">let </span>fut = <span class="kw">async move </span>{
@@ -1449,7 +1436,7 @@
     <span class="attr">#[derive(Debug)]
     </span><span class="kw">struct </span>EmptyDiscovery;
     <span class="kw">impl </span>Discovery <span class="kw">for </span>EmptyDiscovery {
-        <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, _info: <span class="kw-2">&amp;</span>AddrInfo) {}
+        <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, _url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, _addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {}
 
         <span class="kw">fn </span>resolve(
             <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -1584,10 +1571,8 @@
         </span>ep1.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>ep1_wrong_addr = NodeAddr {
             node_id: ep1.node_id(),
-            info: AddrInfo {
-                relay_url: <span class="prelude-val">None</span>,
-                direct_addresses: BTreeSet::from([<span class="string">"240.0.0.1:1000"</span>.parse().unwrap()]),
-            },
+            relay_url: <span class="prelude-val">None</span>,
+            direct_addresses: BTreeSet::from([<span class="string">"240.0.0.1:1000"</span>.parse().unwrap()]),
         };
         <span class="kw">let </span>_conn = ep2.connect(ep1_wrong_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
@@ -1639,7 +1624,8 @@
     <span class="kw">use </span>std::time::Duration;
 
     <span class="kw">use </span>anyhow::Result;
-    <span class="kw">use </span>iroh_base::key::SecretKey;
+    <span class="kw">use </span>iroh_base::{NodeAddr, SecretKey};
+    <span class="kw">use </span>iroh_relay::RelayMap;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
     <span class="kw">use crate</span>::{
@@ -1650,7 +1636,7 @@
             pkarr_dns_state::State,
             run_relay_server, DnsPkarrServer,
         },
-        AddrInfo, Endpoint, NodeAddr, RelayMap, RelayMode,
+        Endpoint, RelayMode,
     };
 
     <span class="kw">const </span>PUBLISH_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
@@ -1691,22 +1677,20 @@
         <span class="kw">let </span>secret_key = SecretKey::generate();
         <span class="kw">let </span>node_id = secret_key.public();
 
-        <span class="kw">let </span>addr_info = AddrInfo {
-            relay_url: <span class="prelude-val">Some</span>(<span class="string">"https://relay.example"</span>.parse().unwrap()),
-            ..Default::default()
-        };
+        <span class="kw">let </span>relay_url = <span class="prelude-val">Some</span>(<span class="string">"https://relay.example"</span>.parse().unwrap());
 
         <span class="kw">let </span>resolver = create_dns_resolver(dns_pkarr_server.nameserver)<span class="question-mark">?</span>;
         <span class="kw">let </span>publisher = PkarrPublisher::new(secret_key, dns_pkarr_server.pkarr_url.clone());
         <span class="comment">// does not block, update happens in background task
-        </span>publisher.update_addr_info(<span class="kw-2">&amp;</span>addr_info);
+        </span>publisher.update_addr_info(relay_url.as_ref(), <span class="kw-2">&amp;</span>Default::default());
         <span class="comment">// wait until our shared state received the update from pkarr publishing
         </span>dns_pkarr_server.on_node(<span class="kw-2">&amp;</span>node_id, PUBLISH_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>resolved = resolver.lookup_by_id(<span class="kw-2">&amp;</span>node_id, <span class="kw-2">&amp;</span>origin).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>expected = NodeAddr {
-            info: addr_info,
             node_id,
+            relay_url,
+            direct_addresses: Default::default(),
         };
 
         <span class="macro">assert_eq!</span>(resolved, expected);

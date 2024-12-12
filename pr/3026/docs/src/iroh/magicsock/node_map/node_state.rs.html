@@ -1,4 +1,5 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/magicsock/node_map/node_state.rs`."><title>node_state.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-b21aa549bf6d91ff.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.80.0-nightly (c987ad527 2024-05-01)" data-channel="nightly" data-search-js="search-bf21c90c8c1d92b1.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../../static.files/storage-e32f0c247825364d.js"></script><script defer src="../../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-09095024cf37855e.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><nav class="sub"><form class="search-form"><span></span><div id="sidebar-button" tabindex="-1"><a href="../../../../iroh/all.html" title="show sidebar"></a></div><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Type ‘S’ or ‘/’ to search, ‘?’ for more options…" type="search"><div id="help-button" tabindex="-1"><a href="../../../../help.html" title="help">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../../settings.html" title="settings">Settings</a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/magicsock/node_map/node_state.rs`."><title>node_state.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../../static.files/storage-59e33391.js"></script><script defer src="../../../../static.files/src-script-56102188.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/magicsock/node_map/</div>node_state.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -1718,17 +1719,16 @@
 <a href="#1718" id="1718">1718</a>
 <a href="#1719" id="1719">1719</a>
 <a href="#1720" id="1720">1720</a>
-<a href="#1721" id="1721">1721</a>
-<a href="#1722" id="1722">1722</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1721" id="1721">1721</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     time::{Duration, Instant},
 };
 
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 <span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>iroh_relay::{protos::stun, RelayUrl};
+<span class="kw">use </span>iroh_relay::protos::stun;
 <span class="kw">use </span>netwatch::ip::is_unicast_link_local;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::sync::mpsc;
@@ -1743,11 +1743,8 @@
 };
 <span class="kw">use crate</span>::{
     disco::{<span class="self">self</span>, SendAddr},
-    endpoint::AddrInfo,
-    key::PublicKey,
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
     util::relay_only_mode,
-    NodeAddr, NodeId,
 };
 
 <span class="doccomment">/// Number of addresses that are not active that we keep around per node.
@@ -2359,14 +2356,19 @@
         ping_msgs
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>update_from_node_addr(<span class="kw-2">&amp;mut </span><span class="self">self</span>, n: <span class="kw-2">&amp;</span>AddrInfo, source: <span class="kw">super</span>::Source) {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>update_from_node_addr(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        relay_url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;,
+        addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;,
+        source: <span class="kw">super</span>::Source,
+    ) {
         <span class="kw">if </span><span class="self">self</span>.udp_paths.best_addr.is_empty() {
             <span class="comment">// we do not have a direct connection, so changing the relay information may
             // have an effect on our connection status
-            </span><span class="kw">if </span><span class="self">self</span>.relay_url.is_none() &amp;&amp; n.relay_url.is_some() {
+            </span><span class="kw">if </span><span class="self">self</span>.relay_url.is_none() &amp;&amp; relay_url.is_some() {
                 <span class="comment">// we did not have a relay connection before, but now we do
                 </span><span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added)
-            } <span class="kw">else if </span><span class="self">self</span>.relay_url.is_some() &amp;&amp; n.relay_url.is_none() {
+            } <span class="kw">else if </span><span class="self">self</span>.relay_url.is_some() &amp;&amp; relay_url.is_none() {
                 <span class="comment">// we had a relay connection before but do not have one now
                 </span><span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_removed)
             }
@@ -2374,12 +2376,12 @@
 
         <span class="kw">let </span>now = Instant::now();
 
-        <span class="kw">if </span>n.relay_url.is_some() &amp;&amp; n.relay_url != <span class="self">self</span>.relay_url() {
+        <span class="kw">if </span>relay_url.is_some() &amp;&amp; relay_url != <span class="self">self</span>.relay_url().as_ref() {
             <span class="macro">debug!</span>(
                 <span class="string">"Changing relay node from {:?} to {:?}"</span>,
-                <span class="self">self</span>.relay_url, n.relay_url
+                <span class="self">self</span>.relay_url, relay_url
             );
-            <span class="self">self</span>.relay_url = n.relay_url.as_ref().map(|url| {
+            <span class="self">self</span>.relay_url = relay_url.map(|url| {
                 (
                     url.clone(),
                     PathState::new(<span class="self">self</span>.node_id, url.clone().into(), source.clone(), now),
@@ -2387,7 +2389,7 @@
             });
         }
 
-        <span class="kw">for </span><span class="kw-2">&amp;</span>addr <span class="kw">in </span>n.direct_addresses.iter() {
+        <span class="kw">for </span><span class="kw-2">&amp;</span>addr <span class="kw">in </span>addrs.iter() {
             <span class="self">self</span>.udp_paths
                 .paths
                 .entry(addr.into())
@@ -2399,7 +2401,7 @@
                 });
         }
         <span class="kw">let </span>paths = summarize_node_paths(<span class="kw-2">&amp;</span><span class="self">self</span>.udp_paths.paths);
-        <span class="macro">debug!</span>(new = <span class="question-mark">?</span>n.direct_addresses , %paths, <span class="string">"added new direct paths for endpoint"</span>);
+        <span class="macro">debug!</span>(new = <span class="question-mark">?</span>addrs , %paths, <span class="string">"added new direct paths for endpoint"</span>);
     }
 
     <span class="doccomment">/// Clears all the endpoint's p2p state, reverting it to a relay-only endpoint.
@@ -2909,10 +2911,8 @@
 
         NodeAddr {
             node_id: info.node_id,
-            info: AddrInfo {
-                relay_url: info.relay_url.map(Into::into),
-                direct_addresses,
-            },
+            relay_url: info.relay_url.map(Into::into),
+            direct_addresses,
         }
     }
 }
@@ -3150,12 +3150,10 @@
     <span class="kw">use </span>std::{collections::BTreeMap, net::Ipv4Addr};
 
     <span class="kw">use </span>best_addr::BestAddr;
+    <span class="kw">use </span>iroh_base::SecretKey;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use crate</span>::{
-        key::SecretKey,
-        magicsock::node_map::{NodeMap, NodeMapInner},
-    };
+    <span class="kw">use </span><span class="kw">crate</span>::magicsock::node_map::{NodeMap, NodeMapInner};
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_remote_infos() {

@@ -1,4 +1,5 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/test_utils.rs`."><title>test_utils.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../static.files/rustdoc-b21aa549bf6d91ff.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.80.0-nightly (c987ad527 2024-05-01)" data-channel="nightly" data-search-js="search-bf21c90c8c1d92b1.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../static.files/storage-e32f0c247825364d.js"></script><script defer src="../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-09095024cf37855e.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><nav class="sub"><form class="search-form"><span></span><div id="sidebar-button" tabindex="-1"><a href="../../iroh/all.html" title="show sidebar"></a></div><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Type ‘S’ or ‘/’ to search, ‘?’ for more options…" type="search"><div id="help-button" tabindex="-1"><a href="../../help.html" title="help">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../settings.html" title="settings">Settings</a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/test_utils.rs`."><title>test_utils.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../../static.files/src-script-56102188.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/</div>test_utils.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -488,20 +489,20 @@
 <a href="#488" id="488">488</a>
 <a href="#489" id="489">489</a>
 <a href="#490" id="490">490</a>
-<a href="#491" id="491">491</a>
-<a href="#492" id="492">492</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
+<a href="#491" id="491">491</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">pub use </span>dns_and_pkarr_servers::DnsPkarrServer;
 <span class="kw">pub use </span>dns_server::create_dns_resolver;
-<span class="kw">use </span>iroh_relay::server::{
-    CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig,
+<span class="kw">use </span>iroh_base::RelayUrl;
+<span class="kw">use </span>iroh_relay::{
+    server::{CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
+    RelayMap, RelayNode, RelayQuicConfig,
 };
 <span class="kw">use </span>tokio::sync::oneshot;
 
-<span class="kw">use crate</span>::{defaults::DEFAULT_STUN_PORT, RelayMap, RelayNode, RelayUrl};
+<span class="kw">use </span><span class="kw">crate</span>::defaults::DEFAULT_STUN_PORT;
 
 <span class="doccomment">/// A drop guard to clean up test infrastructure.
 ///
@@ -580,20 +581,18 @@
         <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
         </span>metrics_addr: <span class="prelude-val">None</span>,
     };
-    <span class="kw">let </span>server = Server::spawn(config).<span class="kw">await</span>.unwrap();
-    <span class="kw">let </span>url: RelayUrl = <span class="macro">format!</span>(<span class="string">"https://{}"</span>, server.https_addr().expect(<span class="string">"configured"</span>))
-        .parse()
-        .unwrap();
+    <span class="kw">let </span>server = Server::spawn(config).<span class="kw">await</span><span class="question-mark">?</span>;
+    <span class="kw">let </span>url: RelayUrl = <span class="macro">format!</span>(<span class="string">"https://{}"</span>, server.https_addr().expect(<span class="string">"configured"</span>)).parse()<span class="question-mark">?</span>;
+
     <span class="kw">let </span>quic = server
         .quic_addr()
-        .map(|addr| iroh_base::relay_map::QuicConfig { port: addr.port() });
+        .map(|addr| RelayQuicConfig { port: addr.port() });
     <span class="kw">let </span>m = RelayMap::from_nodes([RelayNode {
         url: url.clone(),
         stun_only: <span class="bool-val">false</span>,
         stun_port: server.stun_addr().map_or(DEFAULT_STUN_PORT, |s| s.port()),
         quic,
-    }])
-    .unwrap();
+    }])<span class="question-mark">?</span>;
     <span class="prelude-val">Ok</span>((m, url, server))
 }
 
@@ -601,7 +600,7 @@
     <span class="kw">use </span>std::{net::SocketAddr, time::Duration};
 
     <span class="kw">use </span>anyhow::Result;
-    <span class="kw">use </span>iroh_base::key::{NodeId, SecretKey};
+    <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
     <span class="kw">use </span>url::Url;
 
     <span class="kw">use super</span>::{create_dns_resolver, CleanupDropGuard};
@@ -866,19 +865,17 @@
     <span class="kw">use </span>std::{
         collections::{hash_map, HashMap},
         future::Future,
-        ops::Deref,
-        sync::Arc,
+        sync::{Arc, Mutex},
         time::Duration,
     };
 
     <span class="kw">use </span>anyhow::{bail, <span class="prelude-ty">Result</span>};
-    <span class="kw">use </span>parking_lot::{Mutex, MutexGuard};
+    <span class="kw">use </span>iroh_base::NodeId;
     <span class="kw">use </span>pkarr::SignedPacket;
 
     <span class="kw">use crate</span>::{
         dns::node_info::{node_id_from_hickory_name, NodeInfo},
         test_utils::dns_server::QueryHandler,
-        NodeId,
     };
 
     <span class="attr">#[derive(Debug, Clone)]
@@ -904,7 +901,7 @@
         <span class="kw">pub async fn </span>on_node(<span class="kw-2">&amp;</span><span class="self">self</span>, node: <span class="kw-2">&amp;</span>NodeId, timeout: Duration) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
             <span class="kw">let </span>timeout = tokio::time::sleep(timeout);
             <span class="macro">tokio::pin!</span>(timeout);
-            <span class="kw">while </span><span class="self">self</span>.get(node).is_none() {
+            <span class="kw">while </span><span class="self">self</span>.get(node, |p| p.is_none()) {
                 <span class="macro">tokio::select!</span> {
                     <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>timeout =&gt; <span class="macro">bail!</span>(<span class="string">"timeout"</span>),
                     <span class="kw">_ </span>= <span class="self">self</span>.on_update() =&gt; {}
@@ -915,7 +912,7 @@
 
         <span class="kw">pub fn </span>upsert(<span class="kw-2">&amp;</span><span class="self">self</span>, signed_packet: SignedPacket) -&gt; anyhow::Result&lt;bool&gt; {
             <span class="kw">let </span>node_id = NodeId::from_bytes(<span class="kw-2">&amp;</span>signed_packet.public_key().to_bytes())<span class="question-mark">?</span>;
-            <span class="kw">let </span><span class="kw-2">mut </span>map = <span class="self">self</span>.packets.lock();
+            <span class="kw">let </span><span class="kw-2">mut </span>map = <span class="self">self</span>.packets.lock().expect(<span class="string">"poisoned"</span>);
             <span class="kw">let </span>updated = <span class="kw">match </span>map.entry(node_id) {
                 hash_map::Entry::Vacant(e) =&gt; {
                     e.insert(signed_packet);
@@ -937,14 +934,13 @@
         }
 
         <span class="doccomment">/// Returns a mutex guard, do not hold over await points
-        </span><span class="kw">pub fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: <span class="kw-2">&amp;</span>NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw">impl </span>Deref&lt;Target = SignedPacket&gt; + <span class="lifetime">'_</span>&gt; {
-            <span class="kw">let </span>map = <span class="self">self</span>.packets.lock();
-            <span class="kw">if </span>map.contains_key(node_id) {
-                <span class="kw">let </span>guard = MutexGuard::map(map, |state| state.get_mut(node_id).unwrap());
-                <span class="prelude-val">Some</span>(guard)
-            } <span class="kw">else </span>{
-                <span class="prelude-val">None
-            </span>}
+        </span><span class="kw">pub fn </span>get&lt;F, T&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: <span class="kw-2">&amp;</span>NodeId, cb: F) -&gt; T
+        <span class="kw">where
+            </span>F: FnOnce(<span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>SignedPacket&gt;) -&gt; T,
+        {
+            <span class="kw">let </span><span class="kw-2">mut </span>map = <span class="self">self</span>.packets.lock().expect(<span class="string">"poisoned"</span>);
+            <span class="kw">let </span>packet = map.get_mut(node_id);
+            cb(packet)
         }
 
         <span class="kw">pub fn </span>resolve_dns(
@@ -957,14 +953,16 @@
                 <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = node_id_from_hickory_name(query.name()) <span class="kw">else </span>{
                     <span class="kw">continue</span>;
                 };
-                <span class="kw">let </span>packet = <span class="self">self</span>.get(<span class="kw-2">&amp;</span>node_id);
-                <span class="kw">let </span><span class="prelude-val">Some</span>(packet) = packet.as_ref() <span class="kw">else </span>{
-                    <span class="kw">continue</span>;
-                };
-                <span class="kw">let </span>node_info = NodeInfo::from_pkarr_signed_packet(packet)<span class="question-mark">?</span>;
-                <span class="kw">for </span>record <span class="kw">in </span>node_info.to_hickory_records(<span class="kw-2">&amp;</span><span class="self">self</span>.origin, ttl)<span class="question-mark">? </span>{
-                    reply.add_answer(record);
-                }
+
+                <span class="self">self</span>.get(<span class="kw-2">&amp;</span>node_id, |packet| {
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(packet) = packet {
+                        <span class="kw">let </span>node_info = NodeInfo::from_pkarr_signed_packet(packet)<span class="question-mark">?</span>;
+                        <span class="kw">for </span>record <span class="kw">in </span>node_info.to_hickory_records(<span class="kw-2">&amp;</span><span class="self">self</span>.origin, ttl)<span class="question-mark">? </span>{
+                            reply.add_answer(record);
+                        }
+                    }
+                    anyhow::Ok(())
+                })<span class="question-mark">?</span>;
             }
             <span class="prelude-val">Ok</span>(())
         }
