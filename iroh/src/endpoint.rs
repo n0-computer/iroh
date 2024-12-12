@@ -24,7 +24,8 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use derive_more::Debug;
 use futures_lite::{Stream, StreamExt};
-use iroh_base::{NodeAddr, NodeId, PublicKey, RelayMap, RelayUrl, SecretKey};
+use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
+use iroh_relay::RelayMap;
 use pin_project::pin_project;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, instrument, trace, warn};

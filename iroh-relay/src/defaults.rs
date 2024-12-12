@@ -1,6 +1,15 @@
 //! Default values used in the relay.
 
-pub use iroh_base::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT};
+/// The default STUN port used by the Relay server.
+///
+/// The STUN port as defined by [RFC 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
+pub const DEFAULT_STUN_PORT: u16 = 3478;
+
+/// The default QUIC port used by the Relay server to accept QUIC connections
+/// for QUIC address discovery
+///
+/// The port is "QUIC" typed on a phone keypad.
+pub const DEFAULT_RELAY_QUIC_PORT: u16 = 7842;
 
 /// The default HTTP port used by the Relay server.
 pub const DEFAULT_HTTP_PORT: u16 = 80;

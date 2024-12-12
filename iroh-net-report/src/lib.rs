@@ -15,10 +15,10 @@ use std::{
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use hickory_resolver::TokioResolver as DnsResolver;
-use iroh_base::{RelayMap, RelayUrl};
+use iroh_base::RelayUrl;
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
-use iroh_relay::protos::stun;
+use iroh_relay::{protos::stun, RelayMap};
 use netwatch::{IpFamily, UdpSocket};
 use tokio::{
     sync::{self, mpsc, oneshot},
@@ -808,8 +808,7 @@ mod test_utils {
 
     use std::sync::Arc;
 
-    use iroh_base::{RelayNode, RelayQuicConfig};
-    use iroh_relay::server;
+    use iroh_relay::{server, RelayNode, RelayQuicConfig};
 
     pub(crate) async fn relay() -> (server::Server, Arc<RelayNode>) {
         let server = server::Server::spawn(server::testing::server_config())
@@ -862,7 +861,8 @@ mod tests {
         use std::{net::IpAddr, sync::Arc};
 
         use anyhow::Result;
-        use iroh_base::{RelayMap, RelayNode, RelayUrl};
+        use iroh_base::RelayUrl;
+        use iroh_relay::RelayNode;
         use tokio::{
             net,
             sync::{oneshot, Mutex},

@@ -16,8 +16,6 @@ mod key;
 #[cfg(feature = "key")]
 mod node_addr;
 #[cfg(feature = "relay")]
-mod relay_map;
-#[cfg(feature = "relay")]
 mod relay_url;
 
 #[cfg(feature = "hash")]
@@ -28,9 +26,5 @@ pub use self::key::{
 };
 #[cfg(feature = "key")]
 pub use self::node_addr::NodeAddr;
-#[cfg(feature = "relay")]
-pub use self::relay_map::{
-    RelayMap, RelayNode, RelayQuicConfig, DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT,
-};
 #[cfg(feature = "relay")]
 pub use self::relay_url::RelayUrl;

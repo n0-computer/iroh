@@ -7,7 +7,8 @@
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
 use anyhow::{ensure, Result};
-use iroh_base::{RelayMap, RelayNode, RelayUrl};
+use iroh_base::RelayUrl;
+use iroh_relay::{RelayMap, RelayNode};
 use netwatch::interfaces;
 use tokio::time::Duration;
 

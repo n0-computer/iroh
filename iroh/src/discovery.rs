@@ -737,7 +737,8 @@ mod test_dns_pkarr {
     use std::time::Duration;
 
     use anyhow::Result;
-    use iroh_base::{NodeAddr, RelayMap, SecretKey};
+    use iroh_base::{NodeAddr, SecretKey};
+    use iroh_relay::RelayMap;
     use tokio_util::task::AbortOnDropHandle;
 
     use crate::{
