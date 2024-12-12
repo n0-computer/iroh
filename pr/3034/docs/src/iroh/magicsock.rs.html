@@ -6351,7 +6351,7 @@
                         loopback,
                     } = tokio::task::spawn_blocking(LocalAddresses::new)
                         .<span class="kw">await
-                        </span>.expect(<span class="string">"spawn paniced"</span>);
+                        </span>.expect(<span class="string">"spawn panicked"</span>);
                     <span class="kw">if </span>ips.is_empty() &amp;&amp; addrs.is_empty() {
                         <span class="comment">// Include loopback addresses only if there are no other interfaces
                         // or public addresses, this allows testing offline.
