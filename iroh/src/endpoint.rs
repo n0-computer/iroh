@@ -28,7 +28,7 @@ use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use pin_project::pin_project;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, instrument, trace, warn};
+use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
 use crate::{
@@ -319,7 +319,7 @@ impl Builder {
             {
                 Ok(discovery) => Some(Box::new(discovery)),
                 Err(err) => {
-                    error!("failed to build discovery: {:?}", err);
+                    tracing::error!("failed to build discovery: {:?}", err);
                     None
                 }
             }
