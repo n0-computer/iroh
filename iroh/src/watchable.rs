@@ -23,7 +23,7 @@ use futures_lite::stream::Stream;
 use loom::sync;
 use sync::{Mutex, RwLock};
 
-/// A value who's changes over time can be observed.
+/// A wrapper around a value that notifies [`Watcher`]s when the value is modified.
 ///
 /// Only the most recent value is available to any observer, but but observer is guaranteed
 /// to be notified of the most recent value.
