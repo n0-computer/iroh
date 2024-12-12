@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 authors = ["n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 keywords = ["networking", "holepunching", "p2p"]
-rust-version = "1.76"
+rust-version = "1.81"
 
 [lints]
 workspace = true
