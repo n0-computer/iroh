@@ -54,7 +54,7 @@ impl Pinger {
     fn get_client(&self, kind: ICMP) -> Result<Client> {
         let client = match kind {
             ICMP::V4 => {
-                let mut opt_client = self.0.client_v4.lock().unwrap();
+                let mut opt_client = self.0.client_v4.lock().expect("poisoned");
                 match *opt_client {
                     Some(ref client) => client.clone(),
                     None => {
@@ -66,7 +66,7 @@ impl Pinger {
                 }
             }
             ICMP::V6 => {
-                let mut opt_client = self.0.client_v6.lock().unwrap();
+                let mut opt_client = self.0.client_v6.lock().expect("poisoned");
                 match *opt_client {
                     Some(ref client) => client.clone(),
                     None => {

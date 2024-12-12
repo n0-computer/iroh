@@ -43,7 +43,6 @@ iroh-metrics = { version = "0.29.0", default-features = false }
 libc = "0.2.139"
 num_enum = "0.7"
 once_cell = "1.18.0"
-parking_lot = "0.12.1"
 pin-project = "1"
 postcard = { version = "1", default-features = false, features = [
     "alloc",

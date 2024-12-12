@@ -92,7 +92,8 @@ pub fn generate(
     // and certificate for multiple connections.
     let certificate_keypair = rcgen::KeyPair::generate_for(P2P_SIGNATURE_ALGORITHM)?;
     let rustls_key =
-        rustls::pki_types::PrivateKeyDer::try_from(certificate_keypair.serialize_der()).unwrap();
+        rustls::pki_types::PrivateKeyDer::try_from(certificate_keypair.serialize_der())
+            .expect("checked");
     let certificate = {
         let mut params = rcgen::CertificateParams::default();
         params.distinguished_name = rcgen::DistinguishedName::new();

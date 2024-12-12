@@ -230,6 +230,7 @@
 
 #![recursion_limit = "256"]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
 
 mod disco;

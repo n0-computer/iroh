@@ -9,8 +9,6 @@ pub mod base32;
 #[cfg(feature = "ticket")]
 pub mod ticket;
 
-#[cfg(feature = "hash")]
-mod hash;
 #[cfg(feature = "key")]
 mod key;
 #[cfg(feature = "key")]
@@ -18,8 +16,6 @@ mod node_addr;
 #[cfg(feature = "relay")]
 mod relay_url;
 
-#[cfg(feature = "hash")]
-pub use self::hash::{BlobFormat, Hash, HashAndFormat};
 #[cfg(feature = "key")]
 pub use self::key::{
     KeyParsingError, NodeId, PublicKey, SecretKey, SharedSecret, Signature, PUBLIC_KEY_LENGTH,

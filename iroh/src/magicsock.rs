@@ -187,7 +187,7 @@ pub(crate) struct MagicSock {
     ///
     /// This waker is used by [`IoPoller`] and the [`RelayActor`] to signal when more
     /// datagrams can be sent to the relays.
-    relay_send_waker: Arc<parking_lot::Mutex<Option<Waker>>>,
+    relay_send_waker: Arc<std::sync::Mutex<Option<Waker>>>,
     /// Counter for ordering of [`MagicSock::poll_recv`] polling order.
     poll_recv_counter: AtomicUsize,
 
@@ -236,7 +236,7 @@ pub(crate) struct MagicSock {
 
     /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
-    pending_call_me_maybes: parking_lot::Mutex<HashMap<PublicKey, RelayUrl>>,
+    pending_call_me_maybes: std::sync::Mutex<HashMap<PublicKey, RelayUrl>>,
 
     /// Indicates the direct addr update state.
     direct_addr_update_state: DirectAddrUpdateState,
@@ -1331,7 +1331,12 @@ impl MagicSock {
     fn send_queued_call_me_maybes(&self) {
         let msg = self.direct_addrs.to_call_me_maybe_message();
         let msg = disco::Message::CallMeMaybe(msg);
-        for (public_key, url) in self.pending_call_me_maybes.lock().drain() {
+        for (public_key, url) in self
+            .pending_call_me_maybes
+            .lock()
+            .expect("poisoned")
+            .drain()
+        {
             if !self.send_disco_message_relay(&url, public_key, msg.clone()) {
                 warn!(node = %public_key.fmt_short(), "relay channel full, dropping call-me-maybe");
             }
@@ -1358,6 +1363,7 @@ impl MagicSock {
             Err(last_refresh_ago) => {
                 self.pending_call_me_maybes
                     .lock()
+                    .expect("poisoned")
                     .insert(dst_node, url.clone());
                 debug!(
                     ?last_refresh_ago,
@@ -1436,7 +1442,7 @@ struct DirectAddrUpdateState {
     /// If running, set to the reason for the currently the update.
     running: sync::watch::Sender<Option<&'static str>>,
     /// If set, start a new update as soon as the current one is finished.
-    want_update: parking_lot::Mutex<Option<&'static str>>,
+    want_update: std::sync::Mutex<Option<&'static str>>,
 }
 
 impl DirectAddrUpdateState {
@@ -1452,7 +1458,7 @@ impl DirectAddrUpdateState {
     /// scheduling it for later.
     fn schedule_run(&self, why: &'static str) {
         if self.is_running() {
-            let _ = self.want_update.lock().insert(why);
+            let _ = self.want_update.lock().expect("poisoned").insert(why);
         } else {
             self.run(why);
         }
@@ -1475,7 +1481,7 @@ impl DirectAddrUpdateState {
 
     /// Returns the next update, if one is set.
     fn next_update(&self) -> Option<&'static str> {
-        self.want_update.lock().take()
+        self.want_update.lock().expect("poisoned").take()
     }
 }
 
@@ -1548,7 +1554,7 @@ impl Handle {
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             relay_datagrams_queue: relay_datagrams_queue.clone(),
-            relay_send_waker: Arc::new(parking_lot::Mutex::new(None)),
+            relay_send_waker: Arc::new(std::sync::Mutex::new(None)),
             poll_recv_counter: AtomicUsize::new(0),
             actor_sender: actor_sender.clone(),
             ipv6_reported: Arc::new(AtomicBool::new(false)),
@@ -1664,19 +1670,18 @@ impl Handle {
 }
 
 #[derive(Debug, Default)]
-struct DiscoSecrets(parking_lot::Mutex<HashMap<PublicKey, SharedSecret>>);
+struct DiscoSecrets(std::sync::Mutex<HashMap<PublicKey, SharedSecret>>);
 
 impl DiscoSecrets {
-    fn get(
-        &self,
-        secret: &SecretKey,
-        node_id: PublicKey,
-    ) -> parking_lot::MappedMutexGuard<SharedSecret> {
-        parking_lot::MutexGuard::map(self.0.lock(), |inner| {
-            inner
-                .entry(node_id)
-                .or_insert_with(|| secret.shared(&node_id))
-        })
+    fn get<F, T>(&self, secret: &SecretKey, node_id: PublicKey, cb: F) -> T
+    where
+        F: FnOnce(&mut SharedSecret) -> T,
+    {
+        let mut inner = self.0.lock().expect("poisoned");
+        let x = inner
+            .entry(node_id)
+            .or_insert_with(|| secret.shared(&node_id));
+        cb(x)
     }
 
     pub fn encode_and_seal(
@@ -1686,7 +1691,7 @@ impl DiscoSecrets {
         msg: &disco::Message,
     ) -> Bytes {
         let mut seal = msg.as_bytes();
-        self.get(secret_key, node_id).seal(&mut seal);
+        self.get(secret_key, node_id, |secret| secret.seal(&mut seal));
         disco::encode_message(&secret_key.public(), seal).into()
     }
 
@@ -1696,9 +1701,9 @@ impl DiscoSecrets {
         node_id: PublicKey,
         mut sealed_box: Vec<u8>,
     ) -> Result<disco::Message, DiscoBoxError> {
-        self.get(secret, node_id)
-            .open(&mut sealed_box)
-            .map_err(DiscoBoxError::Open)?;
+        self.get(secret, node_id, |secret| {
+            secret.open(&mut sealed_box).map_err(DiscoBoxError::Open)
+        })?;
         disco::Message::from_bytes(&sealed_box).map_err(DiscoBoxError::Parse)
     }
 }
@@ -1859,7 +1864,7 @@ struct IoPoller {
     ipv4_poller: Pin<Box<dyn quinn::UdpPoller>>,
     ipv6_poller: Option<Pin<Box<dyn quinn::UdpPoller>>>,
     relay_sender: mpsc::Sender<RelayActorMessage>,
-    relay_send_waker: Arc<parking_lot::Mutex<Option<Waker>>>,
+    relay_send_waker: Arc<std::sync::Mutex<Option<Waker>>>,
 }
 
 impl quinn::UdpPoller for IoPoller {
@@ -1878,7 +1883,10 @@ impl quinn::UdpPoller for IoPoller {
         }
         match this.relay_sender.capacity() {
             0 => {
-                self.relay_send_waker.lock().replace(cx.waker().clone());
+                self.relay_send_waker
+                    .lock()
+                    .expect("poisoned")
+                    .replace(cx.waker().clone());
                 Poll::Pending
             }
             _ => Poll::Ready(Ok(())),
@@ -2223,7 +2231,7 @@ impl Actor {
                         loopback,
                     } = tokio::task::spawn_blocking(LocalAddresses::new)
                         .await
-                        .unwrap();
+                        .expect("spawn panicked");
                     if ips.is_empty() && addrs.is_empty() {
                         // Include loopback addresses only if there are no other interfaces
                         // or public addresses, this allows testing offline.
@@ -2563,7 +2571,7 @@ struct DiscoveredDirectAddrs {
 impl DiscoveredDirectAddrs {
     /// Updates the direct addresses, returns `true` if they changed, `false` if not.
     fn update(&self, addrs: BTreeSet<DirectAddr>) -> bool {
-        *self.updated_at.write().unwrap() = Some(Instant::now());
+        *self.updated_at.write().expect("poisoned") = Some(Instant::now());
         let updated = self.addrs.set(Some(addrs)).is_ok();
         if updated {
             event!(

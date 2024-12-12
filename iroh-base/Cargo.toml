@@ -20,7 +20,6 @@ blake3 = { version = "1.4.5", package = "iroh-blake3", optional = true }
 data-encoding = { version = "2.3.3", optional = true }
 hex = "0.4.3"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"], optional = true }
-redb = { version = "2.0.0", optional = true }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 
@@ -46,11 +45,9 @@ serde_json = "1"
 serde_test = "1"
 
 [features]
-default = ["hash", "ticket", "relay"]
-hash = ["dep:blake3", "dep:data-encoding", "dep:postcard", "dep:derive_more", "base32"]
-ticket = ["base32", "key", "hash"]
+default = ["ticket", "relay"]
+ticket = ["base32", "key"]
 base32 = ["dep:data-encoding", "dep:postcard"]
-redb = ["dep:redb"]
 key = [
   "dep:ed25519-dalek",
   "dep:once_cell",
@@ -65,6 +62,7 @@ key = [
   "dep:derive_more",
   "dep:getrandom",
   "base32",
+  "relay",
 ]
 wasm = ["getrandom?/js"]
 relay = ["dep:url", "dep:derive_more"]
