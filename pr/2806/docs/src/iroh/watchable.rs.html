@@ -613,7 +613,7 @@
         <span class="comment">// We don't actually write when the value didn't change, but there's unfortunately
         // no way to upgrade a read guard to a write guard, and locking as read first, then
         // dropping and locking as write introduces a possible race condition.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>state = <span class="self">self</span>.shared.state.write().unwrap();
+        </span><span class="kw">let </span><span class="kw-2">mut </span>state = <span class="self">self</span>.shared.state.write().expect(<span class="string">"poisoned"</span>);
 
         <span class="comment">// Find out if the value changed
         </span><span class="kw">let </span>changed = state.value != value;
@@ -629,7 +629,7 @@
 
         // Notify watchers
         </span><span class="kw">if </span>changed {
-            <span class="kw">for </span>watcher <span class="kw">in </span><span class="self">self</span>.shared.watchers.lock().unwrap().drain(..) {
+            <span class="kw">for </span>watcher <span class="kw">in </span><span class="self">self</span>.shared.watchers.lock().expect(<span class="string">"poisoned"</span>).drain(..) {
                 watcher.wake();
             }
         }
@@ -639,7 +639,7 @@
     <span class="doccomment">/// Creates a [`Watcher`] allowing the value to be observed, but not modified.
     </span><span class="kw">pub fn </span>watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;T&gt; {
         Watcher {
-            epoch: <span class="self">self</span>.shared.state.read().unwrap().epoch,
+            epoch: <span class="self">self</span>.shared.state.read().expect(<span class="string">"poisoned"</span>).epoch,
             shared: Arc::downgrade(<span class="kw-2">&amp;</span><span class="self">self</span>.shared),
         }
     }
@@ -866,7 +866,7 @@
 
     <span class="kw">fn </span>poll_next(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;, last_epoch: u64) -&gt; Poll&lt;(u64, T)&gt; {
         {
-            <span class="kw">let </span>state = <span class="self">self</span>.state.read().unwrap();
+            <span class="kw">let </span>state = <span class="self">self</span>.state.read().expect(<span class="string">"poisoned"</span>);
             <span class="kw">let </span>epoch = state.epoch;
 
             <span class="kw">if </span>last_epoch &lt; epoch {
@@ -885,7 +885,7 @@
         </span>loom::thread::yield_now();
 
         {
-            <span class="kw">let </span>state = <span class="self">self</span>.state.read().unwrap();
+            <span class="kw">let </span>state = <span class="self">self</span>.state.read().expect(<span class="string">"poisoned"</span>);
             <span class="kw">let </span>epoch = state.epoch;
 
             <span class="kw">if </span>last_epoch &lt; epoch {
@@ -1069,7 +1069,7 @@
                 <span class="macro">tokio::select!</span> {
                     val = watch.updated() =&gt; {
                         <span class="kw">let </span><span class="prelude-val">Ok</span>(val) = val <span class="kw">else </span>{
-                            <span class="kw">return </span>();
+                            <span class="kw">return</span>;
                         };
 
                         <span class="macro">assert_ne!</span>(val, last_observed, <span class="string">"never observe the same value twice, even with cancellation"</span>);

@@ -1124,7 +1124,12 @@
 <a href="#1123" id="1123">1123</a>
 <a href="#1124" id="1124">1124</a>
 <a href="#1125" id="1125">1125</a>
-<a href="#1126" id="1126">1126</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
+<a href="#1126" id="1126">1126</a>
+<a href="#1127" id="1127">1127</a>
+<a href="#1128" id="1128">1128</a>
+<a href="#1129" id="1129">1129</a>
+<a href="#1130" id="1130">1130</a>
+<a href="#1131" id="1131">1131</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
 //! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
@@ -1172,12 +1177,14 @@
 <span class="kw">mod </span>clients;
 <span class="kw">mod </span>http_server;
 <span class="kw">mod </span>metrics;
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>resolver;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>streams;
 <span class="attr">#[cfg(feature = <span class="string">"test-utils"</span>)]
 </span><span class="kw">pub mod </span>testing;
 
 <span class="kw">pub use </span><span class="self">self</span>::{
     metrics::{Metrics, StunMetrics},
+    resolver::{ReloadingResolver, DEFAULT_CERT_RELOAD_INTERVAL},
     streams::MaybeTlsStream <span class="kw">as </span>MaybeTlsStreamServer,
 };
 
@@ -1324,6 +1331,8 @@
         <span class="doccomment">/// The TLS certificate chain.
         </span>certs: Vec&lt;rustls::pki_types::CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;,
     },
+    <span class="doccomment">/// Use a TLS key and certificate chain that can be reloaded.
+    </span>Reloading,
 }
 
 <span class="doccomment">/// A running Relay + STUN server.
@@ -1405,6 +1414,7 @@
             relay.tls.as_ref().and_then(|tls| <span class="kw">match </span>tls.cert {
                 CertConfig::LetsEncrypt { .. } =&gt; <span class="prelude-val">None</span>,
                 CertConfig::Manual { <span class="kw-2">ref </span>certs, .. } =&gt; <span class="prelude-val">Some</span>(certs.clone()),
+                CertConfig::Reloading { .. } =&gt; <span class="prelude-val">None</span>,
             })
         });
 
@@ -1461,7 +1471,7 @@
                                     acceptor,
                                 })
                             }
-                            CertConfig::Manual { .. } =&gt; {
+                            CertConfig::Manual { .. } | CertConfig::Reloading { .. } =&gt; {
                                 <span class="kw">let </span>server_config = Arc::new(tls_config.server_config);
                                 <span class="kw">let </span>acceptor =
                                     tokio_rustls::TlsAcceptor::from(server_config.clone());
