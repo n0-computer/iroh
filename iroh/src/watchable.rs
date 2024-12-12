@@ -8,19 +8,20 @@
 //! [`Watcher`] is like a [`tokio::sync::broadcast::Receiver`]), except that there's no risk
 //! of the channel filling up, but instead you might miss items.
 
-#[cfg(iroh_loom)]
-use loom::sync;
 #[cfg(not(iroh_loom))]
 use std::sync;
-
-use std::collections::VecDeque;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::{Arc, Weak};
-use std::task::{self, Poll, Waker};
-use sync::{Mutex, RwLock};
+use std::{
+    collections::VecDeque,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Weak},
+    task::{self, Poll, Waker},
+};
 
 use futures_lite::stream::Stream;
+#[cfg(iroh_loom)]
+use loom::sync;
+use sync::{Mutex, RwLock};
 
 /// A value who's changes over time can be observed.
 ///
@@ -330,14 +331,14 @@ impl<T: Clone> Shared<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::time::{Duration, Instant};
 
     use futures_lite::StreamExt;
     use rand::{thread_rng, Rng};
     use tokio::task::JoinSet;
     use tokio_util::sync::CancellationToken;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_watcher() {
@@ -458,10 +459,11 @@ mod tests {
 
     #[test]
     fn test_initialized_always_resolves() {
-        #[cfg(iroh_loom)]
-        use loom::thread;
         #[cfg(not(iroh_loom))]
         use std::thread;
+
+        #[cfg(iroh_loom)]
+        use loom::thread;
 
         let test_case = || {
             let watchable = Watchable::<Option<u8>>::new(None);
