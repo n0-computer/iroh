@@ -32,7 +32,7 @@ jobs:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@master
       with:
-        toolchain: nightly-2024-05-02
+        toolchain: nightly-2024-11-30
     - name: Install sccache
       uses: mozilla-actions/sccache-action@v0.0.6
 
@@ -68,6 +68,6 @@ jobs:
         comment-id: ${{ steps.fc.outputs.comment-id }}
         body: |
           Documentation for this PR has been generated and is available at: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/${{ env.PREVIEW_PATH }}/iroh/
-          
+
           Last updated: ${{ env.TIMESTAMP }}
         edit-mode: replace

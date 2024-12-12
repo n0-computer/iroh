@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use futures_concurrency::stream::stream_group;
 use futures_lite::StreamExt;
-use iroh_base::key::NodeId;
+use iroh_base::NodeId;
 use iroh_metrics::inc;
 use tokio::{
     sync::{mpsc, Notify},

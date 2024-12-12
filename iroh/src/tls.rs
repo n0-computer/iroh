@@ -5,11 +5,11 @@
 
 use std::sync::Arc;
 
+use iroh_base::{PublicKey, SecretKey};
 use quinn::crypto::rustls::{NoInitialCipherSuite, QuicClientConfig, QuicServerConfig};
 use tracing::warn;
 
 use self::certificate::AlwaysResolvesCert;
-use crate::key::{PublicKey, SecretKey};
 
 pub mod certificate;
 mod verifier;

@@ -126,7 +126,7 @@ impl<T: Clone + Eq> Watcher<T> {
     }
 
     /// Returns a future completing with `Ok(value)` once a new value is set, or with
-    /// [`Err(disconnected)`](Disconnected) if the connected [`Watchable`] was dropped.
+    /// [`Err(Disconnected)`](Disconnected) if the connected [`Watchable`] was dropped.
     pub fn updated(&mut self) -> WatchNextFut<T> {
         WatchNextFut { watcher: self }
     }

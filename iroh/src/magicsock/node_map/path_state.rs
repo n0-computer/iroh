@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use iroh_base::key::NodeId;
+use iroh_base::NodeId;
 use iroh_relay::protos::stun;
 use tracing::{debug, event, Level};
 

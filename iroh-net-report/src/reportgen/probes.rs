@@ -7,10 +7,12 @@
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
 use anyhow::{ensure, Result};
+use iroh_base::RelayUrl;
+use iroh_relay::{RelayMap, RelayNode};
 use netwatch::interfaces;
 use tokio::time::Duration;
 
-use crate::{RelayMap, RelayNode, RelayUrl, Report};
+use crate::Report;
 
 /// The retransmit interval used when net_report first runs.
 ///

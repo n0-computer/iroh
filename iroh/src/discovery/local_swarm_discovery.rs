@@ -40,8 +40,7 @@ use anyhow::Result;
 use derive_more::FromStr;
 use futures_lite::stream::Boxed as BoxStream;
 use futures_util::FutureExt;
-use iroh_base::{key::PublicKey, node_addr::NodeAddr};
-use iroh_relay::RelayUrl;
+use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::{
     sync::mpsc::{
@@ -56,7 +55,7 @@ use tracing::{debug, error, info_span, trace, warn, Instrument};
 use crate::{
     discovery::{Discovery, DiscoveryItem},
     watchable::Watchable,
-    Endpoint, NodeId,
+    Endpoint,
 };
 
 /// The n0 local swarm node discovery name
@@ -402,6 +401,7 @@ mod tests {
     /// tests)
     mod run_in_isolation {
         use futures_lite::StreamExt;
+        use iroh_base::SecretKey;
         use testresult::TestResult;
 
         use super::super::*;
@@ -481,7 +481,7 @@ mod tests {
         }
 
         fn make_discoverer() -> Result<(PublicKey, LocalSwarmDiscovery)> {
-            let node_id = crate::key::SecretKey::generate().public();
+            let node_id = SecretKey::generate().public();
             Ok((node_id, LocalSwarmDiscovery::new(node_id)?))
         }
     }

@@ -5,9 +5,8 @@ use std::{
     time::Instant,
 };
 
-use iroh_base::key::NodeId;
+use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 use iroh_metrics::inc;
-use iroh_relay::RelayUrl;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
@@ -22,9 +21,7 @@ use super::{
 };
 use crate::{
     disco::{CallMeMaybe, Pong, SendAddr},
-    key::PublicKey,
     watchable::Watcher,
-    NodeAddr,
 };
 
 mod best_addr;
@@ -627,8 +624,9 @@ impl IpPort {
 mod tests {
     use std::net::Ipv4Addr;
 
+    use iroh_base::SecretKey;
+
     use super::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, *};
-    use crate::key::SecretKey;
 
     impl NodeMap {
         #[track_caller]

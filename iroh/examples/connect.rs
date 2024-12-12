@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 
 use anyhow::Context;
 use clap::Parser;
-use iroh::{key::SecretKey, Endpoint, NodeAddr, RelayMode, RelayUrl};
+use iroh::{Endpoint, NodeAddr, RelayMode, RelayUrl, SecretKey};
 use tracing::info;
 
 // An example ALPN that we are using to communicate over the `Endpoint`

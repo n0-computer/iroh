@@ -4,12 +4,14 @@ use std::net::Ipv4Addr;
 use anyhow::Result;
 pub use dns_and_pkarr_servers::DnsPkarrServer;
 pub use dns_server::create_dns_resolver;
-use iroh_relay::server::{
-    CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig,
+use iroh_base::RelayUrl;
+use iroh_relay::{
+    server::{CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
+    RelayMap, RelayNode, RelayQuicConfig,
 };
 use tokio::sync::oneshot;
 
-use crate::{defaults::DEFAULT_STUN_PORT, RelayMap, RelayNode, RelayUrl};
+use crate::defaults::DEFAULT_STUN_PORT;
 
 /// A drop guard to clean up test infrastructure.
 ///
@@ -94,7 +96,7 @@ pub async fn run_relay_server_with(
         .unwrap();
     let quic = server
         .quic_addr()
-        .map(|addr| iroh_base::relay_map::QuicConfig { port: addr.port() });
+        .map(|addr| RelayQuicConfig { port: addr.port() });
     let m = RelayMap::from_nodes([RelayNode {
         url: url.clone(),
         stun_only: false,
@@ -109,7 +111,7 @@ pub(crate) mod dns_and_pkarr_servers {
     use std::{net::SocketAddr, time::Duration};
 
     use anyhow::Result;
-    use iroh_base::key::{NodeId, SecretKey};
+    use iroh_base::{NodeId, SecretKey};
     use url::Url;
 
     use super::{create_dns_resolver, CleanupDropGuard};
@@ -380,13 +382,13 @@ pub(crate) mod pkarr_dns_state {
     };
 
     use anyhow::{bail, Result};
+    use iroh_base::NodeId;
     use parking_lot::{Mutex, MutexGuard};
     use pkarr::SignedPacket;
 
     use crate::{
         dns::node_info::{node_id_from_hickory_name, NodeInfo},
         test_utils::dns_server::QueryHandler,
-        NodeId,
     };
 
     #[derive(Debug, Clone)]

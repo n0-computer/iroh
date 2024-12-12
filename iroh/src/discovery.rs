@@ -50,8 +50,7 @@
 //! ```no_run
 //! use iroh::{
 //!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
-//!     key::SecretKey,
-//!     Endpoint,
+//!     Endpoint, SecretKey,
 //! };
 //!
 //! # async fn wrapper() -> anyhow::Result<()> {
@@ -85,7 +84,7 @@
 //! # use iroh::discovery::local_swarm_discovery::LocalSwarmDiscovery;
 //! # use iroh::discovery::pkarr::PkarrPublisher;
 //! # use iroh::discovery::ConcurrentDiscovery;
-//! # use iroh::key::SecretKey;
+//! # use iroh::SecretKey;
 //! #
 //! # async fn wrapper() -> anyhow::Result<()> {
 //! # let secret_key = SecretKey::generate();
@@ -99,7 +98,7 @@
 //! # }
 //! ```
 //!
-//! [`RelayUrl`]: crate::relay::RelayUrl
+//! [`RelayUrl`]: crate::RelayUrl
 //! [`Builder::discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: dns::DnsDiscovery
 //! [Number 0]: https://n0.computer
@@ -116,12 +115,11 @@ use std::{collections::BTreeSet, net::SocketAddr, time::Duration};
 
 use anyhow::{anyhow, ensure, Result};
 use futures_lite::stream::{Boxed as BoxStream, StreamExt};
-use iroh_base::node_addr::NodeAddr;
-use iroh_relay::RelayUrl;
+use iroh_base::{NodeAddr, NodeId, RelayUrl};
 use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{debug, error_span, warn, Instrument};
 
-use crate::{Endpoint, NodeId};
+use crate::Endpoint;
 
 pub mod dns;
 
@@ -145,7 +143,7 @@ pub mod static_provider;
 /// discovery information changes. If a discovery mechanism requires a periodic
 /// refresh, it should start its own task.
 ///
-/// [`RelayUrl`]: crate::relay::RelayUrl
+/// [`RelayUrl`]: crate::RelayUrl
 pub trait Discovery: std::fmt::Debug + Send + Sync {
     /// Publishes the given [`RelayUrl`] and direct addreesses to the discovery mechanism.
     ///
@@ -447,12 +445,13 @@ mod tests {
         time::SystemTime,
     };
 
+    use iroh_base::SecretKey;
     use parking_lot::Mutex;
     use rand::Rng;
     use tokio_util::task::AbortOnDropHandle;
 
     use super::*;
-    use crate::{key::SecretKey, RelayMode};
+    use crate::RelayMode;
 
     type InfoStore = HashMap<NodeId, (Option<RelayUrl>, BTreeSet<SocketAddr>, u64)>;
 
@@ -739,7 +738,8 @@ mod test_dns_pkarr {
     use std::time::Duration;
 
     use anyhow::Result;
-    use iroh_base::key::SecretKey;
+    use iroh_base::{NodeAddr, SecretKey};
+    use iroh_relay::RelayMap;
     use tokio_util::task::AbortOnDropHandle;
 
     use crate::{
@@ -750,7 +750,7 @@ mod test_dns_pkarr {
             pkarr_dns_state::State,
             run_relay_server, DnsPkarrServer,
         },
-        Endpoint, NodeAddr, RelayMap, RelayMode,
+        Endpoint, RelayMode,
     };
 
     const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);

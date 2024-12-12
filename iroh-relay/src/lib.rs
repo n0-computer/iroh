@@ -37,14 +37,18 @@ pub mod quic;
 #[cfg(feature = "server")]
 pub mod server;
 
+mod relay_map;
+
 #[cfg(test)]
 mod dns;
 
-pub use iroh_base::node_addr::RelayUrl;
 pub use protos::relay::MAX_PACKET_SIZE;
 
-pub use self::client::{
-    conn::{Conn as RelayConn, ReceivedMessage},
-    Client as HttpClient, ClientBuilder as HttpClientBuilder, ClientError as HttpClientError,
-    ClientReceiver as HttpClientReceiver,
+pub use self::{
+    client::{
+        conn::{Conn as RelayConn, ReceivedMessage},
+        Client as HttpClient, ClientBuilder as HttpClientBuilder, ClientError as HttpClientError,
+        ClientReceiver as HttpClientReceiver,
+    },
+    relay_map::{RelayMap, RelayNode, RelayQuicConfig},
 };

@@ -16,11 +16,11 @@ use std::time::Duration;
 
 use anyhow::{bail, ensure};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-#[cfg(feature = "server")]
+#[cfg(any(test, feature = "server"))]
 use futures_lite::{Stream, StreamExt};
 use futures_sink::Sink;
 use futures_util::SinkExt;
-use iroh_base::key::{PublicKey, SecretKey, Signature, PUBLIC_KEY_LENGTH};
+use iroh_base::{PublicKey, SecretKey, Signature, PUBLIC_KEY_LENGTH};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio_util::codec::{Decoder, Encoder};
@@ -268,7 +268,7 @@ impl Frame {
                 client_public_key: _,
                 message,
                 signature: _,
-            } => MAGIC.as_bytes().len() + PUBLIC_KEY_LENGTH + message.len() + Signature::BYTE_SIZE,
+            } => MAGIC.len() + PUBLIC_KEY_LENGTH + message.len() + Signature::BYTE_SIZE,
             Frame::SendPacket { dst_key: _, packet } => PUBLIC_KEY_LENGTH + packet.len(),
             Frame::RecvPacket {
                 src_key: _,
@@ -368,17 +368,16 @@ impl Frame {
         let res = match frame_type {
             FrameType::ClientInfo => {
                 ensure!(
-                    content.len()
-                        >= PUBLIC_KEY_LENGTH + Signature::BYTE_SIZE + MAGIC.as_bytes().len(),
+                    content.len() >= PUBLIC_KEY_LENGTH + Signature::BYTE_SIZE + MAGIC.len(),
                     "invalid client info frame length: {}",
                     content.len()
                 );
                 ensure!(
-                    &content[..MAGIC.as_bytes().len()] == MAGIC.as_bytes(),
+                    &content[..MAGIC.len()] == MAGIC.as_bytes(),
                     "invalid client info frame magic"
                 );
 
-                let start = MAGIC.as_bytes().len();
+                let start = MAGIC.len();
                 let client_public_key =
                     PublicKey::try_from(&content[start..start + PUBLIC_KEY_LENGTH])?;
                 let start = start + PUBLIC_KEY_LENGTH;
