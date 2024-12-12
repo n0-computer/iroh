@@ -2249,7 +2249,6 @@ dependencies = [
  "proptest",
  "rand",
  "rand_core",
- "redb",
  "serde",
  "serde_json",
  "serde_test",
