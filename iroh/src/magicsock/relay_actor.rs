@@ -1,7 +1,7 @@
 //! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
-//! [`ConnectedRelayActor`] which handles a single relay connection.
+//! [`ActiveRelayActor`] which handles a single relay connection.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -501,7 +501,7 @@ impl RelayActor {
         self.active_relay_handle(url).await
     }
 
-    /// Returns the address of a [`ConnectedRelayActor`].
+    /// Returns the address of a [`ActiveRelayActor`].
     async fn active_relay_handle(&mut self, url: &RelayUrl) -> &ActiveRelayHandle {
         if !self.active_relays.contains_key(url) {
             self.connect_relay(url, None).await;
@@ -795,7 +795,7 @@ impl RelayActor {
     }
 }
 
-/// Handle to one [`ConnectedRelayActor`].
+/// Handle to one [`ActiveRelayActor`].
 #[derive(Debug)]
 struct ActiveRelayHandle {
     inbox_addr: mpsc::Sender<ActiveRelayMessage>,
