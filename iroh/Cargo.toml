@@ -51,7 +51,6 @@ netdev = "0.31.0"
 netwatch = { version = "0.2.0" }
 num_enum = "0.7"
 once_cell = "1.18.0"
-parking_lot = "0.12.1"
 pin-project = "1"
 pkarr = { version = "2", default-features = false, features = [
     "async",

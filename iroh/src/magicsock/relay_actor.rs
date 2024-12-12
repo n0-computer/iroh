@@ -427,7 +427,7 @@ impl RelayActor {
         }
 
         // Wake up the send waker if one is waiting for space in the channel
-        let mut wakers = self.msock.relay_send_waker.lock();
+        let mut wakers = self.msock.relay_send_waker.lock().unwrap();
         if let Some(waker) = wakers.take() {
             waker.wake();
         }

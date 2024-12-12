@@ -3,6 +3,7 @@ use std::{
     hash::Hash,
     net::{IpAddr, SocketAddr},
     pin::Pin,
+    sync::Mutex,
     task::{Context, Poll},
     time::Instant,
 };
@@ -10,7 +11,6 @@ use std::{
 use futures_lite::stream::Stream;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 use iroh_metrics::inc;
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
 use tracing::{debug, info, instrument, trace, warn};
@@ -136,20 +136,20 @@ impl NodeMap {
 
     /// Add the contact information for a node.
     pub(super) fn add_node_addr(&self, node_addr: NodeAddr, source: Source) {
-        self.inner.lock().add_node_addr(node_addr, source)
+        self.inner.lock().unwrap().add_node_addr(node_addr, source)
     }
 
     /// Number of nodes currently listed.
     pub(super) fn node_count(&self) -> usize {
-        self.inner.lock().node_count()
+        self.inner.lock().unwrap().node_count()
     }
 
     pub(super) fn receive_udp(&self, udp_addr: SocketAddr) -> Option<(PublicKey, QuicMappedAddr)> {
-        self.inner.lock().receive_udp(udp_addr)
+        self.inner.lock().unwrap().receive_udp(udp_addr)
     }
 
     pub(super) fn receive_relay(&self, relay_url: &RelayUrl, src: NodeId) -> QuicMappedAddr {
-        self.inner.lock().receive_relay(relay_url, src)
+        self.inner.lock().unwrap().receive_relay(relay_url, src)
     }
 
     pub(super) fn notify_ping_sent(
@@ -160,13 +160,13 @@ impl NodeMap {
         purpose: DiscoPingPurpose,
         msg_sender: tokio::sync::mpsc::Sender<ActorMessage>,
     ) {
-        if let Some(ep) = self.inner.lock().get_mut(NodeStateKey::Idx(id)) {
+        if let Some(ep) = self.inner.lock().unwrap().get_mut(NodeStateKey::Idx(id)) {
             ep.ping_sent(dst, tx_id, purpose, msg_sender);
         }
     }
 
     pub(super) fn notify_ping_timeout(&self, id: usize, tx_id: stun_rs::TransactionId) {
-        if let Some(ep) = self.inner.lock().get_mut(NodeStateKey::Idx(id)) {
+        if let Some(ep) = self.inner.lock().unwrap().get_mut(NodeStateKey::Idx(id)) {
             ep.ping_timeout(tx_id);
         }
     }
@@ -177,6 +177,7 @@ impl NodeMap {
     ) -> Option<QuicMappedAddr> {
         self.inner
             .lock()
+            .unwrap()
             .get(NodeStateKey::NodeId(node_key))
             .map(|ep| *ep.quic_mapped_addr())
     }
@@ -189,11 +190,11 @@ impl NodeMap {
         src: SendAddr,
         tx_id: TransactionId,
     ) -> PingHandled {
-        self.inner.lock().handle_ping(sender, src, tx_id)
+        self.inner.lock().unwrap().handle_ping(sender, src, tx_id)
     }
 
     pub(super) fn handle_pong(&self, sender: PublicKey, src: &DiscoMessageSource, pong: Pong) {
-        self.inner.lock().handle_pong(sender, src, pong)
+        self.inner.lock().unwrap().handle_pong(sender, src, pong)
     }
 
     #[must_use = "actions must be handled"]
@@ -202,7 +203,7 @@ impl NodeMap {
         sender: PublicKey,
         cm: CallMeMaybe,
     ) -> Vec<PingAction> {
-        self.inner.lock().handle_call_me_maybe(sender, cm)
+        self.inner.lock().unwrap().handle_call_me_maybe(sender, cm)
     }
 
     #[allow(clippy::type_complexity)]
@@ -216,7 +217,7 @@ impl NodeMap {
         Option<RelayUrl>,
         Vec<PingAction>,
     )> {
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.lock().unwrap();
         let ep = inner.get_mut(NodeStateKey::QuicMappedAddr(addr))?;
         let public_key = *ep.public_key();
         trace!(dest = %addr, node_id = %public_key.fmt_short(), "dst mapped to NodeId");
@@ -225,21 +226,21 @@ impl NodeMap {
     }
 
     pub(super) fn notify_shutdown(&self) {
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.lock().unwrap();
         for (_, ep) in inner.node_states_mut() {
             ep.reset();
         }
     }
 
     pub(super) fn reset_node_states(&self) {
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.lock().unwrap();
         for (_, ep) in inner.node_states_mut() {
             ep.note_connectivity_change();
         }
     }
 
     pub(super) fn nodes_stayin_alive(&self) -> Vec<PingAction> {
-        let mut inner = self.inner.lock();
+        let mut inner = self.inner.lock().unwrap();
         inner
             .node_states_mut()
             .flat_map(|(_idx, node_state)| node_state.stayin_alive())
@@ -252,7 +253,7 @@ impl NodeMap {
         // we can't avoid `collect` here since it would hold a lock for an indefinite time. Even if
         // we were to find this acceptable, dealing with the lifetimes of the mutex's guard and the
         // internal iterator will be a hassle, if possible at all.
-        self.inner.lock().remote_infos_iter(now).collect()
+        self.inner.lock().unwrap().remote_infos_iter(now).collect()
     }
 
     /// Returns a stream of [`ConnectionType`].
@@ -265,21 +266,24 @@ impl NodeMap {
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
     pub(super) fn conn_type_stream(&self, node_id: NodeId) -> anyhow::Result<ConnectionTypeStream> {
-        self.inner.lock().conn_type_stream(node_id)
+        self.inner.lock().unwrap().conn_type_stream(node_id)
     }
 
     /// Get the [`RemoteInfo`]s for the node identified by [`NodeId`].
     pub(super) fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
-        self.inner.lock().remote_info(node_id)
+        self.inner.lock().unwrap().remote_info(node_id)
     }
 
     /// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
     pub(super) fn prune_inactive(&self) {
-        self.inner.lock().prune_inactive();
+        self.inner.lock().unwrap().prune_inactive();
     }
 
     pub(crate) fn on_direct_addr_discovered(&self, discovered: BTreeSet<SocketAddr>) {
-        self.inner.lock().on_direct_addr_discovered(discovered);
+        self.inner
+            .lock()
+            .unwrap()
+            .on_direct_addr_discovered(discovered);
     }
 }
 
@@ -740,6 +744,7 @@ mod tests {
         let id = node_map
             .inner
             .lock()
+            .unwrap()
             .insert_node(Options {
                 node_id: public_key,
                 relay_url: None,
@@ -762,7 +767,7 @@ mod tests {
             // add address
             node_map.add_test_addr(node_addr);
             // make it active
-            node_map.inner.lock().receive_udp(addr);
+            node_map.inner.lock().unwrap().receive_udp(addr);
         }
 
         info!("Adding offline/inactive addresses");
@@ -772,7 +777,7 @@ mod tests {
             node_map.add_test_addr(node_addr);
         }
 
-        let mut node_map_inner = node_map.inner.lock();
+        let mut node_map_inner = node_map.inner.lock().unwrap();
         let endpoint = node_map_inner.by_id.get_mut(&id).unwrap();
 
         info!("Adding alive addresses");
@@ -811,7 +816,12 @@ mod tests {
         let active_node = SecretKey::generate().public();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
         node_map.add_test_addr(NodeAddr::new(active_node).with_direct_addresses([addr]));
-        node_map.inner.lock().receive_udp(addr).expect("registered");
+        node_map
+            .inner
+            .lock()
+            .unwrap()
+            .receive_udp(addr)
+            .expect("registered");
 
         for _ in 0..MAX_INACTIVE_NODES + 1 {
             let node = SecretKey::generate().public();
@@ -824,6 +834,7 @@ mod tests {
         node_map
             .inner
             .lock()
+            .unwrap()
             .get(NodeStateKey::NodeId(active_node))
             .expect("should not be pruned");
     }
