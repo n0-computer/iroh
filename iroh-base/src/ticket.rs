@@ -4,10 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{base32, key::NodeId, relay_url::RelayUrl};
 
-mod blob;
 mod node;
 
-pub use self::{blob::BlobTicket, node::NodeTicket};
+pub use self::node::NodeTicket;
 
 /// A ticket is a serializable object combining information required for an operation.
 ///
