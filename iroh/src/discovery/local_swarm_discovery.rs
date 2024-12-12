@@ -170,7 +170,7 @@ impl LocalSwarmDiscovery {
                     msg = recv.recv() => {
                         msg
                     }
-                    Ok(Some((_url, addrs)))= addrs_change.updated() => {
+                    Ok(Some((_url, addrs))) = addrs_change.updated() => {
                         tracing::trace!(?addrs, "LocalSwarmDiscovery address changed");
                         discovery.remove_all();
                         let addrs =

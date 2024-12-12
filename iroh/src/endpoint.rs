@@ -755,7 +755,7 @@ impl Endpoint {
 
     /// Returns the current [`NodeAddr`] for this endpoint.
     ///
-    /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and local IP endpoints
+    /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
     /// as they would be returned by [`Endpoint::home_relay`] and
     /// [`Endpoint::direct_addresses`].
     pub async fn node_addr(&self) -> Result<NodeAddr> {
@@ -909,14 +909,14 @@ impl Endpoint {
 
     /// Returns the DNS resolver used in this [`Endpoint`].
     ///
-    /// See [`Builder::discovery`].
+    /// See [`Builder::dns_resolver`].
     pub fn dns_resolver(&self) -> &DnsResolver {
         self.msock.dns_resolver()
     }
 
     /// Returns the discovery mechanism, if configured.
     ///
-    /// See [`Builder::dns_resolver`].
+    /// See [`Builder::discovery`].
     pub fn discovery(&self) -> Option<&dyn Discovery> {
         self.msock.discovery()
     }
