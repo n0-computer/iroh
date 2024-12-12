@@ -64,7 +64,7 @@ impl<T: Clone + Eq> Watchable<T> {
         // We don't actually write when the value didn't change, but there's unfortunately
         // no way to upgrade a read guard to a write guard, and locking as read first, then
         // dropping and locking as write introduces a possible race condition.
-        let mut state = self.shared.state.write().unwrap();
+        let mut state = self.shared.state.write().expect("poisoned");
 
         // Find out if the value changed
         let changed = state.value != value;
@@ -80,7 +80,7 @@ impl<T: Clone + Eq> Watchable<T> {
 
         // Notify watchers
         if changed {
-            for watcher in self.shared.watchers.lock().unwrap().drain(..) {
+            for watcher in self.shared.watchers.lock().expect("poisoned").drain(..) {
                 watcher.wake();
             }
         }
@@ -90,7 +90,7 @@ impl<T: Clone + Eq> Watchable<T> {
     /// Creates a [`Watcher`] allowing the value to be observed, but not modified.
     pub fn watch(&self) -> Watcher<T> {
         Watcher {
-            epoch: self.shared.state.read().unwrap().epoch,
+            epoch: self.shared.state.read().expect("poisoned").epoch,
             shared: Arc::downgrade(&self.shared),
         }
     }
@@ -317,7 +317,7 @@ impl<T: Clone> Shared<T> {
 
     fn poll_next(&self, cx: &mut task::Context<'_>, last_epoch: u64) -> Poll<(u64, T)> {
         {
-            let state = self.state.read().unwrap();
+            let state = self.state.read().expect("poisoned");
             let epoch = state.epoch;
 
             if last_epoch < epoch {
@@ -336,7 +336,7 @@ impl<T: Clone> Shared<T> {
         loom::thread::yield_now();
 
         {
-            let state = self.state.read().unwrap();
+            let state = self.state.read().expect("poisoned");
             let epoch = state.epoch;
 
             if last_epoch < epoch {
@@ -520,7 +520,7 @@ mod tests {
                 tokio::select! {
                     val = watch.updated() => {
                         let Ok(val) = val else {
-                            return ();
+                            return;
                         };
 
                         assert_ne!(val, last_observed, "never observe the same value twice, even with cancellation");
