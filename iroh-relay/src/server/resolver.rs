@@ -6,7 +6,7 @@ use rustls::{
     server::{ClientHello, ResolvesServerCert},
     sign::CertifiedKey,
 };
-use tokio_util::task::AbortOnDropHandle;
+use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 
 /// A Certificate resolver that reloads the certificate every interval
 #[derive(Debug)]
@@ -15,8 +15,8 @@ pub struct ReloadingResolver<Loader: Send + 'static> {
     reloadable: Arc<Reloadable<CertifiedKey, Loader>>,
     /// The handle to the task that reloads the certificate.
     _handle: AbortOnDropHandle<()>,
-    /// Shutdown signal sender
-    _shutdown_tx: tokio::sync::oneshot::Sender<()>,
+    /// Cancel token to shutdown the resolver.
+    cancel_token: CancellationToken,
 }
 
 impl<Loader> ReloadingResolver<Loader>
@@ -30,23 +30,23 @@ where
             .map_err(|_| anyhow!("Failed to load the certificate"))?;
         let reloadable = Arc::new(reloadable);
 
-        // create a channel to send the shutdown signal
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let cancel_token = CancellationToken::new();
 
         // Spawn a task to reload the certificate every interval.
         let _reloadable = reloadable.clone();
+        let _cancel_token = cancel_token.clone();
         let _handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(interval);
-            tokio::select! {
-                _ = async {
-                    loop {
-                        interval.tick().await;
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
                         let _ = _reloadable.reload().await;
                         tracing::info!("Reloaded the certificate");
+                    },
+                    _ = _cancel_token.cancelled() => {
+                        tracing::trace!("shutting down");
+                        break;
                     }
-                } => {},
-                _ = shutdown_rx => {
-                    tracing::info!("Shutdown signal received");
                 }
             }
         });
@@ -55,13 +55,13 @@ where
         Ok(Self {
             reloadable,
             _handle,
-            _shutdown_tx: shutdown_tx,
+            cancel_token,
         })
     }
 
     /// Shutdown the resolver.
     pub fn shutdown(self) {
-        let _ = self._shutdown_tx.send(());
+        self.cancel_token.cancel();
     }
 
     /// Reload the certificate.
