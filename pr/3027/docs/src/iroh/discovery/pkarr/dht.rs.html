@@ -1,4 +1,5 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/discovery/pkarr/dht.rs`."><title>dht.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-b21aa549bf6d91ff.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.80.0-nightly (c987ad527 2024-05-01)" data-channel="nightly" data-search-js="search-bf21c90c8c1d92b1.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../../static.files/storage-e32f0c247825364d.js"></script><script defer src="../../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-09095024cf37855e.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><nav class="sub"><form class="search-form"><span></span><div id="sidebar-button" tabindex="-1"><a href="../../../../iroh/all.html" title="show sidebar"></a></div><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Type ‘S’ or ‘/’ to search, ‘?’ for more options…" type="search"><div id="help-button" tabindex="-1"><a href="../../../../help.html" title="help">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../../settings.html" title="settings">Settings</a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/discovery/pkarr/dht.rs`."><title>dht.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../../static.files/storage-59e33391.js"></script><script defer src="../../../../static.files/src-script-56102188.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/discovery/pkarr/</div>dht.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -461,8 +462,7 @@
 <a href="#461" id="461">461</a>
 <a href="#462" id="462">462</a>
 <a href="#463" id="463">463</a>
-<a href="#464" id="464">464</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
+<a href="#464" id="464">464</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
 //!
 //! This module contains pkarr-based node discovery for iroh which can use both pkarr
 //! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
@@ -470,12 +470,15 @@
 //!
 //! [pkarr module]: super
 </span><span class="kw">use </span>std::{
+    collections::BTreeSet,
+    net::SocketAddr,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 <span class="kw">use </span>futures_lite::{stream::Boxed, StreamExt};
 <span class="kw">use </span>genawaiter::sync::{Co, Gen};
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 <span class="kw">use </span>pkarr::{
     PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
     RelaySettings, SignedPacket,
@@ -489,8 +492,7 @@
         Discovery, DiscoveryItem,
     },
     dns::node_info::NodeInfo,
-    key::SecretKey,
-    AddrInfo, Endpoint, NodeId,
+    Endpoint,
 };
 
 <span class="doccomment">/// Republish delay for the DHT.
@@ -642,10 +644,11 @@
 
     <span class="doccomment">/// Builds the discovery mechanism.
     </span><span class="kw">pub fn </span>build(<span class="self">self</span>) -&gt; anyhow::Result&lt;DhtDiscovery&gt; {
-        <span class="kw">let </span>pkarr = <span class="self">self
-            </span>.client
-            .unwrap_or_else(|| PkarrClient::new(Default::default()).unwrap())
-            .as_async();
+        <span class="kw">let </span>pkarr = <span class="kw">match </span><span class="self">self</span>.client {
+            <span class="prelude-val">Some</span>(client) =&gt; client,
+            <span class="prelude-val">None </span>=&gt; PkarrClient::new(Default::default())<span class="question-mark">?</span>,
+        };
+        <span class="kw">let </span>pkarr = pkarr.as_async();
         <span class="kw">let </span>ttl = <span class="self">self</span>.ttl.unwrap_or(DEFAULT_PKARR_TTL);
         <span class="kw">let </span>relay_url = <span class="self">self</span>.pkarr_relay;
         <span class="kw">let </span>dht = <span class="self">self</span>.dht;
@@ -721,8 +724,8 @@
             </span><span class="kw">let </span>relay_publish = <span class="kw">async </span>{
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(relay) = this.<span class="number">0</span>.pkarr_relay.as_ref() {
                     <span class="macro">tracing::info!</span>(
-                        <span class="string">"publishing to relay: {}"</span>,
-                        this.<span class="number">0</span>.relay_url.as_ref().unwrap().to_string()
+                        <span class="string">"publishing to relay: {:?}"</span>,
+                        this.<span class="number">0</span>.relay_url.as_ref().map(|r| r.to_string())
                     );
                     <span class="kw">match </span>relay.publish(<span class="kw-2">&amp;</span>signed_packet).<span class="kw">await </span>{
                         <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
@@ -748,20 +751,22 @@
         <span class="kw">let </span><span class="prelude-val">Some</span>(relay) = <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>.pkarr_relay <span class="kw">else </span>{
             <span class="kw">return</span>;
         };
-        <span class="kw">let </span>url = <span class="self">self</span>.<span class="number">0</span>.relay_url.as_ref().unwrap();
-        <span class="macro">tracing::info!</span>(<span class="string">"resolving {} from relay {}"</span>, pkarr_public_key.to_z32(), url);
+        <span class="macro">tracing::info!</span>(
+            <span class="string">"resolving {} from relay {:?}"</span>,
+            pkarr_public_key.to_z32(),
+            <span class="self">self</span>.<span class="number">0</span>.relay_url
+        );
         <span class="kw">let </span>response = relay.resolve(<span class="kw-2">&amp;</span>pkarr_public_key).<span class="kw">await</span>;
         <span class="kw">match </span>response {
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(signed_packet)) =&gt; {
                 <span class="kw">if let </span><span class="prelude-val">Ok</span>(node_info) = NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet) {
-                    <span class="kw">let </span>node_id = node_info.node_id;
-                    <span class="kw">let </span>addr_info = node_info.into();
-                    <span class="macro">tracing::info!</span>(<span class="string">"discovered node info from relay {:?}"</span>, addr_info);
+                    <span class="kw">let </span>node_addr: NodeAddr = node_info.into();
+
+                    <span class="macro">tracing::info!</span>(<span class="string">"discovered node info from relay {:?}"</span>, node_addr);
                     co.yield_(<span class="prelude-val">Ok</span>(DiscoveryItem {
-                        node_id,
+                        node_addr,
                         provenance: <span class="string">"relay"</span>,
                         last_updated: <span class="prelude-val">None</span>,
-                        addr_info,
                     }))
                     .<span class="kw">await</span>;
                 } <span class="kw">else </span>{
@@ -800,14 +805,12 @@
             <span class="kw">return</span>;
         };
         <span class="kw">if let </span><span class="prelude-val">Ok</span>(node_info) = NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet) {
-            <span class="kw">let </span>node_id = node_info.node_id;
-            <span class="kw">let </span>addr_info = node_info.into();
-            <span class="macro">tracing::info!</span>(<span class="string">"discovered node info from DHT {:?}"</span>, addr_info);
+            <span class="kw">let </span>node_addr: NodeAddr = node_info.into();
+            <span class="macro">tracing::info!</span>(<span class="string">"discovered node info from DHT {:?}"</span>, node_addr);
             co.yield_(<span class="prelude-val">Ok</span>(DiscoveryItem {
-                node_id,
+                node_addr,
                 provenance: <span class="string">"mainline"</span>,
                 last_updated: <span class="prelude-val">None</span>,
-                addr_info,
             }))
             .<span class="kw">await</span>;
         } <span class="kw">else </span>{
@@ -826,17 +829,17 @@
 }
 
 <span class="kw">impl </span>Discovery <span class="kw">for </span>DhtDiscovery {
-    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span>AddrInfo) {
+    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {
         <span class="kw">let </span><span class="prelude-val">Some</span>(keypair) = <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>.secret_key <span class="kw">else </span>{
             <span class="macro">tracing::debug!</span>(<span class="string">"no keypair set, not publishing"</span>);
             <span class="kw">return</span>;
         };
-        <span class="macro">tracing::debug!</span>(<span class="string">"publishing {:?}"</span>, info);
+        <span class="macro">tracing::debug!</span>(<span class="string">"publishing {:?}, {:?}"</span>, url, addrs);
         <span class="kw">let </span>info = NodeInfo {
             node_id: keypair.public(),
-            relay_url: info.relay_url.clone().map(Url::from),
+            relay_url: url.cloned().map(Url::from),
             direct_addresses: <span class="kw">if </span><span class="self">self</span>.<span class="number">0</span>.include_direct_addresses {
-                info.direct_addresses.clone()
+                addrs.clone()
             } <span class="kw">else </span>{
                 Default::default()
             },
@@ -847,7 +850,7 @@
         };
         <span class="kw">let </span>this = <span class="self">self</span>.clone();
         <span class="kw">let </span>curr = tokio::spawn(this.publish_loop(keypair.clone(), signed_packet));
-        <span class="kw">let </span><span class="kw-2">mut </span>task = <span class="self">self</span>.<span class="number">0</span>.task.lock().unwrap();
+        <span class="kw">let </span><span class="kw-2">mut </span>task = <span class="self">self</span>.<span class="number">0</span>.task.lock().expect(<span class="string">"poisoned"</span>);
         <span class="kw-2">*</span>task = <span class="prelude-val">Some</span>(AbortOnDropHandle::new(curr));
     }
 
@@ -868,7 +871,7 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::collections::BTreeSet;
 
-    <span class="kw">use </span>iroh_base::node_addr::RelayUrl;
+    <span class="kw">use </span>iroh_base::RelayUrl;
     <span class="kw">use </span>pkarr::mainline::dht::DhtSettings;
     <span class="kw">use </span>testresult::TestResult;
 
@@ -896,10 +899,7 @@
             .build()<span class="question-mark">?</span>;
         <span class="kw">let </span>relay_url: RelayUrl = Url::parse(<span class="string">"https://example.com"</span>)<span class="question-mark">?</span>.into();
 
-        discovery.publish(<span class="kw-2">&amp;</span>AddrInfo {
-            relay_url: <span class="prelude-val">Some</span>(relay_url.clone()),
-            direct_addresses: Default::default(),
-        });
+        discovery.publish(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>relay_url), <span class="kw-2">&amp;</span>Default::default());
 
         <span class="comment">// publish is fire and forget, so we have no way to wait until it is done.
         </span>tokio::time::timeout(Duration::from_secs(<span class="number">30</span>), <span class="kw">async move </span>{
@@ -912,7 +912,7 @@
                     .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
                     .<span class="kw">await</span>;
                 <span class="kw">for </span>item <span class="kw">in </span>items.into_iter().flatten() {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(url) = item.addr_info.relay_url {
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(url) = item.node_addr.relay_url {
                         found_relay_urls.insert(url);
                     }
                 }
