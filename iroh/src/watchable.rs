@@ -120,7 +120,7 @@ impl<T: Clone + Eq> Watcher<T> {
     /// Returns [`Err(Disconnected)`](Disconnected) if the original
     /// [`Watchable`] was dropped.
     pub fn get(&self) -> Result<T, Disconnected> {
-        let shared = self.shared.upgrade().ok_or_else(|| Disconnected)?;
+        let shared = self.shared.upgrade().ok_or(Disconnected)?;
         Ok(shared.get())
     }
 
@@ -181,7 +181,7 @@ pub struct WatchNextFut<'a, T> {
     watcher: &'a mut Watcher<T>,
 }
 
-impl<'a, T: Clone + Eq> Future for WatchNextFut<'a, T> {
+impl<T: Clone + Eq> Future for WatchNextFut<'_, T> {
     type Output = Result<T, Disconnected>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
@@ -207,7 +207,7 @@ pub struct WatchInitializedFut<'a, T> {
     watcher: &'a mut Watcher<Option<T>>,
 }
 
-impl<'a, T: Clone + Eq> Future for WatchInitializedFut<'a, T> {
+impl<T: Clone + Eq> Future for WatchInitializedFut<'_, T> {
     type Output = Result<T, Disconnected>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
