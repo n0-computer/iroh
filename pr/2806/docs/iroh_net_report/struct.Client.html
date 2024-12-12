@@ -16,7 +16,7 @@ stop running.</p>
 allows sending messages to the actor.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.get_report" class="method"><a class="src rightside" href="../src/iroh_net_report/lib.rs.html#251-265">source</a><h4 class="code-header">pub async fn <a href="#method.get_report" class="fn">get_report</a>(
     &amp;mut self,
-    dm: <a class="struct" href="../iroh_base/relay_map/struct.RelayMap.html" title="struct iroh_base::relay_map::RelayMap">RelayMap</a>,
+    dm: RelayMap,
     stun_conn4: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;UdpSocket&gt;&gt;,
     stun_conn6: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;UdpSocket&gt;&gt;,
     quic_config: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="struct.QuicConfig.html" title="struct iroh_net_report::QuicConfig">QuicConfig</a>&gt;
@@ -37,7 +37,7 @@ using QUIC address discovery.</p>
 <p>When <code>None</code>, it will disable the QUIC address discovery probes.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.get_report_channel" class="method"><a class="src rightside" href="../src/iroh_net_report/lib.rs.html#268-288">source</a><h4 class="code-header">pub async fn <a href="#method.get_report_channel" class="fn">get_report_channel</a>(
     &amp;mut self,
-    dm: <a class="struct" href="../iroh_base/relay_map/struct.RelayMap.html" title="struct iroh_base::relay_map::RelayMap">RelayMap</a>,
+    dm: RelayMap,
     stun_conn4: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;UdpSocket&gt;&gt;,
     stun_conn6: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;UdpSocket&gt;&gt;,
     quic_config: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="struct.QuicConfig.html" title="struct iroh_net_report::QuicConfig">QuicConfig</a>&gt;

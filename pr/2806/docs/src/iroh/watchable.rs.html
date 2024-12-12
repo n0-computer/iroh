@@ -606,7 +606,7 @@
     /// Returns [`Err(Disconnected)`](Disconnected) if the original
     /// [`Watchable`] was dropped.
     </span><span class="kw">pub fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;T, Disconnected&gt; {
-        <span class="kw">let </span>shared = <span class="self">self</span>.shared.upgrade().ok_or_else(|| Disconnected)<span class="question-mark">?</span>;
+        <span class="kw">let </span>shared = <span class="self">self</span>.shared.upgrade().ok_or(Disconnected)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(shared.get())
     }
 
@@ -667,7 +667,7 @@
     watcher: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>Watcher&lt;T&gt;,
 }
 
-<span class="kw">impl</span>&lt;<span class="lifetime">'a</span>, T: Clone + Eq&gt; Future <span class="kw">for </span>WatchNextFut&lt;<span class="lifetime">'a</span>, T&gt; {
+<span class="kw">impl</span>&lt;T: Clone + Eq&gt; Future <span class="kw">for </span>WatchNextFut&lt;<span class="lifetime">'_</span>, T&gt; {
     <span class="kw">type </span>Output = <span class="prelude-ty">Result</span>&lt;T, Disconnected&gt;;
 
     <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
@@ -693,7 +693,7 @@
     watcher: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>Watcher&lt;<span class="prelude-ty">Option</span>&lt;T&gt;&gt;,
 }
 
-<span class="kw">impl</span>&lt;<span class="lifetime">'a</span>, T: Clone + Eq&gt; Future <span class="kw">for </span>WatchInitializedFut&lt;<span class="lifetime">'a</span>, T&gt; {
+<span class="kw">impl</span>&lt;T: Clone + Eq&gt; Future <span class="kw">for </span>WatchInitializedFut&lt;<span class="lifetime">'_</span>, T&gt; {
     <span class="kw">type </span>Output = <span class="prelude-ty">Result</span>&lt;T, Disconnected&gt;;
 
     <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {

@@ -539,7 +539,7 @@
 <span class="comment">// TODO: custom magicn
 </span><span class="doccomment">/// The 6 byte header of all discovery messages.
 </span><span class="kw">pub const </span>MAGIC: <span class="kw-2">&amp;</span>str = <span class="string">"TS💬"</span>; <span class="comment">// 6 bytes: 0x54 53 f0 9f 92 ac
-</span><span class="kw">pub const </span>MAGIC_LEN: usize = MAGIC.as_bytes().len();
+</span><span class="kw">pub const </span>MAGIC_LEN: usize = MAGIC.len();
 
 <span class="doccomment">/// Current Version.
 </span><span class="kw">const </span>V0: u8 = <span class="number">0</span>;
