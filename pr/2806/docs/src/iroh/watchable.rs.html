@@ -484,6 +484,8 @@
 <a href="#484" id="484">484</a>
 <a href="#485" id="485">485</a>
 <a href="#486" id="486">486</a>
+<a href="#487" id="487">487</a>
+<a href="#488" id="488">488</a>
 </pre></div><pre class="rust"><code><span class="doccomment">//! Watchable values.
 //!
 //! A [`Watchable`] exists to keep track of a value which may change over time.  It allows
@@ -494,19 +496,20 @@
 //! [`Watcher`] is like a [`tokio::sync::broadcast::Receiver`]), except that there's no risk
 //! of the channel filling up, but instead you might miss items.
 
-</span><span class="attr">#[cfg(iroh_loom)]
-</span><span class="kw">use </span>loom::sync;
-<span class="attr">#[cfg(not(iroh_loom))]
+</span><span class="attr">#[cfg(not(iroh_loom))]
 </span><span class="kw">use </span>std::sync;
-
-<span class="kw">use </span>std::collections::VecDeque;
-<span class="kw">use </span>std::future::Future;
-<span class="kw">use </span>std::pin::Pin;
-<span class="kw">use </span>std::sync::{Arc, Weak};
-<span class="kw">use </span>std::task::{<span class="self">self</span>, Poll, Waker};
-<span class="kw">use </span>sync::{Mutex, RwLock};
+<span class="kw">use </span>std::{
+    collections::VecDeque,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Weak},
+    task::{<span class="self">self</span>, Poll, Waker},
+};
 
 <span class="kw">use </span>futures_lite::stream::Stream;
+<span class="attr">#[cfg(iroh_loom)]
+</span><span class="kw">use </span>loom::sync;
+<span class="kw">use </span>sync::{Mutex, RwLock};
 
 <span class="doccomment">/// A value who's changes over time can be observed.
 ///
@@ -816,14 +819,14 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-
     <span class="kw">use </span>std::time::{Duration, Instant};
 
     <span class="kw">use </span>futures_lite::StreamExt;
     <span class="kw">use </span>rand::{thread_rng, Rng};
     <span class="kw">use </span>tokio::task::JoinSet;
     <span class="kw">use </span>tokio_util::sync::CancellationToken;
+
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_watcher() {
@@ -944,10 +947,11 @@
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_initialized_always_resolves() {
-        <span class="attr">#[cfg(iroh_loom)]
-        </span><span class="kw">use </span>loom::thread;
         <span class="attr">#[cfg(not(iroh_loom))]
         </span><span class="kw">use </span>std::thread;
+
+        <span class="attr">#[cfg(iroh_loom)]
+        </span><span class="kw">use </span>loom::thread;
 
         <span class="kw">let </span>test_case = || {
             <span class="kw">let </span>watchable = Watchable::&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;&gt;::new(<span class="prelude-val">None</span>);
