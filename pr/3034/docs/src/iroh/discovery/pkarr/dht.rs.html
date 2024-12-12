@@ -458,7 +458,11 @@
 <a href="#457" id="457">457</a>
 <a href="#458" id="458">458</a>
 <a href="#459" id="459">459</a>
-<a href="#460" id="460">460</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
+<a href="#460" id="460">460</a>
+<a href="#461" id="461">461</a>
+<a href="#462" id="462">462</a>
+<a href="#463" id="463">463</a>
+<a href="#464" id="464">464</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
 //!
 //! This module contains pkarr-based node discovery for iroh which can use both pkarr
 //! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
@@ -640,10 +644,11 @@
 
     <span class="doccomment">/// Builds the discovery mechanism.
     </span><span class="kw">pub fn </span>build(<span class="self">self</span>) -&gt; anyhow::Result&lt;DhtDiscovery&gt; {
-        <span class="kw">let </span>pkarr = <span class="self">self
-            </span>.client
-            .unwrap_or_else(|| PkarrClient::new(Default::default()).unwrap())
-            .as_async();
+        <span class="kw">let </span>pkarr = <span class="kw">match </span><span class="self">self</span>.client {
+            <span class="prelude-val">Some</span>(client) =&gt; client,
+            <span class="prelude-val">None </span>=&gt; PkarrClient::new(Default::default())<span class="question-mark">?</span>,
+        };
+        <span class="kw">let </span>pkarr = pkarr.as_async();
         <span class="kw">let </span>ttl = <span class="self">self</span>.ttl.unwrap_or(DEFAULT_PKARR_TTL);
         <span class="kw">let </span>relay_url = <span class="self">self</span>.pkarr_relay;
         <span class="kw">let </span>dht = <span class="self">self</span>.dht;
@@ -719,8 +724,8 @@
             </span><span class="kw">let </span>relay_publish = <span class="kw">async </span>{
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(relay) = this.<span class="number">0</span>.pkarr_relay.as_ref() {
                     <span class="macro">tracing::info!</span>(
-                        <span class="string">"publishing to relay: {}"</span>,
-                        this.<span class="number">0</span>.relay_url.as_ref().unwrap().to_string()
+                        <span class="string">"publishing to relay: {:?}"</span>,
+                        this.<span class="number">0</span>.relay_url.as_ref().map(|r| r.to_string())
                     );
                     <span class="kw">match </span>relay.publish(<span class="kw-2">&amp;</span>signed_packet).<span class="kw">await </span>{
                         <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
@@ -746,8 +751,11 @@
         <span class="kw">let </span><span class="prelude-val">Some</span>(relay) = <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>.pkarr_relay <span class="kw">else </span>{
             <span class="kw">return</span>;
         };
-        <span class="kw">let </span>url = <span class="self">self</span>.<span class="number">0</span>.relay_url.as_ref().unwrap();
-        <span class="macro">tracing::info!</span>(<span class="string">"resolving {} from relay {}"</span>, pkarr_public_key.to_z32(), url);
+        <span class="macro">tracing::info!</span>(
+            <span class="string">"resolving {} from relay {:?}"</span>,
+            pkarr_public_key.to_z32(),
+            <span class="self">self</span>.<span class="number">0</span>.relay_url
+        );
         <span class="kw">let </span>response = relay.resolve(<span class="kw-2">&amp;</span>pkarr_public_key).<span class="kw">await</span>;
         <span class="kw">match </span>response {
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(signed_packet)) =&gt; {
@@ -842,7 +850,7 @@
         };
         <span class="kw">let </span>this = <span class="self">self</span>.clone();
         <span class="kw">let </span>curr = tokio::spawn(this.publish_loop(keypair.clone(), signed_packet));
-        <span class="kw">let </span><span class="kw-2">mut </span>task = <span class="self">self</span>.<span class="number">0</span>.task.lock().unwrap();
+        <span class="kw">let </span><span class="kw-2">mut </span>task = <span class="self">self</span>.<span class="number">0</span>.task.lock().expect(<span class="string">"poisoned"</span>);
         <span class="kw-2">*</span>task = <span class="prelude-val">Some</span>(AbortOnDropHandle::new(curr));
     }
 

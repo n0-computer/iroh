@@ -489,9 +489,7 @@
 <a href="#488" id="488">488</a>
 <a href="#489" id="489">489</a>
 <a href="#490" id="490">490</a>
-<a href="#491" id="491">491</a>
-<a href="#492" id="492">492</a>
-<a href="#493" id="493">493</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
+<a href="#491" id="491">491</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
 <span class="kw">use </span>anyhow::Result;
@@ -583,10 +581,9 @@
         <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
         </span>metrics_addr: <span class="prelude-val">None</span>,
     };
-    <span class="kw">let </span>server = Server::spawn(config).<span class="kw">await</span>.unwrap();
-    <span class="kw">let </span>url: RelayUrl = <span class="macro">format!</span>(<span class="string">"https://{}"</span>, server.https_addr().expect(<span class="string">"configured"</span>))
-        .parse()
-        .unwrap();
+    <span class="kw">let </span>server = Server::spawn(config).<span class="kw">await</span><span class="question-mark">?</span>;
+    <span class="kw">let </span>url: RelayUrl = <span class="macro">format!</span>(<span class="string">"https://{}"</span>, server.https_addr().expect(<span class="string">"configured"</span>)).parse()<span class="question-mark">?</span>;
+
     <span class="kw">let </span>quic = server
         .quic_addr()
         .map(|addr| RelayQuicConfig { port: addr.port() });
@@ -595,8 +592,7 @@
         stun_only: <span class="bool-val">false</span>,
         stun_port: server.stun_addr().map_or(DEFAULT_STUN_PORT, |s| s.port()),
         quic,
-    }])
-    .unwrap();
+    }])<span class="question-mark">?</span>;
     <span class="prelude-val">Ok</span>((m, url, server))
 }
 
@@ -916,7 +912,7 @@
 
         <span class="kw">pub fn </span>upsert(<span class="kw-2">&amp;</span><span class="self">self</span>, signed_packet: SignedPacket) -&gt; anyhow::Result&lt;bool&gt; {
             <span class="kw">let </span>node_id = NodeId::from_bytes(<span class="kw-2">&amp;</span>signed_packet.public_key().to_bytes())<span class="question-mark">?</span>;
-            <span class="kw">let </span><span class="kw-2">mut </span>map = <span class="self">self</span>.packets.lock().unwrap();
+            <span class="kw">let </span><span class="kw-2">mut </span>map = <span class="self">self</span>.packets.lock().expect(<span class="string">"poisoned"</span>);
             <span class="kw">let </span>updated = <span class="kw">match </span>map.entry(node_id) {
                 hash_map::Entry::Vacant(e) =&gt; {
                     e.insert(signed_packet);
@@ -942,7 +938,7 @@
         <span class="kw">where
             </span>F: FnOnce(<span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>SignedPacket&gt;) -&gt; T,
         {
-            <span class="kw">let </span><span class="kw-2">mut </span>map = <span class="self">self</span>.packets.lock().unwrap();
+            <span class="kw">let </span><span class="kw-2">mut </span>map = <span class="self">self</span>.packets.lock().expect(<span class="string">"poisoned"</span>);
             <span class="kw">let </span>packet = map.get_mut(node_id);
             cb(packet)
         }

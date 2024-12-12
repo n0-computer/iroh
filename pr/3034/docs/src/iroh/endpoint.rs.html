@@ -1884,7 +1884,11 @@
 <a href="#1883" id="1883">1883</a>
 <a href="#1884" id="1884">1884</a>
 <a href="#1885" id="1885">1885</a>
-<a href="#1886" id="1886">1886</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#1886" id="1886">1886</a>
+<a href="#1887" id="1887">1887</a>
+<a href="#1888" id="1888">1888</a>
+<a href="#1889" id="1889">1889</a>
+<a href="#1890" id="1890">1890</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -1914,7 +1918,7 @@
 <span class="kw">use </span>iroh_relay::RelayMap;
 <span class="kw">use </span>pin_project::pin_project;
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
-<span class="kw">use </span>tracing::{debug, instrument, trace, warn};
+<span class="kw">use </span>tracing::{debug, error, instrument, trace, warn};
 <span class="kw">use </span>url::Url;
 
 <span class="kw">use crate</span>::{
@@ -2030,7 +2034,7 @@
             .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="kw">let </span>discovery: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; = <span class="kw">match </span>discovery.len() {
             <span class="number">0 </span>=&gt; <span class="prelude-val">None</span>,
-            <span class="number">1 </span>=&gt; <span class="prelude-val">Some</span>(discovery.into_iter().next().unwrap()),
+            <span class="number">1 </span>=&gt; <span class="prelude-val">Some</span>(discovery.into_iter().next().expect(<span class="string">"checked length"</span>)),
             <span class="kw">_ </span>=&gt; <span class="prelude-val">Some</span>(Box::new(ConcurrentDiscovery::from_services(discovery))),
         };
         <span class="kw">let </span>msock_opts = magicsock::Options {
@@ -2199,12 +2203,16 @@
     </span><span class="kw">pub fn </span>discovery_dht(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="kw">use </span><span class="kw">crate</span>::discovery::pkarr::dht::DhtDiscovery;
         <span class="self">self</span>.discovery.push(Box::new(|secret_key| {
-            <span class="prelude-val">Some</span>(Box::new(
-                DhtDiscovery::builder()
-                    .secret_key(secret_key.clone())
-                    .build()
-                    .unwrap(),
-            ))
+            <span class="kw">match </span>DhtDiscovery::builder()
+                .secret_key(secret_key.clone())
+                .build()
+            {
+                <span class="prelude-val">Ok</span>(discovery) =&gt; <span class="prelude-val">Some</span>(Box::new(discovery)),
+                <span class="prelude-val">Err</span>(err) =&gt; {
+                    <span class="macro">error!</span>(<span class="string">"failed to build discovery: {:?}"</span>, err);
+                    <span class="prelude-val">None
+                </span>}
+            }
         }));
         <span class="self">self
     </span>}

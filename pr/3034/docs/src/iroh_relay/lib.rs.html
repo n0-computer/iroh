@@ -52,7 +52,8 @@
 <a href="#51" id="51">51</a>
 <a href="#52" id="52">52</a>
 <a href="#53" id="53">53</a>
-<a href="#54" id="54">54</a></pre></div><pre class="rust"><code><span class="doccomment">//! Iroh's relay is a feature within [iroh](https://github.com/n0-computer/iroh), a peer-to-peer
+<a href="#54" id="54">54</a>
+<a href="#55" id="55">55</a></pre></div><pre class="rust"><code><span class="doccomment">//! Iroh's relay is a feature within [iroh](https://github.com/n0-computer/iroh), a peer-to-peer
 //! networking system designed to facilitate direct, encrypted connections between devices. Iroh
 //! aims to simplify decentralized communication by automatically handling connections through
 //! "relays" when direct connections aren't immediately possible. The relay server helps establish
@@ -82,6 +83,7 @@
 
 </span><span class="attr">#![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 </span><span class="kw">pub mod </span>client;
 <span class="kw">pub mod </span>defaults;

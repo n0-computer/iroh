@@ -4101,7 +4101,12 @@
 <a href="#4100" id="4100">4100</a>
 <a href="#4101" id="4101">4101</a>
 <a href="#4102" id="4102">4102</a>
-<a href="#4103" id="4103">4103</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4103" id="4103">4103</a>
+<a href="#4104" id="4104">4104</a>
+<a href="#4105" id="4105">4105</a>
+<a href="#4106" id="4106">4106</a>
+<a href="#4107" id="4107">4107</a>
+<a href="#4108" id="4108">4108</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -5445,7 +5450,12 @@
     <span class="kw">fn </span>send_queued_call_me_maybes(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="kw">let </span>msg = <span class="self">self</span>.direct_addrs.to_call_me_maybe_message();
         <span class="kw">let </span>msg = disco::Message::CallMeMaybe(msg);
-        <span class="kw">for </span>(public_key, url) <span class="kw">in </span><span class="self">self</span>.pending_call_me_maybes.lock().unwrap().drain() {
+        <span class="kw">for </span>(public_key, url) <span class="kw">in </span><span class="self">self
+            </span>.pending_call_me_maybes
+            .lock()
+            .expect(<span class="string">"poisoned"</span>)
+            .drain()
+        {
             <span class="kw">if </span>!<span class="self">self</span>.send_disco_message_relay(<span class="kw-2">&amp;</span>url, public_key, msg.clone()) {
                 <span class="macro">warn!</span>(node = %public_key.fmt_short(), <span class="string">"relay channel full, dropping call-me-maybe"</span>);
             }
@@ -5472,7 +5482,7 @@
             <span class="prelude-val">Err</span>(last_refresh_ago) =&gt; {
                 <span class="self">self</span>.pending_call_me_maybes
                     .lock()
-                    .unwrap()
+                    .expect(<span class="string">"poisoned"</span>)
                     .insert(dst_node, url.clone());
                 <span class="macro">debug!</span>(
                     <span class="question-mark">?</span>last_refresh_ago,
@@ -5567,7 +5577,7 @@
     /// scheduling it for later.
     </span><span class="kw">fn </span>schedule_run(<span class="kw-2">&amp;</span><span class="self">self</span>, why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) {
         <span class="kw">if </span><span class="self">self</span>.is_running() {
-            <span class="kw">let _ </span>= <span class="self">self</span>.want_update.lock().unwrap().insert(why);
+            <span class="kw">let _ </span>= <span class="self">self</span>.want_update.lock().expect(<span class="string">"poisoned"</span>).insert(why);
         } <span class="kw">else </span>{
             <span class="self">self</span>.run(why);
         }
@@ -5590,7 +5600,7 @@
 
     <span class="doccomment">/// Returns the next update, if one is set.
     </span><span class="kw">fn </span>next_update(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt; {
-        <span class="self">self</span>.want_update.lock().unwrap().take()
+        <span class="self">self</span>.want_update.lock().expect(<span class="string">"poisoned"</span>).take()
     }
 }
 
@@ -5787,7 +5797,7 @@
     <span class="kw">where
         </span>F: FnOnce(<span class="kw-2">&amp;mut </span>SharedSecret) -&gt; T,
     {
-        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.<span class="number">0</span>.lock().unwrap();
+        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
         <span class="kw">let </span>x = inner
             .entry(node_id)
             .or_insert_with(|| secret.shared(<span class="kw-2">&amp;</span>node_id));
@@ -5995,7 +6005,7 @@
             <span class="number">0 </span>=&gt; {
                 <span class="self">self</span>.relay_send_waker
                     .lock()
-                    .unwrap()
+                    .expect(<span class="string">"poisoned"</span>)
                     .replace(cx.waker().clone());
                 Poll::Pending
             }
@@ -6341,7 +6351,7 @@
                         loopback,
                     } = tokio::task::spawn_blocking(LocalAddresses::new)
                         .<span class="kw">await
-                        </span>.unwrap();
+                        </span>.expect(<span class="string">"spawn paniced"</span>);
                     <span class="kw">if </span>ips.is_empty() &amp;&amp; addrs.is_empty() {
                         <span class="comment">// Include loopback addresses only if there are no other interfaces
                         // or public addresses, this allows testing offline.
@@ -6681,7 +6691,7 @@
 <span class="kw">impl </span>DiscoveredDirectAddrs {
     <span class="doccomment">/// Updates the direct addresses, returns `true` if they changed, `false` if not.
     </span><span class="kw">fn </span>update(<span class="kw-2">&amp;</span><span class="self">self</span>, addrs: BTreeSet&lt;DirectAddr&gt;) -&gt; bool {
-        <span class="kw-2">*</span><span class="self">self</span>.updated_at.write().unwrap() = <span class="prelude-val">Some</span>(Instant::now());
+        <span class="kw-2">*</span><span class="self">self</span>.updated_at.write().expect(<span class="string">"poisoned"</span>) = <span class="prelude-val">Some</span>(Instant::now());
         <span class="kw">let </span>updated = <span class="self">self</span>.addrs.update(addrs).is_ok();
         <span class="kw">if </span>updated {
             <span class="macro">event!</span>(
