@@ -180,10 +180,11 @@ impl Builder {
 
     /// Builds the discovery mechanism.
     pub fn build(self) -> anyhow::Result<DhtDiscovery> {
-        let pkarr = self
-            .client
-            .unwrap_or_else(|| PkarrClient::new(Default::default()).unwrap())
-            .as_async();
+        let pkarr = match self.client {
+            Some(client) => client,
+            None => PkarrClient::new(Default::default())?,
+        };
+        let pkarr = pkarr.as_async();
         let ttl = self.ttl.unwrap_or(DEFAULT_PKARR_TTL);
         let relay_url = self.pkarr_relay;
         let dht = self.dht;
@@ -259,8 +260,8 @@ impl DhtDiscovery {
             let relay_publish = async {
                 if let Some(relay) = this.0.pkarr_relay.as_ref() {
                     tracing::info!(
-                        "publishing to relay: {}",
-                        this.0.relay_url.as_ref().unwrap().to_string()
+                        "publishing to relay: {:?}",
+                        this.0.relay_url.as_ref().map(|r| r.to_string())
                     );
                     match relay.publish(&signed_packet).await {
                         Ok(_) => {
@@ -286,8 +287,11 @@ impl DhtDiscovery {
         let Some(relay) = &self.0.pkarr_relay else {
             return;
         };
-        let url = self.0.relay_url.as_ref().unwrap();
-        tracing::info!("resolving {} from relay {}", pkarr_public_key.to_z32(), url);
+        tracing::info!(
+            "resolving {} from relay {:?}",
+            pkarr_public_key.to_z32(),
+            self.0.relay_url
+        );
         let response = relay.resolve(&pkarr_public_key).await;
         match response {
             Ok(Some(signed_packet)) => {
@@ -382,7 +386,7 @@ impl Discovery for DhtDiscovery {
         };
         let this = self.clone();
         let curr = tokio::spawn(this.publish_loop(keypair.clone(), signed_packet));
-        let mut task = self.0.task.lock().unwrap();
+        let mut task = self.0.task.lock().expect("poisoned");
         *task = Some(AbortOnDropHandle::new(curr));
     }
 

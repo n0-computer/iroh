@@ -90,10 +90,9 @@ pub async fn run_relay_server_with(
         #[cfg(feature = "metrics")]
         metrics_addr: None,
     };
-    let server = Server::spawn(config).await.unwrap();
-    let url: RelayUrl = format!("https://{}", server.https_addr().expect("configured"))
-        .parse()
-        .unwrap();
+    let server = Server::spawn(config).await?;
+    let url: RelayUrl = format!("https://{}", server.https_addr().expect("configured")).parse()?;
+
     let quic = server
         .quic_addr()
         .map(|addr| RelayQuicConfig { port: addr.port() });
@@ -102,8 +101,7 @@ pub async fn run_relay_server_with(
         stun_only: false,
         stun_port: server.stun_addr().map_or(DEFAULT_STUN_PORT, |s| s.port()),
         quic,
-    }])
-    .unwrap();
+    }])?;
     Ok((m, url, server))
 }
 
@@ -376,14 +374,12 @@ pub(crate) mod pkarr_dns_state {
     use std::{
         collections::{hash_map, HashMap},
         future::Future,
-        ops::Deref,
-        sync::Arc,
+        sync::{Arc, Mutex},
         time::Duration,
     };
 
     use anyhow::{bail, Result};
     use iroh_base::NodeId;
-    use parking_lot::{Mutex, MutexGuard};
     use pkarr::SignedPacket;
 
     use crate::{
@@ -414,7 +410,7 @@ pub(crate) mod pkarr_dns_state {
         pub async fn on_node(&self, node: &NodeId, timeout: Duration) -> Result<()> {
             let timeout = tokio::time::sleep(timeout);
             tokio::pin!(timeout);
-            while self.get(node).is_none() {
+            while self.get(node, |p| p.is_none()) {
                 tokio::select! {
                     _ = &mut timeout => bail!("timeout"),
                     _ = self.on_update() => {}
@@ -425,7 +421,7 @@ pub(crate) mod pkarr_dns_state {
 
         pub fn upsert(&self, signed_packet: SignedPacket) -> anyhow::Result<bool> {
             let node_id = NodeId::from_bytes(&signed_packet.public_key().to_bytes())?;
-            let mut map = self.packets.lock();
+            let mut map = self.packets.lock().expect("poisoned");
             let updated = match map.entry(node_id) {
                 hash_map::Entry::Vacant(e) => {
                     e.insert(signed_packet);
@@ -447,14 +443,13 @@ pub(crate) mod pkarr_dns_state {
         }
 
         /// Returns a mutex guard, do not hold over await points
-        pub fn get(&self, node_id: &NodeId) -> Option<impl Deref<Target = SignedPacket> + '_> {
-            let map = self.packets.lock();
-            if map.contains_key(node_id) {
-                let guard = MutexGuard::map(map, |state| state.get_mut(node_id).unwrap());
-                Some(guard)
-            } else {
-                None
-            }
+        pub fn get<F, T>(&self, node_id: &NodeId, cb: F) -> T
+        where
+            F: FnOnce(Option<&mut SignedPacket>) -> T,
+        {
+            let mut map = self.packets.lock().expect("poisoned");
+            let packet = map.get_mut(node_id);
+            cb(packet)
         }
 
         pub fn resolve_dns(
@@ -467,14 +462,16 @@ pub(crate) mod pkarr_dns_state {
                 let Some(node_id) = node_id_from_hickory_name(query.name()) else {
                     continue;
                 };
-                let packet = self.get(&node_id);
-                let Some(packet) = packet.as_ref() else {
-                    continue;
-                };
-                let node_info = NodeInfo::from_pkarr_signed_packet(packet)?;
-                for record in node_info.to_hickory_records(&self.origin, ttl)? {
-                    reply.add_answer(record);
-                }
+
+                self.get(&node_id, |packet| {
+                    if let Some(packet) = packet {
+                        let node_info = NodeInfo::from_pkarr_signed_packet(packet)?;
+                        for record in node_info.to_hickory_records(&self.origin, ttl)? {
+                            reply.add_answer(record);
+                        }
+                    }
+                    anyhow::Ok(())
+                })?;
             }
             Ok(())
         }
