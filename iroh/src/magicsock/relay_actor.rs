@@ -47,7 +47,7 @@ struct ActiveRelayActor {
     /// Queue to send received relay datagrams on.
     relay_datagrams_recv: Arc<RelayDatagramsQueue>,
     /// Channel on which we receive packets to send to the relay.
-    relay_datagrams_send: mpsc::Receiver<(NodeId, Bytes)>,
+    relay_datagrams_send: mpsc::Receiver<RelaySendPacket>,
     url: RelayUrl,
     relay_client: relay::client::Client,
     relay_client_receiver: relay::client::ClientReceiver,
@@ -79,7 +79,7 @@ impl ActiveRelayActor {
         relay_client: relay::client::Client,
         relay_client_receiver: relay::client::ClientReceiver,
         relay_datagrams_recv: Arc<RelayDatagramsQueue>,
-        relay_datagrams_send: mpsc::Receiver<(NodeId, Bytes)>,
+        relay_datagrams_send: mpsc::Receiver<RelaySendPacket>,
     ) -> Self {
         ActiveRelayActor {
             last_write: Instant::now(),
@@ -133,7 +133,7 @@ impl ActiveRelayActor {
                 // Only poll for new datagrams if relay_send_fut is not busy.
                 Some(msg) = self.relay_datagrams_send.recv(), if relay_send_fut.is_none() => {
                     relay_send_fut = MaybeFuture::with_future(
-                        Box::pin(relay_client.send(msg.0, msg.1))
+                        Box::pin(relay_client.send(msg.node_id, msg.packet))
                     );
                     self.last_write = Instant::now();
 
@@ -252,17 +252,13 @@ impl ActiveRelayActor {
                             self.node_present.insert(remote_node_id);
                         }
 
-                        for datagram in PacketSplitIter::new(data) {
+                        for datagram in PacketSplitIter::new(self.url.clone(), remote_node_id, data)
+                        {
                             let Ok(datagram) = datagram else {
                                 error!("Invalid packet split");
                                 break;
                             };
-                            let res = RelayRecvDatagram {
-                                url: self.url.clone(),
-                                src: remote_node_id,
-                                buf: datagram,
-                            };
-                            if let Err(err) = self.relay_datagrams_recv.try_send(res) {
+                            if let Err(err) = self.relay_datagrams_recv.try_send(datagram) {
                                 warn!("dropping received relay packet: {err:#}");
                             }
                         }
@@ -441,13 +437,9 @@ impl RelayActor {
         // and prefix them with a u16 packet size.  They then get sent as a single DISCO
         // frame.  However this might still be multiple packets when otherwise the maximum
         // packet size for the relay protocol would be exceeded.
-        for packet in PacketizeIter::<_, PAYLOAD_SIZE>::new(contents) {
+        for packet in PacketizeIter::<_, PAYLOAD_SIZE>::new(remote_node, contents) {
             let len = packet.len();
-            match handle
-                .datagrams_send_queue
-                .send((remote_node, packet))
-                .await
-            {
+            match handle.datagrams_send_queue.send(packet).await {
                 Ok(_) => inc_by!(MagicsockMetrics, send_relay, len as _),
                 Err(err) => {
                     warn!(?url, "send failed: {err:#}");
@@ -799,8 +791,26 @@ impl RelayActor {
 #[derive(Debug)]
 struct ActiveRelayHandle {
     inbox_addr: mpsc::Sender<ActiveRelayMessage>,
-    datagrams_send_queue: mpsc::Sender<(NodeId, Bytes)>,
+    datagrams_send_queue: mpsc::Sender<RelaySendPacket>,
     actor_task: JoinHandle<()>,
+}
+
+/// A packet to send over the relay.
+///
+/// This is nothing but a newtype, it should be constructed using [`PacketizeIter`].  This
+/// is a packet of one or more datagrams, each prefixed with a u16-be length.  This is what
+/// the `Frame::SendPacket` of the `DerpCodec` transports and is produced by
+/// [`PacketizeIter`] and transformed back into datagrams using [`PacketSplitIter`].
+#[derive(Debug, PartialEq, Eq)]
+struct RelaySendPacket {
+    node_id: NodeId,
+    packet: Bytes,
+}
+
+impl RelaySendPacket {
+    fn len(&self) -> usize {
+        self.packet.len()
+    }
 }
 
 /// A single datagram received from a relay server.
@@ -828,7 +838,8 @@ pub(super) enum ReadResult {
 ///
 /// The [`PacketSplitIter`] does the inverse and splits such packets back into individual
 /// datagrams.
-pub(super) struct PacketizeIter<I: Iterator, const N: usize> {
+struct PacketizeIter<I: Iterator, const N: usize> {
+    node_id: NodeId,
     iter: std::iter::Peekable<I>,
     buffer: BytesMut,
 }
@@ -836,8 +847,9 @@ pub(super) struct PacketizeIter<I: Iterator, const N: usize> {
 impl<I: Iterator, const N: usize> PacketizeIter<I, N> {
     /// Create a new new PacketizeIter from something that can be turned into an
     /// iterator of slices, like a `Vec<Bytes>`.
-    pub(super) fn new(iter: impl IntoIterator<IntoIter = I>) -> Self {
+    fn new(node_id: NodeId, iter: impl IntoIterator<IntoIter = I>) -> Self {
         Self {
+            node_id,
             iter: iter.into_iter().peekable(),
             buffer: BytesMut::with_capacity(N),
         }
@@ -848,7 +860,7 @@ impl<I: Iterator, const N: usize> Iterator for PacketizeIter<I, N>
 where
     I::Item: AsRef<[u8]>,
 {
-    type Item = Bytes;
+    type Item = RelaySendPacket;
 
     fn next(&mut self) -> Option<Self::Item> {
         use bytes::BufMut;
@@ -864,7 +876,10 @@ where
             self.iter.next();
         }
         if !self.buffer.is_empty() {
-            Some(self.buffer.split().freeze())
+            Some(RelaySendPacket {
+                node_id: self.node_id,
+                packet: self.buffer.split().freeze(),
+            })
         } else {
             None
         }
@@ -877,16 +892,18 @@ where
 /// that struct for more details.
 #[derive(Debug)]
 struct PacketSplitIter {
+    url: RelayUrl,
+    src: NodeId,
     bytes: Bytes,
 }
 
 impl PacketSplitIter {
     /// Create a new PacketSplitIter from a packet.
-    fn new(bytes: Bytes) -> Self {
-        Self { bytes }
+    fn new(url: RelayUrl, src: NodeId, bytes: Bytes) -> Self {
+        Self { url, src, bytes }
     }
 
-    fn fail(&mut self) -> Option<std::io::Result<Bytes>> {
+    fn fail(&mut self) -> Option<std::io::Result<RelayRecvDatagram>> {
         self.bytes.clear();
         Some(Err(std::io::Error::new(
             std::io::ErrorKind::UnexpectedEof,
@@ -896,7 +913,7 @@ impl PacketSplitIter {
 }
 
 impl Iterator for PacketSplitIter {
-    type Item = std::io::Result<Bytes>;
+    type Item = std::io::Result<RelayRecvDatagram>;
 
     fn next(&mut self) -> Option<Self::Item> {
         use bytes::Buf;
@@ -908,8 +925,12 @@ impl Iterator for PacketSplitIter {
             if self.bytes.remaining() < len {
                 return self.fail();
             }
-            let item = self.bytes.split_to(len);
-            Some(Ok(item))
+            let buf = self.bytes.split_to(len);
+            Some(Ok(RelayRecvDatagram {
+                url: self.url.clone(),
+                src: self.src,
+                buf,
+            }))
         } else {
             None
         }
@@ -918,26 +939,32 @@ impl Iterator for PacketSplitIter {
 
 #[cfg(test)]
 mod tests {
+    use iroh_base::SecretKey;
+
     use super::*;
 
     #[test]
     fn test_packetize_iter() {
+        let node_id = SecretKey::generate().public();
         let empty_vec: Vec<Bytes> = Vec::new();
-        let mut iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(empty_vec);
+        let mut iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(node_id, empty_vec);
         assert_eq!(None, iter.next());
 
         let single_vec = vec!["Hello"];
-        let iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(single_vec);
+        let iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(node_id, single_vec);
         let result = iter.collect::<Vec<_>>();
         assert_eq!(1, result.len());
-        assert_eq!(&[5, 0, b'H', b'e', b'l', b'l', b'o'], &result[0][..]);
+        assert_eq!(&[5, 0, b'H', b'e', b'l', b'l', b'o'], &result[0].packet[..]);
 
         let spacer = vec![0u8; MAX_PACKET_SIZE - 10];
         let multiple_vec = vec![&b"Hello"[..], &spacer, &b"World"[..]];
-        let iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(multiple_vec);
+        let iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(node_id, multiple_vec);
         let result = iter.collect::<Vec<_>>();
         assert_eq!(2, result.len());
-        assert_eq!(&[5, 0, b'H', b'e', b'l', b'l', b'o'], &result[0][..7]);
-        assert_eq!(&[5, 0, b'W', b'o', b'r', b'l', b'd'], &result[1][..]);
+        assert_eq!(
+            &[5, 0, b'H', b'e', b'l', b'l', b'o'],
+            &result[0].packet[..7]
+        );
+        assert_eq!(&[5, 0, b'W', b'o', b'r', b'l', b'd'], &result[1].packet[..]);
     }
 }
