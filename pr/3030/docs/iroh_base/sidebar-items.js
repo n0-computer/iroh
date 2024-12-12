@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["base32","hash","key","node_addr","relay_map","ticket"]};
+window.SIDEBAR_ITEMS = {"constant":["PUBLIC_KEY_LENGTH"],"enum":["KeyParsingError"],"mod":["base32","ticket"],"struct":["NodeAddr","PublicKey","RelayUrl","SecretKey","SharedSecret","Signature"],"type":["NodeId"]};
