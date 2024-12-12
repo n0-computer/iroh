@@ -1918,7 +1918,7 @@
 <span class="kw">use </span>iroh_relay::RelayMap;
 <span class="kw">use </span>pin_project::pin_project;
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
-<span class="kw">use </span>tracing::{debug, error, instrument, trace, warn};
+<span class="kw">use </span>tracing::{debug, instrument, trace, warn};
 <span class="kw">use </span>url::Url;
 
 <span class="kw">use crate</span>::{
@@ -2209,7 +2209,7 @@
             {
                 <span class="prelude-val">Ok</span>(discovery) =&gt; <span class="prelude-val">Some</span>(Box::new(discovery)),
                 <span class="prelude-val">Err</span>(err) =&gt; {
-                    <span class="macro">error!</span>(<span class="string">"failed to build discovery: {:?}"</span>, err);
+                    <span class="macro">tracing::error!</span>(<span class="string">"failed to build discovery: {:?}"</span>, err);
                     <span class="prelude-val">None
                 </span>}
             }
