@@ -441,12 +441,11 @@ mod tests {
     use std::{
         collections::{BTreeSet, HashMap},
         net::SocketAddr,
-        sync::Arc,
+        sync::{Arc, Mutex},
         time::SystemTime,
     };
 
     use iroh_base::SecretKey;
-    use parking_lot::Mutex;
     use rand::Rng;
     use tokio_util::task::AbortOnDropHandle;
 
@@ -499,6 +498,7 @@ mod tests {
             self.shared
                 .nodes
                 .lock()
+                .unwrap()
                 .insert(self.node_id, (url.cloned(), addrs.clone(), now));
         }
 
@@ -508,7 +508,7 @@ mod tests {
             node_id: NodeId,
         ) -> Option<BoxStream<Result<DiscoveryItem>>> {
             let addr_info = match self.resolve_wrong {
-                false => self.shared.nodes.lock().get(&node_id).cloned(),
+                false => self.shared.nodes.lock().unwrap().get(&node_id).cloned(),
                 true => {
                     let ts = system_time_now() - 100_000;
                     let port: u16 = rand::thread_rng().gen_range(10_000..20_000);

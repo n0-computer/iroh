@@ -70,7 +70,8 @@ pub(crate) mod server {
                 vec![crate::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
             let server_config = QuicServerConfig::try_from(quic_config.server_config)?;
             let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_config));
-            let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
+            let transport_config =
+                Arc::get_mut(&mut server_config.transport).expect("not used yet");
             transport_config
                 .max_concurrent_uni_streams(0_u8.into())
                 .max_concurrent_bidi_streams(0_u8.into())
