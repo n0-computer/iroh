@@ -797,7 +797,10 @@ struct ActiveRelayHandle {
 
 /// A packet to send over the relay.
 ///
-/// This is nothing but a newtype, it should be constructed using [`PacketizeIter`].
+/// This is nothing but a newtype, it should be constructed using [`PacketizeIter`].  This
+/// is a packet of one or more datagrams, each prefixed with a u16-be length.  This is what
+/// the `Frame::SendPacket` of the `DerpCodec` transports and is produced by
+/// [`PacketizeIter`] and transformed back into datagrams using [`PacketSplitIter`].
 #[derive(Debug, PartialEq, Eq)]
 struct RelaySendPacket {
     node_id: NodeId,
