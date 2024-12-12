@@ -6,7 +6,7 @@
 
 /// The 6 byte header of all discovery messages.
 pub const MAGIC: &str = "TS💬"; // 6 bytes: 0x54 53 f0 9f 92 ac
-pub(crate) const MAGIC_LEN: usize = MAGIC.as_bytes().len();
+pub(crate) const MAGIC_LEN: usize = MAGIC.len();
 pub(crate) const KEY_LEN: usize = 32;
 
 const MESSAGE_HEADER_LEN: usize = MAGIC_LEN + KEY_LEN;

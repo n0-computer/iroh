@@ -34,7 +34,7 @@ use crate::key;
 // TODO: custom magicn
 /// The 6 byte header of all discovery messages.
 pub const MAGIC: &str = "TS💬"; // 6 bytes: 0x54 53 f0 9f 92 ac
-pub const MAGIC_LEN: usize = MAGIC.as_bytes().len();
+pub const MAGIC_LEN: usize = MAGIC.len();
 
 /// Current Version.
 const V0: u8 = 0;
