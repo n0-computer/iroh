@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_CERT_RELOAD_INTERVAL"],"enum":["CertConfig","MaybeTlsStreamServer"],"mod":["testing"],"struct":["ClientConnRateLimit","Limits","Metrics","QuicConfig","RelayConfig","ReloadingResolver","Server","ServerConfig","StunConfig","StunMetrics","TlsConfig"]};
