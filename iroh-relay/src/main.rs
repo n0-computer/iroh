@@ -479,7 +479,7 @@ async fn maybe_load_tls(
 
             let cert_path = tls.cert_path();
             let key_path = tls.key_path();
-            let interval = std::time::Duration::from_secs(relay::DEFAULT_CERT_RELOAD_INTERVAL);
+            let interval = relay::DEFAULT_CERT_RELOAD_INTERVAL;
 
             let key_reader = rustls_cert_file_reader::FileReader::new(
                 key_path,

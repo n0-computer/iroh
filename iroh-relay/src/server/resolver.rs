@@ -9,7 +9,7 @@ use rustls::{
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 
 /// The default certificate reload interval.
-pub const DEFAULT_CERT_RELOAD_INTERVAL: u64 = 60 * 60 * 24;
+pub const DEFAULT_CERT_RELOAD_INTERVAL: Duration = Duration::from_secs(60 * 60 * 24);
 
 /// A Certificate resolver that reloads the certificate every interval
 #[derive(Debug)]
