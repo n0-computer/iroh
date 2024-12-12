@@ -441,7 +441,8 @@
 <a href="#440" id="440">440</a>
 <a href="#441" id="441">441</a>
 <a href="#442" id="442">442</a>
-<a href="#443" id="443">443</a></pre></div><pre class="rust"><code><span class="doccomment">//! X.509 certificate handling.
+<a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a></pre></div><pre class="rust"><code><span class="doccomment">//! X.509 certificate handling.
 //!
 //! This module handles generation, signing, and verification of certificates.
 //!
@@ -535,7 +536,8 @@
     // and certificate for multiple connections.
     </span><span class="kw">let </span>certificate_keypair = rcgen::KeyPair::generate_for(P2P_SIGNATURE_ALGORITHM)<span class="question-mark">?</span>;
     <span class="kw">let </span>rustls_key =
-        rustls::pki_types::PrivateKeyDer::try_from(certificate_keypair.serialize_der()).unwrap();
+        rustls::pki_types::PrivateKeyDer::try_from(certificate_keypair.serialize_der())
+            .expect(<span class="string">"checked"</span>);
     <span class="kw">let </span>certificate = {
         <span class="kw">let </span><span class="kw-2">mut </span>params = rcgen::CertificateParams::default();
         params.distinguished_name = rcgen::DistinguishedName::new();

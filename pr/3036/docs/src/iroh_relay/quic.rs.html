@@ -314,7 +314,8 @@
 <a href="#313" id="313">313</a>
 <a href="#314" id="314">314</a>
 <a href="#315" id="315">315</a>
-<a href="#316" id="316">316</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
 
@@ -386,7 +387,8 @@
                 <span class="macro">vec!</span>[<span class="kw">crate</span>::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
             <span class="kw">let </span>server_config = QuicServerConfig::try_from(quic_config.server_config)<span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>server_config = quinn::ServerConfig::with_crypto(Arc::new(server_config));
-            <span class="kw">let </span>transport_config = Arc::get_mut(<span class="kw-2">&amp;mut </span>server_config.transport).unwrap();
+            <span class="kw">let </span>transport_config =
+                Arc::get_mut(<span class="kw-2">&amp;mut </span>server_config.transport).expect(<span class="string">"not used yet"</span>);
             transport_config
                 .max_concurrent_uni_streams(<span class="number">0_u8</span>.into())
                 .max_concurrent_bidi_streams(<span class="number">0_u8</span>.into())
