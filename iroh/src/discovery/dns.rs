@@ -75,10 +75,9 @@ impl Discovery for DnsDiscovery {
                 .lookup_by_id_staggered(&node_id, &origin_domain, DNS_STAGGERING_MS)
                 .await?;
             Ok(DiscoveryItem {
-                node_id,
+                node_addr,
                 provenance: "dns",
                 last_updated: None,
-                addr_info: node_addr.info,
             })
         };
         let stream = futures_lite::stream::once_future(fut);

@@ -45,7 +45,7 @@ use crate::{
 mod rtt_actor;
 
 pub use bytes::Bytes;
-pub use iroh_base::node_addr::{AddrInfo, AddrInfoOptions, NodeAddr};
+pub use iroh_base::node_addr::NodeAddr;
 // Missing still: SendDatagram and ConnectionClose::frame_type's Type.
 pub use quinn::{
     AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream, Connection,
@@ -573,7 +573,7 @@ impl Endpoint {
     /// an error.
     #[instrument(skip_all, fields(me = %self.node_id().fmt_short(), alpn = ?String::from_utf8_lossy(alpn)))]
     pub async fn connect(&self, node_addr: impl Into<NodeAddr>, alpn: &[u8]) -> Result<Connection> {
-        let node_addr = node_addr.into();
+        let node_addr: NodeAddr = node_addr.into();
         tracing::Span::current().record("remote", node_addr.node_id.fmt_short());
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
@@ -583,11 +583,11 @@ impl Endpoint {
             );
         }
 
-        if !node_addr.info.is_empty() {
+        if !node_addr.is_empty() {
             self.add_node_addr(node_addr.clone())?;
         }
-
-        let NodeAddr { node_id, info } = node_addr.clone();
+        let node_id = node_addr.node_id;
+        let direct_addresses = node_addr.direct_addresses.clone();
 
         // Get the mapped IPv6 address from the magic socket. Quinn will connect to this address.
         // Start discovery for this node if it's enabled and we have no valid or verified
@@ -604,7 +604,7 @@ impl Endpoint {
 
         debug!(
             "connecting to {}: (via {} - {:?})",
-            node_id, addr, info.direct_addresses
+            node_id, addr, direct_addresses
         );
 
         // Start connecting via quinn. This will time out after 10 seconds if no reachable address
@@ -1018,7 +1018,7 @@ impl Endpoint {
                 // If the user provided addresses in this connect call, we will add a delay
                 // followed by a recheck before starting the discovery, to give the magicsocket a
                 // chance to test the newly provided addresses.
-                let delay = (!node_addr.info.is_empty()).then_some(DISCOVERY_WAIT_PERIOD);
+                let delay = (!node_addr.is_empty()).then_some(DISCOVERY_WAIT_PERIOD);
                 let discovery = DiscoveryTask::maybe_start_after_delay(self, node_id, delay)
                     .ok()
                     .flatten();
@@ -1422,20 +1422,6 @@ mod tests {
     use crate::test_utils::{run_relay_server, run_relay_server_with};
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
-
-    #[test]
-    fn test_addr_info_debug() {
-        let info = AddrInfo {
-            relay_url: Some("https://relay.example.com".parse().unwrap()),
-            direct_addresses: vec![SocketAddr::from(([1, 2, 3, 4], 1234))]
-                .into_iter()
-                .collect(),
-        };
-        assert_eq!(
-            format!("{:?}", info),
-            r#"AddrInfo { relay_url: Some(RelayUrl("https://relay.example.com./")), direct_addresses: {1.2.3.4:1234} }"#
-        );
-    }
 
     #[tokio::test]
     async fn test_connect_self() {

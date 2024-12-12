@@ -246,7 +246,7 @@ pub mod watchable;
 
 pub(crate) mod util;
 
-pub use endpoint::{AddrInfo, AddrInfoOptions, Endpoint, NodeAddr, RelayMode};
+pub use endpoint::{Endpoint, NodeAddr, RelayMode};
 pub use iroh_base::{
     hash, key,
     key::NodeId,

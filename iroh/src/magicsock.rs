@@ -67,7 +67,7 @@ use crate::{
     endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
     watchable::{Watchable, Watcher},
-    AddrInfo, RelayMap, RelayUrl,
+    RelayMap, RelayUrl,
 };
 
 mod metrics;
@@ -358,12 +358,12 @@ impl MagicSock {
     pub fn add_node_addr(&self, mut addr: NodeAddr, source: node_map::Source) -> Result<()> {
         let mut pruned = 0;
         for my_addr in self.direct_addrs.sockaddrs() {
-            if addr.info.direct_addresses.remove(&my_addr) {
+            if addr.direct_addresses.remove(&my_addr) {
                 warn!( node_id=addr.node_id.fmt_short(), %my_addr, %source, "not adding our addr for node");
                 pruned += 1;
             }
         }
-        if !addr.info.is_empty() {
+        if !addr.direct_addresses.is_empty() || addr.relay_url.is_some() {
             self.node_map.add_node_addr(addr, source);
             Ok(())
         } else if pruned != 0 {
@@ -1384,11 +1384,7 @@ impl MagicSock {
     /// Called whenever our addresses or home relay node changes.
     fn publish_my_addr(&self) {
         if let Some(ref discovery) = self.discovery {
-            let info = AddrInfo {
-                relay_url: self.my_relay(),
-                direct_addresses: self.direct_addrs.sockaddrs(),
-            };
-            discovery.publish(&info);
+            discovery.publish(self.my_relay().as_ref(), &self.direct_addrs.sockaddrs());
         }
     }
 }
@@ -2043,9 +2039,12 @@ impl Actor {
                 // forever like we do with the other branches that yield `Option`s
                 Some(discovery_item) = discovery_events.next() => {
                     trace!("tick: discovery event, address discovered: {discovery_item:?}");
-                    let node_addr = NodeAddr {node_id: discovery_item.node_id, info: discovery_item.addr_info};
-                    if let Err(e) = self.msock.add_node_addr(node_addr.clone(), Source::Discovery { name: discovery_item.provenance.into() }) {
-                        warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
+                    if let Err(e) = self.msock.add_node_addr(
+                        discovery_item.node_addr.clone(),
+                        Source::Discovery {
+                            name: discovery_item.provenance.into()
+                        }) {
+                        warn!(?discovery_item.node_addr, "unable to add discovered node address to the node map: {e:?}");
                     }
                 }
             }
@@ -2338,10 +2337,12 @@ impl Actor {
         let pconn4 = Some(self.pconn4.clone());
         let pconn6 = self.pconn6.clone();
 
+        let quic_config = None;
+
         debug!("requesting net_report report");
         match self
             .net_reporter
-            .get_report_channel(relay_map, pconn4, pconn6)
+            .get_report_channel(relay_map, pconn4, pconn6, quic_config)
             .await
         {
             Ok(rx) => {
@@ -2923,10 +2924,8 @@ mod tests {
 
                 let addr = NodeAddr {
                     node_id: me.public(),
-                    info: crate::AddrInfo {
-                        relay_url: None,
-                        direct_addresses: new_addrs.iter().map(|ep| ep.addr).collect(),
-                    },
+                    relay_url: None,
+                    direct_addresses: new_addrs.iter().map(|ep| ep.addr).collect(),
                 };
                 m.endpoint.magic_sock().add_test_addr(addr);
             }
@@ -3860,17 +3859,15 @@ mod tests {
 
         let node_addr_2 = NodeAddr {
             node_id: node_id_2,
-            info: AddrInfo {
-                relay_url: None,
-                direct_addresses: msock_2
-                    .direct_addresses()
-                    .initialized()
-                    .await
-                    .expect("no direct addrs")
-                    .into_iter()
-                    .map(|x| x.addr)
-                    .collect(),
-            },
+            relay_url: None,
+            direct_addresses: msock_2
+                .direct_addresses()
+                .initialized()
+                .await
+                .expect("no direct addrs")
+                .into_iter()
+                .map(|x| x.addr)
+                .collect(),
         };
         msock_1
             .add_node_addr(
@@ -3932,7 +3929,8 @@ mod tests {
         msock_1.node_map.add_node_addr(
             NodeAddr {
                 node_id: node_id_2,
-                info: AddrInfo::default(),
+                relay_url: None,
+                direct_addresses: Default::default(),
             },
             Source::NamedApp {
                 name: "test".into(),
@@ -3967,17 +3965,15 @@ mod tests {
         msock_1.node_map.add_node_addr(
             NodeAddr {
                 node_id: node_id_2,
-                info: AddrInfo {
-                    relay_url: None,
-                    direct_addresses: msock_2
-                        .direct_addresses()
-                        .initialized()
-                        .await
-                        .expect("no direct addrs")
-                        .into_iter()
-                        .map(|x| x.addr)
-                        .collect(),
-                },
+                relay_url: None,
+                direct_addresses: msock_2
+                    .direct_addresses()
+                    .initialized()
+                    .await
+                    .expect("no direct addrs")
+                    .into_iter()
+                    .map(|x| x.addr)
+                    .collect(),
             },
             Source::NamedApp {
                 name: "test".into(),

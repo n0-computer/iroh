@@ -296,18 +296,22 @@ impl NodeMapInner {
     /// Add the contact information for a node.
     #[instrument(skip_all, fields(node = %node_addr.node_id.fmt_short()))]
     fn add_node_addr(&mut self, node_addr: NodeAddr, source: Source) {
-        let NodeAddr { node_id, info } = node_addr;
-
         let source0 = source.clone();
+        let node_id = node_addr.node_id;
+        let relay_url = node_addr.relay_url.clone();
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(node_id), || Options {
             node_id,
-            relay_url: info.relay_url.clone(),
+            relay_url,
             active: false,
             source,
         });
-        node_state.update_from_node_addr(&info, source0);
+        node_state.update_from_node_addr(
+            node_addr.relay_url.as_ref(),
+            &node_addr.direct_addresses,
+            source0,
+        );
         let id = node_state.id();
-        for addr in &info.direct_addresses {
+        for addr in node_addr.direct_addresses() {
             self.set_node_state_for_ip_port(*addr, id);
         }
     }
@@ -673,7 +677,7 @@ mod tests {
             .into_iter()
             .filter_map(|info| {
                 let addr: NodeAddr = info.into();
-                if addr.info.is_empty() {
+                if addr.direct_addresses.is_empty() && addr.relay_url.is_none() {
                     return None;
                 }
                 Some(addr)
@@ -686,7 +690,7 @@ mod tests {
             .into_iter()
             .filter_map(|info| {
                 let addr: NodeAddr = info.into();
-                if addr.info.is_empty() {
+                if addr.direct_addresses.is_empty() && addr.relay_url.is_none() {
                     return None;
                 }
                 Some(addr)

@@ -19,8 +19,8 @@
 //!   the Mainline DHT on behalf on the client as well as cache lookups performed on the DHT
 //!   to improve performance.
 //!
-//! For node discovery in iroh the pkarr Resource Records contain the [`AddrInfo`]
-//! information, providing nodes which retrieve the pkarr Resource Record with enough detail
+//! For node discovery in iroh the pkarr Resource Records contain the addressing information,
+//! providing nodes which retrieve the pkarr Resource Record with enough detail
 //! to contact the iroh node.
 //!
 //! There are several node discovery services built on top of pkarr, which can be composed
@@ -44,10 +44,11 @@
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
 //! [`DhtDiscovery`]: dht::DhtDiscovery
 
-use std::sync::Arc;
+use std::{collections::BTreeSet, net::SocketAddr, sync::Arc};
 
 use anyhow::{anyhow, bail, Result};
 use futures_util::stream::BoxStream;
+use iroh_relay::RelayUrl;
 use pkarr::SignedPacket;
 use tokio::{
     task::JoinHandle,
@@ -62,7 +63,7 @@ use crate::{
     endpoint::force_staging_infra,
     key::SecretKey,
     watchable::{Disconnected, Watchable, Watcher},
-    AddrInfo, Endpoint, NodeId,
+    Endpoint, NodeId,
 };
 
 #[cfg(feature = "discovery-pkarr-dht")]
@@ -106,9 +107,7 @@ pub const DEFAULT_REPUBLISH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 /// that it only publishes node discovery information, for the corresponding resolver use
 /// the [`PkarrResolver`] together with [`ConcurrentDiscovery`].
 ///
-/// This publisher will **only** publish the [`RelayUrl`] if the [`AddrInfo`] contains a
-/// [`RelayUrl`].  If the [`AddrInfo`] does not contain a [`RelayUrl`] the *direct
-/// addresses* are published instead.
+/// This publisher will **only** publish the [`RelayUrl`] if it is set, otherwise the *direct addresses* are published instead.
 ///
 /// [pkarr]: https://pkarr.org
 /// [module docs]: crate::discovery::pkarr
@@ -192,23 +191,18 @@ impl PkarrPublisher {
         Self::new(secret_key, pkarr_relay)
     }
 
-    /// Publishes [`AddrInfo`] about this node to a pkarr relay.
+    /// Publishes the addressing information about this node to a pkarr relay.
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
-    pub fn update_addr_info(&self, info: &AddrInfo) {
-        let (relay_url, direct_addresses) = if let Some(relay_url) = info.relay_url.as_ref() {
-            (Some(relay_url.clone().into()), Default::default())
-        } else {
-            (None, info.direct_addresses.clone())
-        };
-        let info = NodeInfo::new(self.node_id, relay_url, direct_addresses);
+    pub fn update_addr_info(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
+        let info = NodeInfo::new(self.node_id, url.cloned().map(Into::into), addrs.clone());
         self.watchable.set(Some(info)).ok();
     }
 }
 
 impl Discovery for PkarrPublisher {
-    fn publish(&self, info: &AddrInfo) {
-        self.update_addr_info(info);
+    fn publish(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
+        self.update_addr_info(url, addrs);
     }
 }
 
@@ -346,10 +340,9 @@ impl Discovery for PkarrResolver {
             let signed_packet = pkarr_client.resolve(node_id).await?;
             let info = NodeInfo::from_pkarr_signed_packet(&signed_packet)?;
             let item = DiscoveryItem {
-                node_id,
+                node_addr: info.into(),
                 provenance: "pkarr",
                 last_updated: None,
-                addr_info: info.into(),
             };
             Ok(item)
         };

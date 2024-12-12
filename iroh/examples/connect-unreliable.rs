@@ -55,12 +55,10 @@ async fn main() -> anyhow::Result<()> {
     println!("node id: {me}");
     println!("node listening addresses:");
     node_addr
-        .info
         .direct_addresses
         .iter()
         .for_each(|addr| println!("\t{addr}"));
     let relay_url = node_addr
-        .info
         .relay_url
         .expect("Should have a relay URL, assuming a default endpoint setup.");
     println!("node relay server url: {relay_url}\n");

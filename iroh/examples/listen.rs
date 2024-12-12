@@ -39,7 +39,6 @@ async fn main() -> anyhow::Result<()> {
 
     let node_addr = endpoint.node_addr().await?;
     let local_addrs = node_addr
-        .info
         .direct_addresses
         .into_iter()
         .map(|addr| {
@@ -50,7 +49,6 @@ async fn main() -> anyhow::Result<()> {
         .collect::<Vec<_>>()
         .join(" ");
     let relay_url = node_addr
-        .info
         .relay_url
         .expect("Should have a relay URL, assuming a default endpoint setup.");
     println!("node relay server url: {relay_url}");

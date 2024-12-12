@@ -2365,6 +2365,7 @@ dependencies = [
  "hickory-resolver",
  "iroh-base",
  "iroh-metrics",
+ "iroh-quinn",
  "iroh-relay",
  "iroh-test 0.29.0",
  "netwatch",

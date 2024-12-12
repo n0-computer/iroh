@@ -11,7 +11,7 @@ pub mod key;
 pub mod node_addr;
 #[cfg(feature = "relay")]
 pub mod relay_map;
-#[cfg(any(feature = "relay", feature = "key"))]
+#[cfg(feature = "relay")]
 mod relay_url;
-#[cfg(feature = "base32")]
+#[cfg(feature = "ticket")]
 pub mod ticket;
