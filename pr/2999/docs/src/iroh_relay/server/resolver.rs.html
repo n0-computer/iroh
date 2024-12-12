@@ -96,7 +96,7 @@
     server::{ClientHello, ResolvesServerCert},
     sign::CertifiedKey,
 };
-<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
+<span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 
 <span class="doccomment">/// A Certificate resolver that reloads the certificate every interval
 </span><span class="attr">#[derive(Debug)]
@@ -105,8 +105,8 @@
     </span>reloadable: Arc&lt;Reloadable&lt;CertifiedKey, Loader&gt;&gt;,
     <span class="doccomment">/// The handle to the task that reloads the certificate.
     </span>_handle: AbortOnDropHandle&lt;()&gt;,
-    <span class="doccomment">/// Shutdown signal sender
-    </span>_shutdown_tx: tokio::sync::oneshot::Sender&lt;()&gt;,
+    <span class="doccomment">/// Cancel token to shutdown the resolver.
+    </span>cancel_token: CancellationToken,
 }
 
 <span class="kw">impl</span>&lt;Loader&gt; ReloadingResolver&lt;Loader&gt;
@@ -120,23 +120,23 @@
             </span>.map_err(|<span class="kw">_</span>| <span class="macro">anyhow!</span>(<span class="string">"Failed to load the certificate"</span>))<span class="question-mark">?</span>;
         <span class="kw">let </span>reloadable = Arc::new(reloadable);
 
-        <span class="comment">// create a channel to send the shutdown signal
-        </span><span class="kw">let </span>(shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        <span class="kw">let </span>cancel_token = CancellationToken::new();
 
         <span class="comment">// Spawn a task to reload the certificate every interval.
         </span><span class="kw">let </span>_reloadable = reloadable.clone();
+        <span class="kw">let </span>_cancel_token = cancel_token.clone();
         <span class="kw">let </span>_handle = tokio::spawn(<span class="kw">async move </span>{
             <span class="kw">let </span><span class="kw-2">mut </span>interval = tokio::time::interval(interval);
-            <span class="macro">tokio::select!</span> {
-                <span class="kw">_ </span>= <span class="kw">async </span>{
-                    <span class="kw">loop </span>{
-                        interval.tick().<span class="kw">await</span>;
+            <span class="kw">loop </span>{
+                <span class="macro">tokio::select!</span> {
+                    <span class="kw">_ </span>= interval.tick() =&gt; {
                         <span class="kw">let _ </span>= _reloadable.reload().<span class="kw">await</span>;
                         <span class="macro">tracing::info!</span>(<span class="string">"Reloaded the certificate"</span>);
+                    },
+                    <span class="kw">_ </span>= _cancel_token.cancelled() =&gt; {
+                        <span class="macro">tracing::trace!</span>(<span class="string">"shutting down"</span>);
+                        <span class="kw">break</span>;
                     }
-                } =&gt; {},
-                <span class="kw">_ </span>= shutdown_rx =&gt; {
-                    <span class="macro">tracing::info!</span>(<span class="string">"Shutdown signal received"</span>);
                 }
             }
         });
@@ -145,13 +145,13 @@
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             reloadable,
             _handle,
-            _shutdown_tx: shutdown_tx,
+            cancel_token,
         })
     }
 
     <span class="doccomment">/// Shutdown the resolver.
     </span><span class="kw">pub fn </span>shutdown(<span class="self">self</span>) {
-        <span class="kw">let _ </span>= <span class="self">self</span>._shutdown_tx.send(());
+        <span class="self">self</span>.cancel_token.cancel();
     }
 
     <span class="doccomment">/// Reload the certificate.
