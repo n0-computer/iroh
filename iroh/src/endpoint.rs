@@ -38,7 +38,7 @@ use crate::{
     key::{PublicKey, SecretKey},
     magicsock::{self, Handle, QuicMappedAddr},
     tls,
-    util::watchable::Watcher,
+    watchable::Watcher,
     NodeId, RelayUrl,
 };
 

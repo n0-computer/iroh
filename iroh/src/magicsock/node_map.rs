@@ -23,7 +23,7 @@ use super::{
 use crate::{
     disco::{CallMeMaybe, Pong, SendAddr},
     key::PublicKey,
-    util::watchable::Watcher,
+    watchable::Watcher,
     NodeAddr,
 };
 

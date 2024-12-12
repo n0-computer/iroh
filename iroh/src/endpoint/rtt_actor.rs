@@ -13,7 +13,7 @@ use tokio::{
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info_span, trace, Instrument};
 
-use crate::{magicsock::ConnectionType, metrics::MagicsockMetrics, util::watchable::WatcherStream};
+use crate::{magicsock::ConnectionType, metrics::MagicsockMetrics, watchable::WatcherStream};
 
 #[derive(Debug)]
 pub(super) struct RttHandle {

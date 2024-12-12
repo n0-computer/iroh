@@ -61,7 +61,7 @@ use crate::{
     dns::node_info::NodeInfo,
     endpoint::force_staging_infra,
     key::SecretKey,
-    util::watchable::{Disconnected, Watchable, Watcher},
+    watchable::{Disconnected, Watchable, Watcher},
     AddrInfo, Endpoint, NodeId,
 };
 

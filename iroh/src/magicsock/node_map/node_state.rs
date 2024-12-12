@@ -23,10 +23,8 @@ use crate::{
     endpoint::AddrInfo,
     key::PublicKey,
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
-    util::{
-        relay_only_mode,
-        watchable::{Watchable, Watcher},
-    },
+    util::relay_only_mode,
+    watchable::{Watchable, Watcher},
     NodeAddr, NodeId,
 };
 

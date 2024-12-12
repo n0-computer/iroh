@@ -66,7 +66,7 @@ use crate::{
     dns::DnsResolver,
     endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
-    util::watchable::{Watchable, Watcher},
+    watchable::{Watchable, Watcher},
     AddrInfo, RelayMap, RelayUrl,
 };
 
