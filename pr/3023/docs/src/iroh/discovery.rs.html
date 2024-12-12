@@ -884,7 +884,8 @@
 <a href="#883" id="883">883</a>
 <a href="#884" id="884">884</a>
 <a href="#885" id="885">885</a>
-<a href="#886" id="886">886</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#886" id="886">886</a>
+<a href="#887" id="887">887</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1623,7 +1624,8 @@
     <span class="kw">use </span>std::time::Duration;
 
     <span class="kw">use </span>anyhow::Result;
-    <span class="kw">use </span>iroh_base::{NodeAddr, RelayMap, SecretKey};
+    <span class="kw">use </span>iroh_base::{NodeAddr, SecretKey};
+    <span class="kw">use </span>iroh_relay::RelayMap;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
     <span class="kw">use crate</span>::{

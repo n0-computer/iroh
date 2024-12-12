@@ -932,7 +932,8 @@
 <a href="#931" id="931">931</a>
 <a href="#932" id="932">932</a>
 <a href="#933" id="933">933</a>
-<a href="#934" id="934">934</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay probes.
+<a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay probes.
 //!
 //! All the probes try and establish the latency to the relay servers.  Preferably the STUN
 //! probes work and we also learn about our public IP addresses and ports.  But fallback
@@ -941,7 +942,8 @@
 </span><span class="kw">use </span>std::{collections::BTreeSet, fmt, sync::Arc};
 
 <span class="kw">use </span>anyhow::{ensure, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>iroh_base::{RelayMap, RelayNode, RelayUrl};
+<span class="kw">use </span>iroh_base::RelayUrl;
+<span class="kw">use </span>iroh_relay::{RelayMap, RelayNode};
 <span class="kw">use </span>netwatch::interfaces;
 <span class="kw">use </span>tokio::time::Duration;
 

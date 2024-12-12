@@ -28,13 +28,7 @@
 <a href="#27" id="27">27</a>
 <a href="#28" id="28">28</a>
 <a href="#29" id="29">29</a>
-<a href="#30" id="30">30</a>
-<a href="#31" id="31">31</a>
-<a href="#32" id="32">32</a>
-<a href="#33" id="33">33</a>
-<a href="#34" id="34">34</a>
-<a href="#35" id="35">35</a>
-<a href="#36" id="36">36</a></pre></div><pre class="rust"><code><span class="doccomment">//! Base types and utilities for Iroh
+<a href="#30" id="30">30</a></pre></div><pre class="rust"><code><span class="doccomment">//! Base types and utilities for Iroh
 </span><span class="attr">#![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
 
 </span><span class="comment">// TODO: remove
@@ -52,8 +46,6 @@
 <span class="attr">#[cfg(feature = <span class="string">"key"</span>)]
 </span><span class="kw">mod </span>node_addr;
 <span class="attr">#[cfg(feature = <span class="string">"relay"</span>)]
-</span><span class="kw">mod </span>relay_map;
-<span class="attr">#[cfg(feature = <span class="string">"relay"</span>)]
 </span><span class="kw">mod </span>relay_url;
 
 <span class="attr">#[cfg(feature = <span class="string">"hash"</span>)]
@@ -64,10 +56,6 @@
 };
 <span class="attr">#[cfg(feature = <span class="string">"key"</span>)]
 </span><span class="kw">pub use </span><span class="self">self</span>::node_addr::NodeAddr;
-<span class="attr">#[cfg(feature = <span class="string">"relay"</span>)]
-</span><span class="kw">pub use </span><span class="self">self</span>::relay_map::{
-    RelayMap, RelayNode, RelayQuicConfig, DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT,
-};
 <span class="attr">#[cfg(feature = <span class="string">"relay"</span>)]
 </span><span class="kw">pub use </span><span class="self">self</span>::relay_url::RelayUrl;
 </code></pre></div></section></main></body></html>

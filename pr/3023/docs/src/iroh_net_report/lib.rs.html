@@ -1335,10 +1335,10 @@
 <span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>hickory_resolver::TokioResolver <span class="kw">as </span>DnsResolver;
-<span class="kw">use </span>iroh_base::{RelayMap, RelayUrl};
+<span class="kw">use </span>iroh_base::RelayUrl;
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>iroh_relay::protos::stun;
+<span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
 <span class="kw">use </span>netwatch::{IpFamily, UdpSocket};
 <span class="kw">use </span>tokio::{
     sync::{<span class="self">self</span>, mpsc, oneshot},
@@ -2128,8 +2128,7 @@
 
     </span><span class="kw">use </span>std::sync::Arc;
 
-    <span class="kw">use </span>iroh_base::{RelayNode, RelayQuicConfig};
-    <span class="kw">use </span>iroh_relay::server;
+    <span class="kw">use </span>iroh_relay::{server, RelayNode, RelayQuicConfig};
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>relay() -&gt; (server::Server, Arc&lt;RelayNode&gt;) {
         <span class="kw">let </span>server = server::Server::spawn(server::testing::server_config())
@@ -2182,7 +2181,8 @@
         </span><span class="kw">use </span>std::{net::IpAddr, sync::Arc};
 
         <span class="kw">use </span>anyhow::Result;
-        <span class="kw">use </span>iroh_base::{RelayMap, RelayNode, RelayUrl};
+        <span class="kw">use </span>iroh_base::RelayUrl;
+        <span class="kw">use </span>iroh_relay::RelayNode;
         <span class="kw">use </span>tokio::{
             net,
             sync::{oneshot, Mutex},

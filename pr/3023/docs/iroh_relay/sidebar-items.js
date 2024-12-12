@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ReceivedMessage"],"mod":["client","defaults","http","protos","quic","server"],"struct":["RelayConn"]};
+window.SIDEBAR_ITEMS = {"enum":["ReceivedMessage"],"mod":["client","defaults","http","protos","quic","server"],"struct":["RelayConn","RelayMap","RelayNode","RelayQuicConfig"]};

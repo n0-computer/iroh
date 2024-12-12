@@ -4134,9 +4134,9 @@
 <span class="kw">use </span>concurrent_queue::ConcurrentQueue;
 <span class="kw">use </span>futures_lite::{FutureExt, Stream, StreamExt};
 <span class="kw">use </span>futures_util::{stream::BoxStream, task::AtomicWaker};
-<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayMap, RelayUrl, SecretKey, SharedSecret};
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey, SharedSecret};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
-<span class="kw">use </span>iroh_relay::protos::stun;
+<span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
 <span class="kw">use </span>netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 <span class="kw">use </span>quinn::AsyncUdpSocket;
 <span class="kw">use </span>rand::{seq::SliceRandom, Rng, SeedableRng};

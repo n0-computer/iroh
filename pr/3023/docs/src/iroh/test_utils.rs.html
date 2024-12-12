@@ -491,15 +491,17 @@
 <a href="#490" id="490">490</a>
 <a href="#491" id="491">491</a>
 <a href="#492" id="492">492</a>
-<a href="#493" id="493">493</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
+<a href="#493" id="493">493</a>
+<a href="#494" id="494">494</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">pub use </span>dns_and_pkarr_servers::DnsPkarrServer;
 <span class="kw">pub use </span>dns_server::create_dns_resolver;
-<span class="kw">use </span>iroh_base::{RelayMap, RelayNode, RelayUrl};
-<span class="kw">use </span>iroh_relay::server::{
-    CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig,
+<span class="kw">use </span>iroh_base::RelayUrl;
+<span class="kw">use </span>iroh_relay::{
+    server::{CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
+    RelayMap, RelayNode, RelayQuicConfig,
 };
 <span class="kw">use </span>tokio::sync::oneshot;
 
@@ -588,7 +590,7 @@
         .unwrap();
     <span class="kw">let </span>quic = server
         .quic_addr()
-        .map(|addr| iroh_base::RelayQuicConfig { port: addr.port() });
+        .map(|addr| RelayQuicConfig { port: addr.port() });
     <span class="kw">let </span>m = RelayMap::from_nodes([RelayNode {
         url: url.clone(),
         stun_only: <span class="bool-val">false</span>,

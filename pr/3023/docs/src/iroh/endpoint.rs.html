@@ -1883,7 +1883,8 @@
 <a href="#1882" id="1882">1882</a>
 <a href="#1883" id="1883">1883</a>
 <a href="#1884" id="1884">1884</a>
-<a href="#1885" id="1885">1885</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#1885" id="1885">1885</a>
+<a href="#1886" id="1886">1886</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -1909,7 +1910,8 @@
 <span class="kw">use </span>anyhow::{anyhow, bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>derive_more::Debug;
 <span class="kw">use </span>futures_lite::{Stream, StreamExt};
-<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayMap, RelayUrl, SecretKey};
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
+<span class="kw">use </span>iroh_relay::RelayMap;
 <span class="kw">use </span>pin_project::pin_project;
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{debug, instrument, trace, warn};
