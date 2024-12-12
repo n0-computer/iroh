@@ -1318,12 +1318,20 @@
 <a href="#1317" id="1317">1317</a>
 <a href="#1318" id="1318">1318</a>
 <a href="#1319" id="1319">1319</a>
-<a href="#1320" id="1320">1320</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1320" id="1320">1320</a>
+<a href="#1321" id="1321">1321</a>
+<a href="#1322" id="1322">1322</a>
+<a href="#1323" id="1323">1323</a>
+<a href="#1324" id="1324">1324</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
 //! etc and reachability to the configured relays.
 </span><span class="comment">// Based on &lt;https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go&gt;
+
+</span><span class="attr">#![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
+#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 </span><span class="kw">use </span>std::{
     collections::{BTreeMap, HashMap},

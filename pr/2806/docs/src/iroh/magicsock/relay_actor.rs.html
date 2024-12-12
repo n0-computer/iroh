@@ -864,10 +864,114 @@
 <a href="#863" id="863">863</a>
 <a href="#864" id="864">864</a>
 <a href="#865" id="865">865</a>
-<a href="#866" id="866">866</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#866" id="866">866</a>
+<a href="#867" id="867">867</a>
+<a href="#868" id="868">868</a>
+<a href="#869" id="869">869</a>
+<a href="#870" id="870">870</a>
+<a href="#871" id="871">871</a>
+<a href="#872" id="872">872</a>
+<a href="#873" id="873">873</a>
+<a href="#874" id="874">874</a>
+<a href="#875" id="875">875</a>
+<a href="#876" id="876">876</a>
+<a href="#877" id="877">877</a>
+<a href="#878" id="878">878</a>
+<a href="#879" id="879">879</a>
+<a href="#880" id="880">880</a>
+<a href="#881" id="881">881</a>
+<a href="#882" id="882">882</a>
+<a href="#883" id="883">883</a>
+<a href="#884" id="884">884</a>
+<a href="#885" id="885">885</a>
+<a href="#886" id="886">886</a>
+<a href="#887" id="887">887</a>
+<a href="#888" id="888">888</a>
+<a href="#889" id="889">889</a>
+<a href="#890" id="890">890</a>
+<a href="#891" id="891">891</a>
+<a href="#892" id="892">892</a>
+<a href="#893" id="893">893</a>
+<a href="#894" id="894">894</a>
+<a href="#895" id="895">895</a>
+<a href="#896" id="896">896</a>
+<a href="#897" id="897">897</a>
+<a href="#898" id="898">898</a>
+<a href="#899" id="899">899</a>
+<a href="#900" id="900">900</a>
+<a href="#901" id="901">901</a>
+<a href="#902" id="902">902</a>
+<a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a>
+<a href="#906" id="906">906</a>
+<a href="#907" id="907">907</a>
+<a href="#908" id="908">908</a>
+<a href="#909" id="909">909</a>
+<a href="#910" id="910">910</a>
+<a href="#911" id="911">911</a>
+<a href="#912" id="912">912</a>
+<a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
+<a href="#916" id="916">916</a>
+<a href="#917" id="917">917</a>
+<a href="#918" id="918">918</a>
+<a href="#919" id="919">919</a>
+<a href="#920" id="920">920</a>
+<a href="#921" id="921">921</a>
+<a href="#922" id="922">922</a>
+<a href="#923" id="923">923</a>
+<a href="#924" id="924">924</a>
+<a href="#925" id="925">925</a>
+<a href="#926" id="926">926</a>
+<a href="#927" id="927">927</a>
+<a href="#928" id="928">928</a>
+<a href="#929" id="929">929</a>
+<a href="#930" id="930">930</a>
+<a href="#931" id="931">931</a>
+<a href="#932" id="932">932</a>
+<a href="#933" id="933">933</a>
+<a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a>
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a>
+<a href="#938" id="938">938</a>
+<a href="#939" id="939">939</a>
+<a href="#940" id="940">940</a>
+<a href="#941" id="941">941</a>
+<a href="#942" id="942">942</a>
+<a href="#943" id="943">943</a>
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a>
+<a href="#948" id="948">948</a>
+<a href="#949" id="949">949</a>
+<a href="#950" id="950">950</a>
+<a href="#951" id="951">951</a>
+<a href="#952" id="952">952</a>
+<a href="#953" id="953">953</a>
+<a href="#954" id="954">954</a>
+<a href="#955" id="955">955</a>
+<a href="#956" id="956">956</a>
+<a href="#957" id="957">957</a>
+<a href="#958" id="958">958</a>
+<a href="#959" id="959">959</a>
+<a href="#960" id="960">960</a>
+<a href="#961" id="961">961</a>
+<a href="#962" id="962">962</a>
+<a href="#963" id="963">963</a>
+<a href="#964" id="964">964</a>
+<a href="#965" id="965">965</a>
+<a href="#966" id="966">966</a>
+<a href="#967" id="967">967</a>
+<a href="#968" id="968">968</a>
+<a href="#969" id="969">969</a>
+<a href="#970" id="970">970</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
-//! [`ConnectedRelayActor`] which handles a single relay connection.
+//! [`ActiveRelayActor`] which handles a single relay connection.
 
 </span><span class="kw">use </span>std::{
     collections::{BTreeMap, BTreeSet},
@@ -890,8 +994,9 @@
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
-<span class="kw">use </span><span class="kw">crate</span>::magicsock::{
-    MagicSock, Metrics <span class="kw">as </span>MagicsockMetrics, RelayContents, RelayDatagramsQueue,
+<span class="kw">use crate</span>::{
+    magicsock::{MagicSock, Metrics <span class="kw">as </span>MagicsockMetrics, RelayContents, RelayDatagramsQueue},
+    util::MaybeFuture,
 };
 
 <span class="doccomment">/// How long a non-home relay connection needs to be idle (last written to) before we close it.
@@ -900,26 +1005,19 @@
 <span class="doccomment">/// How often `clean_stale_relay` runs when there are potentially-stale relay connections to close.
 </span><span class="kw">const </span>RELAY_CLEAN_STALE_INTERVAL: Duration = Duration::from_secs(<span class="number">15</span>);
 
-<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>RelayActorMessage {
-    Send {
-        url: RelayUrl,
-        contents: RelayContents,
-        remote_node: NodeId,
-    },
-    MaybeCloseRelaysOnRebind(Vec&lt;IpAddr&gt;),
-    SetHome {
-        url: RelayUrl,
-    },
-}
-
-<span class="doccomment">/// An actor which handles a single relay connection.
+<span class="doccomment">/// An actor which handles the connection to a single relay server.
+///
+/// It is responsible for maintaining the connection to the relay server and handling all
+/// communication with it.
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">struct </span>ConnectedRelayActor {
+</span><span class="kw">struct </span>ActiveRelayActor {
     <span class="doccomment">/// The time of the last request for its write
     /// channel (currently even if there was no write).
     </span>last_write: Instant,
     <span class="doccomment">/// Queue to send received relay datagrams on.
-    </span>relay_datagrams_queue: Arc&lt;RelayDatagramsQueue&gt;,
+    </span>relay_datagrams_recv: Arc&lt;RelayDatagramsQueue&gt;,
+    <span class="doccomment">/// Channel on which we receive packets to send to the relay.
+    </span>relay_datagrams_send: mpsc::Receiver&lt;RelaySendPacket&gt;,
     url: RelayUrl,
     relay_client: relay::client::Client,
     relay_client_receiver: relay::client::ClientReceiver,
@@ -935,7 +1033,7 @@
 
 <span class="attr">#[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
-</span><span class="kw">enum </span>ConnectedRelayMessage {
+</span><span class="kw">enum </span>ActiveRelayMessage {
     GetLastWrite(oneshot::Sender&lt;Instant&gt;),
     Ping(oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;Duration, ClientError&gt;&gt;),
     GetLocalAddr(oneshot::Sender&lt;<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;&gt;),
@@ -945,16 +1043,18 @@
     Shutdown,
 }
 
-<span class="kw">impl </span>ConnectedRelayActor {
+<span class="kw">impl </span>ActiveRelayActor {
     <span class="kw">fn </span>new(
         url: RelayUrl,
         relay_client: relay::client::Client,
         relay_client_receiver: relay::client::ClientReceiver,
-        relay_datagrams_queue: Arc&lt;RelayDatagramsQueue&gt;,
+        relay_datagrams_recv: Arc&lt;RelayDatagramsQueue&gt;,
+        relay_datagrams_send: mpsc::Receiver&lt;RelaySendPacket&gt;,
     ) -&gt; <span class="self">Self </span>{
-        ConnectedRelayActor {
+        ActiveRelayActor {
             last_write: Instant::now(),
-            relay_datagrams_queue,
+            relay_datagrams_recv,
+            relay_datagrams_send,
             url,
             node_present: BTreeSet::new(),
             backoff: backoff::exponential::ExponentialBackoffBuilder::new()
@@ -968,12 +1068,15 @@
         }
     }
 
-    <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>, <span class="kw-2">mut </span>inbox: mpsc::Receiver&lt;ConnectedRelayMessage&gt;) -&gt; anyhow::Result&lt;()&gt; {
+    <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>, <span class="kw-2">mut </span>inbox: mpsc::Receiver&lt;ActiveRelayMessage&gt;) -&gt; anyhow::Result&lt;()&gt; {
         <span class="macro">debug!</span>(<span class="string">"initial dial {}"</span>, <span class="self">self</span>.url);
-        <span class="self">self</span>.relay_client
-            .connect()
-            .<span class="kw">await
-            </span>.context(<span class="string">"initial connection"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>relay_client = <span class="self">self</span>.relay_client.clone();
+        relay_client.connect().<span class="kw">await</span>.context(<span class="string">"initial connection"</span>)<span class="question-mark">?</span>;
+
+        <span class="comment">// When this future has an inner, it is a future which is currently sending
+        // something to the relay server.  Nothing else can be sent to the relay server at
+        // the same time.
+        </span><span class="kw">let </span><span class="kw-2">mut </span>relay_send_fut = MaybeFuture::none();
 
         <span class="kw">loop </span>{
             <span class="comment">// If a read error occurred on the connection it might have been lost.  But we
@@ -981,7 +1084,7 @@
             // peers via the relay even if we don't start sending again first.
             </span><span class="kw">if </span>!<span class="self">self</span>.relay_client.is_connected().<span class="kw">await</span><span class="question-mark">? </span>{
                 <span class="macro">debug!</span>(<span class="string">"relay re-connecting"</span>);
-                <span class="self">self</span>.relay_client.connect().<span class="kw">await</span>.context(<span class="string">"keepalive"</span>)<span class="question-mark">?</span>;
+                relay_client.connect().<span class="kw">await</span>.context(<span class="string">"keepalive"</span>)<span class="question-mark">?</span>;
             }
             <span class="macro">tokio::select!</span> {
                 msg = inbox.recv() =&gt; {
@@ -989,40 +1092,22 @@
                         <span class="macro">debug!</span>(<span class="string">"all clients closed"</span>);
                         <span class="kw">break</span>;
                     };
-
-                    <span class="macro">trace!</span>(<span class="string">"tick: inbox: {:?}"</span>, msg);
-                    <span class="kw">match </span>msg {
-                        ConnectedRelayMessage::GetLastWrite(r) =&gt; {
-                            r.send(<span class="self">self</span>.last_write).ok();
-                        }
-                        ConnectedRelayMessage::Ping(r) =&gt; {
-                            r.send(<span class="self">self</span>.relay_client.ping().<span class="kw">await</span>).ok();
-                        }
-                        ConnectedRelayMessage::GetLocalAddr(r) =&gt; {
-                            r.send(<span class="self">self</span>.relay_client.local_addr().<span class="kw">await</span>).ok();
-                        }
-                        ConnectedRelayMessage::GetClient(r) =&gt; {
-                            <span class="self">self</span>.last_write = Instant::now();
-                            r.send(<span class="self">self</span>.relay_client.clone()).ok();
-                        }
-                        ConnectedRelayMessage::NotePreferred(is_preferred) =&gt; {
-                            <span class="self">self</span>.relay_client.note_preferred(is_preferred).<span class="kw">await</span>;
-                        }
-                        ConnectedRelayMessage::GetNodeRoute(peer, r) =&gt; {
-                            <span class="kw">let </span>client = <span class="kw">if </span><span class="self">self</span>.node_present.contains(<span class="kw-2">&amp;</span>peer) {
-                                <span class="prelude-val">Some</span>(<span class="self">self</span>.relay_client.clone())
-                            } <span class="kw">else </span>{
-                                <span class="prelude-val">None
-                            </span>};
-                            r.send(client).ok();
-                        }
-                        ConnectedRelayMessage::Shutdown =&gt; {
-                            <span class="macro">debug!</span>(<span class="string">"shutdown"</span>);
-                            <span class="kw">break</span>;
-                        }
+                    <span class="kw">if </span><span class="self">self</span>.handle_actor_msg(msg).<span class="kw">await </span>{
+                        <span class="kw">break</span>;
                     }
                 }
+                <span class="comment">// Only poll relay_send_fut if it is sending to the relay.
+                </span><span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>relay_send_fut, <span class="kw">if </span>relay_send_fut.is_some() =&gt; {
+                    relay_send_fut = MaybeFuture::none();
+                }
+                <span class="comment">// Only poll for new datagrams if relay_send_fut is not busy.
+                </span><span class="prelude-val">Some</span>(msg) = <span class="self">self</span>.relay_datagrams_send.recv(), <span class="kw">if </span>relay_send_fut.is_none() =&gt; {
+                    relay_send_fut = MaybeFuture::with_future(
+                        Box::pin(relay_client.send(msg.node_id, msg.packet))
+                    );
+                    <span class="self">self</span>.last_write = Instant::now();
 
+                }
                 msg = <span class="self">self</span>.relay_client_receiver.recv() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: relay_client_receiver"</span>);
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(msg) = msg {
@@ -1038,6 +1123,41 @@
         <span class="self">self</span>.relay_client.close().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
+
+    <span class="kw">async fn </span>handle_actor_msg(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: ActiveRelayMessage) -&gt; bool {
+        <span class="macro">trace!</span>(<span class="string">"tick: inbox: {:?}"</span>, msg);
+        <span class="kw">match </span>msg {
+            ActiveRelayMessage::GetLastWrite(r) =&gt; {
+                r.send(<span class="self">self</span>.last_write).ok();
+            }
+            ActiveRelayMessage::Ping(r) =&gt; {
+                r.send(<span class="self">self</span>.relay_client.ping().<span class="kw">await</span>).ok();
+            }
+            ActiveRelayMessage::GetLocalAddr(r) =&gt; {
+                r.send(<span class="self">self</span>.relay_client.local_addr().<span class="kw">await</span>).ok();
+            }
+            ActiveRelayMessage::GetClient(r) =&gt; {
+                <span class="self">self</span>.last_write = Instant::now();
+                r.send(<span class="self">self</span>.relay_client.clone()).ok();
+            }
+            ActiveRelayMessage::NotePreferred(is_preferred) =&gt; {
+                <span class="self">self</span>.relay_client.note_preferred(is_preferred).<span class="kw">await</span>;
+            }
+            ActiveRelayMessage::GetNodeRoute(peer, r) =&gt; {
+                <span class="kw">let </span>client = <span class="kw">if </span><span class="self">self</span>.node_present.contains(<span class="kw-2">&amp;</span>peer) {
+                    <span class="prelude-val">Some</span>(<span class="self">self</span>.relay_client.clone())
+                } <span class="kw">else </span>{
+                    <span class="prelude-val">None
+                </span>};
+                r.send(client).ok();
+            }
+            ActiveRelayMessage::Shutdown =&gt; {
+                <span class="macro">debug!</span>(<span class="string">"shutdown"</span>);
+                <span class="kw">return </span><span class="bool-val">true</span>;
+            }
+        }
+        <span class="bool-val">false
+    </span>}
 
     <span class="kw">async fn </span>handle_relay_msg(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: <span class="prelude-ty">Result</span>&lt;ReceivedMessage, ClientError&gt;) -&gt; ReadResult {
         <span class="kw">match </span>msg {
@@ -1102,17 +1222,13 @@
                             <span class="self">self</span>.node_present.insert(remote_node_id);
                         }
 
-                        <span class="kw">for </span>datagram <span class="kw">in </span>PacketSplitIter::new(data) {
+                        <span class="kw">for </span>datagram <span class="kw">in </span>PacketSplitIter::new(<span class="self">self</span>.url.clone(), remote_node_id, data)
+                        {
                             <span class="kw">let </span><span class="prelude-val">Ok</span>(datagram) = datagram <span class="kw">else </span>{
                                 <span class="macro">error!</span>(<span class="string">"Invalid packet split"</span>);
                                 <span class="kw">break</span>;
                             };
-                            <span class="kw">let </span>res = RelayRecvDatagram {
-                                url: <span class="self">self</span>.url.clone(),
-                                src: remote_node_id,
-                                buf: datagram,
-                            };
-                            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.relay_datagrams_queue.try_send(res) {
+                            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.relay_datagrams_recv.try_send(datagram) {
                                 <span class="macro">warn!</span>(<span class="string">"dropping received relay packet: {err:#}"</span>);
                             }
                         }
@@ -1146,11 +1262,23 @@
     }
 }
 
+<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>RelayActorMessage {
+    Send {
+        url: RelayUrl,
+        contents: RelayContents,
+        remote_node: NodeId,
+    },
+    MaybeCloseRelaysOnRebind(Vec&lt;IpAddr&gt;),
+    SetHome {
+        url: RelayUrl,
+    },
+}
+
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>RelayActor {
     msock: Arc&lt;MagicSock&gt;,
-    relay_datagrams_queue: Arc&lt;RelayDatagramsQueue&gt;,
+    relay_datagram_recv_queue: Arc&lt;RelayDatagramsQueue&gt;,
     <span class="doccomment">/// relay Url -&gt; connection to the node
-    </span>connected_relays: BTreeMap&lt;RelayUrl, (mpsc::Sender&lt;ConnectedRelayMessage&gt;, JoinHandle&lt;()&gt;)&gt;,
+    </span>active_relays: BTreeMap&lt;RelayUrl, ActiveRelayHandle&gt;,
     ping_tasks: JoinSet&lt;(RelayUrl, bool)&gt;,
     cancel_token: CancellationToken,
 }
@@ -1158,13 +1286,13 @@
 <span class="kw">impl </span>RelayActor {
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
         msock: Arc&lt;MagicSock&gt;,
-        relay_datagrams_queue: Arc&lt;RelayDatagramsQueue&gt;,
+        relay_datagram_recv_queue: Arc&lt;RelayDatagramsQueue&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>cancel_token = CancellationToken::new();
         <span class="self">Self </span>{
             msock,
-            relay_datagrams_queue,
-            connected_relays: Default::default(),
+            relay_datagram_recv_queue,
+            active_relays: Default::default(),
             ping_tasks: Default::default(),
             cancel_token,
         }
@@ -1244,70 +1372,57 @@
                 <span class="self">self</span>.maybe_close_relays_on_rebind(<span class="kw-2">&amp;</span>ifs).<span class="kw">await</span>;
             }
         }
-    }
-
-    <span class="kw">async fn </span>note_preferred(<span class="kw-2">&amp;</span><span class="self">self</span>, my_url: <span class="kw-2">&amp;</span>RelayUrl) {
-        futures_buffered::join_all(
-            <span class="self">self</span>.connected_relays
-                .iter()
-                .map(|(url, (s, <span class="kw">_</span>))| <span class="kw">async move </span>{
-                    <span class="kw">let </span>is_preferred = url == my_url;
-                    s.send(ConnectedRelayMessage::NotePreferred(is_preferred))
-                        .<span class="kw">await
-                        </span>.ok()
-                }),
-        )
-        .<span class="kw">await</span>;
-    }
-
-    <span class="kw">async fn </span>send_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, contents: RelayContents, remote_node: NodeId) {
-        <span class="macro">trace!</span>(
-            %url,
-            remote_node = %remote_node.fmt_short(),
-            len = contents.iter().map(|c| c.len()).sum::&lt;usize&gt;(),
-            <span class="string">"sending over relay"</span>,
-        );
-        <span class="comment">// Relay Send
-        </span><span class="kw">let </span>relay_client = <span class="self">self</span>.connect_relay(url, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>remote_node)).<span class="kw">await</span>;
-        <span class="kw">for </span>content <span class="kw">in </span><span class="kw-2">&amp;</span>contents {
-            <span class="macro">trace!</span>(%url, <span class="question-mark">?</span>remote_node, <span class="string">"sending {}B"</span>, content.len());
-        }
-        <span class="kw">let </span>total_bytes = contents.iter().map(|c| c.len() <span class="kw">as </span>u64).sum::&lt;u64&gt;();
-
-        <span class="kw">const </span>PAYLAOD_SIZE: usize = MAX_PACKET_SIZE - PUBLIC_KEY_LENGTH;
-
-        <span class="comment">// When Quinn sends a GSO Transmit magicsock::split_packets will make us receive
-        // more than one packet to send in a single call.  We join all packets back together
-        // and prefix them with a u16 packet size.  They then get sent as a single DISCO
-        // frame.
-        </span><span class="kw">for </span>packet <span class="kw">in </span>PacketizeIter::&lt;<span class="kw">_</span>, PAYLAOD_SIZE&gt;::new(contents) {
-            <span class="kw">match </span>relay_client.send(remote_node, packet).<span class="kw">await </span>{
-                <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
-                    <span class="macro">inc_by!</span>(MagicsockMetrics, send_relay, total_bytes);
-                }
-                <span class="prelude-val">Err</span>(err) =&gt; {
-                    <span class="macro">warn!</span>(%url, <span class="string">"send: failed {:?}"</span>, err);
-                    <span class="macro">inc!</span>(MagicsockMetrics, send_relay_error);
-                }
-            }
-        }
-
         <span class="comment">// Wake up the send waker if one is waiting for space in the channel
-        </span><span class="kw">let </span><span class="kw-2">mut </span>wakers = <span class="self">self</span>.msock.relay_send_waker.lock();
+        </span><span class="kw">let </span><span class="kw-2">mut </span>wakers = <span class="self">self</span>.msock.relay_send_waker.lock().expect(<span class="string">"poisoned"</span>);
         <span class="kw">if let </span><span class="prelude-val">Some</span>(waker) = wakers.take() {
             waker.wake();
         }
     }
 
+    <span class="kw">async fn </span>note_preferred(<span class="kw-2">&amp;</span><span class="self">self</span>, my_url: <span class="kw-2">&amp;</span>RelayUrl) {
+        futures_buffered::join_all(<span class="self">self</span>.active_relays.iter().map(|(url, handle)| <span class="kw">async move </span>{
+            <span class="kw">let </span>is_preferred = url == my_url;
+            handle
+                .inbox_addr
+                .send(ActiveRelayMessage::NotePreferred(is_preferred))
+                .<span class="kw">await
+                </span>.ok()
+        }))
+        .<span class="kw">await</span>;
+    }
+
+    <span class="kw">async fn </span>send_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, contents: RelayContents, remote_node: NodeId) {
+        <span class="kw">const </span>PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PUBLIC_KEY_LENGTH;
+        <span class="kw">let </span>total_bytes = contents.iter().map(|c| c.len() <span class="kw">as </span>u64).sum::&lt;u64&gt;();
+        <span class="macro">trace!</span>(
+            %url,
+            remote_node = %remote_node.fmt_short(),
+            len = total_bytes,
+            <span class="string">"sending over relay"</span>,
+        );
+        <span class="kw">let </span>handle = <span class="self">self</span>.active_relay_handle_for_node(url, <span class="kw-2">&amp;</span>remote_node).<span class="kw">await</span>;
+
+        <span class="comment">// When Quinn sends a GSO Transmit magicsock::split_packets will make us receive
+        // more than one packet to send in a single call.  We join all packets back together
+        // and prefix them with a u16 packet size.  They then get sent as a single DISCO
+        // frame.  However this might still be multiple packets when otherwise the maximum
+        // packet size for the relay protocol would be exceeded.
+        </span><span class="kw">for </span>packet <span class="kw">in </span>PacketizeIter::&lt;<span class="kw">_</span>, PAYLOAD_SIZE&gt;::new(remote_node, contents) {
+            <span class="kw">let </span>len = packet.len();
+            <span class="kw">match </span>handle.datagrams_send_queue.send(packet).<span class="kw">await </span>{
+                <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="macro">inc_by!</span>(MagicsockMetrics, send_relay, len <span class="kw">as _</span>),
+                <span class="prelude-val">Err</span>(err) =&gt; {
+                    <span class="macro">warn!</span>(<span class="question-mark">?</span>url, <span class="string">"send failed: {err:#}"</span>);
+                    <span class="macro">inc!</span>(MagicsockMetrics, send_relay_error);
+                }
+            }
+        }
+    }
+
     <span class="doccomment">/// Returns `true`if the message was sent successfully.
-    </span><span class="kw">async fn </span>send_to_connected_relay(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        url: <span class="kw-2">&amp;</span>RelayUrl,
-        msg: ConnectedRelayMessage,
-    ) -&gt; bool {
-        <span class="kw">let </span>res = <span class="self">self</span>.connected_relays.get(url);
-        <span class="kw">match </span>res {
-            <span class="prelude-val">Some</span>((s, <span class="kw">_</span>)) =&gt; <span class="kw">match </span>s.send(msg).<span class="kw">await </span>{
+    </span><span class="kw">async fn </span>send_to_active_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, msg: ActiveRelayMessage) -&gt; bool {
+        <span class="kw">match </span><span class="self">self</span>.active_relays.get(url) {
+            <span class="prelude-val">Some</span>(handle) =&gt; <span class="kw">match </span>handle.inbox_addr.send(msg).<span class="kw">await </span>{
                 <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="bool-val">true</span>,
                 <span class="prelude-val">Err</span>(mpsc::error::SendError(<span class="kw">_</span>)) =&gt; {
                     <span class="self">self</span>.close_relay(url, <span class="string">"sender-closed"</span>).<span class="kw">await</span>;
@@ -1316,6 +1431,44 @@
             },
             <span class="prelude-val">None </span>=&gt; <span class="bool-val">false</span>,
         }
+    }
+
+    <span class="kw">async fn </span>active_relay_handle_for_node(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        url: <span class="kw-2">&amp;</span>RelayUrl,
+        remote_node: <span class="kw-2">&amp;</span>NodeId,
+    ) -&gt; <span class="kw-2">&amp;</span>ActiveRelayHandle {
+        <span class="kw">if </span>!<span class="self">self</span>.active_relays.contains_key(url) {
+            <span class="comment">// If we don't have an open connection to the remote node's home relay, see if
+            // we have an open connection to a relay node where we'd heard from that peer
+            // already.  E.g. maybe they dialed our home relay recently.
+            </span><span class="kw">for </span>url <span class="kw">in </span><span class="self">self
+                </span>.active_relays
+                .keys()
+                .cloned()
+                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+                .iter()
+            {
+                <span class="kw">let </span>(tx, rx) = oneshot::channel();
+                <span class="kw">if </span><span class="self">self
+                    </span>.send_to_active_relay(url, ActiveRelayMessage::GetNodeRoute(<span class="kw-2">*</span>remote_node, tx))
+                    .<span class="kw">await
+                </span>{
+                    <span class="kw">if let </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(_client)) = rx.<span class="kw">await </span>{
+                        <span class="kw">return </span><span class="self">self</span>.active_relays.get(url).expect(<span class="string">"just checked"</span>);
+                    }
+                }
+            }
+        }
+        <span class="self">self</span>.active_relay_handle(url).<span class="kw">await
+    </span>}
+
+    <span class="doccomment">/// Returns the address of a [`ActiveRelayActor`].
+    </span><span class="kw">async fn </span>active_relay_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl) -&gt; <span class="kw-2">&amp;</span>ActiveRelayHandle {
+        <span class="kw">if </span>!<span class="self">self</span>.active_relays.contains_key(url) {
+            <span class="self">self</span>.connect_relay(url, <span class="prelude-val">None</span>).<span class="kw">await</span>;
+        }
+        <span class="self">self</span>.active_relays.get(url).expect(<span class="string">"just inserted"</span>)
     }
 
     <span class="doccomment">/// Returns a relay client to a given relay.
@@ -1335,7 +1488,7 @@
         </span>{
             <span class="kw">let </span>(os, or) = oneshot::channel();
             <span class="kw">if </span><span class="self">self
-                </span>.send_to_connected_relay(url, ConnectedRelayMessage::GetClient(os))
+                </span>.send_to_active_relay(url, ActiveRelayMessage::GetClient(os))
                 .<span class="kw">await
             </span>{
                 <span class="kw">if let </span><span class="prelude-val">Ok</span>(client) = or.<span class="kw">await </span>{
@@ -1352,7 +1505,7 @@
         // SF connection rather than dialing Frankfurt.
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(node) = remote_node {
             <span class="kw">for </span>url <span class="kw">in </span><span class="self">self
-                </span>.connected_relays
+                </span>.active_relays
                 .keys()
                 .cloned()
                 .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
@@ -1360,7 +1513,7 @@
             {
                 <span class="kw">let </span>(os, or) = oneshot::channel();
                 <span class="kw">if </span><span class="self">self
-                    </span>.send_to_connected_relay(<span class="kw-2">&amp;</span>url, ConnectedRelayMessage::GetNodeRoute(<span class="kw-2">*</span>node, os))
+                    </span>.send_to_active_relay(<span class="kw-2">&amp;</span>url, ActiveRelayMessage::GetNodeRoute(<span class="kw-2">*</span>node, os))
                     .<span class="kw">await
                 </span>{
                     <span class="kw">if let </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(client)) = or.<span class="kw">await </span>{
@@ -1401,17 +1554,20 @@
             <span class="self">self</span>.msock.dns_resolver.clone(),
         );
         <span class="kw">let </span>(conn_actor_inbox_tx, conn_actor_inbox_rx) = mpsc::channel(<span class="number">64</span>);
+        <span class="comment">// TODO: Replace 64 with PER_CLIENT_SEND_QUEUE_DEPTH once that's unused
+        </span><span class="kw">let </span>(relay_send_datagram_tx, relay_send_datagram_rx) = mpsc::channel(<span class="number">64</span>);
         <span class="kw">let </span>handle = tokio::task::spawn({
             <span class="kw">let </span>url = url.clone();
             <span class="kw">let </span>relay_client = relay_client.clone();
-            <span class="kw">let </span>relay_datagrams_queue = <span class="self">self</span>.relay_datagrams_queue.clone();
+            <span class="kw">let </span>relay_datagrams_queue = <span class="self">self</span>.relay_datagram_recv_queue.clone();
             <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">"conn-relay-actor"</span>, %url);
             <span class="kw">async move </span>{
-                <span class="kw">let </span>conn_actor = ConnectedRelayActor::new(
+                <span class="kw">let </span>conn_actor = ActiveRelayActor::new(
                     url,
                     relay_client,
                     relay_receiver,
                     relay_datagrams_queue,
+                    relay_send_datagram_rx,
                 );
 
                 <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = conn_actor.run(conn_actor_inbox_rx).<span class="kw">await </span>{
@@ -1420,10 +1576,14 @@
             }
             .instrument(span)
         });
+        <span class="kw">let </span>actor_handle = ActiveRelayHandle {
+            inbox_addr: conn_actor_inbox_tx,
+            datagrams_send_queue: relay_send_datagram_tx,
+            actor_task: handle,
+        };
 
         <span class="comment">// Insert, to make sure we do not attempt to double connect.
-        </span><span class="self">self</span>.connected_relays
-            .insert(url.clone(), (conn_actor_inbox_tx, handle));
+        </span><span class="self">self</span>.active_relays.insert(url.clone(), actor_handle);
 
         <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added);
 
@@ -1440,7 +1600,7 @@
     </span><span class="kw">async fn </span>maybe_close_relays_on_rebind(<span class="kw-2">&amp;mut </span><span class="self">self</span>, okay_local_ips: <span class="kw-2">&amp;</span>[IpAddr]) {
         <span class="kw">let </span><span class="kw-2">mut </span>tasks = Vec::new();
         <span class="kw">for </span>url <span class="kw">in </span><span class="self">self
-            </span>.connected_relays
+            </span>.active_relays
             .keys()
             .cloned()
             .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
@@ -1448,7 +1608,7 @@
         {
             <span class="kw">let </span>(os, or) = oneshot::channel();
             <span class="kw">let </span>la = <span class="kw">if </span><span class="self">self
-                </span>.send_to_connected_relay(<span class="kw-2">&amp;</span>url, ConnectedRelayMessage::GetLocalAddr(os))
+                </span>.send_to_active_relay(<span class="kw-2">&amp;</span>url, ActiveRelayMessage::GetLocalAddr(os))
                 .<span class="kw">await
             </span>{
                 <span class="kw">match </span>or.<span class="kw">await </span>{
@@ -1470,7 +1630,7 @@
 
             <span class="kw">let </span>(os, or) = oneshot::channel();
             <span class="kw">let </span>ping_sent = <span class="self">self
-                </span>.send_to_connected_relay(<span class="kw-2">&amp;</span>url, ConnectedRelayMessage::Ping(os))
+                </span>.send_to_active_relay(<span class="kw-2">&amp;</span>url, ActiveRelayMessage::Ping(os))
                 .<span class="kw">await</span>;
 
             <span class="self">self</span>.ping_tasks.spawn(<span class="kw">async move </span>{
@@ -1505,31 +1665,32 @@
     }
 
     <span class="kw">async fn </span>clean_stale_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="macro">trace!</span>(
-            <span class="string">"checking {} relays for staleness"</span>,
-            <span class="self">self</span>.connected_relays.len()
-        );
+        <span class="macro">trace!</span>(<span class="string">"checking {} relays for staleness"</span>, <span class="self">self</span>.active_relays.len());
         <span class="kw">let </span>now = Instant::now();
 
         <span class="kw">let </span><span class="kw-2">mut </span>to_close = Vec::new();
-        <span class="kw">for </span>(i, (s, <span class="kw">_</span>)) <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.connected_relays {
-            <span class="kw">if </span><span class="prelude-val">Some</span>(i) == <span class="self">self</span>.msock.my_relay().as_ref() {
+        <span class="kw">for </span>(url, handle) <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.active_relays {
+            <span class="kw">if </span><span class="prelude-val">Some</span>(url) == <span class="self">self</span>.msock.my_relay().as_ref() {
                 <span class="kw">continue</span>;
             }
             <span class="kw">let </span>(os, or) = oneshot::channel();
-            <span class="kw">match </span>s.send(ConnectedRelayMessage::GetLastWrite(os)).<span class="kw">await </span>{
+            <span class="kw">match </span>handle
+                .inbox_addr
+                .send(ActiveRelayMessage::GetLastWrite(os))
+                .<span class="kw">await
+            </span>{
                 <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="kw">match </span>or.<span class="kw">await </span>{
                     <span class="prelude-val">Ok</span>(last_write) =&gt; {
                         <span class="kw">if </span>last_write.duration_since(now) &gt; RELAY_INACTIVE_CLEANUP_TIME {
-                            to_close.push(i.clone());
+                            to_close.push(url.clone());
                         }
                     }
                     <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
-                        to_close.push(i.clone());
+                        to_close.push(url.clone());
                     }
                 },
                 <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
-                    to_close.push(i.clone());
+                    to_close.push(url.clone());
                 }
             }
         }
@@ -1538,7 +1699,7 @@
         <span class="macro">trace!</span>(
             <span class="string">"closing {} of {} relays"</span>,
             to_close.len(),
-            <span class="self">self</span>.connected_relays.len()
+            <span class="self">self</span>.active_relays.len()
         );
         <span class="kw">for </span>i <span class="kw">in </span>to_close {
             <span class="self">self</span>.close_relay(<span class="kw-2">&amp;</span>i, <span class="string">"idle"</span>).<span class="kw">await</span>;
@@ -1549,11 +1710,11 @@
     }
 
     <span class="kw">async fn </span>close_all_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) {
-        <span class="kw">if </span><span class="self">self</span>.connected_relays.is_empty() {
+        <span class="kw">if </span><span class="self">self</span>.active_relays.is_empty() {
             <span class="kw">return</span>;
         }
         <span class="comment">// Need to collect to avoid double borrow
-        </span><span class="kw">let </span>urls: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self</span>.connected_relays.keys().cloned().collect();
+        </span><span class="kw">let </span>urls: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self</span>.active_relays.keys().cloned().collect();
         <span class="kw">for </span>url <span class="kw">in </span>urls {
             <span class="self">self</span>.close_relay(<span class="kw-2">&amp;</span>url, why).<span class="kw">await</span>;
         }
@@ -1561,20 +1722,24 @@
     }
 
     <span class="kw">async fn </span>close_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>((s, t)) = <span class="self">self</span>.connected_relays.remove(url) {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(handle) = <span class="self">self</span>.active_relays.remove(url) {
             <span class="macro">debug!</span>(%url, <span class="string">"closing connection: {}"</span>, why);
 
-            s.send(ConnectedRelayMessage::Shutdown).<span class="kw">await</span>.ok();
-            t.abort(); <span class="comment">// ensure the task is shutdown
+            handle
+                .inbox_addr
+                .send(ActiveRelayMessage::Shutdown)
+                .<span class="kw">await
+                </span>.ok();
+            handle.actor_task.abort(); <span class="comment">// ensure the task is shutdown
 
             </span><span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_removed);
         }
     }
 
     <span class="kw">fn </span>log_active_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="macro">debug!</span>(<span class="string">"{} active relay conns{}"</span>, <span class="self">self</span>.connected_relays.len(), {
+        <span class="macro">debug!</span>(<span class="string">"{} active relay conns{}"</span>, <span class="self">self</span>.active_relays.len(), {
             <span class="kw">let </span><span class="kw-2">mut </span>s = String::new();
-            <span class="kw">if </span>!<span class="self">self</span>.connected_relays.is_empty() {
+            <span class="kw">if </span>!<span class="self">self</span>.active_relays.is_empty() {
                 s += <span class="string">":"</span>;
                 <span class="kw">for </span>node <span class="kw">in </span><span class="self">self</span>.active_relay_sorted() {
                     s += <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">" relay-{}"</span>, node,);
@@ -1585,10 +1750,36 @@
     }
 
     <span class="kw">fn </span>active_relay_sorted(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = RelayUrl&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>ids: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self</span>.connected_relays.keys().cloned().collect();
+        <span class="kw">let </span><span class="kw-2">mut </span>ids: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self</span>.active_relays.keys().cloned().collect();
         ids.sort();
 
         ids.into_iter()
+    }
+}
+
+<span class="doccomment">/// Handle to one [`ActiveRelayActor`].
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">struct </span>ActiveRelayHandle {
+    inbox_addr: mpsc::Sender&lt;ActiveRelayMessage&gt;,
+    datagrams_send_queue: mpsc::Sender&lt;RelaySendPacket&gt;,
+    actor_task: JoinHandle&lt;()&gt;,
+}
+
+<span class="doccomment">/// A packet to send over the relay.
+///
+/// This is nothing but a newtype, it should be constructed using [`PacketizeIter`].  This
+/// is a packet of one or more datagrams, each prefixed with a u16-be length.  This is what
+/// the `Frame::SendPacket` of the `DerpCodec` transports and is produced by
+/// [`PacketizeIter`] and transformed back into datagrams using [`PacketSplitIter`].
+</span><span class="attr">#[derive(Debug, PartialEq, Eq)]
+</span><span class="kw">struct </span>RelaySendPacket {
+    node_id: NodeId,
+    packet: Bytes,
+}
+
+<span class="kw">impl </span>RelaySendPacket {
+    <span class="kw">fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+        <span class="self">self</span>.packet.len()
     }
 }
 
@@ -1617,7 +1808,8 @@
 ///
 /// The [`PacketSplitIter`] does the inverse and splits such packets back into individual
 /// datagrams.
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>PacketizeIter&lt;I: Iterator, <span class="kw">const </span>N: usize&gt; {
+</span><span class="kw">struct </span>PacketizeIter&lt;I: Iterator, <span class="kw">const </span>N: usize&gt; {
+    node_id: NodeId,
     iter: std::iter::Peekable&lt;I&gt;,
     buffer: BytesMut,
 }
@@ -1625,8 +1817,9 @@
 <span class="kw">impl</span>&lt;I: Iterator, <span class="kw">const </span>N: usize&gt; PacketizeIter&lt;I, N&gt; {
     <span class="doccomment">/// Create a new new PacketizeIter from something that can be turned into an
     /// iterator of slices, like a `Vec&lt;Bytes&gt;`.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(iter: <span class="kw">impl </span>IntoIterator&lt;IntoIter = I&gt;) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">fn </span>new(node_id: NodeId, iter: <span class="kw">impl </span>IntoIterator&lt;IntoIter = I&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
+            node_id,
             iter: iter.into_iter().peekable(),
             buffer: BytesMut::with_capacity(N),
         }
@@ -1637,7 +1830,7 @@
 <span class="kw">where
     </span>I::Item: AsRef&lt;[u8]&gt;,
 {
-    <span class="kw">type </span>Item = Bytes;
+    <span class="kw">type </span>Item = RelaySendPacket;
 
     <span class="kw">fn </span>next(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt; {
         <span class="kw">use </span>bytes::BufMut;
@@ -1653,7 +1846,10 @@
             <span class="self">self</span>.iter.next();
         }
         <span class="kw">if </span>!<span class="self">self</span>.buffer.is_empty() {
-            <span class="prelude-val">Some</span>(<span class="self">self</span>.buffer.split().freeze())
+            <span class="prelude-val">Some</span>(RelaySendPacket {
+                node_id: <span class="self">self</span>.node_id,
+                packet: <span class="self">self</span>.buffer.split().freeze(),
+            })
         } <span class="kw">else </span>{
             <span class="prelude-val">None
         </span>}
@@ -1666,16 +1862,18 @@
 /// that struct for more details.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>PacketSplitIter {
+    url: RelayUrl,
+    src: NodeId,
     bytes: Bytes,
 }
 
 <span class="kw">impl </span>PacketSplitIter {
     <span class="doccomment">/// Create a new PacketSplitIter from a packet.
-    </span><span class="kw">fn </span>new(bytes: Bytes) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{ bytes }
+    </span><span class="kw">fn </span>new(url: RelayUrl, src: NodeId, bytes: Bytes) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{ url, src, bytes }
     }
 
-    <span class="kw">fn </span>fail(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;std::io::Result&lt;Bytes&gt;&gt; {
+    <span class="kw">fn </span>fail(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;std::io::Result&lt;RelayRecvDatagram&gt;&gt; {
         <span class="self">self</span>.bytes.clear();
         <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(std::io::Error::new(
             std::io::ErrorKind::UnexpectedEof,
@@ -1685,7 +1883,7 @@
 }
 
 <span class="kw">impl </span>Iterator <span class="kw">for </span>PacketSplitIter {
-    <span class="kw">type </span>Item = std::io::Result&lt;Bytes&gt;;
+    <span class="kw">type </span>Item = std::io::Result&lt;RelayRecvDatagram&gt;;
 
     <span class="kw">fn </span>next(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt; {
         <span class="kw">use </span>bytes::Buf;
@@ -1697,8 +1895,12 @@
             <span class="kw">if </span><span class="self">self</span>.bytes.remaining() &lt; len {
                 <span class="kw">return </span><span class="self">self</span>.fail();
             }
-            <span class="kw">let </span>item = <span class="self">self</span>.bytes.split_to(len);
-            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(item))
+            <span class="kw">let </span>buf = <span class="self">self</span>.bytes.split_to(len);
+            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(RelayRecvDatagram {
+                url: <span class="self">self</span>.url.clone(),
+                src: <span class="self">self</span>.src,
+                buf,
+            }))
         } <span class="kw">else </span>{
             <span class="prelude-val">None
         </span>}
@@ -1707,27 +1909,33 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
+    <span class="kw">use </span>iroh_base::SecretKey;
+
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_packetize_iter() {
+        <span class="kw">let </span>node_id = SecretKey::generate().public();
         <span class="kw">let </span>empty_vec: Vec&lt;Bytes&gt; = Vec::new();
-        <span class="kw">let </span><span class="kw-2">mut </span>iter = PacketizeIter::&lt;<span class="kw">_</span>, MAX_PACKET_SIZE&gt;::new(empty_vec);
+        <span class="kw">let </span><span class="kw-2">mut </span>iter = PacketizeIter::&lt;<span class="kw">_</span>, MAX_PACKET_SIZE&gt;::new(node_id, empty_vec);
         <span class="macro">assert_eq!</span>(<span class="prelude-val">None</span>, iter.next());
 
         <span class="kw">let </span>single_vec = <span class="macro">vec!</span>[<span class="string">"Hello"</span>];
-        <span class="kw">let </span>iter = PacketizeIter::&lt;<span class="kw">_</span>, MAX_PACKET_SIZE&gt;::new(single_vec);
+        <span class="kw">let </span>iter = PacketizeIter::&lt;<span class="kw">_</span>, MAX_PACKET_SIZE&gt;::new(node_id, single_vec);
         <span class="kw">let </span>result = iter.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="macro">assert_eq!</span>(<span class="number">1</span>, result.len());
-        <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>[<span class="number">5</span>, <span class="number">0</span>, <span class="string">b'H'</span>, <span class="string">b'e'</span>, <span class="string">b'l'</span>, <span class="string">b'l'</span>, <span class="string">b'o'</span>], <span class="kw-2">&amp;</span>result[<span class="number">0</span>][..]);
+        <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>[<span class="number">5</span>, <span class="number">0</span>, <span class="string">b'H'</span>, <span class="string">b'e'</span>, <span class="string">b'l'</span>, <span class="string">b'l'</span>, <span class="string">b'o'</span>], <span class="kw-2">&amp;</span>result[<span class="number">0</span>].packet[..]);
 
         <span class="kw">let </span>spacer = <span class="macro">vec!</span>[<span class="number">0u8</span>; MAX_PACKET_SIZE - <span class="number">10</span>];
         <span class="kw">let </span>multiple_vec = <span class="macro">vec!</span>[<span class="kw-2">&amp;</span><span class="string">b"Hello"</span>[..], <span class="kw-2">&amp;</span>spacer, <span class="kw-2">&amp;</span><span class="string">b"World"</span>[..]];
-        <span class="kw">let </span>iter = PacketizeIter::&lt;<span class="kw">_</span>, MAX_PACKET_SIZE&gt;::new(multiple_vec);
+        <span class="kw">let </span>iter = PacketizeIter::&lt;<span class="kw">_</span>, MAX_PACKET_SIZE&gt;::new(node_id, multiple_vec);
         <span class="kw">let </span>result = iter.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="macro">assert_eq!</span>(<span class="number">2</span>, result.len());
-        <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>[<span class="number">5</span>, <span class="number">0</span>, <span class="string">b'H'</span>, <span class="string">b'e'</span>, <span class="string">b'l'</span>, <span class="string">b'l'</span>, <span class="string">b'o'</span>], <span class="kw-2">&amp;</span>result[<span class="number">0</span>][..<span class="number">7</span>]);
-        <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>[<span class="number">5</span>, <span class="number">0</span>, <span class="string">b'W'</span>, <span class="string">b'o'</span>, <span class="string">b'r'</span>, <span class="string">b'l'</span>, <span class="string">b'd'</span>], <span class="kw-2">&amp;</span>result[<span class="number">1</span>][..]);
+        <span class="macro">assert_eq!</span>(
+            <span class="kw-2">&amp;</span>[<span class="number">5</span>, <span class="number">0</span>, <span class="string">b'H'</span>, <span class="string">b'e'</span>, <span class="string">b'l'</span>, <span class="string">b'l'</span>, <span class="string">b'o'</span>],
+            <span class="kw-2">&amp;</span>result[<span class="number">0</span>].packet[..<span class="number">7</span>]
+        );
+        <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>[<span class="number">5</span>, <span class="number">0</span>, <span class="string">b'W'</span>, <span class="string">b'o'</span>, <span class="string">b'r'</span>, <span class="string">b'l'</span>, <span class="string">b'd'</span>], <span class="kw-2">&amp;</span>result[<span class="number">1</span>].packet[..]);
     }
 }
 </code></pre></div></section></main></body></html>

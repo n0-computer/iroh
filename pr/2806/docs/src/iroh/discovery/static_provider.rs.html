@@ -246,7 +246,7 @@
     </span><span class="kw">pub fn </span>set_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw">impl </span>Into&lt;NodeAddr&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;NodeAddr&gt; {
         <span class="kw">let </span>last_updated = SystemTime::now();
         <span class="kw">let </span>info: NodeAddr = info.into();
-        <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.nodes.write().unwrap();
+        <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.nodes.write().expect(<span class="string">"poisoned"</span>);
         <span class="kw">let </span>previous = guard.insert(
             info.node_id,
             NodeInfo {
@@ -268,7 +268,7 @@
     </span><span class="kw">pub fn </span>add_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw">impl </span>Into&lt;NodeAddr&gt;) {
         <span class="kw">let </span>info: NodeAddr = info.into();
         <span class="kw">let </span>last_updated = SystemTime::now();
-        <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.nodes.write().unwrap();
+        <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.nodes.write().expect(<span class="string">"poisoned"</span>);
         <span class="kw">match </span>guard.entry(info.node_id) {
             Entry::Occupied(<span class="kw-2">mut </span>entry) =&gt; {
                 <span class="kw">let </span>existing = entry.get_mut();
@@ -288,7 +288,7 @@
 
     <span class="doccomment">/// Get node info for the given node id.
     </span><span class="kw">pub fn </span>get_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;NodeAddr&gt; {
-        <span class="kw">let </span>guard = <span class="self">self</span>.nodes.read().unwrap();
+        <span class="kw">let </span>guard = <span class="self">self</span>.nodes.read().expect(<span class="string">"poisoned"</span>);
         <span class="kw">let </span>info = guard.get(<span class="kw-2">&amp;</span>node_id)<span class="question-mark">?</span>;
         <span class="prelude-val">Some</span>(NodeAddr {
             node_id,
@@ -299,7 +299,7 @@
 
     <span class="doccomment">/// Remove node info for the given node id.
     </span><span class="kw">pub fn </span>remove_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;NodeAddr&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.nodes.write().unwrap();
+        <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.nodes.write().expect(<span class="string">"poisoned"</span>);
         <span class="kw">let </span>info = guard.remove(<span class="kw-2">&amp;</span>node_id)<span class="question-mark">?</span>;
         <span class="prelude-val">Some</span>(NodeAddr {
             node_id,
@@ -317,7 +317,7 @@
         _endpoint: <span class="kw">crate</span>::Endpoint,
         node_id: NodeId,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;futures_lite::stream::Boxed&lt;anyhow::Result&lt;<span class="kw">super</span>::DiscoveryItem&gt;&gt;&gt; {
-        <span class="kw">let </span>guard = <span class="self">self</span>.nodes.read().unwrap();
+        <span class="kw">let </span>guard = <span class="self">self</span>.nodes.read().expect(<span class="string">"poisoned"</span>);
         <span class="kw">let </span>info = guard.get(<span class="kw-2">&amp;</span>node_id);
         <span class="kw">match </span>info {
             <span class="prelude-val">Some</span>(addr_info) =&gt; {

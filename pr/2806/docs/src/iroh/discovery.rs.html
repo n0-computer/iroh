@@ -1308,12 +1308,11 @@
     <span class="kw">use </span>std::{
         collections::{BTreeSet, HashMap},
         net::SocketAddr,
-        sync::Arc,
+        sync::{Arc, Mutex},
         time::SystemTime,
     };
 
     <span class="kw">use </span>iroh_base::SecretKey;
-    <span class="kw">use </span>parking_lot::Mutex;
     <span class="kw">use </span>rand::Rng;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
@@ -1367,6 +1366,7 @@
             <span class="self">self</span>.shared
                 .nodes
                 .lock()
+                .unwrap()
                 .insert(<span class="self">self</span>.node_id, (url.cloned(), addrs.clone(), now));
         }
 
@@ -1376,7 +1376,7 @@
             node_id: NodeId,
         ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
             <span class="kw">let </span>addr_info = <span class="kw">match </span><span class="self">self</span>.resolve_wrong {
-                <span class="bool-val">false </span>=&gt; <span class="self">self</span>.shared.nodes.lock().get(<span class="kw-2">&amp;</span>node_id).cloned(),
+                <span class="bool-val">false </span>=&gt; <span class="self">self</span>.shared.nodes.lock().unwrap().get(<span class="kw-2">&amp;</span>node_id).cloned(),
                 <span class="bool-val">true </span>=&gt; {
                     <span class="kw">let </span>ts = system_time_now() - <span class="number">100_000</span>;
                     <span class="kw">let </span>port: u16 = rand::thread_rng().gen_range(<span class="number">10_000</span>..<span class="number">20_000</span>);

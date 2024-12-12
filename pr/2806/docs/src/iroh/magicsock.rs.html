@@ -4050,7 +4050,15 @@
 <a href="#4049" id="4049">4049</a>
 <a href="#4050" id="4050">4050</a>
 <a href="#4051" id="4051">4051</a>
-<a href="#4052" id="4052">4052</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4052" id="4052">4052</a>
+<a href="#4053" id="4053">4053</a>
+<a href="#4054" id="4054">4054</a>
+<a href="#4055" id="4055">4055</a>
+<a href="#4056" id="4056">4056</a>
+<a href="#4057" id="4057">4057</a>
+<a href="#4058" id="4058">4058</a>
+<a href="#4059" id="4059">4059</a>
+<a href="#4060" id="4060">4060</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4239,7 +4247,7 @@
     ///
     /// This waker is used by [`IoPoller`] and the [`RelayActor`] to signal when more
     /// datagrams can be sent to the relays.
-    </span>relay_send_waker: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
+    </span>relay_send_waker: Arc&lt;std::sync::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
     <span class="doccomment">/// Counter for ordering of [`MagicSock::poll_recv`] polling order.
     </span>poll_recv_counter: AtomicUsize,
 
@@ -4288,7 +4296,7 @@
 
     <span class="doccomment">/// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
-    </span>pending_call_me_maybes: parking_lot::Mutex&lt;HashMap&lt;PublicKey, RelayUrl&gt;&gt;,
+    </span>pending_call_me_maybes: std::sync::Mutex&lt;HashMap&lt;PublicKey, RelayUrl&gt;&gt;,
 
     <span class="doccomment">/// Indicates the direct addr update state.
     </span>direct_addr_update_state: DirectAddrUpdateState,
@@ -5383,7 +5391,12 @@
     <span class="kw">fn </span>send_queued_call_me_maybes(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="kw">let </span>msg = <span class="self">self</span>.direct_addrs.to_call_me_maybe_message();
         <span class="kw">let </span>msg = disco::Message::CallMeMaybe(msg);
-        <span class="kw">for </span>(public_key, url) <span class="kw">in </span><span class="self">self</span>.pending_call_me_maybes.lock().drain() {
+        <span class="kw">for </span>(public_key, url) <span class="kw">in </span><span class="self">self
+            </span>.pending_call_me_maybes
+            .lock()
+            .expect(<span class="string">"poisoned"</span>)
+            .drain()
+        {
             <span class="kw">if </span>!<span class="self">self</span>.send_disco_message_relay(<span class="kw-2">&amp;</span>url, public_key, msg.clone()) {
                 <span class="macro">warn!</span>(node = %public_key.fmt_short(), <span class="string">"relay channel full, dropping call-me-maybe"</span>);
             }
@@ -5410,6 +5423,7 @@
             <span class="prelude-val">Err</span>(last_refresh_ago) =&gt; {
                 <span class="self">self</span>.pending_call_me_maybes
                     .lock()
+                    .expect(<span class="string">"poisoned"</span>)
                     .insert(dst_node, url.clone());
                 <span class="macro">debug!</span>(
                     <span class="question-mark">?</span>last_refresh_ago,
@@ -5488,7 +5502,7 @@
     <span class="doccomment">/// If running, set to the reason for the currently the update.
     </span>running: sync::watch::Sender&lt;<span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt;&gt;,
     <span class="doccomment">/// If set, start a new update as soon as the current one is finished.
-    </span>want_update: parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt;&gt;,
+    </span>want_update: std::sync::Mutex&lt;<span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt;&gt;,
 }
 
 <span class="kw">impl </span>DirectAddrUpdateState {
@@ -5504,7 +5518,7 @@
     /// scheduling it for later.
     </span><span class="kw">fn </span>schedule_run(<span class="kw-2">&amp;</span><span class="self">self</span>, why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) {
         <span class="kw">if </span><span class="self">self</span>.is_running() {
-            <span class="kw">let _ </span>= <span class="self">self</span>.want_update.lock().insert(why);
+            <span class="kw">let _ </span>= <span class="self">self</span>.want_update.lock().expect(<span class="string">"poisoned"</span>).insert(why);
         } <span class="kw">else </span>{
             <span class="self">self</span>.run(why);
         }
@@ -5527,7 +5541,7 @@
 
     <span class="doccomment">/// Returns the next update, if one is set.
     </span><span class="kw">fn </span>next_update(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt; {
-        <span class="self">self</span>.want_update.lock().take()
+        <span class="self">self</span>.want_update.lock().expect(<span class="string">"poisoned"</span>).take()
     }
 }
 
@@ -5600,7 +5614,7 @@
             closing: AtomicBool::new(<span class="bool-val">false</span>),
             closed: AtomicBool::new(<span class="bool-val">false</span>),
             relay_datagrams_queue: relay_datagrams_queue.clone(),
-            relay_send_waker: Arc::new(parking_lot::Mutex::new(<span class="prelude-val">None</span>)),
+            relay_send_waker: Arc::new(std::sync::Mutex::new(<span class="prelude-val">None</span>)),
             poll_recv_counter: AtomicUsize::new(<span class="number">0</span>),
             actor_sender: actor_sender.clone(),
             ipv6_reported: Arc::new(AtomicBool::new(<span class="bool-val">false</span>)),
@@ -5716,19 +5730,18 @@
 }
 
 <span class="attr">#[derive(Debug, Default)]
-</span><span class="kw">struct </span>DiscoSecrets(parking_lot::Mutex&lt;HashMap&lt;PublicKey, SharedSecret&gt;&gt;);
+</span><span class="kw">struct </span>DiscoSecrets(std::sync::Mutex&lt;HashMap&lt;PublicKey, SharedSecret&gt;&gt;);
 
 <span class="kw">impl </span>DiscoSecrets {
-    <span class="kw">fn </span>get(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        secret: <span class="kw-2">&amp;</span>SecretKey,
-        node_id: PublicKey,
-    ) -&gt; parking_lot::MappedMutexGuard&lt;SharedSecret&gt; {
-        parking_lot::MutexGuard::map(<span class="self">self</span>.<span class="number">0</span>.lock(), |inner| {
-            inner
-                .entry(node_id)
-                .or_insert_with(|| secret.shared(<span class="kw-2">&amp;</span>node_id))
-        })
+    <span class="kw">fn </span>get&lt;F, T&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, secret: <span class="kw-2">&amp;</span>SecretKey, node_id: PublicKey, cb: F) -&gt; T
+    <span class="kw">where
+        </span>F: FnOnce(<span class="kw-2">&amp;mut </span>SharedSecret) -&gt; T,
+    {
+        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
+        <span class="kw">let </span>x = inner
+            .entry(node_id)
+            .or_insert_with(|| secret.shared(<span class="kw-2">&amp;</span>node_id));
+        cb(x)
     }
 
     <span class="kw">pub fn </span>encode_and_seal(
@@ -5738,7 +5751,7 @@
         msg: <span class="kw-2">&amp;</span>disco::Message,
     ) -&gt; Bytes {
         <span class="kw">let </span><span class="kw-2">mut </span>seal = msg.as_bytes();
-        <span class="self">self</span>.get(secret_key, node_id).seal(<span class="kw-2">&amp;mut </span>seal);
+        <span class="self">self</span>.get(secret_key, node_id, |secret| secret.seal(<span class="kw-2">&amp;mut </span>seal));
         disco::encode_message(<span class="kw-2">&amp;</span>secret_key.public(), seal).into()
     }
 
@@ -5748,9 +5761,9 @@
         node_id: PublicKey,
         <span class="kw-2">mut </span>sealed_box: Vec&lt;u8&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;disco::Message, DiscoBoxError&gt; {
-        <span class="self">self</span>.get(secret, node_id)
-            .open(<span class="kw-2">&amp;mut </span>sealed_box)
-            .map_err(DiscoBoxError::Open)<span class="question-mark">?</span>;
+        <span class="self">self</span>.get(secret, node_id, |secret| {
+            secret.open(<span class="kw-2">&amp;mut </span>sealed_box).map_err(DiscoBoxError::Open)
+        })<span class="question-mark">?</span>;
         disco::Message::from_bytes(<span class="kw-2">&amp;</span>sealed_box).map_err(DiscoBoxError::Parse)
     }
 }
@@ -5911,7 +5924,7 @@
     ipv4_poller: Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt;,
     ipv6_poller: <span class="prelude-ty">Option</span>&lt;Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt;&gt;,
     relay_sender: mpsc::Sender&lt;RelayActorMessage&gt;,
-    relay_send_waker: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
+    relay_send_waker: Arc&lt;std::sync::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
 }
 
 <span class="kw">impl </span>quinn::UdpPoller <span class="kw">for </span>IoPoller {
@@ -5930,7 +5943,10 @@
         }
         <span class="kw">match </span>this.relay_sender.capacity() {
             <span class="number">0 </span>=&gt; {
-                <span class="self">self</span>.relay_send_waker.lock().replace(cx.waker().clone());
+                <span class="self">self</span>.relay_send_waker
+                    .lock()
+                    .expect(<span class="string">"poisoned"</span>)
+                    .replace(cx.waker().clone());
                 Poll::Pending
             }
             <span class="kw">_ </span>=&gt; Poll::Ready(<span class="prelude-val">Ok</span>(())),
@@ -6275,7 +6291,7 @@
                         loopback,
                     } = tokio::task::spawn_blocking(LocalAddresses::new)
                         .<span class="kw">await
-                        </span>.unwrap();
+                        </span>.expect(<span class="string">"spawn panicked"</span>);
                     <span class="kw">if </span>ips.is_empty() &amp;&amp; addrs.is_empty() {
                         <span class="comment">// Include loopback addresses only if there are no other interfaces
                         // or public addresses, this allows testing offline.
@@ -6615,7 +6631,7 @@
 <span class="kw">impl </span>DiscoveredDirectAddrs {
     <span class="doccomment">/// Updates the direct addresses, returns `true` if they changed, `false` if not.
     </span><span class="kw">fn </span>update(<span class="kw-2">&amp;</span><span class="self">self</span>, addrs: BTreeSet&lt;DirectAddr&gt;) -&gt; bool {
-        <span class="kw-2">*</span><span class="self">self</span>.updated_at.write().unwrap() = <span class="prelude-val">Some</span>(Instant::now());
+        <span class="kw-2">*</span><span class="self">self</span>.updated_at.write().expect(<span class="string">"poisoned"</span>) = <span class="prelude-val">Some</span>(Instant::now());
         <span class="kw">let </span>updated = <span class="self">self</span>.addrs.set(<span class="prelude-val">Some</span>(addrs)).is_ok();
         <span class="kw">if </span>updated {
             <span class="macro">event!</span>(

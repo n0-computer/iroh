@@ -83,17 +83,15 @@
 <a href="#82" id="82">82</a>
 <a href="#83" id="83">83</a>
 <a href="#84" id="84">84</a>
-<a href="#85" id="85">85</a>
-<a href="#86" id="86">86</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr};
+<a href="#85" id="85">85</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr};
 
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="kw">use crate</span>::{base32, key::NodeId, relay_url::RelayUrl};
 
-<span class="kw">mod </span>blob;
 <span class="kw">mod </span>node;
 
-<span class="kw">pub use </span><span class="self">self</span>::{blob::BlobTicket, node::NodeTicket};
+<span class="kw">pub use </span><span class="self">self</span>::node::NodeTicket;
 
 <span class="doccomment">/// A ticket is a serializable object combining information required for an operation.
 ///
