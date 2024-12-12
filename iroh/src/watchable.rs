@@ -127,6 +127,10 @@ impl<T: Clone + Eq> Watcher<T> {
 
     /// Returns a future completing with `Ok(value)` once a new value is set, or with
     /// [`Err(Disconnected)`](Disconnected) if the connected [`Watchable`] was dropped.
+    ///
+    /// # Cancel Safety
+    ///
+    /// The returned future is cancel-safe.
     pub fn updated(&mut self) -> WatchNextFut<T> {
         WatchNextFut { watcher: self }
     }
@@ -140,6 +144,10 @@ impl<T: Clone + Eq> Watcher<T> {
     /// item is available it can be replaced with another item by the time it is polled.
     ///
     /// This stream ends once the original [`Watchable`] has been dropped.
+    ///
+    /// # Cancel Safety
+    ///
+    /// The returned stream is cancel-safe.
     pub fn stream(mut self) -> WatcherStream<T> {
         debug_assert!(self.epoch > 0);
         self.epoch -= 1;
@@ -156,6 +164,10 @@ impl<T: Clone + Eq> Watcher<T> {
     /// item is available it can be replaced with another item by the time it is polled.
     ///
     /// This stream ends once the original [`Watchable`] has been dropped.
+    ///
+    /// # Cancel Safety
+    ///
+    /// The returned stream is cancel-safe.
     pub fn stream_updates_only(self) -> WatcherStream<T> {
         WatcherStream { watcher: self }
     }
@@ -177,6 +189,10 @@ impl<T: Clone + Eq> Watcher<Option<T>> {
 /// Future returning the next item after the current one in a [`Watcher`].
 ///
 /// See [`Watcher::updated`].
+///
+/// # Cancel Safety
+///
+/// This future is cancel-safe.
 #[derive(Debug)]
 pub struct WatchNextFut<'a, T> {
     watcher: &'a mut Watcher<T>,
@@ -203,6 +219,10 @@ impl<T: Clone + Eq> Future for WatchNextFut<'_, T> {
 /// in a [`Watcher`].
 ///
 /// See [`Watcher::initialized`].
+///
+/// # Cancel Safety
+///
+/// This Future is cancel-safe.
 #[derive(Debug)]
 pub struct WatchInitializedFut<'a, T> {
     watcher: &'a mut Watcher<Option<T>>,
@@ -212,26 +232,30 @@ impl<T: Clone + Eq> Future for WatchInitializedFut<'_, T> {
     type Output = Result<T, Disconnected>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        let Some(shared) = self.watcher.shared.upgrade() else {
-            return Poll::Ready(Err(Disconnected));
-        };
-
-        let value = loop {
+        loop {
+            let Some(shared) = self.watcher.shared.upgrade() else {
+                return Poll::Ready(Err(Disconnected));
+            };
             let (epoch, value) = futures_lite::ready!(shared.poll_next(cx, self.watcher.epoch));
             self.watcher.epoch = epoch;
 
             if let Some(value) = value {
-                break value;
+                return Poll::Ready(Ok(value));
             }
-        };
-
-        Poll::Ready(Ok(value))
+        }
     }
 }
 
 /// A stream for a [`Watcher`]'s next values.
 ///
 /// See [`Watcher::stream`] and [`Watcher::stream_updates_only`].
+///
+/// # Cancel Safety
+///
+/// This stream is cancel-safe, calling the [`StreamExt::next`] function in a loop in
+/// `tokio::select!` is safe.
+///
+/// [`StreamExt::next`](futures_lite::stream::StreamExt::next)
 #[derive(Debug, Clone)]
 pub struct WatcherStream<T> {
     watcher: Watcher<T>,
@@ -484,5 +508,45 @@ mod tests {
         loom::model(test_case);
         #[cfg(not(iroh_loom))]
         test_case();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_update_cancel_safety() {
+        let watchable = Watchable::new(0);
+        let mut watch = watchable.watch();
+        const MAX: usize = 100_000;
+
+        let handle = tokio::spawn(async move {
+            let mut last_observed = 0;
+
+            while last_observed != MAX {
+                tokio::select! {
+                    val = watch.updated() => {
+                        let Ok(val) = val else {
+                            return ();
+                        };
+
+                        assert_ne!(val, last_observed, "never observe the same value twice, even with cancellation");
+                        last_observed = val;
+                    }
+                    _ = tokio::time::sleep(Duration::from_micros(thread_rng().gen_range(0..10_000))) => {
+                        // We cancel the other future and start over again
+                        continue;
+                    }
+                }
+            }
+        });
+
+        for i in 1..=MAX {
+            watchable.set(i).ok();
+            if thread_rng().gen_bool(0.2) {
+                tokio::task::yield_now().await;
+            }
+        }
+
+        tokio::time::timeout(Duration::from_secs(10), handle)
+            .await
+            .unwrap()
+            .unwrap()
     }
 }
