@@ -53,7 +53,7 @@ pub mod testing;
 
 pub use self::{
     metrics::{Metrics, StunMetrics},
-    resolver::ReloadingResolver,
+    resolver::{ReloadingResolver, DEFAULT_CERT_RELOAD_INTERVAL},
     streams::MaybeTlsStream as MaybeTlsStreamServer,
 };
 
