@@ -252,10 +252,7 @@ impl<T: Clone + Eq> Future for WatchInitializedFut<'_, T> {
 ///
 /// # Cancel Safety
 ///
-/// This stream is cancel-safe, calling the [`StreamExt::next`] function in a loop in
-/// `tokio::select!` is safe.
-///
-/// [`StreamExt::next`](futures_lite::stream::StreamExt::next)
+/// This stream is cancel-safe.
 #[derive(Debug, Clone)]
 pub struct WatcherStream<T> {
     watcher: Watcher<T>,
