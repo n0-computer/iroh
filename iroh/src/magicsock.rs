@@ -2243,7 +2243,7 @@ impl Actor {
                         loopback,
                     } = tokio::task::spawn_blocking(LocalAddresses::new)
                         .await
-                        .expect("spawn paniced");
+                        .expect("spawn panicked");
                     if ips.is_empty() && addrs.is_empty() {
                         // Include loopback addresses only if there are no other interfaces
                         // or public addresses, this allows testing offline.
