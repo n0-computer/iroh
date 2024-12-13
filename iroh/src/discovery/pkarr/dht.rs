@@ -344,7 +344,7 @@ impl Discovery for DhtDiscovery {
                                         "discovered node info from relay {:?}",
                                         node_addr
                                     );
-                                    Some(anyhow::Ok(DiscoveryItem {
+                                    Some(Ok(DiscoveryItem {
                                         node_addr,
                                         provenance: "relay",
                                         last_updated: None,
@@ -409,10 +409,6 @@ impl Discovery for DhtDiscovery {
         }
 
         Some(stream.filter_map(|t| t).boxed())
-        // Some(Box::pin(ResolveStream {
-        //     dht_resolve,
-        //     relay_resolve,
-        // }))
     }
 }
 
