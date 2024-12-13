@@ -70,7 +70,7 @@ use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},
-    dns::DnsResolver,
+    dns::{DnsResolver, ResolverExt},
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     watchable::{Watchable, Watcher},
 };
@@ -595,7 +595,31 @@ impl MagicSock {
                 }
             }
             None => {
-                error!(%dest, "no NodeState for mapped address, voiding transmit");
+                // Check if this is a QUIC address discovery packet
+                if let Some(addr) = self.node_map.get_qad_addr(&dest) {
+                    // send udp
+                    // rewrite target address
+                    transmit.destination = addr;
+                    match self.try_send_udp(addr, &transmit) {
+                        Ok(()) => {
+                            trace!(dst = %addr,
+                                   "sent QAD transmit over UDP");
+                        }
+                        Err(err) => {
+                            // No need to print "WouldBlock" errors to the console
+                            if err.kind() == io::ErrorKind::WouldBlock {
+                                return Err(io::Error::new(io::ErrorKind::WouldBlock, "pending"));
+                            } else {
+                                warn!(
+                                    dst = %addr,
+                                    "failed to send QAD message over udp: {err:#}"
+                                );
+                            }
+                        }
+                    }
+                } else {
+                    error!(%dest, "no NodeState for mapped address, voiding transmit");
+                }
                 // Returning Ok here means we let QUIC timeout.  Returning WouldBlock
                 // triggers a hot loop.  Returning an error would immediately fail a
                 // connection.  The philosophy of quinn-udp is that a UDP connection could
@@ -834,15 +858,27 @@ impl MagicSock {
                 // Update the NodeMap and remap RecvMeta to the QuicMappedAddr.
                 match self.node_map.receive_udp(meta.addr) {
                     None => {
-                        warn!(
-                            src = ?meta.addr,
-                            count = %quic_datagram_count,
-                            len = meta.len,
-                            "UDP recv quic packets: no node state found, skipping",
-                        );
-                        // If we have no node state for the from addr, set len to 0 to make
-                        // quinn skip the buf completely.
-                        meta.len = 0;
+                        // Check if this is QUIC address discovery response
+                        if let Some(quic_mapped_addr) = self.node_map.receive_qad(meta.addr) {
+                            trace!(
+                                src = ?meta.addr,
+                                count = %quic_datagram_count,
+                                len = meta.len,
+                                "UDP recv QUIC address discovery packets",
+                            );
+                            quic_packets_total += quic_datagram_count;
+                            meta.addr = quic_mapped_addr.0;
+                        } else {
+                            warn!(
+                                src = ?meta.addr,
+                                count = %quic_datagram_count,
+                                len = meta.len,
+                                "UDP recv quic packets: no node state found, skipping",
+                            );
+                            // If we have no node state for the from addr, set len to 0 to make
+                            // quinn skip the buf completely.
+                            meta.len = 0;
+                        }
                     }
                     Some((node_id, quic_mapped_addr)) => {
                         trace!(
@@ -1716,17 +1752,13 @@ impl DiscoSecrets {
     where
         F: FnOnce(&mut SharedSecret) -> T,
     {
-        let mut inner = self.0.lock().expect("poisoned");
         let x = inner.entry(node_id).or_insert_with(|| {
             let public_key = public_ed_box(&node_id.public());
-            SharedSecret::new(secret, &public_key)
         });
-        cb(x)
-    }
+    {}}
 
-    fn encode_and_seal(
+    fn , ResolverExt}encode_and_seal(
         &self,
-        this_secret_key: &crypto_box::SecretKey,
         this_node_id: NodeId,
         other_node_id: NodeId,
         msg: &disco::Message,
@@ -2453,6 +2485,9 @@ impl Actor {
 
         let quic_config = match quic_endpoint {
             Some(ep) => {
+                // Need to add Quic Mapped Addrs for the relay nodes to use for
+                // QUIC Address Discovery
+                let mapped_addrs = self.resolve_qad_addrs(Duration::from_millis(500)).await;
                 let root_store = rustls::RootCertStore::from_iter(
                     webpki_roots::TLS_SERVER_ROOTS.iter().cloned(),
                 );
@@ -2464,6 +2499,7 @@ impl Actor {
                     client_config,
                     ipv4: true,
                     ipv6: true,
+                    mapped_addrs,
                 })
             }
             None => None,
@@ -2546,6 +2582,93 @@ impl Actor {
             self.call_net_info_callback(ni).await;
         }
         self.update_direct_addresses(report);
+    }
+
+    /// Does a DNS look up for the `RelayUrl` and returns the set of resolved
+    /// [`SocketAddr`]s
+    async fn resolve_relay_quic_endpoint(
+        dns_resolver: DnsResolver,
+        relay_node: Arc<RelayNode>,
+        duration: Duration,
+    ) -> BTreeSet<SocketAddr> {
+        let mut addrs = BTreeSet::new();
+        let port = if let Some(ref quic_config) = relay_node.quic {
+            quic_config.port
+        } else {
+            trace!(
+                ?relay_node,
+                "No quic config for the relay node: no need to resolve quic endpoint ip"
+            );
+            return addrs;
+        };
+
+        match relay_node.url.host() {
+            Some(url::Host::Domain(hostname)) => {
+                error!(%hostname, "Performing DNS A lookup for relay addr");
+                let mut set = JoinSet::new();
+                let resolver = dns_resolver.clone();
+                let ipv4_resolver = resolver.clone();
+                let ipv4_hostname = hostname.to_owned();
+                set.spawn(async move {
+                    let res = ipv4_resolver.lookup_ipv4(ipv4_hostname, duration).await;
+                    res.map(|addrs| addrs.collect::<Vec<_>>())
+                });
+                let ipv6_hostname = hostname.to_owned();
+                set.spawn(async move {
+                    let res = resolver.lookup_ipv6(ipv6_hostname, duration).await;
+                    res.map(|addrs| addrs.collect::<Vec<_>>())
+                });
+                let responses = set.join_all().await;
+                for res in responses {
+                    match res {
+                        Err(_) => {}
+                        Ok(resolved_addrs) => {
+                            for addr in resolved_addrs {
+                                addrs.insert(SocketAddr::new(addr.into(), port));
+                            }
+                        }
+                    }
+                }
+                if addrs.is_empty() {
+                    error!(%hostname, "Unable to resolve ip addresses for relay node");
+                }
+            }
+            Some(url::Host::Ipv4(addr)) => {
+                addrs.insert(SocketAddr::new(addr.into(), port));
+            }
+            Some(url::Host::Ipv6(addr)) => {
+                addrs.insert(SocketAddr::new(addr.into(), port));
+            }
+            None => {
+                error!(?relay_node.url, "No hostname for relay node, cannot resolve ip");
+            }
+        }
+        return addrs;
+    }
+
+    /// Resolve the relay addresses used for QUIC address discovery.
+    async fn resolve_qad_addrs(
+        &mut self,
+        duration: Duration,
+    ) -> HashMap<SocketAddr, net_report::MappedAddr> {
+        let mut mapped_addrs = HashMap::new();
+        let mut set = JoinSet::new();
+        let resolver = self.msock.dns_resolver();
+        for relay_node in self.msock.relay_map.nodes() {
+            set.spawn(Actor::resolve_relay_quic_endpoint(
+                resolver.clone(),
+                relay_node.clone(),
+                duration,
+            ));
+        }
+        let res = set.join_all().await;
+        for addrs in res {
+            addrs.iter().for_each(|addr| {
+                let mapped_addr = self.msock.node_map.add_qad_addr(*addr);
+                mapped_addrs.insert(*addr, net_report::MappedAddr(mapped_addr.0));
+            });
+        }
+        mapped_addrs
     }
 
     fn set_nearest_relay(&mut self, relay_url: Option<RelayUrl>) -> bool {

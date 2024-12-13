@@ -1693,6 +1693,7 @@ mod tests {
             ]),
             next_id: 5,
             path_selection: PathSelection::default(),
+            qad_mapped_addrs: HashMap::new(),
         });
         let mut got = node_map.list_remote_infos(later);
         got.sort_by_key(|p| p.node_id);

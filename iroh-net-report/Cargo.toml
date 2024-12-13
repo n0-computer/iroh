@@ -48,6 +48,7 @@ tokio = { version = "1", default-features = false, features = ["test-util"] }
 default = ["metrics"]
 metrics = ["iroh-metrics/metrics", "portmapper/metrics"]
 stun-utils = []
+iroh = []
 
 [package.metadata.docs.rs]
 all-features = true

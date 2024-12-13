@@ -69,6 +69,8 @@ pub(super) struct NodeMapInner {
     next_id: usize,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
+    // special mapping for relay socket addresses so that we can do quic address discovery
+    qad_mapped_addrs: HashMap<SocketAddr, QuicMappedAddr>,
 }
 
 /// Identifier to look up a [`NodeState`] in the [`NodeMap`].
@@ -153,9 +155,42 @@ impl NodeMap {
             .add_node_addr(node_addr, source)
     }
 
+    /// Add a the SocketAddr used to preform QUIC Address Discovery to the nodemap
+    pub(super) fn add_qad_addr(&self, udp_addr: SocketAddr) -> QuicMappedAddr {
+        let quic_mapped_addr = QuicMappedAddr::generate();
+        self.inner
+            .lock()
+            .qad_mapped_addrs
+            .insert(udp_addr, quic_mapped_addr);
+        quic_mapped_addr
+    }
+
+    /// Get the socket address used to preform QUIC Address Discovery
+    pub(super) fn get_qad_addr(&self, addr: &QuicMappedAddr) -> Option<SocketAddr> {
+        self.inner
+            .lock()
+            .qad_mapped_addrs
+            .iter()
+            .find_map(|(udp_addr, quic_mapped_addr)| {
+                if addr == quic_mapped_addr {
+                    Some(*udp_addr)
+                } else {
+                    None
+                }
+            })
+    }
+
     /// Number of nodes currently listed.
     pub(super) fn node_count(&self) -> usize {
         self.inner.lock().expect("poisoned").node_count()
+    }
+
+    pub(super) fn receive_qad(&self, udp_addr: SocketAddr) -> Option<QuicMappedAddr> {
+        self.inner
+            .lock()
+            .qad_mapped_addrs
+            .get(&udp_addr)
+            .map(|addr| *addr)
     }
 
     pub(super) fn receive_udp(&self, udp_addr: SocketAddr) -> Option<(PublicKey, QuicMappedAddr)> {
