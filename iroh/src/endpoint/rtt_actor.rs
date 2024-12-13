@@ -13,10 +13,7 @@ use tokio::{
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info_span, trace, Instrument};
 
-use crate::{
-    magicsock::{ConnectionType, ConnectionTypeStream},
-    metrics::MagicsockMetrics,
-};
+use crate::{magicsock::ConnectionType, metrics::MagicsockMetrics, watchable::WatcherStream};
 
 #[derive(Debug)]
 pub(super) struct RttHandle {
@@ -54,7 +51,7 @@ pub(super) enum RttMessage {
         /// The connection.
         connection: quinn::WeakConnectionHandle,
         /// Path changes for this connection from the magic socket.
-        conn_type_changes: ConnectionTypeStream,
+        conn_type_changes: WatcherStream<ConnectionType>,
         /// For reporting-only, the Node ID of this connection.
         node_id: NodeId,
     },
@@ -67,7 +64,7 @@ pub(super) enum RttMessage {
 #[derive(Debug)]
 struct RttActor {
     /// Stream of connection type changes.
-    connection_events: stream_group::Keyed<ConnectionTypeStream>,
+    connection_events: stream_group::Keyed<WatcherStream<ConnectionType>>,
     /// References to the connections.
     ///
     /// These are weak references so not to keep the connections alive.  The key allows
@@ -124,7 +121,7 @@ impl RttActor {
     fn handle_new_connection(
         &mut self,
         connection: quinn::WeakConnectionHandle,
-        conn_type_changes: ConnectionTypeStream,
+        conn_type_changes: WatcherStream<ConnectionType>,
         node_id: NodeId,
     ) {
         let key = self.connection_events.insert(conn_type_changes);

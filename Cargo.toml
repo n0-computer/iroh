@@ -37,7 +37,8 @@ missing_debug_implementations = "warn"
 # require a feature enabled when using `--cfg docsrs` which we can not
 # do.  To enable for a crate set `#![cfg_attr(iroh_docsrs,
 # feature(doc_auto_cfg))]` in the crate.
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)"] }
+# We also have our own `iroh_loom` cfg to enable tokio-rs/loom testing.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_loom)"] }
 
 [workspace.lints.clippy]
 unused-async = "warn"

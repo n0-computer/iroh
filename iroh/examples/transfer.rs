@@ -6,7 +6,6 @@ use std::{
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::{Parser, Subcommand};
-use futures_lite::StreamExt;
 use indicatif::HumanBytes;
 use iroh::{
     endpoint::ConnectionError, Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl, SecretKey,
@@ -71,23 +70,18 @@ async fn provide(size: u64, relay_url: Option<String>) -> anyhow::Result<()> {
 
     let node_id = endpoint.node_id();
 
-    for local_endpoint in endpoint
-        .direct_addresses()
-        .next()
-        .await
-        .context("no endpoints")?
-    {
+    for local_endpoint in endpoint.direct_addresses().initialized().await? {
         println!("\t{}", local_endpoint.addr)
     }
 
     let relay_url = endpoint
         .home_relay()
+        .get()?
         .expect("should be connected to a relay server");
     let local_addrs = endpoint
         .direct_addresses()
-        .next()
-        .await
-        .context("no endpoints")?
+        .initialized()
+        .await?
         .into_iter()
         .map(|endpoint| endpoint.addr)
         .collect::<Vec<_>>();
@@ -171,17 +165,13 @@ async fn fetch(ticket: &str, relay_url: Option<String>) -> anyhow::Result<()> {
     let me = endpoint.node_id();
     println!("node id: {me}");
     println!("node listening addresses:");
-    for local_endpoint in endpoint
-        .direct_addresses()
-        .next()
-        .await
-        .context("no endpoints")?
-    {
+    for local_endpoint in endpoint.direct_addresses().initialized().await? {
         println!("\t{}", local_endpoint.addr)
     }
 
     let relay_url = endpoint
         .home_relay()
+        .get()?
         .expect("should be connected to a relay server, try calling `endpoint.local_endpoints()` or `endpoint.connect()` first, to ensure the endpoint has actually attempted a connection before checking for the connected relay server");
     println!("node relay server url: {relay_url}\n");
 

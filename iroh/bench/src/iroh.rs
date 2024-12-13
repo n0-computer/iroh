@@ -5,7 +5,6 @@ use std::{
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use futures_lite::StreamExt as _;
 use iroh::{
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
     Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl,
@@ -45,7 +44,7 @@ pub fn server_endpoint(
             .unwrap();
 
         if relay_url.is_some() {
-            ep.watch_home_relay().next().await;
+            ep.home_relay().initialized().await.unwrap();
         }
 
         let addr = ep.bound_sockets();
@@ -101,7 +100,7 @@ pub async fn connect_client(
         .unwrap();
 
     if relay_url.is_some() {
-        endpoint.watch_home_relay().next().await;
+        endpoint.home_relay().initialized().await?;
     }
 
     // TODO: We don't support passing client transport config currently

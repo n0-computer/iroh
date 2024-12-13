@@ -56,12 +56,12 @@ use tokio::{
 };
 use tracing::{debug, error_span, info, warn, Instrument};
 use url::Url;
-use watchable::{Watchable, Watcher};
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
     dns::node_info::NodeInfo,
     endpoint::force_staging_infra,
+    watchable::{Disconnected, Watchable, Watcher},
     Endpoint,
 };
 
@@ -195,7 +195,7 @@ impl PkarrPublisher {
     /// This is a nonblocking function, the actual update is performed in the background.
     pub fn update_addr_info(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
         let info = NodeInfo::new(self.node_id, url.cloned().map(Into::into), addrs.clone());
-        self.watchable.update(Some(info)).ok();
+        self.watchable.set(Some(info)).ok();
     }
 }
 
@@ -227,12 +227,15 @@ struct PublisherService {
 }
 
 impl PublisherService {
-    async fn run(self) {
+    async fn run(mut self) {
         let mut failed_attempts = 0;
         let republish = tokio::time::sleep(Duration::MAX);
         tokio::pin!(republish);
         loop {
-            if let Some(info) = self.watcher.get() {
+            let Ok(info) = self.watcher.get() else {
+                break; // disconnected
+            };
+            if let Some(info) = info {
                 if let Err(err) = self.publish_current(info).await {
                     failed_attempts += 1;
                     // Retry after increasing timeout
@@ -255,9 +258,9 @@ impl PublisherService {
             }
             // Wait until either the retry/republish timeout is reached, or the node info changed.
             tokio::select! {
-                res = self.watcher.watch_async() => match res {
-                    Ok(()) => debug!("Publish node info to pkarr (info changed)"),
-                    Err(_disconnected) => break,
+                res = self.watcher.updated() => match res {
+                    Ok(_) => debug!("Publish node info to pkarr (info changed)"),
+                    Err(Disconnected) => break,
                 },
                 _ = &mut republish => debug!("Publish node info to pkarr (interval elapsed)"),
             }

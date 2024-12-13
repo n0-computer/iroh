@@ -2,13 +2,10 @@ use std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
-    pin::Pin,
     sync::Mutex,
-    task::{Context, Poll},
     time::Instant,
 };
 
-use futures_lite::stream::Stream;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 use iroh_metrics::inc;
 use serde::{Deserialize, Serialize};
@@ -22,7 +19,10 @@ use self::{
 use super::{
     metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
 };
-use crate::disco::{CallMeMaybe, Pong, SendAddr};
+use crate::{
+    disco::{CallMeMaybe, Pong, SendAddr},
+    watchable::Watcher,
+};
 
 mod best_addr;
 mod node_state;
@@ -285,20 +285,14 @@ impl NodeMap {
             .collect()
     }
 
-    /// Returns a stream of [`ConnectionType`].
-    ///
-    /// Sends the current [`ConnectionType`] whenever any changes to the
-    /// connection type for `public_key` has occurred.
+    /// Returns a [`Watcher`] for given node's [`ConnectionType`].
     ///
     /// # Errors
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
-    /// the `public_key`
-    pub(super) fn conn_type_stream(&self, node_id: NodeId) -> anyhow::Result<ConnectionTypeStream> {
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .conn_type_stream(node_id)
+    /// the `node_id`
+    pub(super) fn conn_type(&self, node_id: NodeId) -> anyhow::Result<Watcher<ConnectionType>> {
+        self.inner.lock().expect("poisoned").conn_type(node_id)
     }
 
     /// Get the [`RemoteInfo`]s for the node identified by [`NodeId`].
@@ -465,12 +459,9 @@ impl NodeMapInner {
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
-    fn conn_type_stream(&self, node_id: NodeId) -> anyhow::Result<ConnectionTypeStream> {
+    fn conn_type(&self, node_id: NodeId) -> anyhow::Result<Watcher<ConnectionType>> {
         match self.get(NodeStateKey::NodeId(node_id)) {
-            Some(ep) => Ok(ConnectionTypeStream {
-                initial: Some(ep.conn_type()),
-                inner: ep.conn_type_stream(),
-            }),
+            Some(ep) => Ok(ep.conn_type()),
             None => anyhow::bail!("No endpoint for {node_id:?} found"),
         }
     }
@@ -622,25 +613,6 @@ impl NodeMapInner {
 
             self.by_quic_mapped_addr.remove(ep.quic_mapped_addr());
         }
-    }
-}
-
-/// Stream returning `ConnectionTypes`
-#[derive(Debug)]
-pub struct ConnectionTypeStream {
-    initial: Option<ConnectionType>,
-    inner: watchable::WatcherStream<ConnectionType>,
-}
-
-impl Stream for ConnectionTypeStream {
-    type Item = ConnectionType;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = &mut *self;
-        if let Some(initial_conn_type) = this.initial.take() {
-            return Poll::Ready(Some(initial_conn_type));
-        }
-        Pin::new(&mut this.inner).poll_next(cx)
     }
 }
 

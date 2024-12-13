@@ -13,6 +13,7 @@
 
 use std::{
     any::Any,
+    collections::BTreeSet,
     future::{Future, IntoFuture},
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
@@ -21,9 +22,8 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use derive_more::Debug;
-use futures_lite::{Stream, StreamExt};
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use pin_project::pin_project;
@@ -38,6 +38,7 @@ use crate::{
     dns::{default_resolver, DnsResolver},
     magicsock::{self, Handle, QuicMappedAddr},
     tls,
+    watchable::Watcher,
 };
 
 mod rtt_actor;
@@ -61,8 +62,7 @@ pub use quinn_proto::{
 
 use self::rtt_actor::RttMessage;
 pub use super::magicsock::{
-    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
-    DirectAddrsStream, RemoteInfo, Source,
+    ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType, RemoteInfo, Source,
 };
 
 /// The delay to fall back to discovery when direct addresses fail.
@@ -657,7 +657,7 @@ impl Endpoint {
 
         let rtt_msg = RttMessage::NewConnection {
             connection: connection.weak_handle(),
-            conn_type_changes: self.conn_type_stream(node_id)?,
+            conn_type_changes: self.conn_type(node_id)?.stream(),
             node_id,
         };
         if let Err(err) = self.rtt_actor.msg_tx.send(rtt_msg).await {
@@ -756,16 +756,12 @@ impl Endpoint {
 
     /// Returns the current [`NodeAddr`] for this endpoint.
     ///
-    /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and local IP endpoints
+    /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
     /// as they would be returned by [`Endpoint::home_relay`] and
     /// [`Endpoint::direct_addresses`].
     pub async fn node_addr(&self) -> Result<NodeAddr> {
-        let addrs = self
-            .direct_addresses()
-            .next()
-            .await
-            .ok_or(anyhow!("No IP endpoints found"))?;
-        let relay = self.home_relay();
+        let addrs = self.direct_addresses().initialized().await?;
+        let relay = self.home_relay().get()?;
         Ok(NodeAddr::from_parts(
             self.node_id(),
             relay,
@@ -773,36 +769,36 @@ impl Endpoint {
         ))
     }
 
-    /// Returns the [`RelayUrl`] of the Relay server used as home relay.
+    /// Returns a [`Watcher`] for the [`RelayUrl`] of the Relay server used as home relay.
     ///
     /// Every endpoint has a home Relay server which it chooses as the server with the
     /// lowest latency out of the configured servers provided by [`Builder::relay_mode`].
     /// This is the server other iroh nodes can use to reliably establish a connection
     /// to this node.
     ///
-    /// Returns `None` if we are not connected to any Relay server.
+    /// The watcher stores `None` if we are not connected to any Relay server.
     ///
-    /// Note that this will be `None` right after the [`Endpoint`] is created since it takes
-    /// some time to connect to find and connect to the home relay server.  Use
-    /// [`Endpoint::watch_home_relay`] to wait until the home relay server is available.
-    pub fn home_relay(&self) -> Option<RelayUrl> {
-        self.msock.my_relay()
+    /// Note that this will store `None` right after the [`Endpoint`] is created since it takes
+    /// some time to connect to find and connect to the home relay server.
+    ///
+    /// # Examples
+    ///
+    /// To wait for a home relay connection to be established, use [`Watcher::initialized`]:
+    /// ```no_run
+    /// use futures_lite::StreamExt;
+    /// use iroh::Endpoint;
+    ///
+    /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    /// # rt.block_on(async move {
+    /// let mep = Endpoint::builder().bind().await.unwrap();
+    /// let _relay_url = mep.home_relay().initialized().await.unwrap();
+    /// # });
+    /// ```
+    pub fn home_relay(&self) -> Watcher<Option<RelayUrl>> {
+        self.msock.home_relay()
     }
 
-    /// Watches for changes to the home relay.
-    ///
-    /// If there is currently a home relay it will be yielded immediately as the first item
-    /// in the stream.  This makes it possible to use this function to wait for the initial
-    /// home relay to be known.
-    ///
-    /// Note that it is not guaranteed that a home relay will ever become available.  If no
-    /// servers are configured with [`Builder::relay_mode`] this stream will never yield an
-    /// item.
-    pub fn watch_home_relay(&self) -> impl Stream<Item = RelayUrl> {
-        self.msock.watch_home_relay()
-    }
-
-    /// Returns the direct addresses of this [`Endpoint`].
+    /// Returns a [`Watcher`] for the direct addresses of this [`Endpoint`].
     ///
     /// The direct addresses of the [`Endpoint`] are those that could be used by other
     /// iroh nodes to establish direct connectivity, depending on the network
@@ -816,27 +812,27 @@ impl Endpoint {
     /// will yield a new list of direct addresses.
     ///
     /// When issuing the first call to this method the first direct address discovery might
-    /// still be underway, in this case the first item of the returned stream will not be
-    /// immediately available.  Once this first set of local IP endpoints are discovered the
-    /// stream will always return the first set of IP endpoints immediately, which are the
-    /// most recently discovered IP endpoints.
+    /// still be underway, in this case the [`Watcher`] might not be initialized with [`Some`]
+    /// value yet.  Once the first set of local direct addresses are discovered the [`Watcher`]
+    /// will always return [`Some`] set of direct addresses immediately, which are the most
+    /// recently discovered direct addresses.
     ///
     /// # Examples
     ///
-    /// To get the current endpoints, drop the stream after the first item was received:
-    /// ```
+    /// To get the first set of direct addresses use [`Watcher::initialized`]:
+    /// ```no_run
     /// use futures_lite::StreamExt;
     /// use iroh::Endpoint;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
     /// let mep = Endpoint::builder().bind().await.unwrap();
-    /// let _addrs = mep.direct_addresses().next().await;
+    /// let _addrs = mep.direct_addresses().initialized().await.unwrap();
     /// # });
     /// ```
     ///
     /// [STUN]: https://en.wikipedia.org/wiki/STUN
-    pub fn direct_addresses(&self) -> DirectAddrsStream {
+    pub fn direct_addresses(&self) -> Watcher<Option<BTreeSet<DirectAddr>>> {
         self.msock.direct_addresses()
     }
 
@@ -883,38 +879,45 @@ impl Endpoint {
     //
     // Partially they return things passed into the builder.
 
-    /// Returns a stream that reports connection type changes for the remote node.
+    /// Returns a [`Watcher`] that reports the current connection type and any changes for
+    /// given remote node.
     ///
-    /// This returns a stream of [`ConnectionType`] items, each time the underlying
-    /// connection to a remote node changes it yields an item.  These connection changes are
-    /// when the connection switches between using the Relay server and a direct connection.
-    ///
-    /// If there is currently a connection with the remote node the first item in the stream
-    /// will yield immediately returning the current connection type.
+    /// This watcher allows observing a stream of [`ConnectionType`] items by calling
+    /// [`Watcher::stream()`]. If the underlying connection to a remote node changes, it will
+    /// yield a new item.  These connection changes are when the connection switches between
+    /// using the Relay server and a direct connection.
     ///
     /// Note that this does not guarantee each connection change is yielded in the stream.
-    /// If the connection type changes several times before this stream is polled only the
+    /// If the connection type changes several times before this stream is polled, only the
     /// last recorded state is returned.  This can be observed e.g. right at the start of a
     /// connection when the switch from a relayed to a direct connection can be so fast that
     /// the relayed state is never exposed.
     ///
+    /// If there is currently a connection with the remote node, then using [`Watcher::get`]
+    /// will immediately return either [`ConnectionType::Relay`], [`ConnectionType::Direct`]
+    /// or [`ConnectionType::Mixed`].
+    ///
+    /// It is possible for the connection type to be [`ConnectionType::None`] if you've
+    /// recently connected to this node id but previous methods of reaching the node have
+    /// become inaccessible.
+    ///
     /// # Errors
     ///
     /// Will error if we do not have any address information for the given `node_id`.
-    pub fn conn_type_stream(&self, node_id: NodeId) -> Result<ConnectionTypeStream> {
-        self.msock.conn_type_stream(node_id)
+    pub fn conn_type(&self, node_id: NodeId) -> Result<Watcher<ConnectionType>> {
+        self.msock.conn_type(node_id)
     }
 
     /// Returns the DNS resolver used in this [`Endpoint`].
     ///
-    /// See [`Builder::discovery`].
+    /// See [`Builder::dns_resolver`].
     pub fn dns_resolver(&self) -> &DnsResolver {
         self.msock.dns_resolver()
     }
 
     /// Returns the discovery mechanism, if configured.
     ///
-    /// See [`Builder::dns_resolver`].
+    /// See [`Builder::discovery`].
     pub fn discovery(&self) -> Option<&dyn Discovery> {
         self.msock.discovery()
     }
@@ -1296,13 +1299,13 @@ fn try_send_rtt_msg(conn: &Connection, magic_ep: &Endpoint) {
         warn!(?conn, "failed to get remote node id");
         return;
     };
-    let Ok(conn_type_changes) = magic_ep.conn_type_stream(peer_id) else {
-        warn!(?conn, "failed to create conn_type_stream");
+    let Ok(conn_type_changes) = magic_ep.conn_type(peer_id) else {
+        warn!(?conn, "failed to create conn_type stream");
         return;
     };
     let rtt_msg = RttMessage::NewConnection {
         connection: conn.weak_handle(),
-        conn_type_changes,
+        conn_type_changes: conn_type_changes.stream(),
         node_id: peer_id,
     };
     if let Err(err) = magic_ep.rtt_actor.msg_tx.try_send(rtt_msg) {
@@ -1411,6 +1414,7 @@ mod tests {
 
     use std::time::Instant;
 
+    use futures_lite::StreamExt;
     use iroh_test::CallOnDrop;
     use rand::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
@@ -1811,7 +1815,7 @@ mod tests {
             .unwrap();
 
         async fn handle_direct_conn(ep: &Endpoint, node_id: PublicKey) -> Result<()> {
-            let mut stream = ep.conn_type_stream(node_id)?;
+            let mut stream = ep.conn_type(node_id)?.stream();
             let src = ep.node_id().fmt_short();
             let dst = node_id.fmt_short();
             while let Some(conn_type) = stream.next().await {
@@ -1882,7 +1886,7 @@ mod tests {
             .await
             .unwrap();
 
-        tokio::time::timeout(Duration::from_secs(10), ep.direct_addresses().next())
+        tokio::time::timeout(Duration::from_secs(10), ep.direct_addresses().initialized())
             .await
             .unwrap()
             .unwrap();

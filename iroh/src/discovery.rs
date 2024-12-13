@@ -480,6 +480,7 @@ mod tests {
             }
         }
     }
+
     #[derive(Debug)]
     struct TestDiscovery {
         node_id: NodeId,
@@ -578,7 +579,7 @@ mod tests {
             new_endpoint(secret, disco).await
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
-        // wait for out address to be updated and thus published at least once
+        // wait for our address to be updated and thus published at least once
         ep1.node_addr().await?;
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
@@ -814,27 +815,6 @@ mod test_dns_pkarr {
 
     #[tokio::test]
     async fn pkarr_publish_dns_discover() -> Result<()> {
-        let _logging_guard = iroh_test::logging::setup();
-
-        let dns_pkarr_server = DnsPkarrServer::run().await?;
-        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
-
-        let (ep1, _guard1) = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
-        let (ep2, _guard2) = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
-
-        // wait until our shared state received the update from pkarr publishing
-        dns_pkarr_server
-            .on_node(&ep1.node_id(), PUBLISH_TIMEOUT)
-            .await?;
-
-        // we connect only by node id!
-        let res = ep2.connect(ep1.node_id(), TEST_ALPN).await;
-        assert!(res.is_ok(), "connection established");
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn pkarr_publish_dns_discover_empty_node_addr() -> Result<()> {
         let _logging_guard = iroh_test::logging::setup();
 
         let dns_pkarr_server = DnsPkarrServer::run().await?;

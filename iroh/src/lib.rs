@@ -245,6 +245,7 @@ pub mod endpoint;
 pub mod metrics;
 pub mod protocol;
 mod tls;
+pub mod watchable;
 
 pub use endpoint::{Endpoint, RelayMode};
 pub use iroh_base::{KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};

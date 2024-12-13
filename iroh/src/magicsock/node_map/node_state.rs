@@ -12,7 +12,6 @@ use netwatch::ip::is_unicast_link_local;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, event, info, instrument, trace, warn, Level};
-use watchable::{Watchable, WatcherStream};
 
 use super::{
     best_addr::{self, ClearReason, Source as BestAddrSource},
@@ -24,6 +23,7 @@ use crate::{
     disco::{self, SendAddr},
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
     util::relay_only_mode,
+    watchable::{Watchable, Watcher},
 };
 
 /// Number of addresses that are not active that we keep around per node.
@@ -190,12 +190,8 @@ impl NodeState {
         self.id
     }
 
-    pub(super) fn conn_type(&self) -> ConnectionType {
-        self.conn_type.get()
-    }
-
-    pub(super) fn conn_type_stream(&self) -> WatcherStream<ConnectionType> {
-        self.conn_type.watch().into_stream()
+    pub(super) fn conn_type(&self) -> Watcher<ConnectionType> {
+        self.conn_type.watch()
     }
 
     /// Returns info about this node.
@@ -310,7 +306,7 @@ impl NodeState {
             self.has_been_direct = true;
             inc!(MagicsockMetrics, nodes_contacted_directly);
         }
-        if let Ok(prev_typ) = self.conn_type.update(typ.clone()) {
+        if let Ok(prev_typ) = self.conn_type.set(typ.clone()) {
             // The connection type has changed.
             event!(
                 target: "iroh::_events::conn_type::changed",
@@ -1405,7 +1401,7 @@ impl RemoteInfo {
 }
 
 /// The type of connection we have to the endpoint.
-#[derive(derive_more::Display, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(derive_more::Display, Default, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ConnectionType {
     /// Direct UDP connection
     #[display("direct({_0})")]
@@ -1420,6 +1416,7 @@ pub enum ConnectionType {
     #[display("mixed(udp: {_0}, relay: {_1})")]
     Mixed(SocketAddr, RelayUrl),
     /// We have no verified connection to this PublicKey
+    #[default]
     #[display("none")]
     None,
 }

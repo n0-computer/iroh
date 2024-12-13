@@ -9,7 +9,6 @@ use std::net::SocketAddr;
 
 use anyhow::Context;
 use clap::Parser;
-use futures_lite::StreamExt;
 use iroh::{Endpoint, NodeAddr, RelayMode, RelayUrl, SecretKey};
 use tracing::info;
 
@@ -57,15 +56,17 @@ async fn main() -> anyhow::Result<()> {
     println!("node listening addresses:");
     for local_endpoint in endpoint
         .direct_addresses()
-        .next()
+        .initialized()
         .await
-        .context("no endpoints")?
+        .context("no direct addresses")?
     {
         println!("\t{}", local_endpoint.addr)
     }
 
     let relay_url = endpoint
         .home_relay()
+        .get()
+        .unwrap()
         .expect("should be connected to a relay server, try calling `endpoint.local_endpoints()` or `endpoint.connect()` first, to ensure the endpoint has actually attempted a connection before checking for the connected relay server");
     println!("node relay server url: {relay_url}\n");
     // Build a `NodeAddr` from the node_id, relay url, and UDP addresses.

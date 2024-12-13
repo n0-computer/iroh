@@ -51,10 +51,10 @@ use tokio::{
 };
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
-use watchable::Watchable;
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
+    watchable::Watchable,
     Endpoint,
 };
 
@@ -152,8 +152,8 @@ impl LocalSwarmDiscovery {
         )?;
 
         let local_addrs: Watchable<Option<(Option<RelayUrl>, BTreeSet<SocketAddr>)>> =
-            Watchable::new(None);
-        let addrs_change = local_addrs.watch();
+            Watchable::default();
+        let mut addrs_change = local_addrs.watch();
         let discovery_fut = async move {
             let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
             let mut subscribers = Subscribers::new();
@@ -169,7 +169,7 @@ impl LocalSwarmDiscovery {
                     msg = recv.recv() => {
                         msg
                     }
-                    Ok(Some((_url, addrs)))= addrs_change.next_value_async() => {
+                    Ok(Some((_url, addrs))) = addrs_change.updated() => {
                         tracing::trace!(?addrs, "LocalSwarmDiscovery address changed");
                         discovery.remove_all();
                         let addrs =
@@ -379,7 +379,8 @@ impl Discovery for LocalSwarmDiscovery {
 
     fn publish(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
         self.local_addrs
-            .replace(Some((url.cloned(), addrs.clone())));
+            .set(Some((url.cloned(), addrs.clone())))
+            .ok();
     }
 
     fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
