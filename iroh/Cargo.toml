@@ -22,6 +22,7 @@ axum = { version = "0.7", optional = true }
 backoff = "0.4.0"
 base64 = "0.22.1"
 bytes = "1.7"
+data-encoding = "2.2"
 der = { version = "0.7", features = ["alloc", "derive"] }
 derive_more = { version = "1.0.0", features = [
     "debug",
@@ -36,7 +37,6 @@ futures-lite = "2.5"
 futures-sink = "0.3"
 futures-util = "0.3"
 governor = "0.7.0"
-hex = "0.4.3"
 hickory-resolver = { version = "=0.25.0-alpha.4" }
 hostname = "0.4"
 http = "1"
@@ -112,7 +112,6 @@ net-report = { package = "iroh-net-report", path = "../iroh-net-report", version
 iroh-metrics = { version = "0.29", default-features = false }
 
 # local-swarm-discovery
-data-encoding = { version = "2.2", optional = true }
 swarm-discovery = { version = "0.3.0-alpha.1", optional = true }
 
 # dht_discovery
@@ -178,7 +177,7 @@ harness = false
 default = ["metrics", "discovery-pkarr-dht"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "net-report/metrics", "portmapper/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
-discovery-local-network = ["dep:data-encoding", "dep:swarm-discovery"]
+discovery-local-network = ["dep:swarm-discovery"]
 discovery-pkarr-dht = ["pkarr/dht", "dep:genawaiter"]
 examples = [
   "dep:clap",

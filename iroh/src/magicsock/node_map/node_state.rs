@@ -5,6 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use data_encoding::HEXLOWER;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 use iroh_metrics::inc;
 use iroh_relay::protos::stun;
@@ -410,7 +411,7 @@ impl NodeState {
     #[instrument("disco", skip_all, fields(node = %self.node_id.fmt_short()))]
     pub(super) fn ping_timeout(&mut self, txid: stun::TransactionId) {
         if let Some(sp) = self.sent_pings.remove(&txid) {
-            debug!(tx = %hex::encode(txid), addr = %sp.to, "pong not received in timeout");
+            debug!(tx = %HEXLOWER.encode(&txid), addr = %sp.to, "pong not received in timeout");
             match sp.to {
                 SendAddr::Udp(addr) => {
                     if let Some(path_state) = self.udp_paths.paths.get_mut(&addr.into()) {
@@ -461,7 +462,7 @@ impl NodeState {
             return None;
         }
         let tx_id = stun::TransactionId::default();
-        trace!(tx = %hex::encode(tx_id), %dst, ?purpose,
+        trace!(tx = %HEXLOWER.encode(&tx_id), %dst, ?purpose,
                dst = %self.node_id.fmt_short(), "start ping");
         event!(
             target: "iroh::_events::ping::sent",
@@ -488,7 +489,7 @@ impl NodeState {
         purpose: DiscoPingPurpose,
         sender: mpsc::Sender<ActorMessage>,
     ) {
-        trace!(%to, tx = %hex::encode(tx_id), ?purpose, "record ping sent");
+        trace!(%to, tx = %HEXLOWER.encode(&tx_id), ?purpose, "record ping sent");
 
         let now = Instant::now();
         let mut path_found = false;
@@ -872,7 +873,7 @@ impl NodeState {
         match self.sent_pings.remove(&m.tx_id) {
             None => {
                 // This is not a pong for a ping we sent.
-                warn!(tx = %hex::encode(m.tx_id), "received pong with unknown transaction id");
+                warn!(tx = %HEXLOWER.encode(&m.tx_id), "received pong with unknown transaction id");
                 None
             }
             Some(sp) => {
@@ -884,7 +885,7 @@ impl NodeState {
                 let latency = now - sp.at;
 
                 debug!(
-                    tx = %hex::encode(m.tx_id),
+                    tx = %HEXLOWER.encode(&m.tx_id),
                     src = %src,
                     reported_ping_src = %m.ping_observed_addr,
                     ping_dst = %sp.to,

@@ -179,7 +179,11 @@ impl PingTracker {
     ///
     /// If there is no [`oneshot::Sender`] in the tracker, return `None`.
     fn unregister(&mut self, data: [u8; 8], why: &'static str) -> Option<oneshot::Sender<()>> {
-        trace!("removing ping {}: {}", hex::encode(data), why);
+        trace!(
+            "removing ping {}: {}",
+            data_encoding::HEXLOWER.encode(&data),
+            why
+        );
         self.0.remove(&data)
     }
 }
@@ -759,7 +763,7 @@ impl Actor {
     async fn ping(&mut self, s: oneshot::Sender<Result<Duration, ClientError>>) {
         let connect_res = self.connect("ping").await.map(|(c, _)| c);
         let (ping, recv) = self.pings.register();
-        trace!("ping: {}", hex::encode(ping));
+        trace!("ping: {}", data_encoding::HEXLOWER.encode(&ping));
 
         self.ping_tasks.spawn(async move {
             let res = match connect_res {
