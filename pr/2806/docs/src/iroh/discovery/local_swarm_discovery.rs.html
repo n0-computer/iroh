@@ -640,7 +640,7 @@
         )<span class="question-mark">?</span>;
 
         <span class="kw">let </span>local_addrs: Watchable&lt;<span class="prelude-ty">Option</span>&lt;(<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;, BTreeSet&lt;SocketAddr&gt;)&gt;&gt; =
-            Watchable::new(<span class="prelude-val">None</span>);
+            Watchable::default();
         <span class="kw">let </span><span class="kw-2">mut </span>addrs_change = local_addrs.watch();
         <span class="kw">let </span>discovery_fut = <span class="kw">async move </span>{
             <span class="kw">let </span><span class="kw-2">mut </span>node_addrs: HashMap&lt;PublicKey, Peer&gt; = HashMap::default();

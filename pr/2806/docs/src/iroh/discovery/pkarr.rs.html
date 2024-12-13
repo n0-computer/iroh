@@ -565,7 +565,7 @@
         <span class="macro">debug!</span>(<span class="string">"creating pkarr publisher that publishes to {pkarr_relay}"</span>);
         <span class="kw">let </span>node_id = secret_key.public();
         <span class="kw">let </span>pkarr_client = PkarrRelayClient::new(pkarr_relay);
-        <span class="kw">let </span>watchable = Watchable::new(<span class="prelude-val">None</span>);
+        <span class="kw">let </span>watchable = Watchable::default();
         <span class="kw">let </span>service = PublisherService {
             ttl,
             watcher: watchable.watch(),
