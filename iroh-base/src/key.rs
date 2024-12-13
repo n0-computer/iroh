@@ -20,7 +20,6 @@ use ttl_cache::TtlCache;
 
 pub use self::encryption::SharedSecret;
 use self::encryption::{public_ed_box, secret_ed_box};
-use crate::base32::{self, HexOrBase32ParseError};
 
 #[derive(Debug)]
 struct CryptoKeys {
@@ -176,10 +175,10 @@ impl PublicKey {
         self.public().verify_strict(message, signature)
     }
 
-    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
+    /// Convert to a hex string limited to the first 5 bytes for a friendly string
     /// representation of the key.
     pub fn fmt_short(&self) -> String {
-        base32::fmt_short(self.as_bytes())
+        data_encoding::HEXLOWER.encode(&self.as_bytes()[..5])
     }
 }
 
@@ -235,29 +234,31 @@ impl From<VerifyingKey> for PublicKey {
 
 impl Debug for PublicKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "PublicKey({})", base32::fmt_short(self.as_bytes()))
+        write!(
+            f,
+            "PublicKey({})",
+            data_encoding::HEXLOWER.encode(self.as_bytes())
+        )
     }
 }
 
 impl Display for PublicKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if f.alternate() {
-            write!(f, "{}", base32::fmt_short(self.as_bytes()))
-        } else {
-            write!(f, "{}", base32::fmt(self.as_bytes()))
-        }
+        write!(f, "{}", data_encoding::HEXLOWER.encode(self.as_bytes()))
     }
 }
 
 /// Error when deserialising a [`PublicKey`] or a [`SecretKey`].
 #[derive(thiserror::Error, Debug)]
 pub enum KeyParsingError {
-    /// Error when decoding the base32.
+    /// Error when decoding.
     #[error("decoding: {0}")]
-    Base32(#[from] HexOrBase32ParseError),
+    Decode(#[from] data_encoding::DecodeError),
     /// Error when decoding the public key.
     #[error("key: {0}")]
     Key(#[from] ed25519_dalek::SignatureError),
+    #[error("invalid length")]
+    DecodeInvalidLength,
 }
 
 /// Deserialises the [`PublicKey`] from it's base32 encoding.
@@ -267,8 +268,9 @@ impl FromStr for PublicKey {
     type Err = KeyParsingError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = base32::parse_array_hex_or_base32::<32>(s)?;
-        Ok(Self::try_from(bytes.as_ref())?)
+        let bytes = decode_base32_hex(s)?;
+
+        Ok(Self::try_from(&bytes)?)
     }
 }
 
@@ -281,13 +283,18 @@ pub struct SecretKey {
 
 impl Debug for SecretKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SecretKey({})", base32::fmt_short(self.to_bytes()))
+        write!(f, "SecretKey(..)")
     }
 }
 
 impl Display for SecretKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", base32::fmt(self.to_bytes()))
+        // TODO: revivew for security
+        write!(
+            f,
+            "{}",
+            data_encoding::HEXLOWER.encode(self.secret.as_bytes())
+        )
     }
 }
 
@@ -295,7 +302,8 @@ impl FromStr for SecretKey {
     type Err = KeyParsingError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(SecretKey::from(base32::parse_array_hex_or_base32::<32>(s)?))
+        let bytes = decode_base32_hex(s)?;
+        Ok(SecretKey::from(bytes))
     }
 }
 
@@ -409,6 +417,26 @@ impl TryFrom<&[u8]> for SecretKey {
         let secret = SigningKey::try_from(bytes)?;
         Ok(secret.into())
     }
+}
+
+fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
+    let mut bytes = [0u8; 32];
+
+    let res = if s.len() == PUBLIC_KEY_LENGTH * 2 {
+        // hex
+        data_encoding::HEXLOWER.decode_mut(s.as_bytes(), &mut bytes)
+    } else {
+        data_encoding::BASE32_NOPAD.decode_mut(s.to_ascii_uppercase().as_bytes(), &mut bytes)
+    };
+    match res {
+        Ok(len) => {
+            if len != PUBLIC_KEY_LENGTH {
+                return Err(KeyParsingError::DecodeInvalidLength);
+            }
+        }
+        Err(partial) => return Err(partial.error.into()),
+    }
+    Ok(bytes)
 }
 
 #[cfg(test)]
