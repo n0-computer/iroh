@@ -114,9 +114,6 @@ iroh-metrics = { version = "0.29", default-features = false }
 # local-swarm-discovery
 swarm-discovery = { version = "0.3.0-alpha.1", optional = true }
 
-# dht_discovery
-genawaiter = { version = "0.99", features = ["futures03"], optional = true }
-
 # Examples
 clap = { version = "4", features = ["derive"], optional = true }
 tracing-subscriber = { version = "0.3", features = [
@@ -178,7 +175,7 @@ default = ["metrics", "discovery-pkarr-dht"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "net-report/metrics", "portmapper/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 discovery-local-network = ["dep:swarm-discovery"]
-discovery-pkarr-dht = ["pkarr/dht", "dep:genawaiter"]
+discovery-pkarr-dht = ["pkarr/dht"]
 examples = [
   "dep:clap",
   "dep:tracing-subscriber",
