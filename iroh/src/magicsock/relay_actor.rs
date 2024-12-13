@@ -13,7 +13,7 @@ use std::{
 use anyhow::Context;
 use backoff::backoff::Backoff;
 use bytes::{Bytes, BytesMut};
-use iroh_base::{NodeId, RelayUrl, PUBLIC_KEY_LENGTH};
+use iroh_base::{NodeId, PublicKey, RelayUrl};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::{self as relay, client::ClientError, ReceivedMessage, MAX_PACKET_SIZE};
 use tokio::{
@@ -422,7 +422,7 @@ impl RelayActor {
     }
 
     async fn send_relay(&mut self, url: &RelayUrl, contents: RelayContents, remote_node: NodeId) {
-        const PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PUBLIC_KEY_LENGTH;
+        const PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PublicKey::LENGTH;
         let total_bytes = contents.iter().map(|c| c.len() as u64).sum::<u64>();
         trace!(
             %url,

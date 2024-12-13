@@ -44,7 +44,7 @@ const TX_LEN: usize = 12;
 /// Header: Type | Version
 const HEADER_LEN: usize = 2;
 
-const PING_LEN: usize = TX_LEN + iroh_base::PUBLIC_KEY_LENGTH;
+const PING_LEN: usize = TX_LEN + iroh_base::PublicKey::LENGTH;
 const EP_LENGTH: usize = 16 + 2; // 16 byte IP address + 2 byte port
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -206,7 +206,7 @@ impl Ping {
         // Deliberately lax on longer-than-expected messages, for future compatibility.
         ensure!(p.len() >= PING_LEN, "message too short");
         let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().expect("length checked");
-        let raw_key = &p[TX_LEN..TX_LEN + iroh_base::PUBLIC_KEY_LENGTH];
+        let raw_key = &p[TX_LEN..TX_LEN + iroh_base::PublicKey::LENGTH];
         let node_key = PublicKey::try_from(raw_key)?;
         let tx_id = stun_rs::TransactionId::from(tx_id);
 
