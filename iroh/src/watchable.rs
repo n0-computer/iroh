@@ -88,8 +88,8 @@ impl<T: Clone + Eq> Watchable<T> {
     }
 
     /// Creates a [`Watcher`] allowing the value to be observed, but not modified.
-    pub fn watch(&self) -> Watcher<T> {
-        Watcher {
+    pub fn watch(&self) -> DirectWatcher<T> {
+        DirectWatcher {
             epoch: self.shared.state.read().expect("poisoned").epoch,
             shared: Arc::downgrade(&self.shared),
         }
@@ -110,29 +110,68 @@ impl<T: Clone + Eq> Watchable<T> {
 /// When the thread changing the [`Watchable`] pauses updating, the [`Watcher`] will always
 /// end up reporting the most recent state eventually.
 #[derive(Debug, Clone)]
-pub struct Watcher<T> {
+pub struct DirectWatcher<T> {
     epoch: u64,
     shared: Weak<Shared<T>>,
 }
 
-impl<T: Clone + Eq> Watcher<T> {
-    /// Returns the currently held value.
+/// A handle to a value that's represented by one or more underlying [`Watchable`]s.
+///
+/// This handle allows one to observe the latest state and be notified
+/// of any changes to this value.
+pub trait Watcher: Clone {
+    /// The type of value that can change.
     ///
-    /// Returns [`Err(Disconnected)`](Disconnected) if the original
-    /// [`Watchable`] was dropped.
-    pub fn get(&self) -> Result<T, Disconnected> {
-        let shared = self.shared.upgrade().ok_or(Disconnected)?;
-        Ok(shared.get())
-    }
+    /// We require `Clone`, because we need to be able to make
+    /// the values have a lifetime that's detached from the original [`Watchable`]'s
+    /// lifetime.
+    ///
+    /// We require `Eq`, to be able to check whether the value actually changed or
+    /// not, so we can notify or not notify accordingly.
+    type Value: Clone + Eq;
 
+    /// Returns the current state of the underlying value, or errors out with
+    /// [`Disconnected`], if one of the underlying [`Watchable`]s has been dropped.
+    fn get(&self) -> Result<Self::Value, Disconnected>;
+
+    /// Polls for the next value, or returns [`Disconnected`] if one of the underlying
+    /// watchables has been dropped.
+    fn poll_updated(
+        &mut self,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<Self::Value, Disconnected>>;
+}
+
+/// Extension methods for the [`Watcher`] trait.
+pub trait WatcherExt: Watcher {
     /// Returns a future completing with `Ok(value)` once a new value is set, or with
     /// [`Err(Disconnected)`](Disconnected) if the connected [`Watchable`] was dropped.
     ///
     /// # Cancel Safety
     ///
     /// The returned future is cancel-safe.
-    pub fn updated(&mut self) -> WatchNextFut<T> {
+    fn updated(&mut self) -> WatchNextFut<Self> {
         WatchNextFut { watcher: self }
+    }
+
+    /// Returns a future completing once the value is set to [`Some`] value.
+    ///
+    /// If the current value is [`Some`] value, this future will resolve immediately.
+    ///
+    /// This is a utility for the common case of storing an [`Option`] inside a
+    /// [`Watchable`].
+    fn initialized<T>(&mut self) -> WatchInitializedFut<T, Self>
+    where
+        Self: Watcher<Value = Option<T>>,
+    {
+        WatchInitializedFut {
+            initial: match self.get() {
+                Ok(Some(value)) => Some(Ok(value)),
+                Ok(None) => None,
+                Err(Disconnected) => Some(Err(Disconnected)),
+            },
+            watcher: self,
+        }
     }
 
     /// Returns a stream which will yield the most recent values as items.
@@ -148,10 +187,14 @@ impl<T: Clone + Eq> Watcher<T> {
     /// # Cancel Safety
     ///
     /// The returned stream is cancel-safe.
-    pub fn stream(mut self) -> WatcherStream<T> {
-        debug_assert!(self.epoch > 0);
-        self.epoch -= 1;
-        WatcherStream { watcher: self }
+    fn stream(self) -> WatcherStream<Self>
+    where
+        Self: Unpin,
+    {
+        WatcherStream {
+            initial: self.get().ok(),
+            watcher: self,
+        }
     }
 
     /// Returns a stream which will yield the most recent values as items, starting from
@@ -168,21 +211,67 @@ impl<T: Clone + Eq> Watcher<T> {
     /// # Cancel Safety
     ///
     /// The returned stream is cancel-safe.
-    pub fn stream_updates_only(self) -> WatcherStream<T> {
-        WatcherStream { watcher: self }
+    fn stream_updates_only(self) -> WatcherStream<Self>
+    where
+        Self: Unpin,
+    {
+        WatcherStream {
+            initial: None,
+            watcher: self,
+        }
     }
 }
 
-impl<T: Clone + Eq> Watcher<Option<T>> {
-    /// Returns a future completing once the value is set to [`Some`] value.
-    ///
-    /// If the current value is [`Some`] value, this future will resolve immediately.
-    ///
-    /// This is a utility for the common case of storing an [`Option`] inside a
-    /// [`Watchable`].
-    pub fn initialized(&mut self) -> WatchInitializedFut<T> {
-        self.epoch = PRE_INITIAL_EPOCH;
-        WatchInitializedFut { watcher: self }
+impl<T: Watcher> WatcherExt for T {}
+
+impl<T: Clone + Eq> Watcher for DirectWatcher<T> {
+    type Value = T;
+
+    fn get(&self) -> Result<Self::Value, Disconnected> {
+        let shared = self.shared.upgrade().ok_or(Disconnected)?;
+        Ok(shared.get())
+    }
+
+    fn poll_updated(
+        &mut self,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<Self::Value, Disconnected>> {
+        let Some(shared) = self.shared.upgrade() else {
+            return Poll::Ready(Err(Disconnected));
+        };
+        match shared.poll_updated(cx, self.epoch) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready((current_epoch, value)) => {
+                self.epoch = current_epoch;
+                Poll::Ready(Ok(value))
+            }
+        }
+    }
+}
+
+/// Combines two [`Watcher`]s into a single watcher.
+#[derive(Clone, Debug)]
+pub struct Or<S: Watcher, T: Watcher>(S, T);
+
+impl<S: Watcher, T: Watcher> Watcher for Or<S, T> {
+    type Value = (S::Value, T::Value);
+
+    fn get(&self) -> Result<Self::Value, Disconnected> {
+        Ok((self.0.get()?, self.1.get()?))
+    }
+
+    fn poll_updated(
+        &mut self,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<Self::Value, Disconnected>> {
+        let poll_0 = self.0.poll_updated(cx)?;
+        let poll_1 = self.1.poll_updated(cx)?;
+        match (poll_0, poll_1) {
+            (Poll::Ready(s), Poll::Ready(t)) => Poll::Ready(Ok((s, t))),
+            (Poll::Ready(s), Poll::Pending) => Poll::Ready(self.1.get().map(move |t| (s, t))),
+            (Poll::Pending, Poll::Ready(t)) => Poll::Ready(self.0.get().map(move |s| (s, t))),
+            (Poll::Pending, Poll::Pending) => Poll::Pending,
+        }
     }
 }
 
@@ -194,24 +283,15 @@ impl<T: Clone + Eq> Watcher<Option<T>> {
 ///
 /// This future is cancel-safe.
 #[derive(Debug)]
-pub struct WatchNextFut<'a, T> {
-    watcher: &'a mut Watcher<T>,
+pub struct WatchNextFut<'a, W: Watcher> {
+    watcher: &'a mut W,
 }
 
-impl<T: Clone + Eq> Future for WatchNextFut<'_, T> {
-    type Output = Result<T, Disconnected>;
+impl<W: Watcher> Future for WatchNextFut<'_, W> {
+    type Output = Result<W::Value, Disconnected>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        let Some(shared) = self.watcher.shared.upgrade() else {
-            return Poll::Ready(Err(Disconnected));
-        };
-        match shared.poll_next(cx, self.watcher.epoch) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready((current_epoch, value)) => {
-                self.watcher.epoch = current_epoch;
-                Poll::Ready(Ok(value))
-            }
-        }
+        self.watcher.poll_updated(cx)
     }
 }
 
@@ -224,22 +304,22 @@ impl<T: Clone + Eq> Future for WatchNextFut<'_, T> {
 ///
 /// This Future is cancel-safe.
 #[derive(Debug)]
-pub struct WatchInitializedFut<'a, T> {
-    watcher: &'a mut Watcher<Option<T>>,
+pub struct WatchInitializedFut<'a, T, W: Watcher<Value = Option<T>>> {
+    initial: Option<Result<T, Disconnected>>,
+    watcher: &'a mut W,
 }
 
-impl<T: Clone + Eq> Future for WatchInitializedFut<'_, T> {
+impl<T: Clone + Eq + Unpin, W: Watcher<Value = Option<T>> + Unpin> Future
+    for WatchInitializedFut<'_, T, W>
+{
     type Output = Result<T, Disconnected>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
+        if let Some(value) = self.as_mut().initial.take() {
+            return Poll::Ready(value);
+        }
         loop {
-            let Some(shared) = self.watcher.shared.upgrade() else {
-                return Poll::Ready(Err(Disconnected));
-            };
-            let (epoch, value) = futures_lite::ready!(shared.poll_next(cx, self.watcher.epoch));
-            self.watcher.epoch = epoch;
-
-            if let Some(value) = value {
+            if let Some(value) = futures_lite::ready!(self.as_mut().watcher.poll_updated(cx)?) {
                 return Poll::Ready(Ok(value));
             }
         }
@@ -254,23 +334,25 @@ impl<T: Clone + Eq> Future for WatchInitializedFut<'_, T> {
 ///
 /// This stream is cancel-safe.
 #[derive(Debug, Clone)]
-pub struct WatcherStream<T> {
-    watcher: Watcher<T>,
+pub struct WatcherStream<W: Watcher + Unpin> {
+    initial: Option<W::Value>,
+    watcher: W,
 }
 
-impl<T: Clone + Eq> Stream for WatcherStream<T> {
-    type Item = T;
+impl<W: Watcher + Unpin> Stream for WatcherStream<W>
+where
+    W::Value: Unpin,
+{
+    type Item = W::Value;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
-        let Some(shared) = self.watcher.shared.upgrade() else {
-            return Poll::Ready(None);
-        };
-        match shared.poll_next(cx, self.watcher.epoch) {
+        if let Some(value) = self.as_mut().initial.take() {
+            return Poll::Ready(Some(value));
+        }
+        match self.as_mut().watcher.poll_updated(cx) {
+            Poll::Ready(Ok(value)) => Poll::Ready(Some(value)),
+            Poll::Ready(Err(Disconnected)) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
-            Poll::Ready((epoch, value)) => {
-                self.watcher.epoch = epoch;
-                Poll::Ready(Some(value))
-            }
         }
     }
 }
@@ -284,7 +366,6 @@ pub struct Disconnected;
 // Private:
 
 const INITIAL_EPOCH: u64 = 1;
-const PRE_INITIAL_EPOCH: u64 = 0;
 
 /// The shared state for a [`Watchable`].
 #[derive(Debug, Default)]
@@ -315,7 +396,7 @@ impl<T: Clone> Shared<T> {
         self.state.read().expect("poisoned").value.clone()
     }
 
-    fn poll_next(&self, cx: &mut task::Context<'_>, last_epoch: u64) -> Poll<(u64, T)> {
+    fn poll_updated(&self, cx: &mut task::Context<'_>, last_epoch: u64) -> Poll<(u64, T)> {
         {
             let state = self.state.read().expect("poisoned");
             let epoch = state.epoch;

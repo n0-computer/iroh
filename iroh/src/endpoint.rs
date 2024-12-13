@@ -38,7 +38,7 @@ use crate::{
     dns::{default_resolver, DnsResolver},
     magicsock::{self, Handle, QuicMappedAddr},
     tls,
-    watchable::Watcher,
+    watchable::{DirectWatcher, Watcher as _, WatcherExt as _},
 };
 
 mod rtt_actor;
@@ -762,13 +762,28 @@ impl Endpoint {
     /// as they would be returned by [`Endpoint::home_relay`] and
     /// [`Endpoint::direct_addresses`].
     pub async fn node_addr(&self) -> Result<NodeAddr> {
-        let addrs = self.direct_addresses().initialized().await?;
-        let relay = self.home_relay().get()?;
-        Ok(NodeAddr::from_parts(
-            self.node_id(),
-            relay,
-            addrs.into_iter().map(|x| x.addr),
-        ))
+        let mut watch_addrs = self.direct_addresses();
+        let mut watch_relay = self.home_relay();
+        tokio::select! {
+            addrs = watch_addrs.initialized() => {
+                let addrs = addrs?;
+                let relay = self.home_relay().get()?;
+                Ok(NodeAddr::from_parts(
+                    self.node_id(),
+                    relay,
+                    addrs.into_iter().map(|x| x.addr),
+                ))
+            },
+            relay = watch_relay.initialized() => {
+                let relay = relay?;
+                let addrs = self.direct_addresses().get()?.unwrap_or_default();
+                Ok(NodeAddr::from_parts(
+                    self.node_id(),
+                    Some(relay),
+                    addrs.into_iter().map(|x| x.addr),
+                ))
+            },
+        }
     }
 
     /// Returns a [`Watcher`] for the [`RelayUrl`] of the Relay server used as home relay.
@@ -796,7 +811,7 @@ impl Endpoint {
     /// let _relay_url = mep.home_relay().initialized().await.unwrap();
     /// # });
     /// ```
-    pub fn home_relay(&self) -> Watcher<Option<RelayUrl>> {
+    pub fn home_relay(&self) -> DirectWatcher<Option<RelayUrl>> {
         self.msock.home_relay()
     }
 
@@ -834,7 +849,7 @@ impl Endpoint {
     /// ```
     ///
     /// [STUN]: https://en.wikipedia.org/wiki/STUN
-    pub fn direct_addresses(&self) -> Watcher<Option<BTreeSet<DirectAddr>>> {
+    pub fn direct_addresses(&self) -> DirectWatcher<Option<BTreeSet<DirectAddr>>> {
         self.msock.direct_addresses()
     }
 
@@ -906,7 +921,7 @@ impl Endpoint {
     /// # Errors
     ///
     /// Will error if we do not have any address information for the given `node_id`.
-    pub fn conn_type(&self, node_id: NodeId) -> Result<Watcher<ConnectionType>> {
+    pub fn conn_type(&self, node_id: NodeId) -> Result<DirectWatcher<ConnectionType>> {
         self.msock.conn_type(node_id)
     }
 

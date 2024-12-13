@@ -21,7 +21,7 @@ use super::{
 };
 use crate::{
     disco::{CallMeMaybe, Pong, SendAddr},
-    watchable::Watcher,
+    watchable::DirectWatcher,
 };
 
 mod best_addr;
@@ -291,7 +291,10 @@ impl NodeMap {
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `node_id`
-    pub(super) fn conn_type(&self, node_id: NodeId) -> anyhow::Result<Watcher<ConnectionType>> {
+    pub(super) fn conn_type(
+        &self,
+        node_id: NodeId,
+    ) -> anyhow::Result<DirectWatcher<ConnectionType>> {
         self.inner.lock().expect("poisoned").conn_type(node_id)
     }
 
@@ -459,7 +462,7 @@ impl NodeMapInner {
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
-    fn conn_type(&self, node_id: NodeId) -> anyhow::Result<Watcher<ConnectionType>> {
+    fn conn_type(&self, node_id: NodeId) -> anyhow::Result<DirectWatcher<ConnectionType>> {
         match self.get(NodeStateKey::NodeId(node_id)) {
             Some(ep) => Ok(ep.conn_type()),
             None => anyhow::bail!("No endpoint for {node_id:?} found"),

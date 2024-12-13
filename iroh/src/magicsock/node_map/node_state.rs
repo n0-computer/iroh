@@ -24,7 +24,7 @@ use crate::{
     disco::{self, SendAddr},
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
     util::relay_only_mode,
-    watchable::{Watchable, Watcher},
+    watchable::{DirectWatcher, Watchable},
 };
 
 /// Number of addresses that are not active that we keep around per node.
@@ -191,7 +191,7 @@ impl NodeState {
         self.id
     }
 
-    pub(super) fn conn_type(&self) -> Watcher<ConnectionType> {
+    pub(super) fn conn_type(&self) -> DirectWatcher<ConnectionType> {
         self.conn_type.watch()
     }
 

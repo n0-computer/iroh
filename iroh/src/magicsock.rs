@@ -66,7 +66,7 @@ use crate::{
     discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
-    watchable::{Watchable, Watcher},
+    watchable::{DirectWatcher, Watchable},
 };
 
 mod metrics;
@@ -323,7 +323,7 @@ impl MagicSock {
     /// store [`Some`] set of addresses.
     ///
     /// To get the current direct addresses, use [`Watcher::initialized`].
-    pub(crate) fn direct_addresses(&self) -> Watcher<Option<BTreeSet<DirectAddr>>> {
+    pub(crate) fn direct_addresses(&self) -> DirectWatcher<Option<BTreeSet<DirectAddr>>> {
         self.direct_addrs.addrs.watch()
     }
 
@@ -331,7 +331,7 @@ impl MagicSock {
     ///
     /// Note that this can be used to wait for the initial home relay to be known using
     /// [`Watcher::initialized`].
-    pub(crate) fn home_relay(&self) -> Watcher<Option<RelayUrl>> {
+    pub(crate) fn home_relay(&self) -> DirectWatcher<Option<RelayUrl>> {
         self.my_relay.watch()
     }
 
@@ -345,7 +345,7 @@ impl MagicSock {
     ///
     /// Will return an error if there is no address information known about the
     /// given `node_id`.
-    pub(crate) fn conn_type(&self, node_id: NodeId) -> Result<Watcher<ConnectionType>> {
+    pub(crate) fn conn_type(&self, node_id: NodeId) -> Result<DirectWatcher<ConnectionType>> {
         self.node_map.conn_type(node_id)
     }
 
@@ -2853,7 +2853,9 @@ mod tests {
     use super::*;
     use crate::{
         defaults::staging::{self, EU_RELAY_HOSTNAME},
-        tls, Endpoint, RelayMode,
+        tls,
+        watchable::WatcherExt as _,
+        Endpoint, RelayMode,
     };
 
     const ALPN: &[u8] = b"n0/test/1";
