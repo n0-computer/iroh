@@ -205,13 +205,13 @@ pub trait Watcher: Clone {
     }
 
     /// Maps this watcher with a function that transforms the observed values.
-    fn map<T: Clone + Eq, F: Clone + Fn(Self::Value) -> T>(
+    fn map<T: Clone + Eq, F: Fn(Self::Value) -> T>(
         self,
         map: F,
     ) -> Result<MapWatcher<Self, T, F>, Disconnected> {
         Ok(MapWatcher {
             current: (map)(self.get()?),
-            map,
+            map: Arc::new(map),
             watcher: self,
         })
     }
@@ -292,14 +292,24 @@ impl<S: Watcher, T: Watcher> Watcher for OrWatcher<S, T> {
 }
 
 /// Maps a [`Watcher`] and allows filtering updates.
-#[derive(Clone, Debug)]
-pub struct MapWatcher<W: Watcher, T: Clone + Eq, F: Clone + Fn(W::Value) -> T> {
-    map: F,
+#[derive(Debug)]
+pub struct MapWatcher<W: Watcher, T: Clone + Eq, F: Fn(W::Value) -> T> {
+    map: Arc<F>,
     watcher: W,
     current: T,
 }
 
-impl<W: Watcher, T: Clone + Eq, F: Clone + Fn(W::Value) -> T> Watcher for MapWatcher<W, T, F> {
+impl<W: Watcher + Clone, T: Clone + Eq, F: Fn(W::Value) -> T> Clone for MapWatcher<W, T, F> {
+    fn clone(&self) -> Self {
+        Self {
+            map: self.map.clone(),
+            watcher: self.watcher.clone(),
+            current: self.current.clone(),
+        }
+    }
+}
+
+impl<W: Watcher, T: Clone + Eq, F: Fn(W::Value) -> T> Watcher for MapWatcher<W, T, F> {
     type Value = T;
 
     fn get(&self) -> Result<Self::Value, Disconnected> {

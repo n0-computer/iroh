@@ -38,7 +38,7 @@ use crate::{
     dns::{default_resolver, DnsResolver},
     magicsock::{self, Handle, QuicMappedAddr},
     tls,
-    watchable::{DirectWatcher, Watcher},
+    watchable::{DirectWatcher, MapWatcher, OrWatcher, Watcher},
 };
 
 mod rtt_actor;
@@ -73,6 +73,22 @@ pub use super::magicsock::{
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
 type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync>;
+
+type NodeAddrMapper = Box<
+    dyn Fn((Option<BTreeSet<DirectAddr>>, Option<RelayUrl>)) -> Option<NodeAddr>
+        + Send
+        + Sync
+        + 'static,
+>;
+
+/// TODO(matheus23): DOCS (don't even ask)
+///
+/// Implements [`Watcher`]`<Option<`[`NodeAddr`]`>>`.
+pub type NodeAddrWatcher = MapWatcher<
+    OrWatcher<DirectWatcher<Option<BTreeSet<DirectAddr>>>, DirectWatcher<Option<RelayUrl>>>,
+    Option<NodeAddr>,
+    NodeAddrMapper,
+>;
 
 /// Builder for [`Endpoint`].
 ///
@@ -761,26 +777,25 @@ impl Endpoint {
     /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
     /// as they would be returned by [`Endpoint::home_relay`] and
     /// [`Endpoint::direct_addresses`].
-    pub fn node_addr(&self) -> Result<impl Watcher<Value = Option<NodeAddr>>> {
+    pub fn node_addr(&self) -> Result<NodeAddrWatcher> {
         let watch_addrs = self.direct_addresses();
         let watch_relay = self.home_relay();
         let node_id = self.node_id();
-        let watcher =
-            watch_addrs
-                .or(watch_relay)
-                .map(move |(addrs, relay)| match (addrs, relay) {
-                    (Some(addrs), relay) => Some(NodeAddr::from_parts(
-                        node_id,
-                        relay,
-                        addrs.into_iter().map(|x| x.addr),
-                    )),
-                    (None, Some(relay)) => Some(NodeAddr::from_parts(
-                        node_id,
-                        Some(relay),
-                        std::iter::empty(),
-                    )),
-                    (None, None) => None,
-                })?;
+        let mapper: NodeAddrMapper = Box::new(move |(addrs, relay)| match (addrs, relay) {
+            (Some(addrs), relay) => Some(NodeAddr::from_parts(
+                node_id,
+                relay,
+                addrs.into_iter().map(|x| x.addr),
+            )),
+            (None, Some(relay)) => Some(NodeAddr::from_parts(
+                node_id,
+                Some(relay),
+                std::iter::empty(),
+            )),
+            (None, None) => None,
+        });
+
+        let watcher = watch_addrs.or(watch_relay).map(mapper)?;
         Ok(watcher)
     }
 
