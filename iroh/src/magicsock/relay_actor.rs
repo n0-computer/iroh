@@ -572,7 +572,7 @@ impl RelayActor {
         let builder = builder
             .address_family_selector(move || {
                 let ipv6_reported = ipv6_reported.clone();
-                Box::pin(async move { ipv6_reported.load(Ordering::Relaxed) })
+                ipv6_reported.load(Ordering::Relaxed)
             })
             .is_preferred(my_relay.as_ref() == Some(url));
 
