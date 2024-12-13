@@ -150,7 +150,7 @@ impl PkarrPublisher {
         debug!("creating pkarr publisher that publishes to {pkarr_relay}");
         let node_id = secret_key.public();
         let pkarr_client = PkarrRelayClient::new(pkarr_relay);
-        let watchable = Watchable::new(None);
+        let watchable = Watchable::default();
         let service = PublisherService {
             ttl,
             watcher: watchable.watch(),

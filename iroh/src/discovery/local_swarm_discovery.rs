@@ -152,7 +152,7 @@ impl LocalSwarmDiscovery {
         )?;
 
         let local_addrs: Watchable<Option<(Option<RelayUrl>, BTreeSet<SocketAddr>)>> =
-            Watchable::new(None);
+            Watchable::default();
         let mut addrs_change = local_addrs.watch();
         let discovery_fut = async move {
             let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
