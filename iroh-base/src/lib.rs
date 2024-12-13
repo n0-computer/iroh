@@ -1,10 +1,6 @@
 //! Base types and utilities for Iroh
 #![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
 
-// TODO: remove
-#[cfg(feature = "base32")]
-pub mod base32;
-
 // TODO: move to own crate
 #[cfg(feature = "ticket")]
 pub mod ticket;

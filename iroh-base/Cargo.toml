@@ -15,13 +15,11 @@ rust-version = "1.81"
 workspace = true
 
 [dependencies]
-anyhow = { version = "1" }
-blake3 = { version = "1.4.5", package = "iroh-blake3", optional = true }
+anyhow = { version = "1", optional = true }
 data-encoding = { version = "2.3.3", optional = true }
-hex = "0.4.3"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"], optional = true }
 serde = { version = "1", features = ["derive"] }
-thiserror = "2"
+thiserror = { version = "2", optional = true }
 
 # key module
 aead = { version = "0.5.2", features = ["bytes"], optional = true }
@@ -43,12 +41,13 @@ iroh-test = "0.28.0"
 proptest = "1.0.0"
 serde_json = "1"
 serde_test = "1"
+postcard = { version = "1", features = ["use-std"] }
 
 [features]
 default = ["ticket", "relay"]
-ticket = ["base32", "key"]
-base32 = ["dep:data-encoding", "dep:postcard"]
+ticket = ["key", "dep:postcard", "dep:data-encoding"]
 key = [
+  "dep:anyhow",
   "dep:ed25519-dalek",
   "dep:once_cell",
   "dep:rand",
@@ -61,11 +60,17 @@ key = [
   "dep:url",
   "dep:derive_more",
   "dep:getrandom",
-  "base32",
+  "dep:thiserror",
+  "dep:data-encoding",
   "relay",
 ]
 wasm = ["getrandom?/js"]
-relay = ["dep:url", "dep:derive_more"]
+relay = [
+  "dep:url",
+  "dep:derive_more",
+  "dep:anyhow",
+  "dep:thiserror",
+]
 
 [package.metadata.docs.rs]
 all-features = true
