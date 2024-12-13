@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
     let secret_key = match std::env::var("IROH_SECRET") {
         Ok(s) => SecretKey::from_str(&s)?,
         Err(_) if args.create => {
-            let s = SecretKey::generate();
+            let s = SecretKey::generate(rand::rngs::OsRng);
             println!("Generated a new node secret. To reuse, set");
             println!("IROH_SECRET={s}");
             s

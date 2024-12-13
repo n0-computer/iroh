@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn sanity_check() {
-        let secret_key = SecretKey::generate();
+        let secret_key = SecretKey::generate(rand::thread_rng());
 
         let (cert, _) = generate(&secret_key).unwrap();
         let parsed_cert = parse(&cert).unwrap();

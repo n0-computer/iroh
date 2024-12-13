@@ -3,7 +3,6 @@
 use std::fmt::Debug;
 
 use aead::Buffer;
-use anyhow::{anyhow, ensure, Context, Result};
 
 pub(crate) const NONCE_LEN: usize = 24;
 
@@ -17,6 +16,17 @@ pub(super) fn secret_ed_box(key: &ed25519_dalek::SigningKey) -> crypto_box::Secr
 
 /// Shared Secret.
 pub struct SharedSecret(crypto_box::ChaChaBox);
+
+/// Errors that can occur during [`SharedSecret::open`].
+#[derive(Debug, thiserror::Error)]
+pub enum DecryptionError {
+    /// The nonce had the wrong size.
+    #[error("Invalid nonce")]
+    InvalidNonce,
+    /// AEAD decrption faile.
+    #[error("Aead error")]
+    Aead(aead::Error),
+}
 
 impl Debug for SharedSecret {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -42,19 +52,21 @@ impl SharedSecret {
     }
 
     /// Opens the ciphertext, which must have been created using `Self::seal`, and places the clear text into the provided buffer.
-    pub fn open(&self, buffer: &mut dyn Buffer) -> Result<()> {
+    pub fn open(&self, buffer: &mut dyn Buffer) -> Result<(), DecryptionError> {
         use aead::AeadInPlace;
-        ensure!(buffer.len() > NONCE_LEN, "too short");
+        if buffer.len() < NONCE_LEN {
+            return Err(DecryptionError::InvalidNonce);
+        }
 
         let offset = buffer.len() - NONCE_LEN;
         let nonce: [u8; NONCE_LEN] = buffer.as_ref()[offset..]
             .try_into()
-            .context("nonce wrong length")?;
+            .map_err(|_| DecryptionError::InvalidNonce)?;
 
         buffer.truncate(offset);
         self.0
             .decrypt_in_place(&nonce.into(), &[], buffer)
-            .map_err(|e| anyhow!("decryption failed: {:?}", e))?;
+            .map_err(DecryptionError::Aead)?;
 
         Ok(())
     }
@@ -76,8 +88,8 @@ mod tests {
 
     #[test]
     fn test_seal_open_roundtrip() {
-        let key_a = crate::key::SecretKey::generate();
-        let key_b = crate::key::SecretKey::generate();
+        let key_a = crate::key::SecretKey::generate(&mut rand::thread_rng());
+        let key_b = crate::key::SecretKey::generate(&mut rand::thread_rng());
 
         seal_open_roundtrip(&key_a, &key_b);
         seal_open_roundtrip(&key_b, &key_a);
@@ -105,7 +117,7 @@ mod tests {
 
     #[test]
     fn test_same_public_key_api() {
-        let key = crate::key::SecretKey::generate();
+        let key = crate::key::SecretKey::generate(&mut rand::thread_rng());
         let public_key1: crypto_box::PublicKey = public_ed_box(&key.public().public());
         let public_key2: crypto_box::PublicKey = secret_ed_box(&key.secret).public_key();
 

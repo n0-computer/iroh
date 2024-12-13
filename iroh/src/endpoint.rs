@@ -128,7 +128,9 @@ impl Builder {
     /// Binds the magic endpoint.
     pub async fn bind(self) -> Result<Endpoint> {
         let relay_map = self.relay_mode.relay_map();
-        let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
+        let secret_key = self
+            .secret_key
+            .unwrap_or_else(|| SecretKey::generate(rand::rngs::OsRng));
         let static_config = StaticConfig {
             transport_config: Arc::new(self.transport_config.unwrap_or_default()),
             keylog: self.keylog,
@@ -1448,7 +1450,7 @@ mod tests {
     async fn endpoint_connect_close() {
         let _guard = iroh_test::logging::setup();
         let (relay_map, relay_url, _guard) = run_relay_server().await.unwrap();
-        let server_secret_key = SecretKey::generate();
+        let server_secret_key = SecretKey::generate(rand::thread_rng());
         let server_peer_id = server_secret_key.public();
 
         let server = {
@@ -1542,7 +1544,7 @@ mod tests {
     async fn restore_peers() {
         let _guard = iroh_test::logging::setup();
 
-        let secret_key = SecretKey::generate();
+        let secret_key = SecretKey::generate(rand::thread_rng());
 
         /// Create an endpoint for the test.
         async fn new_endpoint(secret_key: SecretKey, nodes: Option<Vec<NodeAddr>>) -> Endpoint {
@@ -1563,7 +1565,7 @@ mod tests {
         }
 
         // create the peer that will be added to the peer map
-        let peer_id = SecretKey::generate().public();
+        let peer_id = SecretKey::generate(rand::thread_rng()).public();
         let direct_addr: SocketAddr =
             (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 8758u16).into();
         let node_addr = NodeAddr::new(peer_id).with_direct_addresses([direct_addr]);
@@ -1601,7 +1603,7 @@ mod tests {
         let chunk_size = 10;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let (relay_map, relay_url, _relay_guard) = run_relay_server().await.unwrap();
-        let server_secret_key = SecretKey::generate_with_rng(&mut rng);
+        let server_secret_key = SecretKey::generate(&mut rng);
         let server_node_id = server_secret_key.public();
 
         // The server accepts the connections of the clients sequentially.
@@ -1651,7 +1653,7 @@ mod tests {
             let now = Instant::now();
             println!("[client] round {}", i + 1);
             let relay_map = relay_map.clone();
-            let client_secret_key = SecretKey::generate_with_rng(&mut rng);
+            let client_secret_key = SecretKey::generate(&mut rng);
             let relay_url = relay_url.clone();
             async {
                 info!("client binding");
@@ -1795,8 +1797,8 @@ mod tests {
         let _logging_guard = iroh_test::logging::setup();
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await.unwrap();
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let ep1_secret_key = SecretKey::generate_with_rng(&mut rng);
-        let ep2_secret_key = SecretKey::generate_with_rng(&mut rng);
+        let ep1_secret_key = SecretKey::generate(&mut rng);
+        let ep2_secret_key = SecretKey::generate(&mut rng);
         let ep1 = Endpoint::builder()
             .secret_key(ep1_secret_key)
             .insecure_skip_relay_cert_verify(true)

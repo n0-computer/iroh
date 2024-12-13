@@ -30,6 +30,7 @@ derive_more = { version = "1.0.0", features = [
     "from",
     "try_into",
     "deref",
+    "from_str"
 ] }
 futures-buffered = "0.2.8"
 futures-concurrency = "7.6"

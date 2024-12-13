@@ -1158,7 +1158,7 @@ mod tests {
     async fn test_recv_detail_connect_error() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let key = SecretKey::generate();
+        let key = SecretKey::generate(rand::thread_rng());
         let bad_url: Url = "https://bad.url".parse().unwrap();
         let dns_resolver = default_resolver();
 

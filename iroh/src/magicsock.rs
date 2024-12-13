@@ -35,7 +35,7 @@ use concurrent_queue::ConcurrentQueue;
 use data_encoding::HEXLOWER;
 use futures_lite::{FutureExt, StreamExt};
 use futures_util::{stream::BoxStream, task::AtomicWaker};
-use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey, SharedSecret};
+use iroh_base::{DecryptionError, NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey, SharedSecret};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::{protos::stun, RelayMap};
 use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
@@ -133,7 +133,7 @@ impl Default for Options {
         Options {
             addr_v4: None,
             addr_v6: None,
-            secret_key: SecretKey::generate(),
+            secret_key: SecretKey::generate(rand::rngs::OsRng),
             relay_map: RelayMap::empty(),
             node_map: None,
             discovery: None,
@@ -1702,9 +1702,7 @@ impl DiscoSecrets {
         node_id: PublicKey,
         mut sealed_box: Vec<u8>,
     ) -> Result<disco::Message, DiscoBoxError> {
-        self.get(secret, node_id, |secret| {
-            secret.open(&mut sealed_box).map_err(DiscoBoxError::Open)
-        })?;
+        self.get(secret, node_id, |secret| secret.open(&mut sealed_box))?;
         disco::Message::from_bytes(&sealed_box).map_err(DiscoBoxError::Parse)
     }
 }
@@ -1712,7 +1710,7 @@ impl DiscoSecrets {
 #[derive(Debug, thiserror::Error)]
 enum DiscoBoxError {
     #[error("Failed to open crypto box")]
-    Open(anyhow::Error),
+    Open(#[from] DecryptionError),
     #[error("Failed to parse disco message")]
     Parse(anyhow::Error),
 }
@@ -2873,7 +2871,7 @@ mod tests {
 
     impl MagicStack {
         async fn new(relay_mode: RelayMode) -> Result<Self> {
-            let secret_key = SecretKey::generate();
+            let secret_key = SecretKey::generate(rand::thread_rng());
 
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
@@ -3344,7 +3342,7 @@ mod tests {
         let _guard = iroh_test::logging::setup();
 
         let make_conn = |addr: SocketAddr| -> anyhow::Result<quinn::Endpoint> {
-            let key = SecretKey::generate();
+            let key = SecretKey::generate(rand::thread_rng());
             let conn = std::net::UdpSocket::bind(addr)?;
 
             let quic_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
@@ -3493,7 +3491,7 @@ mod tests {
         let _guard = iroh_test::logging::setup();
 
         fn make_conn(addr: SocketAddr) -> anyhow::Result<quinn::Endpoint> {
-            let key = SecretKey::generate();
+            let key = SecretKey::generate(rand::thread_rng());
             let conn = UdpConn::bind(addr)?;
 
             let quic_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;

@@ -52,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn provide(size: u64, relay_url: Option<String>) -> anyhow::Result<()> {
-    let secret_key = SecretKey::generate();
+    let secret_key = SecretKey::generate(rand::rngs::OsRng);
     let relay_mode = match relay_url {
         Some(relay_url) => {
             let relay_url = RelayUrl::from_str(&relay_url)?;
@@ -144,7 +144,7 @@ async fn provide(size: u64, relay_url: Option<String>) -> anyhow::Result<()> {
 
 async fn fetch(ticket: &str, relay_url: Option<String>) -> anyhow::Result<()> {
     let ticket: NodeTicket = ticket.parse()?;
-    let secret_key = SecretKey::generate();
+    let secret_key = SecretKey::generate(rand::rngs::OsRng);
     let relay_mode = match relay_url {
         Some(relay_url) => {
             let relay_url = RelayUrl::from_str(&relay_url)?;

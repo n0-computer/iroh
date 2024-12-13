@@ -483,7 +483,7 @@ mod tests {
         }
 
         fn make_discoverer() -> Result<(PublicKey, LocalSwarmDiscovery)> {
-            let node_id = SecretKey::generate().public();
+            let node_id = SecretKey::generate(rand::thread_rng()).public();
             Ok((node_id, LocalSwarmDiscovery::new(node_id)?))
         }
     }

@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     println!("\nconnect (unreliable) example!\n");
     let args = Cli::parse();
-    let secret_key = SecretKey::generate();
+    let secret_key = SecretKey::generate(rand::rngs::OsRng);
     println!("secret key: {secret_key}");
 
     // Build a `Endpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the relay protocol and relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.

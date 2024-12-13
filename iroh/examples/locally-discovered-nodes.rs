@@ -13,7 +13,8 @@ use iroh::{
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     println!("locally discovered nodes example!\n");
-    let key = SecretKey::generate();
+    let mut rng = rand::rngs::OsRng;
+    let key = SecretKey::generate(&mut rng);
     let id = key.public();
     println!("creating endpoint {id:?}\n");
     let ep = Endpoint::builder()
@@ -26,7 +27,7 @@ async fn main() -> anyhow::Result<()> {
     println!("creating {node_count} additional endpoints to discover locally:");
     let mut discoverable_eps = Vec::with_capacity(node_count);
     for _ in 0..node_count {
-        let key = SecretKey::generate();
+        let key = SecretKey::generate(&mut rng);
         let id = key.public();
         println!("\t{id:?}");
         let ep = Endpoint::builder()

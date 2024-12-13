@@ -881,7 +881,7 @@ mod tests {
         let relay_url: RelayUrl = relay_url.parse().unwrap();
 
         // set up client a
-        let a_secret_key = SecretKey::generate();
+        let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
         let (client_a, mut client_a_receiver) =
@@ -906,7 +906,7 @@ mod tests {
         }
 
         // set up client b
-        let b_secret_key = SecretKey::generate();
+        let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
         let (client_b, mut client_b_receiver) =
@@ -955,7 +955,7 @@ mod tests {
         let relay_url: RelayUrl = relay_url.parse().unwrap();
 
         // set up client a
-        let a_secret_key = SecretKey::generate();
+        let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
         let (client_a, mut client_a_receiver) = ClientBuilder::new(relay_url.clone())
@@ -981,7 +981,7 @@ mod tests {
         }
 
         // set up client b
-        let b_secret_key = SecretKey::generate();
+        let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
         let (client_b, mut client_b_receiver) = ClientBuilder::new(relay_url.clone())
@@ -1031,7 +1031,7 @@ mod tests {
         let relay_url: RelayUrl = relay_url.parse().unwrap();
 
         // set up client a
-        let a_secret_key = SecretKey::generate();
+        let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
         let (client_a, mut client_a_receiver) =
@@ -1056,7 +1056,7 @@ mod tests {
         }
 
         // set up client b
-        let b_secret_key = SecretKey::generate();
+        let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
         let (client_b, mut client_b_receiver) = ClientBuilder::new(relay_url.clone())

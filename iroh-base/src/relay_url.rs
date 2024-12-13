@@ -1,6 +1,5 @@
 use std::{fmt, ops::Deref, str::FromStr};
 
-use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use url::Url;
 /// A URL identifying a relay server.
@@ -36,15 +35,20 @@ impl From<Url> for RelayUrl {
     }
 }
 
+/// Can occur when parsing a string into a [`RelayUrl`].
+#[derive(Debug, thiserror::Error)]
+#[error("Failed to parse: {0}")]
+pub struct RelayUrlParsingError(#[from] url::ParseError);
+
 /// Support for parsing strings directly.
 ///
 /// If you need more control over the error first create a [`Url`] and use [`RelayUrl::from`]
 /// instead.
 impl FromStr for RelayUrl {
-    type Err = anyhow::Error;
+    type Err = RelayUrlParsingError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let inner = Url::from_str(s).context("invalid URL")?;
+        let inner = Url::from_str(s)?;
         Ok(RelayUrl::from(inner))
     }
 }
