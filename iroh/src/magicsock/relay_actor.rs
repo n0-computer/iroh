@@ -695,7 +695,7 @@ impl RelayActor {
         self.active_relay_handle(url).await;
     }
 
-    /// Cleans up stale [`ActiveRelayActors`].
+    /// Cleans up stale [`ActiveRelayActor`]s.
     ///
     /// This not only checks if the relays have been used recently, but also makes sure that
     /// all relay actors are running.  In particular this is called whenever an
