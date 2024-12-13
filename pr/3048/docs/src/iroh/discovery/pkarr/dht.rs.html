@@ -471,11 +471,7 @@
 <a href="#470" id="470">470</a>
 <a href="#471" id="471">471</a>
 <a href="#472" id="472">472</a>
-<a href="#473" id="473">473</a>
-<a href="#474" id="474">474</a>
-<a href="#475" id="475">475</a>
-<a href="#476" id="476">476</a>
-<a href="#477" id="477">477</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
+<a href="#473" id="473">473</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
 //!
 //! This module contains pkarr-based node discovery for iroh which can use both pkarr
 //! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
@@ -821,7 +817,7 @@
                                         <span class="string">"discovered node info from relay {:?}"</span>,
                                         node_addr
                                     );
-                                    <span class="prelude-val">Some</span>(anyhow::Ok(DiscoveryItem {
+                                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(DiscoveryItem {
                                         node_addr,
                                         provenance: <span class="string">"relay"</span>,
                                         last_updated: <span class="prelude-val">None</span>,
@@ -886,11 +882,7 @@
         }
 
         <span class="prelude-val">Some</span>(stream.filter_map(|t| t).boxed())
-        <span class="comment">// Some(Box::pin(ResolveStream {
-        //     dht_resolve,
-        //     relay_resolve,
-        // }))
-    </span>}
+    }
 }
 
 <span class="attr">#[cfg(test)]
