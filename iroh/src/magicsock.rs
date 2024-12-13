@@ -44,6 +44,7 @@ use n0_future::{
     time::{Duration, Instant},
     FutureExt, StreamExt,
 };
+use net_report::QuicConfig;
 use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -231,6 +232,10 @@ pub(crate) struct MagicSock {
     pconn6: Option<UdpConn>,
     /// NetReport client
     net_reporter: net_report::Addr,
+    /// Handle to the underlying quinn::Endpoint.
+    ///
+    /// Used in netcheck for QUIC address discovery.
+    quic_endpoint: Arc<RwLock<Option<quinn::Endpoint>>>,
     /// The state for an active DiscoKey.
     disco_secrets: DiscoSecrets,
 
@@ -280,6 +285,16 @@ impl MagicSock {
     /// If we are not connected to any relay nodes, set this to `None`.
     fn set_my_relay(&self, my_relay: Option<RelayUrl>) -> Option<RelayUrl> {
         self.my_relay.set(my_relay).unwrap_or_else(|e| e)
+    }
+
+    /// Sets the internal `quinn::Endpoint` that is used for QUIC address
+    /// discovery.
+    pub(crate) fn set_quic_endpoint(&self, endpoint: Option<quinn::Endpoint>) {
+        let mut ep = self
+            .quic_endpoint
+            .write()
+            .expect("MagicSock::endpoint RwLock is poisoned");
+        *ep = endpoint;
     }
 
     fn is_closing(&self) -> bool {
@@ -1591,6 +1606,7 @@ impl Handle {
             dns_resolver,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
+            quic_endpoint: Arc::new(RwLock::new(None)),
         });
 
         let mut actor_tasks = JoinSet::default();
@@ -2429,9 +2445,30 @@ impl Actor {
         }
 
         let relay_map = self.msock.relay_map.clone();
-        let opts = net_report::Options::default()
+        let mut opts = net_report::Options::default()
             .stun_v4(Some(self.pconn4.clone()))
             .stun_v6(self.pconn6.clone());
+
+        let quic_endpoint = self.msock.quic_endpoint.read().expect("poisoned").clone();
+
+        let quic_config = match quic_endpoint {
+            Some(ep) => {
+                let root_store = rustls::RootCertStore::from_iter(
+                    webpki_roots::TLS_SERVER_ROOTS.iter().cloned(),
+                );
+                let client_config = rustls::ClientConfig::builder()
+                    .with_root_certificates(root_store)
+                    .with_no_client_auth();
+                Some(QuicConfig {
+                    ep,
+                    client_config,
+                    ipv4: true,
+                    ipv6: true,
+                })
+            }
+            None => None,
+        };
+        opts = opts.quic_config(quic_config);
 
         debug!("requesting net_report report");
         match self.net_reporter.get_report_channel(relay_map, opts).await {

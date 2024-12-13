@@ -564,12 +564,14 @@ impl Endpoint {
         )?;
         trace!("created quinn endpoint");
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
-        Ok(Self {
-            msock,
-            endpoint,
+        let ep = Self {
+            msock: msock.clone(),
+            endpoint: endpoint.clone(),
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
             static_config: Arc::new(static_config),
-        })
+        };
+        msock.set_quic_endpoint(Some(endpoint));
+        Ok(ep)
     }
 
     /// Sets the list of accepted ALPN protocols.
