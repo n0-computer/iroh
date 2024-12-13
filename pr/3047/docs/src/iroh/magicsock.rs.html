@@ -4059,10 +4059,7 @@
 <a href="#4058" id="4058">4058</a>
 <a href="#4059" id="4059">4059</a>
 <a href="#4060" id="4060">4060</a>
-<a href="#4061" id="4061">4061</a>
-<a href="#4062" id="4062">4062</a>
-<a href="#4063" id="4063">4063</a>
-<a href="#4064" id="4064">4064</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4061" id="4061">4061</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4096,6 +4093,7 @@
 <span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>concurrent_queue::ConcurrentQueue;
+<span class="kw">use </span>data_encoding::HEXLOWER;
 <span class="kw">use </span>futures_lite::{FutureExt, StreamExt};
 <span class="kw">use </span>futures_util::{stream::BoxStream, task::AtomicWaker};
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey, SharedSecret};
@@ -5134,20 +5132,20 @@
         <span class="kw">let </span>handled = <span class="self">self</span>.node_map.handle_ping(sender, addr.clone(), dm.tx_id);
         <span class="kw">match </span>handled.role {
             PingRole::Duplicate =&gt; {
-                <span class="macro">debug!</span>(%src, tx = %hex_encode(dm.tx_id), <span class="string">"received ping: path already confirmed, skip"</span>);
+                <span class="macro">debug!</span>(%src, tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>dm.tx_id), <span class="string">"received ping: path already confirmed, skip"</span>);
                 <span class="kw">return</span>;
             }
             PingRole::LikelyHeartbeat =&gt; {}
             PingRole::NewPath =&gt; {
-                <span class="macro">debug!</span>(%src, tx = %hex_encode(dm.tx_id), <span class="string">"received ping: new path"</span>);
+                <span class="macro">debug!</span>(%src, tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>dm.tx_id), <span class="string">"received ping: new path"</span>);
             }
             PingRole::Activate =&gt; {
-                <span class="macro">debug!</span>(%src, tx = %hex_encode(dm.tx_id), <span class="string">"received ping: path active"</span>);
+                <span class="macro">debug!</span>(%src, tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>dm.tx_id), <span class="string">"received ping: path active"</span>);
             }
         }
 
         <span class="comment">// Send a pong.
-        </span><span class="macro">debug!</span>(tx = %hex_encode(dm.tx_id), %addr, dstkey = %sender.fmt_short(),
+        </span><span class="macro">debug!</span>(tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>dm.tx_id), %addr, dstkey = %sender.fmt_short(),
                <span class="string">"sending pong"</span>);
         <span class="kw">let </span>pong = disco::Message::Pong(disco::Pong {
             tx_id: dm.tx_id,
@@ -5201,11 +5199,11 @@
         };
         <span class="kw">if </span>sent {
             <span class="kw">let </span>msg_sender = <span class="self">self</span>.actor_sender.clone();
-            <span class="macro">trace!</span>(%dst, tx = %hex_encode(tx_id), <span class="question-mark">?</span>purpose, <span class="string">"ping sent (queued)"</span>);
+            <span class="macro">trace!</span>(%dst, tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>tx_id), <span class="question-mark">?</span>purpose, <span class="string">"ping sent (queued)"</span>);
             <span class="self">self</span>.node_map
                 .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
         } <span class="kw">else </span>{
-            <span class="macro">warn!</span>(dst = <span class="question-mark">?</span>dst, tx = %hex_encode(tx_id), <span class="question-mark">?</span>purpose, <span class="string">"failed to send ping: queues full"</span>);
+            <span class="macro">warn!</span>(dst = <span class="question-mark">?</span>dst, tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>tx_id), <span class="question-mark">?</span>purpose, <span class="string">"failed to send ping: queues full"</span>);
         }
     }
 
@@ -5385,7 +5383,7 @@
             node_key: <span class="self">self</span>.public_key(),
         });
         <span class="self">self</span>.try_send_disco_message(dst.clone(), dst_node, msg)<span class="question-mark">?</span>;
-        <span class="macro">debug!</span>(%dst, tx = %hex_encode(tx_id), <span class="question-mark">?</span>purpose, <span class="string">"ping sent (polled)"</span>);
+        <span class="macro">debug!</span>(%dst, tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>tx_id), <span class="question-mark">?</span>purpose, <span class="string">"ping sent (polled)"</span>);
         <span class="kw">let </span>msg_sender = <span class="self">self</span>.actor_sender.clone();
         <span class="self">self</span>.node_map
             .notify_ping_sent(id, dst.clone(), tx_id, purpose, msg_sender);
@@ -6899,10 +6897,6 @@
     }
 }
 
-<span class="kw">fn </span>hex_encode(b: <span class="kw">impl </span>AsRef&lt;[u8]&gt;) -&gt; String {
-    data_encoding::HEXLOWER.encode(b.as_ref())
-}
-
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>anyhow::Context;
@@ -7127,8 +7121,8 @@
             val,
             msg,
             <span class="string">"[sender] expected {}, got {}"</span>,
-            hex_encode(msg),
-            hex_encode(<span class="kw-2">&amp;</span>val)
+            HEXLOWER.encode(msg),
+            HEXLOWER.encode(<span class="kw-2">&amp;</span>val)
         );
 
         <span class="kw">let </span>stats = conn.stats();
@@ -7533,8 +7527,8 @@
                 <span class="macro">anyhow::ensure!</span>(
                     val == <span class="macro-nonterminal">$msg</span>,
                     <span class="string">"expected {}, got {}"</span>,
-                    hex_encode(<span class="macro-nonterminal">$msg</span>),
-                    hex_encode(val)
+                    HEXLOWER.encode(<span class="kw-2">&amp;</span><span class="macro-nonterminal">$msg</span>[..]),
+                    HEXLOWER.encode(<span class="kw-2">&amp;</span>val)
                 );
             };
         }
@@ -7686,8 +7680,8 @@
                 <span class="macro">anyhow::ensure!</span>(
                     val == <span class="macro-nonterminal">$msg</span>,
                     <span class="string">"expected {}, got {}"</span>,
-                    hex_encode(<span class="macro-nonterminal">$msg</span>),
-                    hex_encode(val)
+                    HEXLOWER.encode(<span class="kw-2">&amp;</span><span class="macro-nonterminal">$msg</span>[..]),
+                    HEXLOWER.encode(<span class="kw-2">&amp;</span>val)
                 );
             };
         }
