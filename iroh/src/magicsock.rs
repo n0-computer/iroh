@@ -3200,7 +3200,7 @@ mod tests {
         println!("first conn!");
         let conn = m1
             .endpoint
-            .connect(m2.endpoint.node_addr().await?, ALPN)
+            .connect(m2.endpoint.node_addr()?.initialized().await?, ALPN)
             .await?;
         println!("Closing first conn");
         conn.close(0u32.into(), b"bye lolz");

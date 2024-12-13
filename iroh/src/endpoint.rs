@@ -38,7 +38,7 @@ use crate::{
     dns::{default_resolver, DnsResolver},
     magicsock::{self, Handle, QuicMappedAddr},
     tls,
-    watchable::{DirectWatcher, Watcher as _},
+    watchable::{DirectWatcher, Watcher},
 };
 
 mod rtt_actor;
@@ -761,29 +761,27 @@ impl Endpoint {
     /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
     /// as they would be returned by [`Endpoint::home_relay`] and
     /// [`Endpoint::direct_addresses`].
-    pub async fn node_addr(&self) -> Result<NodeAddr> {
-        let mut watch_addrs = self.direct_addresses();
-        let mut watch_relay = self.home_relay();
-        tokio::select! {
-            addrs = watch_addrs.initialized() => {
-                let addrs = addrs?;
-                let relay = self.home_relay().get()?;
-                Ok(NodeAddr::from_parts(
-                    self.node_id(),
-                    relay,
-                    addrs.into_iter().map(|x| x.addr),
-                ))
-            },
-            relay = watch_relay.initialized() => {
-                let relay = relay?;
-                let addrs = self.direct_addresses().get()?.unwrap_or_default();
-                Ok(NodeAddr::from_parts(
-                    self.node_id(),
-                    Some(relay),
-                    addrs.into_iter().map(|x| x.addr),
-                ))
-            },
-        }
+    pub fn node_addr(&self) -> Result<impl Watcher<Value = Option<NodeAddr>>> {
+        let watch_addrs = self.direct_addresses();
+        let watch_relay = self.home_relay();
+        let node_id = self.node_id();
+        let watcher =
+            watch_addrs
+                .or(watch_relay)
+                .map(move |(addrs, relay)| match (addrs, relay) {
+                    (Some(addrs), relay) => Some(NodeAddr::from_parts(
+                        node_id,
+                        relay,
+                        addrs.into_iter().map(|x| x.addr),
+                    )),
+                    (None, Some(relay)) => Some(NodeAddr::from_parts(
+                        node_id,
+                        Some(relay),
+                        std::iter::empty(),
+                    )),
+                    (None, None) => None,
+                })?;
+        Ok(watcher)
     }
 
     /// Returns a [`Watcher`] for the [`RelayUrl`] of the Relay server used as home relay.
@@ -1449,7 +1447,7 @@ mod tests {
             .bind()
             .await
             .unwrap();
-        let my_addr = ep.node_addr().await.unwrap();
+        let my_addr = ep.node_addr().unwrap().initialized().await.unwrap();
         let res = ep.connect(my_addr.clone(), TEST_ALPN).await;
         assert!(res.is_err());
         let err = res.err().unwrap();
@@ -1731,8 +1729,8 @@ mod tests {
             .bind()
             .await
             .unwrap();
-        let ep1_nodeaddr = ep1.node_addr().await.unwrap();
-        let ep2_nodeaddr = ep2.node_addr().await.unwrap();
+        let ep1_nodeaddr = ep1.node_addr().unwrap().initialized().await.unwrap();
+        let ep2_nodeaddr = ep2.node_addr().unwrap().initialized().await.unwrap();
         ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();
         ep2.add_node_addr(ep1_nodeaddr.clone()).unwrap();
         let ep1_nodeid = ep1.node_id();
@@ -1855,7 +1853,7 @@ mod tests {
         let ep1_nodeid = ep1.node_id();
         let ep2_nodeid = ep2.node_id();
 
-        let ep1_nodeaddr = ep1.node_addr().await.unwrap();
+        let ep1_nodeaddr = ep1.node_addr().unwrap().initialized().await.unwrap();
         tracing::info!(
             "node id 1 {ep1_nodeid}, relay URL {:?}",
             ep1_nodeaddr.relay_url()

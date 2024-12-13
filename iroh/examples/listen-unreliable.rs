@@ -3,7 +3,7 @@
 //! This example uses the default relay servers to attempt to holepunch, and will use that relay server to relay packets if the two devices cannot establish a direct UDP connection.
 //! run this example from the project root:
 //!     $ cargo run --example listen-unreliable
-use iroh::{Endpoint, RelayMode, SecretKey};
+use iroh::{watchable::Watcher as _, Endpoint, RelayMode, SecretKey};
 use tracing::{info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -35,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
     println!("node id: {me}");
     println!("node listening addresses:");
 
-    let node_addr = endpoint.node_addr().await?;
+    let node_addr = endpoint.node_addr()?.initialized().await?;
     let local_addrs = node_addr
         .direct_addresses
         .into_iter()

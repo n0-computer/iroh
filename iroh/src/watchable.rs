@@ -101,20 +101,6 @@ impl<T: Clone + Eq> Watchable<T> {
     }
 }
 
-/// An observer for a value.
-///
-/// The [`Watcher`] can get the current value, and will be notified when the value changes.
-/// Only the most recent value is accessible, and if the thread with the [`Watchable`]
-/// changes the value faster than the thread with the [`Watcher`] can keep up with, then
-/// it'll miss in-between values.
-/// When the thread changing the [`Watchable`] pauses updating, the [`Watcher`] will always
-/// end up reporting the most recent state eventually.
-#[derive(Debug, Clone)]
-pub struct DirectWatcher<T> {
-    epoch: u64,
-    shared: Weak<Shared<T>>,
-}
-
 /// A handle to a value that's represented by one or more underlying [`Watchable`]s.
 ///
 /// This handle allows one to observe the latest state and be notified
@@ -217,6 +203,38 @@ pub trait Watcher: Clone {
             watcher: self,
         }
     }
+
+    /// Maps this watcher with a function that transforms the observed values.
+    fn map<T: Clone + Eq, F: Clone + Fn(Self::Value) -> T>(
+        self,
+        map: F,
+    ) -> Result<MapWatcher<Self, T, F>, Disconnected> {
+        Ok(MapWatcher {
+            current: (map)(self.get()?),
+            map,
+            watcher: self,
+        })
+    }
+
+    /// Returns a watcher that updates every time this or the other watcher
+    /// updates, and yields both watcher's items together when that happens.
+    fn or<W: Watcher>(self, other: W) -> OrWatcher<Self, W> {
+        OrWatcher(self, other)
+    }
+}
+
+/// An observer for a value.
+///
+/// The [`Watcher`] can get the current value, and will be notified when the value changes.
+/// Only the most recent value is accessible, and if the thread with the [`Watchable`]
+/// changes the value faster than the thread with the [`Watcher`] can keep up with, then
+/// it'll miss in-between values.
+/// When the thread changing the [`Watchable`] pauses updating, the [`Watcher`] will always
+/// end up reporting the most recent state eventually.
+#[derive(Debug, Clone)]
+pub struct DirectWatcher<T> {
+    epoch: u64,
+    shared: Weak<Shared<T>>,
 }
 
 impl<T: Clone + Eq> Watcher for DirectWatcher<T> {
@@ -245,10 +263,13 @@ impl<T: Clone + Eq> Watcher for DirectWatcher<T> {
 }
 
 /// Combines two [`Watcher`]s into a single watcher.
+///
+/// This watcher updates when one of the inner watchers
+/// is updated at least once.
 #[derive(Clone, Debug)]
-pub struct Or<S: Watcher, T: Watcher>(S, T);
+pub struct OrWatcher<S: Watcher, T: Watcher>(S, T);
 
-impl<S: Watcher, T: Watcher> Watcher for Or<S, T> {
+impl<S: Watcher, T: Watcher> Watcher for OrWatcher<S, T> {
     type Value = (S::Value, T::Value);
 
     fn get(&self) -> Result<Self::Value, Disconnected> {
@@ -266,6 +287,38 @@ impl<S: Watcher, T: Watcher> Watcher for Or<S, T> {
             (Poll::Ready(s), Poll::Pending) => Poll::Ready(self.1.get().map(move |t| (s, t))),
             (Poll::Pending, Poll::Ready(t)) => Poll::Ready(self.0.get().map(move |s| (s, t))),
             (Poll::Pending, Poll::Pending) => Poll::Pending,
+        }
+    }
+}
+
+/// Maps a [`Watcher`] and allows filtering updates.
+#[derive(Clone, Debug)]
+pub struct MapWatcher<W: Watcher, T: Clone + Eq, F: Clone + Fn(W::Value) -> T> {
+    map: F,
+    watcher: W,
+    current: T,
+}
+
+impl<W: Watcher, T: Clone + Eq, F: Clone + Fn(W::Value) -> T> Watcher for MapWatcher<W, T, F> {
+    type Value = T;
+
+    fn get(&self) -> Result<Self::Value, Disconnected> {
+        Ok((self.map)(self.watcher.get()?))
+    }
+
+    fn poll_updated(
+        &mut self,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<Self::Value, Disconnected>> {
+        loop {
+            let value = futures_lite::ready!(self.watcher.poll_updated(cx)?);
+            let mapped = (self.map)(value);
+            if mapped != self.current {
+                self.current = mapped.clone();
+                return Poll::Ready(Ok(mapped));
+            } else {
+                self.current = mapped;
+            }
         }
     }
 }

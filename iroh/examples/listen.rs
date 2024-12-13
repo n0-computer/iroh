@@ -5,7 +5,7 @@
 //!     $ cargo run --example listen
 use std::time::Duration;
 
-use iroh::{endpoint::ConnectionError, Endpoint, RelayMode, SecretKey};
+use iroh::{endpoint::ConnectionError, watchable::Watcher as _, Endpoint, RelayMode, SecretKey};
 use tracing::{debug, info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -37,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
     println!("node id: {me}");
     println!("node listening addresses:");
 
-    let node_addr = endpoint.node_addr().await?;
+    let node_addr = endpoint.node_addr()?.initialized().await?;
     let local_addrs = node_addr
         .direct_addresses
         .into_iter()

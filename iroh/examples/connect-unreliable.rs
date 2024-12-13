@@ -8,7 +8,7 @@
 use std::net::SocketAddr;
 
 use clap::Parser;
-use iroh::{Endpoint, NodeAddr, RelayMode, RelayUrl, SecretKey};
+use iroh::{watchable::Watcher as _, Endpoint, NodeAddr, RelayMode, RelayUrl, SecretKey};
 use tracing::info;
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -50,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
         .bind()
         .await?;
 
-    let node_addr = endpoint.node_addr().await?;
+    let node_addr = endpoint.node_addr()?.initialized().await?;
     let me = node_addr.node_id;
     println!("node id: {me}");
     println!("node listening addresses:");
