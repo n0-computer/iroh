@@ -23,7 +23,7 @@ pub enum DecryptionError {
     /// The nonce had the wrong size.
     #[error("Invalid nonce")]
     InvalidNonce,
-    /// AEAD decrption faile.
+    /// AEAD decryption failed.
     #[error("Aead error")]
     Aead(aead::Error),
 }
