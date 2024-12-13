@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["PUBLIC_KEY_LENGTH"],"enum":["KeyParsingError"],"mod":["ticket"],"struct":["NodeAddr","PublicKey","RelayUrl","SecretKey","SharedSecret","Signature"],"type":["NodeId"]};
