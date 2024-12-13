@@ -2854,7 +2854,7 @@ mod tests {
     use crate::{
         defaults::staging::{self, EU_RELAY_HOSTNAME},
         tls,
-        watchable::WatcherExt as _,
+        watchable::Watcher as _,
         Endpoint, RelayMode,
     };
 

@@ -38,7 +38,7 @@ use crate::{
     dns::{default_resolver, DnsResolver},
     magicsock::{self, Handle, QuicMappedAddr},
     tls,
-    watchable::{DirectWatcher, Watcher as _, WatcherExt as _},
+    watchable::{DirectWatcher, Watcher as _},
 };
 
 mod rtt_actor;

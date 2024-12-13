@@ -140,10 +140,7 @@ pub trait Watcher: Clone {
         &mut self,
         cx: &mut task::Context<'_>,
     ) -> Poll<Result<Self::Value, Disconnected>>;
-}
 
-/// Extension methods for the [`Watcher`] trait.
-pub trait WatcherExt: Watcher {
     /// Returns a future completing with `Ok(value)` once a new value is set, or with
     /// [`Err(Disconnected)`](Disconnected) if the connected [`Watchable`] was dropped.
     ///
@@ -221,8 +218,6 @@ pub trait WatcherExt: Watcher {
         }
     }
 }
-
-impl<T: Watcher> WatcherExt for T {}
 
 impl<T: Clone + Eq> Watcher for DirectWatcher<T> {
     type Value = T;

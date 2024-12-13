@@ -61,7 +61,7 @@ use crate::{
     discovery::{Discovery, DiscoveryItem},
     dns::node_info::NodeInfo,
     endpoint::force_staging_infra,
-    watchable::{DirectWatcher, Disconnected, Watchable, Watcher as _, WatcherExt as _},
+    watchable::{DirectWatcher, Disconnected, Watchable, Watcher as _},
     Endpoint,
 };
 
