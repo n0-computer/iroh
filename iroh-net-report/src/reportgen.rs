@@ -799,7 +799,7 @@ async fn run_probe(
             let url = node.url.clone();
             match quic_config {
                 Some(quic_config) => {
-                    run_quic_probe(quic_config, url, relay_addr, probe).await?;
+                    result = run_quic_probe(quic_config, url, relay_addr, probe).await?;
                 }
                 None => {
                     return Err(ProbeError::AbortSet(
