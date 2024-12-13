@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-pub use ed25519_dalek::{Signature, PUBLIC_KEY_LENGTH};
+pub use ed25519_dalek::Signature;
 use ed25519_dalek::{SignatureError, SigningKey, VerifyingKey};
 use once_cell::sync::OnceCell;
 use rand_core::CryptoRngCore;
@@ -180,6 +180,8 @@ impl PublicKey {
     pub fn fmt_short(&self) -> String {
         data_encoding::HEXLOWER.encode(&self.as_bytes()[..5])
     }
+
+    pub const LENGTH: usize = ed25519_dalek::PUBLIC_KEY_LENGTH;
 }
 
 impl TryFrom<&[u8]> for PublicKey {
@@ -422,7 +424,7 @@ impl TryFrom<&[u8]> for SecretKey {
 fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
     let mut bytes = [0u8; 32];
 
-    let res = if s.len() == PUBLIC_KEY_LENGTH * 2 {
+    let res = if s.len() == PublicKey::LENGTH * 2 {
         // hex
         data_encoding::HEXLOWER.decode_mut(s.as_bytes(), &mut bytes)
     } else {
@@ -430,7 +432,7 @@ fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
     };
     match res {
         Ok(len) => {
-            if len != PUBLIC_KEY_LENGTH {
+            if len != PublicKey::LENGTH {
                 return Err(KeyParsingError::DecodeInvalidLength);
             }
         }
