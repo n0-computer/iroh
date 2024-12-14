@@ -697,24 +697,7 @@ pub struct QuicConfig {
     pub ipv4: bool,
     /// Enable ipv6 QUIC address discovery probes
     pub ipv6: bool,
-    /// A map of RelayUrls to addresses
-    ///
-    /// Only makes sense in the context of iroh, which uses QuicMappedAddrs
-    /// to allow dialing by NodeId
-    #[cfg(feature = "iroh")]
-    pub mapped_addrs: MappedRelayAddrs,
 }
-
-/// Holds a QuicMappedAddr
-#[cfg(feature = "iroh")]
-#[derive(Debug, Clone, Copy)]
-pub struct MappedAddr(pub SocketAddr);
-
-/// A relationship between a socket address and it's QUIC mapped address
-///
-/// Only relevant when using the net-report with iroh.
-#[cfg(feature = "iroh")]
-type MappedRelayAddrs = std::collections::HashMap<SocketAddr, MappedAddr>;
 
 /// Executes a particular [`Probe`], including using a delayed start if needed.
 ///
@@ -937,14 +920,6 @@ async fn run_quic_probe(
             ));
         }
     };
-
-    // if we are using net-report with iroh, we must dial using the mapped address
-    #[cfg(feature = "iroh")]
-    let relay_addr = quic_config
-        .mapped_addrs
-        .get(&relay_addr)
-        .map_or(relay_addr, |mapped_addr| mapped_addr.0.clone());
-
     let quic_client = iroh_relay::quic::QuicClient::new(quic_config.ep, quic_config.client_config)
         .map_err(|e| ProbeError::Error(e, probe.clone()))?;
     let (addr, latency) = quic_client
@@ -1614,7 +1589,6 @@ mod tests {
             client_config,
             ipv4: true,
             ipv6: true,
-            mapped_addrs: std::collections::HashMap::new(),
         };
         let url = relay.url.clone();
         let port = server.quic_addr().unwrap().port();

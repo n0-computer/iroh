@@ -162,8 +162,7 @@ impl Default for Options {
     }
 }
 
-/// Generate a server config with no ALPNS and  a default
-/// transport configuration
+/// Generate a server config with no ALPNS and a default transport configuration
 fn make_default_server_config(secret_key: &SecretKey) -> ServerConfig {
     let quic_server_config = crate::tls::make_server_config(secret_key, vec![], false)
         .expect("should generate valid config");
@@ -574,11 +573,11 @@ impl MagicSock {
                 }
             }
             None => {
-                // Check if this is a QUIC address discovery packet
-                if let Some(addr) = self.node_map.get_qad_addr(&dest) {
-                    // send udp
+                // Check if this is addr is used to perform QUIC Address Discovery
+                if let Some(addr) = self.node_map.qad_addr_for_send(&dest.0) {
                     // rewrite target address
                     transmit.destination = addr;
+                    // send udp
                     match self.try_send_udp(addr, &transmit) {
                         Ok(()) => {
                             trace!(dst = %addr,
@@ -837,8 +836,8 @@ impl MagicSock {
                 // Update the NodeMap and remap RecvMeta to the QuicMappedAddr.
                 match self.node_map.receive_udp(meta.addr) {
                     None => {
-                        // Check if this is QUIC address discovery response
-                        if let Some(quic_mapped_addr) = self.node_map.receive_qad(meta.addr) {
+                        // Check if this address is used for QUIC address discovery
+                        if let Some(addr) = self.node_map.qad_addr_for_recv(&meta.addr) {
                             trace!(
                                 src = ?meta.addr,
                                 count = %quic_datagram_count,
@@ -846,7 +845,7 @@ impl MagicSock {
                                 "UDP recv QUIC address discovery packets",
                             );
                             quic_packets_total += quic_datagram_count;
-                            meta.addr = quic_mapped_addr.0;
+                            meta.addr = addr;
                         } else {
                             warn!(
                                 src = ?meta.addr,
@@ -1975,7 +1974,7 @@ impl AsyncUdpSocket for MagicSock {
         self.try_send(transmit)
     }
 
-    /// NOTE: Receiving on a [`Self::close`]d socket will return [`Poll::Pending`] indefinitely.
+    /// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
     fn poll_recv(
         &self,
         cx: &mut Context,
@@ -2136,6 +2135,9 @@ impl Actor {
                 discovery_events = events;
             }
         }
+
+        // kick off resolving the URLs for relay addresses
+        self.resolve_qad_addrs(Duration::from_millis(10)).await;
 
         let mut receiver_closed = false;
         let mut portmap_watcher_closed = false;
@@ -2515,13 +2517,11 @@ impl Actor {
             .stun_v4(Some(self.pconn4.clone()))
             .stun_v6(self.pconn6.clone());
 
-        // Need to add Quic Mapped Addrs for the relay nodes to use for
-        // QUIC Address Discovery
-        let mapped_addrs = self
-            .resolve_qad_addrs(std::time::Duration::from_millis(500))
+        // Need to get the SocketAddrs of the relay urls and add them to the node map
+        // so the socket knows to treat them special
+        self.resolve_qad_addrs(std::time::Duration::from_millis(300))
             .await;
-        // create a client config for the endpoint to
-        // use for QUIC address discovery
+        // create a client config for the endpoint to use for QUIC address discovery
         let root_store =
             rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
         let client_config = rustls::ClientConfig::builder()
@@ -2532,7 +2532,6 @@ impl Actor {
             client_config,
             ipv4: true,
             ipv6: self.pconn6.is_some(),
-            mapped_addrs,
         });
         opts = opts.quic_config(quic_config);
 
@@ -2634,7 +2633,7 @@ impl Actor {
 
         match relay_node.url.host() {
             Some(url::Host::Domain(hostname)) => {
-                error!(%hostname, "Performing DNS A lookup for relay addr");
+                debug!(%hostname, "Performing DNS A lookup for relay addr");
                 let mut set = JoinSet::new();
                 let resolver = dns_resolver.clone();
                 let ipv4_resolver = resolver.clone();
@@ -2654,13 +2653,13 @@ impl Actor {
                         Err(_) => {}
                         Ok(resolved_addrs) => {
                             for addr in resolved_addrs {
-                                addrs.insert(SocketAddr::new(addr.into(), port));
+                                addrs.insert(SocketAddr::new(addr, port));
                             }
                         }
                     }
                 }
                 if addrs.is_empty() {
-                    error!(%hostname, "Unable to resolve ip addresses for relay node");
+                    debug!(%hostname, "Unable to resolve ip addresses for relay node");
                 }
             }
             Some(url::Host::Ipv4(addr)) => {
@@ -2673,15 +2672,11 @@ impl Actor {
                 error!(?relay_node.url, "No hostname for relay node, cannot resolve ip");
             }
         }
-        return addrs;
+        addrs
     }
 
     /// Resolve the relay addresses used for QUIC address discovery.
-    async fn resolve_qad_addrs(
-        &mut self,
-        duration: Duration,
-    ) -> HashMap<SocketAddr, net_report::MappedAddr> {
-        let mut mapped_addrs = HashMap::new();
+    async fn resolve_qad_addrs(&mut self, duration: Duration) {
         let mut set = JoinSet::new();
         let resolver = self.msock.dns_resolver();
         for relay_node in self.msock.relay_map.nodes() {
@@ -2694,11 +2689,9 @@ impl Actor {
         let res = set.join_all().await;
         for addrs in res {
             addrs.iter().for_each(|addr| {
-                let mapped_addr = self.msock.node_map.add_qad_addr(*addr);
-                mapped_addrs.insert(*addr, net_report::MappedAddr(mapped_addr.0));
+                self.msock.node_map.add_qad_addr(*addr);
             });
         }
-        mapped_addrs
     }
 
     fn set_nearest_relay(&mut self, relay_url: Option<RelayUrl>) -> bool {

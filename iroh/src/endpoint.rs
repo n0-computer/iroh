@@ -452,6 +452,7 @@ impl Builder {
         self
     }
 }
+
 /// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
 #[derive(Debug)]
 struct StaticConfig {
@@ -462,7 +463,7 @@ struct StaticConfig {
 
 impl StaticConfig {
     /// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
-    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> Result<quinn::ServerConfig> {
+    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> Result<ServerConfig> {
         let server_config = make_server_config(
             &self.secret_key,
             alpn_protocols,
