@@ -642,6 +642,7 @@ impl Actor {
             quic_config,
             ..
         } = opts;
+        trace!("Attempting probes for protocols {protocols:#?}");
         if self.current_report_run.is_some() {
             response_tx
                 .send(Err(anyhow!(

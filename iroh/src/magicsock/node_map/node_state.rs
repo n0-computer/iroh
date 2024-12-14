@@ -1671,6 +1671,7 @@ mod tests {
                 (d_endpoint.id, d_endpoint),
             ]),
             next_id: 5,
+            qad_addrs: BTreeSet::new(),
         });
         let mut got = node_map.list_remote_infos(later);
         got.sort_by_key(|p| p.node_id);

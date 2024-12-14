@@ -65,6 +65,8 @@ pub(super) struct NodeMapInner {
     by_quic_mapped_addr: HashMap<QuicMappedAddr, usize>,
     by_id: HashMap<usize, NodeState>,
     next_id: usize,
+    // special set of relay socket addresses that we use to do quic address discovery
+    qad_addrs: BTreeSet<SocketAddr>,
 }
 
 /// Identifier to look up a [`NodeState`] in the [`NodeMap`].
@@ -140,6 +142,61 @@ impl NodeMap {
             .lock()
             .expect("poisoned")
             .add_node_addr(node_addr, source)
+    }
+
+    /// Add a the SocketAddr used to perform QUIC Address Discovery to the nodemap
+    pub(super) fn add_qad_addr(&self, udp_addr: SocketAddr) {
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .qad_addrs
+            .insert(udp_addr);
+    }
+
+    /// Return a correctly canonicalized SocketAddr if this address is one
+    /// used to perform QUIC Address Discovery
+    pub(super) fn qad_addr_for_send(&self, addr: &SocketAddr) -> Option<SocketAddr> {
+        // all addresses given to the endpoint are Ipv6 addresses, so we need to
+        // canonicalize before we check for the actual addr we are trying to send to
+        let canonicalized_addr = SocketAddr::new(addr.ip().to_canonical(), addr.port());
+        if self
+            .inner
+            .lock()
+            .expect("poisoned")
+            .qad_addrs
+            .contains(&canonicalized_addr)
+        {
+            Some(canonicalized_addr)
+        } else {
+            None
+        }
+    }
+
+    /// Return a correctly formed SocketAddr if this address is one used to
+    /// perform QUIC Address Discovery
+    pub(super) fn qad_addr_for_recv(&self, addr: &SocketAddr) -> Option<SocketAddr> {
+        if self
+            .inner
+            .lock()
+            .expect("poisoned")
+            .qad_addrs
+            .contains(addr)
+        {
+            match addr.ip() {
+                IpAddr::V4(ipv4_addr) => {
+                    // if this is an ipv4 addr, we need to map it back to
+                    // an ipv6 addr, since all addresses we use to dial on
+                    // the underlying quinn endpoint are mapped ipv6 addrs
+                    Some(SocketAddr::new(
+                        ipv4_addr.to_ipv6_mapped().into(),
+                        addr.port(),
+                    ))
+                }
+                IpAddr::V6(_) => Some(*addr),
+            }
+        } else {
+            None
+        }
     }
 
     /// Number of nodes currently listed.
