@@ -4236,9 +4236,7 @@
 <a href="#4235" id="4235">4235</a>
 <a href="#4236" id="4236">4236</a>
 <a href="#4237" id="4237">4237</a>
-<a href="#4238" id="4238">4238</a>
-<a href="#4239" id="4239">4239</a>
-<a href="#4240" id="4240">4240</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4238" id="4238">4238</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4391,8 +4389,7 @@
     }
 }
 
-<span class="doccomment">/// Generate a server config with no ALPNS and  a default
-/// transport configuration
+<span class="doccomment">/// Generate a server config with no ALPNS and a default transport configuration
 </span><span class="kw">fn </span>make_default_server_config(secret_key: <span class="kw-2">&amp;</span>SecretKey) -&gt; ServerConfig {
     <span class="kw">let </span>quic_server_config = <span class="kw">crate</span>::tls::make_server_config(secret_key, <span class="macro">vec!</span>[], <span class="bool-val">false</span>)
         .expect(<span class="string">"should generate valid config"</span>);
@@ -4807,10 +4804,10 @@
             <span class="prelude-val">None </span>=&gt; {
                 <span class="comment">// Check if this is addr is used to perform QUIC Address Discovery
                 </span><span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = <span class="self">self</span>.node_map.qad_addr_for_send(<span class="kw-2">&amp;</span>dest.<span class="number">0</span>) {
-                    <span class="comment">// send udp
-                    // rewrite target address
+                    <span class="comment">// rewrite target address
                     </span>transmit.destination = addr;
-                    <span class="kw">match </span><span class="self">self</span>.try_send_udp(addr, <span class="kw-2">&amp;</span>transmit) {
+                    <span class="comment">// send udp
+                    </span><span class="kw">match </span><span class="self">self</span>.try_send_udp(addr, <span class="kw-2">&amp;</span>transmit) {
                         <span class="prelude-val">Ok</span>(()) =&gt; {
                             <span class="macro">trace!</span>(dst = %addr,
                                    <span class="string">"sent QAD transmit over UDP"</span>);
@@ -6116,7 +6113,7 @@
         <span class="self">self</span>.try_send(transmit)
     }
 
-    <span class="doccomment">/// NOTE: Receiving on a [`Self::close`]d socket will return [`Poll::Pending`] indefinitely.
+    <span class="doccomment">/// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
     </span><span class="kw">fn </span>poll_recv(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         cx: <span class="kw-2">&amp;mut </span>Context,
@@ -6670,12 +6667,11 @@
             .stun_v4(<span class="prelude-val">Some</span>(<span class="self">self</span>.pconn4.clone()))
             .stun_v6(<span class="self">self</span>.pconn6.clone());
 
-        <span class="comment">// Need to add Quic Mapped Addrs for the relay nodes to use for
-        // QUIC Address Discovery
+        <span class="comment">// Need to get the SocketAddrs of the relay urls and add them to the node map
+        // so the socket knows to treat them special
         </span><span class="self">self</span>.resolve_qad_addrs(std::time::Duration::from_millis(<span class="number">300</span>))
             .<span class="kw">await</span>;
-        <span class="comment">// create a client config for the endpoint to
-        // use for QUIC address discovery
+        <span class="comment">// create a client config for the endpoint to use for QUIC address discovery
         </span><span class="kw">let </span>root_store =
             rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
         <span class="kw">let </span>client_config = rustls::ClientConfig::builder()

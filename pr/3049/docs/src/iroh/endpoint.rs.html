@@ -1867,7 +1867,8 @@
 <a href="#1866" id="1866">1866</a>
 <a href="#1867" id="1867">1867</a>
 <a href="#1868" id="1868">1868</a>
-<a href="#1869" id="1869">1869</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#1869" id="1869">1869</a>
+<a href="#1870" id="1870">1870</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2288,6 +2289,7 @@
         <span class="self">self
     </span>}
 }
+
 <span class="doccomment">/// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>StaticConfig {
@@ -2298,7 +2300,7 @@
 
 <span class="kw">impl </span>StaticConfig {
     <span class="doccomment">/// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
-    </span><span class="kw">fn </span>create_server_config(<span class="kw-2">&amp;</span><span class="self">self</span>, alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::ServerConfig&gt; {
+    </span><span class="kw">fn </span>create_server_config(<span class="kw-2">&amp;</span><span class="self">self</span>, alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;ServerConfig&gt; {
         <span class="kw">let </span>server_config = make_server_config(
             <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key,
             alpn_protocols,

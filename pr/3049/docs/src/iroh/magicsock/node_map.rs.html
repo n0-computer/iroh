@@ -967,7 +967,7 @@
     by_quic_mapped_addr: HashMap&lt;QuicMappedAddr, usize&gt;,
     by_id: HashMap&lt;usize, NodeState&gt;,
     next_id: usize,
-    <span class="comment">// special mapping for relay socket addresses so that we can do quic address discovery
+    <span class="comment">// special set of relay socket addresses that we use to do quic address discovery
     </span>qad_addrs: BTreeSet&lt;SocketAddr&gt;,
 }
 
@@ -1046,7 +1046,7 @@
             .add_node_addr(node_addr, source)
     }
 
-    <span class="doccomment">/// Add a the SocketAddr used to preform QUIC Address Discovery to the nodemap
+    <span class="doccomment">/// Add a the SocketAddr used to perform QUIC Address Discovery to the nodemap
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>add_qad_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, udp_addr: SocketAddr) {
         <span class="self">self</span>.inner
             .lock()
@@ -1058,8 +1058,8 @@
     <span class="doccomment">/// Return a correctly canonicalized SocketAddr if this address is one
     /// used to perform QUIC Address Discovery
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>qad_addr_for_send(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: <span class="kw-2">&amp;</span>SocketAddr) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
-        <span class="comment">// all mapped addresses are Ipv6 addresses,
-        // so we need to canonicalize before check
+        <span class="comment">// all addresses given to the endpoint are Ipv6 addresses, so we need to
+        // canonicalize before we check for the actual addr we are trying to send to
         </span><span class="kw">let </span>canonicalized_addr = SocketAddr::new(addr.ip().to_canonical(), addr.port());
         <span class="kw">if </span><span class="self">self
             </span>.inner
@@ -1074,7 +1074,7 @@
         </span>}
     }
 
-    <span class="doccomment">/// Return a correctly formed SocketAddr if this adddress is one used to
+    <span class="doccomment">/// Return a correctly formed SocketAddr if this address is one used to
     /// perform QUIC Address Discovery
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>qad_addr_for_recv(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: <span class="kw-2">&amp;</span>SocketAddr) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
         <span class="kw">if </span><span class="self">self

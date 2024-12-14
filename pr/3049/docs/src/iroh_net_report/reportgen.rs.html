@@ -1621,8 +1621,7 @@
 <a href="#1620" id="1620">1620</a>
 <a href="#1621" id="1621">1621</a>
 <a href="#1622" id="1622">1622</a>
-<a href="#1623" id="1623">1623</a>
-<a href="#1624" id="1624">1624</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1623" id="1623">1623</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -2547,7 +2546,6 @@
             ));
         }
     };
-
     <span class="kw">let </span>quic_client = iroh_relay::quic::QuicClient::new(quic_config.ep, quic_config.client_config)
         .map_err(|e| ProbeError::Error(e, probe.clone()))<span class="question-mark">?</span>;
     <span class="kw">let </span>(addr, latency) = quic_client
