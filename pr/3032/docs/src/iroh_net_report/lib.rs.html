@@ -1,4 +1,5 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh-net-report/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../static.files/rustdoc-b21aa549bf6d91ff.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh_net_report" data-themes="" data-resource-suffix="" data-rustdoc-version="1.80.0-nightly (c987ad527 2024-05-01)" data-channel="nightly" data-search-js="search-bf21c90c8c1d92b1.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../static.files/storage-e32f0c247825364d.js"></script><script defer src="../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-09095024cf37855e.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><nav class="sub"><form class="search-form"><span></span><div id="sidebar-button" tabindex="-1"><a href="../../iroh_net_report/all.html" title="show sidebar"></a></div><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Type ‘S’ or ‘/’ to search, ‘?’ for more options…" type="search"><div id="help-button" tabindex="-1"><a href="../../help.html" title="help">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../settings.html" title="settings">Settings</a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh-net-report/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh_net_report" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../../static.files/src-script-56102188.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh_net_report/</div>lib.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -1373,12 +1374,18 @@
 <a href="#1373" id="1373">1373</a>
 <a href="#1374" id="1374">1374</a>
 <a href="#1375" id="1375">1375</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1376" id="1376">1376</a>
+<a href="#1377" id="1377">1377</a>
+<a href="#1378" id="1378">1378</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
 //! etc and reachability to the configured relays.
 </span><span class="comment">// Based on &lt;https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go&gt;
+
+</span><span class="attr">#![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
+#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 </span><span class="kw">use </span>std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -1390,10 +1397,10 @@
 <span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>hickory_resolver::TokioResolver <span class="kw">as </span>DnsResolver;
-<span class="kw">use </span>iroh_base::relay_map::{RelayMap, RelayNode, RelayUrl};
+<span class="kw">use </span>iroh_base::RelayUrl;
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>iroh_relay::protos::stun;
+<span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
 <span class="kw">use </span>netwatch::{IpFamily, UdpSocket};
 <span class="kw">use </span>tokio::{
     sync::{<span class="self">self</span>, mpsc, oneshot},
@@ -1409,8 +1416,7 @@
 <span class="kw">mod </span>reportgen;
 
 <span class="kw">pub use </span>metrics::Metrics;
-<span class="kw">pub use </span>reportgen::ProbeProto <span class="kw">as </span>ProbeProtocol;
-<span class="kw">pub use </span>reportgen::QuicConfig;
+<span class="kw">pub use </span>reportgen::{ProbeProto <span class="kw">as </span>ProbeProtocol, QuicConfig};
 
 <span class="kw">const </span>FULL_REPORT_INTERVAL: Duration = Duration::from_secs(<span class="number">5 </span>* <span class="number">60</span>);
 
@@ -1591,7 +1597,8 @@
     ///
     /// If not provided and:
     /// - no probes are indicated in the *probes* field,
-    /// - or [`ProbeProto::StunIpv4`] probes are explicitly added to the *probes* list,
+    /// - or [`ProbeProtocol::StunIpv4`] probes are explicitly added to the *probes* list,
+    ///
     /// then the client will attempt to bind a suitable socket itself.
     </span><span class="kw">pub </span>stun_sock_v4: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
     <span class="doccomment">/// Socket to send IPv6 STUN probes from.
@@ -1603,6 +1610,7 @@
     /// If not provided and:
     /// - no probes are indicated in the *probes* field,
     /// - or [`ProbeProtocol::StunIpv6`] probes are explicitly added to the *probes* list,
+    ///
     /// then the client will attempt to bind a suitable socket itself.
     </span><span class="kw">pub </span>stun_sock_v6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
     <span class="doccomment">/// Endpoint and client configuration to create a QUIC
@@ -2236,16 +2244,13 @@
 
     </span><span class="kw">use </span>std::sync::Arc;
 
-    <span class="kw">use </span>iroh_base::relay_map::QuicConfig;
-    <span class="kw">use </span>iroh_relay::server;
-
-    <span class="kw">use </span><span class="kw">crate</span>::RelayNode;
+    <span class="kw">use </span>iroh_relay::{server, RelayNode, RelayQuicConfig};
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>relay() -&gt; (server::Server, Arc&lt;RelayNode&gt;) {
         <span class="kw">let </span>server = server::Server::spawn(server::testing::server_config())
             .<span class="kw">await
             </span>.expect(<span class="string">"should serve relay"</span>);
-        <span class="kw">let </span>quic = <span class="prelude-val">Some</span>(QuicConfig {
+        <span class="kw">let </span>quic = <span class="prelude-val">Some</span>(RelayQuicConfig {
             port: server.quic_addr().expect(<span class="string">"server should run quic"</span>).port(),
         });
         <span class="kw">let </span>node_desc = RelayNode {
@@ -2292,6 +2297,8 @@
         </span><span class="kw">use </span>std::{net::IpAddr, sync::Arc};
 
         <span class="kw">use </span>anyhow::Result;
+        <span class="kw">use </span>iroh_base::RelayUrl;
+        <span class="kw">use </span>iroh_relay::RelayNode;
         <span class="kw">use </span>tokio::{
             net,
             sync::{oneshot, Mutex},
@@ -2299,7 +2306,6 @@
         <span class="kw">use </span>tracing::{debug, trace};
 
         <span class="kw">use super</span>::<span class="kw-2">*</span>;
-        <span class="kw">use crate</span>::{RelayMap, RelayNode, RelayUrl};
 
         <span class="doccomment">/// A drop guard to clean up test infrastructure.
         ///

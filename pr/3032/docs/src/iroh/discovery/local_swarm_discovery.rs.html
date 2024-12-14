@@ -1,4 +1,5 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/discovery/local_swarm_discovery.rs`."><title>local_swarm_discovery.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-b21aa549bf6d91ff.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.80.0-nightly (c987ad527 2024-05-01)" data-channel="nightly" data-search-js="search-bf21c90c8c1d92b1.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../static.files/storage-e32f0c247825364d.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-09095024cf37855e.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><nav class="sub"><form class="search-form"><span></span><div id="sidebar-button" tabindex="-1"><a href="../../../iroh/all.html" title="show sidebar"></a></div><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Type ‘S’ or ‘/’ to search, ‘?’ for more options…" type="search"><div id="help-button" tabindex="-1"><a href="../../../help.html" title="help">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../settings.html" title="settings">Settings</a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/discovery/local_swarm_discovery.rs`."><title>local_swarm_discovery.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../../../static.files/src-script-56102188.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/discovery/</div>local_swarm_discovery.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -485,7 +486,9 @@
 <a href="#485" id="485">485</a>
 <a href="#486" id="486">486</a>
 <a href="#487" id="487">487</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
+<a href="#488" id="488">488</a>
+<a href="#489" id="489">489</a>
+<a href="#490" id="490">490</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
@@ -527,8 +530,7 @@
 <span class="kw">use </span>derive_more::FromStr;
 <span class="kw">use </span>futures_lite::stream::Boxed <span class="kw">as </span>BoxStream;
 <span class="kw">use </span>futures_util::FutureExt;
-<span class="kw">use </span>iroh_base::{key::PublicKey, node_addr::NodeAddr};
-<span class="kw">use </span>iroh_relay::RelayUrl;
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 <span class="kw">use </span>swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 <span class="kw">use </span>tokio::{
     sync::mpsc::{
@@ -539,11 +541,11 @@
 };
 <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
-<span class="kw">use </span>watchable::Watchable;
 
 <span class="kw">use crate</span>::{
     discovery::{Discovery, DiscoveryItem},
-    Endpoint, NodeId,
+    watchable::Watchable,
+    Endpoint,
 };
 
 <span class="doccomment">/// The n0 local swarm node discovery name
@@ -640,8 +642,8 @@
         )<span class="question-mark">?</span>;
 
         <span class="kw">let </span>local_addrs: Watchable&lt;<span class="prelude-ty">Option</span>&lt;(<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;, BTreeSet&lt;SocketAddr&gt;)&gt;&gt; =
-            Watchable::new(<span class="prelude-val">None</span>);
-        <span class="kw">let </span>addrs_change = local_addrs.watch();
+            Watchable::default();
+        <span class="kw">let </span><span class="kw-2">mut </span>addrs_change = local_addrs.watch();
         <span class="kw">let </span>discovery_fut = <span class="kw">async move </span>{
             <span class="kw">let </span><span class="kw-2">mut </span>node_addrs: HashMap&lt;PublicKey, Peer&gt; = HashMap::default();
             <span class="kw">let </span><span class="kw-2">mut </span>subscribers = Subscribers::new();
@@ -657,7 +659,7 @@
                     msg = recv.recv() =&gt; {
                         msg
                     }
-                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>((_url, addrs)))= addrs_change.next_value_async() =&gt; {
+                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>((_url, addrs))) = addrs_change.updated() =&gt; {
                         <span class="macro">tracing::trace!</span>(<span class="question-mark">?</span>addrs, <span class="string">"LocalSwarmDiscovery address changed"</span>);
                         discovery.remove_all();
                         <span class="kw">let </span>addrs =
@@ -812,10 +814,12 @@
             });
         };
         <span class="kw">let </span>addrs = LocalSwarmDiscovery::socketaddrs_to_addrs(socketaddrs);
-        <span class="kw">let </span><span class="kw-2">mut </span>discoverer =
-            Discoverer::new_interactive(N0_LOCAL_SWARM.to_string(), node_id.to_string())
-                .with_callback(callback)
-                .with_ip_class(IpClass::Auto);
+        <span class="kw">let </span>node_id_str = data_encoding::BASE32_NOPAD
+            .encode(node_id.as_bytes())
+            .to_ascii_lowercase();
+        <span class="kw">let </span><span class="kw-2">mut </span>discoverer = Discoverer::new_interactive(N0_LOCAL_SWARM.to_string(), node_id_str)
+            .with_callback(callback)
+            .with_ip_class(IpClass::Auto);
         <span class="kw">for </span>addr <span class="kw">in </span>addrs {
             discoverer = discoverer.with_addrs(addr.<span class="number">0</span>, addr.<span class="number">1</span>);
         }
@@ -867,7 +871,8 @@
 
     <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {
         <span class="self">self</span>.local_addrs
-            .replace(<span class="prelude-val">Some</span>((url.cloned(), addrs.clone())));
+            .set(<span class="prelude-val">Some</span>((url.cloned(), addrs.clone())))
+            .ok();
     }
 
     <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;DiscoveryItem&gt;&gt; {
@@ -888,6 +893,7 @@
     /// tests)
     </span><span class="kw">mod </span>run_in_isolation {
         <span class="kw">use </span>futures_lite::StreamExt;
+        <span class="kw">use </span>iroh_base::SecretKey;
         <span class="kw">use </span>testresult::TestResult;
 
         <span class="kw">use </span><span class="kw">super</span>::<span class="kw">super</span>::<span class="kw-2">*</span>;
@@ -967,7 +973,7 @@
         }
 
         <span class="kw">fn </span>make_discoverer() -&gt; <span class="prelude-ty">Result</span>&lt;(PublicKey, LocalSwarmDiscovery)&gt; {
-            <span class="kw">let </span>node_id = <span class="kw">crate</span>::key::SecretKey::generate().public();
+            <span class="kw">let </span>node_id = SecretKey::generate().public();
             <span class="prelude-val">Ok</span>((node_id, LocalSwarmDiscovery::new(node_id)<span class="question-mark">?</span>))
         }
     }

@@ -1,4 +1,5 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/magicsock.rs`."><title>magicsock.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../static.files/rustdoc-b21aa549bf6d91ff.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.80.0-nightly (c987ad527 2024-05-01)" data-channel="nightly" data-search-js="search-bf21c90c8c1d92b1.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../static.files/storage-e32f0c247825364d.js"></script><script defer src="../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-09095024cf37855e.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><nav class="sub"><form class="search-form"><span></span><div id="sidebar-button" tabindex="-1"><a href="../../iroh/all.html" title="show sidebar"></a></div><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Type ‘S’ or ‘/’ to search, ‘?’ for more options…" type="search"><div id="help-button" tabindex="-1"><a href="../../help.html" title="help">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../settings.html" title="settings">Settings</a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/magicsock.rs`."><title>magicsock.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../../static.files/src-script-56102188.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/</div>magicsock.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -4064,51 +4065,7 @@
 <a href="#4064" id="4064">4064</a>
 <a href="#4065" id="4065">4065</a>
 <a href="#4066" id="4066">4066</a>
-<a href="#4067" id="4067">4067</a>
-<a href="#4068" id="4068">4068</a>
-<a href="#4069" id="4069">4069</a>
-<a href="#4070" id="4070">4070</a>
-<a href="#4071" id="4071">4071</a>
-<a href="#4072" id="4072">4072</a>
-<a href="#4073" id="4073">4073</a>
-<a href="#4074" id="4074">4074</a>
-<a href="#4075" id="4075">4075</a>
-<a href="#4076" id="4076">4076</a>
-<a href="#4077" id="4077">4077</a>
-<a href="#4078" id="4078">4078</a>
-<a href="#4079" id="4079">4079</a>
-<a href="#4080" id="4080">4080</a>
-<a href="#4081" id="4081">4081</a>
-<a href="#4082" id="4082">4082</a>
-<a href="#4083" id="4083">4083</a>
-<a href="#4084" id="4084">4084</a>
-<a href="#4085" id="4085">4085</a>
-<a href="#4086" id="4086">4086</a>
-<a href="#4087" id="4087">4087</a>
-<a href="#4088" id="4088">4088</a>
-<a href="#4089" id="4089">4089</a>
-<a href="#4090" id="4090">4090</a>
-<a href="#4091" id="4091">4091</a>
-<a href="#4092" id="4092">4092</a>
-<a href="#4093" id="4093">4093</a>
-<a href="#4094" id="4094">4094</a>
-<a href="#4095" id="4095">4095</a>
-<a href="#4096" id="4096">4096</a>
-<a href="#4097" id="4097">4097</a>
-<a href="#4098" id="4098">4098</a>
-<a href="#4099" id="4099">4099</a>
-<a href="#4100" id="4100">4100</a>
-<a href="#4101" id="4101">4101</a>
-<a href="#4102" id="4102">4102</a>
-<a href="#4103" id="4103">4103</a>
-<a href="#4104" id="4104">4104</a>
-<a href="#4105" id="4105">4105</a>
-<a href="#4106" id="4106">4106</a>
-<a href="#4107" id="4107">4107</a>
-<a href="#4108" id="4108">4108</a>
-<a href="#4109" id="4109">4109</a>
-<a href="#4110" id="4110">4110</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4067" id="4067">4067</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4142,11 +4099,11 @@
 <span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>concurrent_queue::ConcurrentQueue;
-<span class="kw">use </span>futures_lite::{FutureExt, Stream, StreamExt};
+<span class="kw">use </span>futures_lite::{FutureExt, StreamExt};
 <span class="kw">use </span>futures_util::{stream::BoxStream, task::AtomicWaker};
-<span class="kw">use </span>iroh_base::key::NodeId;
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey, SharedSecret};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
-<span class="kw">use </span>iroh_relay::protos::stun;
+<span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
 <span class="kw">use </span>net_report::Options <span class="kw">as </span>ReportOptions;
 <span class="kw">use </span>netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 <span class="kw">use </span>quinn::AsyncUdpSocket;
@@ -4163,7 +4120,6 @@
     Instrument, Level, Span,
 };
 <span class="kw">use </span>url::Url;
-<span class="kw">use </span>watchable::Watchable;
 
 <span class="kw">use </span><span class="self">self</span>::{
     metrics::Metrics <span class="kw">as </span>MagicsockMetrics,
@@ -4176,9 +4132,7 @@
     disco::{<span class="self">self</span>, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
-    endpoint::NodeAddr,
-    key::{PublicKey, SecretKey, SharedSecret},
-    RelayMap, RelayUrl,
+    watchable::{Watchable, Watcher},
 };
 
 <span class="kw">mod </span>metrics;
@@ -4192,7 +4146,7 @@
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">use </span><span class="self">self</span>::timer::Timer;
 <span class="kw">pub use </span><span class="self">self</span>::{
     metrics::Metrics,
-    node_map::{ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, RemoteInfo},
+    node_map::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo},
 };
 
 <span class="doccomment">/// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
@@ -4301,7 +4255,7 @@
     ///
     /// This waker is used by [`IoPoller`] and the [`RelayActor`] to signal when more
     /// datagrams can be sent to the relays.
-    </span>relay_send_waker: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
+    </span>relay_send_waker: Arc&lt;std::sync::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
     <span class="doccomment">/// Counter for ordering of [`MagicSock::poll_recv`] polling order.
     </span>poll_recv_counter: AtomicUsize,
 
@@ -4350,7 +4304,7 @@
 
     <span class="doccomment">/// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
-    </span>pending_call_me_maybes: parking_lot::Mutex&lt;HashMap&lt;PublicKey, RelayUrl&gt;&gt;,
+    </span>pending_call_me_maybes: std::sync::Mutex&lt;HashMap&lt;PublicKey, RelayUrl&gt;&gt;,
 
     <span class="doccomment">/// Indicates the direct addr update state.
     </span>direct_addr_update_state: DirectAddrUpdateState,
@@ -4384,7 +4338,7 @@
     ///
     /// If we are not connected to any relay nodes, set this to `None`.
     </span><span class="kw">fn </span>set_my_relay(<span class="kw-2">&amp;</span><span class="self">self</span>, my_relay: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;RelayUrl&gt; {
-        <span class="self">self</span>.my_relay.replace(my_relay)
+        <span class="self">self</span>.my_relay.set(my_relay).unwrap_or_else(|e| e)
     }
 
     <span class="kw">fn </span>is_closing(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
@@ -4421,53 +4375,42 @@
         <span class="self">self</span>.node_map.remote_info(node_id)
     }
 
-    <span class="doccomment">/// Returns the direct addresses as a stream.
+    <span class="doccomment">/// Returns a [`Watcher`] for this socket's direct addresses.
     ///
     /// The [`MagicSock`] continuously monitors the direct addresses, the network addresses
     /// it might be able to be contacted on, for changes.  Whenever changes are detected
-    /// this stream will yield a new list of addresses.
+    /// this [`Watcher`] will yield a new list of addresses.
     ///
     /// Upon the first creation on the [`MagicSock`] it may not yet have completed a first
-    /// direct addresses discovery, in this case the first item of the stream will not be
-    /// immediately available.  Once this first set of direct addresses are discovered the
-    /// stream will always return the first set of addresses immediately, which are the most
-    /// recently discovered addresses.
+    /// direct addresses discovery, in this case the current item in this [`Watcher`] will be
+    /// [`None`].  Once the first set of direct addresses are discovered the [`Watcher`] will
+    /// store [`Some`] set of addresses.
     ///
-    /// To get the current direct addresses, drop the stream after the first item was
-    /// received.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DirectAddrsStream {
-        <span class="self">self</span>.direct_addrs.updates_stream()
+    /// To get the current direct addresses, use [`Watcher::initialized`].
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
+        <span class="self">self</span>.direct_addrs.addrs.watch()
     }
 
     <span class="doccomment">/// Watch for changes to the home relay.
     ///
-    /// Note that this can be used to wait for the initial home relay to be known. If the home
-    /// relay is known at this point, it will be the first item in the stream.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>watch_home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Stream&lt;Item = RelayUrl&gt; {
-        <span class="kw">let </span>current = futures_lite::stream::iter(<span class="self">self</span>.my_relay());
-        <span class="kw">let </span>changes = <span class="self">self
-            </span>.my_relay
-            .watch()
-            .into_stream()
-            .filter_map(|maybe_relay| maybe_relay);
-        current.chain(changes)
+    /// Note that this can be used to wait for the initial home relay to be known using
+    /// [`Watcher::initialized`].
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt; {
+        <span class="self">self</span>.my_relay.watch()
     }
 
-    <span class="doccomment">/// Returns a stream that reports the [`ConnectionType`] we have to the
+    <span class="doccomment">/// Returns a [`Watcher`] that reports the [`ConnectionType`] we have to the
     /// given `node_id`.
     ///
-    /// The `NodeMap` continuously monitors the `node_id`'s endpoint for
-    /// [`ConnectionType`] changes, and sends the latest [`ConnectionType`]
-    /// on the stream.
-    ///
-    /// The current [`ConnectionType`] will the the initial entry on the stream.
+    /// This gets us a copy of the [`Watcher`] for the [`Watchable`] with a [`ConnectionType`]
+    /// that the `NodeMap` stores for each `node_id`'s endpoint.
     ///
     /// # Errors
     ///
     /// Will return an error if there is no address information known about the
     /// given `node_id`.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>conn_type_stream(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;ConnectionTypeStream&gt; {
-        <span class="self">self</span>.node_map.conn_type_stream(node_id)
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;Watcher&lt;ConnectionType&gt;&gt; {
+        <span class="self">self</span>.node_map.conn_type(node_id)
     }
 
     <span class="doccomment">/// Returns the socket address which can be used by the QUIC layer to dial this node.
@@ -5456,7 +5399,12 @@
     <span class="kw">fn </span>send_queued_call_me_maybes(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="kw">let </span>msg = <span class="self">self</span>.direct_addrs.to_call_me_maybe_message();
         <span class="kw">let </span>msg = disco::Message::CallMeMaybe(msg);
-        <span class="kw">for </span>(public_key, url) <span class="kw">in </span><span class="self">self</span>.pending_call_me_maybes.lock().drain() {
+        <span class="kw">for </span>(public_key, url) <span class="kw">in </span><span class="self">self
+            </span>.pending_call_me_maybes
+            .lock()
+            .expect(<span class="string">"poisoned"</span>)
+            .drain()
+        {
             <span class="kw">if </span>!<span class="self">self</span>.send_disco_message_relay(<span class="kw-2">&amp;</span>url, public_key, msg.clone()) {
                 <span class="macro">warn!</span>(node = %public_key.fmt_short(), <span class="string">"relay channel full, dropping call-me-maybe"</span>);
             }
@@ -5483,6 +5431,7 @@
             <span class="prelude-val">Err</span>(last_refresh_ago) =&gt; {
                 <span class="self">self</span>.pending_call_me_maybes
                     .lock()
+                    .expect(<span class="string">"poisoned"</span>)
                     .insert(dst_node, url.clone());
                 <span class="macro">debug!</span>(
                     <span class="question-mark">?</span>last_refresh_ago,
@@ -5561,7 +5510,7 @@
     <span class="doccomment">/// If running, set to the reason for the currently the update.
     </span>running: sync::watch::Sender&lt;<span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt;&gt;,
     <span class="doccomment">/// If set, start a new update as soon as the current one is finished.
-    </span>want_update: parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt;&gt;,
+    </span>want_update: std::sync::Mutex&lt;<span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt;&gt;,
 }
 
 <span class="kw">impl </span>DirectAddrUpdateState {
@@ -5577,7 +5526,7 @@
     /// scheduling it for later.
     </span><span class="kw">fn </span>schedule_run(<span class="kw-2">&amp;</span><span class="self">self</span>, why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) {
         <span class="kw">if </span><span class="self">self</span>.is_running() {
-            <span class="kw">let _ </span>= <span class="self">self</span>.want_update.lock().insert(why);
+            <span class="kw">let _ </span>= <span class="self">self</span>.want_update.lock().expect(<span class="string">"poisoned"</span>).insert(why);
         } <span class="kw">else </span>{
             <span class="self">self</span>.run(why);
         }
@@ -5600,7 +5549,7 @@
 
     <span class="doccomment">/// Returns the next update, if one is set.
     </span><span class="kw">fn </span>next_update(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt; {
-        <span class="self">self</span>.want_update.lock().take()
+        <span class="self">self</span>.want_update.lock().expect(<span class="string">"poisoned"</span>).take()
     }
 }
 
@@ -5673,7 +5622,7 @@
             closing: AtomicBool::new(<span class="bool-val">false</span>),
             closed: AtomicBool::new(<span class="bool-val">false</span>),
             relay_datagrams_queue: relay_datagrams_queue.clone(),
-            relay_send_waker: Arc::new(parking_lot::Mutex::new(<span class="prelude-val">None</span>)),
+            relay_send_waker: Arc::new(std::sync::Mutex::new(<span class="prelude-val">None</span>)),
             poll_recv_counter: AtomicUsize::new(<span class="number">0</span>),
             actor_sender: actor_sender.clone(),
             ipv6_reported: Arc::new(AtomicBool::new(<span class="bool-val">false</span>)),
@@ -5763,7 +5712,6 @@
         <span class="self">self</span>.msock.closing.store(<span class="bool-val">true</span>, Ordering::Relaxed);
         <span class="self">self</span>.msock.actor_sender.send(ActorMessage::Shutdown).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="self">self</span>.msock.closed.store(<span class="bool-val">true</span>, Ordering::SeqCst);
-        <span class="self">self</span>.msock.direct_addrs.addrs.shutdown();
 
         <span class="kw">let </span><span class="kw-2">mut </span>tasks = <span class="self">self</span>.actor_tasks.lock().<span class="kw">await</span>;
 
@@ -5790,19 +5738,18 @@
 }
 
 <span class="attr">#[derive(Debug, Default)]
-</span><span class="kw">struct </span>DiscoSecrets(parking_lot::Mutex&lt;HashMap&lt;PublicKey, SharedSecret&gt;&gt;);
+</span><span class="kw">struct </span>DiscoSecrets(std::sync::Mutex&lt;HashMap&lt;PublicKey, SharedSecret&gt;&gt;);
 
 <span class="kw">impl </span>DiscoSecrets {
-    <span class="kw">fn </span>get(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        secret: <span class="kw-2">&amp;</span>SecretKey,
-        node_id: PublicKey,
-    ) -&gt; parking_lot::MappedMutexGuard&lt;SharedSecret&gt; {
-        parking_lot::MutexGuard::map(<span class="self">self</span>.<span class="number">0</span>.lock(), |inner| {
-            inner
-                .entry(node_id)
-                .or_insert_with(|| secret.shared(<span class="kw-2">&amp;</span>node_id))
-        })
+    <span class="kw">fn </span>get&lt;F, T&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, secret: <span class="kw-2">&amp;</span>SecretKey, node_id: PublicKey, cb: F) -&gt; T
+    <span class="kw">where
+        </span>F: FnOnce(<span class="kw-2">&amp;mut </span>SharedSecret) -&gt; T,
+    {
+        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
+        <span class="kw">let </span>x = inner
+            .entry(node_id)
+            .or_insert_with(|| secret.shared(<span class="kw-2">&amp;</span>node_id));
+        cb(x)
     }
 
     <span class="kw">pub fn </span>encode_and_seal(
@@ -5812,7 +5759,7 @@
         msg: <span class="kw-2">&amp;</span>disco::Message,
     ) -&gt; Bytes {
         <span class="kw">let </span><span class="kw-2">mut </span>seal = msg.as_bytes();
-        <span class="self">self</span>.get(secret_key, node_id).seal(<span class="kw-2">&amp;mut </span>seal);
+        <span class="self">self</span>.get(secret_key, node_id, |secret| secret.seal(<span class="kw-2">&amp;mut </span>seal));
         disco::encode_message(<span class="kw-2">&amp;</span>secret_key.public(), seal).into()
     }
 
@@ -5822,9 +5769,9 @@
         node_id: PublicKey,
         <span class="kw-2">mut </span>sealed_box: Vec&lt;u8&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;disco::Message, DiscoBoxError&gt; {
-        <span class="self">self</span>.get(secret, node_id)
-            .open(<span class="kw-2">&amp;mut </span>sealed_box)
-            .map_err(DiscoBoxError::Open)<span class="question-mark">?</span>;
+        <span class="self">self</span>.get(secret, node_id, |secret| {
+            secret.open(<span class="kw-2">&amp;mut </span>sealed_box).map_err(DiscoBoxError::Open)
+        })<span class="question-mark">?</span>;
         disco::Message::from_bytes(<span class="kw-2">&amp;</span>sealed_box).map_err(DiscoBoxError::Parse)
     }
 }
@@ -5985,7 +5932,7 @@
     ipv4_poller: Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt;,
     ipv6_poller: <span class="prelude-ty">Option</span>&lt;Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt;&gt;,
     relay_sender: mpsc::Sender&lt;RelayActorMessage&gt;,
-    relay_send_waker: Arc&lt;parking_lot::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
+    relay_send_waker: Arc&lt;std::sync::Mutex&lt;<span class="prelude-ty">Option</span>&lt;Waker&gt;&gt;&gt;,
 }
 
 <span class="kw">impl </span>quinn::UdpPoller <span class="kw">for </span>IoPoller {
@@ -6004,7 +5951,10 @@
         }
         <span class="kw">match </span>this.relay_sender.capacity() {
             <span class="number">0 </span>=&gt; {
-                <span class="self">self</span>.relay_send_waker.lock().replace(cx.waker().clone());
+                <span class="self">self</span>.relay_send_waker
+                    .lock()
+                    .expect(<span class="string">"poisoned"</span>)
+                    .replace(cx.waker().clone());
                 Poll::Pending
             }
             <span class="kw">_ </span>=&gt; Poll::Ready(<span class="prelude-val">Ok</span>(())),
@@ -6349,7 +6299,7 @@
                         loopback,
                     } = tokio::task::spawn_blocking(LocalAddresses::new)
                         .<span class="kw">await
-                        </span>.unwrap();
+                        </span>.expect(<span class="string">"spawn panicked"</span>);
                     <span class="kw">if </span>ips.is_empty() &amp;&amp; addrs.is_empty() {
                         <span class="comment">// Include loopback addresses only if there are no other interfaces
                         // or public addresses, this allows testing offline.
@@ -6684,7 +6634,7 @@
 </span><span class="attr">#[derive(derive_more::Debug, Default, Clone)]
 </span><span class="kw">struct </span>DiscoveredDirectAddrs {
     <span class="doccomment">/// The last set of discovered direct addresses.
-    </span>addrs: Watchable&lt;BTreeSet&lt;DirectAddr&gt;&gt;,
+    </span>addrs: Watchable&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt;,
 
     <span class="doccomment">/// The last time the direct addresses were updated, even if there was no change.
     ///
@@ -6695,8 +6645,8 @@
 <span class="kw">impl </span>DiscoveredDirectAddrs {
     <span class="doccomment">/// Updates the direct addresses, returns `true` if they changed, `false` if not.
     </span><span class="kw">fn </span>update(<span class="kw-2">&amp;</span><span class="self">self</span>, addrs: BTreeSet&lt;DirectAddr&gt;) -&gt; bool {
-        <span class="kw-2">*</span><span class="self">self</span>.updated_at.write().unwrap() = <span class="prelude-val">Some</span>(Instant::now());
-        <span class="kw">let </span>updated = <span class="self">self</span>.addrs.update(addrs).is_ok();
+        <span class="kw-2">*</span><span class="self">self</span>.updated_at.write().expect(<span class="string">"poisoned"</span>) = <span class="prelude-val">Some</span>(Instant::now());
+        <span class="kw">let </span>updated = <span class="self">self</span>.addrs.set(<span class="prelude-val">Some</span>(addrs)).is_ok();
         <span class="kw">if </span>updated {
             <span class="macro">event!</span>(
                 target: <span class="string">"iroh::_events::direct_addrs"</span>,
@@ -6708,7 +6658,12 @@
     }
 
     <span class="kw">fn </span>sockaddrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BTreeSet&lt;SocketAddr&gt; {
-        <span class="self">self</span>.addrs.read().iter().map(|da| da.addr).collect()
+        <span class="self">self</span>.addrs
+            .get()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|da| da.addr)
+            .collect()
     }
 
     <span class="doccomment">/// Whether the direct addr information is considered "fresh".
@@ -6734,55 +6689,14 @@
     }
 
     <span class="kw">fn </span>to_call_me_maybe_message(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; disco::CallMeMaybe {
-        <span class="kw">let </span>my_numbers = <span class="self">self</span>.addrs.read().iter().map(|da| da.addr).collect();
+        <span class="kw">let </span>my_numbers = <span class="self">self
+            </span>.addrs
+            .get()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|da| da.addr)
+            .collect();
         disco::CallMeMaybe { my_numbers }
-    }
-
-    <span class="kw">fn </span>updates_stream(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DirectAddrsStream {
-        DirectAddrsStream {
-            initial: <span class="prelude-val">Some</span>(<span class="self">self</span>.addrs.get()),
-            inner: <span class="self">self</span>.addrs.watch().into_stream(),
-        }
-    }
-}
-
-<span class="doccomment">/// Stream returning local endpoints as they change.
-</span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>DirectAddrsStream {
-    initial: <span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;,
-    inner: watchable::WatcherStream&lt;BTreeSet&lt;DirectAddr&gt;&gt;,
-}
-
-<span class="kw">impl </span>Stream <span class="kw">for </span>DirectAddrsStream {
-    <span class="kw">type </span>Item = BTreeSet&lt;DirectAddr&gt;;
-
-    <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
-        <span class="kw">let </span>this = <span class="kw-2">&amp;mut *</span><span class="self">self</span>;
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(addrs) = this.initial.take() {
-            <span class="kw">if </span>!addrs.is_empty() {
-                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(addrs));
-            }
-        }
-        <span class="kw">loop </span>{
-            <span class="kw">match </span>Pin::new(<span class="kw-2">&amp;mut </span>this.inner).poll_next(cx) {
-                Poll::Pending =&gt; <span class="kw">break </span>Poll::Pending,
-                Poll::Ready(<span class="prelude-val">Some</span>(addrs)) =&gt; {
-                    <span class="kw">if </span>addrs.is_empty() {
-                        <span class="comment">// When we start up we might initially have empty direct addrs as
-                        // the magic socket has not yet figured this out.  Later on this set
-                        // should never be empty.  However even if it was the magicsock
-                        // would be in a state not very usable so skipping those events is
-                        // probably fine.
-                        // To make sure we install the right waker we loop rather than
-                        // returning Poll::Pending immediately here.
-                        </span><span class="kw">continue</span>;
-                    } <span class="kw">else </span>{
-                        <span class="kw">break </span>Poll::Ready(<span class="prelude-val">Some</span>(addrs));
-                    }
-                }
-                Poll::Ready(<span class="prelude-val">None</span>) =&gt; <span class="kw">break </span>Poll::Ready(<span class="prelude-val">None</span>),
-            }
-        }
     }
 }
 
@@ -7104,7 +7018,7 @@
             <span class="kw">let </span>stacks = stacks.clone();
             tasks.spawn(<span class="kw">async move </span>{
                 <span class="kw">let </span>me = m.endpoint.node_id().fmt_short();
-                <span class="kw">let </span><span class="kw-2">mut </span>stream = m.endpoint.direct_addresses();
+                <span class="kw">let </span><span class="kw-2">mut </span>stream = m.endpoint.direct_addresses().stream().filter_map(|i| i);
                 <span class="kw">while let </span><span class="prelude-val">Some</span>(new_eps) = stream.next().<span class="kw">await </span>{
                     <span class="macro">info!</span>(%me, <span class="string">"conn{} endpoints update: {:?}"</span>, my_idx + <span class="number">1</span>, new_eps);
                     update_direct_addrs(<span class="kw-2">&amp;</span>stacks, my_idx, new_eps);
@@ -7846,12 +7760,12 @@
         <span class="kw">let </span>ms = Handle::new(Default::default()).<span class="kw">await</span>.unwrap();
 
         <span class="comment">// See if we can get endpoints.
-        </span><span class="kw">let </span>eps0 = ms.direct_addresses().next().<span class="kw">await</span>.unwrap();
+        </span><span class="kw">let </span>eps0 = ms.direct_addresses().initialized().<span class="kw">await</span>.unwrap();
         <span class="macro">println!</span>(<span class="string">"{eps0:?}"</span>);
         <span class="macro">assert!</span>(!eps0.is_empty());
 
         <span class="comment">// Getting the endpoints again immediately should give the same results.
-        </span><span class="kw">let </span>eps1 = ms.direct_addresses().next().<span class="kw">await</span>.unwrap();
+        </span><span class="kw">let </span>eps1 = ms.direct_addresses().initialized().<span class="kw">await</span>.unwrap();
         <span class="macro">println!</span>(<span class="string">"{eps1:?}"</span>);
         <span class="macro">assert_eq!</span>(eps0, eps1);
     }
@@ -7864,7 +7778,7 @@
             ..Default::default()
         };
         <span class="kw">let </span>msock = MagicSock::spawn(ops).<span class="kw">await</span>.unwrap();
-        <span class="kw">let </span><span class="kw-2">mut </span>relay_stream = msock.watch_home_relay();
+        <span class="kw">let </span><span class="kw-2">mut </span>relay_stream = msock.home_relay().stream().filter_map(|r| r);
 
         <span class="comment">// no relay, nothing to report
         </span><span class="macro">assert_eq!</span>(
@@ -7879,7 +7793,7 @@
 
         <span class="comment">// drop the stream and query it again, the result should be immediately available
 
-        </span><span class="kw">let </span><span class="kw-2">mut </span>relay_stream = msock.watch_home_relay();
+        </span><span class="kw">let </span><span class="kw-2">mut </span>relay_stream = msock.home_relay().stream().filter_map(|r| r);
         <span class="macro">assert_eq!</span>(
             futures_lite::future::poll_once(relay_stream.next()).<span class="kw">await</span>,
             <span class="prelude-val">Some</span>(<span class="prelude-val">Some</span>(url))
@@ -8027,7 +7941,7 @@
             relay_url: <span class="prelude-val">None</span>,
             direct_addresses: msock_2
                 .direct_addresses()
-                .next()
+                .initialized()
                 .<span class="kw">await
                 </span>.expect(<span class="string">"no direct addrs"</span>)
                 .into_iter()
@@ -8133,7 +8047,7 @@
                 relay_url: <span class="prelude-val">None</span>,
                 direct_addresses: msock_2
                     .direct_addresses()
-                    .next()
+                    .initialized()
                     .<span class="kw">await
                     </span>.expect(<span class="string">"no direct addrs"</span>)
                     .into_iter()

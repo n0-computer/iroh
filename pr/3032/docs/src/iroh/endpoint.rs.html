@@ -1,4 +1,5 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/endpoint.rs`."><title>endpoint.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../static.files/rustdoc-b21aa549bf6d91ff.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.80.0-nightly (c987ad527 2024-05-01)" data-channel="nightly" data-search-js="search-bf21c90c8c1d92b1.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../static.files/storage-e32f0c247825364d.js"></script><script defer src="../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-09095024cf37855e.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><nav class="sub"><form class="search-form"><span></span><div id="sidebar-button" tabindex="-1"><a href="../../iroh/all.html" title="show sidebar"></a></div><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Type ‘S’ or ‘/’ to search, ‘?’ for more options…" type="search"><div id="help-button" tabindex="-1"><a href="../../help.html" title="help">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../settings.html" title="settings">Settings</a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/endpoint.rs`."><title>endpoint.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../../static.files/src-script-56102188.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/</div>endpoint.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -1886,7 +1887,12 @@
 <a href="#1886" id="1886">1886</a>
 <a href="#1887" id="1887">1887</a>
 <a href="#1888" id="1888">1888</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#1889" id="1889">1889</a>
+<a href="#1890" id="1890">1890</a>
+<a href="#1891" id="1891">1891</a>
+<a href="#1892" id="1892">1892</a>
+<a href="#1893" id="1893">1893</a>
+<a href="#1894" id="1894">1894</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -1901,6 +1907,7 @@
 
 </span><span class="kw">use </span>std::{
     any::Any,
+    collections::BTreeSet,
     future::{Future, IntoFuture},
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
@@ -1909,10 +1916,10 @@
     time::Duration,
 };
 
-<span class="kw">use </span>anyhow::{anyhow, bail, Context, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>derive_more::Debug;
-<span class="kw">use </span>futures_lite::{Stream, StreamExt};
-<span class="kw">use </span>iroh_base::relay_map::RelayMap;
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
+<span class="kw">use </span>iroh_relay::RelayMap;
 <span class="kw">use </span>pin_project::pin_project;
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{debug, instrument, trace, warn};
@@ -1923,15 +1930,13 @@
         dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
     },
     dns::{default_resolver, DnsResolver},
-    key::{PublicKey, SecretKey},
     magicsock::{<span class="self">self</span>, Handle, QuicMappedAddr},
-    tls, NodeId, RelayUrl,
+    tls,
+    watchable::Watcher,
 };
 
 <span class="kw">mod </span>rtt_actor;
 
-<span class="kw">pub use </span>bytes::Bytes;
-<span class="kw">pub use </span>iroh_base::node_addr::NodeAddr;
 <span class="comment">// Missing still: SendDatagram and ConnectionClose::frame_type's Type.
 </span><span class="kw">pub use </span>quinn::{
     AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream, Connection,
@@ -1951,8 +1956,7 @@
 
 <span class="kw">use </span><span class="self">self</span>::rtt_actor::RttMessage;
 <span class="kw">pub use </span><span class="kw">super</span>::magicsock::{
-    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
-    DirectAddrsStream, RemoteInfo, Source,
+    ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType, RemoteInfo, Source,
 };
 
 <span class="doccomment">/// The delay to fall back to discovery when direct addresses fail.
@@ -2034,7 +2038,7 @@
             .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="kw">let </span>discovery: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; = <span class="kw">match </span>discovery.len() {
             <span class="number">0 </span>=&gt; <span class="prelude-val">None</span>,
-            <span class="number">1 </span>=&gt; <span class="prelude-val">Some</span>(discovery.into_iter().next().unwrap()),
+            <span class="number">1 </span>=&gt; <span class="prelude-val">Some</span>(discovery.into_iter().next().expect(<span class="string">"checked length"</span>)),
             <span class="kw">_ </span>=&gt; <span class="prelude-val">Some</span>(Box::new(ConcurrentDiscovery::from_services(discovery))),
         };
         <span class="kw">let </span>msock_opts = magicsock::Options {
@@ -2203,12 +2207,16 @@
     </span><span class="kw">pub fn </span>discovery_dht(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="kw">use </span><span class="kw">crate</span>::discovery::pkarr::dht::DhtDiscovery;
         <span class="self">self</span>.discovery.push(Box::new(|secret_key| {
-            <span class="prelude-val">Some</span>(Box::new(
-                DhtDiscovery::builder()
-                    .secret_key(secret_key.clone())
-                    .build()
-                    .unwrap(),
-            ))
+            <span class="kw">match </span>DhtDiscovery::builder()
+                .secret_key(secret_key.clone())
+                .build()
+            {
+                <span class="prelude-val">Ok</span>(discovery) =&gt; <span class="prelude-val">Some</span>(Box::new(discovery)),
+                <span class="prelude-val">Err</span>(err) =&gt; {
+                    <span class="macro">tracing::error!</span>(<span class="string">"failed to build discovery: {:?}"</span>, err);
+                    <span class="prelude-val">None
+                </span>}
+            }
         }));
         <span class="self">self
     </span>}
@@ -2543,7 +2551,7 @@
 
         <span class="kw">let </span>rtt_msg = RttMessage::NewConnection {
             connection: connection.weak_handle(),
-            conn_type_changes: <span class="self">self</span>.conn_type_stream(node_id)<span class="question-mark">?</span>,
+            conn_type_changes: <span class="self">self</span>.conn_type(node_id)<span class="question-mark">?</span>.stream(),
             node_id,
         };
         <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.rtt_actor.msg_tx.send(rtt_msg).<span class="kw">await </span>{
@@ -2642,16 +2650,12 @@
 
     <span class="doccomment">/// Returns the current [`NodeAddr`] for this endpoint.
     ///
-    /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and local IP endpoints
+    /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
     /// as they would be returned by [`Endpoint::home_relay`] and
     /// [`Endpoint::direct_addresses`].
     </span><span class="kw">pub async fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;NodeAddr&gt; {
-        <span class="kw">let </span>addrs = <span class="self">self
-            </span>.direct_addresses()
-            .next()
-            .<span class="kw">await
-            </span>.ok_or(<span class="macro">anyhow!</span>(<span class="string">"No IP endpoints found"</span>))<span class="question-mark">?</span>;
-        <span class="kw">let </span>relay = <span class="self">self</span>.home_relay();
+        <span class="kw">let </span>addrs = <span class="self">self</span>.direct_addresses().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>relay = <span class="self">self</span>.home_relay().get()<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(NodeAddr::from_parts(
             <span class="self">self</span>.node_id(),
             relay,
@@ -2659,36 +2663,36 @@
         ))
     }
 
-    <span class="doccomment">/// Returns the [`RelayUrl`] of the Relay server used as home relay.
+    <span class="doccomment">/// Returns a [`Watcher`] for the [`RelayUrl`] of the Relay server used as home relay.
     ///
     /// Every endpoint has a home Relay server which it chooses as the server with the
     /// lowest latency out of the configured servers provided by [`Builder::relay_mode`].
     /// This is the server other iroh nodes can use to reliably establish a connection
     /// to this node.
     ///
-    /// Returns `None` if we are not connected to any Relay server.
+    /// The watcher stores `None` if we are not connected to any Relay server.
     ///
-    /// Note that this will be `None` right after the [`Endpoint`] is created since it takes
-    /// some time to connect to find and connect to the home relay server.  Use
-    /// [`Endpoint::watch_home_relay`] to wait until the home relay server is available.
-    </span><span class="kw">pub fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;RelayUrl&gt; {
-        <span class="self">self</span>.msock.my_relay()
+    /// Note that this will store `None` right after the [`Endpoint`] is created since it takes
+    /// some time to connect to find and connect to the home relay server.
+    ///
+    /// # Examples
+    ///
+    /// To wait for a home relay connection to be established, use [`Watcher::initialized`]:
+    /// ```no_run
+    /// use futures_lite::StreamExt;
+    /// use iroh::Endpoint;
+    ///
+    /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    /// # rt.block_on(async move {
+    /// let mep = Endpoint::builder().bind().await.unwrap();
+    /// let _relay_url = mep.home_relay().initialized().await.unwrap();
+    /// # });
+    /// ```
+    </span><span class="kw">pub fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt; {
+        <span class="self">self</span>.msock.home_relay()
     }
 
-    <span class="doccomment">/// Watches for changes to the home relay.
-    ///
-    /// If there is currently a home relay it will be yielded immediately as the first item
-    /// in the stream.  This makes it possible to use this function to wait for the initial
-    /// home relay to be known.
-    ///
-    /// Note that it is not guaranteed that a home relay will ever become available.  If no
-    /// servers are configured with [`Builder::relay_mode`] this stream will never yield an
-    /// item.
-    </span><span class="kw">pub fn </span>watch_home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Stream&lt;Item = RelayUrl&gt; {
-        <span class="self">self</span>.msock.watch_home_relay()
-    }
-
-    <span class="doccomment">/// Returns the direct addresses of this [`Endpoint`].
+    <span class="doccomment">/// Returns a [`Watcher`] for the direct addresses of this [`Endpoint`].
     ///
     /// The direct addresses of the [`Endpoint`] are those that could be used by other
     /// iroh nodes to establish direct connectivity, depending on the network
@@ -2702,27 +2706,27 @@
     /// will yield a new list of direct addresses.
     ///
     /// When issuing the first call to this method the first direct address discovery might
-    /// still be underway, in this case the first item of the returned stream will not be
-    /// immediately available.  Once this first set of local IP endpoints are discovered the
-    /// stream will always return the first set of IP endpoints immediately, which are the
-    /// most recently discovered IP endpoints.
+    /// still be underway, in this case the [`Watcher`] might not be initialized with [`Some`]
+    /// value yet.  Once the first set of local direct addresses are discovered the [`Watcher`]
+    /// will always return [`Some`] set of direct addresses immediately, which are the most
+    /// recently discovered direct addresses.
     ///
     /// # Examples
     ///
-    /// To get the current endpoints, drop the stream after the first item was received:
-    /// ```
+    /// To get the first set of direct addresses use [`Watcher::initialized`]:
+    /// ```no_run
     /// use futures_lite::StreamExt;
     /// use iroh::Endpoint;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
     /// let mep = Endpoint::builder().bind().await.unwrap();
-    /// let _addrs = mep.direct_addresses().next().await;
+    /// let _addrs = mep.direct_addresses().initialized().await.unwrap();
     /// # });
     /// ```
     ///
     /// [STUN]: https://en.wikipedia.org/wiki/STUN
-    </span><span class="kw">pub fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DirectAddrsStream {
+    </span><span class="kw">pub fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
         <span class="self">self</span>.msock.direct_addresses()
     }
 
@@ -2769,38 +2773,45 @@
     //
     // Partially they return things passed into the builder.
 
-    </span><span class="doccomment">/// Returns a stream that reports connection type changes for the remote node.
+    </span><span class="doccomment">/// Returns a [`Watcher`] that reports the current connection type and any changes for
+    /// given remote node.
     ///
-    /// This returns a stream of [`ConnectionType`] items, each time the underlying
-    /// connection to a remote node changes it yields an item.  These connection changes are
-    /// when the connection switches between using the Relay server and a direct connection.
-    ///
-    /// If there is currently a connection with the remote node the first item in the stream
-    /// will yield immediately returning the current connection type.
+    /// This watcher allows observing a stream of [`ConnectionType`] items by calling
+    /// [`Watcher::stream()`]. If the underlying connection to a remote node changes, it will
+    /// yield a new item.  These connection changes are when the connection switches between
+    /// using the Relay server and a direct connection.
     ///
     /// Note that this does not guarantee each connection change is yielded in the stream.
-    /// If the connection type changes several times before this stream is polled only the
+    /// If the connection type changes several times before this stream is polled, only the
     /// last recorded state is returned.  This can be observed e.g. right at the start of a
     /// connection when the switch from a relayed to a direct connection can be so fast that
     /// the relayed state is never exposed.
     ///
+    /// If there is currently a connection with the remote node, then using [`Watcher::get`]
+    /// will immediately return either [`ConnectionType::Relay`], [`ConnectionType::Direct`]
+    /// or [`ConnectionType::Mixed`].
+    ///
+    /// It is possible for the connection type to be [`ConnectionType::None`] if you've
+    /// recently connected to this node id but previous methods of reaching the node have
+    /// become inaccessible.
+    ///
     /// # Errors
     ///
     /// Will error if we do not have any address information for the given `node_id`.
-    </span><span class="kw">pub fn </span>conn_type_stream(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;ConnectionTypeStream&gt; {
-        <span class="self">self</span>.msock.conn_type_stream(node_id)
+    </span><span class="kw">pub fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;Watcher&lt;ConnectionType&gt;&gt; {
+        <span class="self">self</span>.msock.conn_type(node_id)
     }
 
     <span class="doccomment">/// Returns the DNS resolver used in this [`Endpoint`].
     ///
-    /// See [`Builder::discovery`].
+    /// See [`Builder::dns_resolver`].
     </span><span class="kw">pub fn </span>dns_resolver(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>DnsResolver {
         <span class="self">self</span>.msock.dns_resolver()
     }
 
     <span class="doccomment">/// Returns the discovery mechanism, if configured.
     ///
-    /// See [`Builder::dns_resolver`].
+    /// See [`Builder::discovery`].
     </span><span class="kw">pub fn </span>discovery(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="kw">dyn </span>Discovery&gt; {
         <span class="self">self</span>.msock.discovery()
     }
@@ -3182,13 +3193,13 @@
         <span class="macro">warn!</span>(<span class="question-mark">?</span>conn, <span class="string">"failed to get remote node id"</span>);
         <span class="kw">return</span>;
     };
-    <span class="kw">let </span><span class="prelude-val">Ok</span>(conn_type_changes) = magic_ep.conn_type_stream(peer_id) <span class="kw">else </span>{
-        <span class="macro">warn!</span>(<span class="question-mark">?</span>conn, <span class="string">"failed to create conn_type_stream"</span>);
+    <span class="kw">let </span><span class="prelude-val">Ok</span>(conn_type_changes) = magic_ep.conn_type(peer_id) <span class="kw">else </span>{
+        <span class="macro">warn!</span>(<span class="question-mark">?</span>conn, <span class="string">"failed to create conn_type stream"</span>);
         <span class="kw">return</span>;
     };
     <span class="kw">let </span>rtt_msg = RttMessage::NewConnection {
         connection: conn.weak_handle(),
-        conn_type_changes,
+        conn_type_changes: conn_type_changes.stream(),
         node_id: peer_id,
     };
     <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = magic_ep.rtt_actor.msg_tx.try_send(rtt_msg) {
@@ -3297,6 +3308,7 @@
 
     <span class="kw">use </span>std::time::Instant;
 
+    <span class="kw">use </span>futures_lite::StreamExt;
     <span class="kw">use </span>iroh_test::CallOnDrop;
     <span class="kw">use </span>rand::SeedableRng;
     <span class="kw">use </span>tracing::{error_span, info, info_span, Instrument};
@@ -3697,7 +3709,7 @@
             </span>.unwrap();
 
         <span class="kw">async fn </span>handle_direct_conn(ep: <span class="kw-2">&amp;</span>Endpoint, node_id: PublicKey) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-            <span class="kw">let </span><span class="kw-2">mut </span>stream = ep.conn_type_stream(node_id)<span class="question-mark">?</span>;
+            <span class="kw">let </span><span class="kw-2">mut </span>stream = ep.conn_type(node_id)<span class="question-mark">?</span>.stream();
             <span class="kw">let </span>src = ep.node_id().fmt_short();
             <span class="kw">let </span>dst = node_id.fmt_short();
             <span class="kw">while let </span><span class="prelude-val">Some</span>(conn_type) = stream.next().<span class="kw">await </span>{
@@ -3768,7 +3780,7 @@
             .<span class="kw">await
             </span>.unwrap();
 
-        tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), ep.direct_addresses().next())
+        tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), ep.direct_addresses().initialized())
             .<span class="kw">await
             </span>.unwrap()
             .unwrap();

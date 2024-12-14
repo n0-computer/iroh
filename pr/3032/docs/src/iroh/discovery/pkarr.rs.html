@@ -1,4 +1,5 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/discovery/pkarr.rs`."><title>pkarr.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-b21aa549bf6d91ff.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.80.0-nightly (c987ad527 2024-05-01)" data-channel="nightly" data-search-js="search-bf21c90c8c1d92b1.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../static.files/storage-e32f0c247825364d.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-09095024cf37855e.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><nav class="sub"><form class="search-form"><span></span><div id="sidebar-button" tabindex="-1"><a href="../../../iroh/all.html" title="show sidebar"></a></div><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Type ‘S’ or ‘/’ to search, ‘?’ for more options…" type="search"><div id="help-button" tabindex="-1"><a href="../../../help.html" title="help">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../settings.html" title="settings">Settings</a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/discovery/pkarr.rs`."><title>pkarr.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../../../static.files/src-script-56102188.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/discovery/</div>pkarr.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -411,7 +412,8 @@
 <a href="#411" id="411">411</a>
 <a href="#412" id="412">412</a>
 <a href="#413" id="413">413</a>
-</pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
+<a href="#414" id="414">414</a>
+<a href="#415" id="415">415</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
 //! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
@@ -451,9 +453,9 @@
 //! [pkarr]: https://pkarr.org
 //! [DNS Resource Records]: https://en.wikipedia.org/wiki/Domain_Name_System#Resource_records
 //! [Mainline DHT]: https://en.wikipedia.org/wiki/Mainline_DHT
-//! [`SecretKey`]: crate::key::SecretKey
-//! [`PublicKey`]: crate::key::PublicKey
-//! [`NodeId`]: crate::key::NodeId
+//! [`SecretKey`]: crate::SecretKey
+//! [`PublicKey`]: crate::PublicKey
+//! [`NodeId`]: crate::NodeId
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
 //! [`DhtDiscovery`]: dht::DhtDiscovery
 
@@ -461,7 +463,7 @@
 
 <span class="kw">use </span>anyhow::{anyhow, bail, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_util::stream::BoxStream;
-<span class="kw">use </span>iroh_relay::RelayUrl;
+<span class="kw">use </span>iroh_base::{NodeId, RelayUrl, SecretKey};
 <span class="kw">use </span>pkarr::SignedPacket;
 <span class="kw">use </span>tokio::{
     task::JoinHandle,
@@ -469,14 +471,13 @@
 };
 <span class="kw">use </span>tracing::{debug, error_span, info, warn, Instrument};
 <span class="kw">use </span>url::Url;
-<span class="kw">use </span>watchable::{Watchable, Watcher};
 
 <span class="kw">use crate</span>::{
     discovery::{Discovery, DiscoveryItem},
     dns::node_info::NodeInfo,
     endpoint::force_staging_infra,
-    key::SecretKey,
-    Endpoint, NodeId,
+    watchable::{Disconnected, Watchable, Watcher},
+    Endpoint,
 };
 
 <span class="attr">#[cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)]
@@ -524,7 +525,7 @@
 ///
 /// [pkarr]: https://pkarr.org
 /// [module docs]: crate::discovery::pkarr
-/// [`RelayUrl`]: crate::relay::RelayUrl
+/// [`RelayUrl`]: crate::RelayUrl
 /// [`ConcurrentDiscovery`]: super::ConcurrentDiscovery
 </span><span class="attr">#[derive(derive_more::Debug, Clone)]
 </span><span class="kw">pub struct </span>PkarrPublisher {
@@ -609,7 +610,7 @@
     /// This is a nonblocking function, the actual update is performed in the background.
     </span><span class="kw">pub fn </span>update_addr_info(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {
         <span class="kw">let </span>info = NodeInfo::new(<span class="self">self</span>.node_id, url.cloned().map(Into::into), addrs.clone());
-        <span class="self">self</span>.watchable.update(<span class="prelude-val">Some</span>(info)).ok();
+        <span class="self">self</span>.watchable.set(<span class="prelude-val">Some</span>(info)).ok();
     }
 }
 
@@ -641,12 +642,15 @@
 }
 
 <span class="kw">impl </span>PublisherService {
-    <span class="kw">async fn </span>run(<span class="self">self</span>) {
+    <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) {
         <span class="kw">let </span><span class="kw-2">mut </span>failed_attempts = <span class="number">0</span>;
         <span class="kw">let </span>republish = tokio::time::sleep(Duration::MAX);
         <span class="macro">tokio::pin!</span>(republish);
         <span class="kw">loop </span>{
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(info) = <span class="self">self</span>.watcher.get() {
+            <span class="kw">let </span><span class="prelude-val">Ok</span>(info) = <span class="self">self</span>.watcher.get() <span class="kw">else </span>{
+                <span class="kw">break</span>; <span class="comment">// disconnected
+            </span>};
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(info) = info {
                 <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.publish_current(info).<span class="kw">await </span>{
                     failed_attempts += <span class="number">1</span>;
                     <span class="comment">// Retry after increasing timeout
@@ -669,9 +673,9 @@
             }
             <span class="comment">// Wait until either the retry/republish timeout is reached, or the node info changed.
             </span><span class="macro">tokio::select!</span> {
-                res = <span class="self">self</span>.watcher.watch_async() =&gt; <span class="kw">match </span>res {
-                    <span class="prelude-val">Ok</span>(()) =&gt; <span class="macro">debug!</span>(<span class="string">"Publish node info to pkarr (info changed)"</span>),
-                    <span class="prelude-val">Err</span>(_disconnected) =&gt; <span class="kw">break</span>,
+                res = <span class="self">self</span>.watcher.updated() =&gt; <span class="kw">match </span>res {
+                    <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="macro">debug!</span>(<span class="string">"Publish node info to pkarr (info changed)"</span>),
+                    <span class="prelude-val">Err</span>(Disconnected) =&gt; <span class="kw">break</span>,
                 },
                 <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>republish =&gt; <span class="macro">debug!</span>(<span class="string">"Publish node info to pkarr (interval elapsed)"</span>),
             }

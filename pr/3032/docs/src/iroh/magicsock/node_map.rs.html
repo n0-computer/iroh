@@ -1,4 +1,5 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/magicsock/node_map.rs`."><title>node_map.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-b21aa549bf6d91ff.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.80.0-nightly (c987ad527 2024-05-01)" data-channel="nightly" data-search-js="search-bf21c90c8c1d92b1.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../static.files/storage-e32f0c247825364d.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-20a3ad099b048cf2.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-09095024cf37855e.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><nav class="sub"><form class="search-form"><span></span><div id="sidebar-button" tabindex="-1"><a href="../../../iroh/all.html" title="show sidebar"></a></div><input class="search-input" name="search" aria-label="Run search in the documentation" autocomplete="off" spellcheck="false" placeholder="Type ‘S’ or ‘/’ to search, ‘?’ for more options…" type="search"><div id="help-button" tabindex="-1"><a href="../../../help.html" title="help">?</a></div><div id="settings-menu" tabindex="-1"><a href="../../../settings.html" title="settings">Settings</a></div></form></nav><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/magicsock/node_map.rs`."><title>node_map.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../../../static.files/src-script-56102188.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/magicsock/</div>node_map.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -832,20 +833,26 @@
 <a href="#832" id="832">832</a>
 <a href="#833" id="833">833</a>
 <a href="#834" id="834">834</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#835" id="835">835</a>
+<a href="#836" id="836">836</a>
+<a href="#837" id="837">837</a>
+<a href="#838" id="838">838</a>
+<a href="#839" id="839">839</a>
+<a href="#840" id="840">840</a>
+<a href="#841" id="841">841</a>
+<a href="#842" id="842">842</a>
+<a href="#843" id="843">843</a>
+<a href="#844" id="844">844</a>
+<a href="#845" id="845">845</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
-    pin::Pin,
-    task::{Context, Poll},
+    sync::Mutex,
     time::Instant,
 };
 
-<span class="kw">use </span>futures_lite::stream::Stream;
-<span class="kw">use </span>iroh_base::key::NodeId;
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 <span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>iroh_relay::RelayUrl;
-<span class="kw">use </span>parking_lot::Mutex;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>stun_rs::TransactionId;
 <span class="kw">use </span>tracing::{debug, info, instrument, trace, warn};
@@ -859,8 +866,7 @@
 };
 <span class="kw">use crate</span>::{
     disco::{CallMeMaybe, Pong, SendAddr},
-    key::PublicKey,
-    NodeAddr,
+    watchable::Watcher,
 };
 
 <span class="kw">mod </span>best_addr;
@@ -975,20 +981,26 @@
 
     <span class="doccomment">/// Add the contact information for a node.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>add_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: NodeAddr, source: Source) {
-        <span class="self">self</span>.inner.lock().add_node_addr(node_addr, source)
+        <span class="self">self</span>.inner
+            .lock()
+            .expect(<span class="string">"poisoned"</span>)
+            .add_node_addr(node_addr, source)
     }
 
     <span class="doccomment">/// Number of nodes currently listed.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>node_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.inner.lock().node_count()
+        <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).node_count()
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>receive_udp(<span class="kw-2">&amp;</span><span class="self">self</span>, udp_addr: SocketAddr) -&gt; <span class="prelude-ty">Option</span>&lt;(PublicKey, QuicMappedAddr)&gt; {
-        <span class="self">self</span>.inner.lock().receive_udp(udp_addr)
+        <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).receive_udp(udp_addr)
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>receive_relay(<span class="kw-2">&amp;</span><span class="self">self</span>, relay_url: <span class="kw-2">&amp;</span>RelayUrl, src: NodeId) -&gt; QuicMappedAddr {
-        <span class="self">self</span>.inner.lock().receive_relay(relay_url, src)
+        <span class="self">self</span>.inner
+            .lock()
+            .expect(<span class="string">"poisoned"</span>)
+            .receive_relay(relay_url, src)
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>notify_ping_sent(
@@ -999,13 +1011,23 @@
         purpose: DiscoPingPurpose,
         msg_sender: tokio::sync::mpsc::Sender&lt;ActorMessage&gt;,
     ) {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(ep) = <span class="self">self</span>.inner.lock().get_mut(NodeStateKey::Idx(id)) {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(ep) = <span class="self">self
+            </span>.inner
+            .lock()
+            .expect(<span class="string">"poisoned"</span>)
+            .get_mut(NodeStateKey::Idx(id))
+        {
             ep.ping_sent(dst, tx_id, purpose, msg_sender);
         }
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>notify_ping_timeout(<span class="kw-2">&amp;</span><span class="self">self</span>, id: usize, tx_id: stun_rs::TransactionId) {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(ep) = <span class="self">self</span>.inner.lock().get_mut(NodeStateKey::Idx(id)) {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(ep) = <span class="self">self
+            </span>.inner
+            .lock()
+            .expect(<span class="string">"poisoned"</span>)
+            .get_mut(NodeStateKey::Idx(id))
+        {
             ep.ping_timeout(tx_id);
         }
     }
@@ -1016,6 +1038,7 @@
     ) -&gt; <span class="prelude-ty">Option</span>&lt;QuicMappedAddr&gt; {
         <span class="self">self</span>.inner
             .lock()
+            .expect(<span class="string">"poisoned"</span>)
             .get(NodeStateKey::NodeId(node_key))
             .map(|ep| <span class="kw-2">*</span>ep.quic_mapped_addr())
     }
@@ -1028,11 +1051,17 @@
         src: SendAddr,
         tx_id: TransactionId,
     ) -&gt; PingHandled {
-        <span class="self">self</span>.inner.lock().handle_ping(sender, src, tx_id)
+        <span class="self">self</span>.inner
+            .lock()
+            .expect(<span class="string">"poisoned"</span>)
+            .handle_ping(sender, src, tx_id)
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>handle_pong(<span class="kw-2">&amp;</span><span class="self">self</span>, sender: PublicKey, src: <span class="kw-2">&amp;</span>DiscoMessageSource, pong: Pong) {
-        <span class="self">self</span>.inner.lock().handle_pong(sender, src, pong)
+        <span class="self">self</span>.inner
+            .lock()
+            .expect(<span class="string">"poisoned"</span>)
+            .handle_pong(sender, src, pong)
     }
 
     <span class="attr">#[must_use = <span class="string">"actions must be handled"</span>]
@@ -1041,7 +1070,10 @@
         sender: PublicKey,
         cm: CallMeMaybe,
     ) -&gt; Vec&lt;PingAction&gt; {
-        <span class="self">self</span>.inner.lock().handle_call_me_maybe(sender, cm)
+        <span class="self">self</span>.inner
+            .lock()
+            .expect(<span class="string">"poisoned"</span>)
+            .handle_call_me_maybe(sender, cm)
     }
 
     <span class="attr">#[allow(clippy::type_complexity)]
@@ -1055,7 +1087,7 @@
         <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
         Vec&lt;PingAction&gt;,
     )&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock();
+        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>);
         <span class="kw">let </span>ep = inner.get_mut(NodeStateKey::QuicMappedAddr(addr))<span class="question-mark">?</span>;
         <span class="kw">let </span>public_key = <span class="kw-2">*</span>ep.public_key();
         <span class="macro">trace!</span>(dest = %addr, node_id = %public_key.fmt_short(), <span class="string">"dst mapped to NodeId"</span>);
@@ -1064,21 +1096,21 @@
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>notify_shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock();
+        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>);
         <span class="kw">for </span>(<span class="kw">_</span>, ep) <span class="kw">in </span>inner.node_states_mut() {
             ep.reset();
         }
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>reset_node_states(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock();
+        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>);
         <span class="kw">for </span>(<span class="kw">_</span>, ep) <span class="kw">in </span>inner.node_states_mut() {
             ep.note_connectivity_change();
         }
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>nodes_stayin_alive(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;PingAction&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock();
+        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>);
         inner
             .node_states_mut()
             .flat_map(|(_idx, node_state)| node_state.stayin_alive())
@@ -1091,34 +1123,38 @@
         // we can't avoid `collect` here since it would hold a lock for an indefinite time. Even if
         // we were to find this acceptable, dealing with the lifetimes of the mutex's guard and the
         // internal iterator will be a hassle, if possible at all.
-        </span><span class="self">self</span>.inner.lock().remote_infos_iter(now).collect()
+        </span><span class="self">self</span>.inner
+            .lock()
+            .expect(<span class="string">"poisoned"</span>)
+            .remote_infos_iter(now)
+            .collect()
     }
 
-    <span class="doccomment">/// Returns a stream of [`ConnectionType`].
-    ///
-    /// Sends the current [`ConnectionType`] whenever any changes to the
-    /// connection type for `public_key` has occurred.
+    <span class="doccomment">/// Returns a [`Watcher`] for given node's [`ConnectionType`].
     ///
     /// # Errors
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
-    /// the `public_key`
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>conn_type_stream(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; anyhow::Result&lt;ConnectionTypeStream&gt; {
-        <span class="self">self</span>.inner.lock().conn_type_stream(node_id)
+    /// the `node_id`
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; anyhow::Result&lt;Watcher&lt;ConnectionType&gt;&gt; {
+        <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).conn_type(node_id)
     }
 
     <span class="doccomment">/// Get the [`RemoteInfo`]s for the node identified by [`NodeId`].
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>remote_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;RemoteInfo&gt; {
-        <span class="self">self</span>.inner.lock().remote_info(node_id)
+        <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).remote_info(node_id)
     }
 
     <span class="doccomment">/// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>prune_inactive(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="self">self</span>.inner.lock().prune_inactive();
+        <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).prune_inactive();
     }
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>on_direct_addr_discovered(<span class="kw-2">&amp;</span><span class="self">self</span>, discovered: BTreeSet&lt;SocketAddr&gt;) {
-        <span class="self">self</span>.inner.lock().on_direct_addr_discovered(discovered);
+        <span class="self">self</span>.inner
+            .lock()
+            .expect(<span class="string">"poisoned"</span>)
+            .on_direct_addr_discovered(discovered);
     }
 }
 
@@ -1268,12 +1304,9 @@
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
-    </span><span class="kw">fn </span>conn_type_stream(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; anyhow::Result&lt;ConnectionTypeStream&gt; {
+    </span><span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; anyhow::Result&lt;Watcher&lt;ConnectionType&gt;&gt; {
         <span class="kw">match </span><span class="self">self</span>.get(NodeStateKey::NodeId(node_id)) {
-            <span class="prelude-val">Some</span>(ep) =&gt; <span class="prelude-val">Ok</span>(ConnectionTypeStream {
-                initial: <span class="prelude-val">Some</span>(ep.conn_type()),
-                inner: ep.conn_type_stream(),
-            }),
+            <span class="prelude-val">Some</span>(ep) =&gt; <span class="prelude-val">Ok</span>(ep.conn_type()),
             <span class="prelude-val">None </span>=&gt; <span class="macro">anyhow::bail!</span>(<span class="string">"No endpoint for {node_id:?} found"</span>),
         }
     }
@@ -1428,25 +1461,6 @@
     }
 }
 
-<span class="doccomment">/// Stream returning `ConnectionTypes`
-</span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>ConnectionTypeStream {
-    initial: <span class="prelude-ty">Option</span>&lt;ConnectionType&gt;,
-    inner: watchable::WatcherStream&lt;ConnectionType&gt;,
-}
-
-<span class="kw">impl </span>Stream <span class="kw">for </span>ConnectionTypeStream {
-    <span class="kw">type </span>Item = ConnectionType;
-
-    <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
-        <span class="kw">let </span>this = <span class="kw-2">&amp;mut *</span><span class="self">self</span>;
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(initial_conn_type) = this.initial.take() {
-            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(initial_conn_type));
-        }
-        Pin::new(<span class="kw-2">&amp;mut </span>this.inner).poll_next(cx)
-    }
-}
-
 <span class="doccomment">/// An (Ip, Port) pair.
 ///
 /// NOTE: storing an [`IpPort`] is safer than storing a [`SocketAddr`] because for IPv6 socket
@@ -1488,8 +1502,9 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::net::Ipv4Addr;
 
+    <span class="kw">use </span>iroh_base::SecretKey;
+
     <span class="kw">use super</span>::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, <span class="kw-2">*</span>};
-    <span class="kw">use </span><span class="kw">crate</span>::key::SecretKey;
 
     <span class="kw">impl </span>NodeMap {
         <span class="attr">#[track_caller]
@@ -1578,6 +1593,7 @@
         <span class="kw">let </span>id = node_map
             .inner
             .lock()
+            .unwrap()
             .insert_node(Options {
                 node_id: public_key,
                 relay_url: <span class="prelude-val">None</span>,
@@ -1600,7 +1616,7 @@
             <span class="comment">// add address
             </span>node_map.add_test_addr(node_addr);
             <span class="comment">// make it active
-            </span>node_map.inner.lock().receive_udp(addr);
+            </span>node_map.inner.lock().unwrap().receive_udp(addr);
         }
 
         <span class="macro">info!</span>(<span class="string">"Adding offline/inactive addresses"</span>);
@@ -1610,7 +1626,7 @@
             node_map.add_test_addr(node_addr);
         }
 
-        <span class="kw">let </span><span class="kw-2">mut </span>node_map_inner = node_map.inner.lock();
+        <span class="kw">let </span><span class="kw-2">mut </span>node_map_inner = node_map.inner.lock().unwrap();
         <span class="kw">let </span>endpoint = node_map_inner.by_id.get_mut(<span class="kw-2">&amp;</span>id).unwrap();
 
         <span class="macro">info!</span>(<span class="string">"Adding alive addresses"</span>);
@@ -1649,7 +1665,12 @@
         </span><span class="kw">let </span>active_node = SecretKey::generate().public();
         <span class="kw">let </span>addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), <span class="number">167</span>);
         node_map.add_test_addr(NodeAddr::new(active_node).with_direct_addresses([addr]));
-        node_map.inner.lock().receive_udp(addr).expect(<span class="string">"registered"</span>);
+        node_map
+            .inner
+            .lock()
+            .unwrap()
+            .receive_udp(addr)
+            .expect(<span class="string">"registered"</span>);
 
         <span class="kw">for _ in </span><span class="number">0</span>..MAX_INACTIVE_NODES + <span class="number">1 </span>{
             <span class="kw">let </span>node = SecretKey::generate().public();
@@ -1662,6 +1683,7 @@
         node_map
             .inner
             .lock()
+            .unwrap()
             .get(NodeStateKey::NodeId(active_node))
             .expect(<span class="string">"should not be pruned"</span>);
     }
