@@ -4053,19 +4053,7 @@
 <a href="#4052" id="4052">4052</a>
 <a href="#4053" id="4053">4053</a>
 <a href="#4054" id="4054">4054</a>
-<a href="#4055" id="4055">4055</a>
-<a href="#4056" id="4056">4056</a>
-<a href="#4057" id="4057">4057</a>
-<a href="#4058" id="4058">4058</a>
-<a href="#4059" id="4059">4059</a>
-<a href="#4060" id="4060">4060</a>
-<a href="#4061" id="4061">4061</a>
-<a href="#4062" id="4062">4062</a>
-<a href="#4063" id="4063">4063</a>
-<a href="#4064" id="4064">4064</a>
-<a href="#4065" id="4065">4065</a>
-<a href="#4066" id="4066">4066</a>
-<a href="#4067" id="4067">4067</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4055" id="4055">4055</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4104,7 +4092,6 @@
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey, SharedSecret};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
-<span class="kw">use </span>net_report::Options <span class="kw">as </span>ReportOptions;
 <span class="kw">use </span>netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 <span class="kw">use </span>quinn::AsyncUdpSocket;
 <span class="kw">use </span>rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -6407,23 +6394,12 @@
         }
 
         <span class="kw">let </span>relay_map = <span class="self">self</span>.msock.relay_map.clone();
-        <span class="kw">let </span>pconn4 = <span class="prelude-val">Some</span>(<span class="self">self</span>.pconn4.clone());
-        <span class="kw">let </span>pconn6 = <span class="self">self</span>.pconn6.clone();
-
-        <span class="kw">let </span>quic_config = <span class="prelude-val">None</span>;
+        <span class="kw">let </span>opts = net_report::Options::default()
+            .stun_v4(<span class="prelude-val">Some</span>(<span class="self">self</span>.pconn4.clone()))
+            .stun_v6(<span class="self">self</span>.pconn6.clone());
 
         <span class="macro">debug!</span>(<span class="string">"requesting net_report report"</span>);
-        <span class="kw">match </span><span class="self">self
-            </span>.net_reporter
-            .get_report_channel(ReportOptions {
-                relay_map,
-                stun_sock_v4: pconn4,
-                stun_sock_v6: pconn6,
-                quic_config,
-                protocols: ReportOptions::default_protocols(),
-            })
-            .<span class="kw">await
-        </span>{
+        <span class="kw">match </span><span class="self">self</span>.net_reporter.get_report_channel(relay_map, opts).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(rx) =&gt; {
                 <span class="kw">let </span>msg_sender = <span class="self">self</span>.msg_sender.clone();
                 tokio::task::spawn(<span class="kw">async move </span>{

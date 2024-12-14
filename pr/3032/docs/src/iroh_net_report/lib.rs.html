@@ -1376,7 +1376,79 @@
 <a href="#1375" id="1375">1375</a>
 <a href="#1376" id="1376">1376</a>
 <a href="#1377" id="1377">1377</a>
-<a href="#1378" id="1378">1378</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1378" id="1378">1378</a>
+<a href="#1379" id="1379">1379</a>
+<a href="#1380" id="1380">1380</a>
+<a href="#1381" id="1381">1381</a>
+<a href="#1382" id="1382">1382</a>
+<a href="#1383" id="1383">1383</a>
+<a href="#1384" id="1384">1384</a>
+<a href="#1385" id="1385">1385</a>
+<a href="#1386" id="1386">1386</a>
+<a href="#1387" id="1387">1387</a>
+<a href="#1388" id="1388">1388</a>
+<a href="#1389" id="1389">1389</a>
+<a href="#1390" id="1390">1390</a>
+<a href="#1391" id="1391">1391</a>
+<a href="#1392" id="1392">1392</a>
+<a href="#1393" id="1393">1393</a>
+<a href="#1394" id="1394">1394</a>
+<a href="#1395" id="1395">1395</a>
+<a href="#1396" id="1396">1396</a>
+<a href="#1397" id="1397">1397</a>
+<a href="#1398" id="1398">1398</a>
+<a href="#1399" id="1399">1399</a>
+<a href="#1400" id="1400">1400</a>
+<a href="#1401" id="1401">1401</a>
+<a href="#1402" id="1402">1402</a>
+<a href="#1403" id="1403">1403</a>
+<a href="#1404" id="1404">1404</a>
+<a href="#1405" id="1405">1405</a>
+<a href="#1406" id="1406">1406</a>
+<a href="#1407" id="1407">1407</a>
+<a href="#1408" id="1408">1408</a>
+<a href="#1409" id="1409">1409</a>
+<a href="#1410" id="1410">1410</a>
+<a href="#1411" id="1411">1411</a>
+<a href="#1412" id="1412">1412</a>
+<a href="#1413" id="1413">1413</a>
+<a href="#1414" id="1414">1414</a>
+<a href="#1415" id="1415">1415</a>
+<a href="#1416" id="1416">1416</a>
+<a href="#1417" id="1417">1417</a>
+<a href="#1418" id="1418">1418</a>
+<a href="#1419" id="1419">1419</a>
+<a href="#1420" id="1420">1420</a>
+<a href="#1421" id="1421">1421</a>
+<a href="#1422" id="1422">1422</a>
+<a href="#1423" id="1423">1423</a>
+<a href="#1424" id="1424">1424</a>
+<a href="#1425" id="1425">1425</a>
+<a href="#1426" id="1426">1426</a>
+<a href="#1427" id="1427">1427</a>
+<a href="#1428" id="1428">1428</a>
+<a href="#1429" id="1429">1429</a>
+<a href="#1430" id="1430">1430</a>
+<a href="#1431" id="1431">1431</a>
+<a href="#1432" id="1432">1432</a>
+<a href="#1433" id="1433">1433</a>
+<a href="#1434" id="1434">1434</a>
+<a href="#1435" id="1435">1435</a>
+<a href="#1436" id="1436">1436</a>
+<a href="#1437" id="1437">1437</a>
+<a href="#1438" id="1438">1438</a>
+<a href="#1439" id="1439">1439</a>
+<a href="#1440" id="1440">1440</a>
+<a href="#1441" id="1441">1441</a>
+<a href="#1442" id="1442">1442</a>
+<a href="#1443" id="1443">1443</a>
+<a href="#1444" id="1444">1444</a>
+<a href="#1445" id="1445">1445</a>
+<a href="#1446" id="1446">1446</a>
+<a href="#1447" id="1447">1447</a>
+<a href="#1448" id="1448">1448</a>
+<a href="#1449" id="1449">1449</a>
+<a href="#1450" id="1450">1450</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -1416,7 +1488,8 @@
 <span class="kw">mod </span>reportgen;
 
 <span class="kw">pub use </span>metrics::Metrics;
-<span class="kw">pub use </span>reportgen::{ProbeProto <span class="kw">as </span>ProbeProtocol, QuicConfig};
+<span class="kw">use </span>reportgen::ProbeProto;
+<span class="kw">pub use </span>reportgen::QuicConfig;
 
 <span class="kw">const </span>FULL_REPORT_INTERVAL: Duration = Duration::from_secs(<span class="number">5 </span>* <span class="number">60</span>);
 
@@ -1584,58 +1657,137 @@
     }
 }
 
-<span class="attr">#[derive(Debug)]
-</span><span class="doccomment">/// Options for running a report
+<span class="doccomment">/// Options for running probes
+///
+/// By default, will run icmp over IPv4, icmp over IPv6, and Https probes.
+///
+/// Use [`Options::stun_v4`], [`Options::stun_v6`], and [`Options::quic_config`]
+/// to enable STUN over IPv4, STUN over IPv6, and QUIC address discovery.
+</span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>Options {
-    <span class="doccomment">/// The relay configuration.
-    </span><span class="kw">pub </span>relay_map: RelayMap,
     <span class="doccomment">/// Socket to send IPv4 STUN probes from.
     ///
     /// Responses are never read from this socket, they must be passed in via internal
-    ///  messaging since, when used internally in iroh, the socket is also used to receive
+    /// messaging since, when used internally in iroh, the socket is also used to receive
     /// other packets from in the magicsocket (`MagicSock`).
     ///
-    /// If not provided and:
-    /// - no probes are indicated in the *probes* field,
-    /// - or [`ProbeProtocol::StunIpv4`] probes are explicitly added to the *probes* list,
-    ///
-    /// then the client will attempt to bind a suitable socket itself.
-    </span><span class="kw">pub </span>stun_sock_v4: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
+    /// If not provided, STUN probes will not be sent over IPv4.
+    </span>stun_sock_v4: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
     <span class="doccomment">/// Socket to send IPv6 STUN probes from.
     ///
     /// Responses are never read from this socket, they must be passed in via internal
-    ///  messaging since, when used internally in iroh, the socket is also used to receive
+    /// messaging since, when used internally in iroh, the socket is also used to receive
     /// other packets from in the magicsocket (`MagicSock`).
     ///
-    /// If not provided and:
-    /// - no probes are indicated in the *probes* field,
-    /// - or [`ProbeProtocol::StunIpv6`] probes are explicitly added to the *probes* list,
+    /// If not provided, STUN probes will not be sent over IPv6.
+    </span>stun_sock_v6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
+    <span class="doccomment">/// The configuration needed to launch QUIC address discovery probes.
     ///
-    /// then the client will attempt to bind a suitable socket itself.
-    </span><span class="kw">pub </span>stun_sock_v6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
-    <span class="doccomment">/// Endpoint and client configuration to create a QUIC
-    /// connection to do QUIC address discovery.
+    /// If not provided, will not run QUIC address discovery.
+    </span>quic_config: <span class="prelude-ty">Option</span>&lt;QuicConfig&gt;,
+    <span class="doccomment">/// Enable icmp_v4 probes
     ///
-    /// If not provided, will not do QUIC address discovery, even if indicated in the *probes* set.
-    </span><span class="kw">pub </span>quic_config: <span class="prelude-ty">Option</span>&lt;QuicConfig&gt;,
-    <span class="doccomment">/// An empty protocols list indicates running all possible probe protocols.
+    /// On by default
+    </span>icmp_v4: bool,
+    <span class="doccomment">/// Enable icmp_v6 probes
     ///
-    /// Otherwise, *protocols* is a set of [`ProbeProtocol`]s that should be run in the report.
-    </span><span class="kw">pub </span>protocols: BTreeSet&lt;ProbeProtocol&gt;,
+    /// On by default
+    </span>icmp_v6: bool,
+    <span class="doccomment">/// Enable https probes
+    ///
+    /// On by default
+    </span>https: bool,
+}
+
+<span class="kw">impl </span>Default <span class="kw">for </span>Options {
+    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            stun_sock_v4: <span class="prelude-val">None</span>,
+            stun_sock_v6: <span class="prelude-val">None</span>,
+            quic_config: <span class="prelude-val">None</span>,
+            icmp_v4: <span class="bool-val">true</span>,
+            icmp_v6: <span class="bool-val">true</span>,
+            https: <span class="bool-val">true</span>,
+        }
+    }
 }
 
 <span class="kw">impl </span>Options {
-    <span class="doccomment">/// The default probe protocols used in a report
-    </span><span class="kw">pub fn </span>default_protocols() -&gt; BTreeSet&lt;ProbeProtocol&gt; {
-        BTreeSet::from([
-            ProbeProtocol::StunIpv4,
-            ProbeProtocol::StunIpv6,
-            ProbeProtocol::Https,
-            ProbeProtocol::IcmpV4,
-            ProbeProtocol::IcmpV6,
-            ProbeProtocol::QuicIpv4,
-            ProbeProtocol::QuicIpv6,
-        ])
+    <span class="doccomment">/// Create an empty Options that enables no probes
+    </span><span class="kw">pub fn </span>empty() -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            stun_sock_v4: <span class="prelude-val">None</span>,
+            stun_sock_v6: <span class="prelude-val">None</span>,
+            quic_config: <span class="prelude-val">None</span>,
+            icmp_v4: <span class="bool-val">false</span>,
+            icmp_v6: <span class="bool-val">false</span>,
+            https: <span class="bool-val">false</span>,
+        }
+    }
+
+    <span class="doccomment">/// Set the ipv4 stun socket and enable ipv4 stun probes
+    </span><span class="kw">pub fn </span>stun_v4(<span class="kw-2">mut </span><span class="self">self</span>, sock: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.stun_sock_v4 = sock;
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Set the ipv6 stun socket and enable ipv6 stun probes
+    </span><span class="kw">pub fn </span>stun_v6(<span class="kw-2">mut </span><span class="self">self</span>, sock: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.stun_sock_v6 = sock;
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Enable quic probes
+    </span><span class="kw">pub fn </span>quic_config(<span class="kw-2">mut </span><span class="self">self</span>, quic_config: <span class="prelude-ty">Option</span>&lt;QuicConfig&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.quic_config = quic_config;
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Enable icmp_v4 probe
+    </span><span class="kw">pub fn </span>enable_icmp_v4(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.icmp_v4 = <span class="bool-val">true</span>;
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Enable icmp_v6 probe
+    </span><span class="kw">pub fn </span>enable_icmp_v6(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.icmp_v6 = <span class="bool-val">true</span>;
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Enable https probe
+    </span><span class="kw">pub fn </span>enable_https(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.https = <span class="bool-val">true</span>;
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Turn the options into set of valid protocols
+    </span><span class="kw">fn </span>to_protocols(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BTreeSet&lt;ProbeProto&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>protocols = BTreeSet::new();
+        <span class="kw">if </span><span class="self">self</span>.stun_sock_v4.is_some() {
+            protocols.insert(ProbeProto::StunIpv4);
+        }
+        <span class="kw">if </span><span class="self">self</span>.stun_sock_v6.is_some() {
+            protocols.insert(ProbeProto::StunIpv6);
+        }
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>quic) = <span class="self">self</span>.quic_config {
+            <span class="kw">if </span>quic.ipv4 {
+                protocols.insert(ProbeProto::StunIpv4);
+            }
+            <span class="kw">if </span>quic.ipv6 {
+                protocols.insert(ProbeProto::QuicIpv6);
+            }
+        }
+        <span class="kw">if </span><span class="self">self</span>.icmp_v4 {
+            protocols.insert(ProbeProto::IcmpV4);
+        }
+        <span class="kw">if </span><span class="self">self</span>.icmp_v6 {
+            protocols.insert(ProbeProto::IcmpV6);
+        }
+        <span class="kw">if </span><span class="self">self</span>.https {
+            protocols.insert(ProbeProto::Https);
+        }
+        protocols
     }
 }
 
@@ -1694,15 +1846,11 @@
         stun_sock_v6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
         quic_config: <span class="prelude-ty">Option</span>&lt;QuicConfig&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt; {
-        <span class="kw">let </span>rx = <span class="self">self
-            </span>.get_report_channel(Options {
-                relay_map,
-                stun_sock_v4,
-                stun_sock_v6,
-                quic_config,
-                protocols: Options::default_protocols(),
-            })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>opts = Options::default()
+            .stun_v4(stun_sock_v4)
+            .stun_v6(stun_sock_v6)
+            .quic_config(quic_config);
+        <span class="kw">let </span>rx = <span class="self">self</span>.get_report_channel(relay_map.clone(), opts).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">match </span>rx.<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(res) =&gt; res,
             <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"channel closed, actor awol"</span>)),
@@ -1713,10 +1861,13 @@
     ///
     /// It may not be called concurrently with itself, `&amp;mut self` takes care of that.
     ///
-    /// Look at [`Options`] for the different configuration options. Use the
-    /// `Options::protocols` field to specify which protocols to attempt to run.
-    </span><span class="kw">pub async fn </span>get_report_with_opts(<span class="kw-2">&amp;mut </span><span class="self">self</span>, opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt; {
-        <span class="kw">let </span>rx = <span class="self">self</span>.get_report_channel(opts).<span class="kw">await</span><span class="question-mark">?</span>;
+    /// Look at [`Options`] for the different configuration options.
+    </span><span class="kw">pub async fn </span>get_report_with_opts(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        relay_map: RelayMap,
+        opts: Options,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt; {
+        <span class="kw">let </span>rx = <span class="self">self</span>.get_report_channel(relay_map, opts).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">match </span>rx.<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(res) =&gt; res,
             <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"channel closed, actor awol"</span>)),
@@ -1724,15 +1875,17 @@
     }
 
     <span class="doccomment">/// Get report with channel
+    ///
+    /// Look at [`Options`] for the different configuration options.
     </span><span class="kw">pub async fn </span>get_report_channel(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        relay_map: RelayMap,
         opts: Options,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;oneshot::Receiver&lt;<span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt;&gt;&gt; {
-        <span class="comment">// TODO: consider if RelayMap should be made to easily clone?  It seems expensive
-        // right now.
-        </span><span class="kw">let </span>(tx, rx) = oneshot::channel();
+        <span class="kw">let </span>(tx, rx) = oneshot::channel();
         <span class="self">self</span>.addr
             .send(Message::RunCheck {
+                relay_map,
                 opts,
                 response_tx: tx,
             })
@@ -1759,6 +1912,8 @@
     /// Only one net_report can be run at a time, trying to run multiple concurrently will
     /// fail.
     </span>RunCheck {
+        <span class="doccomment">/// The map of relays we want to probe
+        </span>relay_map: RelayMap,
         <span class="doccomment">/// Options for the report
         </span>opts: Options,
         <span class="doccomment">/// Channel to receive the response.
@@ -1896,8 +2051,12 @@
         <span class="kw">while let </span><span class="prelude-val">Some</span>(msg) = <span class="self">self</span>.receiver.recv().<span class="kw">await </span>{
             <span class="macro">trace!</span>(<span class="question-mark">?</span>msg, <span class="string">"handling message"</span>);
             <span class="kw">match </span>msg {
-                Message::RunCheck { opts, response_tx } =&gt; {
-                    <span class="self">self</span>.handle_run_check(opts, response_tx);
+                Message::RunCheck {
+                    relay_map,
+                    opts,
+                    response_tx,
+                } =&gt; {
+                    <span class="self">self</span>.handle_run_check(relay_map, opts, response_tx);
                 }
                 Message::ReportReady { report } =&gt; {
                     <span class="self">self</span>.handle_report_ready(report);
@@ -1922,21 +2081,17 @@
     /// sockets you will be using.
     </span><span class="kw">fn </span>handle_run_check(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        relay_map: RelayMap,
         opts: Options,
         response_tx: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt;&gt;,
     ) {
+        <span class="kw">let </span>protocols = opts.to_protocols();
         <span class="kw">let </span>Options {
-            relay_map,
             stun_sock_v4,
             stun_sock_v6,
             quic_config,
-            protocols,
+            ..
         } = opts;
-        <span class="kw">let </span>protos = <span class="kw">if </span>protocols.is_empty() {
-            Options::default_protocols()
-        } <span class="kw">else </span>{
-            protocols
-        };
         <span class="kw">if </span><span class="self">self</span>.current_report_run.is_some() {
             response_tx
                 .send(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(
@@ -1948,17 +2103,6 @@
 
         <span class="kw">let </span>now = Instant::now();
 
-        <span class="kw">let </span>cancel_token = CancellationToken::new();
-        <span class="kw">let </span>stun_sock_v4 = <span class="kw">match </span>(stun_sock_v4, protos.contains(<span class="kw-2">&amp;</span>ProbeProtocol::StunIpv4)) {
-            (<span class="prelude-val">Some</span>(sock), <span class="bool-val">true</span>) =&gt; <span class="prelude-val">Some</span>(sock),
-            (<span class="prelude-val">None</span>, <span class="bool-val">true</span>) =&gt; bind_local_stun_socket(IpFamily::V4, <span class="self">self</span>.addr(), cancel_token.clone()),
-            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-        };
-        <span class="kw">let </span>stun_sock_v6 = <span class="kw">match </span>(stun_sock_v6, protos.contains(<span class="kw-2">&amp;</span>ProbeProtocol::StunIpv6)) {
-            (<span class="prelude-val">Some</span>(sock), <span class="bool-val">true</span>) =&gt; <span class="prelude-val">Some</span>(sock),
-            (<span class="prelude-val">None</span>, <span class="bool-val">true</span>) =&gt; bind_local_stun_socket(IpFamily::V6, <span class="self">self</span>.addr(), cancel_token.clone()),
-            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-        };
         <span class="kw">let </span><span class="kw-2">mut </span>do_full = <span class="self">self</span>.reports.next_full
             || now.duration_since(<span class="self">self</span>.reports.last_full) &gt; FULL_REPORT_INTERVAL;
 
@@ -1989,12 +2133,11 @@
             stun_sock_v6,
             quic_config,
             <span class="self">self</span>.dns_resolver.clone(),
-            protos,
+            protocols,
         );
 
         <span class="self">self</span>.current_report_run = <span class="prelude-val">Some</span>(ReportRun {
             _reportgen: actor,
-            _drop_guard: cancel_token.drop_guard(),
             report_tx: response_tx,
         });
     }
@@ -2161,8 +2304,6 @@
 </span><span class="kw">struct </span>ReportRun {
     <span class="doccomment">/// The handle of the [`reportgen`] actor, cancels the actor on drop.
     </span>_reportgen: reportgen::Client,
-    <span class="doccomment">/// Drop guard to optionally kill workers started by net_report to support reportgen.
-    </span>_drop_guard: tokio_util::sync::DropGuard,
     <span class="doccomment">/// Where to send the completed report.
     </span>report_tx: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt;&gt;,
 }
@@ -2172,7 +2313,7 @@
 /// If successful this returns the bound socket and will forward STUN responses to the
 /// provided *actor_addr*.  The *cancel_token* serves to stop the packet forwarding when the
 /// socket is no longer needed.
-</span><span class="kw">fn </span>bind_local_stun_socket(
+</span><span class="kw">pub fn </span>bind_local_stun_socket(
     network: IpFamily,
     actor_addr: Addr,
     cancel_token: CancellationToken,
@@ -2435,8 +2576,10 @@
 
         <span class="comment">// Note that the ProbePlan will change with each iteration.
         </span><span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">5 </span>{
+            <span class="kw">let </span>cancel = CancellationToken::new();
+            <span class="kw">let </span>sock = bind_local_stun_socket(IpFamily::V4, client.addr(), cancel.clone());
             <span class="macro">println!</span>(<span class="string">"--round {}"</span>, i);
-            <span class="kw">let </span>r = client.get_report(dm.clone(), <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>r = client.get_report(dm.clone(), sock, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
             <span class="macro">assert!</span>(r.udp, <span class="string">"want UDP"</span>);
             <span class="macro">assert_eq!</span>(
@@ -2452,6 +2595,7 @@
             );
             <span class="macro">assert!</span>(r.global_v4.is_some(), <span class="string">"expected globalV4 set"</span>);
             <span class="macro">assert!</span>(r.preferred_relay.is_some(),);
+            cancel.cancel();
         }
 
         <span class="macro">assert!</span>(
