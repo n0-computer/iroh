@@ -289,7 +289,7 @@ impl ProbePlan {
                 // the highest probe delay and the next probes we create
                 // if there are no high priority probes, we don't need a buffer
                 if plan.has_priority_probes() {
-                    start = start + DEFAULT_INITIAL_RETRANSMIT;
+                    start += DEFAULT_INITIAL_RETRANSMIT;
                 }
                 let delay = start + DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
                 https_probes
@@ -568,7 +568,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::{test_utils, Options, RelayLatencies};
+    use crate::{test_utils, RelayLatencies};
 
     /// Shorthand which declares a new ProbeSet.
     ///
@@ -590,13 +590,25 @@ mod tests {
         };
     }
 
+    fn default_protocols() -> BTreeSet<ProbeProto> {
+        BTreeSet::from([
+            ProbeProto::StunIpv4,
+            ProbeProto::StunIpv6,
+            ProbeProto::QuicIpv4,
+            ProbeProto::QuicIpv6,
+            ProbeProto::IcmpV4,
+            ProbeProto::IcmpV6,
+            ProbeProto::Https,
+        ])
+    }
+
     #[tokio::test]
     async fn test_initial_probeplan() {
         let (_servers, relay_map) = test_utils::relay_map(2).await;
         let relay_node_1 = relay_map.nodes().next().unwrap();
         let relay_node_2 = relay_map.nodes().nth(1).unwrap();
         let if_state = interfaces::State::fake();
-        let plan = ProbePlan::initial(&relay_map, &if_state, &Options::default_protocols());
+        let plan = ProbePlan::initial(&relay_map, &if_state, &default_protocols());
 
         let expected_plan: ProbePlan = [
             probeset! {
@@ -818,7 +830,7 @@ mod tests {
                 &relay_map,
                 &if_state,
                 &last_report,
-                &Options::default_protocols(),
+                &default_protocols(),
             );
             let expected_plan: ProbePlan = [
                 probeset! {
