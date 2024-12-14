@@ -160,6 +160,7 @@ impl NodeMap {
         let quic_mapped_addr = QuicMappedAddr::generate();
         self.inner
             .lock()
+            .expect("poisoned")
             .qad_mapped_addrs
             .insert(udp_addr, quic_mapped_addr);
         quic_mapped_addr
@@ -169,6 +170,7 @@ impl NodeMap {
     pub(super) fn get_qad_addr(&self, addr: &QuicMappedAddr) -> Option<SocketAddr> {
         self.inner
             .lock()
+            .expect("poisoned")
             .qad_mapped_addrs
             .iter()
             .find_map(|(udp_addr, quic_mapped_addr)| {
@@ -188,6 +190,7 @@ impl NodeMap {
     pub(super) fn receive_qad(&self, udp_addr: SocketAddr) -> Option<QuicMappedAddr> {
         self.inner
             .lock()
+            .expect("poisoned")
             .qad_mapped_addrs
             .get(&udp_addr)
             .map(|addr| *addr)
