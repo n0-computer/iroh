@@ -1773,7 +1773,7 @@
         }
         <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>quic) = <span class="self">self</span>.quic_config {
             <span class="kw">if </span>quic.ipv4 {
-                protocols.insert(ProbeProto::StunIpv4);
+                protocols.insert(ProbeProto::QuicIpv4);
             }
             <span class="kw">if </span>quic.ipv6 {
                 protocols.insert(ProbeProto::QuicIpv6);
