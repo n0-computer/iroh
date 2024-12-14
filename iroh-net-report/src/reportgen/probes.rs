@@ -214,7 +214,10 @@ impl fmt::Display for ProbeSet {
 ///
 /// [`reportgen`]: crate::reportgen
 #[derive(Debug, PartialEq, Eq)]
-pub(super) struct ProbePlan(BTreeSet<ProbeSet>);
+pub(super) struct ProbePlan {
+    set: BTreeSet<ProbeSet>,
+    protocols: BTreeSet<ProbeProto>,
+}
 
 impl ProbePlan {
     /// Creates an initial probe plan.
@@ -223,11 +226,14 @@ impl ProbePlan {
         if_state: &interfaces::State,
         protocols: &BTreeSet<ProbeProto>,
     ) -> Self {
-        let mut plan = Self(BTreeSet::new());
+        let mut plan = Self {
+            set: BTreeSet::new(),
+            protocols: protocols.clone(),
+        };
 
         // The first time we need add probes after the STUN we record this delay, so that
         // further relay server can reuse this delay.
-        let mut max_stun_delay: Option<Duration> = None;
+        let mut max_high_prio_delay: Option<Duration> = None;
 
         for relay_node in relay_map.nodes() {
             let mut stun_ipv4_probes = ProbeSet::new(ProbeProto::StunIpv4);
@@ -267,31 +273,25 @@ impl ProbePlan {
                     })
                     .expect("adding QuicIpv6 probe to a QuicAddrIpv6 probe set");
             }
-            plan.add_probes(
-                protocols,
-                vec![
-                    stun_ipv4_probes,
-                    stun_ipv6_probes,
-                    quic_ipv4_probes,
-                    quic_ipv6_probes,
-                ],
-            );
+            plan.add_if_enabled(stun_ipv4_probes);
+            plan.add_if_enabled(stun_ipv6_probes);
+            plan.add_if_enabled(quic_ipv4_probes);
+            plan.add_if_enabled(quic_ipv6_probes);
 
             // The HTTP and ICMP probes only start after the STUN probes have had a chance.
             let mut https_probes = ProbeSet::new(ProbeProto::Https);
-            let mut icmp_probes_ipv4 = ProbeSet::new(ProbeProto::IcmpV4);
-            let mut icmp_probes_ipv6 = ProbeSet::new(ProbeProto::IcmpV6);
+            let mut icmp_v4_probes = ProbeSet::new(ProbeProto::IcmpV4);
+            let mut icmp_v6_probes = ProbeSet::new(ProbeProto::IcmpV6);
 
-            let has_priority_probes = plan.has_priority_probes();
             for attempt in 0..3 {
-                let delay = if !has_priority_probes {
-                    DEFAULT_INITIAL_RETRANSMIT * attempt as u32
-                } else {
-                    let start = *max_stun_delay.get_or_insert_with(|| plan.max_delay())
-                        + DEFAULT_INITIAL_RETRANSMIT;
-                    start + DEFAULT_INITIAL_RETRANSMIT * attempt as u32
-                };
-
+                let mut start = *max_high_prio_delay.get_or_insert_with(|| plan.max_delay());
+                // if there are high priority probes, ensure there is a buffer between
+                // the highest probe delay and the next probes we create
+                // if there are no high priority probes, we don't need a buffer
+                if plan.has_priority_probes() {
+                    start = start + DEFAULT_INITIAL_RETRANSMIT;
+                }
+                let delay = start + DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
                 https_probes
                     .push(Probe::Https {
                         delay,
@@ -299,7 +299,7 @@ impl ProbePlan {
                     })
                     .expect("adding Https probe to a Https probe set");
                 if if_state.have_v4 {
-                    icmp_probes_ipv4
+                    icmp_v4_probes
                         .push(Probe::IcmpV4 {
                             delay,
                             node: relay_node.clone(),
@@ -307,7 +307,7 @@ impl ProbePlan {
                         .expect("adding Icmp probe to an Icmp probe set");
                 }
                 if if_state.have_v6 {
-                    icmp_probes_ipv6
+                    icmp_v6_probes
                         .push(Probe::IcmpV6 {
                             delay,
                             node: relay_node.clone(),
@@ -316,10 +316,9 @@ impl ProbePlan {
                 }
             }
 
-            plan.add_probes(
-                protocols,
-                vec![https_probes, icmp_probes_ipv4, icmp_probes_ipv6],
-            );
+            plan.add_if_enabled(https_probes);
+            plan.add_if_enabled(icmp_v4_probes);
+            plan.add_if_enabled(icmp_v6_probes);
         }
         plan
     }
@@ -334,7 +333,10 @@ impl ProbePlan {
         if last_report.relay_latency.is_empty() {
             return Self::initial(relay_map, if_state, protocols);
         }
-        let mut plan = Self(Default::default());
+        let mut plan = Self {
+            set: Default::default(),
+            protocols: protocols.clone(),
+        };
 
         // The first time we need add probes after the STUN we record this delay, so that
         // further relay servers can reuse this delay.
@@ -418,15 +420,10 @@ impl ProbePlan {
                         .expect("adding QuicIpv6 probe to a QuicAddrIpv6 probe set");
                 }
             }
-            plan.add_probes(
-                protocols,
-                vec![
-                    stun_ipv4_probes,
-                    stun_ipv6_probes,
-                    quic_ipv4_probes,
-                    quic_ipv6_probes,
-                ],
-            );
+            plan.add_if_enabled(stun_ipv4_probes);
+            plan.add_if_enabled(stun_ipv6_probes);
+            plan.add_if_enabled(quic_ipv4_probes);
+            plan.add_if_enabled(quic_ipv6_probes);
 
             // The HTTP and ICMP probes only start after the STUN probes have had a chance.
             let mut https_probes = ProbeSet::new(ProbeProto::Https);
@@ -461,29 +458,29 @@ impl ProbePlan {
                 }
             }
 
-            plan.add_probes(
-                protocols,
-                vec![https_probes, icmp_v4_probes, icmp_v6_probes],
-            );
+            plan.add_if_enabled(https_probes);
+            plan.add_if_enabled(icmp_v4_probes);
+            plan.add_if_enabled(icmp_v6_probes);
         }
         plan
     }
 
     /// Returns an iterator over the [`ProbeSet`]s in this plan.
     pub(super) fn iter(&self) -> impl Iterator<Item = &ProbeSet> {
-        self.0.iter()
+        self.set.iter()
     }
 
-    /// Adds a [`ProbeSet`] if it contains probes.
-    fn add(&mut self, set: ProbeSet) {
-        if !set.is_empty() {
-            self.0.insert(set);
+    /// Adds a [`ProbeSet`] if it contains probes and the protocol indicated in
+    /// the [`ProbeSet] matches a protocol in our set of [`ProbeProto`]s.
+    fn add_if_enabled(&mut self, set: ProbeSet) {
+        if !set.is_empty() && self.protocols.contains(&set.proto) {
+            self.set.insert(set);
         }
     }
 
     /// Returns the delay of the last probe in the probe plan.
     fn max_delay(&self) -> Duration {
-        self.0
+        self.set
             .iter()
             .flatten()
             .map(|probe| probe.delay())
@@ -491,18 +488,9 @@ impl ProbePlan {
             .unwrap_or_default()
     }
 
-    /// Adds [`ProbeSet`]s, if the probe set has been indicated in the set of protocols we want to attempt
-    fn add_probes(&mut self, protocols: &BTreeSet<ProbeProto>, probes: Vec<ProbeSet>) {
-        for probe in probes.into_iter() {
-            if protocols.contains(&probe.proto) {
-                self.add(probe);
-            }
-        }
-    }
-
     /// Stun & Quic probes are "priority" probes
     fn has_priority_probes(&self) -> bool {
-        for probe in &self.0 {
+        for probe in &self.set {
             if matches!(
                 probe.proto,
                 ProbeProto::StunIpv4
@@ -520,7 +508,7 @@ impl ProbePlan {
 impl fmt::Display for ProbePlan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "ProbePlan {{")?;
-        for probe_set in self.0.iter() {
+        for probe_set in self.set.iter() {
             writeln!(f, r#"    ProbeSet("{}") {{"#, probe_set.proto)?;
             for probe in probe_set.probes.iter() {
                 writeln!(f, "        {probe},")?;
@@ -533,7 +521,10 @@ impl fmt::Display for ProbePlan {
 
 impl FromIterator<ProbeSet> for ProbePlan {
     fn from_iter<T: IntoIterator<Item = ProbeSet>>(iter: T) -> Self {
-        Self(iter.into_iter().collect())
+        Self {
+            set: iter.into_iter().collect(),
+            protocols: BTreeSet::new(),
+        }
     }
 }
 
