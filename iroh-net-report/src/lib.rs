@@ -38,7 +38,8 @@ mod ping;
 mod reportgen;
 
 pub use metrics::Metrics;
-pub use reportgen::{ProbeProto as ProbeProtocol, QuicConfig};
+use reportgen::ProbeProto;
+pub use reportgen::QuicConfig;
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
@@ -206,58 +207,137 @@ impl Default for Reports {
     }
 }
 
+/// Options for running probes
+///
+/// By default, will run icmp over IPv4, icmp over IPv6, and Https probes.
+///
+/// Use [`Options::stun_v4`], [`Options::stun_v6`], and [`Options::quic_config`]
+/// to enable STUN over IPv4, STUN over IPv6, and QUIC address discovery.
 #[derive(Debug)]
-/// Options for running a report
 pub struct Options {
-    /// The relay configuration.
-    pub relay_map: RelayMap,
     /// Socket to send IPv4 STUN probes from.
     ///
     /// Responses are never read from this socket, they must be passed in via internal
-    ///  messaging since, when used internally in iroh, the socket is also used to receive
+    /// messaging since, when used internally in iroh, the socket is also used to receive
     /// other packets from in the magicsocket (`MagicSock`).
     ///
-    /// If not provided and:
-    /// - no probes are indicated in the *probes* field,
-    /// - or [`ProbeProtocol::StunIpv4`] probes are explicitly added to the *probes* list,
-    ///
-    /// then the client will attempt to bind a suitable socket itself.
-    pub stun_sock_v4: Option<Arc<UdpSocket>>,
+    /// If not provided, STUN probes will not be sent over IPv4.
+    stun_sock_v4: Option<Arc<UdpSocket>>,
     /// Socket to send IPv6 STUN probes from.
     ///
     /// Responses are never read from this socket, they must be passed in via internal
-    ///  messaging since, when used internally in iroh, the socket is also used to receive
+    /// messaging since, when used internally in iroh, the socket is also used to receive
     /// other packets from in the magicsocket (`MagicSock`).
     ///
-    /// If not provided and:
-    /// - no probes are indicated in the *probes* field,
-    /// - or [`ProbeProtocol::StunIpv6`] probes are explicitly added to the *probes* list,
+    /// If not provided, STUN probes will not be sent over IPv6.
+    stun_sock_v6: Option<Arc<UdpSocket>>,
+    /// The configuration needed to launch QUIC address discovery probes.
     ///
-    /// then the client will attempt to bind a suitable socket itself.
-    pub stun_sock_v6: Option<Arc<UdpSocket>>,
-    /// Endpoint and client configuration to create a QUIC
-    /// connection to do QUIC address discovery.
+    /// If not provided, will not run QUIC address discovery.
+    quic_config: Option<QuicConfig>,
+    /// Enable icmp_v4 probes
     ///
-    /// If not provided, will not do QUIC address discovery, even if indicated in the *probes* set.
-    pub quic_config: Option<QuicConfig>,
-    /// An empty protocols list indicates running all possible probe protocols.
+    /// On by default
+    icmp_v4: bool,
+    /// Enable icmp_v6 probes
     ///
-    /// Otherwise, *protocols* is a set of [`ProbeProtocol`]s that should be run in the report.
-    pub protocols: BTreeSet<ProbeProtocol>,
+    /// On by default
+    icmp_v6: bool,
+    /// Enable https probes
+    ///
+    /// On by default
+    https: bool,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            stun_sock_v4: None,
+            stun_sock_v6: None,
+            quic_config: None,
+            icmp_v4: true,
+            icmp_v6: true,
+            https: true,
+        }
+    }
 }
 
 impl Options {
-    /// The default probe protocols used in a report
-    pub fn default_protocols() -> BTreeSet<ProbeProtocol> {
-        BTreeSet::from([
-            ProbeProtocol::StunIpv4,
-            ProbeProtocol::StunIpv6,
-            ProbeProtocol::Https,
-            ProbeProtocol::IcmpV4,
-            ProbeProtocol::IcmpV6,
-            ProbeProtocol::QuicIpv4,
-            ProbeProtocol::QuicIpv6,
-        ])
+    /// Create an empty Options that enables no probes
+    pub fn empty() -> Self {
+        Self {
+            stun_sock_v4: None,
+            stun_sock_v6: None,
+            quic_config: None,
+            icmp_v4: false,
+            icmp_v6: false,
+            https: false,
+        }
+    }
+
+    /// Set the ipv4 stun socket and enable ipv4 stun probes
+    pub fn stun_v4(mut self, sock: Option<Arc<UdpSocket>>) -> Self {
+        self.stun_sock_v4 = sock;
+        self
+    }
+
+    /// Set the ipv6 stun socket and enable ipv6 stun probes
+    pub fn stun_v6(mut self, sock: Option<Arc<UdpSocket>>) -> Self {
+        self.stun_sock_v6 = sock;
+        self
+    }
+
+    /// Enable quic probes
+    pub fn quic_config(mut self, quic_config: Option<QuicConfig>) -> Self {
+        self.quic_config = quic_config;
+        self
+    }
+
+    /// Enable icmp_v4 probe
+    pub fn enable_icmp_v4(mut self) -> Self {
+        self.icmp_v4 = true;
+        self
+    }
+
+    /// Enable icmp_v6 probe
+    pub fn enable_icmp_v6(mut self) -> Self {
+        self.icmp_v6 = true;
+        self
+    }
+
+    /// Enable https probe
+    pub fn enable_https(mut self) -> Self {
+        self.https = true;
+        self
+    }
+
+    /// Turn the options into set of valid protocols
+    fn to_protocols(&self) -> BTreeSet<ProbeProto> {
+        let mut protocols = BTreeSet::new();
+        if self.stun_sock_v4.is_some() {
+            protocols.insert(ProbeProto::StunIpv4);
+        }
+        if self.stun_sock_v6.is_some() {
+            protocols.insert(ProbeProto::StunIpv6);
+        }
+        if let Some(ref quic) = self.quic_config {
+            if quic.ipv4 {
+                protocols.insert(ProbeProto::QuicIpv4);
+            }
+            if quic.ipv6 {
+                protocols.insert(ProbeProto::QuicIpv6);
+            }
+        }
+        if self.icmp_v4 {
+            protocols.insert(ProbeProto::IcmpV4);
+        }
+        if self.icmp_v6 {
+            protocols.insert(ProbeProto::IcmpV6);
+        }
+        if self.https {
+            protocols.insert(ProbeProto::Https);
+        }
+        protocols
     }
 }
 
@@ -316,15 +396,11 @@ impl Client {
         stun_sock_v6: Option<Arc<UdpSocket>>,
         quic_config: Option<QuicConfig>,
     ) -> Result<Arc<Report>> {
-        let rx = self
-            .get_report_channel(Options {
-                relay_map,
-                stun_sock_v4,
-                stun_sock_v6,
-                quic_config,
-                protocols: Options::default_protocols(),
-            })
-            .await?;
+        let opts = Options::default()
+            .stun_v4(stun_sock_v4)
+            .stun_v6(stun_sock_v6)
+            .quic_config(quic_config);
+        let rx = self.get_report_channel(relay_map.clone(), opts).await?;
         match rx.await {
             Ok(res) => res,
             Err(_) => Err(anyhow!("channel closed, actor awol")),
@@ -335,10 +411,13 @@ impl Client {
     ///
     /// It may not be called concurrently with itself, `&mut self` takes care of that.
     ///
-    /// Look at [`Options`] for the different configuration options. Use the
-    /// `Options::protocols` field to specify which protocols to attempt to run.
-    pub async fn get_report_with_opts(&mut self, opts: Options) -> Result<Arc<Report>> {
-        let rx = self.get_report_channel(opts).await?;
+    /// Look at [`Options`] for the different configuration options.
+    pub async fn get_report_with_opts(
+        &mut self,
+        relay_map: RelayMap,
+        opts: Options,
+    ) -> Result<Arc<Report>> {
+        let rx = self.get_report_channel(relay_map, opts).await?;
         match rx.await {
             Ok(res) => res,
             Err(_) => Err(anyhow!("channel closed, actor awol")),
@@ -346,15 +425,17 @@ impl Client {
     }
 
     /// Get report with channel
+    ///
+    /// Look at [`Options`] for the different configuration options.
     pub async fn get_report_channel(
         &mut self,
+        relay_map: RelayMap,
         opts: Options,
     ) -> Result<oneshot::Receiver<Result<Arc<Report>>>> {
-        // TODO: consider if RelayMap should be made to easily clone?  It seems expensive
-        // right now.
         let (tx, rx) = oneshot::channel();
         self.addr
             .send(Message::RunCheck {
+                relay_map,
                 opts,
                 response_tx: tx,
             })
@@ -381,6 +462,8 @@ pub(crate) enum Message {
     /// Only one net_report can be run at a time, trying to run multiple concurrently will
     /// fail.
     RunCheck {
+        /// The map of relays we want to probe
+        relay_map: RelayMap,
         /// Options for the report
         opts: Options,
         /// Channel to receive the response.
@@ -518,8 +601,12 @@ impl Actor {
         while let Some(msg) = self.receiver.recv().await {
             trace!(?msg, "handling message");
             match msg {
-                Message::RunCheck { opts, response_tx } => {
-                    self.handle_run_check(opts, response_tx);
+                Message::RunCheck {
+                    relay_map,
+                    opts,
+                    response_tx,
+                } => {
+                    self.handle_run_check(relay_map, opts, response_tx);
                 }
                 Message::ReportReady { report } => {
                     self.handle_report_ready(report);
@@ -544,21 +631,17 @@ impl Actor {
     /// sockets you will be using.
     fn handle_run_check(
         &mut self,
+        relay_map: RelayMap,
         opts: Options,
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     ) {
+        let protocols = opts.to_protocols();
         let Options {
-            relay_map,
             stun_sock_v4,
             stun_sock_v6,
             quic_config,
-            protocols,
+            ..
         } = opts;
-        let protos = if protocols.is_empty() {
-            Options::default_protocols()
-        } else {
-            protocols
-        };
         if self.current_report_run.is_some() {
             response_tx
                 .send(Err(anyhow!(
@@ -570,17 +653,6 @@ impl Actor {
 
         let now = Instant::now();
 
-        let cancel_token = CancellationToken::new();
-        let stun_sock_v4 = match (stun_sock_v4, protos.contains(&ProbeProtocol::StunIpv4)) {
-            (Some(sock), true) => Some(sock),
-            (None, true) => bind_local_stun_socket(IpFamily::V4, self.addr(), cancel_token.clone()),
-            _ => None,
-        };
-        let stun_sock_v6 = match (stun_sock_v6, protos.contains(&ProbeProtocol::StunIpv6)) {
-            (Some(sock), true) => Some(sock),
-            (None, true) => bind_local_stun_socket(IpFamily::V6, self.addr(), cancel_token.clone()),
-            _ => None,
-        };
         let mut do_full = self.reports.next_full
             || now.duration_since(self.reports.last_full) > FULL_REPORT_INTERVAL;
 
@@ -611,12 +683,11 @@ impl Actor {
             stun_sock_v6,
             quic_config,
             self.dns_resolver.clone(),
-            protos,
+            protocols,
         );
 
         self.current_report_run = Some(ReportRun {
             _reportgen: actor,
-            _drop_guard: cancel_token.drop_guard(),
             report_tx: response_tx,
         });
     }
@@ -783,8 +854,6 @@ impl Actor {
 struct ReportRun {
     /// The handle of the [`reportgen`] actor, cancels the actor on drop.
     _reportgen: reportgen::Client,
-    /// Drop guard to optionally kill workers started by net_report to support reportgen.
-    _drop_guard: tokio_util::sync::DropGuard,
     /// Where to send the completed report.
     report_tx: oneshot::Sender<Result<Arc<Report>>>,
 }
@@ -794,7 +863,7 @@ struct ReportRun {
 /// If successful this returns the bound socket and will forward STUN responses to the
 /// provided *actor_addr*.  The *cancel_token* serves to stop the packet forwarding when the
 /// socket is no longer needed.
-fn bind_local_stun_socket(
+pub fn bind_local_stun_socket(
     network: IpFamily,
     actor_addr: Addr,
     cancel_token: CancellationToken,
@@ -1057,8 +1126,10 @@ mod tests {
 
         // Note that the ProbePlan will change with each iteration.
         for i in 0..5 {
+            let cancel = CancellationToken::new();
+            let sock = bind_local_stun_socket(IpFamily::V4, client.addr(), cancel.clone());
             println!("--round {}", i);
-            let r = client.get_report(dm.clone(), None, None, None).await?;
+            let r = client.get_report(dm.clone(), sock, None, None).await?;
 
             assert!(r.udp, "want UDP");
             assert_eq!(
@@ -1074,6 +1145,7 @@ mod tests {
             );
             assert!(r.global_v4.is_some(), "expected globalV4 set");
             assert!(r.preferred_relay.is_some(),);
+            cancel.cancel();
         }
 
         assert!(

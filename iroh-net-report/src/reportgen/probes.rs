@@ -610,7 +610,7 @@ mod tests {
         let if_state = interfaces::State::fake();
         let plan = ProbePlan::initial(&relay_map, &if_state, &default_protocols());
 
-        let expected_plan: ProbePlan = [
+        let mut expected_plan: ProbePlan = [
             probeset! {
                 proto: ProbeProto::StunIpv4,
                 relay: relay_node_1.clone(),
@@ -712,6 +712,7 @@ mod tests {
         ]
         .into_iter()
         .collect();
+        expected_plan.protocols = default_protocols();
 
         println!("expected:");
         println!("{expected_plan}");
@@ -735,7 +736,7 @@ mod tests {
             &BTreeSet::from([ProbeProto::Https, ProbeProto::IcmpV4, ProbeProto::IcmpV6]),
         );
 
-        let expected_plan: ProbePlan = [
+        let mut expected_plan: ProbePlan = [
             probeset! {
                 proto: ProbeProto::Https,
                 relay: relay_node_1.clone(),
@@ -781,6 +782,8 @@ mod tests {
         ]
         .into_iter()
         .collect();
+        expected_plan.protocols =
+            BTreeSet::from([ProbeProto::Https, ProbeProto::IcmpV4, ProbeProto::IcmpV6]);
 
         println!("expected:");
         println!("{expected_plan}");
@@ -832,7 +835,7 @@ mod tests {
                 &last_report,
                 &default_protocols(),
             );
-            let expected_plan: ProbePlan = [
+            let mut expected_plan: ProbePlan = [
                 probeset! {
                     proto: ProbeProto::StunIpv4,
                     relay: relay_node_1.clone(),
@@ -934,6 +937,7 @@ mod tests {
             ]
             .into_iter()
             .collect();
+            expected_plan.protocols = default_protocols();
 
             println!("{} round", i);
             println!("expected:");

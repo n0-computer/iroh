@@ -696,6 +696,10 @@ pub struct QuicConfig {
     pub ep: quinn::Endpoint,
     /// A client config.
     pub client_config: rustls::ClientConfig,
+    /// Enable ipv4 QUIC address discovery probes
+    pub ipv4: bool,
+    /// Enable ipv6 QUIC address discovery probes
+    pub ipv6: bool,
 }
 
 /// Executes a particular [`Probe`], including using a delayed start if needed.
@@ -1586,6 +1590,8 @@ mod tests {
         let quic_addr_disc = QuicConfig {
             ep: ep.clone(),
             client_config,
+            ipv4: true,
+            ipv6: true,
         };
         let url = relay.url.clone();
         let port = server.quic_addr().unwrap().port();
