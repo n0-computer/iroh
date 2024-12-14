@@ -38,8 +38,7 @@ mod ping;
 mod reportgen;
 
 pub use metrics::Metrics;
-pub use reportgen::ProbeProto as ProbeProtocol;
-pub use reportgen::QuicConfig;
+pub use reportgen::{ProbeProto as ProbeProtocol, QuicConfig};
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
@@ -220,7 +219,8 @@ pub struct Options {
     ///
     /// If not provided and:
     /// - no probes are indicated in the *probes* field,
-    /// - or [`ProbeProto::StunIpv4`] probes are explicitly added to the *probes* list,
+    /// - or [`ProbeProtocol::StunIpv4`] probes are explicitly added to the *probes* list,
+    ///
     /// then the client will attempt to bind a suitable socket itself.
     pub stun_sock_v4: Option<Arc<UdpSocket>>,
     /// Socket to send IPv6 STUN probes from.
@@ -232,6 +232,7 @@ pub struct Options {
     /// If not provided and:
     /// - no probes are indicated in the *probes* field,
     /// - or [`ProbeProtocol::StunIpv6`] probes are explicitly added to the *probes* list,
+    ///
     /// then the client will attempt to bind a suitable socket itself.
     pub stun_sock_v6: Option<Arc<UdpSocket>>,
     /// Endpoint and client configuration to create a QUIC

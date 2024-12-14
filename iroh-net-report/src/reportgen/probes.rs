@@ -268,7 +268,7 @@ impl ProbePlan {
                     .expect("adding QuicIpv6 probe to a QuicAddrIpv6 probe set");
             }
             plan.add_probes(
-                &protocols,
+                protocols,
                 vec![
                     stun_ipv4_probes,
                     stun_ipv6_probes,
@@ -317,7 +317,7 @@ impl ProbePlan {
             }
 
             plan.add_probes(
-                &protocols,
+                protocols,
                 vec![https_probes, icmp_probes_ipv4, icmp_probes_ipv6],
             );
         }
@@ -513,7 +513,7 @@ impl ProbePlan {
                 return true;
             }
         }
-        return false;
+        false
     }
 }
 
