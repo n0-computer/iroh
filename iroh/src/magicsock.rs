@@ -35,7 +35,7 @@ use concurrent_queue::ConcurrentQueue;
 use data_encoding::HEXLOWER;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
-use iroh_relay::{protos::stun, RelayMap};
+use iroh_relay::{protos::stun, RelayMap, RelayNode};
 use n0_future::{
     boxed::BoxStream,
     task,
@@ -46,7 +46,7 @@ use n0_future::{
 };
 use net_report::QuicConfig;
 use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
-use quinn::AsyncUdpSocket;
+use quinn::{AsyncUdpSocket, ServerConfig};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use relay_actor::RelaySendItem;
 use smallvec::{smallvec, SmallVec};
@@ -126,6 +126,9 @@ pub(crate) struct Options {
     /// Proxy configuration.
     pub(crate) proxy_url: Option<Url>,
 
+    /// ServerConfig for the internal QUIC endpoint
+    pub(crate) server_config: ServerConfig,
+
     /// Skip verification of SSL certificates from relay servers
     ///
     /// May only be used in tests.
@@ -139,6 +142,8 @@ pub(crate) struct Options {
 
 impl Default for Options {
     fn default() -> Self {
+        let secret_key = SecretKey::generate(rand::thread_rng());
+        let server_config = make_default_server_config(&secret_key);
         Options {
             addr_v4: None,
             addr_v6: None,
@@ -148,12 +153,23 @@ impl Default for Options {
             discovery: None,
             proxy_url: None,
             dns_resolver: crate::dns::default_resolver().clone(),
+            server_config,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: PathSelection::default(),
         }
     }
+}
+
+/// Generate a server config with no ALPNS and  a default
+/// transport configuration
+fn make_default_server_config(secret_key: &SecretKey) -> ServerConfig {
+    let quic_server_config = crate::tls::make_server_config(secret_key, vec![], false)
+        .expect("should generate valid config");
+    let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
+    server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
+    server_config
 }
 
 /// Contents of a relay message. Use a SmallVec to avoid allocations for the very
@@ -169,6 +185,8 @@ pub(crate) struct Handle {
     msock: Arc<MagicSock>,
     // Empty when closed
     actor_tasks: Arc<Mutex<JoinSet<()>>>,
+    // quinn endpoint
+    endpoint: quinn::Endpoint,
 }
 
 /// Iroh connectivity layer.
@@ -232,10 +250,6 @@ pub(crate) struct MagicSock {
     pconn6: Option<UdpConn>,
     /// NetReport client
     net_reporter: net_report::Addr,
-    /// Handle to the underlying quinn::Endpoint.
-    ///
-    /// Used in netcheck for QUIC address discovery.
-    quic_endpoint: Arc<RwLock<Option<quinn::Endpoint>>>,
     /// The state for an active DiscoKey.
     disco_secrets: DiscoSecrets,
 
@@ -285,16 +299,6 @@ impl MagicSock {
     /// If we are not connected to any relay nodes, set this to `None`.
     fn set_my_relay(&self, my_relay: Option<RelayUrl>) -> Option<RelayUrl> {
         self.my_relay.set(my_relay).unwrap_or_else(|e| e)
-    }
-
-    /// Sets the internal `quinn::Endpoint` that is used for QUIC address
-    /// discovery.
-    pub(crate) fn set_quic_endpoint(&self, endpoint: Option<quinn::Endpoint>) {
-        let mut ep = self
-            .quic_endpoint
-            .write()
-            .expect("MagicSock::endpoint RwLock is poisoned");
-        *ep = endpoint;
     }
 
     fn is_closing(&self) -> bool {
@@ -440,31 +444,6 @@ impl MagicSock {
         let (v4, v6) = self.local_addr();
         let addr = if let Some(v6) = v6 { v6 } else { v4 };
         Ok(addr)
-    }
-
-    fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
-        // To do this properly the MagicSock would need a registry of pollers.  For each
-        // node we would look up the poller or create one.  Then on each try_send we can
-        // look up the correct poller and configure it to poll the paths it needs.
-        //
-        // Note however that the current quinn impl calls UdpPoller::poll_writable()
-        // **before** it calls try_send(), as opposed to how it is documented.  That is a
-        // problem as we would not yet know the path that needs to be polled.  To avoid such
-        // ambiguity the API could be changed to a .poll_send(&self, cx: &mut Context,
-        // io_poller: Pin<&mut dyn UdpPoller>, transmit: &Transmit) -> Poll<io::Result<()>>
-        // instead of the existing .try_send() because then we would have control over this.
-        //
-        // Right now however we have one single poller behaving the same for each
-        // connection.  It checks all paths and returns Poll::Ready as soon as any path is
-        // ready.
-        let ipv4_poller = self.pconn4.create_io_poller();
-        let ipv6_poller = self.pconn6.as_ref().map(|sock| sock.create_io_poller());
-        let relay_sender = self.relay_datagram_send_channel.clone();
-        Box::pin(IoPoller {
-            ipv4_poller,
-            ipv6_poller,
-            relay_sender,
-        })
     }
 
     /// Implementation for AsyncUdpSocket::try_send
@@ -1572,6 +1551,7 @@ impl Handle {
             discovery,
             dns_resolver,
             proxy_url,
+            server_config,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
             #[cfg(any(test, feature = "test-utils"))]
@@ -1642,8 +1622,22 @@ impl Handle {
             dns_resolver,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
-            quic_endpoint: Arc::new(RwLock::new(None)),
         });
+
+        let mut endpoint_config = quinn::EndpointConfig::default();
+        // Setting this to false means that quinn will ignore packets that have the QUIC fixed bit
+        // set to 0. The fixed bit is the 3rd bit of the first byte of a packet.
+        // For performance reasons and to not rewrite buffers we pass non-QUIC UDP packets straight
+        // through to quinn. We set the first byte of the packet to zero, which makes quinn ignore
+        // the packet if grease_quic_bit is set to false.
+        endpoint_config.grease_quic_bit(false);
+
+        let endpoint = quinn::Endpoint::new_with_abstract_socket(
+            endpoint_config,
+            Some(server_config),
+            inner.clone(),
+            Arc::new(quinn::TokioRuntime),
+        )?;
 
         let mut actor_tasks = JoinSet::default();
 
@@ -1669,6 +1663,7 @@ impl Handle {
 
         let inner2 = inner.clone();
         let network_monitor = netmon::Monitor::new().await?;
+        let qad_endpoint = endpoint.clone();
         actor_tasks.spawn(
             async move {
                 let actor = Actor {
@@ -1685,6 +1680,7 @@ impl Handle {
                     no_v4_send: false,
                     net_reporter,
                     network_monitor,
+                    qad_endpoint,
                 };
 
                 if let Err(err) = actor.run().await {
@@ -1697,9 +1693,15 @@ impl Handle {
         let c = Handle {
             msock: inner,
             actor_tasks: Arc::new(Mutex::new(actor_tasks)),
+            endpoint,
         };
 
         Ok(c)
+    }
+
+    /// The underlying [`quinn::Endpoint`]
+    pub fn endpoint(&self) -> &quinn::Endpoint {
+        &self.endpoint
     }
 
     /// Closes the connection.
@@ -1709,6 +1711,10 @@ impl Handle {
     /// indefinitely after this call.
     #[instrument(skip_all, fields(me = %self.msock.me))]
     pub(crate) async fn close(&self) {
+        tracing::debug!("Closing connections");
+        self.endpoint.close(0u16.into(), b"");
+        self.endpoint.wait_idle().await;
+
         if self.msock.is_closed() {
             return;
         }
@@ -1736,7 +1742,6 @@ impl Handle {
         .await;
         if shutdown_done.is_ok() {
             debug!("tasks shutdown complete");
-        } else {
             // shutdown all tasks
             debug!("aborting remaining {}/3 tasks", tasks.len());
             tasks.shutdown().await;
@@ -1752,13 +1757,17 @@ impl DiscoSecrets {
     where
         F: FnOnce(&mut SharedSecret) -> T,
     {
+        let mut inner = self.0.lock().expect("poisoned");
         let x = inner.entry(node_id).or_insert_with(|| {
             let public_key = public_ed_box(&node_id.public());
+            SharedSecret::new(secret, &public_key)
         });
-    {}}
+        cb(x)
+    }
 
-    fn , ResolverExt}encode_and_seal(
+    fn encode_and_seal(
         &self,
+        this_secret_key: &crypto_box::SecretKey,
         this_node_id: NodeId,
         other_node_id: NodeId,
         msg: &disco::Message,
@@ -1769,7 +1778,6 @@ impl DiscoSecrets {
         });
         disco::encode_message(&this_node_id, seal).into()
     }
-
     fn unseal_and_decode(
         &self,
         secret: &crypto_box::SecretKey,
@@ -1937,13 +1945,34 @@ impl RelayDatagramRecvQueue {
     }
 }
 
-impl AsyncUdpSocket for Handle {
+impl AsyncUdpSocket for MagicSock {
     fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn quinn::UdpPoller>> {
-        self.msock.create_io_poller()
+        // To do this properly the MagicSock would need a registry of pollers.  For each
+        // node we would look up the poller or create one.  Then on each try_send we can
+        // look up the correct poller and configure it to poll the paths it needs.
+        //
+        // Note however that the current quinn impl calls UdpPoller::poll_writable()
+        // **before** it calls try_send(), as opposed to how it is documented.  That is a
+        // problem as we would not yet know the path that needs to be polled.  To avoid such
+        // ambiguity the API could be changed to a .poll_send(&self, cx: &mut Context,
+        // io_poller: Pin<&mut dyn UdpPoller>, transmit: &Transmit) -> Poll<io::Result<()>>
+        // instead of the existing .try_send() because then we would have control over this.
+        //
+        // Right now however we have one single poller behaving the same for each
+        // connection.  It checks all paths and returns Poll::Ready as soon as any path is
+        // ready.
+        let ipv4_poller = self.pconn4.create_io_poller();
+        let ipv6_poller = self.pconn6.as_ref().map(|sock| sock.create_io_poller());
+        let relay_sender = self.relay_datagram_send_channel.clone();
+        Box::pin(IoPoller {
+            ipv4_poller,
+            ipv6_poller,
+            relay_sender,
+        })
     }
 
     fn try_send(&self, transmit: &quinn_udp::Transmit) -> io::Result<()> {
-        self.msock.try_send(transmit)
+        self.try_send(transmit)
     }
 
     /// NOTE: Receiving on a [`Self::close`]d socket will return [`Poll::Pending`] indefinitely.
@@ -1953,11 +1982,11 @@ impl AsyncUdpSocket for Handle {
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        self.msock.poll_recv(cx, bufs, metas)
+        self.poll_recv(cx, bufs, metas)
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        match &*self.msock.local_addrs.read().expect("not poisoned") {
+        match &*self.local_addrs.read().expect("not poisoned") {
             (ipv4, None) => {
                 // Pretend to be IPv6, because our QuinnMappedAddrs
                 // need to be IPv6.
@@ -2070,6 +2099,11 @@ struct Actor {
     net_reporter: net_report::Client,
 
     network_monitor: netmon::Monitor,
+
+    /// The internal quinn::Endpoint
+    ///
+    /// Needed for Quic Address Discovery
+    qad_endpoint: quinn::Endpoint,
 }
 
 impl Actor {
@@ -2481,29 +2515,25 @@ impl Actor {
             .stun_v4(Some(self.pconn4.clone()))
             .stun_v6(self.pconn6.clone());
 
-        let quic_endpoint = self.msock.quic_endpoint.read().expect("poisoned").clone();
-
-        let quic_config = match quic_endpoint {
-            Some(ep) => {
-                // Need to add Quic Mapped Addrs for the relay nodes to use for
-                // QUIC Address Discovery
-                let mapped_addrs = self.resolve_qad_addrs(Duration::from_millis(500)).await;
-                let root_store = rustls::RootCertStore::from_iter(
-                    webpki_roots::TLS_SERVER_ROOTS.iter().cloned(),
-                );
-                let client_config = rustls::ClientConfig::builder()
-                    .with_root_certificates(root_store)
-                    .with_no_client_auth();
-                Some(QuicConfig {
-                    ep,
-                    client_config,
-                    ipv4: true,
-                    ipv6: true,
-                    mapped_addrs,
-                })
-            }
-            None => None,
-        };
+        // Need to add Quic Mapped Addrs for the relay nodes to use for
+        // QUIC Address Discovery
+        let mapped_addrs = self
+            .resolve_qad_addrs(std::time::Duration::from_millis(500))
+            .await;
+        // create a client config for the endpoint to
+        // use for QUIC address discovery
+        let root_store =
+            rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let client_config = rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        let quic_config = Some(QuicConfig {
+            ep: self.qad_endpoint.clone(),
+            client_config,
+            ipv4: true,
+            ipv6: self.pconn6.is_some(),
+            mapped_addrs,
+        });
         opts = opts.quic_config(quic_config);
 
         debug!("requesting net_report report");
@@ -3978,7 +4008,13 @@ mod tests {
     ///
     /// Use [`magicsock_connect`] to establish connections.
     #[instrument(name = "ep", skip_all, fields(me = secret_key.public().fmt_short()))]
-    async fn magicsock_ep(secret_key: SecretKey) -> anyhow::Result<(quinn::Endpoint, Handle)> {
+    async fn magicsock_ep(secret_key: SecretKey) -> anyhow::Result<Handle> {
+        let server_config = crate::endpoint::make_server_config(
+            &secret_key,
+            vec![ALPN.to_vec()],
+            Arc::new(quinn::TransportConfig::default()),
+            true,
+        )?;
         let opts = Options {
             addr_v4: None,
             addr_v6: None,
@@ -3988,25 +4024,12 @@ mod tests {
             discovery: None,
             dns_resolver: crate::dns::default_resolver().clone(),
             proxy_url: None,
+            server_config,
             insecure_skip_relay_cert_verify: true,
             path_selection: PathSelection::default(),
         };
         let msock = MagicSock::spawn(opts).await?;
-        let server_config = crate::endpoint::make_server_config(
-            &secret_key,
-            vec![ALPN.to_vec()],
-            Arc::new(quinn::TransportConfig::default()),
-            true,
-        )?;
-        let mut endpoint_config = quinn::EndpointConfig::default();
-        endpoint_config.grease_quic_bit(false);
-        let endpoint = quinn::Endpoint::new_with_abstract_socket(
-            endpoint_config,
-            Some(server_config),
-            Arc::new(msock.clone()),
-            Arc::new(quinn::TokioRuntime),
-        )?;
-        Ok((endpoint, msock))
+        Ok(msock)
     }
 
     /// Connects from `ep` returned by [`magicsock_ep`] to the `node_id`.
@@ -4023,7 +4046,7 @@ mod tests {
         let mut transport_config = quinn::TransportConfig::default();
         transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
 
-        magicsock_connet_with_transport_config(
+        magicsock_connect_with_transport_config(
             ep,
             ep_secret_key,
             addr,
@@ -4039,7 +4062,7 @@ mod tests {
     ///
     /// Uses [`ALPN`], `node_id`, must match `addr`.
     #[instrument(name = "connect", skip_all, fields(me = ep_secret_key.public().fmt_short()))]
-    async fn magicsock_connet_with_transport_config(
+    async fn magicsock_connect_with_transport_config(
         ep: &quinn::Endpoint,
         ep_secret_key: SecretKey,
         addr: QuicMappedAddr,
@@ -4068,7 +4091,7 @@ mod tests {
         let secret_key_missing_node = SecretKey::from_bytes(&[255u8; 32]);
         let node_id_missing_node = secret_key_missing_node.public();
 
-        let (ep_1, msock_1) = magicsock_ep(secret_key_1.clone()).await.unwrap();
+        let msock_1 = magicsock_ep(secret_key_1.clone()).await.unwrap();
 
         // Generate an address not present in the NodeMap.
         let bad_addr = QuicMappedAddr::generate();
@@ -4079,14 +4102,19 @@ mod tests {
         // this speeds up the test.
         let res = tokio::time::timeout(
             Duration::from_millis(500),
-            magicsock_connect(&ep_1, secret_key_1.clone(), bad_addr, node_id_missing_node),
+            magicsock_connect(
+                msock_1.endpoint(),
+                secret_key_1.clone(),
+                bad_addr,
+                node_id_missing_node,
+            ),
         )
         .await;
         assert!(res.is_err(), "expecting timeout");
 
         // Now check we can still create another connection with this endpoint.
-        let (ep_2, msock_2) = magicsock_ep(secret_key_2.clone()).await.unwrap();
-
+        let msock_2 = magicsock_ep(secret_key_2.clone()).await.unwrap();
+        let ep_2 = msock_2.endpoint().clone();
         // This needs an accept task
         let accept_task = tokio::spawn({
             async fn accept(ep: quinn::Endpoint) -> Result<()> {
@@ -4098,7 +4126,6 @@ mod tests {
                 info!("accept finished");
                 Ok(())
             }
-            let ep_2 = ep_2.clone();
             async move {
                 if let Err(err) = accept(ep_2).await {
                     error!("{err:#}");
@@ -4131,7 +4158,7 @@ mod tests {
         let addr = msock_1.get_mapping_addr(node_id_2).unwrap();
         let res = tokio::time::timeout(
             Duration::from_secs(10),
-            magicsock_connect(&ep_1, secret_key_1.clone(), addr, node_id_2),
+            magicsock_connect(msock_1.endpoint(), secret_key_1.clone(), addr, node_id_2),
         )
         .await
         .expect("timeout while connecting");
@@ -4153,8 +4180,9 @@ mod tests {
         let secret_key_2 = SecretKey::from_bytes(&[2u8; 32]);
         let node_id_2 = secret_key_2.public();
 
-        let (ep_1, msock_1) = magicsock_ep(secret_key_1.clone()).await.unwrap();
-        let (ep_2, msock_2) = magicsock_ep(secret_key_2.clone()).await.unwrap();
+        let msock_1 = magicsock_ep(secret_key_1.clone()).await.unwrap();
+        let msock_2 = magicsock_ep(secret_key_2.clone()).await.unwrap();
+        let ep_2 = msock_2.endpoint().clone();
 
         // We need a task to accept the connection.
         let accept_task = tokio::spawn({
@@ -4166,7 +4194,6 @@ mod tests {
                 info!("accept finished");
                 Ok(())
             }
-            let ep_2 = ep_2.clone();
             async move {
                 if let Err(err) = accept(ep_2).await {
                     error!("{err:#}");
@@ -4201,8 +4228,8 @@ mod tests {
         // little slower though.
         let mut transport_config = quinn::TransportConfig::default();
         transport_config.max_idle_timeout(Some(Duration::from_millis(200).try_into().unwrap()));
-        let res = magicsock_connet_with_transport_config(
-            &ep_1,
+        let res = magicsock_connect_with_transport_config(
+            msock_1.endpoint(),
             secret_key_1.clone(),
             addr_2,
             node_id_2,
@@ -4234,9 +4261,10 @@ mod tests {
         // We can now connect
         tokio::time::timeout(Duration::from_secs(10), async move {
             info!("establishing new connection");
-            let conn = magicsock_connect(&ep_1, secret_key_1.clone(), addr_2, node_id_2)
-                .await
-                .unwrap();
+            let conn =
+                magicsock_connect(msock_1.endpoint(), secret_key_1.clone(), addr_2, node_id_2)
+                    .await
+                    .unwrap();
             info!("have connection");
             let mut stream = conn.open_uni().await.unwrap();
             stream.write_all(b"hello").await.unwrap();
