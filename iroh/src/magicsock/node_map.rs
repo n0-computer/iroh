@@ -69,8 +69,8 @@ pub(super) struct NodeMapInner {
     next_id: usize,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
-    // special mapping for relay socket addresses so that we can do quic address discovery
-    qad_mapped_addrs: HashMap<SocketAddr, QuicMappedAddr>,
+    // special set of relay socket addresses that we use to do quic address discovery
+    qad_addrs: BTreeSet<SocketAddr>,
 }
 
 /// Identifier to look up a [`NodeState`] in the [`NodeMap`].
@@ -155,45 +155,64 @@ impl NodeMap {
             .add_node_addr(node_addr, source)
     }
 
-    /// Add a the SocketAddr used to preform QUIC Address Discovery to the nodemap
-    pub(super) fn add_qad_addr(&self, udp_addr: SocketAddr) -> QuicMappedAddr {
-        let quic_mapped_addr = QuicMappedAddr::generate();
+    /// Add a the SocketAddr used to perform QUIC Address Discovery to the nodemap
+    pub(super) fn add_qad_addr(&self, udp_addr: SocketAddr) {
         self.inner
             .lock()
             .expect("poisoned")
-            .qad_mapped_addrs
-            .insert(udp_addr, quic_mapped_addr);
-        quic_mapped_addr
+            .qad_addrs
+            .insert(udp_addr);
     }
 
-    /// Get the socket address used to preform QUIC Address Discovery
-    pub(super) fn get_qad_addr(&self, addr: &QuicMappedAddr) -> Option<SocketAddr> {
-        self.inner
+    /// Return a correctly canonicalized SocketAddr if this address is one
+    /// used to perform QUIC Address Discovery
+    pub(super) fn qad_addr_for_send(&self, addr: &SocketAddr) -> Option<SocketAddr> {
+        // all addresses given to the endpoint are Ipv6 addresses, so we need to
+        // canonicalize before we check for the actual addr we are trying to send to
+        let canonicalized_addr = SocketAddr::new(addr.ip().to_canonical(), addr.port());
+        if self
+            .inner
             .lock()
             .expect("poisoned")
-            .qad_mapped_addrs
-            .iter()
-            .find_map(|(udp_addr, quic_mapped_addr)| {
-                if addr == quic_mapped_addr {
-                    Some(*udp_addr)
-                } else {
-                    None
+            .qad_addrs
+            .contains(&canonicalized_addr)
+        {
+            Some(canonicalized_addr)
+        } else {
+            None
+        }
+    }
+
+    /// Return a correctly formed SocketAddr if this address is one used to
+    /// perform QUIC Address Discovery
+    pub(super) fn qad_addr_for_recv(&self, addr: &SocketAddr) -> Option<SocketAddr> {
+        if self
+            .inner
+            .lock()
+            .expect("poisoned")
+            .qad_addrs
+            .contains(addr)
+        {
+            match addr.ip() {
+                IpAddr::V4(ipv4_addr) => {
+                    // if this is an ipv4 addr, we need to map it back to
+                    // an ipv6 addr, since all addresses we use to dial on
+                    // the underlying quinn endpoint are mapped ipv6 addrs
+                    Some(SocketAddr::new(
+                        ipv4_addr.to_ipv6_mapped().into(),
+                        addr.port(),
+                    ))
                 }
-            })
+                IpAddr::V6(_) => Some(*addr),
+            }
+        } else {
+            None
+        }
     }
 
     /// Number of nodes currently listed.
     pub(super) fn node_count(&self) -> usize {
         self.inner.lock().expect("poisoned").node_count()
-    }
-
-    pub(super) fn receive_qad(&self, udp_addr: SocketAddr) -> Option<QuicMappedAddr> {
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .qad_mapped_addrs
-            .get(&udp_addr)
-            .map(|addr| *addr)
     }
 
     pub(super) fn receive_udp(&self, udp_addr: SocketAddr) -> Option<(PublicKey, QuicMappedAddr)> {

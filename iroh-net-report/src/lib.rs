@@ -38,7 +38,6 @@ mod ping;
 mod reportgen;
 
 pub use metrics::Metrics;
-pub use reportgen::MappedAddr;
 use reportgen::ProbeProto;
 pub use reportgen::QuicConfig;
 #[cfg(feature = "stun-utils")]
