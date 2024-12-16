@@ -494,7 +494,13 @@
 <a href="#493" id="493">493</a>
 <a href="#494" id="494">494</a>
 <a href="#495" id="495">495</a>
-<a href="#496" id="496">496</a></pre></div><pre class="rust"><code><span class="doccomment">//! Cryptographic key handling for `iroh`.
+<a href="#496" id="496">496</a>
+<a href="#497" id="497">497</a>
+<a href="#498" id="498">498</a>
+<a href="#499" id="499">499</a>
+<a href="#500" id="500">500</a>
+<a href="#501" id="501">501</a>
+<a href="#502" id="502">502</a></pre></div><pre class="rust"><code><span class="doccomment">//! Cryptographic key handling for `iroh`.
 
 </span><span class="kw">mod </span>encryption;
 
@@ -831,6 +837,12 @@
     }
 
     <span class="doccomment">/// Generate a new [`SecretKey`] with a randomness generator.
+    ///
+    /// ```rust
+    /// // use the OsRng option for OS depedndent most secure RNG.
+    /// let mut rng = rand::rngs::OsRng;
+    /// let _key = iroh_base::SecretKey::generate(&amp;mut rng);
+    /// ```
     </span><span class="kw">pub fn </span>generate&lt;R: CryptoRngCore&gt;(<span class="kw-2">mut </span>csprng: R) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>secret = SigningKey::generate(<span class="kw-2">&amp;mut </span>csprng);
 
