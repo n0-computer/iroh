@@ -265,8 +265,8 @@ impl Default for Options {
 }
 
 impl Options {
-    /// Create an empty Options that enables no probes
-    pub fn empty() -> Self {
+    /// Create an [`Options`] that disables all probes
+    pub fn disabled() -> Self {
         Self {
             stun_sock_v4: None,
             stun_sock_v6: None,
