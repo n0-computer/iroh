@@ -216,6 +216,12 @@ impl ServerBuilder {
         self
     }
 
+    /// Set the capacity of the cache for public keys.
+    pub fn key_cache_capacity(mut self, capacity: usize) -> Self {
+        self.key_cache_capacity = capacity;
+        self
+    }
+
     /// Builds and spawns an HTTP(S) Relay Server.
     pub(super) async fn spawn(self) -> Result<Server> {
         let server_task = ServerActorTask::spawn();

@@ -286,6 +286,12 @@ impl ClientBuilder {
         self
     }
 
+    /// Set the capacity of the cache for public keys.
+    pub fn key_cache_capacity(mut self, capacity: usize) -> Self {
+        self.key_cache_capacity = capacity;
+        self
+    }
+
     /// Build the [`Client`]
     pub fn build(self, key: SecretKey, dns_resolver: DnsResolver) -> (Client, ClientReceiver) {
         // TODO: review TLS config

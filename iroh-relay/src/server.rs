@@ -119,6 +119,8 @@ pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     pub tls: Option<TlsConfig<EC, EA>>,
     /// Rate limits.
     pub limits: Limits,
+    /// Key cache capacity.
+    pub key_cache_capacity: usize,
 }
 
 /// Configuration for the STUN server.
@@ -310,6 +312,7 @@ impl Server {
                 };
                 let mut builder = http_server::ServerBuilder::new(relay_bind_addr)
                     .headers(headers)
+                    .key_cache_capacity(relay_config.key_cache_capacity)
                     .request_handler(Method::GET, "/", Box::new(root_handler))
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
                     .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
@@ -779,6 +782,7 @@ mod tests {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
                 tls: None,
                 limits: Default::default(),
+                key_cache_capacity: 1024,
             }),
             quic: None,
             stun: None,
@@ -808,6 +812,7 @@ mod tests {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 1234).into(),
                 tls: None,
                 limits: Default::default(),
+                key_cache_capacity: 1024,
             }),
             stun: None,
             quic: None,

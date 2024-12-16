@@ -66,6 +66,7 @@ pub fn relay_config() -> RelayConfig<()> {
         http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
         tls: Some(tls_config()),
         limits: Default::default(),
+        key_cache_capacity: 1024,
     }
 }
 
