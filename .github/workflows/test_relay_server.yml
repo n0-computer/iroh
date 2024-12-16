@@ -32,7 +32,7 @@ jobs:
         - name: Install rust stable
           uses: dtolnay/rust-toolchain@stable
         - name: Install sccache
-          uses: mozilla-actions/sccache-action@v0.0.6
+          uses: mozilla-actions/sccache-action@v0.0.7
 
         - name: build release
           run: |
