@@ -403,6 +403,9 @@ impl RelayActor {
                     break;
                 }
                 Some(Err(err)) = self.active_relay_tasks.join_next() => {
+                    if err.is_panic() {
+                        panic!("ActiveRelayActor task panicked: {err:#?}");
+                    }
                     if !err.is_cancelled() {
                         error!("ActiveRelayActor failed: {err:?}");
                     }
