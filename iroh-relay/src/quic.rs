@@ -96,7 +96,7 @@ pub(crate) mod server {
                             _ = cancel_accept_loop.cancelled() => {
                                 break;
                             }
-                            Some(res) = set.join_next(), if !set.is_empty() => {
+                            Some(res) = set.join_next() => {
                                 if let Err(err) = res {
                                     if err.is_panic() {
                                         panic!("task panicked: {err:#?}");
