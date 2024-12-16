@@ -27,6 +27,7 @@ use tokio_util::{
 };
 use tracing::{debug, info_span, trace, Instrument};
 
+use super::KeyCache;
 use crate::{
     client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
     defaults::timeouts::CLIENT_RECV_TIMEOUT,
@@ -35,8 +36,6 @@ use crate::{
         PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
     },
 };
-
-use super::KeyCache;
 
 impl PartialEq for Conn {
     fn eq(&self, other: &Self) -> bool {

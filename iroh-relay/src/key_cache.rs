@@ -15,7 +15,7 @@ pub enum KeyCache {
     #[default]
     Disabled,
     /// The key cache is enabled with a fixed capacity.
-    Enabled(Arc<Mutex<lru::LruCache<PublicKeyBytes, PublicKey>>>),
+    Enabled(Arc<Mutex<lru::LruCache<PublicKey, ()>>>),
 }
 
 impl KeyCache {
@@ -40,11 +40,11 @@ impl KeyCache {
             unreachable!();
         };
         let mut cache = cache.lock().unwrap();
-        if let Some(key) = cache.get(&bytes) {
+        if let Some((key, _)) = cache.get_key_value(&bytes) {
             return Ok(key.clone());
         }
         let key = PublicKey::from_bytes(&bytes)?;
-        cache.put(bytes, key.clone());
+        cache.put(key.clone(), ());
         Ok(key)
     }
 }
