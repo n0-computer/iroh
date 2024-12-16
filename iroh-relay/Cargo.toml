@@ -30,7 +30,6 @@ futures-lite = "2.5"
 futures-sink = "0.3"
 futures-util = "0.3"
 governor = "0.7.0"
-hex = "0.4.3"
 hickory-proto = { version = "=0.25.0-alpha.4" }
 hickory-resolver = "=0.25.0-alpha.4"
 hostname = "0.4"
@@ -96,6 +95,7 @@ tracing-subscriber = { version = "0.3", features = [
 url = { version = "2.5", features = ["serde"] }
 webpki = { package = "rustls-webpki", version = "0.102" }
 webpki-roots = "0.26"
+data-encoding = "2.6.0"
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }

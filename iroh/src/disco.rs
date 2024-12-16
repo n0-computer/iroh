@@ -24,6 +24,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
+use data_encoding::HEXLOWER;
 use iroh_base::{PublicKey, RelayUrl};
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -383,10 +384,10 @@ impl Display for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Message::Ping(ping) => {
-                write!(f, "Ping(tx={})", hex::encode(ping.tx_id))
+                write!(f, "Ping(tx={})", HEXLOWER.encode(&ping.tx_id))
             }
             Message::Pong(pong) => {
-                write!(f, "Pong(tx={})", hex::encode(pong.tx_id))
+                write!(f, "Pong(tx={})", HEXLOWER.encode(&pong.tx_id))
             }
             Message::CallMeMaybe(_) => {
                 write!(f, "CallMeMaybe")
@@ -460,7 +461,9 @@ mod tests {
             let got = test.m.as_bytes();
             assert_eq!(
                 got,
-                hex::decode(test.want.replace(' ', "")).unwrap(),
+                data_encoding::HEXLOWER
+                    .decode(test.want.replace(' ', "").as_bytes())
+                    .unwrap(),
                 "wrong as_bytes"
             );
 

@@ -32,6 +32,7 @@ use std::{
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
+use data_encoding::HEXLOWER;
 use futures_lite::{FutureExt, StreamExt};
 use futures_util::{stream::BoxStream, task::AtomicWaker};
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey, SharedSecret};
@@ -1070,20 +1071,20 @@ impl MagicSock {
         let handled = self.node_map.handle_ping(sender, addr.clone(), dm.tx_id);
         match handled.role {
             PingRole::Duplicate => {
-                debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: path already confirmed, skip");
+                debug!(%src, tx = %HEXLOWER.encode(&dm.tx_id), "received ping: path already confirmed, skip");
                 return;
             }
             PingRole::LikelyHeartbeat => {}
             PingRole::NewPath => {
-                debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: new path");
+                debug!(%src, tx = %HEXLOWER.encode(&dm.tx_id), "received ping: new path");
             }
             PingRole::Activate => {
-                debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: path active");
+                debug!(%src, tx = %HEXLOWER.encode(&dm.tx_id), "received ping: path active");
             }
         }
 
         // Send a pong.
-        debug!(tx = %hex::encode(dm.tx_id), %addr, dstkey = %sender.fmt_short(),
+        debug!(tx = %HEXLOWER.encode(&dm.tx_id), %addr, dstkey = %sender.fmt_short(),
                "sending pong");
         let pong = disco::Message::Pong(disco::Pong {
             tx_id: dm.tx_id,
@@ -1137,11 +1138,11 @@ impl MagicSock {
         };
         if sent {
             let msg_sender = self.actor_sender.clone();
-            trace!(%dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (queued)");
+            trace!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "ping sent (queued)");
             self.node_map
                 .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
         } else {
-            warn!(dst = ?dst, tx = %hex::encode(tx_id), ?purpose, "failed to send ping: queues full");
+            warn!(dst = ?dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "failed to send ping: queues full");
         }
     }
 
@@ -1321,7 +1322,7 @@ impl MagicSock {
             node_key: self.public_key(),
         });
         self.try_send_disco_message(dst.clone(), dst_node, msg)?;
-        debug!(%dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (polled)");
+        debug!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "ping sent (polled)");
         let msg_sender = self.actor_sender.clone();
         self.node_map
             .notify_ping_sent(id, dst.clone(), tx_id, purpose, msg_sender);
@@ -3059,8 +3060,8 @@ mod tests {
             val,
             msg,
             "[sender] expected {}, got {}",
-            hex::encode(msg),
-            hex::encode(&val)
+            HEXLOWER.encode(msg),
+            HEXLOWER.encode(&val)
         );
 
         let stats = conn.stats();
@@ -3465,8 +3466,8 @@ mod tests {
                 anyhow::ensure!(
                     val == $msg,
                     "expected {}, got {}",
-                    hex::encode($msg),
-                    hex::encode(val)
+                    HEXLOWER.encode(&$msg[..]),
+                    HEXLOWER.encode(&val)
                 );
             };
         }
@@ -3618,8 +3619,8 @@ mod tests {
                 anyhow::ensure!(
                     val == $msg,
                     "expected {}, got {}",
-                    hex::encode($msg),
-                    hex::encode(val)
+                    HEXLOWER.encode(&$msg[..]),
+                    HEXLOWER.encode(&val)
                 );
             };
         }
