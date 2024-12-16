@@ -34,7 +34,7 @@ pub enum PacketSource {
 
 /// A store for pkarr signed packets.
 ///
-/// Packets are stored in the persistent [`SignedPacketStore`], and cached on-demand in an in-memory LRU
+/// Packets are stored in the persistent `SignedPacketStore`, and cached on-demand in an in-memory LRU
 /// cache used for resolving DNS queries.
 #[derive(Debug, Clone)]
 pub struct ZoneStore {
