@@ -248,7 +248,10 @@ mod tls;
 pub mod watchable;
 
 pub use endpoint::{Endpoint, RelayMode};
-pub use iroh_base::{KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
+pub use iroh_base::{
+    DecryptionError, KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, RelayUrlParseError,
+    SecretKey,
+};
 pub use iroh_relay::{RelayMap, RelayNode};
 
 #[cfg(any(test, feature = "test-utils"))]

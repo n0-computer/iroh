@@ -289,7 +289,7 @@ mod tests {
                 .instrument(info_span!("relay.server")),
         );
 
-        let node_id_a = SecretKey::generate().public();
+        let node_id_a = SecretKey::generate(rand::thread_rng()).public();
         let (client_a, mut a_io) = test_client_builder(node_id_a, server_channel.clone());
 
         // create client a
@@ -299,7 +299,7 @@ mod tests {
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 
         // server message: create client b
-        let node_id_b = SecretKey::generate().public();
+        let node_id_b = SecretKey::generate(rand::thread_rng()).public();
         let (client_b, mut b_io) = test_client_builder(node_id_b, server_channel.clone());
         server_channel
             .send(Message::CreateClient(client_b))

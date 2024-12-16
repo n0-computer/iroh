@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use crypto_box::aead::{AeadCore, AeadInPlace, OsRng};
+use crypto_box::aead::{AeadCore, AeadInPlace};
 use iroh::SecretKey;
-use rand::RngCore;
+use rand::{RngCore, SeedableRng};
 
 pub fn seal_to(c: &mut Criterion) {
     let mut group = c.benchmark_group("seal_to");
@@ -10,8 +10,9 @@ pub fn seal_to(c: &mut Criterion) {
         rand::thread_rng().fill_bytes(&mut text);
 
         group.bench_with_input(BenchmarkId::new("wrapper", i), i, |b, _| {
-            let key = SecretKey::generate();
-            let target_key = SecretKey::generate();
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+            let key = SecretKey::generate(&mut rng);
+            let target_key = SecretKey::generate(&mut rng);
 
             b.iter(|| {
                 let shared = key.shared(&target_key.public());
@@ -22,7 +23,8 @@ pub fn seal_to(c: &mut Criterion) {
         });
 
         group.bench_with_input(BenchmarkId::new("raw", i), i, |b, _| {
-            let mut rng = OsRng;
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+
             let key = crypto_box::SecretKey::generate(&mut rng);
             let target_key = crypto_box::SecretKey::generate(&mut rng);
             b.iter(|| {
@@ -45,8 +47,10 @@ pub fn open_from(c: &mut Criterion) {
         rand::thread_rng().fill_bytes(&mut text);
 
         group.bench_with_input(BenchmarkId::new("wrapper", i), i, |b, _| {
-            let key = SecretKey::generate();
-            let target_key = SecretKey::generate();
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+
+            let key = SecretKey::generate(&mut rng);
+            let target_key = SecretKey::generate(&mut rng);
             let shared = key.shared(&target_key.public());
             let mut cipher_text = text.clone();
             shared.seal(&mut cipher_text);
@@ -60,7 +64,8 @@ pub fn open_from(c: &mut Criterion) {
         });
 
         group.bench_with_input(BenchmarkId::new("raw", i), i, |b, _| {
-            let mut rng = OsRng;
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+
             let key = crypto_box::SecretKey::generate(&mut rng);
             let target_key = crypto_box::SecretKey::generate(&mut rng);
             let boxx = crypto_box::ChaChaBox::new(&key.public_key(), &target_key);

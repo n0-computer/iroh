@@ -474,8 +474,8 @@ mod tests {
 
     #[test]
     fn test_extraction() {
-        let sender_key = SecretKey::generate();
-        let recv_key = SecretKey::generate();
+        let sender_key = SecretKey::generate(rand::thread_rng());
+        let recv_key = SecretKey::generate(rand::thread_rng());
 
         let msg = Message::Ping(Ping {
             tx_id: stun_rs::TransactionId::default(),

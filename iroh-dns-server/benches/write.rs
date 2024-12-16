@@ -2,6 +2,7 @@ use anyhow::Result;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use iroh::{discovery::pkarr::PkarrRelayClient, dns::node_info::NodeInfo, SecretKey};
 use iroh_dns_server::{config::Config, server::Server, ZoneStore};
+use rand_chacha::rand_core::SeedableRng;
 use tokio::runtime::Runtime;
 
 const LOCALHOST_PKARR: &str = "http://localhost:8080/pkarr";
@@ -23,7 +24,8 @@ fn benchmark_dns_server(c: &mut Criterion) {
                     let config = Config::load("./config.dev.toml").await.unwrap();
                     let server = start_dns_server(config).await.unwrap();
 
-                    let secret_key = SecretKey::generate();
+                    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+                    let secret_key = SecretKey::generate(&mut rng);
                     let node_id = secret_key.public();
 
                     let pkarr_relay = LOCALHOST_PKARR.parse().expect("valid url");

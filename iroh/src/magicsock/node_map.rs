@@ -680,10 +680,11 @@ mod tests {
 
         let node_map = NodeMap::default();
 
-        let node_a = SecretKey::generate().public();
-        let node_b = SecretKey::generate().public();
-        let node_c = SecretKey::generate().public();
-        let node_d = SecretKey::generate().public();
+        let mut rng = rand::thread_rng();
+        let node_a = SecretKey::generate(&mut rng).public();
+        let node_b = SecretKey::generate(&mut rng).public();
+        let node_c = SecretKey::generate(&mut rng).public();
+        let node_d = SecretKey::generate(&mut rng).public();
 
         let relay_x: RelayUrl = "https://my-relay-1.com".parse().unwrap();
         let relay_y: RelayUrl = "https://my-relay-2.com".parse().unwrap();
@@ -744,7 +745,7 @@ mod tests {
         let _guard = iroh_test::logging::setup();
 
         let node_map = NodeMap::default();
-        let public_key = SecretKey::generate().public();
+        let public_key = SecretKey::generate(rand::thread_rng()).public();
         let id = node_map
             .inner
             .lock()
@@ -817,7 +818,7 @@ mod tests {
     fn test_prune_inactive() {
         let node_map = NodeMap::default();
         // add one active node and more than MAX_INACTIVE_NODES inactive nodes
-        let active_node = SecretKey::generate().public();
+        let active_node = SecretKey::generate(rand::thread_rng()).public();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
         node_map.add_test_addr(NodeAddr::new(active_node).with_direct_addresses([addr]));
         node_map
@@ -828,7 +829,7 @@ mod tests {
             .expect("registered");
 
         for _ in 0..MAX_INACTIVE_NODES + 1 {
-            let node = SecretKey::generate().public();
+            let node = SecretKey::generate(rand::thread_rng()).public();
             node_map.add_test_addr(NodeAddr::new(node));
         }
 
