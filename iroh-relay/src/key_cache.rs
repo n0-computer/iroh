@@ -54,12 +54,12 @@ impl KeyCache {
             PublicKey::try_from(slice)?;
             unreachable!();
         };
-        let mut cache = cache.lock().unwrap();
+        let mut cache = cache.lock().expect("not poisoned");
         if let Some((key, _)) = cache.get_key_value(&bytes) {
-            return Ok(key.clone());
+            return Ok(*key);
         }
         let key = PublicKey::from_bytes(&bytes)?;
-        cache.put(key.clone(), ());
+        cache.put(key, ());
         Ok(key)
     }
 }
