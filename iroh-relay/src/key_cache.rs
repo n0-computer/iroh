@@ -50,8 +50,7 @@ impl KeyCache {
         let Ok(bytes) = PublicKeyBytes::try_from(slice) else {
             // if the size is wrong, use PublicKey::try_from to fail with a
             // SignatureError.
-            PublicKey::try_from(slice)?;
-            unreachable!();
+            return Err(PublicKey::try_from(slice).expect_err("invalid length"));
         };
         let mut cache = cache.lock().expect("not poisoned");
         if let Some((key, _)) = cache.get_key_value(&bytes) {
