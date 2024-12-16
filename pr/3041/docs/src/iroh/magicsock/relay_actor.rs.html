@@ -962,7 +962,10 @@
 <a href="#961" id="961">961</a>
 <a href="#962" id="962">962</a>
 <a href="#963" id="963">963</a>
-<a href="#964" id="964">964</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#964" id="964">964</a>
+<a href="#965" id="965">965</a>
+<a href="#966" id="966">966</a>
+<a href="#967" id="967">967</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1367,6 +1370,9 @@
                     <span class="kw">break</span>;
                 }
                 <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)) = <span class="self">self</span>.active_relay_tasks.join_next() =&gt; {
+                    <span class="kw">if </span>err.is_panic() {
+                        <span class="macro">panic!</span>(<span class="string">"ActiveRelayActor task panicked: {err:#?}"</span>);
+                    }
                     <span class="kw">if </span>!err.is_cancelled() {
                         <span class="macro">error!</span>(<span class="string">"ActiveRelayActor failed: {err:?}"</span>);
                     }
@@ -1903,7 +1909,7 @@
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_packetize_iter() {
-        <span class="kw">let </span>node_id = SecretKey::generate().public();
+        <span class="kw">let </span>node_id = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>empty_vec: Vec&lt;Bytes&gt; = Vec::new();
         <span class="kw">let </span><span class="kw-2">mut </span>iter = PacketizeIter::&lt;<span class="kw">_</span>, MAX_PACKET_SIZE&gt;::new(node_id, empty_vec);
         <span class="macro">assert_eq!</span>(<span class="prelude-val">None</span>, iter.next());

@@ -843,7 +843,8 @@
 <a href="#842" id="842">842</a>
 <a href="#843" id="843">843</a>
 <a href="#844" id="844">844</a>
-<a href="#845" id="845">845</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#845" id="845">845</a>
+<a href="#846" id="846">846</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -1525,10 +1526,11 @@
 
         <span class="kw">let </span>node_map = NodeMap::default();
 
-        <span class="kw">let </span>node_a = SecretKey::generate().public();
-        <span class="kw">let </span>node_b = SecretKey::generate().public();
-        <span class="kw">let </span>node_c = SecretKey::generate().public();
-        <span class="kw">let </span>node_d = SecretKey::generate().public();
+        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand::thread_rng();
+        <span class="kw">let </span>node_a = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+        <span class="kw">let </span>node_b = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+        <span class="kw">let </span>node_c = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+        <span class="kw">let </span>node_d = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
 
         <span class="kw">let </span>relay_x: RelayUrl = <span class="string">"https://my-relay-1.com"</span>.parse().unwrap();
         <span class="kw">let </span>relay_y: RelayUrl = <span class="string">"https://my-relay-2.com"</span>.parse().unwrap();
@@ -1589,7 +1591,7 @@
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
         <span class="kw">let </span>node_map = NodeMap::default();
-        <span class="kw">let </span>public_key = SecretKey::generate().public();
+        <span class="kw">let </span>public_key = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>id = node_map
             .inner
             .lock()
@@ -1662,7 +1664,7 @@
     </span><span class="kw">fn </span>test_prune_inactive() {
         <span class="kw">let </span>node_map = NodeMap::default();
         <span class="comment">// add one active node and more than MAX_INACTIVE_NODES inactive nodes
-        </span><span class="kw">let </span>active_node = SecretKey::generate().public();
+        </span><span class="kw">let </span>active_node = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), <span class="number">167</span>);
         node_map.add_test_addr(NodeAddr::new(active_node).with_direct_addresses([addr]));
         node_map
@@ -1673,7 +1675,7 @@
             .expect(<span class="string">"registered"</span>);
 
         <span class="kw">for _ in </span><span class="number">0</span>..MAX_INACTIVE_NODES + <span class="number">1 </span>{
-            <span class="kw">let </span>node = SecretKey::generate().public();
+            <span class="kw">let </span>node = SecretKey::generate(rand::thread_rng()).public();
             node_map.add_test_addr(NodeAddr::new(node));
         }
 

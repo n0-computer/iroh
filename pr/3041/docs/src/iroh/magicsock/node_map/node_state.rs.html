@@ -3175,7 +3175,7 @@
 
         <span class="comment">// endpoint with a `best_addr` that has a latency but no relay
         </span><span class="kw">let </span>(a_endpoint, a_socket_addr) = {
-            <span class="kw">let </span>key = SecretKey::generate();
+            <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
             <span class="kw">let </span>node_id = key.public();
             <span class="kw">let </span>ip_port = IpPort {
                 ip: Ipv4Addr::UNSPECIFIED.into(),
@@ -3221,7 +3221,7 @@
         <span class="comment">// endpoint w/ no best addr but a relay w/ latency
         </span><span class="kw">let </span>b_endpoint = {
             <span class="comment">// let socket_addr = "0.0.0.0:9".parse().unwrap();
-            </span><span class="kw">let </span>key = SecretKey::generate();
+            </span><span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
             NodeState {
                 id: <span class="number">1</span>,
                 quic_mapped_addr: QuicMappedAddr::generate(),
@@ -3240,7 +3240,7 @@
         <span class="comment">// endpoint w/ no best addr but a relay w/ no latency
         </span><span class="kw">let </span>c_endpoint = {
             <span class="comment">// let socket_addr = "0.0.0.0:8".parse().unwrap();
-            </span><span class="kw">let </span>key = SecretKey::generate();
+            </span><span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
             NodeState {
                 id: <span class="number">2</span>,
                 quic_mapped_addr: QuicMappedAddr::generate(),
@@ -3268,7 +3268,7 @@
         </span><span class="kw">let </span>(d_endpoint, d_socket_addr) = {
             <span class="kw">let </span>socket_addr: SocketAddr = <span class="string">"0.0.0.0:7"</span>.parse().unwrap();
             <span class="kw">let </span>expired = now.checked_sub(Duration::from_secs(<span class="number">100</span>)).unwrap();
-            <span class="kw">let </span>key = SecretKey::generate();
+            <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
             <span class="kw">let </span>node_id = key.public();
             <span class="kw">let </span>endpoint_state = BTreeMap::from([(
                 IpPort::from(socket_addr),
@@ -3412,7 +3412,7 @@
         <span class="comment">// When we handle a call-me-maybe with more than MAX_INACTIVE_DIRECT_ADDRESSES we do
         // not want to prune them right away but send pings to all of them.
 
-        </span><span class="kw">let </span>key = SecretKey::generate();
+        </span><span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>opts = Options {
             node_id: key.public(),
             relay_url: <span class="prelude-val">None</span>,

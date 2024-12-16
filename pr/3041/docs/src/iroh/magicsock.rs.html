@@ -4057,9 +4057,7 @@
 <a href="#4056" id="4056">4056</a>
 <a href="#4057" id="4057">4057</a>
 <a href="#4058" id="4058">4058</a>
-<a href="#4059" id="4059">4059</a>
-<a href="#4060" id="4060">4060</a>
-<a href="#4061" id="4061">4061</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4059" id="4059">4059</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4096,7 +4094,7 @@
 <span class="kw">use </span>data_encoding::HEXLOWER;
 <span class="kw">use </span>futures_lite::{FutureExt, StreamExt};
 <span class="kw">use </span>futures_util::{stream::BoxStream, task::AtomicWaker};
-<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey, SharedSecret};
+<span class="kw">use </span>iroh_base::{DecryptionError, NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey, SharedSecret};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
 <span class="kw">use </span>netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
@@ -4194,7 +4192,7 @@
         Options {
             addr_v4: <span class="prelude-val">None</span>,
             addr_v6: <span class="prelude-val">None</span>,
-            secret_key: SecretKey::generate(),
+            secret_key: SecretKey::generate(rand::rngs::OsRng),
             relay_map: RelayMap::empty(),
             node_map: <span class="prelude-val">None</span>,
             discovery: <span class="prelude-val">None</span>,
@@ -5763,9 +5761,7 @@
         node_id: PublicKey,
         <span class="kw-2">mut </span>sealed_box: Vec&lt;u8&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;disco::Message, DiscoBoxError&gt; {
-        <span class="self">self</span>.get(secret, node_id, |secret| {
-            secret.open(<span class="kw-2">&amp;mut </span>sealed_box).map_err(DiscoBoxError::Open)
-        })<span class="question-mark">?</span>;
+        <span class="self">self</span>.get(secret, node_id, |secret| secret.open(<span class="kw-2">&amp;mut </span>sealed_box))<span class="question-mark">?</span>;
         disco::Message::from_bytes(<span class="kw-2">&amp;</span>sealed_box).map_err(DiscoBoxError::Parse)
     }
 }
@@ -5773,7 +5769,7 @@
 <span class="attr">#[derive(Debug, thiserror::Error)]
 </span><span class="kw">enum </span>DiscoBoxError {
     <span class="attr">#[error(<span class="string">"Failed to open crypto box"</span>)]
-    </span>Open(anyhow::Error),
+    </span>Open(<span class="attr">#[from] </span>DecryptionError),
     <span class="attr">#[error(<span class="string">"Failed to parse disco message"</span>)]
     </span>Parse(anyhow::Error),
 }
@@ -6934,7 +6930,7 @@
 
     <span class="kw">impl </span>MagicStack {
         <span class="kw">async fn </span>new(relay_mode: RelayMode) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-            <span class="kw">let </span>secret_key = SecretKey::generate();
+            <span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
 
             <span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(<span class="prelude-val">Some</span>(Duration::from_secs(<span class="number">10</span>).try_into().unwrap()));
@@ -7405,7 +7401,7 @@
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
         <span class="kw">let </span>make_conn = |addr: SocketAddr| -&gt; anyhow::Result&lt;quinn::Endpoint&gt; {
-            <span class="kw">let </span>key = SecretKey::generate();
+            <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
             <span class="kw">let </span>conn = std::net::UdpSocket::bind(addr)<span class="question-mark">?</span>;
 
             <span class="kw">let </span>quic_server_config = tls::make_server_config(<span class="kw-2">&amp;</span>key, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">false</span>)<span class="question-mark">?</span>;
@@ -7554,7 +7550,7 @@
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
         <span class="kw">fn </span>make_conn(addr: SocketAddr) -&gt; anyhow::Result&lt;quinn::Endpoint&gt; {
-            <span class="kw">let </span>key = SecretKey::generate();
+            <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
             <span class="kw">let </span>conn = UdpConn::bind(addr)<span class="question-mark">?</span>;
 
             <span class="kw">let </span>quic_server_config = tls::make_server_config(<span class="kw-2">&amp;</span>key, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">false</span>)<span class="question-mark">?</span>;

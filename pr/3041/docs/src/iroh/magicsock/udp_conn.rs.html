@@ -368,7 +368,7 @@
     <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/test/1"</span>;
 
     <span class="kw">fn </span>wrap_socket(conn: <span class="kw">impl </span>AsyncUdpSocket) -&gt; <span class="prelude-ty">Result</span>&lt;(quinn::Endpoint, SecretKey)&gt; {
-        <span class="kw">let </span>key = SecretKey::generate();
+        <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>quic_server_config = tls::make_server_config(<span class="kw-2">&amp;</span>key, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">false</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
         <span class="kw">let </span><span class="kw-2">mut </span>quic_ep = quinn::Endpoint::new_with_abstract_socket(

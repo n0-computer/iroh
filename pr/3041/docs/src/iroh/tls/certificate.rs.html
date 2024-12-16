@@ -877,7 +877,7 @@
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>sanity_check() {
-        <span class="kw">let </span>secret_key = SecretKey::generate();
+        <span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
 
         <span class="kw">let </span>(cert, <span class="kw">_</span>) = generate(<span class="kw-2">&amp;</span>secret_key).unwrap();
         <span class="kw">let </span>parsed_cert = parse(<span class="kw-2">&amp;</span>cert).unwrap();

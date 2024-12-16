@@ -1892,7 +1892,9 @@
 <a href="#1891" id="1891">1891</a>
 <a href="#1892" id="1892">1892</a>
 <a href="#1893" id="1893">1893</a>
-<a href="#1894" id="1894">1894</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#1894" id="1894">1894</a>
+<a href="#1895" id="1895">1895</a>
+<a href="#1896" id="1896">1896</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2022,7 +2024,9 @@
     </span><span class="doccomment">/// Binds the magic endpoint.
     </span><span class="kw">pub async fn </span>bind(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint&gt; {
         <span class="kw">let </span>relay_map = <span class="self">self</span>.relay_mode.relay_map();
-        <span class="kw">let </span>secret_key = <span class="self">self</span>.secret_key.unwrap_or_else(SecretKey::generate);
+        <span class="kw">let </span>secret_key = <span class="self">self
+            </span>.secret_key
+            .unwrap_or_else(|| SecretKey::generate(rand::rngs::OsRng));
         <span class="kw">let </span>static_config = StaticConfig {
             transport_config: Arc::new(<span class="self">self</span>.transport_config.unwrap_or_default()),
             keylog: <span class="self">self</span>.keylog,
@@ -3342,7 +3346,7 @@
     </span><span class="kw">async fn </span>endpoint_connect_close() {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>(relay_map, relay_url, _guard) = run_relay_server().<span class="kw">await</span>.unwrap();
-        <span class="kw">let </span>server_secret_key = SecretKey::generate();
+        <span class="kw">let </span>server_secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>server_peer_id = server_secret_key.public();
 
         <span class="kw">let </span>server = {
@@ -3436,7 +3440,7 @@
     </span><span class="kw">async fn </span>restore_peers() {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
-        <span class="kw">let </span>secret_key = SecretKey::generate();
+        <span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
 
         <span class="doccomment">/// Create an endpoint for the test.
         </span><span class="kw">async fn </span>new_endpoint(secret_key: SecretKey, nodes: <span class="prelude-ty">Option</span>&lt;Vec&lt;NodeAddr&gt;&gt;) -&gt; Endpoint {
@@ -3457,7 +3461,7 @@
         }
 
         <span class="comment">// create the peer that will be added to the peer map
-        </span><span class="kw">let </span>peer_id = SecretKey::generate().public();
+        </span><span class="kw">let </span>peer_id = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>direct_addr: SocketAddr =
             (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), <span class="number">8758u16</span>).into();
         <span class="kw">let </span>node_addr = NodeAddr::new(peer_id).with_direct_addresses([direct_addr]);
@@ -3495,7 +3499,7 @@
         <span class="kw">let </span>chunk_size = <span class="number">10</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
         <span class="kw">let </span>(relay_map, relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span>.unwrap();
-        <span class="kw">let </span>server_secret_key = SecretKey::generate_with_rng(<span class="kw-2">&amp;mut </span>rng);
+        <span class="kw">let </span>server_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
         <span class="kw">let </span>server_node_id = server_secret_key.public();
 
         <span class="comment">// The server accepts the connections of the clients sequentially.
@@ -3545,7 +3549,7 @@
             <span class="kw">let </span>now = Instant::now();
             <span class="macro">println!</span>(<span class="string">"[client] round {}"</span>, i + <span class="number">1</span>);
             <span class="kw">let </span>relay_map = relay_map.clone();
-            <span class="kw">let </span>client_secret_key = SecretKey::generate_with_rng(<span class="kw-2">&amp;mut </span>rng);
+            <span class="kw">let </span>client_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
             <span class="kw">let </span>relay_url = relay_url.clone();
             <span class="kw">async </span>{
                 <span class="macro">info!</span>(<span class="string">"client binding"</span>);
@@ -3689,8 +3693,8 @@
         <span class="kw">let </span>_logging_guard = iroh_test::logging::setup();
         <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span>.unwrap();
         <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
-        <span class="kw">let </span>ep1_secret_key = SecretKey::generate_with_rng(<span class="kw-2">&amp;mut </span>rng);
-        <span class="kw">let </span>ep2_secret_key = SecretKey::generate_with_rng(<span class="kw-2">&amp;mut </span>rng);
+        <span class="kw">let </span>ep1_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+        <span class="kw">let </span>ep2_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
         <span class="kw">let </span>ep1 = Endpoint::builder()
             .secret_key(ep1_secret_key)
             .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)

@@ -130,12 +130,23 @@
 <a href="#129" id="129">129</a>
 <a href="#130" id="130">130</a>
 <a href="#131" id="131">131</a>
-<a href="#132" id="132">132</a></pre></div><pre class="rust"><code><span class="doccomment">//! The private and public keys of a node.
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a></pre></div><pre class="rust"><code><span class="doccomment">//! The private and public keys of a node.
 
 </span><span class="kw">use </span>std::fmt::Debug;
 
 <span class="kw">use </span>aead::Buffer;
-<span class="kw">use </span>anyhow::{anyhow, ensure, Context, <span class="prelude-ty">Result</span>};
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>NONCE_LEN: usize = <span class="number">24</span>;
 
@@ -149,6 +160,17 @@
 
 <span class="doccomment">/// Shared Secret.
 </span><span class="kw">pub struct </span>SharedSecret(crypto_box::ChaChaBox);
+
+<span class="doccomment">/// Errors that can occur during [`SharedSecret::open`].
+</span><span class="attr">#[derive(Debug, thiserror::Error)]
+</span><span class="kw">pub enum </span>DecryptionError {
+    <span class="doccomment">/// The nonce had the wrong size.
+    </span><span class="attr">#[error(<span class="string">"Invalid nonce"</span>)]
+    </span>InvalidNonce,
+    <span class="doccomment">/// AEAD decryption failed.
+    </span><span class="attr">#[error(<span class="string">"Aead error"</span>)]
+    </span>Aead(aead::Error),
+}
 
 <span class="kw">impl </span>Debug <span class="kw">for </span>SharedSecret {
     <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>std::fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; std::fmt::Result {
@@ -174,19 +196,21 @@
     }
 
     <span class="doccomment">/// Opens the ciphertext, which must have been created using `Self::seal`, and places the clear text into the provided buffer.
-    </span><span class="kw">pub fn </span>open(<span class="kw-2">&amp;</span><span class="self">self</span>, buffer: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>Buffer) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">pub fn </span>open(<span class="kw-2">&amp;</span><span class="self">self</span>, buffer: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>Buffer) -&gt; <span class="prelude-ty">Result</span>&lt;(), DecryptionError&gt; {
         <span class="kw">use </span>aead::AeadInPlace;
-        <span class="macro">ensure!</span>(buffer.len() &gt; NONCE_LEN, <span class="string">"too short"</span>);
+        <span class="kw">if </span>buffer.len() &lt; NONCE_LEN {
+            <span class="kw">return </span><span class="prelude-val">Err</span>(DecryptionError::InvalidNonce);
+        }
 
         <span class="kw">let </span>offset = buffer.len() - NONCE_LEN;
         <span class="kw">let </span>nonce: [u8; NONCE_LEN] = buffer.as_ref()[offset..]
             .try_into()
-            .context(<span class="string">"nonce wrong length"</span>)<span class="question-mark">?</span>;
+            .map_err(|<span class="kw">_</span>| DecryptionError::InvalidNonce)<span class="question-mark">?</span>;
 
         buffer.truncate(offset);
         <span class="self">self</span>.<span class="number">0
             </span>.decrypt_in_place(<span class="kw-2">&amp;</span>nonce.into(), <span class="kw-2">&amp;</span>[], buffer)
-            .map_err(|e| <span class="macro">anyhow!</span>(<span class="string">"decryption failed: {:?}"</span>, e))<span class="question-mark">?</span>;
+            .map_err(DecryptionError::Aead)<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(())
     }
@@ -208,8 +232,8 @@
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_seal_open_roundtrip() {
-        <span class="kw">let </span>key_a = <span class="kw">crate</span>::key::SecretKey::generate();
-        <span class="kw">let </span>key_b = <span class="kw">crate</span>::key::SecretKey::generate();
+        <span class="kw">let </span>key_a = <span class="kw">crate</span>::key::SecretKey::generate(<span class="kw-2">&amp;mut </span>rand::thread_rng());
+        <span class="kw">let </span>key_b = <span class="kw">crate</span>::key::SecretKey::generate(<span class="kw-2">&amp;mut </span>rand::thread_rng());
 
         seal_open_roundtrip(<span class="kw-2">&amp;</span>key_a, <span class="kw-2">&amp;</span>key_b);
         seal_open_roundtrip(<span class="kw-2">&amp;</span>key_b, <span class="kw-2">&amp;</span>key_a);
@@ -237,7 +261,7 @@
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_same_public_key_api() {
-        <span class="kw">let </span>key = <span class="kw">crate</span>::key::SecretKey::generate();
+        <span class="kw">let </span>key = <span class="kw">crate</span>::key::SecretKey::generate(<span class="kw-2">&amp;mut </span>rand::thread_rng());
         <span class="kw">let </span>public_key1: crypto_box::PublicKey = public_ed_box(<span class="kw-2">&amp;</span>key.public().public());
         <span class="kw">let </span>public_key2: crypto_box::PublicKey = secret_ed_box(<span class="kw-2">&amp;</span>key.secret).public_key();
 

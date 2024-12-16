@@ -2354,7 +2354,7 @@
     </span><span class="kw">async fn </span>test_recv_detail_connect_error() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
-        <span class="kw">let </span>key = SecretKey::generate();
+        <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>bad_url: Url = <span class="string">"https://bad.url"</span>.parse().unwrap();
         <span class="kw">let </span>dns_resolver = default_resolver();
 

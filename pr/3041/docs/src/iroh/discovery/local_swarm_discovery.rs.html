@@ -973,7 +973,7 @@
         }
 
         <span class="kw">fn </span>make_discoverer() -&gt; <span class="prelude-ty">Result</span>&lt;(PublicKey, LocalSwarmDiscovery)&gt; {
-            <span class="kw">let </span>node_id = SecretKey::generate().public();
+            <span class="kw">let </span>node_id = SecretKey::generate(rand::thread_rng()).public();
             <span class="prelude-val">Ok</span>((node_id, LocalSwarmDiscovery::new(node_id)<span class="question-mark">?</span>))
         }
     }

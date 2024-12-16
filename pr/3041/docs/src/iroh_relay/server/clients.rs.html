@@ -566,8 +566,8 @@
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_clients() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>a_key = SecretKey::generate().public();
-        <span class="kw">let </span>b_key = SecretKey::generate().public();
+        <span class="kw">let </span>a_key = SecretKey::generate(rand::thread_rng()).public();
+        <span class="kw">let </span>b_key = SecretKey::generate(rand::thread_rng()).public();
 
         <span class="kw">let </span>(builder_a, <span class="kw-2">mut </span>a_rw) = test_client_builder(a_key);
 

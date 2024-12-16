@@ -83,7 +83,16 @@
 <a href="#82" id="82">82</a>
 <a href="#83" id="83">83</a>
 <a href="#84" id="84">84</a>
-<a href="#85" id="85">85</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr};
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tickets is a serializable object combining information required for an operation.
+//! Typically tickets contain all information required for an operation, e.g. an iroh blob
+//! ticket would contain the hash of the data as well as information about how to reach the
+//! provider.
+
+</span><span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr};
 
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
@@ -94,10 +103,6 @@
 <span class="kw">pub use </span><span class="self">self</span>::node::NodeTicket;
 
 <span class="doccomment">/// A ticket is a serializable object combining information required for an operation.
-///
-/// Typically tickets contain all information required for an operation, e.g. an iroh blob
-/// ticket would contain the hash of the data as well as information about how to reach the
-/// provider.
 ///
 /// Tickets support serialization to a string using base32 encoding. The kind of
 /// ticket will be prepended to the string to make it somewhat self describing.
@@ -145,7 +150,10 @@
 </span><span class="kw">pub enum </span>Error {
     <span class="doccomment">/// Found a ticket of with the wrong prefix, indicating the wrong kind.
     </span><span class="attr">#[error(<span class="string">"wrong prefix, expected {expected}"</span>)]
-    </span>Kind { expected: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str },
+    </span>Kind {
+        <span class="doccomment">/// The expected prefix.
+        </span>expected: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+    },
     <span class="doccomment">/// This looks like a ticket, but postcard deserialization failed.
     </span><span class="attr">#[error(<span class="string">"deserialization failed: {_0}"</span>)]
     </span>Postcard(<span class="attr">#[from] </span>postcard::Error),
