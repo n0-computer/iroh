@@ -2245,6 +2245,7 @@ dependencies = [
  "aead",
  "anyhow",
  "crypto_box",
+ "curve25519-dalek",
  "data-encoding",
  "derive_more",
  "ed25519-dalek",
@@ -2260,7 +2261,6 @@ dependencies = [
  "serde_test",
  "ssh-key",
  "thiserror 2.0.6",
- "ttl_cache",
  "url",
  "zeroize",
 ]

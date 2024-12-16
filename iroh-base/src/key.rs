@@ -3,93 +3,42 @@
 mod encryption;
 
 use std::{
+    cmp::{Ord, PartialOrd},
     fmt::{Debug, Display},
     hash::Hash,
     str::FromStr,
-    sync::Mutex,
-    time::Duration,
 };
 
+use curve25519_dalek::edwards::CompressedEdwardsY;
 pub use ed25519_dalek::Signature;
 use ed25519_dalek::{SignatureError, SigningKey, VerifyingKey};
 use once_cell::sync::OnceCell;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 use ssh_key::LineEnding;
-use ttl_cache::TtlCache;
 
 pub use self::encryption::SharedSecret;
 use self::encryption::{public_ed_box, secret_ed_box};
 
-#[derive(Debug)]
-struct CryptoKeys {
-    verifying_key: VerifyingKey,
-    crypto_box: crypto_box::PublicKey,
-}
+/// A public key.
+///
+/// The key itself is stored as the `CompressedEdwards` y coordinate of the public key
+/// It is verified to decompress into a valid key when created.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct PublicKey(CompressedEdwardsY);
 
-impl CryptoKeys {
-    fn new(verifying_key: VerifyingKey) -> Self {
-        let crypto_box = public_ed_box(&verifying_key);
-        Self {
-            verifying_key,
-            crypto_box,
-        }
+impl Ord for PublicKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.as_bytes().cmp(other.0.as_bytes())
     }
 }
 
-/// Expiry time for the crypto key cache.
-///
-/// Basically, if no crypto operations have been performed with a key for this
-/// duration, the crypto keys will be removed from the cache and need to be
-/// re-created when they are used again.
-const KEY_CACHE_TTL: Duration = Duration::from_secs(60);
-/// Maximum number of keys in the crypto key cache. CryptoKeys are 224 bytes,
-/// keys are 32 bytes, so each entry is 256 bytes plus some overhead.
-///
-/// So that is about 4MB of max memory for the cache.
-const KEY_CACHE_CAPACITY: usize = 1024 * 16;
-static KEY_CACHE: OnceCell<Mutex<TtlCache<[u8; 32], CryptoKeys>>> = OnceCell::new();
-
-fn lock_key_cache() -> std::sync::MutexGuard<'static, TtlCache<[u8; 32], CryptoKeys>> {
-    let mutex = KEY_CACHE.get_or_init(|| Mutex::new(TtlCache::new(KEY_CACHE_CAPACITY)));
-    mutex.lock().expect("not poisoned")
+impl PartialOrd for PublicKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
-
-/// Get or create the crypto keys, and project something out of them.
-///
-/// If the key has been verified before, this will not fail.
-fn get_or_create_crypto_keys<T>(
-    key: &[u8; 32],
-    f: impl Fn(&CryptoKeys) -> T,
-) -> std::result::Result<T, SignatureError> {
-    let mut state = lock_key_cache();
-    Ok(match state.entry(*key) {
-        ttl_cache::Entry::Occupied(entry) => {
-            // cache hit
-            f(entry.get())
-        }
-        ttl_cache::Entry::Vacant(entry) => {
-            // cache miss, create. This might fail if the key is invalid.
-            let vk = VerifyingKey::from_bytes(key)?;
-            let item = CryptoKeys::new(vk);
-            let item = entry.insert(item, KEY_CACHE_TTL);
-            f(item)
-        }
-    })
-}
-
-/// A public key.
-///
-/// The key itself is just a 32 byte array, but a key has associated crypto
-/// information that is cached for performance reasons.
-///
-/// The cache item will be refreshed every time a crypto operation is performed,
-/// or when a key is deserialised or created from a byte array.
-///
-/// Serialisation or creation from a byte array is cheap if the key is already
-/// in the cache, but expensive if it is not.
-#[derive(Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
-pub struct PublicKey([u8; 32]);
 
 /// The identifier for a node in the (iroh) network.
 ///
@@ -119,7 +68,7 @@ impl Serialize for PublicKey {
         if serializer.is_human_readable() {
             serializer.serialize_str(&self.to_string())
         } else {
-            self.0.serialize(serializer)
+            self.0.as_bytes().serialize(serializer)
         }
     }
 }
@@ -142,16 +91,15 @@ impl<'de> Deserialize<'de> for PublicKey {
 impl PublicKey {
     /// Get this public key as a byte array.
     pub fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
+        self.0.as_bytes()
     }
 
     fn public(&self) -> VerifyingKey {
-        get_or_create_crypto_keys(&self.0, |item| item.verifying_key).expect("key has been checked")
+        VerifyingKey::from_bytes(self.0.as_bytes()).expect("already verified")
     }
 
     fn public_crypto_box(&self) -> crypto_box::PublicKey {
-        get_or_create_crypto_keys(&self.0, |item| item.crypto_box.clone())
-            .expect("key has been checked")
+        public_ed_box(&self.public())
     }
 
     /// Construct a `PublicKey` from a slice of bytes.
@@ -162,8 +110,9 @@ impl PublicKey {
     /// a valid `ed25519_dalek` curve point. Will never fail for bytes return from [`Self::as_bytes`].
     /// See [`VerifyingKey::from_bytes`] for details.
     pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, SignatureError> {
-        get_or_create_crypto_keys(bytes, |item| item.verifying_key)?;
-        Ok(Self(*bytes))
+        let key = VerifyingKey::from_bytes(bytes)?;
+        let y = CompressedEdwardsY(key.to_bytes());
+        Ok(Self(y))
     }
 
     /// Verify a signature on a message with this secret key's public key.
@@ -189,21 +138,8 @@ impl TryFrom<&[u8]> for PublicKey {
 
     #[inline]
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-        Ok(match <[u8; 32]>::try_from(bytes) {
-            Ok(bytes) => {
-                // using from_bytes is faster than going via the verifying
-                // key in case the key is already in the cache, which should
-                // be quite common.
-                Self::from_bytes(&bytes)?
-            }
-            Err(_) => {
-                // this will always fail since the size is wrong.
-                // but there is no public constructor for SignatureError,
-                // so ¯\_(ツ)_/¯...
-                let vk = VerifyingKey::try_from(bytes)?;
-                vk.into()
-            }
-        })
+        let vk = VerifyingKey::try_from(bytes)?;
+        Ok(Self(CompressedEdwardsY(vk.to_bytes())))
     }
 }
 
@@ -224,13 +160,8 @@ impl AsRef<[u8]> for PublicKey {
 
 impl From<VerifyingKey> for PublicKey {
     fn from(verifying_key: VerifyingKey) -> Self {
-        let item = CryptoKeys::new(verifying_key);
-        let key = *verifying_key.as_bytes();
-        let mut table = lock_key_cache();
-        // we already have performed the crypto operation, so no need for
-        // get_or_create_crypto_keys. Just insert in any case.
-        table.insert(key, item, KEY_CACHE_TTL);
-        PublicKey(key)
+        let key = verifying_key.to_bytes();
+        PublicKey(CompressedEdwardsY(key))
     }
 }
 
@@ -272,7 +203,7 @@ impl FromStr for PublicKey {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let bytes = decode_base32_hex(s)?;
 
-        Ok(Self::try_from(&bytes)?)
+        Ok(Self::from_bytes(&bytes)?)
     }
 }
 
@@ -495,37 +426,5 @@ mod tests {
             PublicKey::from_str(&key.public().to_string()).unwrap(),
             key.public()
         );
-    }
-
-    /// Test the different ways a key can come into existence, and that they
-    /// all populate the key cache.
-    #[test]
-    fn test_key_creation_cache() {
-        let random_verifying_key = || {
-            let sk = SigningKey::generate(&mut rand::thread_rng());
-            sk.verifying_key()
-        };
-        let random_public_key = || random_verifying_key().to_bytes();
-        let k1 = random_public_key();
-        let _key = PublicKey::from_bytes(&k1).unwrap();
-        assert!(lock_key_cache().contains_key(&k1));
-
-        let k2 = random_public_key();
-        let _key = PublicKey::try_from(&k2).unwrap();
-        assert!(lock_key_cache().contains_key(&k2));
-
-        let k3 = random_public_key();
-        let _key = PublicKey::try_from(k3.as_slice()).unwrap();
-        assert!(lock_key_cache().contains_key(&k3));
-
-        let k4 = random_verifying_key();
-        let _key = PublicKey::from(k4);
-        assert!(lock_key_cache().contains_key(k4.as_bytes()));
-
-        let k5 = random_verifying_key();
-        let bytes = postcard::to_stdvec(&k5).unwrap();
-        // VerifyingKey serialises with a length prefix, PublicKey does not.
-        let _key: PublicKey = postcard::from_bytes(&bytes[1..]).unwrap();
-        assert!(lock_key_cache().contains_key(k5.as_bytes()));
     }
 }
