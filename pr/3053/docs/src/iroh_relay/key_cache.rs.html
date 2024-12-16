@@ -55,7 +55,15 @@
 <a href="#54" id="54">54</a>
 <a href="#55" id="55">55</a>
 <a href="#56" id="56">56</a>
-<a href="#57" id="57">57</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#57" id="57">57</a>
+<a href="#58" id="58">58</a>
+<a href="#59" id="59">59</a>
+<a href="#60" id="60">60</a>
+<a href="#61" id="61">61</a>
+<a href="#62" id="62">62</a>
+<a href="#63" id="63">63</a>
+<a href="#64" id="64">64</a>
+<a href="#65" id="65">65</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     num::NonZeroUsize,
     sync::{Arc, Mutex},
 };
@@ -66,6 +74,12 @@
 <span class="kw">type </span>PublicKeyBytes = [u8; PublicKey::LENGTH];
 
 <span class="doccomment">/// A cache for public keys.
+///
+/// This is used solely to make parsing public keys from byte slices more
+/// efficient for the very common case where a large number of identical keys
+/// are being parsed, like in the relay server.
+///
+/// The cache stores only successful parse results.
 </span><span class="attr">#[derive(Debug, Clone, Default)]
 </span><span class="kw">pub enum </span>KeyCache {
     <span class="doccomment">/// The key cache is disabled.
@@ -100,15 +114,17 @@
             <span class="kw">return </span>PublicKey::try_from(slice);
         };
         <span class="kw">let </span><span class="prelude-val">Ok</span>(bytes) = PublicKeyBytes::try_from(slice) <span class="kw">else </span>{
-            PublicKey::try_from(slice)<span class="question-mark">?</span>;
+            <span class="comment">// if the size is wrong, use PublicKey::try_from to fail with a
+            // SignatureError.
+            </span>PublicKey::try_from(slice)<span class="question-mark">?</span>;
             <span class="macro">unreachable!</span>();
         };
-        <span class="kw">let </span><span class="kw-2">mut </span>cache = cache.lock().unwrap();
+        <span class="kw">let </span><span class="kw-2">mut </span>cache = cache.lock().expect(<span class="string">"not poisoned"</span>);
         <span class="kw">if let </span><span class="prelude-val">Some</span>((key, <span class="kw">_</span>)) = cache.get_key_value(<span class="kw-2">&amp;</span>bytes) {
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(key.clone());
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="kw-2">*</span>key);
         }
         <span class="kw">let </span>key = PublicKey::from_bytes(<span class="kw-2">&amp;</span>bytes)<span class="question-mark">?</span>;
-        cache.put(key.clone(), ());
+        cache.put(key, ());
         <span class="prelude-val">Ok</span>(key)
     }
 }
