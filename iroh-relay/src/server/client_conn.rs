@@ -528,7 +528,7 @@ mod tests {
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
 
-        let key = SecretKey::generate().public();
+        let key = SecretKey::generate(rand::thread_rng()).public();
         let (io, io_rw) = tokio::io::duplex(1024);
         let mut io_rw = Framed::new(io_rw, DerpCodec::default());
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
@@ -613,7 +613,7 @@ mod tests {
         // tokio::time::sleep(Duration::from_millis(100)).await;
         // assert!(preferred.fetch_and(true, Ordering::Relaxed));
 
-        let target = SecretKey::generate().public();
+        let target = SecretKey::generate(rand::thread_rng()).public();
 
         // send packet
         println!("  send packet");
@@ -669,7 +669,7 @@ mod tests {
         let (_disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (_peer_gone_s, peer_gone_r) = mpsc::channel(10);
 
-        let key = SecretKey::generate().public();
+        let key = SecretKey::generate(rand::thread_rng()).public();
         let (io, io_rw) = tokio::io::duplex(1024);
         let mut io_rw = Framed::new(io_rw, DerpCodec::default());
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
@@ -698,7 +698,7 @@ mod tests {
         // send packet
         println!("   send packet");
         let data = b"hello world!";
-        let target = SecretKey::generate().public();
+        let target = SecretKey::generate(rand::thread_rng()).public();
 
         conn::send_packet(&mut io_rw, target, Bytes::from_static(data)).await?;
         let msg = server_channel_r.recv().await.unwrap();
@@ -761,7 +761,7 @@ mod tests {
 
         // Prepare a frame to send, assert its size.
         let data = Bytes::from_static(b"hello world!!");
-        let target = SecretKey::generate().public();
+        let target = SecretKey::generate(rand::thread_rng()).public();
         let frame = Frame::SendPacket {
             dst_key: target,
             packet: data.clone(),

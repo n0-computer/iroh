@@ -405,6 +405,7 @@ mod tests {
     use iroh_base::SecretKey;
 
     use super::*;
+    use crate::key::{public_ed_box, secret_ed_box, SharedSecret};
 
     #[test]
     fn test_to_from_bytes() {
@@ -474,15 +475,16 @@ mod tests {
 
     #[test]
     fn test_extraction() {
-        let sender_key = SecretKey::generate();
-        let recv_key = SecretKey::generate();
+        let sender_key = SecretKey::generate(rand::thread_rng());
+        let recv_key = SecretKey::generate(rand::thread_rng());
 
         let msg = Message::Ping(Ping {
             tx_id: stun_rs::TransactionId::default(),
             node_key: sender_key.public(),
         });
 
-        let shared = sender_key.shared(&recv_key.public());
+        let sender_secret = secret_ed_box(sender_key.secret());
+        let shared = SharedSecret::new(&sender_secret, &public_ed_box(&recv_key.public().public()));
         let mut seal = msg.as_bytes();
         shared.seal(&mut seal);
 
@@ -495,7 +497,9 @@ mod tests {
         assert_eq!(raw_key, sender_key.public());
         assert_eq!(seal_back, seal);
 
-        let shared_recv = recv_key.shared(&sender_key.public());
+        let recv_secret = secret_ed_box(recv_key.secret());
+        let shared_recv =
+            SharedSecret::new(&recv_secret, &public_ed_box(&sender_key.public().public()));
         let mut open_seal = seal_back.to_vec();
         shared_recv
             .open(&mut open_seal)

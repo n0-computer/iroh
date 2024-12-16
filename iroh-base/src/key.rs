@@ -1,7 +1,5 @@
 //! Cryptographic key handling for `iroh`.
 
-mod encryption;
-
 use std::{
     cmp::{Ord, PartialOrd},
     fmt::{Debug, Display},
@@ -12,13 +10,8 @@ use std::{
 use curve25519_dalek::edwards::CompressedEdwardsY;
 pub use ed25519_dalek::Signature;
 use ed25519_dalek::{SignatureError, SigningKey, VerifyingKey};
-use once_cell::sync::OnceCell;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
-use ssh_key::LineEnding;
-
-pub use self::encryption::SharedSecret;
-use self::encryption::{public_ed_box, secret_ed_box};
 
 /// A public key.
 ///
@@ -28,15 +21,15 @@ use self::encryption::{public_ed_box, secret_ed_box};
 #[repr(transparent)]
 pub struct PublicKey(CompressedEdwardsY);
 
-impl Ord for PublicKey {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.as_bytes().cmp(other.0.as_bytes())
-    }
-}
-
 impl PartialOrd for PublicKey {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+impl Ord for PublicKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.as_bytes().cmp(other.0.as_bytes())
     }
 }
 
@@ -94,12 +87,9 @@ impl PublicKey {
         self.0.as_bytes()
     }
 
-    fn public(&self) -> VerifyingKey {
+    /// Returns the [`VerifyingKey`] for this `PublicKey`.
+    pub fn public(&self) -> VerifyingKey {
         VerifyingKey::from_bytes(self.0.as_bytes()).expect("already verified")
-    }
-
-    fn public_crypto_box(&self) -> crypto_box::PublicKey {
-        public_ed_box(&self.public())
     }
 
     /// Construct a `PublicKey` from a slice of bytes.
@@ -113,10 +103,6 @@ impl PublicKey {
         let key = VerifyingKey::from_bytes(bytes)?;
         let y = CompressedEdwardsY(key.to_bytes());
         Ok(Self(y))
-    }
-
-    pub fn from_bytes_unchecked(bytes: &[u8; 32]) -> Self {
-        Self(CompressedEdwardsY(*bytes))
     }
 
     /// Verify a signature on a message with this secret key's public key.
@@ -134,6 +120,7 @@ impl PublicKey {
         data_encoding::HEXLOWER.encode(&self.as_bytes()[..5])
     }
 
+    /// The length of an ed25519 `PublicKey`, in bytes.
     pub const LENGTH: usize = ed25519_dalek::PUBLIC_KEY_LENGTH;
 }
 
@@ -194,6 +181,7 @@ pub enum KeyParsingError {
     /// Error when decoding the public key.
     #[error("key: {0}")]
     Key(#[from] ed25519_dalek::SignatureError),
+    /// The encoded information had the wrong length.
     #[error("invalid length")]
     DecodeInvalidLength,
 }
@@ -215,7 +203,6 @@ impl FromStr for PublicKey {
 #[derive(Clone)]
 pub struct SecretKey {
     secret: SigningKey,
-    secret_crypto_box: OnceCell<crypto_box::SecretKey>,
 }
 
 impl Debug for SecretKey {
@@ -269,41 +256,17 @@ impl SecretKey {
         self.secret.verifying_key().into()
     }
 
-    /// Generate a new [`SecretKey`] with the default randomness generator.
-    pub fn generate() -> Self {
-        let mut rng = rand::rngs::OsRng;
-        Self::generate_with_rng(&mut rng)
-    }
-
     /// Generate a new [`SecretKey`] with a randomness generator.
-    pub fn generate_with_rng<R: CryptoRngCore + ?Sized>(csprng: &mut R) -> Self {
-        let secret = SigningKey::generate(csprng);
+    ///
+    /// ```rust
+    /// // use the OsRng option for OS depedndent most secure RNG.
+    /// let mut rng = rand::rngs::OsRng;
+    /// let _key = iroh_base::SecretKey::generate(&mut rng);
+    /// ```
+    pub fn generate<R: CryptoRngCore>(mut csprng: R) -> Self {
+        let secret = SigningKey::generate(&mut csprng);
 
-        Self {
-            secret,
-            secret_crypto_box: OnceCell::default(),
-        }
-    }
-
-    /// Serialise this key to OpenSSH format.
-    pub fn to_openssh(&self) -> ssh_key::Result<zeroize::Zeroizing<String>> {
-        let ckey = ssh_key::private::Ed25519Keypair {
-            public: self.secret.verifying_key().into(),
-            private: self.secret.clone().into(),
-        };
-        ssh_key::private::PrivateKey::from(ckey).to_openssh(LineEnding::default())
-    }
-
-    /// Deserialise this key from OpenSSH format.
-    pub fn try_from_openssh<T: AsRef<[u8]>>(data: T) -> anyhow::Result<Self> {
-        let ser_key = ssh_key::private::PrivateKey::from_openssh(data)?;
-        match ser_key.key_data() {
-            ssh_key::private::KeypairData::Ed25519(kp) => Ok(SecretKey {
-                secret: kp.private.clone().into(),
-                secret_crypto_box: OnceCell::default(),
-            }),
-            _ => anyhow::bail!("invalid key format"),
-        }
+        Self { secret }
     }
 
     /// Sign the given message and return a digital signature
@@ -325,18 +288,15 @@ impl SecretKey {
         secret.into()
     }
 
-    fn secret_crypto_box(&self) -> &crypto_box::SecretKey {
-        self.secret_crypto_box
-            .get_or_init(|| secret_ed_box(&self.secret))
+    /// Returns the [`SigningKey`] for this `SecretKey`.
+    pub fn secret(&self) -> &SigningKey {
+        &self.secret
     }
 }
 
 impl From<SigningKey> for SecretKey {
     fn from(secret: SigningKey) -> Self {
-        SecretKey {
-            secret,
-            secret_crypto_box: OnceCell::default(),
-        }
+        SecretKey { secret }
     }
 }
 
@@ -395,14 +355,6 @@ mod tests {
     }
 
     #[test]
-    fn test_secret_key_openssh_roundtrip() {
-        let kp = SecretKey::generate();
-        let ser = kp.to_openssh().unwrap();
-        let de = SecretKey::try_from_openssh(&ser).unwrap();
-        assert_eq!(kp.to_bytes(), de.to_bytes());
-    }
-
-    #[test]
     fn public_key_postcard() {
         let key = PublicKey::from_bytes(&[0; 32]).unwrap();
         let bytes = postcard::to_stdvec(&key).unwrap();
@@ -420,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_display_from_str() {
-        let key = SecretKey::generate();
+        let key = SecretKey::generate(&mut rand::thread_rng());
         assert_eq!(
             SecretKey::from_str(&key.to_string()).unwrap().to_bytes(),
             key.to_bytes()

@@ -1,3 +1,8 @@
+//! Tickets is a serializable object combining information required for an operation.
+//! Typically tickets contain all information required for an operation, e.g. an iroh blob
+//! ticket would contain the hash of the data as well as information about how to reach the
+//! provider.
+
 use std::{collections::BTreeSet, net::SocketAddr};
 
 use serde::{Deserialize, Serialize};
@@ -9,10 +14,6 @@ mod node;
 pub use self::node::NodeTicket;
 
 /// A ticket is a serializable object combining information required for an operation.
-///
-/// Typically tickets contain all information required for an operation, e.g. an iroh blob
-/// ticket would contain the hash of the data as well as information about how to reach the
-/// provider.
 ///
 /// Tickets support serialization to a string using base32 encoding. The kind of
 /// ticket will be prepended to the string to make it somewhat self describing.
@@ -60,7 +61,10 @@ pub trait Ticket: Sized {
 pub enum Error {
     /// Found a ticket of with the wrong prefix, indicating the wrong kind.
     #[error("wrong prefix, expected {expected}")]
-    Kind { expected: &'static str },
+    Kind {
+        /// The expected prefix.
+        expected: &'static str,
+    },
     /// This looks like a ticket, but postcard deserialization failed.
     #[error("deserialization failed: {_0}")]
     Postcard(#[from] postcard::Error),

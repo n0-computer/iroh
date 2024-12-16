@@ -629,7 +629,7 @@ mod tests {
         let mut reader = FramedRead::new(reader, DerpCodec::default());
         let mut writer = FramedWrite::new(writer, DerpCodec::default());
 
-        let client_key = SecretKey::generate();
+        let client_key = SecretKey::generate(rand::thread_rng());
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,
         };

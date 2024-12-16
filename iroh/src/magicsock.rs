@@ -35,7 +35,7 @@ use concurrent_queue::ConcurrentQueue;
 use data_encoding::HEXLOWER;
 use futures_lite::{FutureExt, StreamExt};
 use futures_util::{stream::BoxStream, task::AtomicWaker};
-use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey, SharedSecret};
+use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::{protos::stun, RelayMap};
 use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
@@ -65,6 +65,7 @@ use crate::{
     disco::{self, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
+    key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     watchable::{Watchable, Watcher},
 };
 
@@ -133,7 +134,7 @@ impl Default for Options {
         Options {
             addr_v4: None,
             addr_v6: None,
-            secret_key: SecretKey::generate(),
+            secret_key: SecretKey::generate(rand::rngs::OsRng),
             relay_map: RelayMap::empty(),
             node_map: None,
             discovery: None,
@@ -197,6 +198,8 @@ pub(crate) struct MagicSock {
 
     /// Key for this node.
     secret_key: SecretKey,
+    /// Encryption key for this node.
+    secret_encryption_key: crypto_box::SecretKey,
 
     /// Cached version of the Ipv4 and Ipv6 addrs of the current connection.
     local_addrs: std::sync::RwLock<(SocketAddr, Option<SocketAddr>)>,
@@ -989,7 +992,7 @@ impl MagicSock {
         // We're now reasonably sure we're expecting communication from
         // this node, do the heavy crypto lifting to see what they want.
         let dm = match self.disco_secrets.unseal_and_decode(
-            &self.secret_key,
+            &self.secret_encryption_key,
             sender,
             sealed_box.to_vec(),
         ) {
@@ -1113,8 +1116,12 @@ impl MagicSock {
     }
 
     fn encode_disco_message(&self, dst_key: PublicKey, msg: &disco::Message) -> Bytes {
-        self.disco_secrets
-            .encode_and_seal(&self.secret_key, dst_key, msg)
+        self.disco_secrets.encode_and_seal(
+            &self.secret_encryption_key,
+            self.secret_key.public(),
+            dst_key,
+            msg,
+        )
     }
 
     fn send_ping_queued(&self, ping: SendPing) {
@@ -1546,10 +1553,13 @@ impl Handle {
         let node_map = node_map.unwrap_or_default();
         let node_map = NodeMap::load_from_vec(node_map);
 
+        let secret_encryption_key = secret_ed_box(secret_key.secret());
+
         let inner = Arc::new(MagicSock {
             me,
             port: AtomicU16::new(port),
             secret_key,
+            secret_encryption_key,
             proxy_url,
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(false),
@@ -1674,37 +1684,39 @@ impl Handle {
 struct DiscoSecrets(std::sync::Mutex<HashMap<PublicKey, SharedSecret>>);
 
 impl DiscoSecrets {
-    fn get<F, T>(&self, secret: &SecretKey, node_id: PublicKey, cb: F) -> T
+    fn get<F, T>(&self, secret: &crypto_box::SecretKey, node_id: PublicKey, cb: F) -> T
     where
         F: FnOnce(&mut SharedSecret) -> T,
     {
         let mut inner = self.0.lock().expect("poisoned");
-        let x = inner
-            .entry(node_id)
-            .or_insert_with(|| secret.shared(&node_id));
+        let x = inner.entry(node_id).or_insert_with(|| {
+            let public_key = public_ed_box(&node_id.public());
+            SharedSecret::new(secret, &public_key)
+        });
         cb(x)
     }
 
-    pub fn encode_and_seal(
+    fn encode_and_seal(
         &self,
-        secret_key: &SecretKey,
-        node_id: PublicKey,
+        this_secret_key: &crypto_box::SecretKey,
+        this_node_id: NodeId,
+        other_node_id: NodeId,
         msg: &disco::Message,
     ) -> Bytes {
         let mut seal = msg.as_bytes();
-        self.get(secret_key, node_id, |secret| secret.seal(&mut seal));
-        disco::encode_message(&secret_key.public(), seal).into()
+        self.get(this_secret_key, other_node_id, |secret| {
+            secret.seal(&mut seal)
+        });
+        disco::encode_message(&this_node_id, seal).into()
     }
 
-    pub fn unseal_and_decode(
+    fn unseal_and_decode(
         &self,
-        secret: &SecretKey,
+        secret: &crypto_box::SecretKey,
         node_id: PublicKey,
         mut sealed_box: Vec<u8>,
     ) -> Result<disco::Message, DiscoBoxError> {
-        self.get(secret, node_id, |secret| {
-            secret.open(&mut sealed_box).map_err(DiscoBoxError::Open)
-        })?;
+        self.get(secret, node_id, |secret| secret.open(&mut sealed_box))?;
         disco::Message::from_bytes(&sealed_box).map_err(DiscoBoxError::Parse)
     }
 }
@@ -1712,7 +1724,7 @@ impl DiscoSecrets {
 #[derive(Debug, thiserror::Error)]
 enum DiscoBoxError {
     #[error("Failed to open crypto box")]
-    Open(anyhow::Error),
+    Open(#[from] DecryptionError),
     #[error("Failed to parse disco message")]
     Parse(anyhow::Error),
 }
@@ -2873,7 +2885,7 @@ mod tests {
 
     impl MagicStack {
         async fn new(relay_mode: RelayMode) -> Result<Self> {
-            let secret_key = SecretKey::generate();
+            let secret_key = SecretKey::generate(rand::thread_rng());
 
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
@@ -3344,7 +3356,7 @@ mod tests {
         let _guard = iroh_test::logging::setup();
 
         let make_conn = |addr: SocketAddr| -> anyhow::Result<quinn::Endpoint> {
-            let key = SecretKey::generate();
+            let key = SecretKey::generate(rand::thread_rng());
             let conn = std::net::UdpSocket::bind(addr)?;
 
             let quic_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
@@ -3493,7 +3505,7 @@ mod tests {
         let _guard = iroh_test::logging::setup();
 
         fn make_conn(addr: SocketAddr) -> anyhow::Result<quinn::Endpoint> {
-            let key = SecretKey::generate();
+            let key = SecretKey::generate(rand::thread_rng());
             let conn = UdpConn::bind(addr)?;
 
             let quic_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;

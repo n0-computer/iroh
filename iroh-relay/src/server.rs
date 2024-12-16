@@ -494,7 +494,7 @@ async fn relay_supervisor(
     };
     let res = tokio::select! {
         biased;
-        ret = tasks.join_next(), if !tasks.is_empty() => ret.expect("checked"),
+        Some(ret) = tasks.join_next() => ret,
         ret = &mut quic_fut, if quic_enabled => ret.map(anyhow::Ok),
         ret = &mut relay_fut, if relay_enabled => ret.map(anyhow::Ok),
         else => Ok(Err(anyhow!("No relay services are enabled."))),
@@ -547,7 +547,7 @@ async fn server_stun_listener(sock: UdpSocket) -> Result<()> {
         tokio::select! {
             biased;
 
-            Some(res) = tasks.join_next(), if !tasks.is_empty() => {
+            Some(res) = tasks.join_next() => {
                 if let Err(err) = res {
                     if err.is_panic() {
                         panic!("task panicked: {:#?}", err);
@@ -695,7 +695,7 @@ async fn run_captive_portal_service(http_listener: TcpListener) -> Result<()> {
         tokio::select! {
             biased;
 
-            Some(res) = tasks.join_next(), if !tasks.is_empty() => {
+            Some(res) = tasks.join_next() => {
                 if let Err(err) = res {
                     if err.is_panic() {
                         panic!("task panicked: {:#?}", err);
@@ -881,7 +881,7 @@ mod tests {
         let relay_url: RelayUrl = relay_url.parse().unwrap();
 
         // set up client a
-        let a_secret_key = SecretKey::generate();
+        let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
         let (client_a, mut client_a_receiver) =
@@ -906,7 +906,7 @@ mod tests {
         }
 
         // set up client b
-        let b_secret_key = SecretKey::generate();
+        let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
         let (client_b, mut client_b_receiver) =
@@ -955,7 +955,7 @@ mod tests {
         let relay_url: RelayUrl = relay_url.parse().unwrap();
 
         // set up client a
-        let a_secret_key = SecretKey::generate();
+        let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
         let (client_a, mut client_a_receiver) = ClientBuilder::new(relay_url.clone())
@@ -981,7 +981,7 @@ mod tests {
         }
 
         // set up client b
-        let b_secret_key = SecretKey::generate();
+        let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
         let (client_b, mut client_b_receiver) = ClientBuilder::new(relay_url.clone())
@@ -1031,7 +1031,7 @@ mod tests {
         let relay_url: RelayUrl = relay_url.parse().unwrap();
 
         // set up client a
-        let a_secret_key = SecretKey::generate();
+        let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
         let (client_a, mut client_a_receiver) =
@@ -1056,7 +1056,7 @@ mod tests {
         }
 
         // set up client b
-        let b_secret_key = SecretKey::generate();
+        let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
         let (client_b, mut client_b_receiver) = ClientBuilder::new(relay_url.clone())

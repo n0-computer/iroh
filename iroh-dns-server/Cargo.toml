@@ -63,6 +63,8 @@ hickory-resolver = "=0.25.0-alpha.4"
 iroh = { version = "0.29.0", path = "../iroh" }
 iroh-test = { version = "0.29.0", path = "../iroh-test" }
 pkarr = { version = "2.2.0", features = ["rand"] }
+rand = "0.8"
+rand_chacha = "0.3.1"
 testresult = "0.4.1"
 
 [[bench]]

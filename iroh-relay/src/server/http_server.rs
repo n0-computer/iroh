@@ -249,7 +249,7 @@ impl ServerBuilder {
                         _ = cancel.cancelled() => {
                             break;
                         }
-                        Some(res) = set.join_next(), if !set.is_empty() => {
+                        Some(res) = set.join_next() => {
                             if let Err(err) = res {
                                 if err.is_panic() {
                                     panic!("task panicked: {:#?}", err);
@@ -708,8 +708,8 @@ mod tests {
     async fn test_http_clients_and_server() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let a_key = SecretKey::generate();
-        let b_key = SecretKey::generate();
+        let a_key = SecretKey::generate(rand::thread_rng());
+        let b_key = SecretKey::generate(rand::thread_rng());
 
         // start server
         let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
@@ -837,8 +837,8 @@ mod tests {
             .try_init()
             .ok();
 
-        let a_key = SecretKey::generate();
-        let b_key = SecretKey::generate();
+        let a_key = SecretKey::generate(rand::thread_rng());
+        let b_key = SecretKey::generate(rand::thread_rng());
 
         // create tls_config
         let tls_config = make_tls_config();
@@ -929,7 +929,7 @@ mod tests {
         );
 
         // create client a and connect it to the server
-        let key_a = SecretKey::generate();
+        let key_a = SecretKey::generate(rand::thread_rng());
         let public_key_a = key_a.public();
         let (rw_a, client_a_builder) = make_test_client(key_a);
         let s = service.clone();
@@ -941,7 +941,7 @@ mod tests {
         handler_task.await??;
 
         // create client b and connect it to the server
-        let key_b = SecretKey::generate();
+        let key_b = SecretKey::generate(rand::thread_rng());
         let public_key_b = key_b.public();
         let (rw_b, client_b_builder) = make_test_client(key_b);
         let s = service.clone();
@@ -1015,7 +1015,7 @@ mod tests {
         );
 
         // create client a and connect it to the server
-        let key_a = SecretKey::generate();
+        let key_a = SecretKey::generate(rand::thread_rng());
         let public_key_a = key_a.public();
         let (rw_a, client_a_builder) = make_test_client(key_a);
         let s = service.clone();
@@ -1027,7 +1027,7 @@ mod tests {
         handler_task.await??;
 
         // create client b and connect it to the server
-        let key_b = SecretKey::generate();
+        let key_b = SecretKey::generate(rand::thread_rng());
         let public_key_b = key_b.public();
         let (rw_b, client_b_builder) = make_test_client(key_b.clone());
         let s = service.clone();

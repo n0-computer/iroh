@@ -945,7 +945,7 @@ mod tests {
 
     #[test]
     fn test_packetize_iter() {
-        let node_id = SecretKey::generate().public();
+        let node_id = SecretKey::generate(rand::thread_rng()).public();
         let empty_vec: Vec<Bytes> = Vec::new();
         let mut iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(node_id, empty_vec);
         assert_eq!(None, iter.next());
