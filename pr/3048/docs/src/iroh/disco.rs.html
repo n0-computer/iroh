@@ -501,7 +501,10 @@
 <a href="#500" id="500">500</a>
 <a href="#501" id="501">501</a>
 <a href="#502" id="502">502</a>
-<a href="#503" id="503">503</a></pre></div><pre class="rust"><code><span class="doccomment">//! Contains the discovery message types.
+<a href="#503" id="503">503</a>
+<a href="#504" id="504">504</a>
+<a href="#505" id="505">505</a>
+<a href="#506" id="506">506</a></pre></div><pre class="rust"><code><span class="doccomment">//! Contains the discovery message types.
 //!
 //! A discovery message is:
 //!
@@ -527,6 +530,7 @@
 };
 
 <span class="kw">use </span>anyhow::{anyhow, bail, ensure, Context, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>data_encoding::HEXLOWER;
 <span class="kw">use </span>iroh_base::{PublicKey, RelayUrl};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>url::Url;
@@ -886,10 +890,10 @@
     <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>std::fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; std::fmt::Result {
         <span class="kw">match </span><span class="self">self </span>{
             Message::Ping(ping) =&gt; {
-                <span class="macro">write!</span>(f, <span class="string">"Ping(tx={})"</span>, hex::encode(ping.tx_id))
+                <span class="macro">write!</span>(f, <span class="string">"Ping(tx={})"</span>, HEXLOWER.encode(<span class="kw-2">&amp;</span>ping.tx_id))
             }
             Message::Pong(pong) =&gt; {
-                <span class="macro">write!</span>(f, <span class="string">"Pong(tx={})"</span>, hex::encode(pong.tx_id))
+                <span class="macro">write!</span>(f, <span class="string">"Pong(tx={})"</span>, HEXLOWER.encode(<span class="kw-2">&amp;</span>pong.tx_id))
             }
             Message::CallMeMaybe(<span class="kw">_</span>) =&gt; {
                 <span class="macro">write!</span>(f, <span class="string">"CallMeMaybe"</span>)
@@ -963,7 +967,9 @@
             <span class="kw">let </span>got = test.m.as_bytes();
             <span class="macro">assert_eq!</span>(
                 got,
-                hex::decode(test.want.replace(<span class="string">' '</span>, <span class="string">""</span>)).unwrap(),
+                data_encoding::HEXLOWER
+                    .decode(test.want.replace(<span class="string">' '</span>, <span class="string">""</span>).as_bytes())
+                    .unwrap(),
                 <span class="string">"wrong as_bytes"
             </span>);
 
