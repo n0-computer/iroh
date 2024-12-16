@@ -2052,7 +2052,7 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "0.29.0"
+version = "0.30.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2088,7 +2088,7 @@ dependencies = [
  "iroh-quinn-proto",
  "iroh-quinn-udp",
  "iroh-relay",
- "iroh-test 0.29.0",
+ "iroh-test 0.30.0",
  "libc",
  "netdev",
  "netlink-packet-core",
@@ -2143,7 +2143,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.29.0"
+version = "0.30.0"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
@@ -2164,7 +2164,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-bench"
-version = "0.29.0"
+version = "0.30.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2184,7 +2184,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns-server"
-version = "0.29.0"
+version = "0.30.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2204,7 +2204,7 @@ dependencies = [
  "humantime-serde",
  "iroh",
  "iroh-metrics",
- "iroh-test 0.29.0",
+ "iroh-test 0.30.0",
  "lru",
  "pkarr",
  "rand",
@@ -2255,7 +2255,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net-report"
-version = "0.29.0"
+version = "0.30.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2267,7 +2267,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-quinn",
  "iroh-relay",
- "iroh-test 0.29.0",
+ "iroh-test 0.30.0",
  "netwatch",
  "once_cell",
  "portmapper",
@@ -2335,7 +2335,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-relay"
-version = "0.29.0"
+version = "0.30.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -2360,7 +2360,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-quinn",
  "iroh-quinn-proto",
- "iroh-test 0.29.0",
+ "iroh-test 0.30.0",
  "libc",
  "lru",
  "num_enum",
@@ -2415,7 +2415,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-test"
-version = "0.29.0"
+version = "0.30.0"
 dependencies = [
  "anyhow",
  "tokio",
