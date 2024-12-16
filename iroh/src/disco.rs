@@ -404,9 +404,8 @@ const fn msg_header(t: MessageType, ver: u8) -> [u8; HEADER_LEN] {
 mod tests {
     use iroh_base::SecretKey;
 
-    use crate::key::{public_ed_box, secret_ed_box, SharedSecret};
-
     use super::*;
+    use crate::key::{public_ed_box, secret_ed_box, SharedSecret};
 
     #[test]
     fn test_to_from_bytes() {
