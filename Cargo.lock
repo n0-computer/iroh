@@ -2095,7 +2095,7 @@ dependencies = [
  "netlink-packet-route 0.19.0",
  "netlink-packet-route 0.21.0",
  "netlink-sys",
- "netwatch 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "netwatch",
  "num_enum",
  "once_cell",
  "parse-size",
@@ -2268,7 +2268,7 @@ dependencies = [
  "iroh-quinn",
  "iroh-relay",
  "iroh-test 0.29.0",
- "netwatch 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "netwatch",
  "once_cell",
  "portmapper",
  "pretty_assertions",
@@ -2827,38 +2827,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "netwatch"
-version = "0.2.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=feat-iroh-metrics-0-30#226326bcbeae9cfdd33c4576b9f40a4c8cab90c3"
-dependencies = [
- "anyhow",
- "atomic-waker",
- "bytes",
- "derive_more",
- "futures-lite 2.5.0",
- "futures-sink",
- "futures-util",
- "iroh-quinn-udp",
- "libc",
- "netdev",
- "netlink-packet-core",
- "netlink-packet-route 0.19.0",
- "netlink-sys",
- "once_cell",
- "rtnetlink 0.13.1",
- "rtnetlink 0.14.1",
- "serde",
- "socket2",
- "thiserror 2.0.7",
- "time",
- "tokio",
- "tokio-util",
- "tracing",
- "windows 0.58.0",
- "wmi",
-]
-
-[[package]]
 name = "nix"
 version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3302,8 +3270,9 @@ checksum = "280dc24453071f1b63954171985a0b0d30058d287960968b9b2aca264c8d4ee6"
 
 [[package]]
 name = "portmapper"
-version = "0.2.1"
-source = "git+https://github.com/n0-computer/net-tools?branch=feat-iroh-metrics-0-30#226326bcbeae9cfdd33c4576b9f40a4c8cab90c3"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e6b2058e5b2c829b7dcc62bb94ec223e2fdf07cad157b09ab05c5520af6f5b6"
 dependencies = [
  "anyhow",
  "base64",
@@ -3314,7 +3283,7 @@ dependencies = [
  "igd-next",
  "iroh-metrics",
  "libc",
- "netwatch 0.2.0 (git+https://github.com/n0-computer/net-tools?branch=feat-iroh-metrics-0-30)",
+ "netwatch",
  "num_enum",
  "rand",
  "serde",

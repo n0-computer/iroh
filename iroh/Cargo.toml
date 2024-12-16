@@ -60,7 +60,7 @@ pkarr = { version = "2", default-features = false, features = [
     "async",
     "relay",
 ] }
-portmapper = { version = "0.2.0", default-features = false }
+portmapper = { version = "0.3.0", default-features = false }
 postcard = { version = "1", default-features = false, features = [
     "alloc",
     "use-std",
