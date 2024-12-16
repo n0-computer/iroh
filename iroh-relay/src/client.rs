@@ -13,7 +13,6 @@ use std::{
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use bytes::Bytes;
 use conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMessage};
-use futures_lite::future::Boxed as BoxFuture;
 use futures_util::StreamExt;
 use hickory_resolver::TokioResolver as DnsResolver;
 use http_body_util::Empty;
@@ -151,7 +150,7 @@ struct Actor {
     relay_conn: Option<(Conn, ConnReceiver)>,
     is_closed: bool,
     #[debug("address family selector callback")]
-    address_family_selector: Option<Box<dyn Fn() -> BoxFuture<bool> + Send + Sync + 'static>>,
+    address_family_selector: Option<Box<dyn Fn() -> bool + Send + Sync>>,
     url: RelayUrl,
     protocol: Protocol,
     #[debug("TlsConnector")]
@@ -195,7 +194,7 @@ pub struct ClientBuilder {
     is_preferred: bool,
     /// Default is None
     #[debug("address family selector callback")]
-    address_family_selector: Option<Box<dyn Fn() -> BoxFuture<bool> + Send + Sync + 'static>>,
+    address_family_selector: Option<Box<dyn Fn() -> bool + Send + Sync>>,
     /// Default is false
     is_prober: bool,
     /// Expected PublicKey of the server
@@ -248,7 +247,7 @@ impl ClientBuilder {
     /// work anyway, so we don't artificially delay the connection speed.
     pub fn address_family_selector<S>(mut self, selector: S) -> Self
     where
-        S: Fn() -> BoxFuture<bool> + Send + Sync + 'static,
+        S: Fn() -> bool + Send + Sync + 'static,
     {
         self.address_family_selector = Some(Box::new(selector));
         self
@@ -848,7 +847,7 @@ impl Actor {
 
     async fn dial_url_direct(&self) -> Result<TcpStream, ClientError> {
         debug!(%self.url, "dial url");
-        let prefer_ipv6 = self.prefer_ipv6().await;
+        let prefer_ipv6 = self.prefer_ipv6();
         let dst_ip = self
             .dns_resolver
             .resolve_host(&self.url, prefer_ipv6)
@@ -880,7 +879,7 @@ impl Actor {
         debug!(%self.url, %proxy_url, "dial url via proxy");
 
         // Resolve proxy DNS
-        let prefer_ipv6 = self.prefer_ipv6().await;
+        let prefer_ipv6 = self.prefer_ipv6();
         let proxy_ip = self
             .dns_resolver
             .resolve_host(&proxy_url, prefer_ipv6)
@@ -977,9 +976,9 @@ impl Actor {
     /// Implementations should only return true if IPv6 is expected
     /// to succeed. (otherwise delaying IPv4 will delay the connection
     /// overall)
-    async fn prefer_ipv6(&self) -> bool {
+    fn prefer_ipv6(&self) -> bool {
         match self.address_family_selector {
-            Some(ref selector) => selector().await,
+            Some(ref selector) => selector(),
             None => false,
         }
     }
