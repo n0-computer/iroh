@@ -1758,21 +1758,21 @@
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Enable icmp_v4 probe
-    </span><span class="kw">pub fn </span>enable_icmp_v4(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.icmp_v4 = <span class="bool-val">true</span>;
+    <span class="doccomment">/// Enable or disable icmp_v4 probe
+    </span><span class="kw">pub fn </span>icmp_v4(<span class="kw-2">mut </span><span class="self">self</span>, enable: bool) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.icmp_v4 = enable;
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Enable icmp_v6 probe
-    </span><span class="kw">pub fn </span>enable_icmp_v6(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.icmp_v6 = <span class="bool-val">true</span>;
+    <span class="doccomment">/// Enable or disable icmp_v6 probe
+    </span><span class="kw">pub fn </span>icmp_v6(<span class="kw-2">mut </span><span class="self">self</span>, enable: bool) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.icmp_v6 = enable;
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Enable https probe
-    </span><span class="kw">pub fn </span>enable_https(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.https = <span class="bool-val">true</span>;
+    <span class="doccomment">/// Enable or disable https probe
+    </span><span class="kw">pub fn </span>https(<span class="kw-2">mut </span><span class="self">self</span>, enable: bool) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.https = enable;
         <span class="self">self
     </span>}
 
