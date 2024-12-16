@@ -45,6 +45,7 @@ use crate::{
     defaults::timeouts::*,
     http::{Protocol, RELAY_PATH},
     protos::relay::DerpCodec,
+    KeyCache,
 };
 
 pub(crate) mod conn;
@@ -159,6 +160,7 @@ struct Actor {
     ping_tasks: JoinSet<()>,
     dns_resolver: DnsResolver,
     proxy_url: Option<Url>,
+    key_cache: KeyCache,
 }
 
 #[derive(Default, Debug)]
@@ -208,6 +210,8 @@ pub struct ClientBuilder {
     insecure_skip_cert_verify: bool,
     /// HTTP Proxy
     proxy_url: Option<Url>,
+    /// Capacity of the key cache
+    key_cache_capacity: usize,
 }
 
 impl ClientBuilder {
@@ -223,6 +227,7 @@ impl ClientBuilder {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify: false,
             proxy_url: None,
+            key_cache_capacity: 128,
         }
     }
 
@@ -281,6 +286,12 @@ impl ClientBuilder {
         self
     }
 
+    /// Set the capacity of the cache for public keys.
+    pub fn key_cache_capacity(mut self, capacity: usize) -> Self {
+        self.key_cache_capacity = capacity;
+        self
+    }
+
     /// Build the [`Client`]
     pub fn build(self, key: SecretKey, dns_resolver: DnsResolver) -> (Client, ClientReceiver) {
         // TODO: review TLS config
@@ -320,6 +331,7 @@ impl ClientBuilder {
             tls_connector,
             dns_resolver,
             proxy_url: self.proxy_url,
+            key_cache: KeyCache::new(self.key_cache_capacity),
         };
 
         let (msg_sender, inbox) = mpsc::channel(64);
@@ -629,7 +641,9 @@ impl Actor {
 
         let (writer, reader) = tokio_tungstenite_wasm::connect(dial_url).await?.split();
 
-        let reader = ConnReader::Ws(reader);
+        let cache = self.key_cache.clone();
+
+        let reader = ConnReader::Ws(reader, cache);
         let writer = ConnWriter::Ws(writer);
 
         Ok((reader, writer))
@@ -683,8 +697,10 @@ impl Actor {
         let (reader, writer) =
             downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))?;
 
-        let reader = ConnReader::Derp(FramedRead::new(reader, DerpCodec));
-        let writer = ConnWriter::Derp(FramedWrite::new(writer, DerpCodec));
+        let cache = self.key_cache.clone();
+
+        let reader = ConnReader::Derp(FramedRead::new(reader, DerpCodec::new(cache.clone())));
+        let writer = ConnWriter::Derp(FramedWrite::new(writer, DerpCodec::new(cache)));
 
         Ok((reader, writer, local_addr))
     }

@@ -28,6 +28,7 @@ use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
 use crate::{
+    defaults::DEFAULT_KEY_CACHE_CAPACITY,
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
     protos::relay::{recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION},
     server::{
@@ -37,6 +38,7 @@ use crate::{
         streams::{MaybeTlsStream, RelayedStream},
         ClientConnRateLimit,
     },
+    KeyCache,
 };
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;
@@ -161,6 +163,8 @@ pub(super) struct ServerBuilder {
     /// Rate-limiting is enforced on received traffic from individual clients.  This
     /// configuration applies to a single client connection.
     client_rx_ratelimit: Option<ClientConnRateLimit>,
+    /// The capacity of the key cache.
+    key_cache_capacity: usize,
 }
 
 impl ServerBuilder {
@@ -172,6 +176,7 @@ impl ServerBuilder {
             handlers: Default::default(),
             headers: HeaderMap::new(),
             client_rx_ratelimit: None,
+            key_cache_capacity: DEFAULT_KEY_CACHE_CAPACITY,
         }
     }
 
@@ -209,6 +214,12 @@ impl ServerBuilder {
         self
     }
 
+    /// Set the capacity of the cache for public keys.
+    pub fn key_cache_capacity(mut self, capacity: usize) -> Self {
+        self.key_cache_capacity = capacity;
+        self
+    }
+
     /// Builds and spawns an HTTP(S) Relay Server.
     pub(super) async fn spawn(self) -> Result<Server> {
         let server_task = ServerActorTask::spawn();
@@ -218,6 +229,7 @@ impl ServerBuilder {
             server_task.server_channel.clone(),
             server_task.write_timeout,
             self.client_rx_ratelimit,
+            KeyCache::new(self.key_cache_capacity),
         );
 
         let addr = self.addr;
@@ -300,6 +312,7 @@ struct Inner {
     server_channel: mpsc::Sender<Message>,
     write_timeout: Duration,
     rate_limit: Option<ClientConnRateLimit>,
+    key_cache: KeyCache,
 }
 
 impl RelayService {
@@ -491,11 +504,14 @@ impl Inner {
         let mut io = match protocol {
             Protocol::Relay => {
                 inc!(Metrics, derp_accepts);
-                RelayedStream::Derp(Framed::new(io, DerpCodec))
+                RelayedStream::Derp(Framed::new(io, DerpCodec::new(self.key_cache.clone())))
             }
             Protocol::Websocket => {
                 inc!(Metrics, websocket_accepts);
-                RelayedStream::Ws(WebSocketStream::from_raw_socket(io, Role::Server, None).await)
+                RelayedStream::Ws(
+                    WebSocketStream::from_raw_socket(io, Role::Server, None).await,
+                    self.key_cache.clone(),
+                )
             }
         };
         trace!("accept: recv client key");
@@ -548,6 +564,7 @@ impl RelayService {
         server_channel: mpsc::Sender<Message>,
         write_timeout: Duration,
         rate_limit: Option<ClientConnRateLimit>,
+        key_cache: KeyCache,
     ) -> Self {
         Self(Arc::new(Inner {
             handlers,
@@ -555,6 +572,7 @@ impl RelayService {
             server_channel,
             write_timeout,
             rate_limit,
+            key_cache,
         }))
     }
 
@@ -900,8 +918,8 @@ mod tests {
         let client_reader = MaybeTlsStreamReader::Mem(client_reader);
         let client_writer = MaybeTlsStreamWriter::Mem(client_writer);
 
-        let client_reader = ConnReader::Derp(FramedRead::new(client_reader, DerpCodec));
-        let client_writer = ConnWriter::Derp(FramedWrite::new(client_writer, DerpCodec));
+        let client_reader = ConnReader::Derp(FramedRead::new(client_reader, DerpCodec::test()));
+        let client_writer = ConnWriter::Derp(FramedWrite::new(client_writer, DerpCodec::test()));
 
         (
             server,
@@ -921,6 +939,7 @@ mod tests {
             server_task.server_channel.clone(),
             server_task.write_timeout,
             None,
+            KeyCache::test(),
         );
 
         // create client a and connect it to the server
@@ -1007,6 +1026,7 @@ mod tests {
             server_task.server_channel.clone(),
             server_task.write_timeout,
             None,
+            KeyCache::test(),
         );
 
         // create client a and connect it to the server

@@ -1,6 +1,7 @@
 //! Cryptographic key handling for `iroh`.
 
 use std::{
+    borrow::Borrow,
     cmp::{Ord, PartialOrd},
     fmt::{Debug, Display},
     hash::Hash,
@@ -20,6 +21,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct PublicKey(CompressedEdwardsY);
+
+impl Borrow<[u8; 32]> for PublicKey {
+    fn borrow(&self) -> &[u8; 32] {
+        self.as_bytes()
+    }
+}
 
 impl PartialOrd for PublicKey {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {

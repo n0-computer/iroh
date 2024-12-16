@@ -2364,6 +2364,7 @@ dependencies = [
  "iroh-quinn-proto",
  "iroh-test 0.29.0",
  "libc",
+ "lru",
  "num_enum",
  "once_cell",
  "pin-project",

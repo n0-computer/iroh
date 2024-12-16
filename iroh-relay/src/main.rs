@@ -168,6 +168,8 @@ struct Config {
     /// Defaults to `http_bind_addr` with the port set to [`DEFAULT_METRICS_PORT`]
     /// (`[::]:9090` when `http_bind_addr` is set to the default).
     metrics_bind_addr: Option<SocketAddr>,
+    /// The capacity of the key cache.
+    key_cache_capacity: Option<usize>,
 }
 
 impl Config {
@@ -199,6 +201,7 @@ impl Default for Config {
             limits: None,
             enable_metrics: cfg_defaults::enable_metrics(),
             metrics_bind_addr: None,
+            key_cache_capacity: Default::default(),
         }
     }
 }
@@ -570,6 +573,7 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
         // if `dangerous_http_only` is set, do not pass in any tls configuration
         tls: relay_tls.and_then(|tls| if dangerous_http_only { None } else { Some(tls) }),
         limits,
+        key_cache_capacity: cfg.key_cache_capacity,
     };
     let stun_config = relay::StunConfig {
         bind_addr: cfg.stun_bind_addr(),

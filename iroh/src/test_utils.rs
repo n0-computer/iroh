@@ -84,6 +84,7 @@ pub async fn run_relay_server_with(
             http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
             tls: Some(tls),
             limits: Default::default(),
+            key_cache_capacity: Some(1024),
         }),
         quic,
         stun,

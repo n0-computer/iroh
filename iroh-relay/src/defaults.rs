@@ -20,6 +20,13 @@ pub const DEFAULT_HTTPS_PORT: u16 = 443;
 /// The default metrics port used by the Relay server.
 pub const DEFAULT_METRICS_PORT: u16 = 9090;
 
+/// The default capacity of the key cache for the relay server.
+///
+/// Sized for 1 million concurrent clients.
+/// memory usage will be (32 + 8 + 8 + 8) * 1_000_000 = 56MB on 64 bit,
+/// which seems reasonable for a server.
+pub const DEFAULT_KEY_CACHE_CAPACITY: usize = 1024 * 1024;
+
 /// Contains all timeouts that we use in `iroh`.
 pub(crate) mod timeouts {
     use std::time::Duration;

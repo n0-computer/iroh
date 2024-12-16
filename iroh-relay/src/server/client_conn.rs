@@ -530,9 +530,9 @@ mod tests {
 
         let key = SecretKey::generate(rand::thread_rng()).public();
         let (io, io_rw) = tokio::io::duplex(1024);
-        let mut io_rw = Framed::new(io_rw, DerpCodec);
+        let mut io_rw = Framed::new(io_rw, DerpCodec::test());
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
-        let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec));
+        let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec::test()));
 
         let actor = Actor {
             stream: RateLimitedRelayedStream::unlimited(stream),
@@ -670,9 +670,9 @@ mod tests {
 
         let key = SecretKey::generate(rand::thread_rng()).public();
         let (io, io_rw) = tokio::io::duplex(1024);
-        let mut io_rw = Framed::new(io_rw, DerpCodec);
+        let mut io_rw = Framed::new(io_rw, DerpCodec::test());
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
-        let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec));
+        let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec::test()));
 
         println!("-- create client conn");
         let actor = Actor {
@@ -750,8 +750,11 @@ mod tests {
 
         // Build the rate limited stream.
         let (io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) as _);
-        let mut frame_writer = Framed::new(io_write, DerpCodec);
-        let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io_read), DerpCodec));
+        let mut frame_writer = Framed::new(io_write, DerpCodec::test());
+        let stream = RelayedStream::Derp(Framed::new(
+            MaybeTlsStream::Test(io_read),
+            DerpCodec::test(),
+        ));
         let mut stream = RateLimitedRelayedStream::new(stream, limiter);
 
         // Prepare a frame to send, assert its size.

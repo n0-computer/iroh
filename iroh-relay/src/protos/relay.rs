@@ -25,6 +25,8 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio_util::codec::{Decoder, Encoder};
 
+use crate::KeyCache;
+
 /// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
 /// including its on-wire framing overhead)
@@ -204,8 +206,23 @@ pub(crate) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
 ///
 /// This is a framed protocol, using [`tokio_util::codec`] to turn the streams of bytes into
 /// [`Frame`]s.
-#[derive(Debug, Default, Clone)]
-pub(crate) struct DerpCodec;
+#[derive(Debug, Clone)]
+pub(crate) struct DerpCodec {
+    cache: KeyCache,
+}
+
+impl DerpCodec {
+    #[cfg(test)]
+    pub fn test() -> Self {
+        Self {
+            cache: KeyCache::test(),
+        }
+    }
+
+    pub(crate) fn new(cache: KeyCache) -> Self {
+        Self { cache }
+    }
+}
 
 /// The frames in the [`DerpCodec`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -293,13 +310,13 @@ impl Frame {
     /// Tries to decode a frame received over websockets.
     ///
     /// Specifically, bytes received from a binary websocket message frame.
-    pub(crate) fn decode_from_ws_msg(vec: Vec<u8>) -> anyhow::Result<Self> {
+    pub(crate) fn decode_from_ws_msg(vec: Vec<u8>, cache: &KeyCache) -> anyhow::Result<Self> {
         if vec.is_empty() {
             bail!("error parsing relay::codec::Frame: too few bytes (0)");
         }
         let bytes = Bytes::from(vec);
         let typ = FrameType::from(bytes[0]);
-        let frame = Self::from_bytes(typ, bytes.slice(1..))?;
+        let frame = Self::from_bytes(typ, bytes.slice(1..), cache)?;
         Ok(frame)
     }
 
@@ -364,7 +381,7 @@ impl Frame {
         }
     }
 
-    fn from_bytes(frame_type: FrameType, content: Bytes) -> anyhow::Result<Self> {
+    fn from_bytes(frame_type: FrameType, content: Bytes, cache: &KeyCache) -> anyhow::Result<Self> {
         let res = match frame_type {
             FrameType::ClientInfo => {
                 ensure!(
@@ -379,7 +396,7 @@ impl Frame {
 
                 let start = MAGIC.len();
                 let client_public_key =
-                    PublicKey::try_from(&content[start..start + PublicKey::LENGTH])?;
+                    cache.key_from_slice(&content[start..start + PublicKey::LENGTH])?;
                 let start = start + PublicKey::LENGTH;
                 let signature =
                     Signature::from_slice(&content[start..start + Signature::BYTE_SIZE])?;
@@ -402,7 +419,7 @@ impl Frame {
                     packet_len <= MAX_PACKET_SIZE,
                     "data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
                 );
-                let dst_key = PublicKey::try_from(&content[..PublicKey::LENGTH])?;
+                let dst_key = cache.key_from_slice(&content[..PublicKey::LENGTH])?;
                 let packet = content.slice(PublicKey::LENGTH..);
                 Self::SendPacket { dst_key, packet }
             }
@@ -417,7 +434,7 @@ impl Frame {
                     packet_len <= MAX_PACKET_SIZE,
                     "data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
                 );
-                let src_key = PublicKey::try_from(&content[..PublicKey::LENGTH])?;
+                let src_key = cache.key_from_slice(&content[..PublicKey::LENGTH])?;
                 let content = content.slice(PublicKey::LENGTH..);
                 Self::RecvPacket { src_key, content }
             }
@@ -439,7 +456,7 @@ impl Frame {
                     content.len() == PublicKey::LENGTH,
                     "invalid peer gone frame length"
                 );
-                let peer = PublicKey::try_from(&content[..32])?;
+                let peer = cache.key_from_slice(&content[..32])?;
                 Self::NodeGone { node_id: peer }
             }
             FrameType::Ping => {
@@ -516,7 +533,7 @@ impl Decoder for DerpCodec {
         src.advance(HEADER_LEN);
 
         let content = src.split_to(frame_len).freeze();
-        let frame = Frame::from_bytes(frame_type, content)?;
+        let frame = Frame::from_bytes(frame_type, content, &self.cache)?;
 
         Ok(Some(frame))
     }
@@ -576,8 +593,8 @@ mod tests {
     #[tokio::test]
     async fn test_basic_read_write() -> anyhow::Result<()> {
         let (reader, writer) = tokio::io::duplex(1024);
-        let mut reader = FramedRead::new(reader, DerpCodec);
-        let mut writer = FramedWrite::new(writer, DerpCodec);
+        let mut reader = FramedRead::new(reader, DerpCodec::test());
+        let mut writer = FramedWrite::new(writer, DerpCodec::test());
 
         let expect_buf = b"hello world!";
         let expected_frame = Frame::Health {
@@ -596,8 +613,8 @@ mod tests {
     #[tokio::test]
     async fn test_send_recv_client_key() -> anyhow::Result<()> {
         let (reader, writer) = tokio::io::duplex(1024);
-        let mut reader = FramedRead::new(reader, DerpCodec);
-        let mut writer = FramedWrite::new(writer, DerpCodec);
+        let mut reader = FramedRead::new(reader, DerpCodec::test());
+        let mut writer = FramedWrite::new(writer, DerpCodec::test());
 
         let client_key = SecretKey::generate(rand::thread_rng());
         let client_info = ClientInfo {
@@ -797,15 +814,16 @@ mod proptests {
         #[test]
         fn frame_roundtrip(frame in frame()) {
             let mut buf = BytesMut::new();
-            DerpCodec.encode(frame.clone(), &mut buf).unwrap();
-            let decoded = DerpCodec.decode(&mut buf).unwrap().unwrap();
+            let mut codec = DerpCodec::test();
+            codec.encode(frame.clone(), &mut buf).unwrap();
+            let decoded = codec.decode(&mut buf).unwrap().unwrap();
             prop_assert_eq!(frame, decoded);
         }
 
         #[test]
         fn frame_ws_roundtrip(frame in frame()) {
             let encoded = frame.clone().encode_for_ws_msg();
-            let decoded = Frame::decode_from_ws_msg(encoded).unwrap();
+            let decoded = Frame::decode_from_ws_msg(encoded, &KeyCache::test()).unwrap();
             prop_assert_eq!(frame, decoded);
         }
 
@@ -813,9 +831,10 @@ mod proptests {
         #[test]
         fn broken_frame_handling(frame in frame()) {
             let mut buf = BytesMut::new();
-            DerpCodec.encode(frame.clone(), &mut buf).unwrap();
+            let mut codec = DerpCodec::test();
+            codec.encode(frame.clone(), &mut buf).unwrap();
             inject_error(&mut buf);
-            let decoded = DerpCodec.decode(&mut buf);
+            let decoded = codec.decode(&mut buf);
             prop_assert!(decoded.is_err());
         }
     }

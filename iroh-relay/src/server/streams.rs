@@ -12,7 +12,10 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::{tungstenite, WebSocketStream};
 use tokio_util::codec::Framed;
 
-use crate::protos::relay::{DerpCodec, Frame};
+use crate::{
+    protos::relay::{DerpCodec, Frame},
+    KeyCache,
+};
 
 /// A Stream and Sink for [`Frame`]s connected to a single relay client.
 ///
@@ -20,7 +23,7 @@ use crate::protos::relay::{DerpCodec, Frame};
 #[derive(Debug)]
 pub(crate) enum RelayedStream {
     Derp(Framed<MaybeTlsStream, DerpCodec>),
-    Ws(WebSocketStream<MaybeTlsStream>),
+    Ws(WebSocketStream<MaybeTlsStream>, KeyCache),
 }
 
 fn tung_to_io_err(e: tungstenite::Error) -> std::io::Error {
@@ -36,14 +39,14 @@ impl Sink<Frame> for RelayedStream {
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             Self::Derp(ref mut framed) => Pin::new(framed).poll_ready(cx),
-            Self::Ws(ref mut ws) => Pin::new(ws).poll_ready(cx).map_err(tung_to_io_err),
+            Self::Ws(ref mut ws, _) => Pin::new(ws).poll_ready(cx).map_err(tung_to_io_err),
         }
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
         match *self {
             Self::Derp(ref mut framed) => Pin::new(framed).start_send(item),
-            Self::Ws(ref mut ws) => Pin::new(ws)
+            Self::Ws(ref mut ws, _) => Pin::new(ws)
                 .start_send(tungstenite::Message::Binary(item.encode_for_ws_msg()))
                 .map_err(tung_to_io_err),
         }
@@ -52,14 +55,14 @@ impl Sink<Frame> for RelayedStream {
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             Self::Derp(ref mut framed) => Pin::new(framed).poll_flush(cx),
-            Self::Ws(ref mut ws) => Pin::new(ws).poll_flush(cx).map_err(tung_to_io_err),
+            Self::Ws(ref mut ws, _) => Pin::new(ws).poll_flush(cx).map_err(tung_to_io_err),
         }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             Self::Derp(ref mut framed) => Pin::new(framed).poll_close(cx),
-            Self::Ws(ref mut ws) => Pin::new(ws).poll_close(cx).map_err(tung_to_io_err),
+            Self::Ws(ref mut ws, _) => Pin::new(ws).poll_close(cx).map_err(tung_to_io_err),
         }
     }
 }
@@ -70,9 +73,9 @@ impl Stream for RelayedStream {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
             Self::Derp(ref mut framed) => Pin::new(framed).poll_next(cx),
-            Self::Ws(ref mut ws) => match Pin::new(ws).poll_next(cx) {
+            Self::Ws(ref mut ws, ref cache) => match Pin::new(ws).poll_next(cx) {
                 Poll::Ready(Some(Ok(tungstenite::Message::Binary(vec)))) => {
-                    Poll::Ready(Some(Frame::decode_from_ws_msg(vec)))
+                    Poll::Ready(Some(Frame::decode_from_ws_msg(vec, cache)))
                 }
                 Poll::Ready(Some(Ok(msg))) => {
                     tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
