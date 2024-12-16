@@ -264,9 +264,9 @@ impl RouterBuilder {
                         break;
                     },
                     // handle task terminations and quit on panics.
-                    res = join_set.join_next(), if !join_set.is_empty() => {
+                    Some(res) = join_set.join_next() => {
                         match res {
-                            Some(Err(outer)) => {
+                            Err(outer) => {
                                 if outer.is_panic() {
                                     error!("Task panicked: {outer:?}");
                                     break;
@@ -277,13 +277,12 @@ impl RouterBuilder {
                                     break;
                                 }
                             }
-                            Some(Ok(Some(()))) => {
+                            Ok(Some(())) => {
                                 trace!("Task finished");
                             }
-                            Some(Ok(None)) => {
+                            Ok(None) => {
                                 trace!("Task cancelled");
                             }
-                            _ => {}
                         }
                     },
 
