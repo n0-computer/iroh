@@ -867,11 +867,11 @@ pub fn os_has_ipv6() -> bool {
 
 #[cfg(any(test, feature = "stun-utils"))]
 pub(crate) mod stun_utils {
-    use super::*;
-
     use anyhow::Context as _;
     use netwatch::IpFamily;
     use tokio_util::sync::CancellationToken;
+
+    use super::*;
 
     /// Attempts to bind a local socket to send STUN packets from.
     ///
