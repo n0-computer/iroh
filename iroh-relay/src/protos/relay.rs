@@ -201,7 +201,7 @@ pub(crate) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
 }
 
 /// A cache for public keys.
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 pub struct KeyCache;
 
 /// The protocol for the relay server.
@@ -305,7 +305,7 @@ impl Frame {
     /// Tries to decode a frame received over websockets.
     ///
     /// Specifically, bytes received from a binary websocket message frame.
-    pub(crate) fn decode_from_ws_msg(vec: Vec<u8>, cache: KeyCache) -> anyhow::Result<Self> {
+    pub(crate) fn decode_from_ws_msg(vec: Vec<u8>, cache: &KeyCache) -> anyhow::Result<Self> {
         if vec.is_empty() {
             bail!("error parsing relay::codec::Frame: too few bytes (0)");
         }
@@ -376,7 +376,11 @@ impl Frame {
         }
     }
 
-    fn from_bytes(frame_type: FrameType, content: Bytes, _cache: KeyCache) -> anyhow::Result<Self> {
+    fn from_bytes(
+        frame_type: FrameType,
+        content: Bytes,
+        _cache: &KeyCache,
+    ) -> anyhow::Result<Self> {
         let res = match frame_type {
             FrameType::ClientInfo => {
                 ensure!(
@@ -528,7 +532,7 @@ impl Decoder for DerpCodec {
         src.advance(HEADER_LEN);
 
         let content = src.split_to(frame_len).freeze();
-        let frame = Frame::from_bytes(frame_type, content, self.cache.clone())?;
+        let frame = Frame::from_bytes(frame_type, content, &self.cache)?;
 
         Ok(Some(frame))
     }
@@ -818,7 +822,7 @@ mod proptests {
         #[test]
         fn frame_ws_roundtrip(frame in frame()) {
             let encoded = frame.clone().encode_for_ws_msg();
-            let decoded = Frame::decode_from_ws_msg(encoded, KeyCache::default()).unwrap();
+            let decoded = Frame::decode_from_ws_msg(encoded, &KeyCache::default()).unwrap();
             prop_assert_eq!(frame, decoded);
         }
 

@@ -687,7 +687,7 @@ impl Actor {
 
         let cache = KeyCache::default();
 
-        let reader = ConnReader::Derp(FramedRead::new(reader, DerpCodec::new(cache)));
+        let reader = ConnReader::Derp(FramedRead::new(reader, DerpCodec::new(cache.clone())));
         let writer = ConnWriter::Derp(FramedWrite::new(writer, DerpCodec::new(cache)));
 
         Ok((reader, writer, local_addr))

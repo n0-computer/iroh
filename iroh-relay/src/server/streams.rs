@@ -70,9 +70,9 @@ impl Stream for RelayedStream {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
             Self::Derp(ref mut framed) => Pin::new(framed).poll_next(cx),
-            Self::Ws(ref mut ws, cache) => match Pin::new(ws).poll_next(cx) {
+            Self::Ws(ref mut ws, ref cache) => match Pin::new(ws).poll_next(cx) {
                 Poll::Ready(Some(Ok(tungstenite::Message::Binary(vec)))) => {
-                    Poll::Ready(Some(Frame::decode_from_ws_msg(vec, cache.clone())))
+                    Poll::Ready(Some(Frame::decode_from_ws_msg(vec, cache)))
                 }
                 Poll::Ready(Some(Ok(msg))) => {
                     tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
