@@ -46,7 +46,7 @@ perform lookups to all discovery systems at the same time.</p>
     Endpoint, SecretKey,
 };
 
-<span class="kw">let </span>secret_key = SecretKey::generate();
+<span class="kw">let </span>secret_key = SecretKey::generate(rand::rngs::OsRng);
 <span class="kw">let </span>discovery = ConcurrentDiscovery::from_services(<span class="macro">vec!</span>[
     Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
     Box::new(DnsDiscovery::n0_dns()),

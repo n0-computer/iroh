@@ -1915,7 +1915,7 @@
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_packetize_iter() {
-        <span class="kw">let </span>node_id = SecretKey::generate().public();
+        <span class="kw">let </span>node_id = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>empty_vec: Vec&lt;Bytes&gt; = Vec::new();
         <span class="kw">let </span><span class="kw-2">mut </span>iter = PacketizeIter::&lt;<span class="kw">_</span>, MAX_PACKET_SIZE&gt;::new(node_id, empty_vec);
         <span class="macro">assert_eq!</span>(<span class="prelude-val">None</span>, iter.next());

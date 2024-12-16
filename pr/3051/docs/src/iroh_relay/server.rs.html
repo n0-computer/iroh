@@ -2012,7 +2012,7 @@
         <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse().unwrap();
 
         <span class="comment">// set up client a
-        </span><span class="kw">let </span>a_secret_key = SecretKey::generate();
+        </span><span class="kw">let </span>a_secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>a_key = a_secret_key.public();
         <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::default_resolver().clone();
         <span class="kw">let </span>(client_a, <span class="kw-2">mut </span>client_a_receiver) =
@@ -2037,7 +2037,7 @@
         }
 
         <span class="comment">// set up client b
-        </span><span class="kw">let </span>b_secret_key = SecretKey::generate();
+        </span><span class="kw">let </span>b_secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>b_key = b_secret_key.public();
         <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::default_resolver().clone();
         <span class="kw">let </span>(client_b, <span class="kw-2">mut </span>client_b_receiver) =
@@ -2086,7 +2086,7 @@
         <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse().unwrap();
 
         <span class="comment">// set up client a
-        </span><span class="kw">let </span>a_secret_key = SecretKey::generate();
+        </span><span class="kw">let </span>a_secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>a_key = a_secret_key.public();
         <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::default_resolver().clone();
         <span class="kw">let </span>(client_a, <span class="kw-2">mut </span>client_a_receiver) = ClientBuilder::new(relay_url.clone())
@@ -2112,7 +2112,7 @@
         }
 
         <span class="comment">// set up client b
-        </span><span class="kw">let </span>b_secret_key = SecretKey::generate();
+        </span><span class="kw">let </span>b_secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>b_key = b_secret_key.public();
         <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::default_resolver().clone();
         <span class="kw">let </span>(client_b, <span class="kw-2">mut </span>client_b_receiver) = ClientBuilder::new(relay_url.clone())
@@ -2162,7 +2162,7 @@
         <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse().unwrap();
 
         <span class="comment">// set up client a
-        </span><span class="kw">let </span>a_secret_key = SecretKey::generate();
+        </span><span class="kw">let </span>a_secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>a_key = a_secret_key.public();
         <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::default_resolver().clone();
         <span class="kw">let </span>(client_a, <span class="kw-2">mut </span>client_a_receiver) =
@@ -2187,7 +2187,7 @@
         }
 
         <span class="comment">// set up client b
-        </span><span class="kw">let </span>b_secret_key = SecretKey::generate();
+        </span><span class="kw">let </span>b_secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>b_key = b_secret_key.public();
         <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::default_resolver().clone();
         <span class="kw">let </span>(client_b, <span class="kw-2">mut </span>client_b_receiver) = ClientBuilder::new(relay_url.clone())

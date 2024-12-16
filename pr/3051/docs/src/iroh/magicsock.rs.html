@@ -4059,7 +4059,19 @@
 <a href="#4058" id="4058">4058</a>
 <a href="#4059" id="4059">4059</a>
 <a href="#4060" id="4060">4060</a>
-<a href="#4061" id="4061">4061</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4061" id="4061">4061</a>
+<a href="#4062" id="4062">4062</a>
+<a href="#4063" id="4063">4063</a>
+<a href="#4064" id="4064">4064</a>
+<a href="#4065" id="4065">4065</a>
+<a href="#4066" id="4066">4066</a>
+<a href="#4067" id="4067">4067</a>
+<a href="#4068" id="4068">4068</a>
+<a href="#4069" id="4069">4069</a>
+<a href="#4070" id="4070">4070</a>
+<a href="#4071" id="4071">4071</a>
+<a href="#4072" id="4072">4072</a>
+<a href="#4073" id="4073">4073</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4096,7 +4108,7 @@
 <span class="kw">use </span>data_encoding::HEXLOWER;
 <span class="kw">use </span>futures_lite::{FutureExt, StreamExt};
 <span class="kw">use </span>futures_util::{stream::BoxStream, task::AtomicWaker};
-<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey, SharedSecret};
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
 <span class="kw">use </span>netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
@@ -4126,6 +4138,7 @@
     disco::{<span class="self">self</span>, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
+    key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     watchable::{Watchable, Watcher},
 };
 
@@ -4194,7 +4207,7 @@
         Options {
             addr_v4: <span class="prelude-val">None</span>,
             addr_v6: <span class="prelude-val">None</span>,
-            secret_key: SecretKey::generate(),
+            secret_key: SecretKey::generate(rand::rngs::OsRng),
             relay_map: RelayMap::empty(),
             node_map: <span class="prelude-val">None</span>,
             discovery: <span class="prelude-val">None</span>,
@@ -4258,6 +4271,8 @@
 
     <span class="doccomment">/// Key for this node.
     </span>secret_key: SecretKey,
+    <span class="doccomment">/// Encryption key for this node.
+    </span>secret_encryption_key: crypto_box::SecretKey,
 
     <span class="doccomment">/// Cached version of the Ipv4 and Ipv6 addrs of the current connection.
     </span>local_addrs: std::sync::RwLock&lt;(SocketAddr, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;)&gt;,
@@ -5050,7 +5065,7 @@
         <span class="comment">// We're now reasonably sure we're expecting communication from
         // this node, do the heavy crypto lifting to see what they want.
         </span><span class="kw">let </span>dm = <span class="kw">match </span><span class="self">self</span>.disco_secrets.unseal_and_decode(
-            <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key,
+            <span class="kw-2">&amp;</span><span class="self">self</span>.secret_encryption_key,
             sender,
             sealed_box.to_vec(),
         ) {
@@ -5174,8 +5189,12 @@
     }
 
     <span class="kw">fn </span>encode_disco_message(<span class="kw-2">&amp;</span><span class="self">self</span>, dst_key: PublicKey, msg: <span class="kw-2">&amp;</span>disco::Message) -&gt; Bytes {
-        <span class="self">self</span>.disco_secrets
-            .encode_and_seal(<span class="kw-2">&amp;</span><span class="self">self</span>.secret_key, dst_key, msg)
+        <span class="self">self</span>.disco_secrets.encode_and_seal(
+            <span class="kw-2">&amp;</span><span class="self">self</span>.secret_encryption_key,
+            <span class="self">self</span>.secret_key.public(),
+            dst_key,
+            msg,
+        )
     }
 
     <span class="kw">fn </span>send_ping_queued(<span class="kw-2">&amp;</span><span class="self">self</span>, ping: SendPing) {
@@ -5607,10 +5626,13 @@
         </span><span class="kw">let </span>node_map = node_map.unwrap_or_default();
         <span class="kw">let </span>node_map = NodeMap::load_from_vec(node_map);
 
+        <span class="kw">let </span>secret_encryption_key = secret_ed_box(secret_key.secret());
+
         <span class="kw">let </span>inner = Arc::new(MagicSock {
             me,
             port: AtomicU16::new(port),
             secret_key,
+            secret_encryption_key,
             proxy_url,
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(<span class="bool-val">false</span>),
@@ -5735,37 +5757,39 @@
 </span><span class="kw">struct </span>DiscoSecrets(std::sync::Mutex&lt;HashMap&lt;PublicKey, SharedSecret&gt;&gt;);
 
 <span class="kw">impl </span>DiscoSecrets {
-    <span class="kw">fn </span>get&lt;F, T&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, secret: <span class="kw-2">&amp;</span>SecretKey, node_id: PublicKey, cb: F) -&gt; T
+    <span class="kw">fn </span>get&lt;F, T&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, secret: <span class="kw-2">&amp;</span>crypto_box::SecretKey, node_id: PublicKey, cb: F) -&gt; T
     <span class="kw">where
         </span>F: FnOnce(<span class="kw-2">&amp;mut </span>SharedSecret) -&gt; T,
     {
         <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
-        <span class="kw">let </span>x = inner
-            .entry(node_id)
-            .or_insert_with(|| secret.shared(<span class="kw-2">&amp;</span>node_id));
+        <span class="kw">let </span>x = inner.entry(node_id).or_insert_with(|| {
+            <span class="kw">let </span>public_key = public_ed_box(<span class="kw-2">&amp;</span>node_id.public());
+            SharedSecret::new(secret, <span class="kw-2">&amp;</span>public_key)
+        });
         cb(x)
     }
 
-    <span class="kw">pub fn </span>encode_and_seal(
+    <span class="kw">fn </span>encode_and_seal(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        secret_key: <span class="kw-2">&amp;</span>SecretKey,
-        node_id: PublicKey,
+        this_secret_key: <span class="kw-2">&amp;</span>crypto_box::SecretKey,
+        this_node_id: NodeId,
+        other_node_id: NodeId,
         msg: <span class="kw-2">&amp;</span>disco::Message,
     ) -&gt; Bytes {
         <span class="kw">let </span><span class="kw-2">mut </span>seal = msg.as_bytes();
-        <span class="self">self</span>.get(secret_key, node_id, |secret| secret.seal(<span class="kw-2">&amp;mut </span>seal));
-        disco::encode_message(<span class="kw-2">&amp;</span>secret_key.public(), seal).into()
+        <span class="self">self</span>.get(this_secret_key, other_node_id, |secret| {
+            secret.seal(<span class="kw-2">&amp;mut </span>seal)
+        });
+        disco::encode_message(<span class="kw-2">&amp;</span>this_node_id, seal).into()
     }
 
-    <span class="kw">pub fn </span>unseal_and_decode(
+    <span class="kw">fn </span>unseal_and_decode(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        secret: <span class="kw-2">&amp;</span>SecretKey,
+        secret: <span class="kw-2">&amp;</span>crypto_box::SecretKey,
         node_id: PublicKey,
         <span class="kw-2">mut </span>sealed_box: Vec&lt;u8&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;disco::Message, DiscoBoxError&gt; {
-        <span class="self">self</span>.get(secret, node_id, |secret| {
-            secret.open(<span class="kw-2">&amp;mut </span>sealed_box).map_err(DiscoBoxError::Open)
-        })<span class="question-mark">?</span>;
+        <span class="self">self</span>.get(secret, node_id, |secret| secret.open(<span class="kw-2">&amp;mut </span>sealed_box))<span class="question-mark">?</span>;
         disco::Message::from_bytes(<span class="kw-2">&amp;</span>sealed_box).map_err(DiscoBoxError::Parse)
     }
 }
@@ -5773,7 +5797,7 @@
 <span class="attr">#[derive(Debug, thiserror::Error)]
 </span><span class="kw">enum </span>DiscoBoxError {
     <span class="attr">#[error(<span class="string">"Failed to open crypto box"</span>)]
-    </span>Open(anyhow::Error),
+    </span>Open(<span class="attr">#[from] </span>DecryptionError),
     <span class="attr">#[error(<span class="string">"Failed to parse disco message"</span>)]
     </span>Parse(anyhow::Error),
 }
@@ -6934,7 +6958,7 @@
 
     <span class="kw">impl </span>MagicStack {
         <span class="kw">async fn </span>new(relay_mode: RelayMode) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-            <span class="kw">let </span>secret_key = SecretKey::generate();
+            <span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
 
             <span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(<span class="prelude-val">Some</span>(Duration::from_secs(<span class="number">10</span>).try_into().unwrap()));
@@ -7405,7 +7429,7 @@
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
         <span class="kw">let </span>make_conn = |addr: SocketAddr| -&gt; anyhow::Result&lt;quinn::Endpoint&gt; {
-            <span class="kw">let </span>key = SecretKey::generate();
+            <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
             <span class="kw">let </span>conn = std::net::UdpSocket::bind(addr)<span class="question-mark">?</span>;
 
             <span class="kw">let </span>quic_server_config = tls::make_server_config(<span class="kw-2">&amp;</span>key, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">false</span>)<span class="question-mark">?</span>;
@@ -7554,7 +7578,7 @@
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
         <span class="kw">fn </span>make_conn(addr: SocketAddr) -&gt; anyhow::Result&lt;quinn::Endpoint&gt; {
-            <span class="kw">let </span>key = SecretKey::generate();
+            <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
             <span class="kw">let </span>conn = UdpConn::bind(addr)<span class="question-mark">?</span>;
 
             <span class="kw">let </span>quic_server_config = tls::make_server_config(<span class="kw-2">&amp;</span>key, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">false</span>)<span class="question-mark">?</span>;
