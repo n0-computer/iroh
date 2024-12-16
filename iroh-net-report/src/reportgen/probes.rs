@@ -45,7 +45,7 @@ const NUM_INCREMENTAL_RELAYS: usize = 3;
 /// The protocol used to time a node's latency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 #[repr(u8)]
-pub(super) enum ProbeProto {
+pub enum ProbeProto {
     /// STUN IPv4
     StunIpv4,
     /// STUN IPv6
@@ -214,16 +214,26 @@ impl fmt::Display for ProbeSet {
 ///
 /// [`reportgen`]: crate::reportgen
 #[derive(Debug, PartialEq, Eq)]
-pub(super) struct ProbePlan(BTreeSet<ProbeSet>);
+pub(super) struct ProbePlan {
+    set: BTreeSet<ProbeSet>,
+    protocols: BTreeSet<ProbeProto>,
+}
 
 impl ProbePlan {
     /// Creates an initial probe plan.
-    pub(super) fn initial(relay_map: &RelayMap, if_state: &interfaces::State) -> Self {
-        let mut plan = Self(BTreeSet::new());
+    pub(super) fn initial(
+        relay_map: &RelayMap,
+        if_state: &interfaces::State,
+        protocols: &BTreeSet<ProbeProto>,
+    ) -> Self {
+        let mut plan = Self {
+            set: BTreeSet::new(),
+            protocols: protocols.clone(),
+        };
 
         // The first time we need add probes after the STUN we record this delay, so that
         // further relay server can reuse this delay.
-        let mut max_stun_delay: Option<Duration> = None;
+        let mut max_high_prio_delay: Option<Duration> = None;
 
         for relay_node in relay_map.nodes() {
             let mut stun_ipv4_probes = ProbeSet::new(ProbeProto::StunIpv4);
@@ -263,20 +273,25 @@ impl ProbePlan {
                     })
                     .expect("adding QuicIpv6 probe to a QuicAddrIpv6 probe set");
             }
-            plan.add(stun_ipv4_probes);
-            plan.add(stun_ipv6_probes);
-            plan.add(quic_ipv4_probes);
-            plan.add(quic_ipv6_probes);
+            plan.add_if_enabled(stun_ipv4_probes);
+            plan.add_if_enabled(stun_ipv6_probes);
+            plan.add_if_enabled(quic_ipv4_probes);
+            plan.add_if_enabled(quic_ipv6_probes);
 
             // The HTTP and ICMP probes only start after the STUN probes have had a chance.
             let mut https_probes = ProbeSet::new(ProbeProto::Https);
-            let mut icmp_probes_ipv4 = ProbeSet::new(ProbeProto::IcmpV4);
-            let mut icmp_probes_ipv6 = ProbeSet::new(ProbeProto::IcmpV6);
-            for attempt in 0..3 {
-                let start = *max_stun_delay.get_or_insert_with(|| plan.max_delay())
-                    + DEFAULT_INITIAL_RETRANSMIT;
-                let delay = start + DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
+            let mut icmp_v4_probes = ProbeSet::new(ProbeProto::IcmpV4);
+            let mut icmp_v6_probes = ProbeSet::new(ProbeProto::IcmpV6);
 
+            for attempt in 0..3 {
+                let mut start = *max_high_prio_delay.get_or_insert_with(|| plan.max_delay());
+                // if there are high priority probes, ensure there is a buffer between
+                // the highest probe delay and the next probes we create
+                // if there are no high priority probes, we don't need a buffer
+                if plan.has_priority_probes() {
+                    start += DEFAULT_INITIAL_RETRANSMIT;
+                }
+                let delay = start + DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
                 https_probes
                     .push(Probe::Https {
                         delay,
@@ -284,7 +299,7 @@ impl ProbePlan {
                     })
                     .expect("adding Https probe to a Https probe set");
                 if if_state.have_v4 {
-                    icmp_probes_ipv4
+                    icmp_v4_probes
                         .push(Probe::IcmpV4 {
                             delay,
                             node: relay_node.clone(),
@@ -292,7 +307,7 @@ impl ProbePlan {
                         .expect("adding Icmp probe to an Icmp probe set");
                 }
                 if if_state.have_v6 {
-                    icmp_probes_ipv6
+                    icmp_v6_probes
                         .push(Probe::IcmpV6 {
                             delay,
                             node: relay_node.clone(),
@@ -300,9 +315,10 @@ impl ProbePlan {
                         .expect("adding IcmpIpv6 probe to and IcmpIpv6 probe set");
                 }
             }
-            plan.add(https_probes);
-            plan.add(icmp_probes_ipv4);
-            plan.add(icmp_probes_ipv6);
+
+            plan.add_if_enabled(https_probes);
+            plan.add_if_enabled(icmp_v4_probes);
+            plan.add_if_enabled(icmp_v6_probes);
         }
         plan
     }
@@ -312,11 +328,15 @@ impl ProbePlan {
         relay_map: &RelayMap,
         if_state: &interfaces::State,
         last_report: &Report,
+        protocols: &BTreeSet<ProbeProto>,
     ) -> Self {
         if last_report.relay_latency.is_empty() {
-            return Self::initial(relay_map, if_state);
+            return Self::initial(relay_map, if_state, protocols);
         }
-        let mut plan = Self(Default::default());
+        let mut plan = Self {
+            set: Default::default(),
+            protocols: protocols.clone(),
+        };
 
         // The first time we need add probes after the STUN we record this delay, so that
         // further relay servers can reuse this delay.
@@ -400,10 +420,10 @@ impl ProbePlan {
                         .expect("adding QuicIpv6 probe to a QuicAddrIpv6 probe set");
                 }
             }
-            plan.add(stun_ipv4_probes);
-            plan.add(stun_ipv6_probes);
-            plan.add(quic_ipv4_probes);
-            plan.add(quic_ipv6_probes);
+            plan.add_if_enabled(stun_ipv4_probes);
+            plan.add_if_enabled(stun_ipv6_probes);
+            plan.add_if_enabled(quic_ipv4_probes);
+            plan.add_if_enabled(quic_ipv6_probes);
 
             // The HTTP and ICMP probes only start after the STUN probes have had a chance.
             let mut https_probes = ProbeSet::new(ProbeProto::Https);
@@ -437,40 +457,58 @@ impl ProbePlan {
                         .expect("Pusying IcmpV6 Probe to an IcmpV6 ProbeSet");
                 }
             }
-            plan.add(https_probes);
-            plan.add(icmp_v4_probes);
-            plan.add(icmp_v6_probes);
+
+            plan.add_if_enabled(https_probes);
+            plan.add_if_enabled(icmp_v4_probes);
+            plan.add_if_enabled(icmp_v6_probes);
         }
         plan
     }
 
     /// Returns an iterator over the [`ProbeSet`]s in this plan.
     pub(super) fn iter(&self) -> impl Iterator<Item = &ProbeSet> {
-        self.0.iter()
+        self.set.iter()
     }
 
-    /// Adds a [`ProbeSet`] if it contains probes.
-    fn add(&mut self, set: ProbeSet) {
-        if !set.is_empty() {
-            self.0.insert(set);
+    /// Adds a [`ProbeSet`] if it contains probes and the protocol indicated in
+    /// the [`ProbeSet] matches a protocol in our set of [`ProbeProto`]s.
+    fn add_if_enabled(&mut self, set: ProbeSet) {
+        if !set.is_empty() && self.protocols.contains(&set.proto) {
+            self.set.insert(set);
         }
     }
 
     /// Returns the delay of the last probe in the probe plan.
     fn max_delay(&self) -> Duration {
-        self.0
+        self.set
             .iter()
             .flatten()
             .map(|probe| probe.delay())
             .max()
             .unwrap_or_default()
     }
+
+    /// Stun & Quic probes are "priority" probes
+    fn has_priority_probes(&self) -> bool {
+        for probe in &self.set {
+            if matches!(
+                probe.proto,
+                ProbeProto::StunIpv4
+                    | ProbeProto::StunIpv6
+                    | ProbeProto::QuicIpv4
+                    | ProbeProto::QuicIpv6
+            ) {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 impl fmt::Display for ProbePlan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "ProbePlan {{")?;
-        for probe_set in self.0.iter() {
+        for probe_set in self.set.iter() {
             writeln!(f, r#"    ProbeSet("{}") {{"#, probe_set.proto)?;
             for probe in probe_set.probes.iter() {
                 writeln!(f, "        {probe},")?;
@@ -483,7 +521,10 @@ impl fmt::Display for ProbePlan {
 
 impl FromIterator<ProbeSet> for ProbePlan {
     fn from_iter<T: IntoIterator<Item = ProbeSet>>(iter: T) -> Self {
-        Self(iter.into_iter().collect())
+        Self {
+            set: iter.into_iter().collect(),
+            protocols: BTreeSet::new(),
+        }
     }
 }
 
@@ -549,15 +590,27 @@ mod tests {
         };
     }
 
+    fn default_protocols() -> BTreeSet<ProbeProto> {
+        BTreeSet::from([
+            ProbeProto::StunIpv4,
+            ProbeProto::StunIpv6,
+            ProbeProto::QuicIpv4,
+            ProbeProto::QuicIpv6,
+            ProbeProto::IcmpV4,
+            ProbeProto::IcmpV6,
+            ProbeProto::Https,
+        ])
+    }
+
     #[tokio::test]
     async fn test_initial_probeplan() {
         let (_servers, relay_map) = test_utils::relay_map(2).await;
         let relay_node_1 = relay_map.nodes().next().unwrap();
         let relay_node_2 = relay_map.nodes().nth(1).unwrap();
         let if_state = interfaces::State::fake();
-        let plan = ProbePlan::initial(&relay_map, &if_state);
+        let plan = ProbePlan::initial(&relay_map, &if_state, &default_protocols());
 
-        let expected_plan: ProbePlan = [
+        let mut expected_plan: ProbePlan = [
             probeset! {
                 proto: ProbeProto::StunIpv4,
                 relay: relay_node_1.clone(),
@@ -659,6 +712,78 @@ mod tests {
         ]
         .into_iter()
         .collect();
+        expected_plan.protocols = default_protocols();
+
+        println!("expected:");
+        println!("{expected_plan}");
+        println!("actual:");
+        println!("{plan}");
+        // The readable error:
+        assert_eq!(plan.to_string(), expected_plan.to_string());
+        // Just in case there's a bug in the Display impl:
+        assert_eq!(plan, expected_plan);
+    }
+
+    #[tokio::test]
+    async fn test_initial_probeplan_some_protocols() {
+        let (_servers, relay_map) = test_utils::relay_map(2).await;
+        let relay_node_1 = relay_map.nodes().next().unwrap();
+        let relay_node_2 = relay_map.nodes().nth(1).unwrap();
+        let if_state = interfaces::State::fake();
+        let plan = ProbePlan::initial(
+            &relay_map,
+            &if_state,
+            &BTreeSet::from([ProbeProto::Https, ProbeProto::IcmpV4, ProbeProto::IcmpV6]),
+        );
+
+        let mut expected_plan: ProbePlan = [
+            probeset! {
+                proto: ProbeProto::Https,
+                relay: relay_node_1.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(100),
+                         Duration::from_millis(200)],
+            },
+            probeset! {
+                proto: ProbeProto::IcmpV4,
+                relay: relay_node_1.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(100),
+                         Duration::from_millis(200)],
+            },
+            probeset! {
+                proto: ProbeProto::IcmpV6,
+                relay: relay_node_1.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(100),
+                         Duration::from_millis(200)],
+            },
+            probeset! {
+                proto: ProbeProto::Https,
+                relay: relay_node_2.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(100),
+                         Duration::from_millis(200)],
+            },
+            probeset! {
+                proto: ProbeProto::IcmpV4,
+                relay: relay_node_2.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(100),
+                         Duration::from_millis(200)],
+            },
+            probeset! {
+                proto: ProbeProto::IcmpV6,
+                relay: relay_node_2.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(100),
+                         Duration::from_millis(200)],
+            },
+        ]
+        .into_iter()
+        .collect();
+        expected_plan.protocols =
+            BTreeSet::from([ProbeProto::Https, ProbeProto::IcmpV4, ProbeProto::IcmpV6]);
 
         println!("expected:");
         println!("{expected_plan}");
@@ -704,8 +829,13 @@ mod tests {
                 global_v6: None,
                 captive_portal: None,
             };
-            let plan = ProbePlan::with_last_report(&relay_map, &if_state, &last_report);
-            let expected_plan: ProbePlan = [
+            let plan = ProbePlan::with_last_report(
+                &relay_map,
+                &if_state,
+                &last_report,
+                &default_protocols(),
+            );
+            let mut expected_plan: ProbePlan = [
                 probeset! {
                     proto: ProbeProto::StunIpv4,
                     relay: relay_node_1.clone(),
@@ -807,6 +937,7 @@ mod tests {
             ]
             .into_iter()
             .collect();
+            expected_plan.protocols = default_protocols();
 
             println!("{} round", i);
             println!("expected:");

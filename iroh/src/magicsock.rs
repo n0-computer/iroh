@@ -2352,17 +2352,12 @@ impl Actor {
         }
 
         let relay_map = self.msock.relay_map.clone();
-        let pconn4 = Some(self.pconn4.clone());
-        let pconn6 = self.pconn6.clone();
-
-        let quic_config = None;
+        let opts = net_report::Options::default()
+            .stun_v4(Some(self.pconn4.clone()))
+            .stun_v6(self.pconn6.clone());
 
         debug!("requesting net_report report");
-        match self
-            .net_reporter
-            .get_report_channel(relay_map, pconn4, pconn6, quic_config)
-            .await
-        {
+        match self.net_reporter.get_report_channel(relay_map, opts).await {
             Ok(rx) => {
                 let msg_sender = self.msg_sender.clone();
                 tokio::task::spawn(async move {
