@@ -204,6 +204,24 @@ pub(crate) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
 #[derive(Default, Debug, Clone)]
 pub struct KeyCache;
 
+impl KeyCache {
+    /// Get a key from key bytes and update the cache.
+    pub fn key_from_bytes(
+        &self,
+        bytes: &[u8; 32],
+    ) -> Result<PublicKey, <PublicKey as TryFrom<&[u8; 32]>>::Error> {
+        PublicKey::try_from(bytes)
+    }
+
+    /// Get a key from a slice of bytes.
+    pub fn key_from_slice(
+        &self,
+        bytes: &[u8],
+    ) -> Result<PublicKey, <PublicKey as TryFrom<&[u8]>>::Error> {
+        PublicKey::try_from(bytes)
+    }
+}
+
 /// The protocol for the relay server.
 ///
 /// This is a framed protocol, using [`tokio_util::codec`] to turn the streams of bytes into
@@ -376,11 +394,7 @@ impl Frame {
         }
     }
 
-    fn from_bytes(
-        frame_type: FrameType,
-        content: Bytes,
-        _cache: &KeyCache,
-    ) -> anyhow::Result<Self> {
+    fn from_bytes(frame_type: FrameType, content: Bytes, cache: &KeyCache) -> anyhow::Result<Self> {
         let res = match frame_type {
             FrameType::ClientInfo => {
                 ensure!(
@@ -395,7 +409,7 @@ impl Frame {
 
                 let start = MAGIC.len();
                 let client_public_key =
-                    PublicKey::try_from(&content[start..start + PublicKey::LENGTH])?;
+                    cache.key_from_slice(&content[start..start + PublicKey::LENGTH])?;
                 let start = start + PublicKey::LENGTH;
                 let signature =
                     Signature::from_slice(&content[start..start + Signature::BYTE_SIZE])?;
@@ -418,7 +432,7 @@ impl Frame {
                     packet_len <= MAX_PACKET_SIZE,
                     "data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
                 );
-                let dst_key = PublicKey::try_from(&content[..PublicKey::LENGTH])?;
+                let dst_key = cache.key_from_slice(&content[..PublicKey::LENGTH])?;
                 let packet = content.slice(PublicKey::LENGTH..);
                 Self::SendPacket { dst_key, packet }
             }
@@ -433,7 +447,7 @@ impl Frame {
                     packet_len <= MAX_PACKET_SIZE,
                     "data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
                 );
-                let src_key = PublicKey::try_from(&content[..PublicKey::LENGTH])?;
+                let src_key = cache.key_from_slice(&content[..PublicKey::LENGTH])?;
                 let content = content.slice(PublicKey::LENGTH..);
                 Self::RecvPacket { src_key, content }
             }
@@ -455,7 +469,7 @@ impl Frame {
                     content.len() == PublicKey::LENGTH,
                     "invalid peer gone frame length"
                 );
-                let peer = PublicKey::try_from(&content[..32])?;
+                let peer = cache.key_from_slice(&content[..32])?;
                 Self::NodeGone { node_id: peer }
             }
             FrameType::Ping => {
