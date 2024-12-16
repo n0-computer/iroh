@@ -2055,6 +2055,7 @@ dependencies = [
 name = "iroh"
 version = "0.29.0"
 dependencies = [
+ "aead",
  "anyhow",
  "axum",
  "backoff",
@@ -2062,11 +2063,11 @@ dependencies = [
  "bytes",
  "clap",
  "concurrent-queue",
- "criterion",
  "crypto_box",
  "data-encoding",
  "der",
  "derive_more",
+ "ed25519-dalek",
  "futures-buffered",
  "futures-concurrency",
  "futures-lite 2.5.0",
@@ -2145,8 +2146,6 @@ dependencies = [
 name = "iroh-base"
 version = "0.29.0"
 dependencies = [
- "aead",
- "crypto_box",
  "curve25519-dalek",
  "data-encoding",
  "derive_more",

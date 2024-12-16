@@ -1,13 +1,10 @@
 //! Cryptographic key handling for `iroh`.
 
-mod encryption;
-
 use std::{
     cmp::{Ord, PartialOrd},
     fmt::{Debug, Display},
     hash::Hash,
     str::FromStr,
-    sync::OnceLock,
 };
 
 use curve25519_dalek::edwards::CompressedEdwardsY;
@@ -15,9 +12,6 @@ pub use ed25519_dalek::Signature;
 use ed25519_dalek::{SignatureError, SigningKey, VerifyingKey};
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
-
-use self::encryption::{public_ed_box, secret_ed_box};
-pub use self::encryption::{DecryptionError, SharedSecret};
 
 /// A public key.
 ///
@@ -93,12 +87,9 @@ impl PublicKey {
         self.0.as_bytes()
     }
 
-    fn public(&self) -> VerifyingKey {
+    /// Returns the [`VerifyingKey`] for this `PublicKey`.
+    pub fn public(&self) -> VerifyingKey {
         VerifyingKey::from_bytes(self.0.as_bytes()).expect("already verified")
-    }
-
-    fn public_crypto_box(&self) -> crypto_box::PublicKey {
-        public_ed_box(&self.public())
     }
 
     /// Construct a `PublicKey` from a slice of bytes.
@@ -212,7 +203,6 @@ impl FromStr for PublicKey {
 #[derive(Clone)]
 pub struct SecretKey {
     secret: SigningKey,
-    secret_crypto_box: OnceLock<crypto_box::SecretKey>,
 }
 
 impl Debug for SecretKey {
@@ -276,10 +266,7 @@ impl SecretKey {
     pub fn generate<R: CryptoRngCore>(mut csprng: R) -> Self {
         let secret = SigningKey::generate(&mut csprng);
 
-        Self {
-            secret,
-            secret_crypto_box: Default::default(),
-        }
+        Self { secret }
     }
 
     /// Sign the given message and return a digital signature
@@ -301,18 +288,15 @@ impl SecretKey {
         secret.into()
     }
 
-    fn secret_crypto_box(&self) -> &crypto_box::SecretKey {
-        self.secret_crypto_box
-            .get_or_init(|| secret_ed_box(&self.secret))
+    /// Returns the [`SigningKey`] for this `SecretKey`.
+    pub fn secret(&self) -> &SigningKey {
+        &self.secret
     }
 }
 
 impl From<SigningKey> for SecretKey {
     fn from(secret: SigningKey) -> Self {
-        SecretKey {
-            secret,
-            secret_crypto_box: Default::default(),
-        }
+        SecretKey { secret }
     }
 }
 
