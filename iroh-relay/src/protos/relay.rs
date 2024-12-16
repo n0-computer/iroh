@@ -25,6 +25,8 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio_util::codec::{Decoder, Encoder};
 
+use crate::KeyCache;
+
 /// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
 /// including its on-wire framing overhead)
@@ -197,28 +199,6 @@ pub(crate) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
         Ok((client_public_key, info))
     } else {
         anyhow::bail!("expected FrameType::ClientInfo");
-    }
-}
-
-/// A cache for public keys.
-#[derive(Default, Debug, Clone)]
-pub struct KeyCache;
-
-impl KeyCache {
-    /// Get a key from key bytes and update the cache.
-    pub fn key_from_bytes(
-        &self,
-        bytes: &[u8; 32],
-    ) -> Result<PublicKey, <PublicKey as TryFrom<&[u8; 32]>>::Error> {
-        PublicKey::try_from(bytes)
-    }
-
-    /// Get a key from a slice of bytes.
-    pub fn key_from_slice(
-        &self,
-        bytes: &[u8],
-    ) -> Result<PublicKey, <PublicKey as TryFrom<&[u8]>>::Error> {
-        PublicKey::try_from(bytes)
     }
 }
 

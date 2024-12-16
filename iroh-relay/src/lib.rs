@@ -38,7 +38,9 @@ pub mod quic;
 #[cfg(feature = "server")]
 pub mod server;
 
+mod key_cache;
 mod relay_map;
+pub(crate) use key_cache::KeyCache;
 
 #[cfg(test)]
 mod dns;

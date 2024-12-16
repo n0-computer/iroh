@@ -31,10 +31,12 @@ use crate::{
     client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
     defaults::timeouts::CLIENT_RECV_TIMEOUT,
     protos::relay::{
-        write_frame, ClientInfo, DerpCodec, Frame, KeyCache, MAX_PACKET_SIZE,
-        PER_CLIENT_READ_QUEUE_DEPTH, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+        write_frame, ClientInfo, DerpCodec, Frame, MAX_PACKET_SIZE, PER_CLIENT_READ_QUEUE_DEPTH,
+        PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
     },
 };
+
+use super::KeyCache;
 
 impl PartialEq for Conn {
     fn eq(&self, other: &Self) -> bool {

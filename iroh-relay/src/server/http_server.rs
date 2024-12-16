@@ -29,9 +29,7 @@ use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument
 
 use crate::{
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
-    protos::relay::{
-        recv_client_key, DerpCodec, KeyCache, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
-    },
+    protos::relay::{recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION},
     server::{
         actor::{Message, ServerActorTask},
         client_conn::ClientConnConfig,
@@ -39,6 +37,7 @@ use crate::{
         streams::{MaybeTlsStream, RelayedStream},
         ClientConnRateLimit,
     },
+    KeyCache,
 };
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;

@@ -44,7 +44,8 @@ use url::Url;
 use crate::{
     defaults::timeouts::*,
     http::{Protocol, RELAY_PATH},
-    protos::relay::{DerpCodec, KeyCache},
+    protos::relay::DerpCodec,
+    KeyCache,
 };
 
 pub(crate) mod conn;

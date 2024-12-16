@@ -12,7 +12,10 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::{tungstenite, WebSocketStream};
 use tokio_util::codec::Framed;
 
-use crate::protos::relay::{DerpCodec, Frame, KeyCache};
+use crate::{
+    protos::relay::{DerpCodec, Frame},
+    KeyCache,
+};
 
 /// A Stream and Sink for [`Frame`]s connected to a single relay client.
 ///
