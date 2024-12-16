@@ -1625,7 +1625,7 @@
     };
     <span class="kw">let </span>res = <span class="macro">tokio::select!</span> {
         biased;
-        ret = tasks.join_next(), <span class="kw">if </span>!tasks.is_empty() =&gt; ret.expect(<span class="string">"checked"</span>),
+        <span class="prelude-val">Some</span>(ret) = tasks.join_next() =&gt; ret,
         ret = <span class="kw-2">&amp;mut </span>quic_fut, <span class="kw">if </span>quic_enabled =&gt; ret.map(anyhow::Ok),
         ret = <span class="kw-2">&amp;mut </span>relay_fut, <span class="kw">if </span>relay_enabled =&gt; ret.map(anyhow::Ok),
         <span class="kw">else </span>=&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No relay services are enabled."</span>))),
@@ -1678,7 +1678,7 @@
         <span class="macro">tokio::select!</span> {
             biased;
 
-            <span class="prelude-val">Some</span>(res) = tasks.join_next(), <span class="kw">if </span>!tasks.is_empty() =&gt; {
+            <span class="prelude-val">Some</span>(res) = tasks.join_next() =&gt; {
                 <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
                     <span class="kw">if </span>err.is_panic() {
                         <span class="macro">panic!</span>(<span class="string">"task panicked: {:#?}"</span>, err);
@@ -1826,7 +1826,7 @@
         <span class="macro">tokio::select!</span> {
             biased;
 
-            <span class="prelude-val">Some</span>(res) = tasks.join_next(), <span class="kw">if </span>!tasks.is_empty() =&gt; {
+            <span class="prelude-val">Some</span>(res) = tasks.join_next() =&gt; {
                 <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
                     <span class="kw">if </span>err.is_panic() {
                         <span class="macro">panic!</span>(<span class="string">"task panicked: {:#?}"</span>, err);
