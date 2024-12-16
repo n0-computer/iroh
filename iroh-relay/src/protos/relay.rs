@@ -816,7 +816,7 @@ mod proptests {
         #[test]
         fn frame_ws_roundtrip(frame in frame()) {
             let encoded = frame.clone().encode_for_ws_msg();
-            let decoded = Frame::decode_from_ws_msg(encoded, &KeyCache::default()).unwrap();
+            let decoded = Frame::decode_from_ws_msg(encoded, &KeyCache::test()).unwrap();
             prop_assert_eq!(frame, decoded);
         }
 

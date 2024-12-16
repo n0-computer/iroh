@@ -162,6 +162,8 @@ pub(super) struct ServerBuilder {
     /// Rate-limiting is enforced on received traffic from individual clients.  This
     /// configuration applies to a single client connection.
     client_rx_ratelimit: Option<ClientConnRateLimit>,
+    /// The capacity of the key cache.
+    key_cache_capacity: usize,
 }
 
 impl ServerBuilder {
@@ -173,6 +175,7 @@ impl ServerBuilder {
             handlers: Default::default(),
             headers: HeaderMap::new(),
             client_rx_ratelimit: None,
+            key_cache_capacity: 0,
         }
     }
 
@@ -219,6 +222,7 @@ impl ServerBuilder {
             server_task.server_channel.clone(),
             server_task.write_timeout,
             self.client_rx_ratelimit,
+            KeyCache::new(self.key_cache_capacity),
         );
 
         let addr = self.addr;
@@ -301,6 +305,7 @@ struct Inner {
     server_channel: mpsc::Sender<Message>,
     write_timeout: Duration,
     rate_limit: Option<ClientConnRateLimit>,
+    key_cache: KeyCache,
 }
 
 impl RelayService {
@@ -498,7 +503,7 @@ impl Inner {
                 inc!(Metrics, websocket_accepts);
                 RelayedStream::Ws(
                     WebSocketStream::from_raw_socket(io, Role::Server, None).await,
-                    KeyCache::default(),
+                    self.key_cache.clone(),
                 )
             }
         };
@@ -552,6 +557,7 @@ impl RelayService {
         server_channel: mpsc::Sender<Message>,
         write_timeout: Duration,
         rate_limit: Option<ClientConnRateLimit>,
+        key_cache: KeyCache,
     ) -> Self {
         Self(Arc::new(Inner {
             handlers,
@@ -559,6 +565,7 @@ impl RelayService {
             server_channel,
             write_timeout,
             rate_limit,
+            key_cache,
         }))
     }
 
@@ -925,6 +932,7 @@ mod tests {
             server_task.server_channel.clone(),
             server_task.write_timeout,
             None,
+            KeyCache::test(),
         );
 
         // create client a and connect it to the server
@@ -1011,6 +1019,7 @@ mod tests {
             server_task.server_channel.clone(),
             server_task.write_timeout,
             None,
+            KeyCache::test(),
         );
 
         // create client a and connect it to the server

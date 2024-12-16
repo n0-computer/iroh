@@ -14,11 +14,18 @@ pub enum KeyCache {
     /// The key cache is disabled.
     #[default]
     Disabled,
-    /// The key cache is enabled with a fixed capacity.
-    Enabled(Arc<Mutex<lru::LruCache<PublicKey, ()>>>),
+    /// The key cache is enabled with a fixed capacity. It is shared between
+    /// multiple threads.
+    Shared(Arc<Mutex<lru::LruCache<PublicKey, ()>>>),
 }
 
 impl KeyCache {
+    /// Key cache to be used in tests.
+    #[cfg(test)]
+    pub fn test() -> Self {
+        Self::Disabled
+    }
+
     /// Create a new key cache with the given capacity.
     ///
     /// If the capacity is zero, the cache is disabled and has zero overhead.
@@ -27,12 +34,12 @@ impl KeyCache {
             return Self::Disabled;
         };
         let cache = lru::LruCache::new(capacity);
-        Self::Enabled(Arc::new(Mutex::new(cache)))
+        Self::Shared(Arc::new(Mutex::new(cache)))
     }
 
     /// Get a key from a slice of bytes.
     pub fn key_from_slice(&self, slice: &[u8]) -> Result<PublicKey, SignatureError> {
-        let Self::Enabled(cache) = self else {
+        let Self::Shared(cache) = self else {
             return PublicKey::try_from(slice);
         };
         let Ok(bytes) = PublicKeyBytes::try_from(slice) else {

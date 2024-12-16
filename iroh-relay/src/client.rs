@@ -160,6 +160,7 @@ struct Actor {
     ping_tasks: JoinSet<()>,
     dns_resolver: DnsResolver,
     proxy_url: Option<Url>,
+    key_cache: KeyCache,
 }
 
 #[derive(Default, Debug)]
@@ -209,6 +210,8 @@ pub struct ClientBuilder {
     insecure_skip_cert_verify: bool,
     /// HTTP Proxy
     proxy_url: Option<Url>,
+    /// Capacity of the key cache
+    key_cache_capacity: usize,
 }
 
 impl ClientBuilder {
@@ -224,6 +227,7 @@ impl ClientBuilder {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify: false,
             proxy_url: None,
+            key_cache_capacity: 0,
         }
     }
 
@@ -321,6 +325,7 @@ impl ClientBuilder {
             tls_connector,
             dns_resolver,
             proxy_url: self.proxy_url,
+            key_cache: KeyCache::new(self.key_cache_capacity),
         };
 
         let (msg_sender, inbox) = mpsc::channel(64);
@@ -630,7 +635,7 @@ impl Actor {
 
         let (writer, reader) = tokio_tungstenite_wasm::connect(dial_url).await?.split();
 
-        let cache = KeyCache::default();
+        let cache = self.key_cache.clone();
 
         let reader = ConnReader::Ws(reader, cache);
         let writer = ConnWriter::Ws(writer);
@@ -686,7 +691,7 @@ impl Actor {
         let (reader, writer) =
             downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))?;
 
-        let cache = KeyCache::default();
+        let cache = self.key_cache.clone();
 
         let reader = ConnReader::Derp(FramedRead::new(reader, DerpCodec::new(cache.clone())));
         let writer = ConnWriter::Derp(FramedWrite::new(writer, DerpCodec::new(cache)));
