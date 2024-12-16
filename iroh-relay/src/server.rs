@@ -257,8 +257,11 @@ impl Server {
                 metrics.insert(StunMetrics::new(reg));
             });
             tasks.spawn(
-                iroh_metrics::metrics::start_metrics_server(addr)
-                    .instrument(info_span!("metrics-server")),
+                async move {
+                    iroh_metrics::metrics::start_metrics_server(addr).await?;
+                    anyhow::Ok(())
+                }
+                .instrument(info_span!("metrics-server")),
             );
         }
 
