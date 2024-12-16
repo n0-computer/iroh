@@ -1542,7 +1542,7 @@
         <span class="kw">let </span>builder = builder
             .address_family_selector(<span class="kw">move </span>|| {
                 <span class="kw">let </span>ipv6_reported = ipv6_reported.clone();
-                Box::pin(<span class="kw">async move </span>{ ipv6_reported.load(Ordering::Relaxed) })
+                ipv6_reported.load(Ordering::Relaxed)
             })
             .is_preferred(my_relay.as_ref() == <span class="prelude-val">Some</span>(url));
 
