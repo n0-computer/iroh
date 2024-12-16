@@ -295,21 +295,21 @@ impl Options {
         self
     }
 
-    /// Enable icmp_v4 probe
-    pub fn enable_icmp_v4(mut self) -> Self {
-        self.icmp_v4 = true;
+    /// Enable or disable icmp_v4 probe
+    pub fn icmp_v4(mut self, enable: bool) -> Self {
+        self.icmp_v4 = enable;
         self
     }
 
-    /// Enable icmp_v6 probe
-    pub fn enable_icmp_v6(mut self) -> Self {
-        self.icmp_v6 = true;
+    /// Enable or disable icmp_v6 probe
+    pub fn icmp_v6(mut self, enable: bool) -> Self {
+        self.icmp_v6 = enable;
         self
     }
 
-    /// Enable https probe
-    pub fn enable_https(mut self) -> Self {
-        self.https = true;
+    /// Enable or disable https probe
+    pub fn https(mut self, enable: bool) -> Self {
+        self.https = enable;
         self
     }
 
