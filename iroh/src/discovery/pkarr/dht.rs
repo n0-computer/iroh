@@ -12,12 +12,15 @@ use std::{
     time::Duration,
 };
 
-use futures_lite::{stream::Boxed, StreamExt};
-use genawaiter::sync::{Co, Gen};
+use anyhow::Result;
+use futures_lite::{
+    stream::{Boxed, StreamExt},
+    FutureExt,
+};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use pkarr::{
-    PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, PublicKey,
-    RelaySettings, SignedPacket,
+    PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, RelaySettings,
+    SignedPacket,
 };
 use tokio_util::task::AbortOnDropHandle;
 use url::Url;
@@ -87,6 +90,73 @@ struct Inner {
     initial_publish_delay: Duration,
     /// Republish delay for the DHT.
     republish_delay: Duration,
+}
+
+impl Inner {
+    async fn resolve_relay(&self, key: pkarr::PublicKey) -> Option<Result<DiscoveryItem>> {
+        tracing::info!("resolving {} from relay {:?}", key.to_z32(), self.relay_url);
+
+        let maybe_packet = self
+            .pkarr_relay
+            .as_ref()
+            .expect("checked")
+            .resolve(&key)
+            .await;
+        match maybe_packet {
+            Ok(Some(signed_packet)) => match NodeInfo::from_pkarr_signed_packet(&signed_packet) {
+                Ok(node_info) => {
+                    let node_addr: NodeAddr = node_info.into();
+
+                    tracing::info!("discovered node info from relay {:?}", node_addr);
+                    Some(Ok(DiscoveryItem {
+                        node_addr,
+                        provenance: "relay",
+                        last_updated: None,
+                    }))
+                }
+                Err(_err) => {
+                    tracing::debug!("failed to parse signed packet as node info");
+                    None
+                }
+            },
+            Ok(None) => {
+                tracing::debug!("no signed packet found in relay");
+                None
+            }
+            Err(err) => {
+                tracing::debug!("failed to get signed packet from relay: {}", err);
+                Some(Err(err.into()))
+            }
+        }
+    }
+    async fn resolve_dht(&self, key: pkarr::PublicKey) -> Option<Result<DiscoveryItem>> {
+        tracing::info!("resolving {} from DHT", key.to_z32());
+
+        let maybe_packet = self.pkarr.resolve(&key).await;
+        match maybe_packet {
+            Ok(Some(signed_packet)) => match NodeInfo::from_pkarr_signed_packet(&signed_packet) {
+                Ok(node_info) => {
+                    let node_addr: NodeAddr = node_info.into();
+                    tracing::info!("discovered node info from DHT {:?}", node_addr);
+                    Some(Ok(DiscoveryItem {
+                        node_addr,
+                        provenance: "mainline",
+                        last_updated: None,
+                    }))
+                }
+                Err(_err) => {
+                    tracing::debug!("failed to parse signed packet as node info");
+                    None
+                }
+            },
+            Ok(None) => {
+                // nothing to do
+                tracing::debug!("no signed packet found in DHT");
+                None
+            }
+            Err(err) => Some(Err(err.into())),
+        }
+    }
 }
 
 /// Builder for [`DhtDiscovery`].
@@ -179,7 +249,7 @@ impl Builder {
     }
 
     /// Builds the discovery mechanism.
-    pub fn build(self) -> anyhow::Result<DhtDiscovery> {
+    pub fn build(self) -> Result<DhtDiscovery> {
         let pkarr = match self.client {
             Some(client) => client,
             None => PkarrClient::new(Default::default())?,
@@ -278,90 +348,6 @@ impl DhtDiscovery {
             tokio::time::sleep(this.0.republish_delay).await;
         }
     }
-
-    async fn resolve_relay(
-        &self,
-        pkarr_public_key: PublicKey,
-        co: &Co<anyhow::Result<DiscoveryItem>>,
-    ) {
-        let Some(relay) = &self.0.pkarr_relay else {
-            return;
-        };
-        tracing::info!(
-            "resolving {} from relay {:?}",
-            pkarr_public_key.to_z32(),
-            self.0.relay_url
-        );
-        let response = relay.resolve(&pkarr_public_key).await;
-        match response {
-            Ok(Some(signed_packet)) => {
-                if let Ok(node_info) = NodeInfo::from_pkarr_signed_packet(&signed_packet) {
-                    let node_addr: NodeAddr = node_info.into();
-
-                    tracing::info!("discovered node info from relay {:?}", node_addr);
-                    co.yield_(Ok(DiscoveryItem {
-                        node_addr,
-                        provenance: "relay",
-                        last_updated: None,
-                    }))
-                    .await;
-                } else {
-                    tracing::debug!("failed to parse signed packet as node info");
-                }
-            }
-            Ok(None) => {
-                tracing::debug!("no signed packet found in relay");
-            }
-            Err(e) => {
-                tracing::debug!("failed to get signed packet from relay: {}", e);
-                co.yield_(Err(e.into())).await;
-            }
-        }
-    }
-
-    /// Resolves a node id from the DHT.
-    async fn resolve_dht(
-        &self,
-        pkarr_public_key: PublicKey,
-        co: &Co<anyhow::Result<DiscoveryItem>>,
-    ) {
-        if !self.0.dht {
-            return;
-        };
-        tracing::info!("resolving {} from DHT", pkarr_public_key.to_z32());
-        let response = match self.0.pkarr.resolve(&pkarr_public_key).await {
-            Ok(r) => r,
-            Err(e) => {
-                co.yield_(Err(e.into())).await;
-                return;
-            }
-        };
-        let Some(signed_packet) = response else {
-            tracing::debug!("no signed packet found in DHT");
-            return;
-        };
-        if let Ok(node_info) = NodeInfo::from_pkarr_signed_packet(&signed_packet) {
-            let node_addr: NodeAddr = node_info.into();
-            tracing::info!("discovered node info from DHT {:?}", node_addr);
-            co.yield_(Ok(DiscoveryItem {
-                node_addr,
-                provenance: "mainline",
-                last_updated: None,
-            }))
-            .await;
-        } else {
-            tracing::debug!("failed to parse signed packet as node info");
-        }
-    }
-
-    async fn gen_resolve(self, node_id: NodeId, co: Co<anyhow::Result<DiscoveryItem>>) {
-        let pkarr_public_key =
-            pkarr::PublicKey::try_from(node_id.as_bytes()).expect("valid public key");
-        tokio::join!(
-            self.resolve_dht(pkarr_public_key.clone(), &co),
-            self.resolve_relay(pkarr_public_key, &co)
-        );
-    }
 }
 
 impl Discovery for DhtDiscovery {
@@ -395,11 +381,24 @@ impl Discovery for DhtDiscovery {
         _endpoint: Endpoint,
         node_id: NodeId,
     ) -> Option<Boxed<anyhow::Result<DiscoveryItem>>> {
-        let this = self.clone();
         let pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect("valid public key");
         tracing::info!("resolving {} as {}", node_id, pkarr_public_key.to_z32());
-        Some(Gen::new(|co| async move { this.gen_resolve(node_id, co).await }).boxed())
+
+        let mut stream = futures_buffered::FuturesUnorderedBounded::new(2);
+        if self.0.pkarr_relay.is_some() {
+            let key = pkarr_public_key.clone();
+            let discovery = self.0.clone();
+            stream.push(async move { discovery.resolve_relay(key).await }.boxed());
+        }
+
+        if self.0.dht {
+            let key = pkarr_public_key.clone();
+            let discovery = self.0.clone();
+            stream.push(async move { discovery.resolve_dht(key).await }.boxed());
+        }
+
+        Some(stream.filter_map(|t| t).boxed())
     }
 }
 
