@@ -165,7 +165,7 @@
         http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
         tls: <span class="prelude-val">Some</span>(tls_config()),
         limits: Default::default(),
-        key_cache_capacity: <span class="number">1024</span>,
+        key_cache_capacity: <span class="prelude-val">Some</span>(<span class="number">1024</span>),
     }
 }
 

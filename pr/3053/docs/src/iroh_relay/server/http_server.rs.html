@@ -1141,9 +1141,7 @@
 <a href="#1140" id="1140">1140</a>
 <a href="#1141" id="1141">1141</a>
 <a href="#1142" id="1142">1142</a>
-<a href="#1143" id="1143">1143</a>
-<a href="#1144" id="1144">1144</a>
-<a href="#1145" id="1145">1145</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1143" id="1143">1143</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -1173,6 +1171,7 @@
 <span class="kw">use </span>tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{
+    defaults::DEFAULT_KEY_CACHE_CAPACITY,
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
     protos::relay::{recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION},
     server::{
@@ -1320,10 +1319,7 @@
             handlers: Default::default(),
             headers: HeaderMap::new(),
             client_rx_ratelimit: <span class="prelude-val">None</span>,
-            <span class="comment">// Sized for 1 million concurrent clients.
-            // memory usage will be (32 + 8 + 8 + 8) * 1_000_000 = 56MB,
-            // which seems reasonable for a server.
-            </span>key_cache_capacity: <span class="number">1024 </span>* <span class="number">1024</span>,
+            key_cache_capacity: DEFAULT_KEY_CACHE_CAPACITY,
         }
     }
 

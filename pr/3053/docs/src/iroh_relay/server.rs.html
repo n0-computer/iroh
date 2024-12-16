@@ -1134,7 +1134,11 @@
 <a href="#1133" id="1133">1133</a>
 <a href="#1134" id="1134">1134</a>
 <a href="#1135" id="1135">1135</a>
-<a href="#1136" id="1136">1136</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
+<a href="#1136" id="1136">1136</a>
+<a href="#1137" id="1137">1137</a>
+<a href="#1138" id="1138">1138</a>
+<a href="#1139" id="1139">1139</a>
+<a href="#1140" id="1140">1140</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
 //! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
@@ -1172,6 +1176,7 @@
 <span class="kw">use </span>tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{
+    defaults::DEFAULT_KEY_CACHE_CAPACITY,
     http::RELAY_PROBE_PATH,
     protos,
     quic::server::{QuicServer, ServerHandle <span class="kw">as </span>QuicServerHandle},
@@ -1256,7 +1261,7 @@
     <span class="doccomment">/// Rate limits.
     </span><span class="kw">pub </span>limits: Limits,
     <span class="doccomment">/// Key cache capacity.
-    </span><span class="kw">pub </span>key_cache_capacity: usize,
+    </span><span class="kw">pub </span>key_cache_capacity: <span class="prelude-ty">Option</span>&lt;usize&gt;,
 }
 
 <span class="doccomment">/// Configuration for the STUN server.
@@ -1446,9 +1451,12 @@
                     <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>tls) =&gt; tls.https_bind_addr,
                     <span class="prelude-val">None </span>=&gt; relay_config.http_bind_addr,
                 };
+                <span class="kw">let </span>key_cache_capacity = relay_config
+                    .key_cache_capacity
+                    .unwrap_or(DEFAULT_KEY_CACHE_CAPACITY);
                 <span class="kw">let </span><span class="kw-2">mut </span>builder = http_server::ServerBuilder::new(relay_bind_addr)
                     .headers(headers)
-                    .key_cache_capacity(relay_config.key_cache_capacity)
+                    .key_cache_capacity(key_cache_capacity)
                     .request_handler(Method::GET, <span class="string">"/"</span>, Box::new(root_handler))
                     .request_handler(Method::GET, <span class="string">"/index.html"</span>, Box::new(root_handler))
                     .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
@@ -1918,7 +1926,7 @@
                 http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
                 tls: <span class="prelude-val">None</span>,
                 limits: Default::default(),
-                key_cache_capacity: <span class="number">1024</span>,
+                key_cache_capacity: <span class="prelude-val">Some</span>(<span class="number">1024</span>),
             }),
             quic: <span class="prelude-val">None</span>,
             stun: <span class="prelude-val">None</span>,
@@ -1948,7 +1956,7 @@
                 http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">1234</span>).into(),
                 tls: <span class="prelude-val">None</span>,
                 limits: Default::default(),
-                key_cache_capacity: <span class="number">1024</span>,
+                key_cache_capacity: <span class="prelude-val">Some</span>(<span class="number">1024</span>),
             }),
             stun: <span class="prelude-val">None</span>,
             quic: <span class="prelude-val">None</span>,
