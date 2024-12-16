@@ -16,19 +16,19 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use hickory_resolver::TokioResolver as DnsResolver;
 use iroh_base::RelayUrl;
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
 use iroh_relay::{protos::stun, RelayMap};
-use netwatch::{IpFamily, UdpSocket};
+use netwatch::UdpSocket;
 use tokio::{
     sync::{self, mpsc, oneshot},
     time::{Duration, Instant},
 };
-use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 mod defaults;
@@ -40,6 +40,8 @@ mod reportgen;
 pub use metrics::Metrics;
 use reportgen::ProbeProto;
 pub use reportgen::QuicConfig;
+#[cfg(feature = "stun-utils")]
+pub use stun_utils::bind_local_stun_socket;
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
@@ -858,75 +860,84 @@ struct ReportRun {
     report_tx: oneshot::Sender<Result<Arc<Report>>>,
 }
 
-/// Attempts to bind a local socket to send STUN packets from.
-///
-/// If successful this returns the bound socket and will forward STUN responses to the
-/// provided *actor_addr*.  The *cancel_token* serves to stop the packet forwarding when the
-/// socket is no longer needed.
-pub fn bind_local_stun_socket(
-    network: IpFamily,
-    actor_addr: Addr,
-    cancel_token: CancellationToken,
-) -> Option<Arc<UdpSocket>> {
-    let sock = match UdpSocket::bind(network, 0) {
-        Ok(sock) => Arc::new(sock),
-        Err(err) => {
-            debug!("failed to bind STUN socket: {}", err);
-            return None;
-        }
-    };
-    let span = info_span!(
-        "stun_udp_listener",
-        local_addr = sock
-            .local_addr()
-            .map(|a| a.to_string())
-            .unwrap_or(String::from("-")),
-    );
-    {
-        let sock = sock.clone();
-        tokio::spawn(
-            async move {
-                debug!("udp stun socket listener started");
-                // TODO: Can we do better for buffers here?  Probably doesn't matter much.
-                let mut buf = vec![0u8; 64 << 10];
-                loop {
-                    tokio::select! {
-                        biased;
-                        _ = cancel_token.cancelled() => break,
-                        res = recv_stun_once(&sock, &mut buf, &actor_addr) => {
-                            if let Err(err) = res {
-                                warn!(%err, "stun recv failed");
-                                break;
-                            }
-                        }
-                    }
-                }
-                debug!("udp stun socket listener stopped");
-            }
-            .instrument(span),
-        );
-    }
-    Some(sock)
-}
-
-/// Receive STUN response from a UDP socket, pass it to the actor.
-async fn recv_stun_once(sock: &UdpSocket, buf: &mut [u8], actor_addr: &Addr) -> Result<()> {
-    let (count, mut from_addr) = sock
-        .recv_from(buf)
-        .await
-        .context("Error reading from stun socket")?;
-    let payload = &buf[..count];
-    from_addr.set_ip(from_addr.ip().to_canonical());
-    let msg = Message::StunPacket {
-        payload: Bytes::from(payload.to_vec()),
-        from_addr,
-    };
-    actor_addr.send(msg).await.context("actor stopped")
-}
-
 /// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
 pub fn os_has_ipv6() -> bool {
     UdpSocket::bind_local_v6(0).is_ok()
+}
+
+#[cfg(any(test, feature = "stun-utils"))]
+pub(crate) mod stun_utils {
+    use super::*;
+
+    use anyhow::Context as _;
+    use netwatch::IpFamily;
+    use tokio_util::sync::CancellationToken;
+
+    /// Attempts to bind a local socket to send STUN packets from.
+    ///
+    /// If successful this returns the bound socket and will forward STUN responses to the
+    /// provided *actor_addr*.  The *cancel_token* serves to stop the packet forwarding when the
+    /// socket is no longer needed.
+    pub fn bind_local_stun_socket(
+        network: IpFamily,
+        actor_addr: Addr,
+        cancel_token: CancellationToken,
+    ) -> Option<Arc<UdpSocket>> {
+        let sock = match UdpSocket::bind(network, 0) {
+            Ok(sock) => Arc::new(sock),
+            Err(err) => {
+                debug!("failed to bind STUN socket: {}", err);
+                return None;
+            }
+        };
+        let span = info_span!(
+            "stun_udp_listener",
+            local_addr = sock
+                .local_addr()
+                .map(|a| a.to_string())
+                .unwrap_or(String::from("-")),
+        );
+        {
+            let sock = sock.clone();
+            tokio::spawn(
+                async move {
+                    debug!("udp stun socket listener started");
+                    // TODO: Can we do better for buffers here?  Probably doesn't matter much.
+                    let mut buf = vec![0u8; 64 << 10];
+                    loop {
+                        tokio::select! {
+                            biased;
+                            _ = cancel_token.cancelled() => break,
+                            res = recv_stun_once(&sock, &mut buf, &actor_addr) => {
+                                if let Err(err) = res {
+                                    warn!(%err, "stun recv failed");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    debug!("udp stun socket listener stopped");
+                }
+                .instrument(span),
+            );
+        }
+        Some(sock)
+    }
+
+    /// Receive STUN response from a UDP socket, pass it to the actor.
+    async fn recv_stun_once(sock: &UdpSocket, buf: &mut [u8], actor_addr: &Addr) -> Result<()> {
+        let (count, mut from_addr) = sock
+            .recv_from(buf)
+            .await
+            .context("Error reading from stun socket")?;
+        let payload = &buf[..count];
+        from_addr.set_ip(from_addr.ip().to_canonical());
+        let msg = Message::StunPacket {
+            payload: Bytes::from(payload.to_vec()),
+            from_addr,
+        };
+        actor_addr.send(msg).await.context("actor stopped")
+    }
 }
 
 #[cfg(test)]
@@ -976,11 +987,13 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use bytes::BytesMut;
+    use netwatch::IpFamily;
     use tokio::time;
+    use tokio_util::sync::CancellationToken;
     use tracing::info;
 
     use super::*;
-    use crate::ping::Pinger;
+    use crate::{ping::Pinger, stun_utils::bind_local_stun_socket};
 
     mod stun_utils {
         //! Utils for testing that expose a simple stun server.
@@ -1416,7 +1429,7 @@ mod tests {
         // it to this socket, which is forwarnding it back to our net_report client, because
         // this dumb implementation just forwards anything even if it would be garbage.
         // Thus hairpinning detection will declare hairpinning to work.
-        let sock = UdpSocket::bind_local(IpFamily::V4, 0)?;
+        let sock = UdpSocket::bind_local(netwatch::IpFamily::V4, 0)?;
         let sock = Arc::new(sock);
         info!(addr=?sock.local_addr().unwrap(), "Using local addr");
         let task = {
