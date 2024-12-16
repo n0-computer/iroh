@@ -163,14 +163,14 @@
 <span class="doccomment">/// Can occur when parsing a string into a [`RelayUrl`].
 </span><span class="attr">#[derive(Debug, thiserror::Error)]
 #[error(<span class="string">"Failed to parse: {0}"</span>)]
-</span><span class="kw">pub struct </span>RelayUrlParsingError(<span class="attr">#[from] </span>url::ParseError);
+</span><span class="kw">pub struct </span>RelayUrlParseError(<span class="attr">#[from] </span>url::ParseError);
 
 <span class="doccomment">/// Support for parsing strings directly.
 ///
 /// If you need more control over the error first create a [`Url`] and use [`RelayUrl::from`]
 /// instead.
 </span><span class="kw">impl </span>FromStr <span class="kw">for </span>RelayUrl {
-    <span class="kw">type </span><span class="prelude-val">Err </span>= RelayUrlParsingError;
+    <span class="kw">type </span><span class="prelude-val">Err </span>= RelayUrlParseError;
 
     <span class="kw">fn </span>from_str(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Err&gt; {
         <span class="kw">let </span>inner = Url::from_str(s)<span class="question-mark">?</span>;

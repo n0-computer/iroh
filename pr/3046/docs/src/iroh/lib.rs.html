@@ -255,7 +255,8 @@
 <a href="#254" id="254">254</a>
 <a href="#255" id="255">255</a>
 <a href="#256" id="256">256</a>
-<a href="#257" id="257">257</a></pre></div><pre class="rust"><code><span class="doccomment">//! Peer-to-peer QUIC connections.
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a></pre></div><pre class="rust"><code><span class="doccomment">//! Peer-to-peer QUIC connections.
 //!
 //! iroh is a library to establish direct connectivity between peers.  It exposes an
 //! interface to [QUIC] connections and streams to the user, while implementing direct
@@ -506,7 +507,8 @@
 
 <span class="kw">pub use </span>endpoint::{Endpoint, RelayMode};
 <span class="kw">pub use </span>iroh_base::{
-    DecryptionError, KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey,
+    DecryptionError, KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, RelayUrlParseError,
+    SecretKey,
 };
 <span class="kw">pub use </span>iroh_relay::{RelayMap, RelayNode};
 
