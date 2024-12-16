@@ -169,7 +169,7 @@ struct Config {
     /// (`[::]:9090` when `http_bind_addr` is set to the default).
     metrics_bind_addr: Option<SocketAddr>,
     /// The capacity of the key cache.
-    key_cache_capacity: usize,
+    key_cache_capacity: Option<usize>,
 }
 
 impl Config {
@@ -201,7 +201,7 @@ impl Default for Config {
             limits: None,
             enable_metrics: cfg_defaults::enable_metrics(),
             metrics_bind_addr: None,
-            key_cache_capacity: 1024 * 1024,
+            key_cache_capacity: Default::default(),
         }
     }
 }

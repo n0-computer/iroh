@@ -28,6 +28,7 @@ use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
 use crate::{
+    defaults::DEFAULT_KEY_CACHE_CAPACITY,
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
     protos::relay::{recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION},
     server::{
@@ -175,10 +176,7 @@ impl ServerBuilder {
             handlers: Default::default(),
             headers: HeaderMap::new(),
             client_rx_ratelimit: None,
-            // Sized for 1 million concurrent clients.
-            // memory usage will be (32 + 8 + 8 + 8) * 1_000_000 = 56MB,
-            // which seems reasonable for a server.
-            key_cache_capacity: 1024 * 1024,
+            key_cache_capacity: DEFAULT_KEY_CACHE_CAPACITY,
         }
     }
 

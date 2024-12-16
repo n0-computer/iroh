@@ -36,6 +36,7 @@ use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 
 use crate::{
+    defaults::DEFAULT_KEY_CACHE_CAPACITY,
     http::RELAY_PROBE_PATH,
     protos,
     quic::server::{QuicServer, ServerHandle as QuicServerHandle},
@@ -120,7 +121,7 @@ pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     /// Rate limits.
     pub limits: Limits,
     /// Key cache capacity.
-    pub key_cache_capacity: usize,
+    pub key_cache_capacity: Option<usize>,
 }
 
 /// Configuration for the STUN server.
@@ -310,9 +311,12 @@ impl Server {
                     Some(ref tls) => tls.https_bind_addr,
                     None => relay_config.http_bind_addr,
                 };
+                let key_cache_capacity = relay_config
+                    .key_cache_capacity
+                    .unwrap_or(DEFAULT_KEY_CACHE_CAPACITY);
                 let mut builder = http_server::ServerBuilder::new(relay_bind_addr)
                     .headers(headers)
-                    .key_cache_capacity(relay_config.key_cache_capacity)
+                    .key_cache_capacity(key_cache_capacity)
                     .request_handler(Method::GET, "/", Box::new(root_handler))
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
                     .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
@@ -782,7 +786,7 @@ mod tests {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
                 tls: None,
                 limits: Default::default(),
-                key_cache_capacity: 1024,
+                key_cache_capacity: Some(1024),
             }),
             quic: None,
             stun: None,
@@ -812,7 +816,7 @@ mod tests {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 1234).into(),
                 tls: None,
                 limits: Default::default(),
-                key_cache_capacity: 1024,
+                key_cache_capacity: Some(1024),
             }),
             stun: None,
             quic: None,
