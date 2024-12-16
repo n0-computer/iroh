@@ -312,10 +312,7 @@
 <a href="#311" id="311">311</a>
 <a href="#312" id="312">312</a>
 <a href="#313" id="313">313</a>
-<a href="#314" id="314">314</a>
-<a href="#315" id="315">315</a>
-<a href="#316" id="316">316</a>
-<a href="#317" id="317">317</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
+<a href="#314" id="314">314</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
 
@@ -577,10 +574,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>observed_addr = res.expect(<span class="string">"checked"</span>);
         <span class="comment">// if we've sent to an ipv4 address, but received an observed address
         // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
-        </span><span class="kw">if </span>server_addr.is_ipv4() &amp;&amp; observed_addr.is_ipv6() {
-            observed_addr =
-                SocketAddr::new(observed_addr.ip().to_canonical(), observed_addr.port());
-        }
+        </span>observed_addr = SocketAddr::new(observed_addr.ip().to_canonical(), observed_addr.port());
         <span class="kw">let </span>latency = conn.rtt() / <span class="number">2</span>;
         <span class="comment">// gracefully close the connections
         </span>conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);

@@ -1606,7 +1606,22 @@
 <a href="#1605" id="1605">1605</a>
 <a href="#1606" id="1606">1606</a>
 <a href="#1607" id="1607">1607</a>
-<a href="#1608" id="1608">1608</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1608" id="1608">1608</a>
+<a href="#1609" id="1609">1609</a>
+<a href="#1610" id="1610">1610</a>
+<a href="#1611" id="1611">1611</a>
+<a href="#1612" id="1612">1612</a>
+<a href="#1613" id="1613">1613</a>
+<a href="#1614" id="1614">1614</a>
+<a href="#1615" id="1615">1615</a>
+<a href="#1616" id="1616">1616</a>
+<a href="#1617" id="1617">1617</a>
+<a href="#1618" id="1618">1618</a>
+<a href="#1619" id="1619">1619</a>
+<a href="#1620" id="1620">1620</a>
+<a href="#1621" id="1621">1621</a>
+<a href="#1622" id="1622">1622</a>
+<a href="#1623" id="1623">1623</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1625,6 +1640,7 @@
 //! - Sends the completed report to the net_report actor.
 
 </span><span class="kw">use </span>std::{
+    collections::BTreeSet,
     future::Future,
     net::{IpAddr, SocketAddr},
     pin::Pin,
@@ -1667,7 +1683,8 @@
 <span class="kw">mod </span>hairpin;
 <span class="kw">mod </span>probes;
 
-<span class="kw">use </span>probes::{Probe, ProbePlan, ProbeProto};
+<span class="kw">pub use </span>probes::ProbeProto;
+<span class="kw">use </span>probes::{Probe, ProbePlan};
 
 <span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::{
     CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, OVERALL_REPORT_TIMEOUT, PROBES_TIMEOUT,
@@ -1699,6 +1716,7 @@
         stun_sock6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
         quic_config: <span class="prelude-ty">Option</span>&lt;QuicConfig&gt;,
         dns_resolver: DnsResolver,
+        protocols: BTreeSet&lt;ProbeProto&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>(msg_tx, msg_rx) = mpsc::channel(<span class="number">32</span>);
         <span class="kw">let </span>addr = Addr {
@@ -1718,6 +1736,7 @@
             hairpin_actor: hairpin::Client::new(net_report, addr),
             outstanding_tasks: OutstandingTasks::default(),
             dns_resolver,
+            protocols,
         };
         <span class="kw">let </span>task = tokio::spawn(
             <span class="kw">async move </span>{ actor.run().<span class="kw">await </span>}.instrument(<span class="macro">info_span!</span>(<span class="string">"reportgen.actor"</span>)),
@@ -1801,6 +1820,9 @@
     </span>outstanding_tasks: OutstandingTasks,
     <span class="doccomment">/// The DNS resolver to use for probes that need to resolve DNS records.
     </span>dns_resolver: DnsResolver,
+    <span class="doccomment">/// Protocols we should attempt to create probes for, if we have the correct
+    /// configuration for that protocol.
+    </span>protocols: BTreeSet&lt;ProbeProto&gt;,
 }
 
 <span class="kw">impl </span>Actor {
@@ -2144,8 +2166,10 @@
         <span class="kw">let </span>if_state = interfaces::State::new().<span class="kw">await</span>;
         <span class="macro">debug!</span>(%if_state, <span class="string">"Local interfaces"</span>);
         <span class="kw">let </span>plan = <span class="kw">match </span><span class="self">self</span>.last_report {
-            <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>report) =&gt; ProbePlan::with_last_report(<span class="kw-2">&amp;</span><span class="self">self</span>.relay_map, <span class="kw-2">&amp;</span>if_state, report),
-            <span class="prelude-val">None </span>=&gt; ProbePlan::initial(<span class="kw-2">&amp;</span><span class="self">self</span>.relay_map, <span class="kw-2">&amp;</span>if_state),
+            <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>report) =&gt; {
+                ProbePlan::with_last_report(<span class="kw-2">&amp;</span><span class="self">self</span>.relay_map, <span class="kw-2">&amp;</span>if_state, report, <span class="kw-2">&amp;</span><span class="self">self</span>.protocols)
+            }
+            <span class="prelude-val">None </span>=&gt; ProbePlan::initial(<span class="kw-2">&amp;</span><span class="self">self</span>.relay_map, <span class="kw-2">&amp;</span>if_state, <span class="kw-2">&amp;</span><span class="self">self</span>.protocols),
         };
         <span class="macro">trace!</span>(%plan, <span class="string">"probe plan"</span>);
 
@@ -2295,6 +2319,10 @@
     </span><span class="kw">pub </span>ep: quinn::Endpoint,
     <span class="doccomment">/// A client config.
     </span><span class="kw">pub </span>client_config: rustls::ClientConfig,
+    <span class="doccomment">/// Enable ipv4 QUIC address discovery probes
+    </span><span class="kw">pub </span>ipv4: bool,
+    <span class="doccomment">/// Enable ipv6 QUIC address discovery probes
+    </span><span class="kw">pub </span>ipv6: bool,
 }
 
 <span class="doccomment">/// Executes a particular [`Probe`], including using a delayed start if needed.
@@ -2398,7 +2426,7 @@
             <span class="kw">let </span>url = node.url.clone();
             <span class="kw">match </span>quic_config {
                 <span class="prelude-val">Some</span>(quic_config) =&gt; {
-                    run_quic_probe(quic_config, url, relay_addr, probe).<span class="kw">await</span><span class="question-mark">?</span>;
+                    result = run_quic_probe(quic_config, url, relay_addr, probe).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
                 <span class="prelude-val">None </span>=&gt; {
                     <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeError::AbortSet(
@@ -3185,6 +3213,8 @@
         <span class="kw">let </span>quic_addr_disc = QuicConfig {
             ep: ep.clone(),
             client_config,
+            ipv4: <span class="bool-val">true</span>,
+            ipv6: <span class="bool-val">true</span>,
         };
         <span class="kw">let </span>url = relay.url.clone();
         <span class="kw">let </span>port = server.quic_addr().unwrap().port();

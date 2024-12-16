@@ -4066,12 +4066,7 @@
 <a href="#4065" id="4065">4065</a>
 <a href="#4066" id="4066">4066</a>
 <a href="#4067" id="4067">4067</a>
-<a href="#4068" id="4068">4068</a>
-<a href="#4069" id="4069">4069</a>
-<a href="#4070" id="4070">4070</a>
-<a href="#4071" id="4071">4071</a>
-<a href="#4072" id="4072">4072</a>
-<a href="#4073" id="4073">4073</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4068" id="4068">4068</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -6425,17 +6420,12 @@
         }
 
         <span class="kw">let </span>relay_map = <span class="self">self</span>.msock.relay_map.clone();
-        <span class="kw">let </span>pconn4 = <span class="prelude-val">Some</span>(<span class="self">self</span>.pconn4.clone());
-        <span class="kw">let </span>pconn6 = <span class="self">self</span>.pconn6.clone();
-
-        <span class="kw">let </span>quic_config = <span class="prelude-val">None</span>;
+        <span class="kw">let </span>opts = net_report::Options::default()
+            .stun_v4(<span class="prelude-val">Some</span>(<span class="self">self</span>.pconn4.clone()))
+            .stun_v6(<span class="self">self</span>.pconn6.clone());
 
         <span class="macro">debug!</span>(<span class="string">"requesting net_report report"</span>);
-        <span class="kw">match </span><span class="self">self
-            </span>.net_reporter
-            .get_report_channel(relay_map, pconn4, pconn6, quic_config)
-            .<span class="kw">await
-        </span>{
+        <span class="kw">match </span><span class="self">self</span>.net_reporter.get_report_channel(relay_map, opts).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(rx) =&gt; {
                 <span class="kw">let </span>msg_sender = <span class="self">self</span>.msg_sender.clone();
                 tokio::task::spawn(<span class="kw">async move </span>{

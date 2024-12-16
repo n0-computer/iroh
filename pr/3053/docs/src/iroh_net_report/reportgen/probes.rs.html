@@ -933,7 +933,138 @@
 <a href="#932" id="932">932</a>
 <a href="#933" id="933">933</a>
 <a href="#934" id="934">934</a>
-<a href="#935" id="935">935</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay probes.
+<a href="#935" id="935">935</a>
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a>
+<a href="#938" id="938">938</a>
+<a href="#939" id="939">939</a>
+<a href="#940" id="940">940</a>
+<a href="#941" id="941">941</a>
+<a href="#942" id="942">942</a>
+<a href="#943" id="943">943</a>
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a>
+<a href="#948" id="948">948</a>
+<a href="#949" id="949">949</a>
+<a href="#950" id="950">950</a>
+<a href="#951" id="951">951</a>
+<a href="#952" id="952">952</a>
+<a href="#953" id="953">953</a>
+<a href="#954" id="954">954</a>
+<a href="#955" id="955">955</a>
+<a href="#956" id="956">956</a>
+<a href="#957" id="957">957</a>
+<a href="#958" id="958">958</a>
+<a href="#959" id="959">959</a>
+<a href="#960" id="960">960</a>
+<a href="#961" id="961">961</a>
+<a href="#962" id="962">962</a>
+<a href="#963" id="963">963</a>
+<a href="#964" id="964">964</a>
+<a href="#965" id="965">965</a>
+<a href="#966" id="966">966</a>
+<a href="#967" id="967">967</a>
+<a href="#968" id="968">968</a>
+<a href="#969" id="969">969</a>
+<a href="#970" id="970">970</a>
+<a href="#971" id="971">971</a>
+<a href="#972" id="972">972</a>
+<a href="#973" id="973">973</a>
+<a href="#974" id="974">974</a>
+<a href="#975" id="975">975</a>
+<a href="#976" id="976">976</a>
+<a href="#977" id="977">977</a>
+<a href="#978" id="978">978</a>
+<a href="#979" id="979">979</a>
+<a href="#980" id="980">980</a>
+<a href="#981" id="981">981</a>
+<a href="#982" id="982">982</a>
+<a href="#983" id="983">983</a>
+<a href="#984" id="984">984</a>
+<a href="#985" id="985">985</a>
+<a href="#986" id="986">986</a>
+<a href="#987" id="987">987</a>
+<a href="#988" id="988">988</a>
+<a href="#989" id="989">989</a>
+<a href="#990" id="990">990</a>
+<a href="#991" id="991">991</a>
+<a href="#992" id="992">992</a>
+<a href="#993" id="993">993</a>
+<a href="#994" id="994">994</a>
+<a href="#995" id="995">995</a>
+<a href="#996" id="996">996</a>
+<a href="#997" id="997">997</a>
+<a href="#998" id="998">998</a>
+<a href="#999" id="999">999</a>
+<a href="#1000" id="1000">1000</a>
+<a href="#1001" id="1001">1001</a>
+<a href="#1002" id="1002">1002</a>
+<a href="#1003" id="1003">1003</a>
+<a href="#1004" id="1004">1004</a>
+<a href="#1005" id="1005">1005</a>
+<a href="#1006" id="1006">1006</a>
+<a href="#1007" id="1007">1007</a>
+<a href="#1008" id="1008">1008</a>
+<a href="#1009" id="1009">1009</a>
+<a href="#1010" id="1010">1010</a>
+<a href="#1011" id="1011">1011</a>
+<a href="#1012" id="1012">1012</a>
+<a href="#1013" id="1013">1013</a>
+<a href="#1014" id="1014">1014</a>
+<a href="#1015" id="1015">1015</a>
+<a href="#1016" id="1016">1016</a>
+<a href="#1017" id="1017">1017</a>
+<a href="#1018" id="1018">1018</a>
+<a href="#1019" id="1019">1019</a>
+<a href="#1020" id="1020">1020</a>
+<a href="#1021" id="1021">1021</a>
+<a href="#1022" id="1022">1022</a>
+<a href="#1023" id="1023">1023</a>
+<a href="#1024" id="1024">1024</a>
+<a href="#1025" id="1025">1025</a>
+<a href="#1026" id="1026">1026</a>
+<a href="#1027" id="1027">1027</a>
+<a href="#1028" id="1028">1028</a>
+<a href="#1029" id="1029">1029</a>
+<a href="#1030" id="1030">1030</a>
+<a href="#1031" id="1031">1031</a>
+<a href="#1032" id="1032">1032</a>
+<a href="#1033" id="1033">1033</a>
+<a href="#1034" id="1034">1034</a>
+<a href="#1035" id="1035">1035</a>
+<a href="#1036" id="1036">1036</a>
+<a href="#1037" id="1037">1037</a>
+<a href="#1038" id="1038">1038</a>
+<a href="#1039" id="1039">1039</a>
+<a href="#1040" id="1040">1040</a>
+<a href="#1041" id="1041">1041</a>
+<a href="#1042" id="1042">1042</a>
+<a href="#1043" id="1043">1043</a>
+<a href="#1044" id="1044">1044</a>
+<a href="#1045" id="1045">1045</a>
+<a href="#1046" id="1046">1046</a>
+<a href="#1047" id="1047">1047</a>
+<a href="#1048" id="1048">1048</a>
+<a href="#1049" id="1049">1049</a>
+<a href="#1050" id="1050">1050</a>
+<a href="#1051" id="1051">1051</a>
+<a href="#1052" id="1052">1052</a>
+<a href="#1053" id="1053">1053</a>
+<a href="#1054" id="1054">1054</a>
+<a href="#1055" id="1055">1055</a>
+<a href="#1056" id="1056">1056</a>
+<a href="#1057" id="1057">1057</a>
+<a href="#1058" id="1058">1058</a>
+<a href="#1059" id="1059">1059</a>
+<a href="#1060" id="1060">1060</a>
+<a href="#1061" id="1061">1061</a>
+<a href="#1062" id="1062">1062</a>
+<a href="#1063" id="1063">1063</a>
+<a href="#1064" id="1064">1064</a>
+<a href="#1065" id="1065">1065</a>
+<a href="#1066" id="1066">1066</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay probes.
 //!
 //! All the probes try and establish the latency to the relay servers.  Preferably the STUN
 //! probes work and we also learn about our public IP addresses and ports.  But fallback
@@ -980,7 +1111,7 @@
 <span class="doccomment">/// The protocol used to time a node's latency.
 </span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 #[repr(u8)]
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>ProbeProto {
+</span><span class="kw">pub enum </span>ProbeProto {
     <span class="doccomment">/// STUN IPv4
     </span>StunIpv4,
     <span class="doccomment">/// STUN IPv6
@@ -1149,16 +1280,26 @@
 ///
 /// [`reportgen`]: crate::reportgen
 </span><span class="attr">#[derive(Debug, PartialEq, Eq)]
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ProbePlan(BTreeSet&lt;ProbeSet&gt;);
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ProbePlan {
+    set: BTreeSet&lt;ProbeSet&gt;,
+    protocols: BTreeSet&lt;ProbeProto&gt;,
+}
 
 <span class="kw">impl </span>ProbePlan {
     <span class="doccomment">/// Creates an initial probe plan.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>initial(relay_map: <span class="kw-2">&amp;</span>RelayMap, if_state: <span class="kw-2">&amp;</span>interfaces::State) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span><span class="kw-2">mut </span>plan = <span class="self">Self</span>(BTreeSet::new());
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>initial(
+        relay_map: <span class="kw-2">&amp;</span>RelayMap,
+        if_state: <span class="kw-2">&amp;</span>interfaces::State,
+        protocols: <span class="kw-2">&amp;</span>BTreeSet&lt;ProbeProto&gt;,
+    ) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span><span class="kw-2">mut </span>plan = <span class="self">Self </span>{
+            set: BTreeSet::new(),
+            protocols: protocols.clone(),
+        };
 
         <span class="comment">// The first time we need add probes after the STUN we record this delay, so that
         // further relay server can reuse this delay.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>max_stun_delay: <span class="prelude-ty">Option</span>&lt;Duration&gt; = <span class="prelude-val">None</span>;
+        </span><span class="kw">let </span><span class="kw-2">mut </span>max_high_prio_delay: <span class="prelude-ty">Option</span>&lt;Duration&gt; = <span class="prelude-val">None</span>;
 
         <span class="kw">for </span>relay_node <span class="kw">in </span>relay_map.nodes() {
             <span class="kw">let </span><span class="kw-2">mut </span>stun_ipv4_probes = ProbeSet::new(ProbeProto::StunIpv4);
@@ -1198,20 +1339,25 @@
                     })
                     .expect(<span class="string">"adding QuicIpv6 probe to a QuicAddrIpv6 probe set"</span>);
             }
-            plan.add(stun_ipv4_probes);
-            plan.add(stun_ipv6_probes);
-            plan.add(quic_ipv4_probes);
-            plan.add(quic_ipv6_probes);
+            plan.add_if_enabled(stun_ipv4_probes);
+            plan.add_if_enabled(stun_ipv6_probes);
+            plan.add_if_enabled(quic_ipv4_probes);
+            plan.add_if_enabled(quic_ipv6_probes);
 
             <span class="comment">// The HTTP and ICMP probes only start after the STUN probes have had a chance.
             </span><span class="kw">let </span><span class="kw-2">mut </span>https_probes = ProbeSet::new(ProbeProto::Https);
-            <span class="kw">let </span><span class="kw-2">mut </span>icmp_probes_ipv4 = ProbeSet::new(ProbeProto::IcmpV4);
-            <span class="kw">let </span><span class="kw-2">mut </span>icmp_probes_ipv6 = ProbeSet::new(ProbeProto::IcmpV6);
-            <span class="kw">for </span>attempt <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
-                <span class="kw">let </span>start = <span class="kw-2">*</span>max_stun_delay.get_or_insert_with(|| plan.max_delay())
-                    + DEFAULT_INITIAL_RETRANSMIT;
-                <span class="kw">let </span>delay = start + DEFAULT_INITIAL_RETRANSMIT * attempt <span class="kw">as </span>u32;
+            <span class="kw">let </span><span class="kw-2">mut </span>icmp_v4_probes = ProbeSet::new(ProbeProto::IcmpV4);
+            <span class="kw">let </span><span class="kw-2">mut </span>icmp_v6_probes = ProbeSet::new(ProbeProto::IcmpV6);
 
+            <span class="kw">for </span>attempt <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
+                <span class="kw">let </span><span class="kw-2">mut </span>start = <span class="kw-2">*</span>max_high_prio_delay.get_or_insert_with(|| plan.max_delay());
+                <span class="comment">// if there are high priority probes, ensure there is a buffer between
+                // the highest probe delay and the next probes we create
+                // if there are no high priority probes, we don't need a buffer
+                </span><span class="kw">if </span>plan.has_priority_probes() {
+                    start += DEFAULT_INITIAL_RETRANSMIT;
+                }
+                <span class="kw">let </span>delay = start + DEFAULT_INITIAL_RETRANSMIT * attempt <span class="kw">as </span>u32;
                 https_probes
                     .push(Probe::Https {
                         delay,
@@ -1219,7 +1365,7 @@
                     })
                     .expect(<span class="string">"adding Https probe to a Https probe set"</span>);
                 <span class="kw">if </span>if_state.have_v4 {
-                    icmp_probes_ipv4
+                    icmp_v4_probes
                         .push(Probe::IcmpV4 {
                             delay,
                             node: relay_node.clone(),
@@ -1227,7 +1373,7 @@
                         .expect(<span class="string">"adding Icmp probe to an Icmp probe set"</span>);
                 }
                 <span class="kw">if </span>if_state.have_v6 {
-                    icmp_probes_ipv6
+                    icmp_v6_probes
                         .push(Probe::IcmpV6 {
                             delay,
                             node: relay_node.clone(),
@@ -1235,9 +1381,10 @@
                         .expect(<span class="string">"adding IcmpIpv6 probe to and IcmpIpv6 probe set"</span>);
                 }
             }
-            plan.add(https_probes);
-            plan.add(icmp_probes_ipv4);
-            plan.add(icmp_probes_ipv6);
+
+            plan.add_if_enabled(https_probes);
+            plan.add_if_enabled(icmp_v4_probes);
+            plan.add_if_enabled(icmp_v6_probes);
         }
         plan
     }
@@ -1247,11 +1394,15 @@
         relay_map: <span class="kw-2">&amp;</span>RelayMap,
         if_state: <span class="kw-2">&amp;</span>interfaces::State,
         last_report: <span class="kw-2">&amp;</span>Report,
+        protocols: <span class="kw-2">&amp;</span>BTreeSet&lt;ProbeProto&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">if </span>last_report.relay_latency.is_empty() {
-            <span class="kw">return </span><span class="self">Self</span>::initial(relay_map, if_state);
+            <span class="kw">return </span><span class="self">Self</span>::initial(relay_map, if_state, protocols);
         }
-        <span class="kw">let </span><span class="kw-2">mut </span>plan = <span class="self">Self</span>(Default::default());
+        <span class="kw">let </span><span class="kw-2">mut </span>plan = <span class="self">Self </span>{
+            set: Default::default(),
+            protocols: protocols.clone(),
+        };
 
         <span class="comment">// The first time we need add probes after the STUN we record this delay, so that
         // further relay servers can reuse this delay.
@@ -1335,10 +1486,10 @@
                         .expect(<span class="string">"adding QuicIpv6 probe to a QuicAddrIpv6 probe set"</span>);
                 }
             }
-            plan.add(stun_ipv4_probes);
-            plan.add(stun_ipv6_probes);
-            plan.add(quic_ipv4_probes);
-            plan.add(quic_ipv6_probes);
+            plan.add_if_enabled(stun_ipv4_probes);
+            plan.add_if_enabled(stun_ipv6_probes);
+            plan.add_if_enabled(quic_ipv4_probes);
+            plan.add_if_enabled(quic_ipv6_probes);
 
             <span class="comment">// The HTTP and ICMP probes only start after the STUN probes have had a chance.
             </span><span class="kw">let </span><span class="kw-2">mut </span>https_probes = ProbeSet::new(ProbeProto::Https);
@@ -1372,40 +1523,58 @@
                         .expect(<span class="string">"Pusying IcmpV6 Probe to an IcmpV6 ProbeSet"</span>);
                 }
             }
-            plan.add(https_probes);
-            plan.add(icmp_v4_probes);
-            plan.add(icmp_v6_probes);
+
+            plan.add_if_enabled(https_probes);
+            plan.add_if_enabled(icmp_v4_probes);
+            plan.add_if_enabled(icmp_v6_probes);
         }
         plan
     }
 
     <span class="doccomment">/// Returns an iterator over the [`ProbeSet`]s in this plan.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>ProbeSet&gt; {
-        <span class="self">self</span>.<span class="number">0</span>.iter()
+        <span class="self">self</span>.set.iter()
     }
 
-    <span class="doccomment">/// Adds a [`ProbeSet`] if it contains probes.
-    </span><span class="kw">fn </span>add(<span class="kw-2">&amp;mut </span><span class="self">self</span>, set: ProbeSet) {
-        <span class="kw">if </span>!set.is_empty() {
-            <span class="self">self</span>.<span class="number">0</span>.insert(set);
+    <span class="doccomment">/// Adds a [`ProbeSet`] if it contains probes and the protocol indicated in
+    /// the [`ProbeSet] matches a protocol in our set of [`ProbeProto`]s.
+    </span><span class="kw">fn </span>add_if_enabled(<span class="kw-2">&amp;mut </span><span class="self">self</span>, set: ProbeSet) {
+        <span class="kw">if </span>!set.is_empty() &amp;&amp; <span class="self">self</span>.protocols.contains(<span class="kw-2">&amp;</span>set.proto) {
+            <span class="self">self</span>.set.insert(set);
         }
     }
 
     <span class="doccomment">/// Returns the delay of the last probe in the probe plan.
     </span><span class="kw">fn </span>max_delay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Duration {
-        <span class="self">self</span>.<span class="number">0
-            </span>.iter()
+        <span class="self">self</span>.set
+            .iter()
             .flatten()
             .map(|probe| probe.delay())
             .max()
             .unwrap_or_default()
     }
+
+    <span class="doccomment">/// Stun &amp; Quic probes are "priority" probes
+    </span><span class="kw">fn </span>has_priority_probes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="kw">for </span>probe <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.set {
+            <span class="kw">if </span><span class="macro">matches!</span>(
+                probe.proto,
+                ProbeProto::StunIpv4
+                    | ProbeProto::StunIpv6
+                    | ProbeProto::QuicIpv4
+                    | ProbeProto::QuicIpv6
+            ) {
+                <span class="kw">return </span><span class="bool-val">true</span>;
+            }
+        }
+        <span class="bool-val">false
+    </span>}
 }
 
 <span class="kw">impl </span>fmt::Display <span class="kw">for </span>ProbePlan {
     <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; fmt::Result {
         <span class="macro">writeln!</span>(f, <span class="string">"ProbePlan {{"</span>)<span class="question-mark">?</span>;
-        <span class="kw">for </span>probe_set <span class="kw">in </span><span class="self">self</span>.<span class="number">0</span>.iter() {
+        <span class="kw">for </span>probe_set <span class="kw">in </span><span class="self">self</span>.set.iter() {
             <span class="macro">writeln!</span>(f, <span class="string">r#"    ProbeSet("{}") {{"#</span>, probe_set.proto)<span class="question-mark">?</span>;
             <span class="kw">for </span>probe <span class="kw">in </span>probe_set.probes.iter() {
                 <span class="macro">writeln!</span>(f, <span class="string">"        {probe},"</span>)<span class="question-mark">?</span>;
@@ -1418,7 +1587,10 @@
 
 <span class="kw">impl </span>FromIterator&lt;ProbeSet&gt; <span class="kw">for </span>ProbePlan {
     <span class="kw">fn </span>from_iter&lt;T: IntoIterator&lt;Item = ProbeSet&gt;&gt;(iter: T) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>(iter.into_iter().collect())
+        <span class="self">Self </span>{
+            set: iter.into_iter().collect(),
+            protocols: BTreeSet::new(),
+        }
     }
 }
 
@@ -1484,15 +1656,27 @@
         };
     }
 
+    <span class="kw">fn </span>default_protocols() -&gt; BTreeSet&lt;ProbeProto&gt; {
+        BTreeSet::from([
+            ProbeProto::StunIpv4,
+            ProbeProto::StunIpv6,
+            ProbeProto::QuicIpv4,
+            ProbeProto::QuicIpv6,
+            ProbeProto::IcmpV4,
+            ProbeProto::IcmpV6,
+            ProbeProto::Https,
+        ])
+    }
+
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_initial_probeplan() {
         <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
         <span class="kw">let </span>relay_node_1 = relay_map.nodes().next().unwrap();
         <span class="kw">let </span>relay_node_2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
         <span class="kw">let </span>if_state = interfaces::State::fake();
-        <span class="kw">let </span>plan = ProbePlan::initial(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>if_state);
+        <span class="kw">let </span>plan = ProbePlan::initial(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>if_state, <span class="kw-2">&amp;</span>default_protocols());
 
-        <span class="kw">let </span>expected_plan: ProbePlan = [
+        <span class="kw">let </span><span class="kw-2">mut </span>expected_plan: ProbePlan = [
             <span class="macro">probeset!</span> {
                 proto: ProbeProto::StunIpv4,
                 relay: relay_node_1.clone(),
@@ -1594,6 +1778,78 @@
         ]
         .into_iter()
         .collect();
+        expected_plan.protocols = default_protocols();
+
+        <span class="macro">println!</span>(<span class="string">"expected:"</span>);
+        <span class="macro">println!</span>(<span class="string">"{expected_plan}"</span>);
+        <span class="macro">println!</span>(<span class="string">"actual:"</span>);
+        <span class="macro">println!</span>(<span class="string">"{plan}"</span>);
+        <span class="comment">// The readable error:
+        </span><span class="macro">assert_eq!</span>(plan.to_string(), expected_plan.to_string());
+        <span class="comment">// Just in case there's a bug in the Display impl:
+        </span><span class="macro">assert_eq!</span>(plan, expected_plan);
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_initial_probeplan_some_protocols() {
+        <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
+        <span class="kw">let </span>relay_node_1 = relay_map.nodes().next().unwrap();
+        <span class="kw">let </span>relay_node_2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
+        <span class="kw">let </span>if_state = interfaces::State::fake();
+        <span class="kw">let </span>plan = ProbePlan::initial(
+            <span class="kw-2">&amp;</span>relay_map,
+            <span class="kw-2">&amp;</span>if_state,
+            <span class="kw-2">&amp;</span>BTreeSet::from([ProbeProto::Https, ProbeProto::IcmpV4, ProbeProto::IcmpV6]),
+        );
+
+        <span class="kw">let </span><span class="kw-2">mut </span>expected_plan: ProbePlan = [
+            <span class="macro">probeset!</span> {
+                proto: ProbeProto::Https,
+                relay: relay_node_1.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(<span class="number">100</span>),
+                         Duration::from_millis(<span class="number">200</span>)],
+            },
+            <span class="macro">probeset!</span> {
+                proto: ProbeProto::IcmpV4,
+                relay: relay_node_1.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(<span class="number">100</span>),
+                         Duration::from_millis(<span class="number">200</span>)],
+            },
+            <span class="macro">probeset!</span> {
+                proto: ProbeProto::IcmpV6,
+                relay: relay_node_1.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(<span class="number">100</span>),
+                         Duration::from_millis(<span class="number">200</span>)],
+            },
+            <span class="macro">probeset!</span> {
+                proto: ProbeProto::Https,
+                relay: relay_node_2.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(<span class="number">100</span>),
+                         Duration::from_millis(<span class="number">200</span>)],
+            },
+            <span class="macro">probeset!</span> {
+                proto: ProbeProto::IcmpV4,
+                relay: relay_node_2.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(<span class="number">100</span>),
+                         Duration::from_millis(<span class="number">200</span>)],
+            },
+            <span class="macro">probeset!</span> {
+                proto: ProbeProto::IcmpV6,
+                relay: relay_node_2.clone(),
+                delays: [Duration::ZERO,
+                         Duration::from_millis(<span class="number">100</span>),
+                         Duration::from_millis(<span class="number">200</span>)],
+            },
+        ]
+        .into_iter()
+        .collect();
+        expected_plan.protocols =
+            BTreeSet::from([ProbeProto::Https, ProbeProto::IcmpV4, ProbeProto::IcmpV6]);
 
         <span class="macro">println!</span>(<span class="string">"expected:"</span>);
         <span class="macro">println!</span>(<span class="string">"{expected_plan}"</span>);
@@ -1639,8 +1895,13 @@
                 global_v6: <span class="prelude-val">None</span>,
                 captive_portal: <span class="prelude-val">None</span>,
             };
-            <span class="kw">let </span>plan = ProbePlan::with_last_report(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>if_state, <span class="kw-2">&amp;</span>last_report);
-            <span class="kw">let </span>expected_plan: ProbePlan = [
+            <span class="kw">let </span>plan = ProbePlan::with_last_report(
+                <span class="kw-2">&amp;</span>relay_map,
+                <span class="kw-2">&amp;</span>if_state,
+                <span class="kw-2">&amp;</span>last_report,
+                <span class="kw-2">&amp;</span>default_protocols(),
+            );
+            <span class="kw">let </span><span class="kw-2">mut </span>expected_plan: ProbePlan = [
                 <span class="macro">probeset!</span> {
                     proto: ProbeProto::StunIpv4,
                     relay: relay_node_1.clone(),
@@ -1742,6 +2003,7 @@
             ]
             .into_iter()
             .collect();
+            expected_plan.protocols = default_protocols();
 
             <span class="macro">println!</span>(<span class="string">"{} round"</span>, i);
             <span class="macro">println!</span>(<span class="string">"expected:"</span>);
