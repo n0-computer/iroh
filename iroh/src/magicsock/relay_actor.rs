@@ -566,10 +566,8 @@ impl RelayActor {
                 }
             }
         }
-        match found_relay {
-            Some(url) => self.active_relay_handle(&url).await,
-            None => self.active_relay_handle(url).await,
-        }
+        let url = found_relay.as_ref().unwrap_or(url);
+        self.active_relay_handle(url).await
     }
 
     /// Returns the handle of the [`ActiveRelayActor`].
