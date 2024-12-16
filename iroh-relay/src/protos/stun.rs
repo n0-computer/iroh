@@ -313,7 +313,7 @@ mod tests {
             },
             ResponseTestCase {
                 name:     "no-4in6",
-                data:     hex::decode("010100182112a4424fd5d202dcb37d31fc773306002000140002cd3d2112a4424fd5d202dcb382ce2dc3fcc7").unwrap(),
+                data:     data_encoding::HEXLOWER.decode(b"010100182112a4424fd5d202dcb37d31fc773306002000140002cd3d2112a4424fd5d202dcb382ce2dc3fcc7").unwrap(),
                 want_tid:  vec![79, 213, 210, 2, 220, 179, 125, 49, 252, 119, 51, 6],
                 want_addr: IpAddr::V4(Ipv4Addr::from([209, 180, 207, 193])),
                 want_port: 60463,

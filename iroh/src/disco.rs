@@ -24,6 +24,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
+use data_encoding::HEXLOWER;
 use iroh_base::{PublicKey, RelayUrl};
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -44,7 +45,7 @@ const TX_LEN: usize = 12;
 /// Header: Type | Version
 const HEADER_LEN: usize = 2;
 
-const PING_LEN: usize = TX_LEN + iroh_base::PUBLIC_KEY_LENGTH;
+const PING_LEN: usize = TX_LEN + iroh_base::PublicKey::LENGTH;
 const EP_LENGTH: usize = 16 + 2; // 16 byte IP address + 2 byte port
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -206,7 +207,7 @@ impl Ping {
         // Deliberately lax on longer-than-expected messages, for future compatibility.
         ensure!(p.len() >= PING_LEN, "message too short");
         let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().expect("length checked");
-        let raw_key = &p[TX_LEN..TX_LEN + iroh_base::PUBLIC_KEY_LENGTH];
+        let raw_key = &p[TX_LEN..TX_LEN + iroh_base::PublicKey::LENGTH];
         let node_key = PublicKey::try_from(raw_key)?;
         let tx_id = stun_rs::TransactionId::from(tx_id);
 
@@ -383,10 +384,10 @@ impl Display for Message {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Message::Ping(ping) => {
-                write!(f, "Ping(tx={})", hex::encode(ping.tx_id))
+                write!(f, "Ping(tx={})", HEXLOWER.encode(&ping.tx_id))
             }
             Message::Pong(pong) => {
-                write!(f, "Pong(tx={})", hex::encode(pong.tx_id))
+                write!(f, "Pong(tx={})", HEXLOWER.encode(&pong.tx_id))
             }
             Message::CallMeMaybe(_) => {
                 write!(f, "CallMeMaybe")
@@ -460,7 +461,9 @@ mod tests {
             let got = test.m.as_bytes();
             assert_eq!(
                 got,
-                hex::decode(test.want.replace(' ', "")).unwrap(),
+                data_encoding::HEXLOWER
+                    .decode(test.want.replace(' ', "").as_bytes())
+                    .unwrap(),
                 "wrong as_bytes"
             );
 

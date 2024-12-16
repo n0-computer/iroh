@@ -1,10 +1,6 @@
 //! Base types and utilities for Iroh
 #![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
 
-// TODO: remove
-#[cfg(feature = "base32")]
-pub mod base32;
-
 // TODO: move to own crate
 #[cfg(feature = "ticket")]
 pub mod ticket;
@@ -17,9 +13,7 @@ mod node_addr;
 mod relay_url;
 
 #[cfg(feature = "key")]
-pub use self::key::{
-    KeyParsingError, NodeId, PublicKey, SecretKey, SharedSecret, Signature, PUBLIC_KEY_LENGTH,
-};
+pub use self::key::{KeyParsingError, NodeId, PublicKey, SecretKey, SharedSecret, Signature};
 #[cfg(feature = "key")]
 pub use self::node_addr::NodeAddr;
 #[cfg(feature = "relay")]

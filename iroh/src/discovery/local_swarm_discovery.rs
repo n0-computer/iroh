@@ -324,10 +324,12 @@ impl LocalSwarmDiscovery {
             });
         };
         let addrs = LocalSwarmDiscovery::socketaddrs_to_addrs(socketaddrs);
-        let mut discoverer =
-            Discoverer::new_interactive(N0_LOCAL_SWARM.to_string(), node_id.to_string())
-                .with_callback(callback)
-                .with_ip_class(IpClass::Auto);
+        let node_id_str = data_encoding::BASE32_NOPAD
+            .encode(node_id.as_bytes())
+            .to_ascii_lowercase();
+        let mut discoverer = Discoverer::new_interactive(N0_LOCAL_SWARM.to_string(), node_id_str)
+            .with_callback(callback)
+            .with_ip_class(IpClass::Auto);
         for addr in addrs {
             discoverer = discoverer.with_addrs(addr.0, addr.1);
         }

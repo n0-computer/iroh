@@ -2,7 +2,6 @@
 
 use std::str::FromStr;
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use super::{Variant0AddrInfo, Variant0NodeAddr};
@@ -62,7 +61,7 @@ impl Ticket for NodeTicket {
         postcard::to_stdvec(&data).expect("postcard serialization failed")
     }
 
-    fn from_bytes(bytes: &[u8]) -> std::result::Result<Self, ticket::Error> {
+    fn from_bytes(bytes: &[u8]) -> Result<Self, ticket::Error> {
         let res: TicketWireFormat = postcard::from_bytes(bytes).map_err(ticket::Error::Postcard)?;
         let TicketWireFormat::Variant0(Variant0NodeTicket { node }) = res;
         Ok(Self {
@@ -139,10 +138,7 @@ mod tests {
     use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
     use super::*;
-    use crate::{
-        base32,
-        key::{PublicKey, SecretKey},
-    };
+    use crate::key::{PublicKey, SecretKey};
 
     fn make_ticket() -> NodeTicket {
         let peer = SecretKey::generate().public();
@@ -182,7 +178,16 @@ mod tests {
                 ["127.0.0.1:1024".parse().unwrap()],
             ),
         };
-        let base32 = base32::parse_vec(ticket.to_string().strip_prefix("node").unwrap()).unwrap();
+        let base32 = data_encoding::BASE32_NOPAD
+            .decode(
+                ticket
+                    .to_string()
+                    .strip_prefix("node")
+                    .unwrap()
+                    .to_ascii_uppercase()
+                    .as_bytes(),
+            )
+            .unwrap();
         let expected = parse_hexdump("
             00 # variant
             ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6 # node id, 32 bytes, see above

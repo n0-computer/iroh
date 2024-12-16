@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, net::SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{base32, key::NodeId, relay_url::RelayUrl};
+use crate::{key::NodeId, relay_url::RelayUrl};
 
 mod node;
 
@@ -39,8 +39,8 @@ pub trait Ticket: Sized {
     /// Serialize to string.
     fn serialize(&self) -> String {
         let mut out = Self::KIND.to_string();
-        base32::fmt_append(self.to_bytes(), &mut out);
-        out
+        data_encoding::BASE32_NOPAD.encode_append(&self.to_bytes(), &mut out);
+        out.to_ascii_lowercase()
     }
 
     /// Deserialize from a string.
@@ -49,7 +49,7 @@ pub trait Ticket: Sized {
         let Some(rest) = str.strip_prefix(expected) else {
             return Err(Error::Kind { expected });
         };
-        let bytes = base32::parse_vec(rest)?;
+        let bytes = data_encoding::BASE32_NOPAD.decode(rest.to_ascii_uppercase().as_bytes())?;
         let ticket = Self::from_bytes(&bytes)?;
         Ok(ticket)
     }
@@ -66,7 +66,7 @@ pub enum Error {
     Postcard(#[from] postcard::Error),
     /// This looks like a ticket, but base32 decoding failed.
     #[error("decoding failed: {_0}")]
-    Encoding(#[from] base32::DecodeError),
+    Encoding(#[from] data_encoding::DecodeError),
     /// Verification of the deserialized bytes failed.
     #[error("verification failed: {_0}")]
     Verify(&'static str),

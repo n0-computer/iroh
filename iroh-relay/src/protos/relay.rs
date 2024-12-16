@@ -20,7 +20,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures_lite::{Stream, StreamExt};
 use futures_sink::Sink;
 use futures_util::SinkExt;
-use iroh_base::{PublicKey, SecretKey, Signature, PUBLIC_KEY_LENGTH};
+use iroh_base::{PublicKey, SecretKey, Signature};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio_util::codec::{Decoder, Encoder};
@@ -268,15 +268,15 @@ impl Frame {
                 client_public_key: _,
                 message,
                 signature: _,
-            } => MAGIC.len() + PUBLIC_KEY_LENGTH + message.len() + Signature::BYTE_SIZE,
-            Frame::SendPacket { dst_key: _, packet } => PUBLIC_KEY_LENGTH + packet.len(),
+            } => MAGIC.len() + PublicKey::LENGTH + message.len() + Signature::BYTE_SIZE,
+            Frame::SendPacket { dst_key: _, packet } => PublicKey::LENGTH + packet.len(),
             Frame::RecvPacket {
                 src_key: _,
                 content,
-            } => PUBLIC_KEY_LENGTH + content.len(),
+            } => PublicKey::LENGTH + content.len(),
             Frame::KeepAlive => 0,
             Frame::NotePreferred { .. } => 1,
-            Frame::NodeGone { .. } => PUBLIC_KEY_LENGTH,
+            Frame::NodeGone { .. } => PublicKey::LENGTH,
             Frame::Ping { .. } => 8,
             Frame::Pong { .. } => 8,
             Frame::Health { problem } => problem.len(),
@@ -368,7 +368,7 @@ impl Frame {
         let res = match frame_type {
             FrameType::ClientInfo => {
                 ensure!(
-                    content.len() >= PUBLIC_KEY_LENGTH + Signature::BYTE_SIZE + MAGIC.len(),
+                    content.len() >= PublicKey::LENGTH + Signature::BYTE_SIZE + MAGIC.len(),
                     "invalid client info frame length: {}",
                     content.len()
                 );
@@ -379,8 +379,8 @@ impl Frame {
 
                 let start = MAGIC.len();
                 let client_public_key =
-                    PublicKey::try_from(&content[start..start + PUBLIC_KEY_LENGTH])?;
-                let start = start + PUBLIC_KEY_LENGTH;
+                    PublicKey::try_from(&content[start..start + PublicKey::LENGTH])?;
+                let start = start + PublicKey::LENGTH;
                 let signature =
                     Signature::from_slice(&content[start..start + Signature::BYTE_SIZE])?;
                 let start = start + Signature::BYTE_SIZE;
@@ -393,32 +393,32 @@ impl Frame {
             }
             FrameType::SendPacket => {
                 ensure!(
-                    content.len() >= PUBLIC_KEY_LENGTH,
+                    content.len() >= PublicKey::LENGTH,
                     "invalid send packet frame length: {}",
                     content.len()
                 );
-                let packet_len = content.len() - PUBLIC_KEY_LENGTH;
+                let packet_len = content.len() - PublicKey::LENGTH;
                 ensure!(
                     packet_len <= MAX_PACKET_SIZE,
                     "data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
                 );
-                let dst_key = PublicKey::try_from(&content[..PUBLIC_KEY_LENGTH])?;
-                let packet = content.slice(PUBLIC_KEY_LENGTH..);
+                let dst_key = PublicKey::try_from(&content[..PublicKey::LENGTH])?;
+                let packet = content.slice(PublicKey::LENGTH..);
                 Self::SendPacket { dst_key, packet }
             }
             FrameType::RecvPacket => {
                 ensure!(
-                    content.len() >= PUBLIC_KEY_LENGTH,
+                    content.len() >= PublicKey::LENGTH,
                     "invalid recv packet frame length: {}",
                     content.len()
                 );
-                let packet_len = content.len() - PUBLIC_KEY_LENGTH;
+                let packet_len = content.len() - PublicKey::LENGTH;
                 ensure!(
                     packet_len <= MAX_PACKET_SIZE,
                     "data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
                 );
-                let src_key = PublicKey::try_from(&content[..PUBLIC_KEY_LENGTH])?;
-                let content = content.slice(PUBLIC_KEY_LENGTH..);
+                let src_key = PublicKey::try_from(&content[..PublicKey::LENGTH])?;
+                let content = content.slice(PublicKey::LENGTH..);
                 Self::RecvPacket { src_key, content }
             }
             FrameType::KeepAlive => {
@@ -436,7 +436,7 @@ impl Frame {
             }
             FrameType::PeerGone => {
                 anyhow::ensure!(
-                    content.len() == PUBLIC_KEY_LENGTH,
+                    content.len() == PublicKey::LENGTH,
                     "invalid peer gone frame length"
                 );
                 let peer = PublicKey::try_from(&content[..32])?;

@@ -18,7 +18,7 @@ use backoff::backoff::Backoff;
 use bytes::{Bytes, BytesMut};
 use futures_buffered::FuturesUnorderedBounded;
 use futures_lite::StreamExt;
-use iroh_base::{NodeId, RelayUrl, SecretKey, PUBLIC_KEY_LENGTH};
+use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::{self as relay, client::ClientError, ReceivedMessage, MAX_PACKET_SIZE};
 use tokio::{
@@ -139,11 +139,8 @@ impl ActiveRelayActor {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify,
         } = opts;
-        let mut builder =
-            relay::client::ClientBuilder::new(url).address_family_selector(move || {
-                let prefer_ipv6 = prefer_ipv6.clone();
-                Box::pin(async move { prefer_ipv6.load(Ordering::Relaxed) })
-            });
+        let mut builder = relay::client::ClientBuilder::new(url)
+            .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
         }
@@ -489,7 +486,7 @@ impl RelayActor {
     }
 
     async fn send_relay(&mut self, url: &RelayUrl, contents: RelayContents, remote_node: NodeId) {
-        const PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PUBLIC_KEY_LENGTH;
+        const PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PublicKey::LENGTH;
         let total_bytes = contents.iter().map(|c| c.len() as u64).sum::<u64>();
         trace!(
             %url,
