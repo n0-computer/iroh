@@ -842,7 +842,7 @@
 </span><span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>futures_sink::Sink;
 <span class="kw">use </span>futures_util::SinkExt;
-<span class="kw">use </span>iroh_base::{PublicKey, SecretKey, Signature, PUBLIC_KEY_LENGTH};
+<span class="kw">use </span>iroh_base::{PublicKey, SecretKey, Signature};
 <span class="kw">use </span>postcard::experimental::max_size::MaxSize;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio_util::codec::{Decoder, Encoder};
@@ -1090,15 +1090,15 @@
                 client_public_key: <span class="kw">_</span>,
                 message,
                 signature: <span class="kw">_</span>,
-            } =&gt; MAGIC.len() + PUBLIC_KEY_LENGTH + message.len() + Signature::BYTE_SIZE,
-            Frame::SendPacket { dst_key: <span class="kw">_</span>, packet } =&gt; PUBLIC_KEY_LENGTH + packet.len(),
+            } =&gt; MAGIC.len() + PublicKey::LENGTH + message.len() + Signature::BYTE_SIZE,
+            Frame::SendPacket { dst_key: <span class="kw">_</span>, packet } =&gt; PublicKey::LENGTH + packet.len(),
             Frame::RecvPacket {
                 src_key: <span class="kw">_</span>,
                 content,
-            } =&gt; PUBLIC_KEY_LENGTH + content.len(),
+            } =&gt; PublicKey::LENGTH + content.len(),
             Frame::KeepAlive =&gt; <span class="number">0</span>,
             Frame::NotePreferred { .. } =&gt; <span class="number">1</span>,
-            Frame::NodeGone { .. } =&gt; PUBLIC_KEY_LENGTH,
+            Frame::NodeGone { .. } =&gt; PublicKey::LENGTH,
             Frame::Ping { .. } =&gt; <span class="number">8</span>,
             Frame::Pong { .. } =&gt; <span class="number">8</span>,
             Frame::Health { problem } =&gt; problem.len(),
@@ -1190,7 +1190,7 @@
         <span class="kw">let </span>res = <span class="kw">match </span>frame_type {
             FrameType::ClientInfo =&gt; {
                 <span class="macro">ensure!</span>(
-                    content.len() &gt;= PUBLIC_KEY_LENGTH + Signature::BYTE_SIZE + MAGIC.len(),
+                    content.len() &gt;= PublicKey::LENGTH + Signature::BYTE_SIZE + MAGIC.len(),
                     <span class="string">"invalid client info frame length: {}"</span>,
                     content.len()
                 );
@@ -1201,8 +1201,8 @@
 
                 <span class="kw">let </span>start = MAGIC.len();
                 <span class="kw">let </span>client_public_key =
-                    PublicKey::try_from(<span class="kw-2">&amp;</span>content[start..start + PUBLIC_KEY_LENGTH])<span class="question-mark">?</span>;
-                <span class="kw">let </span>start = start + PUBLIC_KEY_LENGTH;
+                    PublicKey::try_from(<span class="kw-2">&amp;</span>content[start..start + PublicKey::LENGTH])<span class="question-mark">?</span>;
+                <span class="kw">let </span>start = start + PublicKey::LENGTH;
                 <span class="kw">let </span>signature =
                     Signature::from_slice(<span class="kw-2">&amp;</span>content[start..start + Signature::BYTE_SIZE])<span class="question-mark">?</span>;
                 <span class="kw">let </span>start = start + Signature::BYTE_SIZE;
@@ -1215,32 +1215,32 @@
             }
             FrameType::SendPacket =&gt; {
                 <span class="macro">ensure!</span>(
-                    content.len() &gt;= PUBLIC_KEY_LENGTH,
+                    content.len() &gt;= PublicKey::LENGTH,
                     <span class="string">"invalid send packet frame length: {}"</span>,
                     content.len()
                 );
-                <span class="kw">let </span>packet_len = content.len() - PUBLIC_KEY_LENGTH;
+                <span class="kw">let </span>packet_len = content.len() - PublicKey::LENGTH;
                 <span class="macro">ensure!</span>(
                     packet_len &lt;= MAX_PACKET_SIZE,
                     <span class="string">"data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
                 </span>);
-                <span class="kw">let </span>dst_key = PublicKey::try_from(<span class="kw-2">&amp;</span>content[..PUBLIC_KEY_LENGTH])<span class="question-mark">?</span>;
-                <span class="kw">let </span>packet = content.slice(PUBLIC_KEY_LENGTH..);
+                <span class="kw">let </span>dst_key = PublicKey::try_from(<span class="kw-2">&amp;</span>content[..PublicKey::LENGTH])<span class="question-mark">?</span>;
+                <span class="kw">let </span>packet = content.slice(PublicKey::LENGTH..);
                 <span class="self">Self</span>::SendPacket { dst_key, packet }
             }
             FrameType::RecvPacket =&gt; {
                 <span class="macro">ensure!</span>(
-                    content.len() &gt;= PUBLIC_KEY_LENGTH,
+                    content.len() &gt;= PublicKey::LENGTH,
                     <span class="string">"invalid recv packet frame length: {}"</span>,
                     content.len()
                 );
-                <span class="kw">let </span>packet_len = content.len() - PUBLIC_KEY_LENGTH;
+                <span class="kw">let </span>packet_len = content.len() - PublicKey::LENGTH;
                 <span class="macro">ensure!</span>(
                     packet_len &lt;= MAX_PACKET_SIZE,
                     <span class="string">"data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
                 </span>);
-                <span class="kw">let </span>src_key = PublicKey::try_from(<span class="kw-2">&amp;</span>content[..PUBLIC_KEY_LENGTH])<span class="question-mark">?</span>;
-                <span class="kw">let </span>content = content.slice(PUBLIC_KEY_LENGTH..);
+                <span class="kw">let </span>src_key = PublicKey::try_from(<span class="kw-2">&amp;</span>content[..PublicKey::LENGTH])<span class="question-mark">?</span>;
+                <span class="kw">let </span>content = content.slice(PublicKey::LENGTH..);
                 <span class="self">Self</span>::RecvPacket { src_key, content }
             }
             FrameType::KeepAlive =&gt; {
@@ -1258,7 +1258,7 @@
             }
             FrameType::PeerGone =&gt; {
                 <span class="macro">anyhow::ensure!</span>(
-                    content.len() == PUBLIC_KEY_LENGTH,
+                    content.len() == PublicKey::LENGTH,
                     <span class="string">"invalid peer gone frame length"
                 </span>);
                 <span class="kw">let </span>peer = PublicKey::try_from(<span class="kw-2">&amp;</span>content[..<span class="number">32</span>])<span class="question-mark">?</span>;

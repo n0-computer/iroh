@@ -87,7 +87,7 @@
 
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
-<span class="kw">use crate</span>::{base32, key::NodeId, relay_url::RelayUrl};
+<span class="kw">use crate</span>::{key::NodeId, relay_url::RelayUrl};
 
 <span class="kw">mod </span>node;
 
@@ -124,8 +124,8 @@
     <span class="doccomment">/// Serialize to string.
     </span><span class="kw">fn </span>serialize(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; String {
         <span class="kw">let </span><span class="kw-2">mut </span>out = <span class="self">Self</span>::KIND.to_string();
-        base32::fmt_append(<span class="self">self</span>.to_bytes(), <span class="kw-2">&amp;mut </span>out);
-        out
+        data_encoding::BASE32_NOPAD.encode_append(<span class="kw-2">&amp;</span><span class="self">self</span>.to_bytes(), <span class="kw-2">&amp;mut </span>out);
+        out.to_ascii_lowercase()
     }
 
     <span class="doccomment">/// Deserialize from a string.
@@ -134,7 +134,7 @@
         <span class="kw">let </span><span class="prelude-val">Some</span>(rest) = str.strip_prefix(expected) <span class="kw">else </span>{
             <span class="kw">return </span><span class="prelude-val">Err</span>(Error::Kind { expected });
         };
-        <span class="kw">let </span>bytes = base32::parse_vec(rest)<span class="question-mark">?</span>;
+        <span class="kw">let </span>bytes = data_encoding::BASE32_NOPAD.decode(rest.to_ascii_uppercase().as_bytes())<span class="question-mark">?</span>;
         <span class="kw">let </span>ticket = <span class="self">Self</span>::from_bytes(<span class="kw-2">&amp;</span>bytes)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(ticket)
     }
@@ -151,7 +151,7 @@
     </span>Postcard(<span class="attr">#[from] </span>postcard::Error),
     <span class="doccomment">/// This looks like a ticket, but base32 decoding failed.
     </span><span class="attr">#[error(<span class="string">"decoding failed: {_0}"</span>)]
-    </span>Encoding(<span class="attr">#[from] </span>base32::DecodeError),
+    </span>Encoding(<span class="attr">#[from] </span>data_encoding::DecodeError),
     <span class="doccomment">/// Verification of the deserialized bytes failed.
     </span><span class="attr">#[error(<span class="string">"verification failed: {_0}"</span>)]
     </span>Verify(<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str),

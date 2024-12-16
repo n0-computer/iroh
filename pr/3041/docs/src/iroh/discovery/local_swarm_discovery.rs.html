@@ -486,7 +486,9 @@
 <a href="#485" id="485">485</a>
 <a href="#486" id="486">486</a>
 <a href="#487" id="487">487</a>
-<a href="#488" id="488">488</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
+<a href="#488" id="488">488</a>
+<a href="#489" id="489">489</a>
+<a href="#490" id="490">490</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
@@ -812,10 +814,12 @@
             });
         };
         <span class="kw">let </span>addrs = LocalSwarmDiscovery::socketaddrs_to_addrs(socketaddrs);
-        <span class="kw">let </span><span class="kw-2">mut </span>discoverer =
-            Discoverer::new_interactive(N0_LOCAL_SWARM.to_string(), node_id.to_string())
-                .with_callback(callback)
-                .with_ip_class(IpClass::Auto);
+        <span class="kw">let </span>node_id_str = data_encoding::BASE32_NOPAD
+            .encode(node_id.as_bytes())
+            .to_ascii_lowercase();
+        <span class="kw">let </span><span class="kw-2">mut </span>discoverer = Discoverer::new_interactive(N0_LOCAL_SWARM.to_string(), node_id_str)
+            .with_callback(callback)
+            .with_ip_class(IpClass::Auto);
         <span class="kw">for </span>addr <span class="kw">in </span>addrs {
             discoverer = discoverer.with_addrs(addr.<span class="number">0</span>, addr.<span class="number">1</span>);
         }

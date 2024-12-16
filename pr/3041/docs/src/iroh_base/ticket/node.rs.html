@@ -195,11 +195,15 @@
 <a href="#194" id="194">194</a>
 <a href="#195" id="195">195</a>
 <a href="#196" id="196">196</a>
-<a href="#197" id="197">197</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tickets for nodes.
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a>
+<a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tickets for nodes.
 
 </span><span class="kw">use </span>std::str::FromStr;
 
-<span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="kw">use super</span>::{Variant0AddrInfo, Variant0NodeAddr};
@@ -259,7 +263,7 @@
         postcard::to_stdvec(<span class="kw-2">&amp;</span>data).expect(<span class="string">"postcard serialization failed"</span>)
     }
 
-    <span class="kw">fn </span>from_bytes(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; std::result::Result&lt;<span class="self">Self</span>, ticket::Error&gt; {
+    <span class="kw">fn </span>from_bytes(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ticket::Error&gt; {
         <span class="kw">let </span>res: TicketWireFormat = postcard::from_bytes(bytes).map_err(ticket::Error::Postcard)<span class="question-mark">?</span>;
         <span class="kw">let </span>TicketWireFormat::Variant0(Variant0NodeTicket { node }) = res;
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
@@ -336,10 +340,7 @@
     <span class="kw">use </span>iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use crate</span>::{
-        base32,
-        key::{PublicKey, SecretKey},
-    };
+    <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
 
     <span class="kw">fn </span>make_ticket() -&gt; NodeTicket {
         <span class="kw">let </span>peer = SecretKey::generate().public();
@@ -379,7 +380,16 @@
                 [<span class="string">"127.0.0.1:1024"</span>.parse().unwrap()],
             ),
         };
-        <span class="kw">let </span>base32 = base32::parse_vec(ticket.to_string().strip_prefix(<span class="string">"node"</span>).unwrap()).unwrap();
+        <span class="kw">let </span>base32 = data_encoding::BASE32_NOPAD
+            .decode(
+                ticket
+                    .to_string()
+                    .strip_prefix(<span class="string">"node"</span>)
+                    .unwrap()
+                    .to_ascii_uppercase()
+                    .as_bytes(),
+            )
+            .unwrap();
         <span class="kw">let </span>expected = parse_hexdump(<span class="string">"
             00 # variant
             ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6 # node id, 32 bytes, see above

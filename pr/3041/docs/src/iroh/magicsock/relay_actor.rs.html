@@ -962,12 +962,7 @@
 <a href="#961" id="961">961</a>
 <a href="#962" id="962">962</a>
 <a href="#963" id="963">963</a>
-<a href="#964" id="964">964</a>
-<a href="#965" id="965">965</a>
-<a href="#966" id="966">966</a>
-<a href="#967" id="967">967</a>
-<a href="#968" id="968">968</a>
-<a href="#969" id="969">969</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#964" id="964">964</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -987,7 +982,7 @@
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
 <span class="kw">use </span>futures_buffered::FuturesUnorderedBounded;
 <span class="kw">use </span>futures_lite::StreamExt;
-<span class="kw">use </span>iroh_base::{NodeId, RelayUrl, SecretKey, PUBLIC_KEY_LENGTH};
+<span class="kw">use </span>iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>iroh_relay::{<span class="self">self </span><span class="kw">as </span>relay, client::ClientError, ReceivedMessage, MAX_PACKET_SIZE};
 <span class="kw">use </span>tokio::{
@@ -1108,11 +1103,8 @@
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_cert_verify,
         } = opts;
-        <span class="kw">let </span><span class="kw-2">mut </span>builder =
-            relay::client::ClientBuilder::new(url).address_family_selector(<span class="kw">move </span>|| {
-                <span class="kw">let </span>prefer_ipv6 = prefer_ipv6.clone();
-                Box::pin(<span class="kw">async move </span>{ prefer_ipv6.load(Ordering::Relaxed) })
-            });
+        <span class="kw">let </span><span class="kw-2">mut </span>builder = relay::client::ClientBuilder::new(url)
+            .address_family_selector(<span class="kw">move </span>|| prefer_ipv6.load(Ordering::Relaxed));
         <span class="kw">if let </span><span class="prelude-val">Some</span>(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
         }
@@ -1458,7 +1450,7 @@
     }
 
     <span class="kw">async fn </span>send_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, contents: RelayContents, remote_node: NodeId) {
-        <span class="kw">const </span>PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PUBLIC_KEY_LENGTH;
+        <span class="kw">const </span>PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PublicKey::LENGTH;
         <span class="kw">let </span>total_bytes = contents.iter().map(|c| c.len() <span class="kw">as </span>u64).sum::&lt;u64&gt;();
         <span class="macro">trace!</span>(
             %url,
@@ -1538,11 +1530,9 @@
                 }
             }
         }
-        <span class="kw">match </span>found_relay {
-            <span class="prelude-val">Some</span>(url) =&gt; <span class="self">self</span>.active_relay_handle(<span class="kw-2">&amp;</span>url).<span class="kw">await</span>,
-            <span class="prelude-val">None </span>=&gt; <span class="self">self</span>.active_relay_handle(url).<span class="kw">await</span>,
-        }
-    }
+        <span class="kw">let </span>url = found_relay.as_ref().unwrap_or(url);
+        <span class="self">self</span>.active_relay_handle(url).<span class="kw">await
+    </span>}
 
     <span class="doccomment">/// Returns the handle of the [`ActiveRelayActor`].
     </span><span class="kw">async fn </span>active_relay_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl) -&gt; <span class="kw-2">&amp;</span>ActiveRelayHandle {
