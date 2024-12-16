@@ -1199,7 +1199,12 @@
 <a href="#1198" id="1198">1198</a>
 <a href="#1199" id="1199">1199</a>
 <a href="#1200" id="1200">1200</a>
-<a href="#1201" id="1201">1201</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#1201" id="1201">1201</a>
+<a href="#1202" id="1202">1202</a>
+<a href="#1203" id="1203">1203</a>
+<a href="#1204" id="1204">1204</a>
+<a href="#1205" id="1205">1205</a>
+<a href="#1206" id="1206">1206</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -1361,6 +1366,7 @@
     ping_tasks: JoinSet&lt;()&gt;,
     dns_resolver: DnsResolver,
     proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
+    key_cache: KeyCache,
 }
 
 <span class="attr">#[derive(Default, Debug)]
@@ -1410,6 +1416,8 @@
     </span>insecure_skip_cert_verify: bool,
     <span class="doccomment">/// HTTP Proxy
     </span>proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
+    <span class="doccomment">/// Capacity of the key cache
+    </span>key_cache_capacity: usize,
 }
 
 <span class="kw">impl </span>ClientBuilder {
@@ -1425,6 +1433,7 @@
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_cert_verify: <span class="bool-val">false</span>,
             proxy_url: <span class="prelude-val">None</span>,
+            key_cache_capacity: <span class="number">0</span>,
         }
     }
 
@@ -1522,6 +1531,7 @@
             tls_connector,
             dns_resolver,
             proxy_url: <span class="self">self</span>.proxy_url,
+            key_cache: KeyCache::new(<span class="self">self</span>.key_cache_capacity),
         };
 
         <span class="kw">let </span>(msg_sender, inbox) = mpsc::channel(<span class="number">64</span>);
@@ -1831,7 +1841,7 @@
 
         <span class="kw">let </span>(writer, reader) = tokio_tungstenite_wasm::connect(dial_url).<span class="kw">await</span><span class="question-mark">?</span>.split();
 
-        <span class="kw">let </span>cache = KeyCache::default();
+        <span class="kw">let </span>cache = <span class="self">self</span>.key_cache.clone();
 
         <span class="kw">let </span>reader = ConnReader::Ws(reader, cache);
         <span class="kw">let </span>writer = ConnWriter::Ws(writer);
@@ -1887,7 +1897,7 @@
         <span class="kw">let </span>(reader, writer) =
             downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>cache = KeyCache::default();
+        <span class="kw">let </span>cache = <span class="self">self</span>.key_cache.clone();
 
         <span class="kw">let </span>reader = ConnReader::Derp(FramedRead::new(reader, DerpCodec::new(cache.clone())));
         <span class="kw">let </span>writer = ConnWriter::Derp(FramedWrite::new(writer, DerpCodec::new(cache)));

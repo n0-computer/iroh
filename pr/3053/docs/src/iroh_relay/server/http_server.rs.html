@@ -1125,7 +1125,16 @@
 <a href="#1124" id="1124">1124</a>
 <a href="#1125" id="1125">1125</a>
 <a href="#1126" id="1126">1126</a>
-<a href="#1127" id="1127">1127</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1127" id="1127">1127</a>
+<a href="#1128" id="1128">1128</a>
+<a href="#1129" id="1129">1129</a>
+<a href="#1130" id="1130">1130</a>
+<a href="#1131" id="1131">1131</a>
+<a href="#1132" id="1132">1132</a>
+<a href="#1133" id="1133">1133</a>
+<a href="#1134" id="1134">1134</a>
+<a href="#1135" id="1135">1135</a>
+<a href="#1136" id="1136">1136</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -1289,6 +1298,8 @@
     /// Rate-limiting is enforced on received traffic from individual clients.  This
     /// configuration applies to a single client connection.
     </span>client_rx_ratelimit: <span class="prelude-ty">Option</span>&lt;ClientConnRateLimit&gt;,
+    <span class="doccomment">/// The capacity of the key cache.
+    </span>key_cache_capacity: usize,
 }
 
 <span class="kw">impl </span>ServerBuilder {
@@ -1300,6 +1311,7 @@
             handlers: Default::default(),
             headers: HeaderMap::new(),
             client_rx_ratelimit: <span class="prelude-val">None</span>,
+            key_cache_capacity: <span class="number">0</span>,
         }
     }
 
@@ -1346,6 +1358,7 @@
             server_task.server_channel.clone(),
             server_task.write_timeout,
             <span class="self">self</span>.client_rx_ratelimit,
+            KeyCache::new(<span class="self">self</span>.key_cache_capacity),
         );
 
         <span class="kw">let </span>addr = <span class="self">self</span>.addr;
@@ -1428,6 +1441,7 @@
     server_channel: mpsc::Sender&lt;Message&gt;,
     write_timeout: Duration,
     rate_limit: <span class="prelude-ty">Option</span>&lt;ClientConnRateLimit&gt;,
+    key_cache: KeyCache,
 }
 
 <span class="kw">impl </span>RelayService {
@@ -1625,7 +1639,7 @@
                 <span class="macro">inc!</span>(Metrics, websocket_accepts);
                 RelayedStream::Ws(
                     WebSocketStream::from_raw_socket(io, Role::Server, <span class="prelude-val">None</span>).<span class="kw">await</span>,
-                    KeyCache::default(),
+                    <span class="self">self</span>.key_cache.clone(),
                 )
             }
         };
@@ -1679,6 +1693,7 @@
         server_channel: mpsc::Sender&lt;Message&gt;,
         write_timeout: Duration,
         rate_limit: <span class="prelude-ty">Option</span>&lt;ClientConnRateLimit&gt;,
+        key_cache: KeyCache,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>(Arc::new(Inner {
             handlers,
@@ -1686,6 +1701,7 @@
             server_channel,
             write_timeout,
             rate_limit,
+            key_cache,
         }))
     }
 
@@ -2052,6 +2068,7 @@
             server_task.server_channel.clone(),
             server_task.write_timeout,
             <span class="prelude-val">None</span>,
+            KeyCache::test(),
         );
 
         <span class="comment">// create client a and connect it to the server
@@ -2138,6 +2155,7 @@
             server_task.server_channel.clone(),
             server_task.write_timeout,
             <span class="prelude-val">None</span>,
+            KeyCache::test(),
         );
 
         <span class="comment">// create client a and connect it to the server

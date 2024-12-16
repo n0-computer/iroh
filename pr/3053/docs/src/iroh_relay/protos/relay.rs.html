@@ -1650,7 +1650,7 @@
         <span class="attr">#[test]
         </span><span class="kw">fn </span>frame_ws_roundtrip(frame <span class="kw">in </span>frame()) {
             <span class="kw">let </span>encoded = frame.clone().encode_for_ws_msg();
-            <span class="kw">let </span>decoded = Frame::decode_from_ws_msg(encoded, <span class="kw-2">&amp;</span>KeyCache::default()).unwrap();
+            <span class="kw">let </span>decoded = Frame::decode_from_ws_msg(encoded, <span class="kw-2">&amp;</span>KeyCache::test()).unwrap();
             <span class="macro">prop_assert_eq!</span>(frame, decoded);
         }
 
