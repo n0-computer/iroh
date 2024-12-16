@@ -175,6 +175,9 @@ impl ServerBuilder {
             handlers: Default::default(),
             headers: HeaderMap::new(),
             client_rx_ratelimit: None,
+            // Sized for 1 million concurrent clients.
+            // memory usage will be (32 + 8 + 8 + 8) * 1_000_000 = 56MB,
+            // which seems reasonable for a server.
             key_cache_capacity: 1024 * 1024,
         }
     }
@@ -497,7 +500,7 @@ impl Inner {
         let mut io = match protocol {
             Protocol::Relay => {
                 inc!(Metrics, derp_accepts);
-                RelayedStream::Derp(Framed::new(io, DerpCodec::default()))
+                RelayedStream::Derp(Framed::new(io, DerpCodec::new(self.key_cache.clone())))
             }
             Protocol::Websocket => {
                 inc!(Metrics, websocket_accepts);
@@ -911,8 +914,8 @@ mod tests {
         let client_reader = MaybeTlsStreamReader::Mem(client_reader);
         let client_writer = MaybeTlsStreamWriter::Mem(client_writer);
 
-        let client_reader = ConnReader::Derp(FramedRead::new(client_reader, DerpCodec::default()));
-        let client_writer = ConnWriter::Derp(FramedWrite::new(client_writer, DerpCodec::default()));
+        let client_reader = ConnReader::Derp(FramedRead::new(client_reader, DerpCodec::test()));
+        let client_writer = ConnWriter::Derp(FramedWrite::new(client_writer, DerpCodec::test()));
 
         (
             server,

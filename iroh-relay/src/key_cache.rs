@@ -15,10 +15,9 @@ type PublicKeyBytes = [u8; PublicKey::LENGTH];
 /// are being parsed, like in the relay server.
 ///
 /// The cache stores only successful parse results.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub enum KeyCache {
     /// The key cache is disabled.
-    #[default]
     Disabled,
     /// The key cache is enabled with a fixed capacity. It is shared between
     /// multiple threads.

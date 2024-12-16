@@ -267,14 +267,14 @@ mod tests {
                 node_id,
                 stream: RelayedStream::Derp(Framed::new(
                     MaybeTlsStream::Test(io),
-                    DerpCodec::default(),
+                    DerpCodec::test(),
                 )),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
                 rate_limit: None,
                 server_channel,
             },
-            Framed::new(test_io, DerpCodec::default()),
+            Framed::new(test_io, DerpCodec::test()),
         )
     }
 
