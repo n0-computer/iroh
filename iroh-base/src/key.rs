@@ -115,6 +115,10 @@ impl PublicKey {
         Ok(Self(y))
     }
 
+    pub fn from_bytes_unchecked(bytes: &[u8; 32]) -> Self {
+        Self(CompressedEdwardsY(*bytes))
+    }
+
     /// Verify a signature on a message with this secret key's public key.
     ///
     /// # Return

@@ -44,7 +44,7 @@ use url::Url;
 use crate::{
     defaults::timeouts::*,
     http::{Protocol, RELAY_PATH},
-    protos::relay::DerpCodec,
+    protos::relay::{DerpCodec, KeyCache},
 };
 
 pub(crate) mod conn;
@@ -629,7 +629,9 @@ impl Actor {
 
         let (writer, reader) = tokio_tungstenite_wasm::connect(dial_url).await?.split();
 
-        let reader = ConnReader::Ws(reader);
+        let cache = KeyCache::default();
+
+        let reader = ConnReader::Ws(reader, cache);
         let writer = ConnWriter::Ws(writer);
 
         Ok((reader, writer))
@@ -683,8 +685,10 @@ impl Actor {
         let (reader, writer) =
             downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))?;
 
-        let reader = ConnReader::Derp(FramedRead::new(reader, DerpCodec));
-        let writer = ConnWriter::Derp(FramedWrite::new(writer, DerpCodec));
+        let cache = KeyCache::default();
+
+        let reader = ConnReader::Derp(FramedRead::new(reader, DerpCodec::new(cache)));
+        let writer = ConnWriter::Derp(FramedWrite::new(writer, DerpCodec::new(cache)));
 
         Ok((reader, writer, local_addr))
     }

@@ -244,13 +244,16 @@ mod tests {
         (
             ClientConnConfig {
                 node_id: key,
-                stream: RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec)),
+                stream: RelayedStream::Derp(Framed::new(
+                    MaybeTlsStream::Test(io),
+                    DerpCodec::default(),
+                )),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
                 rate_limit: None,
                 server_channel,
             },
-            FramedRead::new(test_io, DerpCodec),
+            FramedRead::new(test_io, DerpCodec::default()),
         )
     }
 

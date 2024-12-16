@@ -31,8 +31,8 @@ use crate::{
     client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
     defaults::timeouts::CLIENT_RECV_TIMEOUT,
     protos::relay::{
-        write_frame, ClientInfo, DerpCodec, Frame, MAX_PACKET_SIZE, PER_CLIENT_READ_QUEUE_DEPTH,
-        PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+        write_frame, ClientInfo, DerpCodec, Frame, KeyCache, MAX_PACKET_SIZE,
+        PER_CLIENT_READ_QUEUE_DEPTH, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
     },
 };
 
@@ -270,7 +270,7 @@ pub struct ConnBuilder {
 
 pub(crate) enum ConnReader {
     Derp(FramedRead<MaybeTlsStreamReader, DerpCodec>),
-    Ws(SplitStream<WebSocketStream>),
+    Ws(SplitStream<WebSocketStream>, KeyCache),
 }
 
 pub(crate) enum ConnWriter {
@@ -291,9 +291,9 @@ impl Stream for ConnReader {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
             Self::Derp(ref mut ws) => Pin::new(ws).poll_next(cx),
-            Self::Ws(ref mut ws) => match Pin::new(ws).poll_next(cx) {
+            Self::Ws(ref mut ws, cache) => match Pin::new(ws).poll_next(cx) {
                 Poll::Ready(Some(Ok(tokio_tungstenite_wasm::Message::Binary(vec)))) => {
-                    Poll::Ready(Some(Frame::decode_from_ws_msg(vec)))
+                    Poll::Ready(Some(Frame::decode_from_ws_msg(vec, cache.clone())))
                 }
                 Poll::Ready(Some(Ok(msg))) => {
                     tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");

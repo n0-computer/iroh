@@ -200,12 +200,24 @@ pub(crate) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
     }
 }
 
+/// A cache for public keys.
+#[derive(Default, Debug, Clone, Copy)]
+pub struct KeyCache;
+
 /// The protocol for the relay server.
 ///
 /// This is a framed protocol, using [`tokio_util::codec`] to turn the streams of bytes into
 /// [`Frame`]s.
 #[derive(Debug, Default, Clone)]
-pub(crate) struct DerpCodec;
+pub(crate) struct DerpCodec {
+    cache: KeyCache,
+}
+
+impl DerpCodec {
+    pub(crate) fn new(cache: KeyCache) -> Self {
+        Self { cache }
+    }
+}
 
 /// The frames in the [`DerpCodec`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -293,13 +305,13 @@ impl Frame {
     /// Tries to decode a frame received over websockets.
     ///
     /// Specifically, bytes received from a binary websocket message frame.
-    pub(crate) fn decode_from_ws_msg(vec: Vec<u8>) -> anyhow::Result<Self> {
+    pub(crate) fn decode_from_ws_msg(vec: Vec<u8>, cache: KeyCache) -> anyhow::Result<Self> {
         if vec.is_empty() {
             bail!("error parsing relay::codec::Frame: too few bytes (0)");
         }
         let bytes = Bytes::from(vec);
         let typ = FrameType::from(bytes[0]);
-        let frame = Self::from_bytes(typ, bytes.slice(1..))?;
+        let frame = Self::from_bytes(typ, bytes.slice(1..), cache)?;
         Ok(frame)
     }
 
@@ -364,7 +376,7 @@ impl Frame {
         }
     }
 
-    fn from_bytes(frame_type: FrameType, content: Bytes) -> anyhow::Result<Self> {
+    fn from_bytes(frame_type: FrameType, content: Bytes, _cache: KeyCache) -> anyhow::Result<Self> {
         let res = match frame_type {
             FrameType::ClientInfo => {
                 ensure!(
@@ -516,7 +528,7 @@ impl Decoder for DerpCodec {
         src.advance(HEADER_LEN);
 
         let content = src.split_to(frame_len).freeze();
-        let frame = Frame::from_bytes(frame_type, content)?;
+        let frame = Frame::from_bytes(frame_type, content, self.cache.clone())?;
 
         Ok(Some(frame))
     }
@@ -576,8 +588,8 @@ mod tests {
     #[tokio::test]
     async fn test_basic_read_write() -> anyhow::Result<()> {
         let (reader, writer) = tokio::io::duplex(1024);
-        let mut reader = FramedRead::new(reader, DerpCodec);
-        let mut writer = FramedWrite::new(writer, DerpCodec);
+        let mut reader = FramedRead::new(reader, DerpCodec::default());
+        let mut writer = FramedWrite::new(writer, DerpCodec::default());
 
         let expect_buf = b"hello world!";
         let expected_frame = Frame::Health {
@@ -596,8 +608,8 @@ mod tests {
     #[tokio::test]
     async fn test_send_recv_client_key() -> anyhow::Result<()> {
         let (reader, writer) = tokio::io::duplex(1024);
-        let mut reader = FramedRead::new(reader, DerpCodec);
-        let mut writer = FramedWrite::new(writer, DerpCodec);
+        let mut reader = FramedRead::new(reader, DerpCodec::default());
+        let mut writer = FramedWrite::new(writer, DerpCodec::default());
 
         let client_key = SecretKey::generate();
         let client_info = ClientInfo {
@@ -797,15 +809,16 @@ mod proptests {
         #[test]
         fn frame_roundtrip(frame in frame()) {
             let mut buf = BytesMut::new();
-            DerpCodec.encode(frame.clone(), &mut buf).unwrap();
-            let decoded = DerpCodec.decode(&mut buf).unwrap().unwrap();
+            let mut codec = DerpCodec::default();
+            codec.encode(frame.clone(), &mut buf).unwrap();
+            let decoded = codec.decode(&mut buf).unwrap().unwrap();
             prop_assert_eq!(frame, decoded);
         }
 
         #[test]
         fn frame_ws_roundtrip(frame in frame()) {
             let encoded = frame.clone().encode_for_ws_msg();
-            let decoded = Frame::decode_from_ws_msg(encoded).unwrap();
+            let decoded = Frame::decode_from_ws_msg(encoded, KeyCache::default()).unwrap();
             prop_assert_eq!(frame, decoded);
         }
 
@@ -813,9 +826,10 @@ mod proptests {
         #[test]
         fn broken_frame_handling(frame in frame()) {
             let mut buf = BytesMut::new();
-            DerpCodec.encode(frame.clone(), &mut buf).unwrap();
+            let mut codec = DerpCodec::default();
+            codec.encode(frame.clone(), &mut buf).unwrap();
             inject_error(&mut buf);
-            let decoded = DerpCodec.decode(&mut buf);
+            let decoded = codec.decode(&mut buf);
             prop_assert!(decoded.is_err());
         }
     }
