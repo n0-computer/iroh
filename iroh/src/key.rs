@@ -35,7 +35,7 @@ impl Debug for SharedSecret {
 }
 
 impl SharedSecret {
-    fn new(this: &crypto_box::SecretKey, other: &crypto_box::PublicKey) -> Self {
+    pub fn new(this: &crypto_box::SecretKey, other: &crypto_box::PublicKey) -> Self {
         SharedSecret(crypto_box::ChaChaBox::new(other, this))
     }
 
@@ -72,36 +72,34 @@ impl SharedSecret {
     }
 }
 
-impl crate::key::SecretKey {
-    /// Returns the shared key for communication between this key and `other`.
-    pub fn shared(&self, other: &crate::key::PublicKey) -> SharedSecret {
-        let secret_key = self.secret_crypto_box();
-        let public_key = other.public_crypto_box();
-
-        SharedSecret::new(secret_key, &public_key)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn shared(this: &iroh_base::SecretKey, other: &iroh_base::PublicKey) -> SharedSecret {
+        let secret_key = secret_ed_box(this.secret());
+        let public_key = public_ed_box(&other.public());
+
+        SharedSecret::new(&secret_key, &public_key)
+    }
+
     #[test]
     fn test_seal_open_roundtrip() {
-        let key_a = crate::key::SecretKey::generate(&mut rand::thread_rng());
-        let key_b = crate::key::SecretKey::generate(&mut rand::thread_rng());
+        let mut rng = rand::thread_rng();
+        let key_a = iroh_base::SecretKey::generate(&mut rng);
+        let key_b = iroh_base::SecretKey::generate(&mut rng);
 
         seal_open_roundtrip(&key_a, &key_b);
         seal_open_roundtrip(&key_b, &key_a);
         seal_open_roundtrip(&key_a, &key_a);
     }
 
-    fn seal_open_roundtrip(key_a: &crate::key::SecretKey, key_b: &crate::key::SecretKey) {
+    fn seal_open_roundtrip(key_a: &iroh_base::SecretKey, key_b: &iroh_base::SecretKey) {
         let msg = b"super secret message!!!!".to_vec();
-        let shared_a = key_a.shared(&key_b.public());
+        let shared_a = shared(key_a, &key_b.public());
         let mut sealed_message = msg.clone();
         shared_a.seal(&mut sealed_message);
-        let shared_b = key_b.shared(&key_a.public());
+        let shared_b = shared(key_b, &key_a.public());
         let mut decrypted_message = sealed_message.clone();
         shared_b.open(&mut decrypted_message).unwrap();
         assert_eq!(&msg[..], &decrypted_message);
@@ -117,9 +115,9 @@ mod tests {
 
     #[test]
     fn test_same_public_key_api() {
-        let key = crate::key::SecretKey::generate(&mut rand::thread_rng());
+        let key = iroh_base::SecretKey::generate(rand::thread_rng());
         let public_key1: crypto_box::PublicKey = public_ed_box(&key.public().public());
-        let public_key2: crypto_box::PublicKey = secret_ed_box(&key.secret).public_key();
+        let public_key2: crypto_box::PublicKey = secret_ed_box(key.secret()).public_key();
 
         assert_eq!(public_key1, public_key2);
     }

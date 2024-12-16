@@ -15,9 +15,7 @@ mod node_addr;
 mod relay_url;
 
 #[cfg(feature = "key")]
-pub use self::key::{
-    DecryptionError, KeyParsingError, NodeId, PublicKey, SecretKey, SharedSecret, Signature,
-};
+pub use self::key::{KeyParsingError, NodeId, PublicKey, SecretKey, Signature};
 #[cfg(feature = "key")]
 pub use self::node_addr::NodeAddr;
 #[cfg(feature = "relay")]

@@ -234,6 +234,7 @@
 #![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
 
 mod disco;
+mod key;
 mod magicsock;
 
 pub(crate) mod util;
@@ -249,8 +250,7 @@ pub mod watchable;
 
 pub use endpoint::{Endpoint, RelayMode};
 pub use iroh_base::{
-    DecryptionError, KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, RelayUrlParseError,
-    SecretKey,
+    KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
 };
 pub use iroh_relay::{RelayMap, RelayNode};
 
