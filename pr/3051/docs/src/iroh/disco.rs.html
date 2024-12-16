@@ -508,8 +508,7 @@
 <a href="#507" id="507">507</a>
 <a href="#508" id="508">508</a>
 <a href="#509" id="509">509</a>
-<a href="#510" id="510">510</a>
-<a href="#511" id="511">511</a></pre></div><pre class="rust"><code><span class="doccomment">//! Contains the discovery message types.
+<a href="#510" id="510">510</a></pre></div><pre class="rust"><code><span class="doccomment">//! Contains the discovery message types.
 //!
 //! A discovery message is:
 //!
@@ -915,9 +914,8 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>iroh_base::SecretKey;
 
-    <span class="kw">use </span><span class="kw">crate</span>::key::{public_ed_box, secret_ed_box, SharedSecret};
-
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::key::{public_ed_box, secret_ed_box, SharedSecret};
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_to_from_bytes() {
