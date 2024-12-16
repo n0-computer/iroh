@@ -9,10 +9,15 @@ type SignatureError = <PublicKey as TryFrom<&'static [u8]>>::Error;
 type PublicKeyBytes = [u8; PublicKey::LENGTH];
 
 /// A cache for public keys.
-#[derive(Debug, Clone, Default)]
+///
+/// This is used solely to make parsing public keys from byte slices more
+/// efficient for the very common case where a large number of identical keys
+/// are being parsed, like in the relay server.
+///
+/// The cache stores only successful parse results.
+#[derive(Debug, Clone)]
 pub enum KeyCache {
     /// The key cache is disabled.
-    #[default]
     Disabled,
     /// The key cache is enabled with a fixed capacity. It is shared between
     /// multiple threads.
@@ -43,6 +48,8 @@ impl KeyCache {
             return PublicKey::try_from(slice);
         };
         let Ok(bytes) = PublicKeyBytes::try_from(slice) else {
+            // if the size is wrong, use PublicKey::try_from to fail with a
+            // SignatureError.
             PublicKey::try_from(slice)?;
             unreachable!();
         };

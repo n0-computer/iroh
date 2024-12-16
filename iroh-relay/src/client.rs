@@ -227,7 +227,7 @@ impl ClientBuilder {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify: false,
             proxy_url: None,
-            key_cache_capacity: 0,
+            key_cache_capacity: 128,
         }
     }
 

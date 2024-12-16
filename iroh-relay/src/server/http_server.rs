@@ -175,7 +175,7 @@ impl ServerBuilder {
             handlers: Default::default(),
             headers: HeaderMap::new(),
             client_rx_ratelimit: None,
-            key_cache_capacity: 0,
+            key_cache_capacity: 1024 * 1024,
         }
     }
 
