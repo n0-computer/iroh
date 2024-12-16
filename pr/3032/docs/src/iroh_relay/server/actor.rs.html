@@ -631,7 +631,7 @@
                 .instrument(<span class="macro">info_span!</span>(<span class="string">"relay.server"</span>)),
         );
 
-        <span class="kw">let </span>node_id_a = SecretKey::generate().public();
+        <span class="kw">let </span>node_id_a = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>(client_a, <span class="kw-2">mut </span>a_io) = test_client_builder(node_id_a, server_channel.clone());
 
         <span class="comment">// create client a
@@ -641,7 +641,7 @@
             </span>.map_err(|<span class="kw">_</span>| <span class="macro">anyhow::anyhow!</span>(<span class="string">"server gone"</span>))<span class="question-mark">?</span>;
 
         <span class="comment">// server message: create client b
-        </span><span class="kw">let </span>node_id_b = SecretKey::generate().public();
+        </span><span class="kw">let </span>node_id_b = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>(client_b, <span class="kw-2">mut </span>b_io) = test_client_builder(node_id_b, server_channel.clone());
         server_channel
             .send(Message::CreateClient(client_b))

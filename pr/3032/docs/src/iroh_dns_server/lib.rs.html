@@ -451,7 +451,7 @@
 
         <span class="kw">let </span>origin = <span class="string">"irohdns.example."</span>;
 
-        <span class="kw">let </span>secret_key = SecretKey::generate();
+        <span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>node_id = secret_key.public();
         <span class="kw">let </span>relay_url: Url = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;
         <span class="kw">let </span>pkarr = PkarrRelayClient::new(pkarr_relay);
@@ -516,7 +516,7 @@
         <span class="kw">let </span>origin = <span class="string">"irohdns.example."</span>;
 
         <span class="comment">// create a signed packet
-        </span><span class="kw">let </span>secret_key = SecretKey::generate();
+        </span><span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>node_id = secret_key.public();
         <span class="kw">let </span>relay_url: Url = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;
         <span class="kw">let </span>node_info = NodeInfo::new(node_id, <span class="prelude-val">Some</span>(relay_url.clone()), Default::default());
@@ -553,7 +553,7 @@
     }
 
     <span class="kw">fn </span>random_signed_packet() -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket&gt; {
-        <span class="kw">let </span>secret_key = SecretKey::generate();
+        <span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>node_id = secret_key.public();
         <span class="kw">let </span>relay_url: Url = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;
         <span class="kw">let </span>node_info = NodeInfo::new(node_id, <span class="prelude-val">Some</span>(relay_url.clone()), Default::default());

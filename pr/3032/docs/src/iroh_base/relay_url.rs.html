@@ -119,9 +119,12 @@
 <a href="#118" id="118">118</a>
 <a href="#119" id="119">119</a>
 <a href="#120" id="120">120</a>
-<a href="#121" id="121">121</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt, ops::Deref, str::FromStr};
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt, ops::Deref, str::FromStr};
 
-<span class="kw">use </span>anyhow::Context;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>url::Url;
 <span class="doccomment">/// A URL identifying a relay server.
@@ -157,15 +160,20 @@
     }
 }
 
+<span class="doccomment">/// Can occur when parsing a string into a [`RelayUrl`].
+</span><span class="attr">#[derive(Debug, thiserror::Error)]
+#[error(<span class="string">"Failed to parse: {0}"</span>)]
+</span><span class="kw">pub struct </span>RelayUrlParseError(<span class="attr">#[from] </span>url::ParseError);
+
 <span class="doccomment">/// Support for parsing strings directly.
 ///
 /// If you need more control over the error first create a [`Url`] and use [`RelayUrl::from`]
 /// instead.
 </span><span class="kw">impl </span>FromStr <span class="kw">for </span>RelayUrl {
-    <span class="kw">type </span><span class="prelude-val">Err </span>= anyhow::Error;
+    <span class="kw">type </span><span class="prelude-val">Err </span>= RelayUrlParseError;
 
     <span class="kw">fn </span>from_str(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Err&gt; {
-        <span class="kw">let </span>inner = Url::from_str(s).context(<span class="string">"invalid URL"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>inner = Url::from_str(s)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(RelayUrl::from(inner))
     }
 }

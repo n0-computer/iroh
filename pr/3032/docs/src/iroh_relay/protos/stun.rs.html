@@ -701,7 +701,7 @@
             },
             ResponseTestCase {
                 name:     <span class="string">"no-4in6"</span>,
-                data:     hex::decode(<span class="string">"010100182112a4424fd5d202dcb37d31fc773306002000140002cd3d2112a4424fd5d202dcb382ce2dc3fcc7"</span>).unwrap(),
+                data:     data_encoding::HEXLOWER.decode(<span class="string">b"010100182112a4424fd5d202dcb37d31fc773306002000140002cd3d2112a4424fd5d202dcb382ce2dc3fcc7"</span>).unwrap(),
                 want_tid:  <span class="macro">vec!</span>[<span class="number">79</span>, <span class="number">213</span>, <span class="number">210</span>, <span class="number">2</span>, <span class="number">220</span>, <span class="number">179</span>, <span class="number">125</span>, <span class="number">49</span>, <span class="number">252</span>, <span class="number">119</span>, <span class="number">51</span>, <span class="number">6</span>],
                 want_addr: IpAddr::V4(Ipv4Addr::from([<span class="number">209</span>, <span class="number">180</span>, <span class="number">207</span>, <span class="number">193</span>])),
                 want_port: <span class="number">60463</span>,

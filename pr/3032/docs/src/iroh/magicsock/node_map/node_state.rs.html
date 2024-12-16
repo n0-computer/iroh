@@ -1716,13 +1716,15 @@
 <a href="#1715" id="1715">1715</a>
 <a href="#1716" id="1716">1716</a>
 <a href="#1717" id="1717">1717</a>
-<a href="#1718" id="1718">1718</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1718" id="1718">1718</a>
+<a href="#1719" id="1719">1719</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     time::{Duration, Instant},
 };
 
+<span class="kw">use </span>data_encoding::HEXLOWER;
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>iroh_relay::protos::stun;
@@ -2128,7 +2130,7 @@
     </span><span class="attr">#[instrument(<span class="string">"disco"</span>, skip_all, fields(node = %<span class="self">self</span>.node_id.fmt_short()))]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>ping_timeout(<span class="kw-2">&amp;mut </span><span class="self">self</span>, txid: stun::TransactionId) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(sp) = <span class="self">self</span>.sent_pings.remove(<span class="kw-2">&amp;</span>txid) {
-            <span class="macro">debug!</span>(tx = %hex::encode(txid), addr = %sp.to, <span class="string">"pong not received in timeout"</span>);
+            <span class="macro">debug!</span>(tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>txid), addr = %sp.to, <span class="string">"pong not received in timeout"</span>);
             <span class="kw">match </span>sp.to {
                 SendAddr::Udp(addr) =&gt; {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(path_state) = <span class="self">self</span>.udp_paths.paths.get_mut(<span class="kw-2">&amp;</span>addr.into()) {
@@ -2179,7 +2181,7 @@
             <span class="kw">return </span><span class="prelude-val">None</span>;
         }
         <span class="kw">let </span>tx_id = stun::TransactionId::default();
-        <span class="macro">trace!</span>(tx = %hex::encode(tx_id), %dst, <span class="question-mark">?</span>purpose,
+        <span class="macro">trace!</span>(tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>tx_id), %dst, <span class="question-mark">?</span>purpose,
                dst = %<span class="self">self</span>.node_id.fmt_short(), <span class="string">"start ping"</span>);
         <span class="macro">event!</span>(
             target: <span class="string">"iroh::_events::ping::sent"</span>,
@@ -2206,7 +2208,7 @@
         purpose: DiscoPingPurpose,
         sender: mpsc::Sender&lt;ActorMessage&gt;,
     ) {
-        <span class="macro">trace!</span>(%to, tx = %hex::encode(tx_id), <span class="question-mark">?</span>purpose, <span class="string">"record ping sent"</span>);
+        <span class="macro">trace!</span>(%to, tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>tx_id), <span class="question-mark">?</span>purpose, <span class="string">"record ping sent"</span>);
 
         <span class="kw">let </span>now = Instant::now();
         <span class="kw">let </span><span class="kw-2">mut </span>path_found = <span class="bool-val">false</span>;
@@ -2590,7 +2592,7 @@
         <span class="kw">match </span><span class="self">self</span>.sent_pings.remove(<span class="kw-2">&amp;</span>m.tx_id) {
             <span class="prelude-val">None </span>=&gt; {
                 <span class="comment">// This is not a pong for a ping we sent.
-                </span><span class="macro">warn!</span>(tx = %hex::encode(m.tx_id), <span class="string">"received pong with unknown transaction id"</span>);
+                </span><span class="macro">warn!</span>(tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>m.tx_id), <span class="string">"received pong with unknown transaction id"</span>);
                 <span class="prelude-val">None
             </span>}
             <span class="prelude-val">Some</span>(sp) =&gt; {
@@ -2602,7 +2604,7 @@
                 <span class="kw">let </span>latency = now - sp.at;
 
                 <span class="macro">debug!</span>(
-                    tx = %hex::encode(m.tx_id),
+                    tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>m.tx_id),
                     src = %src,
                     reported_ping_src = %m.ping_observed_addr,
                     ping_dst = %sp.to,
@@ -3173,7 +3175,7 @@
 
         <span class="comment">// endpoint with a `best_addr` that has a latency but no relay
         </span><span class="kw">let </span>(a_endpoint, a_socket_addr) = {
-            <span class="kw">let </span>key = SecretKey::generate();
+            <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
             <span class="kw">let </span>node_id = key.public();
             <span class="kw">let </span>ip_port = IpPort {
                 ip: Ipv4Addr::UNSPECIFIED.into(),
@@ -3219,7 +3221,7 @@
         <span class="comment">// endpoint w/ no best addr but a relay w/ latency
         </span><span class="kw">let </span>b_endpoint = {
             <span class="comment">// let socket_addr = "0.0.0.0:9".parse().unwrap();
-            </span><span class="kw">let </span>key = SecretKey::generate();
+            </span><span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
             NodeState {
                 id: <span class="number">1</span>,
                 quic_mapped_addr: QuicMappedAddr::generate(),
@@ -3238,7 +3240,7 @@
         <span class="comment">// endpoint w/ no best addr but a relay w/ no latency
         </span><span class="kw">let </span>c_endpoint = {
             <span class="comment">// let socket_addr = "0.0.0.0:8".parse().unwrap();
-            </span><span class="kw">let </span>key = SecretKey::generate();
+            </span><span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
             NodeState {
                 id: <span class="number">2</span>,
                 quic_mapped_addr: QuicMappedAddr::generate(),
@@ -3266,7 +3268,7 @@
         </span><span class="kw">let </span>(d_endpoint, d_socket_addr) = {
             <span class="kw">let </span>socket_addr: SocketAddr = <span class="string">"0.0.0.0:7"</span>.parse().unwrap();
             <span class="kw">let </span>expired = now.checked_sub(Duration::from_secs(<span class="number">100</span>)).unwrap();
-            <span class="kw">let </span>key = SecretKey::generate();
+            <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
             <span class="kw">let </span>node_id = key.public();
             <span class="kw">let </span>endpoint_state = BTreeMap::from([(
                 IpPort::from(socket_addr),
@@ -3410,7 +3412,7 @@
         <span class="comment">// When we handle a call-me-maybe with more than MAX_INACTIVE_DIRECT_ADDRESSES we do
         // not want to prune them right away but send pings to all of them.
 
-        </span><span class="kw">let </span>key = SecretKey::generate();
+        </span><span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>opts = Options {
             node_id: key.public(),
             relay_url: <span class="prelude-val">None</span>,

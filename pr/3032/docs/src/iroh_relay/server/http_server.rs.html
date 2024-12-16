@@ -1370,7 +1370,7 @@
                         <span class="kw">_ </span>= cancel.cancelled() =&gt; {
                             <span class="kw">break</span>;
                         }
-                        <span class="prelude-val">Some</span>(res) = set.join_next(), <span class="kw">if </span>!set.is_empty() =&gt; {
+                        <span class="prelude-val">Some</span>(res) = set.join_next() =&gt; {
                             <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
                                 <span class="kw">if </span>err.is_panic() {
                                     <span class="macro">panic!</span>(<span class="string">"task panicked: {:#?}"</span>, err);
@@ -1826,8 +1826,8 @@
     </span><span class="kw">async fn </span>test_http_clients_and_server() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
-        <span class="kw">let </span>a_key = SecretKey::generate();
-        <span class="kw">let </span>b_key = SecretKey::generate();
+        <span class="kw">let </span>a_key = SecretKey::generate(rand::thread_rng());
+        <span class="kw">let </span>b_key = SecretKey::generate(rand::thread_rng());
 
         <span class="comment">// start server
         </span><span class="kw">let </span>server = ServerBuilder::new(<span class="string">"127.0.0.1:0"</span>.parse().unwrap())
@@ -1955,8 +1955,8 @@
             .try_init()
             .ok();
 
-        <span class="kw">let </span>a_key = SecretKey::generate();
-        <span class="kw">let </span>b_key = SecretKey::generate();
+        <span class="kw">let </span>a_key = SecretKey::generate(rand::thread_rng());
+        <span class="kw">let </span>b_key = SecretKey::generate(rand::thread_rng());
 
         <span class="comment">// create tls_config
         </span><span class="kw">let </span>tls_config = make_tls_config();
@@ -2047,7 +2047,7 @@
         );
 
         <span class="comment">// create client a and connect it to the server
-        </span><span class="kw">let </span>key_a = SecretKey::generate();
+        </span><span class="kw">let </span>key_a = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>public_key_a = key_a.public();
         <span class="kw">let </span>(rw_a, client_a_builder) = make_test_client(key_a);
         <span class="kw">let </span>s = service.clone();
@@ -2059,7 +2059,7 @@
         handler_task.<span class="kw">await</span><span class="question-mark">??</span>;
 
         <span class="comment">// create client b and connect it to the server
-        </span><span class="kw">let </span>key_b = SecretKey::generate();
+        </span><span class="kw">let </span>key_b = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>public_key_b = key_b.public();
         <span class="kw">let </span>(rw_b, client_b_builder) = make_test_client(key_b);
         <span class="kw">let </span>s = service.clone();
@@ -2133,7 +2133,7 @@
         );
 
         <span class="comment">// create client a and connect it to the server
-        </span><span class="kw">let </span>key_a = SecretKey::generate();
+        </span><span class="kw">let </span>key_a = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>public_key_a = key_a.public();
         <span class="kw">let </span>(rw_a, client_a_builder) = make_test_client(key_a);
         <span class="kw">let </span>s = service.clone();
@@ -2145,7 +2145,7 @@
         handler_task.<span class="kw">await</span><span class="question-mark">??</span>;
 
         <span class="comment">// create client b and connect it to the server
-        </span><span class="kw">let </span>key_b = SecretKey::generate();
+        </span><span class="kw">let </span>key_b = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>public_key_b = key_b.public();
         <span class="kw">let </span>(rw_b, client_b_builder) = make_test_client(key_b.clone());
         <span class="kw">let </span>s = service.clone();

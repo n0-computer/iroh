@@ -1191,7 +1191,10 @@
 <a href="#1190" id="1190">1190</a>
 <a href="#1191" id="1191">1191</a>
 <a href="#1192" id="1192">1192</a>
-<a href="#1193" id="1193">1193</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#1193" id="1193">1193</a>
+<a href="#1194" id="1194">1194</a>
+<a href="#1195" id="1195">1195</a>
+<a href="#1196" id="1196">1196</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -1206,7 +1209,6 @@
 <span class="kw">use </span>base64::{engine::general_purpose::URL_SAFE, Engine <span class="kw">as _</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMessage};
-<span class="kw">use </span>futures_lite::future::Boxed <span class="kw">as </span>BoxFuture;
 <span class="kw">use </span>futures_util::StreamExt;
 <span class="kw">use </span>hickory_resolver::TokioResolver <span class="kw">as </span>DnsResolver;
 <span class="kw">use </span>http_body_util::Empty;
@@ -1344,7 +1346,7 @@
     relay_conn: <span class="prelude-ty">Option</span>&lt;(Conn, ConnReceiver)&gt;,
     is_closed: bool,
     <span class="attr">#[debug(<span class="string">"address family selector callback"</span>)]
-    </span>address_family_selector: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() -&gt; BoxFuture&lt;bool&gt; + Send + Sync + <span class="lifetime">'static</span>&gt;&gt;,
+    </span>address_family_selector: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() -&gt; bool + Send + Sync&gt;&gt;,
     url: RelayUrl,
     protocol: Protocol,
     <span class="attr">#[debug(<span class="string">"TlsConnector"</span>)]
@@ -1372,7 +1374,11 @@
     ///
     /// If there is no [`oneshot::Sender`] in the tracker, return `None`.
     </span><span class="kw">fn </span>unregister(<span class="kw-2">&amp;mut </span><span class="self">self</span>, data: [u8; <span class="number">8</span>], why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) -&gt; <span class="prelude-ty">Option</span>&lt;oneshot::Sender&lt;()&gt;&gt; {
-        <span class="macro">trace!</span>(<span class="string">"removing ping {}: {}"</span>, hex::encode(data), why);
+        <span class="macro">trace!</span>(
+            <span class="string">"removing ping {}: {}"</span>,
+            data_encoding::HEXLOWER.encode(<span class="kw-2">&amp;</span>data),
+            why
+        );
         <span class="self">self</span>.<span class="number">0</span>.remove(<span class="kw-2">&amp;</span>data)
     }
 }
@@ -1384,7 +1390,7 @@
     </span>is_preferred: bool,
     <span class="doccomment">/// Default is None
     </span><span class="attr">#[debug(<span class="string">"address family selector callback"</span>)]
-    </span>address_family_selector: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() -&gt; BoxFuture&lt;bool&gt; + Send + Sync + <span class="lifetime">'static</span>&gt;&gt;,
+    </span>address_family_selector: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() -&gt; bool + Send + Sync&gt;&gt;,
     <span class="doccomment">/// Default is false
     </span>is_prober: bool,
     <span class="doccomment">/// Expected PublicKey of the server
@@ -1437,7 +1443,7 @@
     /// work anyway, so we don't artificially delay the connection speed.
     </span><span class="kw">pub fn </span>address_family_selector&lt;S&gt;(<span class="kw-2">mut </span><span class="self">self</span>, selector: S) -&gt; <span class="self">Self
     </span><span class="kw">where
-        </span>S: Fn() -&gt; BoxFuture&lt;bool&gt; + Send + Sync + <span class="lifetime">'static</span>,
+        </span>S: Fn() -&gt; bool + Send + Sync + <span class="lifetime">'static</span>,
     {
         <span class="self">self</span>.address_family_selector = <span class="prelude-val">Some</span>(Box::new(selector));
         <span class="self">self
@@ -1952,7 +1958,7 @@
     <span class="kw">async fn </span>ping(<span class="kw-2">&amp;mut </span><span class="self">self</span>, s: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;Duration, ClientError&gt;&gt;) {
         <span class="kw">let </span>connect_res = <span class="self">self</span>.connect(<span class="string">"ping"</span>).<span class="kw">await</span>.map(|(c, <span class="kw">_</span>)| c);
         <span class="kw">let </span>(ping, recv) = <span class="self">self</span>.pings.register();
-        <span class="macro">trace!</span>(<span class="string">"ping: {}"</span>, hex::encode(ping));
+        <span class="macro">trace!</span>(<span class="string">"ping: {}"</span>, data_encoding::HEXLOWER.encode(<span class="kw-2">&amp;</span>ping));
 
         <span class="self">self</span>.ping_tasks.spawn(<span class="kw">async move </span>{
             <span class="kw">let </span>res = <span class="kw">match </span>connect_res {
@@ -2037,7 +2043,7 @@
 
     <span class="kw">async fn </span>dial_url_direct(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;TcpStream, ClientError&gt; {
         <span class="macro">debug!</span>(%<span class="self">self</span>.url, <span class="string">"dial url"</span>);
-        <span class="kw">let </span>prefer_ipv6 = <span class="self">self</span>.prefer_ipv6().<span class="kw">await</span>;
+        <span class="kw">let </span>prefer_ipv6 = <span class="self">self</span>.prefer_ipv6();
         <span class="kw">let </span>dst_ip = <span class="self">self
             </span>.dns_resolver
             .resolve_host(<span class="kw-2">&amp;</span><span class="self">self</span>.url, prefer_ipv6)
@@ -2069,7 +2075,7 @@
         <span class="macro">debug!</span>(%<span class="self">self</span>.url, %proxy_url, <span class="string">"dial url via proxy"</span>);
 
         <span class="comment">// Resolve proxy DNS
-        </span><span class="kw">let </span>prefer_ipv6 = <span class="self">self</span>.prefer_ipv6().<span class="kw">await</span>;
+        </span><span class="kw">let </span>prefer_ipv6 = <span class="self">self</span>.prefer_ipv6();
         <span class="kw">let </span>proxy_ip = <span class="self">self
             </span>.dns_resolver
             .resolve_host(<span class="kw-2">&amp;</span>proxy_url, prefer_ipv6)
@@ -2166,9 +2172,9 @@
     /// Implementations should only return true if IPv6 is expected
     /// to succeed. (otherwise delaying IPv4 will delay the connection
     /// overall)
-    </span><span class="kw">async fn </span>prefer_ipv6(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+    </span><span class="kw">fn </span>prefer_ipv6(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="kw">match </span><span class="self">self</span>.address_family_selector {
-            <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>selector) =&gt; selector().<span class="kw">await</span>,
+            <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>selector) =&gt; selector(),
             <span class="prelude-val">None </span>=&gt; <span class="bool-val">false</span>,
         }
     }
@@ -2348,7 +2354,7 @@
     </span><span class="kw">async fn </span>test_recv_detail_connect_error() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
-        <span class="kw">let </span>key = SecretKey::generate();
+        <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>bad_url: Url = <span class="string">"https://bad.url"</span>.parse().unwrap();
         <span class="kw">let </span>dns_resolver = default_resolver();
 

@@ -1328,7 +1328,7 @@
         <span class="kw">let </span>(disco_send_queue_s, disco_send_queue_r) = mpsc::channel(<span class="number">10</span>);
         <span class="kw">let </span>(peer_gone_s, peer_gone_r) = mpsc::channel(<span class="number">10</span>);
 
-        <span class="kw">let </span>key = SecretKey::generate().public();
+        <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>(io, io_rw) = tokio::io::duplex(<span class="number">1024</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>io_rw = Framed::new(io_rw, DerpCodec);
         <span class="kw">let </span>(server_channel_s, <span class="kw-2">mut </span>server_channel_r) = mpsc::channel(<span class="number">10</span>);
@@ -1412,7 +1412,7 @@
         <span class="comment">// tokio::time::sleep(Duration::from_millis(100)).await;
         // assert!(preferred.fetch_and(true, Ordering::Relaxed));
 
-        </span><span class="kw">let </span>target = SecretKey::generate().public();
+        </span><span class="kw">let </span>target = SecretKey::generate(rand::thread_rng()).public();
 
         <span class="comment">// send packet
         </span><span class="macro">println!</span>(<span class="string">"  send packet"</span>);
@@ -1468,7 +1468,7 @@
         <span class="kw">let </span>(_disco_send_queue_s, disco_send_queue_r) = mpsc::channel(<span class="number">10</span>);
         <span class="kw">let </span>(_peer_gone_s, peer_gone_r) = mpsc::channel(<span class="number">10</span>);
 
-        <span class="kw">let </span>key = SecretKey::generate().public();
+        <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>(io, io_rw) = tokio::io::duplex(<span class="number">1024</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>io_rw = Framed::new(io_rw, DerpCodec);
         <span class="kw">let </span>(server_channel_s, <span class="kw-2">mut </span>server_channel_r) = mpsc::channel(<span class="number">10</span>);
@@ -1496,7 +1496,7 @@
         <span class="comment">// send packet
         </span><span class="macro">println!</span>(<span class="string">"   send packet"</span>);
         <span class="kw">let </span>data = <span class="string">b"hello world!"</span>;
-        <span class="kw">let </span>target = SecretKey::generate().public();
+        <span class="kw">let </span>target = SecretKey::generate(rand::thread_rng()).public();
 
         conn::send_packet(<span class="kw-2">&amp;mut </span>io_rw, target, Bytes::from_static(data)).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>msg = server_channel_r.recv().<span class="kw">await</span>.unwrap();
@@ -1556,7 +1556,7 @@
 
         <span class="comment">// Prepare a frame to send, assert its size.
         </span><span class="kw">let </span>data = Bytes::from_static(<span class="string">b"hello world!!"</span>);
-        <span class="kw">let </span>target = SecretKey::generate().public();
+        <span class="kw">let </span>target = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>frame = Frame::SendPacket {
             dst_key: target,
             packet: data.clone(),
