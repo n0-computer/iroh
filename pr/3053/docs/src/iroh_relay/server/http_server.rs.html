@@ -1134,7 +1134,16 @@
 <a href="#1133" id="1133">1133</a>
 <a href="#1134" id="1134">1134</a>
 <a href="#1135" id="1135">1135</a>
-<a href="#1136" id="1136">1136</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1136" id="1136">1136</a>
+<a href="#1137" id="1137">1137</a>
+<a href="#1138" id="1138">1138</a>
+<a href="#1139" id="1139">1139</a>
+<a href="#1140" id="1140">1140</a>
+<a href="#1141" id="1141">1141</a>
+<a href="#1142" id="1142">1142</a>
+<a href="#1143" id="1143">1143</a>
+<a href="#1144" id="1144">1144</a>
+<a href="#1145" id="1145">1145</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -1311,7 +1320,10 @@
             handlers: Default::default(),
             headers: HeaderMap::new(),
             client_rx_ratelimit: <span class="prelude-val">None</span>,
-            key_cache_capacity: <span class="number">1024 </span>* <span class="number">1024</span>,
+            <span class="comment">// Sized for 1 million concurrent clients.
+            // memory usage will be (32 + 8 + 8 + 8) * 1_000_000 = 56MB,
+            // which seems reasonable for a server.
+            </span>key_cache_capacity: <span class="number">1024 </span>* <span class="number">1024</span>,
         }
     }
 
@@ -1346,6 +1358,12 @@
         <span class="kw">for </span>(k, v) <span class="kw">in </span>headers.iter() {
             <span class="self">self</span>.headers.insert(k.clone(), v.clone());
         }
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Set the capacity of the cache for public keys.
+    </span><span class="kw">pub fn </span>key_cache_capacity(<span class="kw-2">mut </span><span class="self">self</span>, capacity: usize) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.key_cache_capacity = capacity;
         <span class="self">self
     </span>}
 
@@ -1633,7 +1651,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>io = <span class="kw">match </span>protocol {
             Protocol::Relay =&gt; {
                 <span class="macro">inc!</span>(Metrics, derp_accepts);
-                RelayedStream::Derp(Framed::new(io, DerpCodec::default()))
+                RelayedStream::Derp(Framed::new(io, DerpCodec::new(<span class="self">self</span>.key_cache.clone())))
             }
             Protocol::Websocket =&gt; {
                 <span class="macro">inc!</span>(Metrics, websocket_accepts);
@@ -2047,8 +2065,8 @@
         <span class="kw">let </span>client_reader = MaybeTlsStreamReader::Mem(client_reader);
         <span class="kw">let </span>client_writer = MaybeTlsStreamWriter::Mem(client_writer);
 
-        <span class="kw">let </span>client_reader = ConnReader::Derp(FramedRead::new(client_reader, DerpCodec::default()));
-        <span class="kw">let </span>client_writer = ConnWriter::Derp(FramedWrite::new(client_writer, DerpCodec::default()));
+        <span class="kw">let </span>client_reader = ConnReader::Derp(FramedRead::new(client_reader, DerpCodec::test()));
+        <span class="kw">let </span>client_writer = ConnWriter::Derp(FramedWrite::new(client_writer, DerpCodec::test()));
 
         (
             server,

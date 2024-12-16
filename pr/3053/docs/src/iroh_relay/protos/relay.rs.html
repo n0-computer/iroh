@@ -832,7 +832,14 @@
 <a href="#831" id="831">831</a>
 <a href="#832" id="832">832</a>
 <a href="#833" id="833">833</a>
-<a href="#834" id="834">834</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
+<a href="#834" id="834">834</a>
+<a href="#835" id="835">835</a>
+<a href="#836" id="836">836</a>
+<a href="#837" id="837">837</a>
+<a href="#838" id="838">838</a>
+<a href="#839" id="839">839</a>
+<a href="#840" id="840">840</a>
+<a href="#841" id="841">841</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
 //!
 //! Protocol flow:
 //!
@@ -1040,12 +1047,19 @@
 ///
 /// This is a framed protocol, using [`tokio_util::codec`] to turn the streams of bytes into
 /// [`Frame`]s.
-</span><span class="attr">#[derive(Debug, Default, Clone)]
+</span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>DerpCodec {
     cache: KeyCache,
 }
 
 <span class="kw">impl </span>DerpCodec {
+    <span class="attr">#[cfg(test)]
+    </span><span class="kw">pub fn </span>test() -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            cache: KeyCache::test(),
+        }
+    }
+
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(cache: KeyCache) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{ cache }
     }
@@ -1420,8 +1434,8 @@
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_basic_read_write() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>(reader, writer) = tokio::io::duplex(<span class="number">1024</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>reader = FramedRead::new(reader, DerpCodec::default());
-        <span class="kw">let </span><span class="kw-2">mut </span>writer = FramedWrite::new(writer, DerpCodec::default());
+        <span class="kw">let </span><span class="kw-2">mut </span>reader = FramedRead::new(reader, DerpCodec::test());
+        <span class="kw">let </span><span class="kw-2">mut </span>writer = FramedWrite::new(writer, DerpCodec::test());
 
         <span class="kw">let </span>expect_buf = <span class="string">b"hello world!"</span>;
         <span class="kw">let </span>expected_frame = Frame::Health {
@@ -1440,8 +1454,8 @@
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_send_recv_client_key() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>(reader, writer) = tokio::io::duplex(<span class="number">1024</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>reader = FramedRead::new(reader, DerpCodec::default());
-        <span class="kw">let </span><span class="kw-2">mut </span>writer = FramedWrite::new(writer, DerpCodec::default());
+        <span class="kw">let </span><span class="kw-2">mut </span>reader = FramedRead::new(reader, DerpCodec::test());
+        <span class="kw">let </span><span class="kw-2">mut </span>writer = FramedWrite::new(writer, DerpCodec::test());
 
         <span class="kw">let </span>client_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>client_info = ClientInfo {
@@ -1641,7 +1655,7 @@
         </span><span class="attr">#[test]
         </span><span class="kw">fn </span>frame_roundtrip(frame <span class="kw">in </span>frame()) {
             <span class="kw">let </span><span class="kw-2">mut </span>buf = BytesMut::new();
-            <span class="kw">let </span><span class="kw-2">mut </span>codec = DerpCodec::default();
+            <span class="kw">let </span><span class="kw-2">mut </span>codec = DerpCodec::test();
             codec.encode(frame.clone(), <span class="kw-2">&amp;mut </span>buf).unwrap();
             <span class="kw">let </span>decoded = codec.decode(<span class="kw-2">&amp;mut </span>buf).unwrap().unwrap();
             <span class="macro">prop_assert_eq!</span>(frame, decoded);
@@ -1658,7 +1672,7 @@
         </span><span class="attr">#[test]
         </span><span class="kw">fn </span>broken_frame_handling(frame <span class="kw">in </span>frame()) {
             <span class="kw">let </span><span class="kw-2">mut </span>buf = BytesMut::new();
-            <span class="kw">let </span><span class="kw-2">mut </span>codec = DerpCodec::default();
+            <span class="kw">let </span><span class="kw-2">mut </span>codec = DerpCodec::test();
             codec.encode(frame.clone(), <span class="kw-2">&amp;mut </span>buf).unwrap();
             inject_error(<span class="kw-2">&amp;mut </span>buf);
             <span class="kw">let </span>decoded = codec.decode(<span class="kw-2">&amp;mut </span>buf);

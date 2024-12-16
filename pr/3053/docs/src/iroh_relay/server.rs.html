@@ -1129,7 +1129,12 @@
 <a href="#1128" id="1128">1128</a>
 <a href="#1129" id="1129">1129</a>
 <a href="#1130" id="1130">1130</a>
-<a href="#1131" id="1131">1131</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
+<a href="#1131" id="1131">1131</a>
+<a href="#1132" id="1132">1132</a>
+<a href="#1133" id="1133">1133</a>
+<a href="#1134" id="1134">1134</a>
+<a href="#1135" id="1135">1135</a>
+<a href="#1136" id="1136">1136</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
 //! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
@@ -1250,6 +1255,8 @@
     </span><span class="kw">pub </span>tls: <span class="prelude-ty">Option</span>&lt;TlsConfig&lt;EC, EA&gt;&gt;,
     <span class="doccomment">/// Rate limits.
     </span><span class="kw">pub </span>limits: Limits,
+    <span class="doccomment">/// Key cache capacity.
+    </span><span class="kw">pub </span>key_cache_capacity: usize,
 }
 
 <span class="doccomment">/// Configuration for the STUN server.
@@ -1441,6 +1448,7 @@
                 };
                 <span class="kw">let </span><span class="kw-2">mut </span>builder = http_server::ServerBuilder::new(relay_bind_addr)
                     .headers(headers)
+                    .key_cache_capacity(relay_config.key_cache_capacity)
                     .request_handler(Method::GET, <span class="string">"/"</span>, Box::new(root_handler))
                     .request_handler(Method::GET, <span class="string">"/index.html"</span>, Box::new(root_handler))
                     .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
@@ -1910,6 +1918,7 @@
                 http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
                 tls: <span class="prelude-val">None</span>,
                 limits: Default::default(),
+                key_cache_capacity: <span class="number">1024</span>,
             }),
             quic: <span class="prelude-val">None</span>,
             stun: <span class="prelude-val">None</span>,
@@ -1939,6 +1948,7 @@
                 http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">1234</span>).into(),
                 tls: <span class="prelude-val">None</span>,
                 limits: Default::default(),
+                key_cache_capacity: <span class="number">1024</span>,
             }),
             stun: <span class="prelude-val">None</span>,
             quic: <span class="prelude-val">None</span>,

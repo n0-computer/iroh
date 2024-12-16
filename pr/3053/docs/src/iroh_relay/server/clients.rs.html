@@ -559,14 +559,14 @@
                 node_id: key,
                 stream: RelayedStream::Derp(Framed::new(
                     MaybeTlsStream::Test(io),
-                    DerpCodec::default(),
+                    DerpCodec::test(),
                 )),
                 write_timeout: Duration::from_secs(<span class="number">1</span>),
                 channel_capacity: <span class="number">10</span>,
                 rate_limit: <span class="prelude-val">None</span>,
                 server_channel,
             },
-            FramedRead::new(test_io, DerpCodec::default()),
+            FramedRead::new(test_io, DerpCodec::test()),
         )
     }
 

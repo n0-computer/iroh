@@ -489,7 +489,8 @@
 <a href="#488" id="488">488</a>
 <a href="#489" id="489">489</a>
 <a href="#490" id="490">490</a>
-<a href="#491" id="491">491</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
+<a href="#491" id="491">491</a>
+<a href="#492" id="492">492</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
 <span class="kw">use </span>anyhow::Result;
@@ -575,6 +576,7 @@
             http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
             tls: <span class="prelude-val">Some</span>(tls),
             limits: Default::default(),
+            key_cache_capacity: <span class="number">1024</span>,
         }),
         quic,
         stun,

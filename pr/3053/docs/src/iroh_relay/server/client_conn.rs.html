@@ -801,9 +801,7 @@
 <a href="#800" id="800">800</a>
 <a href="#801" id="801">801</a>
 <a href="#802" id="802">802</a>
-<a href="#803" id="803">803</a>
-<a href="#804" id="804">804</a>
-<a href="#805" id="805">805</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#803" id="803">803</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
@@ -1335,10 +1333,9 @@
 
         <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>(io, io_rw) = tokio::io::duplex(<span class="number">1024</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>io_rw = Framed::new(io_rw, DerpCodec::default());
+        <span class="kw">let </span><span class="kw-2">mut </span>io_rw = Framed::new(io_rw, DerpCodec::test());
         <span class="kw">let </span>(server_channel_s, <span class="kw-2">mut </span>server_channel_r) = mpsc::channel(<span class="number">10</span>);
-        <span class="kw">let </span>stream =
-            RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec::default()));
+        <span class="kw">let </span>stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec::test()));
 
         <span class="kw">let </span>actor = Actor {
             stream: RateLimitedRelayedStream::unlimited(stream),
@@ -1476,10 +1473,9 @@
 
         <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>(io, io_rw) = tokio::io::duplex(<span class="number">1024</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>io_rw = Framed::new(io_rw, DerpCodec::default());
+        <span class="kw">let </span><span class="kw-2">mut </span>io_rw = Framed::new(io_rw, DerpCodec::test());
         <span class="kw">let </span>(server_channel_s, <span class="kw-2">mut </span>server_channel_r) = mpsc::channel(<span class="number">10</span>);
-        <span class="kw">let </span>stream =
-            RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec::default()));
+        <span class="kw">let </span>stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec::test()));
 
         <span class="macro">println!</span>(<span class="string">"-- create client conn"</span>);
         <span class="kw">let </span>actor = Actor {
@@ -1557,10 +1553,10 @@
 
         <span class="comment">// Build the rate limited stream.
         </span><span class="kw">let </span>(io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) <span class="kw">as _</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>frame_writer = Framed::new(io_write, DerpCodec::default());
+        <span class="kw">let </span><span class="kw-2">mut </span>frame_writer = Framed::new(io_write, DerpCodec::test());
         <span class="kw">let </span>stream = RelayedStream::Derp(Framed::new(
             MaybeTlsStream::Test(io_read),
-            DerpCodec::default(),
+            DerpCodec::test(),
         ));
         <span class="kw">let </span><span class="kw-2">mut </span>stream = RateLimitedRelayedStream::new(stream, limiter);
 

@@ -62,8 +62,7 @@
 <a href="#61" id="61">61</a>
 <a href="#62" id="62">62</a>
 <a href="#63" id="63">63</a>
-<a href="#64" id="64">64</a>
-<a href="#65" id="65">65</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#64" id="64">64</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     num::NonZeroUsize,
     sync::{Arc, Mutex},
 };
@@ -80,10 +79,9 @@
 /// are being parsed, like in the relay server.
 ///
 /// The cache stores only successful parse results.
-</span><span class="attr">#[derive(Debug, Clone, Default)]
+</span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub enum </span>KeyCache {
     <span class="doccomment">/// The key cache is disabled.
-    </span><span class="attr">#[default]
     </span>Disabled,
     <span class="doccomment">/// The key cache is enabled with a fixed capacity. It is shared between
     /// multiple threads.
