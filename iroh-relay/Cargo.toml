@@ -96,7 +96,7 @@ url = { version = "2.5", features = ["serde"] }
 webpki = { package = "rustls-webpki", version = "0.102" }
 webpki-roots = "0.26"
 data-encoding = "2.6.0"
-lru = "0.12.5"
+lru = "0.12"
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
