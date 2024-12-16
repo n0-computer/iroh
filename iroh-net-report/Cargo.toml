@@ -39,8 +39,8 @@ tracing = "0.1"
 url = { version = "2.4" }
 
 [dev-dependencies]
-iroh-relay = { version = "0.29", path = "../iroh-relay", features = ["test-utils", "server"] }
-iroh-test = { version = "0.29.0", path = "../iroh-test" }
+iroh-relay = { path = "../iroh-relay", features = ["test-utils", "server"] }
+iroh-test = { path = "../iroh-test" }
 once_cell = "1.18.0"
 pretty_assertions = "1.4"
 testresult = "0.4.0"
