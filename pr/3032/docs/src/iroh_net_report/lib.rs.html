@@ -1728,8 +1728,8 @@
 }
 
 <span class="kw">impl </span>Options {
-    <span class="doccomment">/// Create an empty Options that enables no probes
-    </span><span class="kw">pub fn </span>empty() -&gt; <span class="self">Self </span>{
+    <span class="doccomment">/// Create an [`Options`] that disables all probes
+    </span><span class="kw">pub fn </span>disabled() -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             stun_sock_v4: <span class="prelude-val">None</span>,
             stun_sock_v6: <span class="prelude-val">None</span>,
