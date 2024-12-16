@@ -61,8 +61,7 @@
 <a href="#60" id="60">60</a>
 <a href="#61" id="61">61</a>
 <a href="#62" id="62">62</a>
-<a href="#63" id="63">63</a>
-<a href="#64" id="64">64</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#63" id="63">63</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     num::NonZeroUsize,
     sync::{Arc, Mutex},
 };
@@ -114,8 +113,7 @@
         <span class="kw">let </span><span class="prelude-val">Ok</span>(bytes) = PublicKeyBytes::try_from(slice) <span class="kw">else </span>{
             <span class="comment">// if the size is wrong, use PublicKey::try_from to fail with a
             // SignatureError.
-            </span>PublicKey::try_from(slice)<span class="question-mark">?</span>;
-            <span class="macro">unreachable!</span>();
+            </span><span class="kw">return </span><span class="prelude-val">Err</span>(PublicKey::try_from(slice).expect_err(<span class="string">"invalid length"</span>));
         };
         <span class="kw">let </span><span class="kw-2">mut </span>cache = cache.lock().expect(<span class="string">"not poisoned"</span>);
         <span class="kw">if let </span><span class="prelude-val">Some</span>((key, <span class="kw">_</span>)) = cache.get_key_value(<span class="kw-2">&amp;</span>bytes) {
