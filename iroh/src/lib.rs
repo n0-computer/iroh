@@ -249,7 +249,8 @@ pub mod watchable;
 
 pub use endpoint::{Endpoint, RelayMode};
 pub use iroh_base::{
-    DecryptionError, KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey,
+    DecryptionError, KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, RelayUrlParseError,
+    SecretKey,
 };
 pub use iroh_relay::{RelayMap, RelayNode};
 

@@ -21,4 +21,4 @@ pub use self::key::{
 #[cfg(feature = "key")]
 pub use self::node_addr::NodeAddr;
 #[cfg(feature = "relay")]
-pub use self::relay_url::{RelayUrl, RelayUrlParsingError};
+pub use self::relay_url::{RelayUrl, RelayUrlParseError};

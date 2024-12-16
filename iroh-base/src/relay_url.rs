@@ -38,14 +38,14 @@ impl From<Url> for RelayUrl {
 /// Can occur when parsing a string into a [`RelayUrl`].
 #[derive(Debug, thiserror::Error)]
 #[error("Failed to parse: {0}")]
-pub struct RelayUrlParsingError(#[from] url::ParseError);
+pub struct RelayUrlParseError(#[from] url::ParseError);
 
 /// Support for parsing strings directly.
 ///
 /// If you need more control over the error first create a [`Url`] and use [`RelayUrl::from`]
 /// instead.
 impl FromStr for RelayUrl {
-    type Err = RelayUrlParsingError;
+    type Err = RelayUrlParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let inner = Url::from_str(s)?;
