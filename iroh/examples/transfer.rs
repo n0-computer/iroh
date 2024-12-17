@@ -52,12 +52,12 @@ async fn main() -> anyhow::Result<()> {
             size,
             relay_url,
             relay_only,
-        } => provide(*size, relay_url.clone(), relay_only).await?,
+        } => provide(*size, relay_url.clone(), *relay_only).await?,
         Commands::Fetch {
             ticket,
             relay_url,
             relay_only,
-        } => fetch(ticket, relay_url.clone(), relay_only).await?,
+        } => fetch(ticket, relay_url.clone(), *relay_only).await?,
     }
 
     Ok(())

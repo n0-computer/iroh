@@ -2,9 +2,9 @@
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
-//! ### `DEV_RELAY_ONLY` env var:
-//! When present at *compile time*, this env var will force all packets
-//! to be sent over the relay connection, regardless of whether or
+//! ### `relay_only` config option:
+//! When present this will force all packets to be sent over
+//! the relay connection, regardless of whether or
 //! not we have a direct UDP address for the given node.
 //!
 //! The intended use is for testing the relay protocol inside the MagicSock
@@ -1509,10 +1509,8 @@ impl Handle {
     /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
     async fn new(opts: Options) -> Result<Self> {
         let me = opts.secret_key.public().fmt_short();
-        let relay_only = crate::util::relay_only_mode();
         #[cfg(any(test, feature = "test-utils"))]
-        let relay_only = relay_only || opts.relay_only;
-        if relay_only {
+        if opts.relay_only {
             warn!(
                 "creating a MagicSock that will only send packets over a relay relay connection."
             );
