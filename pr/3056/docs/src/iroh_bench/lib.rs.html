@@ -266,8 +266,7 @@
 <a href="#265" id="265">265</a>
 <a href="#266" id="266">266</a>
 <a href="#267" id="267">267</a>
-<a href="#268" id="268">268</a>
-<a href="#269" id="269">269</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#268" id="268">268</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     num::ParseIntError,
     str::FromStr,
     sync::{Arc, Mutex},
@@ -339,9 +338,8 @@
     </span><span class="kw">pub </span>initial_mtu: u16,
     <span class="doccomment">/// Whether to run a local relay and have the server and clients connect to that.
     ///
-    /// Can be combined with the `DEV_RELAY_ONLY` environment variable (at compile time)
+    /// Can be combined with the `relay_only` configuration option on the endpoint
     /// to test throughput for relay-only traffic locally.
-    /// (e.g. `DEV_RELAY_ONLY=true cargo run --release -- iroh --with-relay`)
     </span><span class="attr">#[clap(long, default_value_t = <span class="bool-val">false</span>)]
     </span><span class="kw">pub </span>with_relay: bool,
 }

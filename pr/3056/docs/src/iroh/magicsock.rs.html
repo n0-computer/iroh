@@ -4084,15 +4084,13 @@
 <a href="#4083" id="4083">4083</a>
 <a href="#4084" id="4084">4084</a>
 <a href="#4085" id="4085">4085</a>
-<a href="#4086" id="4086">4086</a>
-<a href="#4087" id="4087">4087</a>
-<a href="#4088" id="4088">4088</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4086" id="4086">4086</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
-//! ### `DEV_RELAY_ONLY` env var:
-//! When present at *compile time*, this env var will force all packets
-//! to be sent over the relay connection, regardless of whether or
+//! ### `relay_only` config option:
+//! When present this will force all packets to be sent over
+//! the relay connection, regardless of whether or
 //! not we have a direct UDP address for the given node.
 //!
 //! The intended use is for testing the relay protocol inside the MagicSock
@@ -5597,10 +5595,8 @@
     <span class="doccomment">/// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
     </span><span class="kw">async fn </span>new(opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>me = opts.secret_key.public().fmt_short();
-        <span class="kw">let </span>relay_only = <span class="kw">crate</span>::util::relay_only_mode();
         <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-        </span><span class="kw">let </span>relay_only = relay_only || opts.relay_only;
-        <span class="kw">if </span>relay_only {
+        </span><span class="kw">if </span>opts.relay_only {
             <span class="macro">warn!</span>(
                 <span class="string">"creating a MagicSock that will only send packets over a relay relay connection."
             </span>);
