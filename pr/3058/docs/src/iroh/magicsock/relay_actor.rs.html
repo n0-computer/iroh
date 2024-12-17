@@ -1195,7 +1195,7 @@
 </span><span class="kw">enum </span>ActiveRelayMessage {
     GetLastWrite(oneshot::Sender&lt;Instant&gt;),
     <span class="doccomment">/// Returns whether or not this relay can reach the NodeId.
-    </span>GetNodeRoute(NodeId, oneshot::Sender&lt;bool&gt;),
+    </span>HasNodeRoute(NodeId, oneshot::Sender&lt;bool&gt;),
     <span class="doccomment">/// Triggers a connection check to the relay server.
     ///
     /// Sometimes it is known the local network interfaces have changed in which case it
@@ -1356,7 +1356,7 @@
                 <span class="self">self</span>.is_home_relay = is_preferred;
                 <span class="self">self</span>.relay_client.note_preferred(is_preferred).<span class="kw">await</span>;
             }
-            ActiveRelayMessage::GetNodeRoute(peer, r) =&gt; {
+            ActiveRelayMessage::HasNodeRoute(peer, r) =&gt; {
                 <span class="kw">let </span>has_peer = <span class="self">self</span>.node_present.contains(<span class="kw-2">&amp;</span>peer);
                 r.send(has_peer).ok();
             }
@@ -1696,7 +1696,7 @@
                 <span class="kw">let </span>(tx, rx) = oneshot::channel();
                 handle
                     .inbox_addr
-                    .send(ActiveRelayMessage::GetNodeRoute(<span class="kw-2">*</span>remote_node, tx))
+                    .send(ActiveRelayMessage::HasNodeRoute(<span class="kw-2">*</span>remote_node, tx))
                     .<span class="kw">await
                     </span>.ok();
                 <span class="kw">match </span>rx.<span class="kw">await </span>{
