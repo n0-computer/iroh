@@ -422,7 +422,7 @@ impl Client {
 
     /// Send a ping to the server. Return once we get an expected pong.
     ///
-    /// This has a built-in timeout [`crate::defaults::timeouts::PING_TIMEOUT`].
+    /// This has a built-in timeout `crate::defaults::timeouts::PING_TIMEOUT`.
     ///
     /// There must be a task polling `recv_detail` to process the `pong` response.
     pub async fn ping(&self) -> Result<Duration, ClientError> {

@@ -924,9 +924,8 @@ mod tests {
     use testresult::TestResult;
     use tokio_util::task::AbortOnDropHandle;
 
-    use crate::test_utils;
-
     use super::*;
+    use crate::test_utils;
 
     #[test]
     fn test_packetize_iter() {
