@@ -1626,7 +1626,7 @@
 
     <span class="doccomment">/// Send a ping to the server. Return once we get an expected pong.
     ///
-    /// This has a built-in timeout [`crate::defaults::timeouts::PING_TIMEOUT`].
+    /// This has a built-in timeout `crate::defaults::timeouts::PING_TIMEOUT`.
     ///
     /// There must be a task polling `recv_detail` to process the `pong` response.
     </span><span class="kw">pub async fn </span>ping(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Duration, ClientError&gt; {
