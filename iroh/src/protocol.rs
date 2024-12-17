@@ -43,6 +43,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use anyhow::Result;
 use futures_buffered::join_all;
 use futures_lite::future::Boxed as BoxedFuture;
+use futures_util::future;
 use tokio::{sync::Mutex, task::JoinSet};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{error, info_span, trace, warn, Instrument};
@@ -117,23 +118,51 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     }
 }
 
-impl<T: ProtocolHandler> ProtocolHandler for Arc<T> {
-    fn accept(&self, conn: Connecting) -> BoxedFuture<Result<()>> {
-        self.as_ref().accept(conn)
-    }
+// impl<T: ProtocolHandler> ProtocolHandler for Arc<T> {
+//     fn accept(&self, conn: Connecting) -> BoxedFuture<Result<()>> {
+//         self.as_ref().accept(conn)
+//     }
 
-    fn shutdown(&self) -> BoxedFuture<()> {
-        self.as_ref().shutdown()
+//     fn shutdown(&self) -> BoxedFuture<()> {
+//         self.as_ref().shutdown()
+//     }
+// }
+
+// impl<T: ProtocolHandler> ProtocolHandler for Box<T> {
+//     fn accept(&self, conn: Connecting) -> BoxedFuture<Result<()>> {
+//         self.as_ref().accept(conn)
+//     }
+
+//     fn shutdown(&self) -> BoxedFuture<()> {
+//         self.as_ref().shutdown()
+//     }
+// }
+
+/// A trait for protocol handlers that can be implemented without boxing.
+pub trait UnboxedProtocolHandler: Sized + Send + Sync + std::fmt::Debug + Clone + 'static {
+    /// Handle an incoming connection.
+    ///
+    /// Unboxed equivalent of [`ProtocolHandler::accept`].
+    fn accept(
+        self,
+        conn: Connecting,
+    ) -> impl std::future::Future<Output = Result<()>> + Send + 'static;
+
+    /// Called when the node shuts down.
+    ///
+    /// Unboxed equivalent of [`ProtocolHandler::shutdown`].
+    fn shutdown(self) -> impl std::future::Future<Output = ()> + Send + 'static {
+        future::ready(())
     }
 }
 
-impl<T: ProtocolHandler> ProtocolHandler for Box<T> {
+impl<T: UnboxedProtocolHandler> ProtocolHandler for T {
     fn accept(&self, conn: Connecting) -> BoxedFuture<Result<()>> {
-        self.as_ref().accept(conn)
+        Box::pin(UnboxedProtocolHandler::accept(self.clone(), conn))
     }
 
     fn shutdown(&self) -> BoxedFuture<()> {
-        self.as_ref().shutdown()
+        Box::pin(UnboxedProtocolHandler::shutdown(self.clone()))
     }
 }
 
