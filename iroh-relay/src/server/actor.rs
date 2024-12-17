@@ -142,7 +142,12 @@ impl Actor {
     async fn handle_message(&mut self, msg: Message) {
         match msg {
             Message::SendPacket { dst, data, src } => {
-                trace!(?src, ?dst, len = data.len(), "send packet");
+                trace!(
+                    src = src.fmt_short(),
+                    dst = dst.fmt_short(),
+                    len = data.len(),
+                    "send packet"
+                );
                 if self.clients.contains_key(&dst) {
                     match self.clients.send_packet(&dst, Packet { data, src }).await {
                         Ok(()) => {
