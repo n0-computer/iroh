@@ -136,6 +136,10 @@ pub(super) struct NodeState {
     ///
     /// Used for metric reporting.
     has_been_direct: bool,
+    /// "relay_only" mode implies we only use the relay to communicate
+    /// and do not attempt to do any hole punching.
+    #[cfg(any(test, feature = "test-utils"))]
+    relay_only: bool,
 }
 
 /// Options for creating a new [`NodeState`].
@@ -176,6 +180,8 @@ impl NodeState {
             last_call_me_maybe: None,
             conn_type: Watchable::new(ConnectionType::None),
             has_been_direct: false,
+            #[cfg(any(test, feature = "test-utils"))]
+            relay_only: false,
         }
     }
 
@@ -271,7 +277,11 @@ impl NodeState {
         now: &Instant,
         have_ipv6: bool,
     ) -> (Option<SocketAddr>, Option<RelayUrl>) {
-        if relay_only_mode() {
+        let relay_only = crate::util::relay_only_mode();
+        #[cfg(any(test, feature = "test-utils"))]
+        let relay_only = relay_only || self.relay_only;
+
+        if relay_only {
             debug!("in `DEV_relay_ONLY` mode, giving the relay address as the only viable address for this endpoint");
             return (None, self.relay_url());
         }
@@ -456,7 +466,11 @@ impl NodeState {
 
     #[must_use = "pings must be handled"]
     fn start_ping(&self, dst: SendAddr, purpose: DiscoPingPurpose) -> Option<SendPing> {
-        if relay_only_mode() && !dst.is_relay() {
+        let relay_only = crate::util::relay_only_mode();
+        #[cfg(any(test, feature = "test-utils"))]
+        let relay_only = relay_only || self.relay_only;
+
+        if relay_only && !dst.is_relay() {
             // don't attempt any hole punching in relay only mode
             warn!("in `DEV_relay_ONLY` mode, ignoring request to start a hole punching attempt.");
             return None;
@@ -601,7 +615,12 @@ impl NodeState {
                 }
             }
         }
-        if relay_only_mode() {
+
+        let relay_only = crate::util::relay_only_mode();
+        #[cfg(any(test, feature = "test-utils"))]
+        let relay_only = relay_only || self.relay_only;
+
+        if relay_only {
             warn!(
                 "in `DEV_relay_ONLY` mode, ignoring request to respond to a hole punching attempt."
             );
@@ -1495,6 +1514,8 @@ mod tests {
                     last_call_me_maybe: None,
                     conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
                     has_been_direct: true,
+                    #[cfg(any(test, feature = "test-utils"))]
+                    relay_only: false,
                 },
                 ip_port.into(),
             )
@@ -1515,6 +1536,8 @@ mod tests {
                 last_call_me_maybe: None,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
                 has_been_direct: false,
+                #[cfg(any(test, feature = "test-utils"))]
+                relay_only: false,
             }
         };
 
@@ -1542,6 +1565,8 @@ mod tests {
                 last_call_me_maybe: None,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
                 has_been_direct: false,
+                #[cfg(any(test, feature = "test-utils"))]
+                relay_only: false,
             }
         };
 
@@ -1582,6 +1607,8 @@ mod tests {
                         send_addr.clone(),
                     )),
                     has_been_direct: false,
+                    #[cfg(any(test, feature = "test-utils"))]
+                    relay_only: false,
                 },
                 socket_addr,
             )

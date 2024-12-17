@@ -97,6 +97,8 @@ pub struct Builder {
     insecure_skip_relay_cert_verify: bool,
     addr_v4: Option<SocketAddrV4>,
     addr_v6: Option<SocketAddrV6>,
+    #[cfg(any(test, feature = "test-utils"))]
+    relay_only: bool,
 }
 
 impl Default for Builder {
@@ -115,6 +117,8 @@ impl Default for Builder {
             insecure_skip_relay_cert_verify: false,
             addr_v4: None,
             addr_v6: None,
+            #[cfg(any(test, feature = "test-utils"))]
+            relay_only: false,
         }
     }
 }
@@ -160,6 +164,8 @@ impl Builder {
             dns_resolver,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
+            #[cfg(any(test, feature = "test-utils"))]
+            relay_only: self.relay_only,
         };
         Endpoint::bind(static_config, msock_opts, self.alpn_protocols).await
     }
@@ -415,6 +421,14 @@ impl Builder {
     #[cfg(any(test, feature = "test-utils"))]
     pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
         self.insecure_skip_relay_cert_verify = skip_verify;
+        self
+    }
+
+    /// "relay_only" mode implies we only use the relay to communicate
+    /// and do not attempt to do any hole punching.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn relay_only(mut self, relay_only: bool) -> Self {
+        self.relay_only = relay_only;
         self
     }
 }

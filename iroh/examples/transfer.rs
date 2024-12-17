@@ -29,12 +29,16 @@ enum Commands {
         size: u64,
         #[clap(long)]
         relay_url: Option<String>,
+        #[clap(long, default_value = "false")]
+        relay_only: bool,
     },
     Fetch {
         #[arg(index = 1)]
         ticket: String,
         #[clap(long)]
         relay_url: Option<String>,
+        #[clap(long, default_value = "false")]
+        relay_only: bool,
     },
 }
 
@@ -44,14 +48,22 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Provide { size, relay_url } => provide(*size, relay_url.clone()).await?,
-        Commands::Fetch { ticket, relay_url } => fetch(ticket, relay_url.clone()).await?,
+        Commands::Provide {
+            size,
+            relay_url,
+            relay_only,
+        } => provide(*size, relay_url.clone(), relay_only).await?,
+        Commands::Fetch {
+            ticket,
+            relay_url,
+            relay_only,
+        } => fetch(ticket, relay_url.clone(), relay_only).await?,
     }
 
     Ok(())
 }
 
-async fn provide(size: u64, relay_url: Option<String>) -> anyhow::Result<()> {
+async fn provide(size: u64, relay_url: Option<String>, relay_only: bool) -> anyhow::Result<()> {
     let secret_key = SecretKey::generate(rand::rngs::OsRng);
     let relay_mode = match relay_url {
         Some(relay_url) => {
@@ -65,6 +77,7 @@ async fn provide(size: u64, relay_url: Option<String>) -> anyhow::Result<()> {
         .secret_key(secret_key)
         .alpns(vec![TRANSFER_ALPN.to_vec()])
         .relay_mode(relay_mode)
+        .relay_only(relay_only)
         .bind()
         .await?;
 
@@ -142,7 +155,7 @@ async fn provide(size: u64, relay_url: Option<String>) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn fetch(ticket: &str, relay_url: Option<String>) -> anyhow::Result<()> {
+async fn fetch(ticket: &str, relay_url: Option<String>, relay_only: bool) -> anyhow::Result<()> {
     let ticket: NodeTicket = ticket.parse()?;
     let secret_key = SecretKey::generate(rand::rngs::OsRng);
     let relay_mode = match relay_url {
@@ -157,6 +170,7 @@ async fn fetch(ticket: &str, relay_url: Option<String>) -> anyhow::Result<()> {
         .secret_key(secret_key)
         .alpns(vec![TRANSFER_ALPN.to_vec()])
         .relay_mode(relay_mode)
+        .relay_only(relay_only)
         .bind()
         .await?;
 
