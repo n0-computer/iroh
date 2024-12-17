@@ -82,7 +82,7 @@ struct ActiveRelayActor {
 enum ActiveRelayMessage {
     GetLastWrite(oneshot::Sender<Instant>),
     /// Returns whether or not this relay can reach the NodeId.
-    GetNodeRoute(NodeId, oneshot::Sender<bool>),
+    HasNodeRoute(NodeId, oneshot::Sender<bool>),
     /// Triggers a connection check to the relay server.
     ///
     /// Sometimes it is known the local network interfaces have changed in which case it
@@ -243,7 +243,7 @@ impl ActiveRelayActor {
                 self.is_home_relay = is_preferred;
                 self.relay_client.note_preferred(is_preferred).await;
             }
-            ActiveRelayMessage::GetNodeRoute(peer, r) => {
+            ActiveRelayMessage::HasNodeRoute(peer, r) => {
                 let has_peer = self.node_present.contains(&peer);
                 r.send(has_peer).ok();
             }
@@ -583,7 +583,7 @@ impl RelayActor {
                 let (tx, rx) = oneshot::channel();
                 handle
                     .inbox_addr
-                    .send(ActiveRelayMessage::GetNodeRoute(*remote_node, tx))
+                    .send(ActiveRelayMessage::HasNodeRoute(*remote_node, tx))
                     .await
                     .ok();
                 match rx.await {
