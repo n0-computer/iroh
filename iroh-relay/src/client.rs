@@ -192,8 +192,6 @@ impl PingTracker {
 /// Build a Client.
 #[derive(derive_more::Debug)]
 pub struct ClientBuilder {
-    /// Default is false
-    is_preferred: bool,
     /// Default is None
     #[debug("address family selector callback")]
     address_family_selector: Option<Box<dyn Fn() -> bool + Send + Sync>>,
@@ -218,7 +216,6 @@ impl ClientBuilder {
     /// Create a new [`ClientBuilder`]
     pub fn new(url: impl Into<RelayUrl>) -> Self {
         ClientBuilder {
-            is_preferred: false,
             address_family_selector: None,
             is_prober: false,
             server_public_key: None,
@@ -255,13 +252,6 @@ impl ClientBuilder {
         S: Fn() -> bool + Send + Sync + 'static,
     {
         self.address_family_selector = Some(Box::new(selector));
-        self
-    }
-
-    /// Indicate this client is the preferred way to communicate
-    /// to the peer with this client's [`PublicKey`]
-    pub fn is_preferred(mut self, is: bool) -> Self {
-        self.is_preferred = is;
         self
     }
 
@@ -320,7 +310,7 @@ impl ClientBuilder {
 
         let inner = Actor {
             secret_key: key,
-            is_preferred: self.is_preferred,
+            is_preferred: false,
             relay_conn: None,
             is_closed: false,
             address_family_selector: self.address_family_selector,
@@ -431,6 +421,8 @@ impl Client {
     }
 
     /// Send a ping to the server. Return once we get an expected pong.
+    ///
+    /// This has a built-in timeout `crate::defaults::timeouts::PING_TIMEOUT`.
     ///
     /// There must be a task polling `recv_detail` to process the `pong` response.
     pub async fn ping(&self) -> Result<Duration, ClientError> {

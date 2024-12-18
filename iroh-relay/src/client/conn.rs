@@ -98,7 +98,7 @@ impl Conn {
     ///
     /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
     pub async fn send(&self, dst: NodeId, packet: Bytes) -> Result<()> {
-        trace!(%dst, len = packet.len(), "[RELAY] send");
+        trace!(dst = dst.fmt_short(), len = packet.len(), "[RELAY] send");
 
         self.inner
             .writer_channel
