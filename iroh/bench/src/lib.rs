@@ -69,11 +69,10 @@ pub struct Opt {
     #[clap(long, default_value = "1200")]
     pub initial_mtu: u16,
     /// Whether to run a local relay and have the server and clients connect to that.
-    ///
-    /// Can be combined with the `relay_only` configuration option on the endpoint
-    /// to test throughput for relay-only traffic locally.
+    /// This will force all traffic over the relay and can be used to test
+    /// throughput for relay-only traffic.
     #[clap(long, default_value_t = false)]
-    pub with_relay: bool,
+    pub only_relay: bool,
 }
 
 pub enum EndpointSelector {
