@@ -1296,7 +1296,7 @@
         <span class="comment">// When this future has an inner, it is a future which is currently sending
         // something to the relay server.  Nothing else can be sent to the relay server at
         // the same time.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>relay_send_fut = <span class="macro">std::pin::pin!</span>(MaybeFuture::default());
+        </span><span class="kw">let </span><span class="kw-2">mut </span>relay_send_fut = <span class="macro">std::pin::pin!</span>(MaybeFuture::none());
 
         <span class="kw">loop </span>{
             <span class="comment">// If a read error occurred on the connection it might have been lost.  But we
