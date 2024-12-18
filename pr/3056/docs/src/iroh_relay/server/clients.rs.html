@@ -311,7 +311,9 @@
 <a href="#310" id="310">310</a>
 <a href="#311" id="311">311</a>
 <a href="#312" id="312">312</a>
-<a href="#313" id="313">313</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
 </span><span class="comment">// Based on tailscale/derp/derp_server.go
 
 </span><span class="kw">use </span>std::collections::{HashMap, HashSet};
@@ -547,11 +549,13 @@
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{
-        protos::relay::{recv_frame, DerpCodec, Frame, FrameType},
+        protos::relay::{recv_frame, Frame, FrameType, RelayCodec},
         server::streams::{MaybeTlsStream, RelayedStream},
     };
 
-    <span class="kw">fn </span>test_client_builder(key: NodeId) -&gt; (ClientConnConfig, FramedRead&lt;DuplexStream, DerpCodec&gt;) {
+    <span class="kw">fn </span>test_client_builder(
+        key: NodeId,
+    ) -&gt; (ClientConnConfig, FramedRead&lt;DuplexStream, RelayCodec&gt;) {
         <span class="kw">let </span>(test_io, io) = tokio::io::duplex(<span class="number">1024</span>);
         <span class="kw">let </span>(server_channel, <span class="kw">_</span>) = mpsc::channel(<span class="number">10</span>);
         (
@@ -559,14 +563,14 @@
                 node_id: key,
                 stream: RelayedStream::Derp(Framed::new(
                     MaybeTlsStream::Test(io),
-                    DerpCodec::test(),
+                    RelayCodec::test(),
                 )),
                 write_timeout: Duration::from_secs(<span class="number">1</span>),
                 channel_capacity: <span class="number">10</span>,
                 rate_limit: <span class="prelude-val">None</span>,
                 server_channel,
             },
-            FramedRead::new(test_io, DerpCodec::test()),
+            FramedRead::new(test_io, RelayCodec::test()),
         )
     }
 

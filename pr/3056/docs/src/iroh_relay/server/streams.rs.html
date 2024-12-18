@@ -184,7 +184,7 @@
 <span class="kw">use </span>tokio_util::codec::Framed;
 
 <span class="kw">use crate</span>::{
-    protos::relay::{DerpCodec, Frame},
+    protos::relay::{Frame, RelayCodec},
     KeyCache,
 };
 
@@ -193,7 +193,7 @@
 /// The stream receives message from the client while the sink sends them to the client.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>RelayedStream {
-    Derp(Framed&lt;MaybeTlsStream, DerpCodec&gt;),
+    Derp(Framed&lt;MaybeTlsStream, RelayCodec&gt;),
     Ws(WebSocketStream&lt;MaybeTlsStream&gt;, KeyCache),
 }
 

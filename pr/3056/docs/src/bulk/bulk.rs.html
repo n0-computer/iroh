@@ -244,14 +244,14 @@
             metrics.insert(::iroh::metrics::NetReportMetrics::new(reg));
             metrics.insert(::iroh::metrics::PortmapMetrics::new(reg));
             <span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
-            </span><span class="kw">if </span>opt.with_relay {
+            </span><span class="kw">if </span>opt.only_relay {
                 metrics.insert(::iroh::metrics::RelayMetrics::new(reg));
             }
         })<span class="question-mark">?</span>;
     }
 
     <span class="attr">#[cfg(not(feature = <span class="string">"local-relay"</span>))]
-    </span><span class="kw">if </span>opt.with_relay {
+    </span><span class="kw">if </span>opt.only_relay {
         <span class="macro">anyhow::bail!</span>(
             <span class="string">"Must compile the benchmark with the `local-relay` feature flag to use this option"
         </span>);
@@ -261,7 +261,7 @@
     <span class="kw">let </span>runtime = rt();
 
     <span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
-    </span><span class="kw">let </span>(relay_url, _guard) = <span class="kw">if </span>opt.with_relay {
+    </span><span class="kw">let </span>(relay_url, _guard) = <span class="kw">if </span>opt.only_relay {
         <span class="kw">let </span>(<span class="kw">_</span>, relay_url, _guard) = runtime.block_on(::iroh::test_utils::run_relay_server())<span class="question-mark">?</span>;
 
         (<span class="prelude-val">Some</span>(relay_url), <span class="prelude-val">Some</span>(_guard))
@@ -325,7 +325,7 @@
             <span class="string">"PortmapMetrics"</span>,
             core.get_collector::&lt;::iroh::metrics::PortmapMetrics&gt;(),
         );
-        <span class="comment">// if None, (this is the case if opt.with_relay is false), then this is skipped internally:
+        <span class="comment">// if None, (this is the case if opt.only_relay is false), then this is skipped internally:
         </span><span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
         </span>collect_and_print(
             <span class="string">"RelayMetrics"</span>,

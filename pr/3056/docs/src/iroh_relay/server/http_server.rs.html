@@ -1173,7 +1173,7 @@
 <span class="kw">use crate</span>::{
     defaults::DEFAULT_KEY_CACHE_CAPACITY,
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
-    protos::relay::{recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION},
+    protos::relay::{recv_client_key, RelayCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION},
     server::{
         actor::{Message, ServerActorTask},
         client_conn::ClientConnConfig,
@@ -1647,7 +1647,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>io = <span class="kw">match </span>protocol {
             Protocol::Relay =&gt; {
                 <span class="macro">inc!</span>(Metrics, derp_accepts);
-                RelayedStream::Derp(Framed::new(io, DerpCodec::new(<span class="self">self</span>.key_cache.clone())))
+                RelayedStream::Derp(Framed::new(io, RelayCodec::new(<span class="self">self</span>.key_cache.clone())))
             }
             Protocol::Websocket =&gt; {
                 <span class="macro">inc!</span>(Metrics, websocket_accepts);
@@ -2061,8 +2061,8 @@
         <span class="kw">let </span>client_reader = MaybeTlsStreamReader::Mem(client_reader);
         <span class="kw">let </span>client_writer = MaybeTlsStreamWriter::Mem(client_writer);
 
-        <span class="kw">let </span>client_reader = ConnReader::Derp(FramedRead::new(client_reader, DerpCodec::test()));
-        <span class="kw">let </span>client_writer = ConnWriter::Derp(FramedWrite::new(client_writer, DerpCodec::test()));
+        <span class="kw">let </span>client_reader = ConnReader::Derp(FramedRead::new(client_reader, RelayCodec::test()));
+        <span class="kw">let </span>client_writer = ConnWriter::Derp(FramedWrite::new(client_writer, RelayCodec::test()));
 
         (
             server,

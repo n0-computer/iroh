@@ -343,7 +343,12 @@
 <a href="#342" id="342">342</a>
 <a href="#343" id="343">343</a>
 <a href="#344" id="344">344</a>
-<a href="#345" id="345">345</a></pre></div><pre class="rust"><code><span class="doccomment">//! The main event loop for the relay server.
+<a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
+<a href="#347" id="347">347</a>
+<a href="#348" id="348">348</a>
+<a href="#349" id="349">349</a>
+<a href="#350" id="350">350</a></pre></div><pre class="rust"><code><span class="doccomment">//! The main event loop for the relay server.
 //!
 //! based on tailscale/derp/derp_server.go
 
@@ -487,7 +492,12 @@
     <span class="kw">async fn </span>handle_message(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: Message) {
         <span class="kw">match </span>msg {
             Message::SendPacket { dst, data, src } =&gt; {
-                <span class="macro">trace!</span>(<span class="question-mark">?</span>src, <span class="question-mark">?</span>dst, len = data.len(), <span class="string">"send packet"</span>);
+                <span class="macro">trace!</span>(
+                    src = src.fmt_short(),
+                    dst = dst.fmt_short(),
+                    len = data.len(),
+                    <span class="string">"send packet"
+                </span>);
                 <span class="kw">if </span><span class="self">self</span>.clients.contains_key(<span class="kw-2">&amp;</span>dst) {
                     <span class="kw">match </span><span class="self">self</span>.clients.send_packet(<span class="kw-2">&amp;</span>dst, Packet { data, src }).<span class="kw">await </span>{
                         <span class="prelude-val">Ok</span>(()) =&gt; {
@@ -595,7 +605,7 @@
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{
-        protos::relay::{recv_frame, DerpCodec, Frame, FrameType},
+        protos::relay::{recv_frame, Frame, FrameType, RelayCodec},
         server::{
             client_conn::ClientConnConfig,
             streams::{MaybeTlsStream, RelayedStream},
@@ -605,21 +615,21 @@
     <span class="kw">fn </span>test_client_builder(
         node_id: NodeId,
         server_channel: mpsc::Sender&lt;Message&gt;,
-    ) -&gt; (ClientConnConfig, Framed&lt;DuplexStream, DerpCodec&gt;) {
+    ) -&gt; (ClientConnConfig, Framed&lt;DuplexStream, RelayCodec&gt;) {
         <span class="kw">let </span>(test_io, io) = tokio::io::duplex(<span class="number">1024</span>);
         (
             ClientConnConfig {
                 node_id,
                 stream: RelayedStream::Derp(Framed::new(
                     MaybeTlsStream::Test(io),
-                    DerpCodec::test(),
+                    RelayCodec::test(),
                 )),
                 write_timeout: Duration::from_secs(<span class="number">1</span>),
                 channel_capacity: <span class="number">10</span>,
                 rate_limit: <span class="prelude-val">None</span>,
                 server_channel,
             },
-            Framed::new(test_io, DerpCodec::test()),
+            Framed::new(test_io, RelayCodec::test()),
         )
     }
 

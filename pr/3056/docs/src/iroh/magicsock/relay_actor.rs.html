@@ -965,14 +965,163 @@
 <a href="#964" id="964">964</a>
 <a href="#965" id="965">965</a>
 <a href="#966" id="966">966</a>
-<a href="#967" id="967">967</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#967" id="967">967</a>
+<a href="#968" id="968">968</a>
+<a href="#969" id="969">969</a>
+<a href="#970" id="970">970</a>
+<a href="#971" id="971">971</a>
+<a href="#972" id="972">972</a>
+<a href="#973" id="973">973</a>
+<a href="#974" id="974">974</a>
+<a href="#975" id="975">975</a>
+<a href="#976" id="976">976</a>
+<a href="#977" id="977">977</a>
+<a href="#978" id="978">978</a>
+<a href="#979" id="979">979</a>
+<a href="#980" id="980">980</a>
+<a href="#981" id="981">981</a>
+<a href="#982" id="982">982</a>
+<a href="#983" id="983">983</a>
+<a href="#984" id="984">984</a>
+<a href="#985" id="985">985</a>
+<a href="#986" id="986">986</a>
+<a href="#987" id="987">987</a>
+<a href="#988" id="988">988</a>
+<a href="#989" id="989">989</a>
+<a href="#990" id="990">990</a>
+<a href="#991" id="991">991</a>
+<a href="#992" id="992">992</a>
+<a href="#993" id="993">993</a>
+<a href="#994" id="994">994</a>
+<a href="#995" id="995">995</a>
+<a href="#996" id="996">996</a>
+<a href="#997" id="997">997</a>
+<a href="#998" id="998">998</a>
+<a href="#999" id="999">999</a>
+<a href="#1000" id="1000">1000</a>
+<a href="#1001" id="1001">1001</a>
+<a href="#1002" id="1002">1002</a>
+<a href="#1003" id="1003">1003</a>
+<a href="#1004" id="1004">1004</a>
+<a href="#1005" id="1005">1005</a>
+<a href="#1006" id="1006">1006</a>
+<a href="#1007" id="1007">1007</a>
+<a href="#1008" id="1008">1008</a>
+<a href="#1009" id="1009">1009</a>
+<a href="#1010" id="1010">1010</a>
+<a href="#1011" id="1011">1011</a>
+<a href="#1012" id="1012">1012</a>
+<a href="#1013" id="1013">1013</a>
+<a href="#1014" id="1014">1014</a>
+<a href="#1015" id="1015">1015</a>
+<a href="#1016" id="1016">1016</a>
+<a href="#1017" id="1017">1017</a>
+<a href="#1018" id="1018">1018</a>
+<a href="#1019" id="1019">1019</a>
+<a href="#1020" id="1020">1020</a>
+<a href="#1021" id="1021">1021</a>
+<a href="#1022" id="1022">1022</a>
+<a href="#1023" id="1023">1023</a>
+<a href="#1024" id="1024">1024</a>
+<a href="#1025" id="1025">1025</a>
+<a href="#1026" id="1026">1026</a>
+<a href="#1027" id="1027">1027</a>
+<a href="#1028" id="1028">1028</a>
+<a href="#1029" id="1029">1029</a>
+<a href="#1030" id="1030">1030</a>
+<a href="#1031" id="1031">1031</a>
+<a href="#1032" id="1032">1032</a>
+<a href="#1033" id="1033">1033</a>
+<a href="#1034" id="1034">1034</a>
+<a href="#1035" id="1035">1035</a>
+<a href="#1036" id="1036">1036</a>
+<a href="#1037" id="1037">1037</a>
+<a href="#1038" id="1038">1038</a>
+<a href="#1039" id="1039">1039</a>
+<a href="#1040" id="1040">1040</a>
+<a href="#1041" id="1041">1041</a>
+<a href="#1042" id="1042">1042</a>
+<a href="#1043" id="1043">1043</a>
+<a href="#1044" id="1044">1044</a>
+<a href="#1045" id="1045">1045</a>
+<a href="#1046" id="1046">1046</a>
+<a href="#1047" id="1047">1047</a>
+<a href="#1048" id="1048">1048</a>
+<a href="#1049" id="1049">1049</a>
+<a href="#1050" id="1050">1050</a>
+<a href="#1051" id="1051">1051</a>
+<a href="#1052" id="1052">1052</a>
+<a href="#1053" id="1053">1053</a>
+<a href="#1054" id="1054">1054</a>
+<a href="#1055" id="1055">1055</a>
+<a href="#1056" id="1056">1056</a>
+<a href="#1057" id="1057">1057</a>
+<a href="#1058" id="1058">1058</a>
+<a href="#1059" id="1059">1059</a>
+<a href="#1060" id="1060">1060</a>
+<a href="#1061" id="1061">1061</a>
+<a href="#1062" id="1062">1062</a>
+<a href="#1063" id="1063">1063</a>
+<a href="#1064" id="1064">1064</a>
+<a href="#1065" id="1065">1065</a>
+<a href="#1066" id="1066">1066</a>
+<a href="#1067" id="1067">1067</a>
+<a href="#1068" id="1068">1068</a>
+<a href="#1069" id="1069">1069</a>
+<a href="#1070" id="1070">1070</a>
+<a href="#1071" id="1071">1071</a>
+<a href="#1072" id="1072">1072</a>
+<a href="#1073" id="1073">1073</a>
+<a href="#1074" id="1074">1074</a>
+<a href="#1075" id="1075">1075</a>
+<a href="#1076" id="1076">1076</a>
+<a href="#1077" id="1077">1077</a>
+<a href="#1078" id="1078">1078</a>
+<a href="#1079" id="1079">1079</a>
+<a href="#1080" id="1080">1080</a>
+<a href="#1081" id="1081">1081</a>
+<a href="#1082" id="1082">1082</a>
+<a href="#1083" id="1083">1083</a>
+<a href="#1084" id="1084">1084</a>
+<a href="#1085" id="1085">1085</a>
+<a href="#1086" id="1086">1086</a>
+<a href="#1087" id="1087">1087</a>
+<a href="#1088" id="1088">1088</a>
+<a href="#1089" id="1089">1089</a>
+<a href="#1090" id="1090">1090</a>
+<a href="#1091" id="1091">1091</a>
+<a href="#1092" id="1092">1092</a>
+<a href="#1093" id="1093">1093</a>
+<a href="#1094" id="1094">1094</a>
+<a href="#1095" id="1095">1095</a>
+<a href="#1096" id="1096">1096</a>
+<a href="#1097" id="1097">1097</a>
+<a href="#1098" id="1098">1098</a>
+<a href="#1099" id="1099">1099</a>
+<a href="#1100" id="1100">1100</a>
+<a href="#1101" id="1101">1101</a>
+<a href="#1102" id="1102">1102</a>
+<a href="#1103" id="1103">1103</a>
+<a href="#1104" id="1104">1104</a>
+<a href="#1105" id="1105">1105</a>
+<a href="#1106" id="1106">1106</a>
+<a href="#1107" id="1107">1107</a>
+<a href="#1108" id="1108">1108</a>
+<a href="#1109" id="1109">1109</a>
+<a href="#1110" id="1110">1110</a>
+<a href="#1111" id="1111">1111</a>
+<a href="#1112" id="1112">1112</a>
+<a href="#1113" id="1113">1113</a>
+<a href="#1114" id="1114">1114</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
 
-</span><span class="kw">use </span>std::{
+</span><span class="attr">#[cfg(test)]
+</span><span class="kw">use </span>std::net::SocketAddr;
+<span class="kw">use </span>std::{
     collections::{BTreeMap, BTreeSet},
-    net::{IpAddr, SocketAddr},
+    net::IpAddr,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -1009,6 +1158,9 @@
 <span class="doccomment">/// How often `clean_stale_relay` runs when there are potentially-stale relay connections to close.
 </span><span class="kw">const </span>RELAY_CLEAN_STALE_INTERVAL: Duration = Duration::from_secs(<span class="number">15</span>);
 
+<span class="doccomment">/// Maximum size a datagram payload is allowed to be.
+</span><span class="kw">const </span>MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PublicKey::LENGTH;
+
 <span class="doccomment">/// An actor which handles the connection to a single relay server.
 ///
 /// It is responsible for maintaining the connection to the relay server and handling all
@@ -1023,6 +1175,10 @@
     <span class="doccomment">/// Channel on which we receive packets to send to the relay.
     </span>relay_datagrams_send: mpsc::Receiver&lt;RelaySendPacket&gt;,
     url: RelayUrl,
+    <span class="doccomment">/// Whether or not this is the home relay connection.
+    </span>is_home_relay: bool,
+    <span class="doccomment">/// Configuration to establish connections to a relay server.
+    </span>relay_connection_opts: RelayConnectionOptions,
     relay_client: relay::client::Client,
     relay_client_receiver: relay::client::ClientReceiver,
     <span class="doccomment">/// The set of remote nodes we know are present on this relay server.
@@ -1039,11 +1195,22 @@
 #[allow(clippy::large_enum_variant)]
 </span><span class="kw">enum </span>ActiveRelayMessage {
     GetLastWrite(oneshot::Sender&lt;Instant&gt;),
-    Ping(oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;Duration, ClientError&gt;&gt;),
-    GetLocalAddr(oneshot::Sender&lt;<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;&gt;),
-    GetNodeRoute(NodeId, oneshot::Sender&lt;bool&gt;),
-    NotePreferred(bool),
+    <span class="doccomment">/// Returns whether or not this relay can reach the NodeId.
+    </span>HasNodeRoute(NodeId, oneshot::Sender&lt;bool&gt;),
+    <span class="doccomment">/// Triggers a connection check to the relay server.
+    ///
+    /// Sometimes it is known the local network interfaces have changed in which case it
+    /// might be prudent to check if the relay connection is still working.  `Vec&lt;IpAddr&gt;`
+    /// should contain the current local IP addresses.  If the connection uses a local
+    /// socket with an IP address in this list the relay server will be pinged.  If the
+    /// connection uses a local socket with an IP address not in this list the server will
+    /// always re-connect.
+    </span>CheckConnection(Vec&lt;IpAddr&gt;),
+    <span class="doccomment">/// Sets this relay as the home relay, or not.
+    </span>SetHomeRelay(bool),
     Shutdown,
+    <span class="attr">#[cfg(test)]
+    </span>GetLocalAddr(oneshot::Sender&lt;<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;&gt;),
 }
 
 <span class="doccomment">/// Configuration needed to start an [`ActiveRelayActor`].
@@ -1075,13 +1242,14 @@
             connection_opts,
         } = opts;
         <span class="kw">let </span>(relay_client, relay_client_receiver) =
-            <span class="self">Self</span>::create_relay_client(url.clone(), connection_opts);
+            <span class="self">Self</span>::create_relay_client(url.clone(), connection_opts.clone());
 
         ActiveRelayActor {
             last_write: Instant::now(),
             relay_datagrams_recv,
             relay_datagrams_send,
             url,
+            is_home_relay: <span class="bool-val">false</span>,
             node_present: BTreeSet::new(),
             backoff: backoff::exponential::ExponentialBackoffBuilder::new()
                 .with_initial_interval(Duration::from_millis(<span class="number">10</span>))
@@ -1089,6 +1257,7 @@
                 .build(),
             last_packet_time: <span class="prelude-val">None</span>,
             last_packet_src: <span class="prelude-val">None</span>,
+            relay_connection_opts: connection_opts,
             relay_client,
             relay_client_receiver,
         }
@@ -1119,8 +1288,10 @@
     <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>, <span class="kw-2">mut </span>inbox: mpsc::Receiver&lt;ActiveRelayMessage&gt;) -&gt; anyhow::Result&lt;()&gt; {
         <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added);
         <span class="macro">debug!</span>(<span class="string">"initial dial {}"</span>, <span class="self">self</span>.url);
-        <span class="kw">let </span>relay_client = <span class="self">self</span>.relay_client.clone();
-        relay_client.connect().<span class="kw">await</span>.context(<span class="string">"initial connection"</span>)<span class="question-mark">?</span>;
+        <span class="self">self</span>.relay_client
+            .connect()
+            .<span class="kw">await
+            </span>.context(<span class="string">"initial connection"</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// When this future has an inner, it is a future which is currently sending
         // something to the relay server.  Nothing else can be sent to the relay server at
@@ -1133,7 +1304,7 @@
             // peers via the relay even if we don't start sending again first.
             </span><span class="kw">if </span>!<span class="self">self</span>.relay_client.is_connected().<span class="kw">await</span><span class="question-mark">? </span>{
                 <span class="macro">debug!</span>(<span class="string">"relay re-connecting"</span>);
-                relay_client.connect().<span class="kw">await</span>.context(<span class="string">"keepalive"</span>)<span class="question-mark">?</span>;
+                <span class="self">self</span>.relay_client.connect().<span class="kw">await</span>.context(<span class="string">"keepalive"</span>)<span class="question-mark">?</span>;
             }
             <span class="macro">tokio::select!</span> {
                 msg = inbox.recv() =&gt; {
@@ -1151,9 +1322,11 @@
                 }
                 <span class="comment">// Only poll for new datagrams if relay_send_fut is not busy.
                 </span><span class="prelude-val">Some</span>(msg) = <span class="self">self</span>.relay_datagrams_send.recv(), <span class="kw">if </span>relay_send_fut.is_none() =&gt; {
-                    relay_send_fut = MaybeFuture::with_future(
-                        Box::pin(relay_client.send(msg.node_id, msg.packet))
-                    );
+                    <span class="kw">let </span>relay_client = <span class="self">self</span>.relay_client.clone();
+                    <span class="kw">let </span>fut = <span class="kw">async move </span>{
+                        relay_client.send(msg.node_id, msg.packet).<span class="kw">await
+                    </span>};
+                    relay_send_fut = MaybeFuture::with_future(Box::pin(fut));
                     <span class="self">self</span>.last_write = Instant::now();
 
                 }
@@ -1180,26 +1353,66 @@
             ActiveRelayMessage::GetLastWrite(r) =&gt; {
                 r.send(<span class="self">self</span>.last_write).ok();
             }
-            ActiveRelayMessage::Ping(r) =&gt; {
-                r.send(<span class="self">self</span>.relay_client.ping().<span class="kw">await</span>).ok();
-            }
-            ActiveRelayMessage::GetLocalAddr(r) =&gt; {
-                r.send(<span class="self">self</span>.relay_client.local_addr().<span class="kw">await</span>).ok();
-            }
-            ActiveRelayMessage::NotePreferred(is_preferred) =&gt; {
+            ActiveRelayMessage::SetHomeRelay(is_preferred) =&gt; {
+                <span class="self">self</span>.is_home_relay = is_preferred;
                 <span class="self">self</span>.relay_client.note_preferred(is_preferred).<span class="kw">await</span>;
             }
-            ActiveRelayMessage::GetNodeRoute(peer, r) =&gt; {
+            ActiveRelayMessage::HasNodeRoute(peer, r) =&gt; {
                 <span class="kw">let </span>has_peer = <span class="self">self</span>.node_present.contains(<span class="kw-2">&amp;</span>peer);
                 r.send(has_peer).ok();
+            }
+            ActiveRelayMessage::CheckConnection(local_ips) =&gt; {
+                <span class="self">self</span>.handle_check_connection(local_ips).<span class="kw">await</span>;
             }
             ActiveRelayMessage::Shutdown =&gt; {
                 <span class="macro">debug!</span>(<span class="string">"shutdown"</span>);
                 <span class="kw">return </span><span class="bool-val">true</span>;
             }
+            <span class="attr">#[cfg(test)]
+            </span>ActiveRelayMessage::GetLocalAddr(sender) =&gt; {
+                <span class="kw">let </span>addr = <span class="self">self</span>.relay_client.local_addr().<span class="kw">await</span>;
+                sender.send(addr).ok();
+            }
         }
         <span class="bool-val">false
     </span>}
+
+    <span class="doccomment">/// Checks if the current relay connection is fine or needs reconnecting.
+    ///
+    /// If the local IP address of the current relay connection is in `local_ips` then this
+    /// pings the relay, recreating the connection on ping failure.  Otherwise it always
+    /// recreates the connection.
+    </span><span class="kw">async fn </span>handle_check_connection(<span class="kw-2">&amp;mut </span><span class="self">self</span>, local_ips: Vec&lt;IpAddr&gt;) {
+        <span class="kw">match </span><span class="self">self</span>.relay_client.local_addr().<span class="kw">await </span>{
+            <span class="prelude-val">Some</span>(local_addr) <span class="kw">if </span>local_ips.contains(<span class="kw-2">&amp;</span>local_addr.ip()) =&gt; {
+                <span class="kw">match </span><span class="self">self</span>.relay_client.ping().<span class="kw">await </span>{
+                    <span class="prelude-val">Ok</span>(latency) =&gt; <span class="macro">debug!</span>(<span class="question-mark">?</span>latency, <span class="string">"Still connected."</span>),
+                    <span class="prelude-val">Err</span>(err) =&gt; {
+                        <span class="macro">debug!</span>(<span class="question-mark">?</span>err, <span class="string">"Ping failed, reconnecting."</span>);
+                        <span class="self">self</span>.reconnect().<span class="kw">await</span>;
+                    }
+                }
+            }
+            <span class="prelude-val">Some</span>(_local_addr) =&gt; {
+                <span class="macro">debug!</span>(<span class="string">"Local IP no longer valid, reconnecting"</span>);
+                <span class="self">self</span>.reconnect().<span class="kw">await</span>;
+            }
+            <span class="prelude-val">None </span>=&gt; {
+                <span class="macro">debug!</span>(<span class="string">"No local address for this relay connection, reconnecting."</span>);
+                <span class="self">self</span>.reconnect().<span class="kw">await</span>;
+            }
+        }
+    }
+
+    <span class="kw">async fn </span>reconnect(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="kw">let </span>(client, client_receiver) =
+            <span class="self">Self</span>::create_relay_client(<span class="self">self</span>.url.clone(), <span class="self">self</span>.relay_connection_opts.clone());
+        <span class="self">self</span>.relay_client = client;
+        <span class="self">self</span>.relay_client_receiver = client_receiver;
+        <span class="kw">if </span><span class="self">self</span>.is_home_relay {
+            <span class="self">self</span>.relay_client.note_preferred(<span class="bool-val">true</span>).<span class="kw">await</span>;
+        }
+    }
 
     <span class="kw">async fn </span>handle_relay_msg(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: <span class="prelude-ty">Result</span>&lt;ReceivedMessage, ClientError&gt;) -&gt; ReadResult {
         <span class="kw">match </span>msg {
@@ -1331,7 +1544,6 @@
     </span>active_relays: BTreeMap&lt;RelayUrl, ActiveRelayHandle&gt;,
     <span class="doccomment">/// The tasks for the [`ActiveRelayActor`]s in `active_relays` above.
     </span>active_relay_tasks: JoinSet&lt;()&gt;,
-    ping_tasks: JoinSet&lt;(RelayUrl, bool)&gt;,
     cancel_token: CancellationToken,
 }
 
@@ -1346,12 +1558,11 @@
             relay_datagram_recv_queue,
             active_relays: Default::default(),
             active_relay_tasks: JoinSet::new(),
-            ping_tasks: Default::default(),
             cancel_token,
         }
     }
 
-    <span class="kw">pub fn </span>cancel_token(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; CancellationToken {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>cancel_token(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; CancellationToken {
         <span class="self">self</span>.cancel_token.clone()
     }
 
@@ -1378,25 +1589,6 @@
                     }
                     <span class="self">self</span>.clean_stale_relay().<span class="kw">await</span>;
                 }
-                <span class="comment">// `ping_tasks` being empty is a normal situation - in fact it starts empty
-                // until a `MaybeCloseRelaysOnRebind` message is received.
-                </span><span class="prelude-val">Some</span>(task_result) = <span class="self">self</span>.ping_tasks.join_next() =&gt; {
-                    <span class="kw">match </span>task_result {
-                        <span class="prelude-val">Ok</span>((url, ping_success)) =&gt; {
-                            <span class="kw">if </span>!ping_success {
-                                <span class="kw">let </span>token = <span class="self">self</span>.cancel_token.child_token();
-                                token.run_until_cancelled(
-                                    <span class="self">self</span>.close_and_reconnect_relay(<span class="kw-2">&amp;</span>url, <span class="string">"rebind-ping-fail"</span>)
-                                ).<span class="kw">await</span>;
-                            }
-                        }
-
-                        <span class="prelude-val">Err</span>(err) =&gt; {
-                            <span class="macro">warn!</span>(<span class="string">"ping task error: {:?}"</span>, err);
-                        }
-                    }
-                }
-
                 msg = receiver.recv() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
                         <span class="macro">trace!</span>(<span class="string">"shutting down relay recv loop"</span>);
@@ -1445,7 +1637,7 @@
             <span class="kw">let </span>is_preferred = url == home_url;
             handle
                 .inbox_addr
-                .send(ActiveRelayMessage::NotePreferred(is_preferred))
+                .send(ActiveRelayMessage::SetHomeRelay(is_preferred))
                 .<span class="kw">await
                 </span>.ok()
         }))
@@ -1456,7 +1648,6 @@
     }
 
     <span class="kw">async fn </span>send_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, contents: RelayContents, remote_node: NodeId) {
-        <span class="kw">const </span>PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PublicKey::LENGTH;
         <span class="kw">let </span>total_bytes = contents.iter().map(|c| c.len() <span class="kw">as </span>u64).sum::&lt;u64&gt;();
         <span class="macro">trace!</span>(
             %url,
@@ -1471,7 +1662,7 @@
         // and prefix them with a u16 packet size.  They then get sent as a single DISCO
         // frame.  However this might still be multiple packets when otherwise the maximum
         // packet size for the relay protocol would be exceeded.
-        </span><span class="kw">for </span>packet <span class="kw">in </span>PacketizeIter::&lt;<span class="kw">_</span>, PAYLOAD_SIZE&gt;::new(remote_node, contents) {
+        </span><span class="kw">for </span>packet <span class="kw">in </span>PacketizeIter::&lt;<span class="kw">_</span>, MAX_PAYLOAD_SIZE&gt;::new(remote_node, contents) {
             <span class="kw">let </span>len = packet.len();
             <span class="kw">match </span>handle.datagrams_send_queue.send(packet).<span class="kw">await </span>{
                 <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="macro">inc_by!</span>(MagicsockMetrics, send_relay, len <span class="kw">as _</span>),
@@ -1480,20 +1671,6 @@
                     <span class="macro">inc!</span>(MagicsockMetrics, send_relay_error);
                 }
             }
-        }
-    }
-
-    <span class="doccomment">/// Returns `true`if the message was sent successfully.
-    </span><span class="kw">async fn </span>send_to_active_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, msg: ActiveRelayMessage) -&gt; bool {
-        <span class="kw">match </span><span class="self">self</span>.active_relays.get(url) {
-            <span class="prelude-val">Some</span>(handle) =&gt; <span class="kw">match </span>handle.inbox_addr.send(msg).<span class="kw">await </span>{
-                <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="bool-val">true</span>,
-                <span class="prelude-val">Err</span>(mpsc::error::SendError(<span class="kw">_</span>)) =&gt; {
-                    <span class="self">self</span>.close_active_relay(url, <span class="string">"sender-closed"</span>).<span class="kw">await</span>;
-                    <span class="bool-val">false
-                </span>}
-            },
-            <span class="prelude-val">None </span>=&gt; <span class="bool-val">false</span>,
         }
     }
 
@@ -1520,7 +1697,7 @@
                 <span class="kw">let </span>(tx, rx) = oneshot::channel();
                 handle
                     .inbox_addr
-                    .send(ActiveRelayMessage::GetNodeRoute(<span class="kw-2">*</span>remote_node, tx))
+                    .send(ActiveRelayMessage::HasNodeRoute(<span class="kw-2">*</span>remote_node, tx))
                     .<span class="kw">await
                     </span>.ok();
                 <span class="kw">match </span>rx.<span class="kw">await </span>{
@@ -1544,11 +1721,14 @@
     </span><span class="kw">async fn </span>active_relay_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl) -&gt; <span class="kw-2">&amp;</span>ActiveRelayHandle {
         <span class="kw">if </span>!<span class="self">self</span>.active_relays.contains_key(url) {
             <span class="kw">let </span>handle = <span class="self">self</span>.start_active_relay(url.clone());
-            <span class="self">self</span>.active_relays.insert(url.clone(), handle);
             <span class="kw">if </span><span class="prelude-val">Some</span>(url) == <span class="self">self</span>.msock.my_relay().as_ref() {
-                <span class="self">self</span>.send_to_active_relay(url, ActiveRelayMessage::NotePreferred(<span class="bool-val">true</span>))
-                    .<span class="kw">await</span>;
+                handle
+                    .inbox_addr
+                    .send(ActiveRelayMessage::SetHomeRelay(<span class="bool-val">true</span>))
+                    .<span class="kw">await
+                    </span>.ok();
             }
+            <span class="self">self</span>.active_relays.insert(url.clone(), handle);
         }
         <span class="self">self</span>.active_relays.get(url).expect(<span class="string">"just inserted"</span>)
     }
@@ -1599,65 +1779,15 @@
     /// that's not known to be currently a local IP address should be closed.  All the other
     /// relay connections are pinged.
     </span><span class="kw">async fn </span>maybe_close_relays_on_rebind(<span class="kw-2">&amp;mut </span><span class="self">self</span>, okay_local_ips: <span class="kw-2">&amp;</span>[IpAddr]) {
-        <span class="kw">let </span><span class="kw-2">mut </span>tasks = Vec::new();
-        <span class="kw">for </span>url <span class="kw">in </span><span class="self">self</span>.active_relays.keys().cloned().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;() {
-            <span class="kw">let </span>(os, or) = oneshot::channel();
-            <span class="kw">let </span>la = <span class="kw">if </span><span class="self">self
-                </span>.send_to_active_relay(<span class="kw-2">&amp;</span>url, ActiveRelayMessage::GetLocalAddr(os))
+        <span class="kw">let </span>send_futs = <span class="self">self</span>.active_relays.values().map(|handle| <span class="kw">async move </span>{
+            handle
+                .inbox_addr
+                .send(ActiveRelayMessage::CheckConnection(okay_local_ips.to_vec()))
                 .<span class="kw">await
-            </span>{
-                <span class="kw">match </span>or.<span class="kw">await </span>{
-                    <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) | <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
-                        tasks.push((url, <span class="string">"rebind-no-localaddr"</span>));
-                        <span class="kw">continue</span>;
-                    }
-                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(la)) =&gt; la,
-                }
-            } <span class="kw">else </span>{
-                tasks.push((url.clone(), <span class="string">"rebind-no-localaddr"</span>));
-                <span class="kw">continue</span>;
-            };
-
-            <span class="kw">if </span>!okay_local_ips.contains(<span class="kw-2">&amp;</span>la.ip()) {
-                tasks.push((url, <span class="string">"rebind-default-route-change"</span>));
-                <span class="kw">continue</span>;
-            }
-
-            <span class="kw">let </span>(os, or) = oneshot::channel();
-            <span class="kw">let </span>ping_sent = <span class="self">self
-                </span>.send_to_active_relay(<span class="kw-2">&amp;</span>url, ActiveRelayMessage::Ping(os))
-                .<span class="kw">await</span>;
-
-            <span class="self">self</span>.ping_tasks.spawn(<span class="kw">async move </span>{
-                <span class="kw">let </span>ping_success = time::timeout(Duration::from_secs(<span class="number">3</span>), <span class="kw">async </span>{
-                    <span class="kw">if </span>ping_sent {
-                        or.<span class="kw">await</span>.is_ok()
-                    } <span class="kw">else </span>{
-                        <span class="bool-val">false
-                    </span>}
-                })
-                .<span class="kw">await
-                </span>.unwrap_or(<span class="bool-val">false</span>);
-
-                (url, ping_success)
-            });
-        }
-
-        <span class="kw">for </span>(url, why) <span class="kw">in </span>tasks {
-            <span class="self">self</span>.close_and_reconnect_relay(<span class="kw-2">&amp;</span>url, why).<span class="kw">await</span>;
-        }
-
+                </span>.ok();
+        });
+        futures_buffered::join_all(send_futs).<span class="kw">await</span>;
         <span class="self">self</span>.log_active_relay();
-    }
-
-    <span class="doccomment">/// Shuts down an active relay actor and restarts it.
-    ///
-    /// This will force the connection to be re-created.
-    </span><span class="kw">async fn </span>close_and_reconnect_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) {
-        <span class="self">self</span>.close_active_relay(url, why).<span class="kw">await</span>;
-
-        <span class="comment">// Retrieving the handle starts a new ActiveRelayActor if it did not yet exist.
-        </span><span class="self">self</span>.active_relay_handle(url).<span class="kw">await</span>;
     }
 
     <span class="doccomment">/// Cleans up stale [`ActiveRelayActor`]s.
@@ -1903,9 +2033,13 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
+    <span class="kw">use </span>futures_lite::future;
     <span class="kw">use </span>iroh_base::SecretKey;
+    <span class="kw">use </span>testresult::TestResult;
+    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::test_utils;
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_packetize_iter() {
@@ -1930,6 +2064,166 @@
             <span class="kw-2">&amp;</span>result[<span class="number">0</span>].packet[..<span class="number">7</span>]
         );
         <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>[<span class="number">5</span>, <span class="number">0</span>, <span class="string">b'W'</span>, <span class="string">b'o'</span>, <span class="string">b'r'</span>, <span class="string">b'l'</span>, <span class="string">b'd'</span>], <span class="kw-2">&amp;</span>result[<span class="number">1</span>].packet[..]);
+    }
+
+    <span class="doccomment">/// Starts a new [`ActiveRelayActor`].
+    </span><span class="kw">fn </span>start_active_relay_actor(
+        secret_key: SecretKey,
+        url: RelayUrl,
+        inbox_rx: mpsc::Receiver&lt;ActiveRelayMessage&gt;,
+        relay_datagrams_send: mpsc::Receiver&lt;RelaySendPacket&gt;,
+        relay_datagrams_recv: Arc&lt;RelayDatagramsQueue&gt;,
+    ) -&gt; AbortOnDropHandle&lt;anyhow::Result&lt;()&gt;&gt; {
+        <span class="kw">let </span>opts = ActiveRelayActorOptions {
+            url,
+            relay_datagrams_send,
+            relay_datagrams_recv,
+            connection_opts: RelayConnectionOptions {
+                secret_key,
+                dns_resolver: <span class="kw">crate</span>::dns::default_resolver().clone(),
+                proxy_url: <span class="prelude-val">None</span>,
+                prefer_ipv6: Arc::new(AtomicBool::new(<span class="bool-val">true</span>)),
+                insecure_skip_cert_verify: <span class="bool-val">true</span>,
+            },
+        };
+        <span class="kw">let </span>task = tokio::spawn(
+            <span class="kw">async move </span>{
+                <span class="kw">let </span>actor = ActiveRelayActor::new(opts);
+                actor.run(inbox_rx).<span class="kw">await
+            </span>}
+            .instrument(<span class="macro">info_span!</span>(<span class="string">"actor-under-test"</span>)),
+        );
+        AbortOnDropHandle::new(task)
+    }
+
+    <span class="doccomment">/// Starts an [`ActiveRelayActor`] as an "iroh echo node".
+    ///
+    /// This actor will connect to the relay server, pretending to be an iroh node, and echo
+    /// back any datagram it receives from the relay.  This is used by the
+    /// [`ActiveRelayNode`] under test to check connectivity works.
+    </span><span class="kw">fn </span>start_echo_node(relay_url: RelayUrl) -&gt; (NodeId, AbortOnDropHandle&lt;()&gt;) {
+        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">8u8</span>; <span class="number">32</span>]);
+        <span class="kw">let </span>recv_datagram_queue = Arc::new(RelayDatagramsQueue::new());
+        <span class="kw">let </span>(send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
+        <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
+        <span class="kw">let </span>actor_task = start_active_relay_actor(
+            secret_key.clone(),
+            relay_url,
+            inbox_rx,
+            send_datagram_rx,
+            recv_datagram_queue.clone(),
+        );
+        <span class="kw">let </span>echo_task = tokio::spawn(
+            <span class="kw">async move </span>{
+                <span class="kw">loop </span>{
+                    <span class="kw">let </span>datagram = future::poll_fn(|cx| recv_datagram_queue.poll_recv(cx)).<span class="kw">await</span>;
+                    <span class="kw">if let </span><span class="prelude-val">Ok</span>(recv) = datagram {
+                        <span class="kw">let </span>RelayRecvDatagram { url: <span class="kw">_</span>, src, buf } = recv;
+                        <span class="macro">info!</span>(from = src.fmt_short(), <span class="string">"Received datagram"</span>);
+                        <span class="kw">let </span>send = PacketizeIter::&lt;<span class="kw">_</span>, MAX_PAYLOAD_SIZE&gt;::new(src, [buf])
+                            .next()
+                            .unwrap();
+                        send_datagram_tx.send(send).<span class="kw">await</span>.ok();
+                    }
+                }
+            }
+            .instrument(<span class="macro">info_span!</span>(<span class="string">"echo-task"</span>)),
+        );
+        <span class="kw">let </span>echo_task = AbortOnDropHandle::new(echo_task);
+        <span class="kw">let </span>supervisor_task = tokio::spawn(<span class="kw">async move </span>{
+            <span class="comment">// move the inbox_tx here so it is not dropped, as this stops the actor.
+            </span><span class="kw">let </span>_inbox_tx = inbox_tx;
+            <span class="macro">tokio::select!</span> {
+                biased;
+                <span class="kw">_ </span>= actor_task =&gt; (),
+                <span class="kw">_ </span>= echo_task =&gt; (),
+            };
+        });
+        <span class="kw">let </span>supervisor_task = AbortOnDropHandle::new(supervisor_task);
+        (secret_key.public(), supervisor_task)
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_active_relay_reconnect() -&gt; TestResult {
+        <span class="kw">let </span>_guard = iroh_test::logging::setup();
+        <span class="kw">let </span>(_relay_map, relay_url, _server) = test_utils::run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(peer_node, _echo_node_task) = start_echo_node(relay_url.clone());
+
+        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
+        <span class="kw">let </span>datagram_recv_queue = Arc::new(RelayDatagramsQueue::new());
+        <span class="kw">let </span>(send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
+        <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
+        <span class="kw">let </span>task = start_active_relay_actor(
+            secret_key,
+            relay_url,
+            inbox_rx,
+            send_datagram_rx,
+            datagram_recv_queue.clone(),
+        );
+
+        <span class="comment">// Send a datagram to our echo node.
+        </span><span class="macro">info!</span>(<span class="string">"first echo"</span>);
+        <span class="kw">let </span>packet = PacketizeIter::&lt;<span class="kw">_</span>, MAX_PAYLOAD_SIZE&gt;::new(peer_node, [<span class="string">b"hello"</span>])
+            .next()
+            .context(<span class="string">"no packet"</span>)<span class="question-mark">?</span>;
+        send_datagram_tx.send(packet).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="comment">// Check we get it back
+        </span><span class="kw">let </span>RelayRecvDatagram {
+            url: <span class="kw">_</span>,
+            src: <span class="kw">_</span>,
+            buf,
+        } = future::poll_fn(|cx| datagram_recv_queue.poll_recv(cx)).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">assert_eq!</span>(buf.as_ref(), <span class="string">b"hello"</span>);
+
+        <span class="comment">// Now ask to check the connection, triggering a ping but no reconnect.
+        </span><span class="kw">let </span>(tx, rx) = oneshot::channel();
+        inbox_tx.send(ActiveRelayMessage::GetLocalAddr(tx)).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>local_addr = rx.<span class="kw">await</span><span class="question-mark">?</span>.context(<span class="string">"no local addr"</span>)<span class="question-mark">?</span>;
+        <span class="macro">info!</span>(<span class="question-mark">?</span>local_addr, <span class="string">"check connection with addr"</span>);
+        inbox_tx
+            .send(ActiveRelayMessage::CheckConnection(<span class="macro">vec!</span>[local_addr.ip()]))
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="comment">// Sync the ActiveRelayActor. Ping blocks it and we want to be sure it has handled
+        // another inbox message before continuing.
+        </span><span class="kw">let </span>(tx, rx) = oneshot::channel();
+        inbox_tx.send(ActiveRelayMessage::GetLocalAddr(tx)).<span class="kw">await</span><span class="question-mark">?</span>;
+        rx.<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="comment">// Echo should still work.
+        </span><span class="macro">info!</span>(<span class="string">"second echo"</span>);
+        <span class="kw">let </span>packet = PacketizeIter::&lt;<span class="kw">_</span>, MAX_PAYLOAD_SIZE&gt;::new(peer_node, [<span class="string">b"hello"</span>])
+            .next()
+            .context(<span class="string">"no packet"</span>)<span class="question-mark">?</span>;
+        send_datagram_tx.send(packet).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>recv = future::poll_fn(|cx| datagram_recv_queue.poll_recv(cx)).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">assert_eq!</span>(recv.buf.as_ref(), <span class="string">b"hello"</span>);
+
+        <span class="comment">// Now ask to check the connection, this will reconnect without pinging because we
+        // do not supply any "valid" local IP addresses.
+        </span><span class="macro">info!</span>(<span class="string">"check connection"</span>);
+        inbox_tx
+            .send(ActiveRelayMessage::CheckConnection(Vec::new()))
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="comment">// Give some time to reconnect, mostly to sort logs rather than functional.
+        </span>tokio::time::sleep(Duration::from_millis(<span class="number">10</span>)).<span class="kw">await</span>;
+
+        <span class="comment">// Echo should still work.
+        </span><span class="macro">info!</span>(<span class="string">"third echo"</span>);
+        <span class="kw">let </span>packet = PacketizeIter::&lt;<span class="kw">_</span>, MAX_PAYLOAD_SIZE&gt;::new(peer_node, [<span class="string">b"hello"</span>])
+            .next()
+            .context(<span class="string">"no packet"</span>)<span class="question-mark">?</span>;
+        send_datagram_tx.send(packet).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>recv = future::poll_fn(|cx| datagram_recv_queue.poll_recv(cx)).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">assert_eq!</span>(recv.buf.as_ref(), <span class="string">b"hello"</span>);
+
+        <span class="comment">// Shut down the actor.
+        </span>inbox_tx.send(ActiveRelayMessage::Shutdown).<span class="kw">await</span><span class="question-mark">?</span>;
+        task.<span class="kw">await</span><span class="question-mark">??</span>;
+
+        <span class="prelude-val">Ok</span>(())
     }
 }
 </code></pre></div></section></main></body></html>

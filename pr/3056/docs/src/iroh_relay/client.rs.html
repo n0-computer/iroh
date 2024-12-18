@@ -1202,15 +1202,7 @@
 <a href="#1201" id="1201">1201</a>
 <a href="#1202" id="1202">1202</a>
 <a href="#1203" id="1203">1203</a>
-<a href="#1204" id="1204">1204</a>
-<a href="#1205" id="1205">1205</a>
-<a href="#1206" id="1206">1206</a>
-<a href="#1207" id="1207">1207</a>
-<a href="#1208" id="1208">1208</a>
-<a href="#1209" id="1209">1209</a>
-<a href="#1210" id="1210">1210</a>
-<a href="#1211" id="1211">1211</a>
-<a href="#1212" id="1212">1212</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#1204" id="1204">1204</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -1256,7 +1248,7 @@
 <span class="kw">use crate</span>::{
     defaults::timeouts::<span class="kw-2">*</span>,
     http::{Protocol, RELAY_PATH},
-    protos::relay::DerpCodec,
+    protos::relay::RelayCodec,
     KeyCache,
 };
 
@@ -1404,8 +1396,6 @@
 <span class="doccomment">/// Build a Client.
 </span><span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">pub struct </span>ClientBuilder {
-    <span class="doccomment">/// Default is false
-    </span>is_preferred: bool,
     <span class="doccomment">/// Default is None
     </span><span class="attr">#[debug(<span class="string">"address family selector callback"</span>)]
     </span>address_family_selector: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() -&gt; bool + Send + Sync&gt;&gt;,
@@ -1430,7 +1420,6 @@
     <span class="doccomment">/// Create a new [`ClientBuilder`]
     </span><span class="kw">pub fn </span>new(url: <span class="kw">impl </span>Into&lt;RelayUrl&gt;) -&gt; <span class="self">Self </span>{
         ClientBuilder {
-            is_preferred: <span class="bool-val">false</span>,
             address_family_selector: <span class="prelude-val">None</span>,
             is_prober: <span class="bool-val">false</span>,
             server_public_key: <span class="prelude-val">None</span>,
@@ -1467,13 +1456,6 @@
         </span>S: Fn() -&gt; bool + Send + Sync + <span class="lifetime">'static</span>,
     {
         <span class="self">self</span>.address_family_selector = <span class="prelude-val">Some</span>(Box::new(selector));
-        <span class="self">self
-    </span>}
-
-    <span class="doccomment">/// Indicate this client is the preferred way to communicate
-    /// to the peer with this client's [`PublicKey`]
-    </span><span class="kw">pub fn </span>is_preferred(<span class="kw-2">mut </span><span class="self">self</span>, is: bool) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.is_preferred = is;
         <span class="self">self
     </span>}
 
@@ -1532,7 +1514,7 @@
 
         <span class="kw">let </span>inner = Actor {
             secret_key: key,
-            is_preferred: <span class="self">self</span>.is_preferred,
+            is_preferred: <span class="bool-val">false</span>,
             relay_conn: <span class="prelude-val">None</span>,
             is_closed: <span class="bool-val">false</span>,
             address_family_selector: <span class="self">self</span>.address_family_selector,
@@ -1643,6 +1625,8 @@
     }
 
     <span class="doccomment">/// Send a ping to the server. Return once we get an expected pong.
+    ///
+    /// This has a built-in timeout `crate::defaults::timeouts::PING_TIMEOUT`.
     ///
     /// There must be a task polling `recv_detail` to process the `pong` response.
     </span><span class="kw">pub async fn </span>ping(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Duration, ClientError&gt; {
@@ -1911,8 +1895,8 @@
 
         <span class="kw">let </span>cache = <span class="self">self</span>.key_cache.clone();
 
-        <span class="kw">let </span>reader = ConnReader::Derp(FramedRead::new(reader, DerpCodec::new(cache.clone())));
-        <span class="kw">let </span>writer = ConnWriter::Derp(FramedWrite::new(writer, DerpCodec::new(cache)));
+        <span class="kw">let </span>reader = ConnReader::Derp(FramedRead::new(reader, RelayCodec::new(cache.clone())));
+        <span class="kw">let </span>writer = ConnWriter::Derp(FramedWrite::new(writer, RelayCodec::new(cache)));
 
         <span class="prelude-val">Ok</span>((reader, writer, local_addr))
     }

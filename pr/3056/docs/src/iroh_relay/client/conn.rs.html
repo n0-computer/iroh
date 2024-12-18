@@ -541,7 +541,7 @@
     client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
     defaults::timeouts::CLIENT_RECV_TIMEOUT,
     protos::relay::{
-        write_frame, ClientInfo, DerpCodec, Frame, MAX_PACKET_SIZE, PER_CLIENT_READ_QUEUE_DEPTH,
+        write_frame, ClientInfo, Frame, RelayCodec, MAX_PACKET_SIZE, PER_CLIENT_READ_QUEUE_DEPTH,
         PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
     },
 };
@@ -607,7 +607,7 @@
     ///
     /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
     </span><span class="kw">pub async fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId, packet: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="macro">trace!</span>(%dst, len = packet.len(), <span class="string">"[RELAY] send"</span>);
+        <span class="macro">trace!</span>(dst = dst.fmt_short(), len = packet.len(), <span class="string">"[RELAY] send"</span>);
 
         <span class="self">self</span>.inner
             .writer_channel
@@ -779,12 +779,12 @@
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>ConnReader {
-    Derp(FramedRead&lt;MaybeTlsStreamReader, DerpCodec&gt;),
+    Derp(FramedRead&lt;MaybeTlsStreamReader, RelayCodec&gt;),
     Ws(SplitStream&lt;WebSocketStream&gt;, KeyCache),
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>ConnWriter {
-    Derp(FramedWrite&lt;MaybeTlsStreamWriter, DerpCodec&gt;),
+    Derp(FramedWrite&lt;MaybeTlsStreamWriter, RelayCodec&gt;),
     Ws(SplitSink&lt;WebSocketStream, tokio_tungstenite_wasm::Message&gt;),
 }
 
