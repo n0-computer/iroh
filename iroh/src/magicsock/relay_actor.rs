@@ -480,7 +480,7 @@ impl RelayActor {
 
         // try shutdown
         if let Err(_) =
-            tokio::time::timeout(Duration::from_secs(3), self.close_all_relay("conn-close")).await
+            tokio::time::timeout(Duration::from_secs(3), self.close_all_active_relays()).await
         {
             warn!("Failed to shut down all ActiveRelayActors");
         }
@@ -689,9 +689,9 @@ impl RelayActor {
     }
 
     /// Stops all [`ActiveRelayActor`]s and awaits for them to finish.
-    async fn close_all_relay(&mut self, why: &'static str) {
+    async fn close_all_active_relays(&mut self) {
         let send_futs = self.active_relays.iter().map(|(url, handle)| async move {
-            debug!(%url, why, "closing connection");
+            debug!(%url, "Shutting down ActiveRelayActor");
             handle
                 .inbox_addr
                 .send(ActiveRelayMessage::Shutdown)
