@@ -25,7 +25,7 @@ use std::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering},
         Arc, RwLock,
     },
-    task::{Context, Poll, Waker},
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 
@@ -41,6 +41,7 @@ use iroh_relay::{protos::stun, RelayMap};
 use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
+use relay_actor::RelaySendItem;
 use smallvec::{smallvec, SmallVec};
 use tokio::{
     sync::{self, mpsc, Mutex},
@@ -174,7 +175,6 @@ pub(crate) struct Handle {
 #[derive(derive_more::Debug)]
 pub(crate) struct MagicSock {
     actor_sender: mpsc::Sender<ActorMessage>,
-    relay_actor_sender: mpsc::Sender<RelayActorMessage>,
     /// String representation of the node_id of this node.
     me: String,
     /// Proxy
@@ -184,12 +184,9 @@ pub(crate) struct MagicSock {
     /// Relay datagrams received by relays are put into this queue and consumed by
     /// [`AsyncUdpSocket`].  This queue takes care of the wakers needed by
     /// [`AsyncUdpSocket::poll_recv`].
-    relay_datagrams_queue: Arc<RelayDatagramsQueue>,
-    /// Waker to wake the [`AsyncUdpSocket`] when more data can be sent to the relay server.
-    ///
-    /// This waker is used by [`IoPoller`] and the [`RelayActor`] to signal when more
-    /// datagrams can be sent to the relays.
-    relay_send_waker: Arc<std::sync::Mutex<Option<Waker>>>,
+    relay_datagrams_queue: Arc<RelayDatagramRecvQueue>,
+    /// Channel on which to send datagrams via a relay server.
+    relay_datagrams_send_channel: RelayDatagramSendChannelSender,
     /// Counter for ordering of [`MagicSock::poll_recv`] polling order.
     poll_recv_counter: AtomicUsize,
 
@@ -439,12 +436,11 @@ impl MagicSock {
         // ready.
         let ipv4_poller = self.pconn4.create_io_poller();
         let ipv6_poller = self.pconn6.as_ref().map(|sock| sock.create_io_poller());
-        let relay_sender = self.relay_actor_sender.clone();
+        let relay_sender = self.relay_datagrams_send_channel.clone();
         Box::pin(IoPoller {
             ipv4_poller,
             ipv6_poller,
             relay_sender,
-            relay_send_waker: self.relay_send_waker.clone(),
         })
     }
 
@@ -601,19 +597,19 @@ impl MagicSock {
             len = contents.iter().map(|c| c.len()).sum::<usize>(),
             "send relay",
         );
-        let msg = RelayActorMessage::Send {
-            url: url.clone(),
-            contents,
+        let msg = RelaySendItem {
             remote_node: node,
+            url: url.clone(),
+            datagrams: contents,
         };
-        match self.relay_actor_sender.try_send(msg) {
+        match self.relay_datagrams_send_channel.try_send(msg) {
             Ok(_) => {
                 trace!(node = %node.fmt_short(), relay_url = %url,
                        "send relay: message queued");
                 Ok(())
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
-                warn!(node = %node.fmt_short(), relay_url = %url,
+                error!(node = %node.fmt_short(), relay_url = %url,
                       "send relay: message dropped, channel to actor is closed");
                 Err(io::Error::new(
                     io::ErrorKind::ConnectionReset,
@@ -1524,7 +1520,7 @@ impl Handle {
             insecure_skip_relay_cert_verify,
         } = opts;
 
-        let relay_datagrams_queue = Arc::new(RelayDatagramsQueue::new());
+        let relay_datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
 
         let (pconn4, pconn6) = bind(addr_v4, addr_v6)?;
         let port = pconn4.port();
@@ -1547,6 +1543,7 @@ impl Handle {
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
         let (relay_actor_sender, relay_actor_receiver) = mpsc::channel(256);
+        let (relay_datagram_send_tx, relay_datagram_send_rx) = relay_datagram_sender();
         let (udp_disco_sender, mut udp_disco_receiver) = mpsc::channel(256);
 
         // load the node data
@@ -1564,8 +1561,8 @@ impl Handle {
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
-            relay_datagrams_queue: relay_datagrams_queue.clone(),
-            relay_send_waker: Arc::new(std::sync::Mutex::new(None)),
+            relay_datagrams_queue: relay_datagram_recv_queue.clone(),
+            relay_datagrams_send_channel: relay_datagram_send_tx,
             poll_recv_counter: AtomicUsize::new(0),
             actor_sender: actor_sender.clone(),
             ipv6_reported: Arc::new(AtomicBool::new(false)),
@@ -1576,7 +1573,6 @@ impl Handle {
             pconn6,
             disco_secrets: DiscoSecrets::default(),
             node_map,
-            relay_actor_sender: relay_actor_sender.clone(),
             udp_disco_sender,
             discovery,
             direct_addrs: Default::default(),
@@ -1589,11 +1585,13 @@ impl Handle {
 
         let mut actor_tasks = JoinSet::default();
 
-        let relay_actor = RelayActor::new(inner.clone(), relay_datagrams_queue);
+        let relay_actor = RelayActor::new(inner.clone(), relay_datagram_recv_queue);
         let relay_actor_cancel_token = relay_actor.cancel_token();
         actor_tasks.spawn(
             async move {
-                relay_actor.run(relay_actor_receiver).await;
+                relay_actor
+                    .run(relay_actor_receiver, relay_datagram_send_rx)
+                    .await;
             }
             .instrument(info_span!("relay-actor")),
         );
@@ -1729,6 +1727,125 @@ enum DiscoBoxError {
     Parse(anyhow::Error),
 }
 
+fn relay_datagram_sender() -> (
+    RelayDatagramSendChannelSender,
+    RelayDatagramSendChannelReceiver,
+) {
+    let (sender, receiver) = mpsc::channel(256);
+    let waker = Arc::new(AtomicWaker::new());
+    let tx = RelayDatagramSendChannelSender {
+        sender,
+        waker: waker.clone(),
+    };
+    let rx = RelayDatagramSendChannelReceiver { receiver, waker };
+    (tx, rx)
+}
+
+#[derive(Debug, Clone)]
+struct RelayDatagramSendChannelSender {
+    sender: mpsc::Sender<RelaySendItem>,
+    waker: Arc<AtomicWaker>,
+}
+
+impl RelayDatagramSendChannelSender {
+    fn try_send(
+        &self,
+        item: RelaySendItem,
+    ) -> Result<(), mpsc::error::TrySendError<RelaySendItem>> {
+        self.sender.try_send(item)
+    }
+
+    fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
+        match self.sender.capacity() {
+            0 => {
+                self.waker.register(cx.waker());
+                Poll::Pending
+            }
+            _ => Poll::Ready(Ok(())),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RelayDatagramSendChannelReceiver {
+    receiver: mpsc::Receiver<RelaySendItem>,
+    waker: Arc<AtomicWaker>,
+}
+
+impl RelayDatagramSendChannelReceiver {
+    async fn recv(&mut self) -> Option<RelaySendItem> {
+        let item = self.receiver.recv().await;
+        self.waker.wake();
+        item
+    }
+}
+
+// #[derive(Debug)]
+// struct RelayDatagramSendQueue {
+//     queue: ConcurrentQueue<RelaySendItem>,
+//     writable_waker: AtomicWaker,
+//     readable_waker: AtomicWaker,
+// }
+
+// impl RelayDatagramSendQueue {
+//     fn new() -> Self {
+//         Self {
+//             queue: ConcurrentQueue::bounded(256),
+//             writable_waker: AtomicWaker::new(),
+//             readable_waker: AtomicWaker::new(),
+//         }
+//     }
+
+//     fn try_send(&self, item: RelaySendItem) -> Result<(), io::Error> {
+//         match self.queue.push(item) {
+//             Ok(_) => {
+//                 self.readable_waker.wake();
+//                 Ok(())
+//             }
+//             Err(err) => match err {
+//                 concurrent_queue::PushError::Full(_) => Err(io::Error::new(
+//                     io::ErrorKind::ConnectionReset,
+//                     "queue to RelayActor is closed",
+//                 )),
+//                 concurrent_queue::PushError::Closed(_) => Err(io::Error::new(
+//                     io::ErrorKind::WouldBlock,
+//                     "queue to RelayActor is full",
+//                 )),
+//             },
+//         }
+//     }
+
+//     fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
+//         if self.queue.is_full() {
+//             self.writable_waker.register(cx.waker());
+//             Poll::Pending
+//         } else {
+//             Poll::Ready(Ok(()))
+//         }
+//     }
+
+//     fn recv(&self) -> impl Future<Output = Option<RelaySendItem>> {
+//         future::poll_fn(|cx| match self.queue.pop {
+//             Ok(item) => Poll::Ready(item),
+//             Err(concurrent_queue::PopError::Closed) => Poll::Ready(None),
+//             Err(concurrent_queue::PopError::Empty) => {
+//                 self.readable_waker.register(cx.waker());
+//                 match self.queue.pop() {
+//                     Ok(value) => {
+//                         self.readable_waker.take();
+//                         Poll::Ready(Ok(value))
+//                     }
+//                     Err(concurrent_queue::PopError::Empty) => Poll::Pending,
+//                     Err(concurrent_queue::PopError::Closed) => {
+//                         self.readlable_waker.take();
+//                         Poll::Ready(Err(anyhow!("Queue closed")))
+//                     }
+//                 }
+//             }
+//         })
+//     }
+// }
+
 /// A queue holding [`RelayRecvDatagram`]s that can be polled in async
 /// contexts, and wakes up tasks when something adds items using [`try_send`].
 ///
@@ -1739,12 +1856,12 @@ enum DiscoBoxError {
 /// [`RelayActor`]: crate::magicsock::RelayActor
 /// [`MagicSock`]: crate::magicsock::MagicSock
 #[derive(Debug)]
-struct RelayDatagramsQueue {
+struct RelayDatagramRecvQueue {
     queue: ConcurrentQueue<RelayRecvDatagram>,
     waker: AtomicWaker,
 }
 
-impl RelayDatagramsQueue {
+impl RelayDatagramRecvQueue {
     /// Creates a new, empty queue with a fixed size bound of 128 items.
     fn new() -> Self {
         Self {
@@ -1876,8 +1993,7 @@ impl AsyncUdpSocket for Handle {
 struct IoPoller {
     ipv4_poller: Pin<Box<dyn quinn::UdpPoller>>,
     ipv6_poller: Option<Pin<Box<dyn quinn::UdpPoller>>>,
-    relay_sender: mpsc::Sender<RelayActorMessage>,
-    relay_send_waker: Arc<std::sync::Mutex<Option<Waker>>>,
+    relay_sender: RelayDatagramSendChannelSender,
 }
 
 impl quinn::UdpPoller for IoPoller {
@@ -1894,16 +2010,7 @@ impl quinn::UdpPoller for IoPoller {
                 Poll::Pending => (),
             }
         }
-        match this.relay_sender.capacity() {
-            0 => {
-                self.relay_send_waker
-                    .lock()
-                    .expect("poisoned")
-                    .replace(cx.waker().clone());
-                Poll::Pending
-            }
-            _ => Poll::Ready(Ok(())),
-        }
+        this.relay_sender.poll_writable(cx)
     }
 }
 
@@ -4015,7 +4122,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_relay_datagram_queue() {
-        let queue = Arc::new(RelayDatagramsQueue::new());
+        let queue = Arc::new(RelayDatagramRecvQueue::new());
         let url = staging::default_na_relay_node().url;
         let capacity = queue.queue.capacity().unwrap();
 
