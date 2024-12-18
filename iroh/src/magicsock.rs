@@ -1727,6 +1727,10 @@ enum DiscoBoxError {
     Parse(anyhow::Error),
 }
 
+/// Creates a sender and receiver pair for sending datagrams to the [`RelayActor`].
+///
+/// These includes the waker coordination required to support [`AsyncUdpSocket::try_send`]
+/// and [`quinn::UdpPoller::poll_writable`].
 fn relay_datagram_sender() -> (
     RelayDatagramSendChannelSender,
     RelayDatagramSendChannelReceiver,
@@ -1741,6 +1745,10 @@ fn relay_datagram_sender() -> (
     (tx, rx)
 }
 
+/// Sender to send datagrams to the [`RelayActor`].
+///
+/// This includes the waker coordination required to support [`AsyncUdpSocket::try_send`]
+/// and [`quinn::UdpPoller::poll_writable`].
 #[derive(Debug, Clone)]
 struct RelayDatagramSendChannelSender {
     sender: mpsc::Sender<RelaySendItem>,
@@ -1766,6 +1774,10 @@ impl RelayDatagramSendChannelSender {
     }
 }
 
+/// Receiver to send datagrams to the [`RelayActor`].
+///
+/// This includes the waker coordination required to support [`AsyncUdpSocket::try_send`]
+/// and [`quinn::UdpPoller::poll_writable`].
 #[derive(Debug)]
 struct RelayDatagramSendChannelReceiver {
     receiver: mpsc::Receiver<RelaySendItem>,
@@ -1779,72 +1791,6 @@ impl RelayDatagramSendChannelReceiver {
         item
     }
 }
-
-// #[derive(Debug)]
-// struct RelayDatagramSendQueue {
-//     queue: ConcurrentQueue<RelaySendItem>,
-//     writable_waker: AtomicWaker,
-//     readable_waker: AtomicWaker,
-// }
-
-// impl RelayDatagramSendQueue {
-//     fn new() -> Self {
-//         Self {
-//             queue: ConcurrentQueue::bounded(256),
-//             writable_waker: AtomicWaker::new(),
-//             readable_waker: AtomicWaker::new(),
-//         }
-//     }
-
-//     fn try_send(&self, item: RelaySendItem) -> Result<(), io::Error> {
-//         match self.queue.push(item) {
-//             Ok(_) => {
-//                 self.readable_waker.wake();
-//                 Ok(())
-//             }
-//             Err(err) => match err {
-//                 concurrent_queue::PushError::Full(_) => Err(io::Error::new(
-//                     io::ErrorKind::ConnectionReset,
-//                     "queue to RelayActor is closed",
-//                 )),
-//                 concurrent_queue::PushError::Closed(_) => Err(io::Error::new(
-//                     io::ErrorKind::WouldBlock,
-//                     "queue to RelayActor is full",
-//                 )),
-//             },
-//         }
-//     }
-
-//     fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
-//         if self.queue.is_full() {
-//             self.writable_waker.register(cx.waker());
-//             Poll::Pending
-//         } else {
-//             Poll::Ready(Ok(()))
-//         }
-//     }
-
-//     fn recv(&self) -> impl Future<Output = Option<RelaySendItem>> {
-//         future::poll_fn(|cx| match self.queue.pop {
-//             Ok(item) => Poll::Ready(item),
-//             Err(concurrent_queue::PopError::Closed) => Poll::Ready(None),
-//             Err(concurrent_queue::PopError::Empty) => {
-//                 self.readable_waker.register(cx.waker());
-//                 match self.queue.pop() {
-//                     Ok(value) => {
-//                         self.readable_waker.take();
-//                         Poll::Ready(Ok(value))
-//                     }
-//                     Err(concurrent_queue::PopError::Empty) => Poll::Pending,
-//                     Err(concurrent_queue::PopError::Closed) => {
-//                         self.readlable_waker.take();
-//                         Poll::Ready(Err(anyhow!("Queue closed")))
-//                     }
-//                 }
-//             }
-//         })
-//     }
-// }
 
 /// A queue holding [`RelayRecvDatagram`]s that can be polled in async
 /// contexts, and wakes up tasks when something adds items using [`try_send`].
