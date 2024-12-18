@@ -224,7 +224,7 @@ impl RelayCodec {
     }
 }
 
-/// The frames in the [`DerpCodec`].
+/// The frames in the [`RelayCodec`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Frame {
     ClientInfo {
