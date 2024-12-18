@@ -234,11 +234,13 @@ mod tests {
 
     use super::*;
     use crate::{
-        protos::relay::{recv_frame, DerpCodec, Frame, FrameType},
+        protos::relay::{recv_frame, Frame, FrameType, RelayCodec},
         server::streams::{MaybeTlsStream, RelayedStream},
     };
 
-    fn test_client_builder(key: NodeId) -> (ClientConnConfig, FramedRead<DuplexStream, DerpCodec>) {
+    fn test_client_builder(
+        key: NodeId,
+    ) -> (ClientConnConfig, FramedRead<DuplexStream, RelayCodec>) {
         let (test_io, io) = tokio::io::duplex(1024);
         let (server_channel, _) = mpsc::channel(10);
         (
@@ -246,14 +248,14 @@ mod tests {
                 node_id: key,
                 stream: RelayedStream::Derp(Framed::new(
                     MaybeTlsStream::Test(io),
-                    DerpCodec::test(),
+                    RelayCodec::test(),
                 )),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
                 rate_limit: None,
                 server_channel,
             },
-            FramedRead::new(test_io, DerpCodec::test()),
+            FramedRead::new(test_io, RelayCodec::test()),
         )
     }
 

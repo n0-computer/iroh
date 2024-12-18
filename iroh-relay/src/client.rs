@@ -44,7 +44,7 @@ use url::Url;
 use crate::{
     defaults::timeouts::*,
     http::{Protocol, RELAY_PATH},
-    protos::relay::DerpCodec,
+    protos::relay::RelayCodec,
     KeyCache,
 };
 
@@ -699,8 +699,8 @@ impl Actor {
 
         let cache = self.key_cache.clone();
 
-        let reader = ConnReader::Derp(FramedRead::new(reader, DerpCodec::new(cache.clone())));
-        let writer = ConnWriter::Derp(FramedWrite::new(writer, DerpCodec::new(cache)));
+        let reader = ConnReader::Derp(FramedRead::new(reader, RelayCodec::new(cache.clone())));
+        let writer = ConnWriter::Derp(FramedWrite::new(writer, RelayCodec::new(cache)));
 
         Ok((reader, writer, local_addr))
     }

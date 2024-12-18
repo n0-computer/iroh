@@ -207,11 +207,11 @@ pub(crate) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
 /// This is a framed protocol, using [`tokio_util::codec`] to turn the streams of bytes into
 /// [`Frame`]s.
 #[derive(Debug, Clone)]
-pub(crate) struct DerpCodec {
+pub(crate) struct RelayCodec {
     cache: KeyCache,
 }
 
-impl DerpCodec {
+impl RelayCodec {
     #[cfg(test)]
     pub fn test() -> Self {
         Self {
@@ -495,7 +495,7 @@ impl Frame {
 
 const HEADER_LEN: usize = 5;
 
-impl Decoder for DerpCodec {
+impl Decoder for RelayCodec {
     type Item = Frame;
     type Error = anyhow::Error;
 
@@ -539,7 +539,7 @@ impl Decoder for DerpCodec {
     }
 }
 
-impl Encoder<Frame> for DerpCodec {
+impl Encoder<Frame> for RelayCodec {
     type Error = std::io::Error;
 
     fn encode(&mut self, frame: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
@@ -593,8 +593,8 @@ mod tests {
     #[tokio::test]
     async fn test_basic_read_write() -> anyhow::Result<()> {
         let (reader, writer) = tokio::io::duplex(1024);
-        let mut reader = FramedRead::new(reader, DerpCodec::test());
-        let mut writer = FramedWrite::new(writer, DerpCodec::test());
+        let mut reader = FramedRead::new(reader, RelayCodec::test());
+        let mut writer = FramedWrite::new(writer, RelayCodec::test());
 
         let expect_buf = b"hello world!";
         let expected_frame = Frame::Health {
@@ -613,8 +613,8 @@ mod tests {
     #[tokio::test]
     async fn test_send_recv_client_key() -> anyhow::Result<()> {
         let (reader, writer) = tokio::io::duplex(1024);
-        let mut reader = FramedRead::new(reader, DerpCodec::test());
-        let mut writer = FramedWrite::new(writer, DerpCodec::test());
+        let mut reader = FramedRead::new(reader, RelayCodec::test());
+        let mut writer = FramedWrite::new(writer, RelayCodec::test());
 
         let client_key = SecretKey::generate(rand::thread_rng());
         let client_info = ClientInfo {
@@ -814,7 +814,7 @@ mod proptests {
         #[test]
         fn frame_roundtrip(frame in frame()) {
             let mut buf = BytesMut::new();
-            let mut codec = DerpCodec::test();
+            let mut codec = RelayCodec::test();
             codec.encode(frame.clone(), &mut buf).unwrap();
             let decoded = codec.decode(&mut buf).unwrap().unwrap();
             prop_assert_eq!(frame, decoded);
@@ -831,7 +831,7 @@ mod proptests {
         #[test]
         fn broken_frame_handling(frame in frame()) {
             let mut buf = BytesMut::new();
-            let mut codec = DerpCodec::test();
+            let mut codec = RelayCodec::test();
             codec.encode(frame.clone(), &mut buf).unwrap();
             inject_error(&mut buf);
             let decoded = codec.decode(&mut buf);

@@ -518,7 +518,7 @@ mod tests {
     use super::*;
     use crate::{
         client::conn,
-        protos::relay::{recv_frame, DerpCodec, FrameType},
+        protos::relay::{recv_frame, FrameType, RelayCodec},
         server::streams::MaybeTlsStream,
     };
 
@@ -530,9 +530,9 @@ mod tests {
 
         let key = SecretKey::generate(rand::thread_rng()).public();
         let (io, io_rw) = tokio::io::duplex(1024);
-        let mut io_rw = Framed::new(io_rw, DerpCodec::test());
+        let mut io_rw = Framed::new(io_rw, RelayCodec::test());
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
-        let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec::test()));
+        let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
 
         let actor = Actor {
             stream: RateLimitedRelayedStream::unlimited(stream),
@@ -670,9 +670,9 @@ mod tests {
 
         let key = SecretKey::generate(rand::thread_rng()).public();
         let (io, io_rw) = tokio::io::duplex(1024);
-        let mut io_rw = Framed::new(io_rw, DerpCodec::test());
+        let mut io_rw = Framed::new(io_rw, RelayCodec::test());
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
-        let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), DerpCodec::test()));
+        let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
 
         println!("-- create client conn");
         let actor = Actor {
@@ -750,10 +750,10 @@ mod tests {
 
         // Build the rate limited stream.
         let (io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) as _);
-        let mut frame_writer = Framed::new(io_write, DerpCodec::test());
+        let mut frame_writer = Framed::new(io_write, RelayCodec::test());
         let stream = RelayedStream::Derp(Framed::new(
             MaybeTlsStream::Test(io_read),
-            DerpCodec::test(),
+            RelayCodec::test(),
         ));
         let mut stream = RateLimitedRelayedStream::new(stream, limiter);
 

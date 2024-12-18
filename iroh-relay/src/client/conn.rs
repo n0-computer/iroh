@@ -32,7 +32,7 @@ use crate::{
     client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
     defaults::timeouts::CLIENT_RECV_TIMEOUT,
     protos::relay::{
-        write_frame, ClientInfo, DerpCodec, Frame, MAX_PACKET_SIZE, PER_CLIENT_READ_QUEUE_DEPTH,
+        write_frame, ClientInfo, Frame, RelayCodec, MAX_PACKET_SIZE, PER_CLIENT_READ_QUEUE_DEPTH,
         PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
     },
 };
@@ -270,12 +270,12 @@ pub struct ConnBuilder {
 }
 
 pub(crate) enum ConnReader {
-    Derp(FramedRead<MaybeTlsStreamReader, DerpCodec>),
+    Derp(FramedRead<MaybeTlsStreamReader, RelayCodec>),
     Ws(SplitStream<WebSocketStream>, KeyCache),
 }
 
 pub(crate) enum ConnWriter {
-    Derp(FramedWrite<MaybeTlsStreamWriter, DerpCodec>),
+    Derp(FramedWrite<MaybeTlsStreamWriter, RelayCodec>),
     Ws(SplitSink<WebSocketStream, tokio_tungstenite_wasm::Message>),
 }
 
