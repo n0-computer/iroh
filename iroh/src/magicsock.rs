@@ -184,9 +184,9 @@ pub(crate) struct MagicSock {
     /// Relay datagrams received by relays are put into this queue and consumed by
     /// [`AsyncUdpSocket`].  This queue takes care of the wakers needed by
     /// [`AsyncUdpSocket::poll_recv`].
-    relay_datagrams_queue: Arc<RelayDatagramRecvQueue>,
+    relay_datagram_recv_queue: Arc<RelayDatagramRecvQueue>,
     /// Channel on which to send datagrams via a relay server.
-    relay_datagrams_send_channel: RelayDatagramSendChannelSender,
+    relay_datagram_send_channel: RelayDatagramSendChannelSender,
     /// Counter for ordering of [`MagicSock::poll_recv`] polling order.
     poll_recv_counter: AtomicUsize,
 
@@ -436,7 +436,7 @@ impl MagicSock {
         // ready.
         let ipv4_poller = self.pconn4.create_io_poller();
         let ipv6_poller = self.pconn6.as_ref().map(|sock| sock.create_io_poller());
-        let relay_sender = self.relay_datagrams_send_channel.clone();
+        let relay_sender = self.relay_datagram_send_channel.clone();
         Box::pin(IoPoller {
             ipv4_poller,
             ipv6_poller,
@@ -602,7 +602,7 @@ impl MagicSock {
             url: url.clone(),
             datagrams: contents,
         };
-        match self.relay_datagrams_send_channel.try_send(msg) {
+        match self.relay_datagram_send_channel.try_send(msg) {
             Ok(_) => {
                 trace!(node = %node.fmt_short(), relay_url = %url,
                        "send relay: message queued");
@@ -864,7 +864,7 @@ impl MagicSock {
             // For each output buffer keep polling the datagrams from the relay until one is
             // a QUIC datagram to be placed into the output buffer.  Or the channel is empty.
             loop {
-                let recv = match self.relay_datagrams_queue.poll_recv(cx) {
+                let recv = match self.relay_datagram_recv_queue.poll_recv(cx) {
                     Poll::Ready(Ok(recv)) => recv,
                     Poll::Ready(Err(err)) => {
                         error!("relay_recv_channel closed: {err:#}");
@@ -1561,8 +1561,8 @@ impl Handle {
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
-            relay_datagrams_queue: relay_datagram_recv_queue.clone(),
-            relay_datagrams_send_channel: relay_datagram_send_tx,
+            relay_datagram_recv_queue: relay_datagram_recv_queue.clone(),
+            relay_datagram_send_channel: relay_datagram_send_tx,
             poll_recv_counter: AtomicUsize::new(0),
             actor_sender: actor_sender.clone(),
             ipv6_reported: Arc::new(AtomicBool::new(false)),
