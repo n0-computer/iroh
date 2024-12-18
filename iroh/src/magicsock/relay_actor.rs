@@ -479,8 +479,9 @@ impl RelayActor {
         }
 
         // try shutdown
-        if let Err(_) =
-            tokio::time::timeout(Duration::from_secs(3), self.close_all_active_relays()).await
+        if tokio::time::timeout(Duration::from_secs(3), self.close_all_active_relays())
+            .await
+            .is_err()
         {
             warn!("Failed to shut down all ActiveRelayActors");
         }
