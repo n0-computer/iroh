@@ -31,13 +31,12 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 use url::Url;
 
+use super::RelayDatagramSendChannelReceiver;
 use crate::{
     dns::DnsResolver,
     magicsock::{MagicSock, Metrics as MagicsockMetrics, RelayContents, RelayDatagramRecvQueue},
     util::MaybeFuture,
 };
-
-use super::RelayDatagramSendChannelReceiver;
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
 const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
