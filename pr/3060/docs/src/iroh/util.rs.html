@@ -64,18 +64,7 @@
 <a href="#63" id="63">63</a>
 <a href="#64" id="64">64</a>
 <a href="#65" id="65">65</a>
-<a href="#66" id="66">66</a>
-<a href="#67" id="67">67</a>
-<a href="#68" id="68">68</a>
-<a href="#69" id="69">69</a>
-<a href="#70" id="70">70</a>
-<a href="#71" id="71">71</a>
-<a href="#72" id="72">72</a>
-<a href="#73" id="73">73</a>
-<a href="#74" id="74">74</a>
-<a href="#75" id="75">75</a>
-<a href="#76" id="76">76</a>
-<a href="#77" id="77">77</a></pre></div><pre class="rust"><code><span class="doccomment">//! Utilities used in [`iroh`][`crate`]
+<a href="#66" id="66">66</a></pre></div><pre class="rust"><code><span class="doccomment">//! Utilities used in [`iroh`][`crate`]
 
 </span><span class="kw">use </span>pin_project::pin_project;
 <span class="kw">use </span>std::{
@@ -90,20 +79,16 @@
 /// future polling will always return [`Poll::Pending`].
 ///
 /// The [`Default`] impl will create a [`MaybeFuture`] without an inner.
-</span><span class="attr">#[derive(Debug)]
+</span><span class="attr">#[derive(Default, Debug)]
 #[pin_project(project = MaybeFutureProj, project_replace = MaybeFutureProjReplace)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>MaybeFuture&lt;T&gt; {
     <span class="doccomment">/// Future to be polled.
     </span><span class="prelude-val">Some</span>(<span class="attr">#[pin] </span>T),
-    <span class="prelude-val">None</span>,
+    <span class="attr">#[default]
+    </span><span class="prelude-val">None</span>,
 }
 
 <span class="kw">impl</span>&lt;T&gt; MaybeFuture&lt;T&gt; {
-    <span class="doccomment">/// Creates a [`MaybeFuture`] without an inner future.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>none() -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::None
-    }
-
     <span class="doccomment">/// Clears the value
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>set_none(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;) {
         <span class="self">self</span>.as_mut().project_replace(<span class="self">Self</span>::None);
@@ -122,13 +107,6 @@
     <span class="doccomment">/// Returns `true` if the inner contains a future.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>is_some(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="macro">matches!</span>(<span class="self">self</span>, <span class="self">Self</span>::Some(<span class="kw">_</span>))
-    }
-}
-
-<span class="comment">// NOTE: explicit implementation to bypass derive unnecessary bounds
-</span><span class="kw">impl</span>&lt;T&gt; Default <span class="kw">for </span>MaybeFuture&lt;T&gt; {
-    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::none()
     }
 }
 

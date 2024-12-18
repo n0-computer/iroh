@@ -1112,8 +1112,7 @@
 <a href="#1111" id="1111">1111</a>
 <a href="#1112" id="1112">1112</a>
 <a href="#1113" id="1113">1113</a>
-<a href="#1114" id="1114">1114</a>
-<a href="#1115" id="1115">1115</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1114" id="1114">1114</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1297,8 +1296,7 @@
         <span class="comment">// When this future has an inner, it is a future which is currently sending
         // something to the relay server.  Nothing else can be sent to the relay server at
         // the same time.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>relay_send_fut = MaybeFuture::none();
-        <span class="kw">let </span><span class="kw-2">mut </span>relay_send_fut = <span class="macro">std::pin::pin!</span>(relay_send_fut);
+        </span><span class="kw">let </span><span class="kw-2">mut </span>relay_send_fut = <span class="macro">std::pin::pin!</span>(MaybeFuture::default());
 
         <span class="kw">loop </span>{
             <span class="comment">// If a read error occurred on the connection it might have been lost.  But we
