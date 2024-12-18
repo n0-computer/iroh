@@ -1124,8 +1124,7 @@
 <a href="#1123" id="1123">1123</a>
 <a href="#1124" id="1124">1124</a>
 <a href="#1125" id="1125">1125</a>
-<a href="#1126" id="1126">1126</a>
-<a href="#1127" id="1127">1127</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1126" id="1126">1126</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1300,7 +1299,7 @@
         <span class="comment">// When this future has an inner, it is a future which is currently sending
         // something to the relay server.  Nothing else can be sent to the relay server at
         // the same time.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>relay_send_fut = MaybeFuture::none();
+        </span><span class="kw">let </span><span class="kw-2">mut </span>relay_send_fut = <span class="macro">std::pin::pin!</span>(MaybeFuture::none());
 
         <span class="comment">// If inactive for this long the actor should exit.  Inactivity is only tracked on
         // the last datagrams sent to the relay, received datagrams will trigger ACKs which
@@ -1327,7 +1326,7 @@
                 }
                 <span class="comment">// Only poll relay_send_fut if it is sending to the relay.
                 </span><span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>relay_send_fut, <span class="kw">if </span>relay_send_fut.is_some() =&gt; {
-                    relay_send_fut = MaybeFuture::none();
+                    relay_send_fut.as_mut().set_none();
                 }
                 <span class="comment">// Only poll for new datagrams if relay_send_fut is not busy.
                 </span><span class="prelude-val">Some</span>(msg) = <span class="self">self</span>.relay_datagrams_send.recv(), <span class="kw">if </span>relay_send_fut.is_none() =&gt; {
@@ -1335,7 +1334,7 @@
                     <span class="kw">let </span>fut = <span class="kw">async move </span>{
                         relay_client.send(msg.node_id, msg.packet).<span class="kw">await
                     </span>};
-                    relay_send_fut = MaybeFuture::with_future(Box::pin(fut));
+                    relay_send_fut.as_mut().set_future(fut);
                     inactive_timeout.as_mut().reset(Instant::now() + RELAY_INACTIVE_CLEANUP_TIME);
 
                 }
@@ -1731,8 +1730,7 @@
                     .inbox_addr
                     .try_send(ActiveRelayMessage::SetHomeRelay(<span class="bool-val">true</span>))
                 {
-                    <span class="macro">error!</span>(<span class="string">"Send to newly started active relay failed: {err:#}."</span>);
-                    <span class="macro">warn!</span>(<span class="string">"Home relay not set"</span>);
+                    <span class="macro">error!</span>(<span class="string">"Home relay not set, send to new actor failed: {err:#}."</span>);
                 }
             }
             <span class="self">self</span>.active_relays.insert(url.clone(), handle);
