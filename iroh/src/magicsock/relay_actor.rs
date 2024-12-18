@@ -604,8 +604,7 @@ impl RelayActor {
                     .inbox_addr
                     .try_send(ActiveRelayMessage::SetHomeRelay(true))
                 {
-                    error!("Send to newly started active relay failed: {err:#}.");
-                    warn!("Home relay not set");
+                    error!("Home relay not set, send to new actor failed: {err:#}.");
                 }
             }
             self.active_relays.insert(url.clone(), handle);
