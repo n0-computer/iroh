@@ -13,20 +13,16 @@ use std::{
 /// future polling will always return [`Poll::Pending`].
 ///
 /// The [`Default`] impl will create a [`MaybeFuture`] without an inner.
-#[derive(Debug)]
+#[derive(Default, Debug)]
 #[pin_project(project = MaybeFutureProj, project_replace = MaybeFutureProjReplace)]
 pub(crate) enum MaybeFuture<T> {
     /// Future to be polled.
     Some(#[pin] T),
+    #[default]
     None,
 }
 
 impl<T> MaybeFuture<T> {
-    /// Creates a [`MaybeFuture`] without an inner future.
-    pub(crate) fn none() -> Self {
-        Self::None
-    }
-
     /// Clears the value
     pub(crate) fn set_none(mut self: Pin<&mut Self>) {
         self.as_mut().project_replace(Self::None);
@@ -45,13 +41,6 @@ impl<T> MaybeFuture<T> {
     /// Returns `true` if the inner contains a future.
     pub(crate) fn is_some(&self) -> bool {
         matches!(self, Self::Some(_))
-    }
-}
-
-// NOTE: explicit implementation to bypass derive unnecessary bounds
-impl<T> Default for MaybeFuture<T> {
-    fn default() -> Self {
-        Self::none()
     }
 }
 

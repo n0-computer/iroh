@@ -182,8 +182,7 @@ impl ActiveRelayActor {
         // When this future has an inner, it is a future which is currently sending
         // something to the relay server.  Nothing else can be sent to the relay server at
         // the same time.
-        let mut relay_send_fut = MaybeFuture::none();
-        let mut relay_send_fut = std::pin::pin!(relay_send_fut);
+        let mut relay_send_fut = std::pin::pin!(MaybeFuture::default());
 
         loop {
             // If a read error occurred on the connection it might have been lost.  But we
