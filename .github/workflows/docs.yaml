@@ -34,7 +34,7 @@ jobs:
       with:
         toolchain: nightly-2024-11-30
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.6
+      uses: mozilla-actions/sccache-action@v0.0.7
 
     - name: Generate Docs
       run: cargo doc --workspace --all-features --no-deps

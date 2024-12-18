@@ -173,7 +173,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.7
 
       - name: Setup Environment (PR)
         if: ${{ github.event_name == 'pull_request' }}
@@ -205,7 +205,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - uses: mozilla-actions/sccache-action@v0.0.6
+      - uses: mozilla-actions/sccache-action@v0.0.7
       - uses: taiki-e/install-action@cargo-make
       - run: cargo make format-check
 
@@ -223,7 +223,7 @@ jobs:
         with:
           toolchain: nightly-2024-11-30
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.7
 
       - name: Docs
         run: cargo doc --workspace --all-features --no-deps --document-private-items
@@ -243,7 +243,7 @@ jobs:
         with:
           components: clippy
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.7
 
       # TODO: We have a bunch of platform-dependent code so should
       #    probably run this job on the full platform matrix
@@ -270,7 +270,7 @@ jobs:
         with:
           toolchain: ${{ env.MSRV }}
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.7
 
       - name: Check MSRV all features
         run: |
