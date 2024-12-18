@@ -465,7 +465,7 @@ impl RelayActor {
                     if !err.is_cancelled() {
                         error!("ActiveRelayActor failed: {err:?}");
                     }
-                    self.clean_stopped_active_relays();
+                    self.reap_active_relays();
                 }
                 msg = receiver.recv() => {
                     let Some(msg) = msg else {
@@ -670,7 +670,7 @@ impl RelayActor {
     }
 
     /// Cleans up [`ActiveRelayActor`]s which have stopped running.
-    fn clean_stopped_active_relays(&mut self) {
+    fn reap_active_relays(&mut self) {
         let mut stopped_actors = Vec::with_capacity(self.active_relays.len());
         for (url, handle) in self.active_relays.iter() {
             if handle.inbox_addr.is_closed() {
