@@ -34,7 +34,6 @@ pub fn server_endpoint(
         #[cfg(feature = "local-relay")]
         {
             builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some());
-            #[cfg(any(test, feature = "test-utils"))]
             builder = builder.relay_only(opt.only_relay);
         }
         let ep = builder
@@ -92,7 +91,6 @@ pub async fn connect_client(
     #[cfg(feature = "local-relay")]
     {
         builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some());
-        #[cfg(any(test, feature = "test-utils"))]
         builder = builder.relay_only(opt.only_relay);
     }
     let endpoint = builder
