@@ -173,7 +173,7 @@ impl ActiveRelayActor {
         // When this future has an inner, it is a future which is currently sending
         // something to the relay server.  Nothing else can be sent to the relay server at
         // the same time.
-        let mut relay_send_fut = MaybeFuture::none();
+        let mut relay_send_fut = std::pin::pin!(MaybeFuture::none());
 
         // If inactive for this long the actor should exit.  Inactivity is only tracked on
         // the last datagrams sent to the relay, received datagrams will trigger ACKs which
@@ -200,7 +200,7 @@ impl ActiveRelayActor {
                 }
                 // Only poll relay_send_fut if it is sending to the relay.
                 _ = &mut relay_send_fut, if relay_send_fut.is_some() => {
-                    relay_send_fut = MaybeFuture::none();
+                    relay_send_fut.as_mut().set_none();
                 }
                 // Only poll for new datagrams if relay_send_fut is not busy.
                 Some(msg) = self.relay_datagrams_send.recv(), if relay_send_fut.is_none() => {
@@ -208,7 +208,7 @@ impl ActiveRelayActor {
                     let fut = async move {
                         relay_client.send(msg.node_id, msg.packet).await
                     };
-                    relay_send_fut = MaybeFuture::with_future(Box::pin(fut));
+                    relay_send_fut.as_mut().set_future(fut);
                     inactive_timeout.as_mut().reset(Instant::now() + RELAY_INACTIVE_CLEANUP_TIME);
 
                 }
