@@ -27,11 +27,6 @@ impl<T> MaybeFuture<T> {
         Self::None
     }
 
-    /// Creates a [`MaybeFuture`] with an inner future.
-    pub(crate) fn with_future(fut: T) -> Self {
-        Self::Some(fut)
-    }
-
     /// Clears the value
     pub(crate) fn set_none(mut self: Pin<&mut Self>) {
         self.as_mut().project_replace(Self::None);
