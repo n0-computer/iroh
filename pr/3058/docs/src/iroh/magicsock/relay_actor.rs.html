@@ -1111,7 +1111,8 @@
 <a href="#1110" id="1110">1110</a>
 <a href="#1111" id="1111">1111</a>
 <a href="#1112" id="1112">1112</a>
-<a href="#1113" id="1113">1113</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1113" id="1113">1113</a>
+<a href="#1114" id="1114">1114</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -2199,7 +2200,8 @@
         <span class="kw">let </span>recv = future::poll_fn(|cx| datagram_recv_queue.poll_recv(cx)).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(recv.buf.as_ref(), <span class="string">b"hello"</span>);
 
-        <span class="comment">// Now ask to check the connection, this will reconnect.
+        <span class="comment">// Now ask to check the connection, this will reconnect without pinging because we
+        // do not supply any "valid" local IP addresses.
         </span><span class="macro">info!</span>(<span class="string">"check connection"</span>);
         inbox_tx
             .send(ActiveRelayMessage::CheckConnection(Vec::new()))
