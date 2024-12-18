@@ -1606,7 +1606,7 @@
 
         <span class="comment">// try shutdown
         </span><span class="kw">if let </span><span class="prelude-val">Err</span>(<span class="kw">_</span>) =
-            tokio::time::timeout(Duration::from_secs(<span class="number">3</span>), <span class="self">self</span>.close_all_relay(<span class="string">"conn-close"</span>)).<span class="kw">await
+            tokio::time::timeout(Duration::from_secs(<span class="number">3</span>), <span class="self">self</span>.close_all_active_relays()).<span class="kw">await
         </span>{
             <span class="macro">warn!</span>(<span class="string">"Failed to shut down all ActiveRelayActors"</span>);
         }
@@ -1815,9 +1815,9 @@
     }
 
     <span class="doccomment">/// Stops all [`ActiveRelayActor`]s and awaits for them to finish.
-    </span><span class="kw">async fn </span>close_all_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) {
+    </span><span class="kw">async fn </span>close_all_active_relays(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="kw">let </span>send_futs = <span class="self">self</span>.active_relays.iter().map(|(url, handle)| <span class="kw">async move </span>{
-            <span class="macro">debug!</span>(%url, why, <span class="string">"closing connection"</span>);
+            <span class="macro">debug!</span>(%url, <span class="string">"Shutting down ActiveRelayActor"</span>);
             handle
                 .inbox_addr
                 .send(ActiveRelayMessage::Shutdown)
