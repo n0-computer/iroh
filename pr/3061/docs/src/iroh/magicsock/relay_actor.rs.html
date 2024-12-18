@@ -1591,7 +1591,7 @@
                     <span class="kw">if </span>!err.is_cancelled() {
                         <span class="macro">error!</span>(<span class="string">"ActiveRelayActor failed: {err:?}"</span>);
                     }
-                    <span class="self">self</span>.clean_stopped_active_relays();
+                    <span class="self">self</span>.reap_active_relays();
                 }
                 msg = receiver.recv() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
@@ -1796,7 +1796,7 @@
     }
 
     <span class="doccomment">/// Cleans up [`ActiveRelayActor`]s which have stopped running.
-    </span><span class="kw">fn </span>clean_stopped_active_relays(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+    </span><span class="kw">fn </span>reap_active_relays(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="kw">let </span><span class="kw-2">mut </span>stopped_actors = Vec::with_capacity(<span class="self">self</span>.active_relays.len());
         <span class="kw">for </span>(url, handle) <span class="kw">in </span><span class="self">self</span>.active_relays.iter() {
             <span class="kw">if </span>handle.inbox_addr.is_closed() {
