@@ -1,11 +1,12 @@
 //! Utilities used in [`iroh`][`crate`]
 
-use pin_project::pin_project;
 use std::{
     future::Future,
     pin::Pin,
     task::{Context, Poll},
 };
+
+use pin_project::pin_project;
 
 /// A future which may not be present.
 ///
@@ -23,6 +24,11 @@ pub(crate) enum MaybeFuture<T> {
 }
 
 impl<T> MaybeFuture<T> {
+    /// Creates a [`MaybeFuture`] without an inner future.
+    pub(crate) fn none() -> Self {
+        Self::default()
+    }
+
     /// Clears the value
     pub(crate) fn set_none(mut self: Pin<&mut Self>) {
         self.as_mut().project_replace(Self::None);
