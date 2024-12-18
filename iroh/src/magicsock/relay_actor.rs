@@ -438,7 +438,6 @@ impl RelayActor {
     pub(super) fn new(
         msock: Arc<MagicSock>,
         relay_datagram_recv_queue: Arc<RelayDatagramRecvQueue>,
-        // relay_datagram_send_queue: RelayDatagramsQueue,
     ) -> Self {
         let cancel_token = CancellationToken::new();
         Self {
