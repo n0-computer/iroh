@@ -1086,7 +1086,8 @@ mod tests {
         let recv = future::poll_fn(|cx| datagram_recv_queue.poll_recv(cx)).await?;
         assert_eq!(recv.buf.as_ref(), b"hello");
 
-        // Now ask to check the connection, this will reconnect.
+        // Now ask to check the connection, this will reconnect without pinging because we
+        // do not supply any "valid" local IP addresses.
         info!("check connection");
         inbox_tx
             .send(ActiveRelayMessage::CheckConnection(Vec::new()))
