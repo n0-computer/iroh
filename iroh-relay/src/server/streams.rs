@@ -13,7 +13,7 @@ use tokio_tungstenite::{tungstenite, WebSocketStream};
 use tokio_util::codec::Framed;
 
 use crate::{
-    protos::relay::{DerpCodec, Frame},
+    protos::relay::{Frame, RelayCodec},
     KeyCache,
 };
 
@@ -22,7 +22,7 @@ use crate::{
 /// The stream receives message from the client while the sink sends them to the client.
 #[derive(Debug)]
 pub(crate) enum RelayedStream {
-    Derp(Framed<MaybeTlsStream, DerpCodec>),
+    Derp(Framed<MaybeTlsStream, RelayCodec>),
     Ws(WebSocketStream<MaybeTlsStream>, KeyCache),
 }
 
