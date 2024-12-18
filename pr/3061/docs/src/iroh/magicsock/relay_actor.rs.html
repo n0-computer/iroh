@@ -1124,7 +1124,8 @@
 <a href="#1123" id="1123">1123</a>
 <a href="#1124" id="1124">1124</a>
 <a href="#1125" id="1125">1125</a>
-<a href="#1126" id="1126">1126</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1126" id="1126">1126</a>
+<a href="#1127" id="1127">1127</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1605,9 +1606,10 @@
         }
 
         <span class="comment">// try shutdown
-        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(<span class="kw">_</span>) =
-            tokio::time::timeout(Duration::from_secs(<span class="number">3</span>), <span class="self">self</span>.close_all_active_relays()).<span class="kw">await
-        </span>{
+        </span><span class="kw">if </span>tokio::time::timeout(Duration::from_secs(<span class="number">3</span>), <span class="self">self</span>.close_all_active_relays())
+            .<span class="kw">await
+            </span>.is_err()
+        {
             <span class="macro">warn!</span>(<span class="string">"Failed to shut down all ActiveRelayActors"</span>);
         }
     }
