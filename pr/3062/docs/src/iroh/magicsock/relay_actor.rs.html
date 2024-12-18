@@ -1131,9 +1131,7 @@
 <a href="#1130" id="1130">1130</a>
 <a href="#1131" id="1131">1131</a>
 <a href="#1132" id="1132">1132</a>
-<a href="#1133" id="1133">1133</a>
-<a href="#1134" id="1134">1134</a>
-<a href="#1135" id="1135">1135</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1133" id="1133">1133</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1166,13 +1164,12 @@
 <span class="kw">use </span>tracing::{debug, error, info, info_span, trace, warn, Instrument};
 <span class="kw">use </span>url::Url;
 
+<span class="kw">use </span><span class="kw">super</span>::RelayDatagramSendChannelReceiver;
 <span class="kw">use crate</span>::{
     dns::DnsResolver,
     magicsock::{MagicSock, Metrics <span class="kw">as </span>MagicsockMetrics, RelayContents, RelayDatagramRecvQueue},
     util::MaybeFuture,
 };
-
-<span class="kw">use </span><span class="kw">super</span>::RelayDatagramSendChannelReceiver;
 
 <span class="doccomment">/// How long a non-home relay connection needs to be idle (last written to) before we close it.
 </span><span class="kw">const </span>RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(<span class="number">60</span>);
@@ -1573,8 +1570,7 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
         msock: Arc&lt;MagicSock&gt;,
         relay_datagram_recv_queue: Arc&lt;RelayDatagramRecvQueue&gt;,
-        <span class="comment">// relay_datagram_send_queue: RelayDatagramsQueue,
-    </span>) -&gt; <span class="self">Self </span>{
+    ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>cancel_token = CancellationToken::new();
         <span class="self">Self </span>{
             msock,
