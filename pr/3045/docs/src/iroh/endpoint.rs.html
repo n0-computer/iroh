@@ -1918,7 +1918,10 @@
 <a href="#1917" id="1917">1917</a>
 <a href="#1918" id="1918">1918</a>
 <a href="#1919" id="1919">1919</a>
-<a href="#1920" id="1920">1920</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#1920" id="1920">1920</a>
+<a href="#1921" id="1921">1921</a>
+<a href="#1922" id="1922">1922</a>
+<a href="#1923" id="1923">1923</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3363,6 +3366,8 @@
     <span class="kw">use </span>futures_lite::StreamExt;
     <span class="kw">use </span>iroh_test::CallOnDrop;
     <span class="kw">use </span>rand::SeedableRng;
+    <span class="kw">use </span>testresult::TestResult;
+    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
     <span class="kw">use </span>tracing::{error_span, info, info_span, Instrument};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
@@ -3736,10 +3741,10 @@
     }
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>endpoint_conn_type_stream() {
+    </span><span class="kw">async fn </span>endpoint_conn_type_becomes_direct() -&gt; TestResult {
         <span class="kw">const </span>TIMEOUT: Duration = std::time::Duration::from_secs(<span class="number">15</span>);
         <span class="kw">let </span>_logging_guard = iroh_test::logging::setup();
-        <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
         <span class="kw">let </span>ep1_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
         <span class="kw">let </span>ep2_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
@@ -3749,18 +3754,16 @@
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .bind()
-            .<span class="kw">await
-            </span>.unwrap();
+            .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>ep2 = Endpoint::builder()
             .secret_key(ep2_secret_key)
             .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .bind()
-            .<span class="kw">await
-            </span>.unwrap();
+            .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">async fn </span>handle_direct_conn(ep: <span class="kw-2">&amp;</span>Endpoint, node_id: PublicKey) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">async fn </span>wait_for_conn_type_direct(ep: <span class="kw-2">&amp;</span>Endpoint, node_id: PublicKey) -&gt; TestResult {
             <span class="kw">let </span><span class="kw-2">mut </span>stream = ep.conn_type(node_id)<span class="question-mark">?</span>.stream();
             <span class="kw">let </span>src = ep.node_id().fmt_short();
             <span class="kw">let </span>dst = node_id.fmt_short();
@@ -3770,53 +3773,56 @@
                     <span class="kw">return </span><span class="prelude-val">Ok</span>(());
                 }
             }
-            <span class="macro">anyhow::bail!</span>(<span class="string">"conn_type stream ended before `ConnectionType::Direct`"</span>);
+            <span class="macro">panic!</span>(<span class="string">"conn_type stream ended before `ConnectionType::Direct`"</span>);
         }
 
-        <span class="kw">async fn </span>accept(ep: <span class="kw-2">&amp;</span>Endpoint) -&gt; NodeId {
-            <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.unwrap();
-            <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.unwrap();
-            <span class="kw">let </span>node_id = get_remote_node_id(<span class="kw-2">&amp;</span>conn).unwrap();
+        <span class="kw">async fn </span>accept(ep: <span class="kw-2">&amp;</span>Endpoint) -&gt; TestResult&lt;Connection&gt; {
+            <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.expect(<span class="string">"ep closed"</span>);
+            <span class="kw">let </span>conn = incoming.<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>node_id = get_remote_node_id(<span class="kw-2">&amp;</span>conn)<span class="question-mark">?</span>;
             <span class="macro">tracing::info!</span>(node_id=%node_id.fmt_short(), <span class="string">"accepted connection"</span>);
-            node_id
+            <span class="prelude-val">Ok</span>(conn)
         }
 
         <span class="kw">let </span>ep1_nodeid = ep1.node_id();
         <span class="kw">let </span>ep2_nodeid = ep2.node_id();
 
-        <span class="kw">let </span>ep1_nodeaddr = ep1.node_addr().initialized().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>ep1_nodeaddr = ep1.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">tracing::info!</span>(
             <span class="string">"node id 1 {ep1_nodeid}, relay URL {:?}"</span>,
             ep1_nodeaddr.relay_url()
         );
         <span class="macro">tracing::info!</span>(<span class="string">"node id 2 {ep2_nodeid}"</span>);
 
-        <span class="kw">let </span>ep1_side = <span class="kw">async move </span>{
-            accept(<span class="kw-2">&amp;</span>ep1).<span class="kw">await</span>;
-            handle_direct_conn(<span class="kw-2">&amp;</span>ep1, ep2_nodeid).<span class="kw">await
-        </span>};
-
-        <span class="kw">let </span>ep2_side = <span class="kw">async move </span>{
-            ep2.connect(ep1_nodeaddr, TEST_ALPN).<span class="kw">await</span>.unwrap();
-            handle_direct_conn(<span class="kw-2">&amp;</span>ep2, ep1_nodeid).<span class="kw">await
-        </span>};
-
-        <span class="kw">let </span>res_ep1 = tokio::spawn(tokio::time::timeout(TIMEOUT, ep1_side));
-
-        <span class="kw">let </span>ep1_abort_handle = res_ep1.abort_handle();
-        <span class="kw">let </span>_ep1_guard = CallOnDrop::new(<span class="kw">move </span>|| {
-            ep1_abort_handle.abort();
+        <span class="kw">let </span>ep1_side = tokio::time::timeout(TIMEOUT, <span class="kw">async move </span>{
+            <span class="kw">let </span>conn = accept(<span class="kw-2">&amp;</span>ep1).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span><span class="kw-2">mut </span>send = conn.open_uni().<span class="kw">await</span><span class="question-mark">?</span>;
+            wait_for_conn_type_direct(<span class="kw-2">&amp;</span>ep1, ep2_nodeid).<span class="kw">await</span><span class="question-mark">?</span>;
+            send.write_all(<span class="string">b"Conn is direct"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            send.finish()<span class="question-mark">?</span>;
+            conn.closed().<span class="kw">await</span>;
+            TestResult::Ok(())
         });
 
-        <span class="kw">let </span>res_ep2 = tokio::spawn(tokio::time::timeout(TIMEOUT, ep2_side));
-        <span class="kw">let </span>ep2_abort_handle = res_ep2.abort_handle();
-        <span class="kw">let </span>_ep2_guard = CallOnDrop::new(<span class="kw">move </span>|| {
-            ep2_abort_handle.abort();
+        <span class="kw">let </span>ep2_side = tokio::time::timeout(TIMEOUT, <span class="kw">async move </span>{
+            <span class="kw">let </span>conn = ep2.connect(ep1_nodeaddr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span><span class="kw-2">mut </span>recv = conn.accept_uni().<span class="kw">await</span><span class="question-mark">?</span>;
+            wait_for_conn_type_direct(<span class="kw-2">&amp;</span>ep2, ep1_nodeid).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>read = recv.read_to_end(<span class="number">100</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="macro">assert_eq!</span>(read, <span class="string">b"Conn is direct"</span>.to_vec());
+            conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
+            conn.closed().<span class="kw">await</span>;
+            TestResult::Ok(())
         });
 
-        <span class="kw">let </span>(r1, r2) = <span class="macro">tokio::try_join!</span>(res_ep1, res_ep2).unwrap();
-        r1.expect(<span class="string">"ep1 timeout"</span>).unwrap();
-        r2.expect(<span class="string">"ep2 timeout"</span>).unwrap();
+        <span class="kw">let </span>res_ep1 = AbortOnDropHandle::new(tokio::spawn(ep1_side));
+        <span class="kw">let </span>res_ep2 = AbortOnDropHandle::new(tokio::spawn(ep2_side));
+
+        <span class="kw">let </span>(r1, r2) = <span class="macro">tokio::try_join!</span>(res_ep1, res_ep2)<span class="question-mark">?</span>;
+        r1<span class="question-mark">??</span>;
+        r2<span class="question-mark">??</span>;
+
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="attr">#[tokio::test]
