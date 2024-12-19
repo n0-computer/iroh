@@ -1921,7 +1921,25 @@
 <a href="#1920" id="1920">1920</a>
 <a href="#1921" id="1921">1921</a>
 <a href="#1922" id="1922">1922</a>
-<a href="#1923" id="1923">1923</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#1923" id="1923">1923</a>
+<a href="#1924" id="1924">1924</a>
+<a href="#1925" id="1925">1925</a>
+<a href="#1926" id="1926">1926</a>
+<a href="#1927" id="1927">1927</a>
+<a href="#1928" id="1928">1928</a>
+<a href="#1929" id="1929">1929</a>
+<a href="#1930" id="1930">1930</a>
+<a href="#1931" id="1931">1931</a>
+<a href="#1932" id="1932">1932</a>
+<a href="#1933" id="1933">1933</a>
+<a href="#1934" id="1934">1934</a>
+<a href="#1935" id="1935">1935</a>
+<a href="#1936" id="1936">1936</a>
+<a href="#1937" id="1937">1937</a>
+<a href="#1938" id="1938">1938</a>
+<a href="#1939" id="1939">1939</a>
+<a href="#1940" id="1940">1940</a>
+<a href="#1941" id="1941">1941</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -1997,9 +2015,12 @@
 
 <span class="kw">type </span>DiscoveryBuilder = Box&lt;<span class="kw">dyn </span>FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; + Send + Sync&gt;;
 
-<span class="doccomment">/// TODO(matheus23): DOCS (don't even ask)
+<span class="doccomment">/// A type alias for the return value of [`Endpoint::node_addr`].
 ///
-/// Implements [`Watcher`]`&lt;Option&lt;`[`NodeAddr`]`&gt;&gt;`.
+/// This type implements [`Watcher`] with `Value` being an optional [`NodeAddr`].
+///
+/// We return a named type instead of `impl Watcher&lt;Value = NodeAddr&gt;`, as this allows
+/// you to e.g. store the watcher in a struct.
 </span><span class="kw">pub type </span>NodeAddrWatcher = watcher::Map&lt;
     (
         watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt;,
@@ -2690,11 +2711,26 @@
         <span class="self">self</span>.static_config.secret_key.public()
     }
 
-    <span class="doccomment">/// Returns the current [`NodeAddr`] for this endpoint.
+    <span class="doccomment">/// Returns a [`Watcher`] for the current [`NodeAddr`] for this endpoint.
     ///
-    /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
-    /// as they would be returned by [`Endpoint::home_relay`] and
-    /// [`Endpoint::direct_addresses`].
+    /// The observed [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
+    /// as they would be returned by [`Endpoint::home_relay`] and [`Endpoint::direct_addresses`].
+    ///
+    /// Use [`Watcher::initialized`] to wait for a [`NodeAddr`] that is ready to be connected to:
+    ///
+    /// ```no_run
+    /// # async fn wrapper() -&gt; testresult::TestResult {
+    /// use iroh::{Endpoint, watcher::{Watcher as _}};
+    ///
+    /// let endpoint = Endpoint::builder()
+    ///     .alpns(vec![b"my-alpn".to_vec()])
+    ///     .bind()
+    ///     .await?;
+    /// let node_addr = endpoint.node_addr().initialized().await?;
+    /// # let _ = node_addr;
+    /// # Ok(())
+    /// # }
+    /// ```
     </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeAddrWatcher {
         <span class="kw">let </span>watch_addrs = <span class="self">self</span>.direct_addresses();
         <span class="kw">let </span>watch_relay = <span class="self">self</span>.home_relay();
@@ -2735,7 +2771,7 @@
     /// To wait for a home relay connection to be established, use [`Watcher::initialized`]:
     /// ```no_run
     /// use futures_lite::StreamExt;
-    /// use iroh::Endpoint;
+    /// use iroh::{Endpoint, watcher::{Watcher as _}};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -2771,7 +2807,7 @@
     /// To get the first set of direct addresses use [`Watcher::initialized`]:
     /// ```no_run
     /// use futures_lite::StreamExt;
-    /// use iroh::Endpoint;
+    /// use iroh::{Endpoint, watcher::{Watcher as _}};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
