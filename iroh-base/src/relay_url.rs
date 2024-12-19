@@ -1,5 +1,4 @@
-use std::sync::Arc;
-use std::{fmt, ops::Deref, str::FromStr};
+use std::{fmt, ops::Deref, str::FromStr, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use url::Url;
