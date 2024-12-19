@@ -1443,6 +1443,8 @@ mod tests {
     use futures_lite::StreamExt;
     use iroh_test::CallOnDrop;
     use rand::SeedableRng;
+    use testresult::TestResult;
+    use tokio_util::task::AbortOnDropHandle;
     use tracing::{error_span, info, info_span, Instrument};
 
     use super::*;
@@ -1816,10 +1818,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn endpoint_conn_type_stream() {
+    async fn endpoint_conn_type_becomes_direct() -> TestResult {
         const TIMEOUT: Duration = std::time::Duration::from_secs(15);
         let _logging_guard = iroh_test::logging::setup();
-        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await.unwrap();
+        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let ep1_secret_key = SecretKey::generate(&mut rng);
         let ep2_secret_key = SecretKey::generate(&mut rng);
@@ -1829,18 +1831,16 @@ mod tests {
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .bind()
-            .await
-            .unwrap();
+            .await?;
         let ep2 = Endpoint::builder()
             .secret_key(ep2_secret_key)
             .insecure_skip_relay_cert_verify(true)
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .bind()
-            .await
-            .unwrap();
+            .await?;
 
-        async fn handle_direct_conn(ep: &Endpoint, node_id: PublicKey) -> Result<()> {
+        async fn wait_for_conn_type_direct(ep: &Endpoint, node_id: PublicKey) -> TestResult {
             let mut stream = ep.conn_type(node_id)?.stream();
             let src = ep.node_id().fmt_short();
             let dst = node_id.fmt_short();
@@ -1850,53 +1850,56 @@ mod tests {
                     return Ok(());
                 }
             }
-            anyhow::bail!("conn_type stream ended before `ConnectionType::Direct`");
+            panic!("conn_type stream ended before `ConnectionType::Direct`");
         }
 
-        async fn accept(ep: &Endpoint) -> NodeId {
-            let incoming = ep.accept().await.unwrap();
-            let conn = incoming.await.unwrap();
-            let node_id = get_remote_node_id(&conn).unwrap();
+        async fn accept(ep: &Endpoint) -> TestResult<Connection> {
+            let incoming = ep.accept().await.expect("ep closed");
+            let conn = incoming.await?;
+            let node_id = get_remote_node_id(&conn)?;
             tracing::info!(node_id=%node_id.fmt_short(), "accepted connection");
-            node_id
+            Ok(conn)
         }
 
         let ep1_nodeid = ep1.node_id();
         let ep2_nodeid = ep2.node_id();
 
-        let ep1_nodeaddr = ep1.node_addr().initialized().await.unwrap();
+        let ep1_nodeaddr = ep1.node_addr().initialized().await?;
         tracing::info!(
             "node id 1 {ep1_nodeid}, relay URL {:?}",
             ep1_nodeaddr.relay_url()
         );
         tracing::info!("node id 2 {ep2_nodeid}");
 
-        let ep1_side = async move {
-            accept(&ep1).await;
-            handle_direct_conn(&ep1, ep2_nodeid).await
-        };
-
-        let ep2_side = async move {
-            ep2.connect(ep1_nodeaddr, TEST_ALPN).await.unwrap();
-            handle_direct_conn(&ep2, ep1_nodeid).await
-        };
-
-        let res_ep1 = tokio::spawn(tokio::time::timeout(TIMEOUT, ep1_side));
-
-        let ep1_abort_handle = res_ep1.abort_handle();
-        let _ep1_guard = CallOnDrop::new(move || {
-            ep1_abort_handle.abort();
+        let ep1_side = tokio::time::timeout(TIMEOUT, async move {
+            let conn = accept(&ep1).await?;
+            let mut send = conn.open_uni().await?;
+            wait_for_conn_type_direct(&ep1, ep2_nodeid).await?;
+            send.write_all(b"Conn is direct").await?;
+            send.finish()?;
+            conn.closed().await;
+            TestResult::Ok(())
         });
 
-        let res_ep2 = tokio::spawn(tokio::time::timeout(TIMEOUT, ep2_side));
-        let ep2_abort_handle = res_ep2.abort_handle();
-        let _ep2_guard = CallOnDrop::new(move || {
-            ep2_abort_handle.abort();
+        let ep2_side = tokio::time::timeout(TIMEOUT, async move {
+            let conn = ep2.connect(ep1_nodeaddr, TEST_ALPN).await?;
+            let mut recv = conn.accept_uni().await?;
+            wait_for_conn_type_direct(&ep2, ep1_nodeid).await?;
+            let read = recv.read_to_end(100).await?;
+            assert_eq!(read, b"Conn is direct".to_vec());
+            conn.close(0u32.into(), b"done");
+            conn.closed().await;
+            TestResult::Ok(())
         });
 
-        let (r1, r2) = tokio::try_join!(res_ep1, res_ep2).unwrap();
-        r1.expect("ep1 timeout").unwrap();
-        r2.expect("ep2 timeout").unwrap();
+        let res_ep1 = AbortOnDropHandle::new(tokio::spawn(ep1_side));
+        let res_ep2 = AbortOnDropHandle::new(tokio::spawn(ep2_side));
+
+        let (r1, r2) = tokio::try_join!(res_ep1, res_ep2)?;
+        r1??;
+        r2??;
+
+        Ok(())
     }
 
     #[tokio::test]
