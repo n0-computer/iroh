@@ -111,7 +111,7 @@ jobs:
       - name: run tests
         run: |
           mkdir -p output
-          cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --profile ci --run-ignored ${{ inputs.flaky && 'all' || 'default' }} ${{ inputs.flaky && '--verbose' }} --no-fail-fast --message-format ${{ inputs.flaky && 'libtest-json' || 'human' }} > output/${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
+          cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --profile ci --run-ignored ${{ inputs.flaky && 'all' || 'default' }} ${{ inputs.flaky && '--verbose' || '' }} --no-fail-fast --message-format ${{ inputs.flaky && 'libtest-json' || 'human' }} > output/${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
           NEXTEST_EXPERIMENTAL_LIBTEST_JSON: 1
