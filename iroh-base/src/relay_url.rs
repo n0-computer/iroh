@@ -1,10 +1,12 @@
-use std::{fmt, ops::Deref, str::FromStr};
+use std::{fmt, ops::Deref, str::FromStr, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use url::Url;
+
 /// A URL identifying a relay server.
 ///
-/// This is but a wrapper around [`Url`], with a few custom tweaks:
+/// It is cheaply clonable, as the underlying type is wrapped into an `Arc`.
+/// The main type under the hood though is [`Url`], with a few custom tweaks:
 ///
 /// - A relay URL is never a relative URL, so an implicit `.` is added at the end of the
 ///   domain name if missing.
@@ -16,7 +18,7 @@ use url::Url;
 #[derive(
     Clone, derive_more::Display, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
-pub struct RelayUrl(Url);
+pub struct RelayUrl(Arc<Url>);
 
 impl From<Url> for RelayUrl {
     fn from(mut url: Url) -> Self {
@@ -31,7 +33,7 @@ impl From<Url> for RelayUrl {
                 url.set_host(Some(&domain)).ok();
             }
         }
-        Self(url)
+        Self(Arc::new(url))
     }
 }
 
@@ -55,7 +57,7 @@ impl FromStr for RelayUrl {
 
 impl From<RelayUrl> for Url {
     fn from(value: RelayUrl) -> Self {
-        value.0
+        Arc::unwrap_or_clone(value.0)
     }
 }
 

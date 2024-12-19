@@ -611,7 +611,7 @@ impl Actor {
                     self.handle_run_check(relay_map, opts, response_tx);
                 }
                 Message::ReportReady { report } => {
-                    self.handle_report_ready(report);
+                    self.handle_report_ready(*report);
                 }
                 Message::ReportAborted { err } => {
                     self.handle_report_aborted(err);
@@ -694,8 +694,8 @@ impl Actor {
         });
     }
 
-    fn handle_report_ready(&mut self, report: Box<Report>) {
-        let report = self.finish_and_store_report(*report);
+    fn handle_report_ready(&mut self, report: Report) {
+        let report = self.finish_and_store_report(report);
         self.in_flight_stun_requests.clear();
         if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
             report_tx.send(Ok(report)).ok();

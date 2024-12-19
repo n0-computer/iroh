@@ -22,7 +22,7 @@ derive_more = { version = "1.0.0", features = ["display"], optional = true }
 url = { version = "2.5", features = ["serde"], optional = true }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"], optional = true }
 rand_core = { version = "0.6.4", optional = true }
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 thiserror = { version = "2", optional = true }
 
 # wasm
