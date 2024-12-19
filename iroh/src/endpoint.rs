@@ -74,20 +74,12 @@ const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
 type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync>;
 
-type NodeAddrMapper = Box<
-    dyn Fn((Option<BTreeSet<DirectAddr>>, Option<RelayUrl>)) -> Option<NodeAddr>
-        + Send
-        + Sync
-        + 'static,
->;
-
 /// TODO(matheus23): DOCS (don't even ask)
 ///
 /// Implements [`Watcher`]`<Option<`[`NodeAddr`]`>>`.
 pub type NodeAddrWatcher = MapWatcher<
     OrWatcher<DirectWatcher<Option<BTreeSet<DirectAddr>>>, DirectWatcher<Option<RelayUrl>>>,
     Option<NodeAddr>,
-    NodeAddrMapper,
 >;
 
 /// Builder for [`Endpoint`].
@@ -781,23 +773,22 @@ impl Endpoint {
         let watch_addrs = self.direct_addresses();
         let watch_relay = self.home_relay();
         let node_id = self.node_id();
-        let mapper: NodeAddrMapper = Box::new(move |(addrs, relay)| match (addrs, relay) {
-            (Some(addrs), relay) => Some(NodeAddr::from_parts(
-                node_id,
-                relay,
-                addrs.into_iter().map(|x| x.addr),
-            )),
-            (None, Some(relay)) => Some(NodeAddr::from_parts(
-                node_id,
-                Some(relay),
-                std::iter::empty(),
-            )),
-            (None, None) => None,
-        });
 
         watch_addrs
             .or(watch_relay)
-            .map(mapper)
+            .map(move |(addrs, relay)| match (addrs, relay) {
+                (Some(addrs), relay) => Some(NodeAddr::from_parts(
+                    node_id,
+                    relay,
+                    addrs.into_iter().map(|x| x.addr),
+                )),
+                (None, Some(relay)) => Some(NodeAddr::from_parts(
+                    node_id,
+                    Some(relay),
+                    std::iter::empty(),
+                )),
+                (None, None) => None,
+            })
             .expect("watchable is alive - cannot be disconnected yet")
     }
 
