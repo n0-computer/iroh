@@ -1117,7 +1117,10 @@
 <a href="#1116" id="1116">1116</a>
 <a href="#1117" id="1117">1117</a>
 <a href="#1118" id="1118">1118</a>
-<a href="#1119" id="1119">1119</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1119" id="1119">1119</a>
+<a href="#1120" id="1120">1120</a>
+<a href="#1121" id="1121">1121</a>
+<a href="#1122" id="1122">1122</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1298,8 +1301,9 @@
         // the last datagrams sent to the relay, received datagrams will trigger ACKs which
         // is sufficient to keep active connections open.
         </span><span class="kw">let </span><span class="kw-2">mut </span>inactive_timeout = tokio::time::interval(RELAY_INACTIVE_CLEANUP_TIME);
+        inactive_timeout.reset(); <span class="comment">// skip immediate tick
 
-        <span class="kw">loop </span>{
+        </span><span class="kw">loop </span>{
             <span class="comment">// If a read error occurred on the connection it might have been lost.  But we
             // need this connection to stay alive so we can receive more messages sent by
             // peers via the relay even if we don't start sending again first.
@@ -2211,7 +2215,8 @@
 
         <span class="comment">// We now have an idling ActiveRelayActor.  If we advance time just a little it
         // should stay alive.
-        </span>tokio::time::pause();
+        </span><span class="macro">info!</span>(<span class="string">"Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME / 2"</span>);
+        tokio::time::pause();
         tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME / <span class="number">2</span>).<span class="kw">await</span>;
         tokio::time::resume();
 
@@ -2223,7 +2228,8 @@
         </span>);
 
         <span class="comment">// If we advance time a lot it should finish.
-        </span>tokio::time::pause();
+        </span><span class="macro">info!</span>(<span class="string">"Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME"</span>);
+        tokio::time::pause();
         tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME).<span class="kw">await</span>;
         tokio::time::resume();
         <span class="macro">assert!</span>(
