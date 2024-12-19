@@ -812,7 +812,7 @@ impl Endpoint {
     /// To wait for a home relay connection to be established, use [`Watcher::initialized`]:
     /// ```no_run
     /// use futures_lite::StreamExt;
-    /// use iroh::Endpoint;
+    /// use iroh::{Endpoint, watcher::{Watcher as _}};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -848,7 +848,7 @@ impl Endpoint {
     /// To get the first set of direct addresses use [`Watcher::initialized`]:
     /// ```no_run
     /// use futures_lite::StreamExt;
-    /// use iroh::Endpoint;
+    /// use iroh::{Endpoint, watcher::{Watcher as _}};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
