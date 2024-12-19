@@ -128,11 +128,6 @@ pub(crate) struct Options {
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
     pub(crate) insecure_skip_relay_cert_verify: bool,
-
-    /// "relay_only" mode implies we only use the relay to communicate
-    /// and do not attempt to do any hole punching.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(crate) relay_only: bool,
 }
 
 impl Default for Options {
@@ -148,8 +143,6 @@ impl Default for Options {
             dns_resolver: crate::dns::default_resolver().clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
-            #[cfg(any(test, feature = "test-utils"))]
-            relay_only: false,
         }
     }
 }
@@ -254,11 +247,6 @@ pub(crate) struct MagicSock {
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
-
-    /// "relay_only" mode implies we only use the relay to communicate
-    /// and do not attempt to do any hole punching.
-    #[cfg(any(test, feature = "test-utils"))]
-    relay_only: bool,
 }
 
 impl MagicSock {
@@ -1505,12 +1493,6 @@ impl Handle {
     /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
     async fn new(opts: Options) -> Result<Self> {
         let me = opts.secret_key.public().fmt_short();
-        #[cfg(any(test, feature = "test-utils"))]
-        if opts.relay_only {
-            warn!(
-                "creating a MagicSock that will only send packets over a relay relay connection."
-            );
-        }
 
         Self::with_name(me, opts)
             .instrument(error_span!("magicsock"))
@@ -1531,8 +1513,6 @@ impl Handle {
             proxy_url,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
-            #[cfg(any(test, feature = "test-utils"))]
-            relay_only,
         } = opts;
 
         let relay_datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
@@ -1596,8 +1576,6 @@ impl Handle {
             dns_resolver,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
-            #[cfg(any(test, feature = "test-utils"))]
-            relay_only,
         });
 
         let mut actor_tasks = JoinSet::default();
@@ -3832,7 +3810,6 @@ mod tests {
             dns_resolver: crate::dns::default_resolver().clone(),
             proxy_url: None,
             insecure_skip_relay_cert_verify: true,
-            relay_only: false,
         };
         let msock = MagicSock::spawn(opts).await?;
         let server_config = crate::endpoint::make_server_config(

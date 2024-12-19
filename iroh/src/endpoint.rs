@@ -164,8 +164,6 @@ impl Builder {
             dns_resolver,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
-            #[cfg(any(test, feature = "test-utils"))]
-            relay_only: self.relay_only,
         };
         Endpoint::bind(static_config, msock_opts, self.alpn_protocols).await
     }
