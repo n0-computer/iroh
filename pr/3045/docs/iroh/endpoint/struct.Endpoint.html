@@ -77,7 +77,7 @@ it to be able to connect to this node.</p>
 as they would be returned by <a href="struct.Endpoint.html#method.home_relay" title="method iroh::endpoint::Endpoint::home_relay"><code>Endpoint::home_relay</code></a> and <a href="struct.Endpoint.html#method.direct_addresses" title="method iroh::endpoint::Endpoint::direct_addresses"><code>Endpoint::direct_addresses</code></a>.</p>
 <p>Use <a href="../watcher/trait.Watcher.html#method.initialized" title="method iroh::watcher::Watcher::initialized"><code>Watcher::initialized</code></a> to wait for a <a href="../struct.NodeAddr.html" title="struct iroh::NodeAddr"><code>NodeAddr</code></a> that is ready to be connected to:</p>
 
-<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{Endpoint, watcher::{Watcher <span class="kw">as _</span>}};
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{Endpoint, watcher::Watcher};
 
 <span class="kw">let </span>endpoint = Endpoint::builder()
     .alpns(<span class="macro">vec!</span>[<span class="string">b"my-alpn"</span>.to_vec()])
@@ -96,7 +96,7 @@ some time to connect to find and connect to the home relay server.</p>
 <p>To wait for a home relay connection to be established, use <a href="../watcher/trait.Watcher.html#method.initialized" title="method iroh::watcher::Watcher::initialized"><code>Watcher::initialized</code></a>:</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>futures_lite::StreamExt;
-<span class="kw">use </span>iroh::{Endpoint, watcher::{Watcher <span class="kw">as _</span>}};
+<span class="kw">use </span>iroh::{Endpoint, watcher::Watcher};
 
 <span class="kw">let </span>mep = Endpoint::builder().bind().<span class="kw">await</span>.unwrap();
 <span class="kw">let </span>_relay_url = mep.home_relay().initialized().<span class="kw">await</span>.unwrap();</code></pre></div>
@@ -119,7 +119,7 @@ recently discovered direct addresses.</p>
 <p>To get the first set of direct addresses use <a href="../watcher/trait.Watcher.html#method.initialized" title="method iroh::watcher::Watcher::initialized"><code>Watcher::initialized</code></a>:</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>futures_lite::StreamExt;
-<span class="kw">use </span>iroh::{Endpoint, watcher::{Watcher <span class="kw">as _</span>}};
+<span class="kw">use </span>iroh::{Endpoint, watcher::Watcher};
 
 <span class="kw">let </span>mep = Endpoint::builder().bind().<span class="kw">await</span>.unwrap();
 <span class="kw">let </span>_addrs = mep.direct_addresses().initialized().<span class="kw">await</span>.unwrap();</code></pre></div>

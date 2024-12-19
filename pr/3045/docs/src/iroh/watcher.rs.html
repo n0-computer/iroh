@@ -687,7 +687,12 @@
 <a href="#686" id="686">686</a>
 <a href="#687" id="687">687</a>
 <a href="#688" id="688">688</a>
-<a href="#689" id="689">689</a></pre></div><pre class="rust"><code><span class="doccomment">//! Watchable values.
+<a href="#689" id="689">689</a>
+<a href="#690" id="690">690</a>
+<a href="#691" id="691">691</a>
+<a href="#692" id="692">692</a>
+<a href="#693" id="693">693</a>
+<a href="#694" id="694">694</a></pre></div><pre class="rust"><code><span class="doccomment">//! Watchable values.
 //!
 //! A [`Watchable`] exists to keep track of a value which may change over time.  It allows
 //! observers to be notified of changes to the value.  The aim is to always be aware of the
@@ -696,6 +701,11 @@
 //! In that way, a [`Watchable`] is like a [`tokio::sync::broadcast::Sender`] (and a
 //! [`Watcher`] is like a [`tokio::sync::broadcast::Receiver`]), except that there's no risk
 //! of the channel filling up, but instead you might miss items.
+//!
+//! This module is meant to be imported like this (if you use all of these things):
+//! ```ignore
+//! use iroh::watcher::{self, Watchable, Watcher as _};
+//! ```
 
 </span><span class="attr">#[cfg(not(iroh_loom))]
 </span><span class="kw">use </span>std::sync;

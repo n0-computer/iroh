@@ -476,7 +476,7 @@
     discovery::{Discovery, DiscoveryItem},
     dns::node_info::NodeInfo,
     endpoint::force_staging_infra,
-    watcher::{Direct, Disconnected, Watchable, Watcher <span class="kw">as _</span>},
+    watcher::{<span class="self">self</span>, Disconnected, Watchable, Watcher <span class="kw">as _</span>},
     Endpoint,
 };
 
@@ -636,7 +636,7 @@
     </span>secret_key: SecretKey,
     <span class="attr">#[debug(<span class="string">"PkarrClient"</span>)]
     </span>pkarr_client: PkarrRelayClient,
-    watcher: Direct&lt;<span class="prelude-ty">Option</span>&lt;NodeInfo&gt;&gt;,
+    watcher: watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;NodeInfo&gt;&gt;,
     ttl: u32,
     republish_interval: Duration,
 }
