@@ -175,10 +175,10 @@ impl ActiveRelayActor {
         // the same time.
         let mut relay_send_fut = std::pin::pin!(MaybeFuture::none());
 
-        // If inactive for this long the actor should exit.  Inactivity is only tracked on
+        // If inactive for one tick the actor should exit.  Inactivity is only tracked on
         // the last datagrams sent to the relay, received datagrams will trigger ACKs which
         // is sufficient to keep active connections open.
-        let mut inactive_timeout = std::pin::pin!(tokio::time::sleep(RELAY_INACTIVE_CLEANUP_TIME));
+        let mut inactive_timeout = tokio::time::interval(RELAY_INACTIVE_CLEANUP_TIME);
 
         loop {
             // If a read error occurred on the connection it might have been lost.  But we
@@ -209,7 +209,7 @@ impl ActiveRelayActor {
                         relay_client.send(msg.node_id, msg.packet).await
                     };
                     relay_send_fut.as_mut().set_future(fut);
-                    inactive_timeout.as_mut().reset(Instant::now() + RELAY_INACTIVE_CLEANUP_TIME);
+                    inactive_timeout.reset();
 
                 }
                 msg = self.relay_client_receiver.recv() => {
@@ -221,7 +221,7 @@ impl ActiveRelayActor {
                         }
                     }
                 }
-                _ = &mut inactive_timeout => {
+                _ = inactive_timeout.tick() => {
                     debug!("Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting");
                     break;
                 }
