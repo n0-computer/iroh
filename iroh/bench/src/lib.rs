@@ -71,6 +71,7 @@ pub struct Opt {
     /// Whether to run a local relay and have the server and clients connect to that.
     /// This will force all traffic over the relay and can be used to test
     /// throughput for relay-only traffic.
+    #[cfg(feature = "local-relay")]
     #[clap(long, default_value_t = false)]
     pub only_relay: bool,
 }

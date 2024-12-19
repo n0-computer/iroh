@@ -45,13 +45,6 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
         })?;
     }
 
-    #[cfg(not(feature = "local-relay"))]
-    if opt.only_relay {
-        anyhow::bail!(
-            "Must compile the benchmark with the `local-relay` feature flag to use this option"
-        );
-    }
-
     let server_span = tracing::error_span!("server");
     let runtime = rt();
 
