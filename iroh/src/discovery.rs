@@ -450,7 +450,7 @@ mod tests {
     use tokio_util::task::AbortOnDropHandle;
 
     use super::*;
-    use crate::{watchable::Watcher as _, RelayMode};
+    use crate::{watcher::Watcher as _, RelayMode};
 
     type InfoStore = HashMap<NodeId, (Option<RelayUrl>, BTreeSet<SocketAddr>, u64)>;
 

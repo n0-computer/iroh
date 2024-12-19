@@ -18,7 +18,6 @@ use std::{
     task::{self, Poll, Waker},
 };
 
-use futures_lite::stream::Stream;
 #[cfg(iroh_loom)]
 use loom::sync;
 use sync::{Mutex, RwLock};
@@ -88,8 +87,8 @@ impl<T: Clone + Eq> Watchable<T> {
     }
 
     /// Creates a [`Watcher`] allowing the value to be observed, but not modified.
-    pub fn watch(&self) -> DirectWatcher<T> {
-        DirectWatcher {
+    pub fn watch(&self) -> Direct<T> {
+        Direct {
             epoch: self.shared.state.read().expect("poisoned").epoch,
             shared: Arc::downgrade(&self.shared),
         }
@@ -133,8 +132,8 @@ pub trait Watcher: Clone {
     /// # Cancel Safety
     ///
     /// The returned future is cancel-safe.
-    fn updated(&mut self) -> WatchNextFut<Self> {
-        WatchNextFut { watcher: self }
+    fn updated(&mut self) -> NextFut<Self> {
+        NextFut { watcher: self }
     }
 
     /// Returns a future completing once the value is set to [`Some`] value.
@@ -143,11 +142,11 @@ pub trait Watcher: Clone {
     ///
     /// This is a utility for the common case of storing an [`Option`] inside a
     /// [`Watchable`].
-    fn initialized<T>(&mut self) -> WatchInitializedFut<T, Self>
+    fn initialized<T>(&mut self) -> InitializedFut<T, Self>
     where
         Self: Watcher<Value = Option<T>>,
     {
-        WatchInitializedFut {
+        InitializedFut {
             initial: match self.get() {
                 Ok(Some(value)) => Some(Ok(value)),
                 Ok(None) => None,
@@ -170,11 +169,11 @@ pub trait Watcher: Clone {
     /// # Cancel Safety
     ///
     /// The returned stream is cancel-safe.
-    fn stream(self) -> WatcherStream<Self>
+    fn stream(self) -> Stream<Self>
     where
         Self: Unpin,
     {
-        WatcherStream {
+        Stream {
             initial: self.get().ok(),
             watcher: self,
         }
@@ -194,11 +193,11 @@ pub trait Watcher: Clone {
     /// # Cancel Safety
     ///
     /// The returned stream is cancel-safe.
-    fn stream_updates_only(self) -> WatcherStream<Self>
+    fn stream_updates_only(self) -> Stream<Self>
     where
         Self: Unpin,
     {
-        WatcherStream {
+        Stream {
             initial: None,
             watcher: self,
         }
@@ -208,8 +207,8 @@ pub trait Watcher: Clone {
     fn map<T: Clone + Eq>(
         self,
         map: impl Fn(Self::Value) -> T + 'static,
-    ) -> Result<MapWatcher<Self, T>, Disconnected> {
-        Ok(MapWatcher {
+    ) -> Result<Map<Self, T>, Disconnected> {
+        Ok(Map {
             current: (map)(self.get()?),
             map: Arc::new(map),
             watcher: self,
@@ -232,12 +231,12 @@ pub trait Watcher: Clone {
 /// When the thread changing the [`Watchable`] pauses updating, the [`Watcher`] will always
 /// end up reporting the most recent state eventually.
 #[derive(Debug, Clone)]
-pub struct DirectWatcher<T> {
+pub struct Direct<T> {
     epoch: u64,
     shared: Weak<Shared<T>>,
 }
 
-impl<T: Clone + Eq> Watcher for DirectWatcher<T> {
+impl<T: Clone + Eq> Watcher for Direct<T> {
     type Value = T;
 
     fn get(&self) -> Result<Self::Value, Disconnected> {
@@ -286,14 +285,14 @@ impl<S: Watcher, T: Watcher> Watcher for (S, T) {
 
 /// Maps a [`Watcher`] and allows filtering updates.
 #[derive(derive_more::Debug)]
-pub struct MapWatcher<W: Watcher, T: Clone + Eq> {
+pub struct Map<W: Watcher, T: Clone + Eq> {
     #[debug("Arc<dyn Fn(W::Value) -> T + 'static>")]
     map: Arc<dyn Fn(W::Value) -> T + 'static>,
     watcher: W,
     current: T,
 }
 
-impl<W: Watcher + Clone, T: Clone + Eq> Clone for MapWatcher<W, T> {
+impl<W: Watcher + Clone, T: Clone + Eq> Clone for Map<W, T> {
     fn clone(&self) -> Self {
         Self {
             map: self.map.clone(),
@@ -303,7 +302,7 @@ impl<W: Watcher + Clone, T: Clone + Eq> Clone for MapWatcher<W, T> {
     }
 }
 
-impl<W: Watcher, T: Clone + Eq> Watcher for MapWatcher<W, T> {
+impl<W: Watcher, T: Clone + Eq> Watcher for Map<W, T> {
     type Value = T;
 
     fn get(&self) -> Result<Self::Value, Disconnected> {
@@ -335,11 +334,11 @@ impl<W: Watcher, T: Clone + Eq> Watcher for MapWatcher<W, T> {
 ///
 /// This future is cancel-safe.
 #[derive(Debug)]
-pub struct WatchNextFut<'a, W: Watcher> {
+pub struct NextFut<'a, W: Watcher> {
     watcher: &'a mut W,
 }
 
-impl<W: Watcher> Future for WatchNextFut<'_, W> {
+impl<W: Watcher> Future for NextFut<'_, W> {
     type Output = Result<W::Value, Disconnected>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
@@ -356,13 +355,13 @@ impl<W: Watcher> Future for WatchNextFut<'_, W> {
 ///
 /// This Future is cancel-safe.
 #[derive(Debug)]
-pub struct WatchInitializedFut<'a, T, W: Watcher<Value = Option<T>>> {
+pub struct InitializedFut<'a, T, W: Watcher<Value = Option<T>>> {
     initial: Option<Result<T, Disconnected>>,
     watcher: &'a mut W,
 }
 
 impl<T: Clone + Eq + Unpin, W: Watcher<Value = Option<T>> + Unpin> Future
-    for WatchInitializedFut<'_, T, W>
+    for InitializedFut<'_, T, W>
 {
     type Output = Result<T, Disconnected>;
 
@@ -386,12 +385,12 @@ impl<T: Clone + Eq + Unpin, W: Watcher<Value = Option<T>> + Unpin> Future
 ///
 /// This stream is cancel-safe.
 #[derive(Debug, Clone)]
-pub struct WatcherStream<W: Watcher + Unpin> {
+pub struct Stream<W: Watcher + Unpin> {
     initial: Option<W::Value>,
     watcher: W,
 }
 
-impl<W: Watcher + Unpin> Stream for WatcherStream<W>
+impl<W: Watcher + Unpin> futures_lite::stream::Stream for Stream<W>
 where
     W::Value: Unpin,
 {

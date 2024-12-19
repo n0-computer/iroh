@@ -5,7 +5,7 @@
 //!     $ cargo run --example listen
 use std::time::Duration;
 
-use iroh::{endpoint::ConnectionError, watchable::Watcher as _, Endpoint, RelayMode, SecretKey};
+use iroh::{endpoint::ConnectionError, watcher::Watcher as _, Endpoint, RelayMode, SecretKey};
 use tracing::{debug, info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`

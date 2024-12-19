@@ -38,7 +38,7 @@ use crate::{
     dns::{default_resolver, DnsResolver},
     magicsock::{self, Handle, QuicMappedAddr},
     tls,
-    watchable::{DirectWatcher, MapWatcher, Watcher},
+    watcher::{self, Watcher as _},
 };
 
 mod rtt_actor;
@@ -77,10 +77,10 @@ type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>>
 /// TODO(matheus23): DOCS (don't even ask)
 ///
 /// Implements [`Watcher`]`<Option<`[`NodeAddr`]`>>`.
-pub type NodeAddrWatcher = MapWatcher<
+pub type NodeAddrWatcher = watcher::Map<
     (
-        DirectWatcher<Option<BTreeSet<DirectAddr>>>,
-        DirectWatcher<Option<RelayUrl>>,
+        watcher::Direct<Option<BTreeSet<DirectAddr>>>,
+        watcher::Direct<Option<RelayUrl>>,
     ),
     Option<NodeAddr>,
 >;
@@ -820,7 +820,7 @@ impl Endpoint {
     /// let _relay_url = mep.home_relay().initialized().await.unwrap();
     /// # });
     /// ```
-    pub fn home_relay(&self) -> DirectWatcher<Option<RelayUrl>> {
+    pub fn home_relay(&self) -> watcher::Direct<Option<RelayUrl>> {
         self.msock.home_relay()
     }
 
@@ -858,7 +858,7 @@ impl Endpoint {
     /// ```
     ///
     /// [STUN]: https://en.wikipedia.org/wiki/STUN
-    pub fn direct_addresses(&self) -> DirectWatcher<Option<BTreeSet<DirectAddr>>> {
+    pub fn direct_addresses(&self) -> watcher::Direct<Option<BTreeSet<DirectAddr>>> {
         self.msock.direct_addresses()
     }
 
@@ -930,7 +930,7 @@ impl Endpoint {
     /// # Errors
     ///
     /// Will error if we do not have any address information for the given `node_id`.
-    pub fn conn_type(&self, node_id: NodeId) -> Result<DirectWatcher<ConnectionType>> {
+    pub fn conn_type(&self, node_id: NodeId) -> Result<watcher::Direct<ConnectionType>> {
         self.msock.conn_type(node_id)
     }
 
