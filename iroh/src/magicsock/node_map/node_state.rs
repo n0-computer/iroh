@@ -149,6 +149,8 @@ pub(super) struct Options {
     /// Is this endpoint currently active (sending data)?
     pub(super) active: bool,
     pub(super) source: super::Source,
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(super) relay_only: bool,
 }
 
 impl NodeState {
@@ -180,7 +182,7 @@ impl NodeState {
             conn_type: Watchable::new(ConnectionType::None),
             has_been_direct: false,
             #[cfg(any(test, feature = "test-utils"))]
-            relay_only: false,
+            relay_only: options.relay_only,
         }
     }
 
@@ -1687,6 +1689,7 @@ mod tests {
                 (d_endpoint.id, d_endpoint),
             ]),
             next_id: 5,
+            relay_only: false,
         });
         let mut got = node_map.list_remote_infos(later);
         got.sort_by_key(|p| p.node_id);
@@ -1716,6 +1719,7 @@ mod tests {
             source: crate::magicsock::Source::NamedApp {
                 name: "test".into(),
             },
+            relay_only: false,
         };
         let mut ep = NodeState::new(0, opts);
 

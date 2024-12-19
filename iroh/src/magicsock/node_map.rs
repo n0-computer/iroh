@@ -65,6 +65,8 @@ pub(super) struct NodeMapInner {
     by_quic_mapped_addr: HashMap<QuicMappedAddr, usize>,
     by_id: HashMap<usize, NodeState>,
     next_id: usize,
+    #[cfg(any(test, feature = "test-utils"))]
+    relay_only: bool,
 }
 
 /// Identifier to look up a [`NodeState`] in the [`NodeMap`].
@@ -329,11 +331,15 @@ impl NodeMapInner {
         let source0 = source.clone();
         let node_id = node_addr.node_id;
         let relay_url = node_addr.relay_url.clone();
+        #[cfg(any(test, feature = "test-utils"))]
+        let relay_only = self.relay_only;
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(node_id), || Options {
             node_id,
             relay_url,
             active: false,
             source,
+            #[cfg(any(test, feature = "test-utils"))]
+            relay_only,
         });
         node_state.update_from_node_addr(
             node_addr.relay_url.as_ref(),
@@ -418,6 +424,8 @@ impl NodeMapInner {
 
     #[instrument(skip_all, fields(src = %src.fmt_short()))]
     fn receive_relay(&mut self, relay_url: &RelayUrl, src: NodeId) -> QuicMappedAddr {
+        #[cfg(any(test, feature = "test-utils"))]
+        let relay_only = self.relay_only;
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(src), || {
             trace!("packets from unknown node, insert into node map");
             Options {
@@ -425,6 +433,8 @@ impl NodeMapInner {
                 relay_url: Some(relay_url.clone()),
                 active: true,
                 source: Source::Relay,
+                #[cfg(any(test, feature = "test-utils"))]
+                relay_only,
             }
         });
         node_state.receive_relay(relay_url, src, Instant::now());
@@ -502,6 +512,8 @@ impl NodeMapInner {
     }
 
     fn handle_ping(&mut self, sender: NodeId, src: SendAddr, tx_id: TransactionId) -> PingHandled {
+        #[cfg(any(test, feature = "test-utils"))]
+        let relay_only = self.relay_only;
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(sender), || {
             debug!("received ping: node unknown, add to node map");
             let source = if src.is_relay() {
@@ -514,6 +526,8 @@ impl NodeMapInner {
                 relay_url: src.relay_url(),
                 active: true,
                 source,
+                #[cfg(any(test, feature = "test-utils"))]
+                relay_only,
             }
         });
 
@@ -757,6 +771,7 @@ mod tests {
                 source: Source::NamedApp {
                     name: "test".into(),
                 },
+                relay_only: false,
             })
             .id();
 
