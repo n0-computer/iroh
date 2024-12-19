@@ -1120,7 +1120,15 @@
 <a href="#1119" id="1119">1119</a>
 <a href="#1120" id="1120">1120</a>
 <a href="#1121" id="1121">1121</a>
-<a href="#1122" id="1122">1122</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1122" id="1122">1122</a>
+<a href="#1123" id="1123">1123</a>
+<a href="#1124" id="1124">1124</a>
+<a href="#1125" id="1125">1125</a>
+<a href="#1126" id="1126">1126</a>
+<a href="#1127" id="1127">1127</a>
+<a href="#1128" id="1128">1128</a>
+<a href="#1129" id="1129">1129</a>
+<a href="#1130" id="1130">1130</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1620,7 +1628,7 @@
                 <span class="self">self</span>.send_relay(<span class="kw-2">&amp;</span>url, contents, remote_node).<span class="kw">await</span>;
             }
             RelayActorMessage::SetHome { url } =&gt; {
-                <span class="self">self</span>.set_home_relay(<span class="kw-2">&amp;</span>url).<span class="kw">await</span>;
+                <span class="self">self</span>.set_home_relay(url).<span class="kw">await</span>;
             }
             RelayActorMessage::MaybeCloseRelaysOnRebind(ifs) =&gt; {
                 <span class="self">self</span>.maybe_close_relays_on_rebind(<span class="kw-2">&amp;</span>ifs).<span class="kw">await</span>;
@@ -1660,9 +1668,10 @@
         }
     }
 
-    <span class="kw">async fn </span>set_home_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, home_url: <span class="kw-2">&amp;</span>RelayUrl) {
+    <span class="kw">async fn </span>set_home_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, home_url: RelayUrl) {
+        <span class="kw">let </span>home_url_ref = <span class="kw-2">&amp;</span>home_url;
         futures_buffered::join_all(<span class="self">self</span>.active_relays.iter().map(|(url, handle)| <span class="kw">async move </span>{
-            <span class="kw">let </span>is_preferred = url == home_url;
+            <span class="kw">let </span>is_preferred = url == home_url_ref;
             handle
                 .inbox_addr
                 .send(ActiveRelayMessage::SetHomeRelay(is_preferred))
@@ -1684,16 +1693,20 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         url: <span class="kw-2">&amp;</span>RelayUrl,
         remote_node: <span class="kw-2">&amp;</span>NodeId,
-    ) -&gt; <span class="kw-2">&amp;</span>ActiveRelayHandle {
-        <span class="kw">let </span><span class="kw-2">mut </span>found_relay: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt; = <span class="prelude-val">None</span>;
-        <span class="kw">if </span>!<span class="self">self</span>.active_relays.contains_key(url) {
-            <span class="comment">// If we don't have an open connection to the remote node's home relay, see if
-            // we have an open connection to a relay node where we'd heard from that peer
-            // already.  E.g. maybe they dialed our home relay recently.
-            // TODO: LRU cache the NodeId -&gt; relay mapping so this is much faster for repeat
-            // senders.
+    ) -&gt; ActiveRelayHandle {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(handle) = <span class="self">self</span>.active_relays.get(url) {
+            <span class="kw">return </span>handle.clone();
+        }
 
-            // Futures which return Some(RelayUrl) if the relay knows about the remote node.
+        <span class="kw">let </span><span class="kw-2">mut </span>found_relay: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt; = <span class="prelude-val">None</span>;
+        <span class="comment">// If we don't have an open connection to the remote node's home relay, see if
+        // we have an open connection to a relay node where we'd heard from that peer
+        // already.  E.g. maybe they dialed our home relay recently.
+        // TODO: LRU cache the NodeId -&gt; relay mapping so this is much faster for repeat
+        // senders.
+
+        </span>{
+            <span class="comment">// Futures which return Some(RelayUrl) if the relay knows about the remote node.
             </span><span class="kw">let </span>check_futs = <span class="self">self</span>.active_relays.iter().map(|(url, handle)| <span class="kw">async move </span>{
                 <span class="kw">let </span>(tx, rx) = oneshot::channel();
                 handle
@@ -1714,25 +1727,28 @@
                 }
             }
         }
-        <span class="kw">let </span>url = found_relay.as_ref().unwrap_or(url);
+        <span class="kw">let </span>url = found_relay.unwrap_or(url.clone());
         <span class="self">self</span>.active_relay_handle(url)
     }
 
     <span class="doccomment">/// Returns the handle of the [`ActiveRelayActor`].
-    </span><span class="kw">fn </span>active_relay_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl) -&gt; <span class="kw-2">&amp;</span>ActiveRelayHandle {
-        <span class="kw">if </span>!<span class="self">self</span>.active_relays.contains_key(url) {
-            <span class="kw">let </span>handle = <span class="self">self</span>.start_active_relay(url.clone());
-            <span class="kw">if </span><span class="prelude-val">Some</span>(url) == <span class="self">self</span>.msock.my_relay().as_ref() {
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = handle
-                    .inbox_addr
-                    .try_send(ActiveRelayMessage::SetHomeRelay(<span class="bool-val">true</span>))
-                {
-                    <span class="macro">error!</span>(<span class="string">"Home relay not set, send to new actor failed: {err:#}."</span>);
+    </span><span class="kw">fn </span>active_relay_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: RelayUrl) -&gt; ActiveRelayHandle {
+        <span class="kw">match </span><span class="self">self</span>.active_relays.get(<span class="kw-2">&amp;</span>url) {
+            <span class="prelude-val">Some</span>(e) =&gt; e.clone(),
+            <span class="prelude-val">None </span>=&gt; {
+                <span class="kw">let </span>handle = <span class="self">self</span>.start_active_relay(url.clone());
+                <span class="kw">if </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>url) == <span class="self">self</span>.msock.my_relay().as_ref() {
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = handle
+                        .inbox_addr
+                        .try_send(ActiveRelayMessage::SetHomeRelay(<span class="bool-val">true</span>))
+                    {
+                        <span class="macro">error!</span>(<span class="string">"Home relay not set, send to new actor failed: {err:#}."</span>);
+                    }
                 }
+                <span class="self">self</span>.active_relays.insert(url, handle.clone());
+                handle
             }
-            <span class="self">self</span>.active_relays.insert(url.clone(), handle);
         }
-        <span class="self">self</span>.active_relays.get(url).expect(<span class="string">"just inserted"</span>)
     }
 
     <span class="kw">fn </span>start_active_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: RelayUrl) -&gt; ActiveRelayHandle {
@@ -1799,7 +1815,7 @@
 
         <span class="comment">// Make sure home relay exists
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>url) = <span class="self">self</span>.msock.my_relay() {
-            <span class="self">self</span>.active_relay_handle(url);
+            <span class="self">self</span>.active_relay_handle(url.clone());
         }
         <span class="self">self</span>.log_active_relay();
     }
