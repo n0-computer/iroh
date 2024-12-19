@@ -125,9 +125,7 @@
 <a href="#124" id="124">124</a>
 <a href="#125" id="125">125</a>
 <a href="#126" id="126">126</a>
-<a href="#127" id="127">127</a>
-<a href="#128" id="128">128</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::sync::Arc;
-<span class="kw">use </span>std::{fmt, ops::Deref, str::FromStr};
+<a href="#127" id="127">127</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt, ops::Deref, str::FromStr, sync::Arc};
 
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>url::Url;
@@ -135,7 +133,7 @@
 <span class="doccomment">/// A URL identifying a relay server.
 ///
 /// It is cheaply clonable, as the underlying type is wrapped into an `Arc`.
-/// The main type tpye under the hood though is [`Url`], with a few custom tweaks:
+/// The main type under the hood though is [`Url`], with a few custom tweaks:
 ///
 /// - A relay URL is never a relative URL, so an implicit `.` is added at the end of the
 ///   domain name if missing.
