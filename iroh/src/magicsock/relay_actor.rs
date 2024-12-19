@@ -671,15 +671,8 @@ impl RelayActor {
 
     /// Cleans up [`ActiveRelayActor`]s which have stopped running.
     fn reap_active_relays(&mut self) {
-        let mut stopped_actors = Vec::with_capacity(self.active_relays.len());
-        for (url, handle) in self.active_relays.iter() {
-            if handle.inbox_addr.is_closed() {
-                stopped_actors.push(url.clone());
-            }
-        }
-        for url in stopped_actors {
-            self.active_relays.remove(&url);
-        }
+        self.active_relays
+            .retain(|_url, handle| !handle.inbox_addr.is_closed());
 
         // Make sure home relay exists
         if let Some(ref url) = self.msock.my_relay() {
