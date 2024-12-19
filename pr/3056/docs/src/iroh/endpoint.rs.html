@@ -1906,9 +1906,7 @@
 <a href="#1905" id="1905">1905</a>
 <a href="#1906" id="1906">1906</a>
 <a href="#1907" id="1907">1907</a>
-<a href="#1908" id="1908">1908</a>
-<a href="#1909" id="1909">1909</a>
-<a href="#1910" id="1910">1910</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#1908" id="1908">1908</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2074,8 +2072,6 @@
             dns_resolver,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="self">self</span>.insecure_skip_relay_cert_verify,
-            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-            </span>relay_only: <span class="self">self</span>.relay_only,
         };
         Endpoint::bind(static_config, msock_opts, <span class="self">self</span>.alpn_protocols).<span class="kw">await
     </span>}

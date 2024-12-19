@@ -4061,30 +4061,7 @@
 <a href="#4060" id="4060">4060</a>
 <a href="#4061" id="4061">4061</a>
 <a href="#4062" id="4062">4062</a>
-<a href="#4063" id="4063">4063</a>
-<a href="#4064" id="4064">4064</a>
-<a href="#4065" id="4065">4065</a>
-<a href="#4066" id="4066">4066</a>
-<a href="#4067" id="4067">4067</a>
-<a href="#4068" id="4068">4068</a>
-<a href="#4069" id="4069">4069</a>
-<a href="#4070" id="4070">4070</a>
-<a href="#4071" id="4071">4071</a>
-<a href="#4072" id="4072">4072</a>
-<a href="#4073" id="4073">4073</a>
-<a href="#4074" id="4074">4074</a>
-<a href="#4075" id="4075">4075</a>
-<a href="#4076" id="4076">4076</a>
-<a href="#4077" id="4077">4077</a>
-<a href="#4078" id="4078">4078</a>
-<a href="#4079" id="4079">4079</a>
-<a href="#4080" id="4080">4080</a>
-<a href="#4081" id="4081">4081</a>
-<a href="#4082" id="4082">4082</a>
-<a href="#4083" id="4083">4083</a>
-<a href="#4084" id="4084">4084</a>
-<a href="#4085" id="4085">4085</a>
-<a href="#4086" id="4086">4086</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4063" id="4063">4063</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4213,11 +4190,6 @@
     /// May only be used in tests.
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) insecure_skip_relay_cert_verify: bool,
-
-    <span class="doccomment">/// "relay_only" mode implies we only use the relay to communicate
-    /// and do not attempt to do any hole punching.
-    </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) relay_only: bool,
 }
 
 <span class="kw">impl </span>Default <span class="kw">for </span>Options {
@@ -4233,8 +4205,6 @@
             dns_resolver: <span class="kw">crate</span>::dns::default_resolver().clone(),
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
-            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-            </span>relay_only: <span class="bool-val">false</span>,
         }
     }
 }
@@ -4343,11 +4313,6 @@
     /// May only be used in tests.
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
     </span>insecure_skip_relay_cert_verify: bool,
-
-    <span class="doccomment">/// "relay_only" mode implies we only use the relay to communicate
-    /// and do not attempt to do any hole punching.
-    </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-    </span>relay_only: bool,
 }
 
 <span class="kw">impl </span>MagicSock {
@@ -5595,12 +5560,6 @@
     <span class="doccomment">/// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
     </span><span class="kw">async fn </span>new(opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>me = opts.secret_key.public().fmt_short();
-        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-        </span><span class="kw">if </span>opts.relay_only {
-            <span class="macro">warn!</span>(
-                <span class="string">"creating a MagicSock that will only send packets over a relay relay connection."
-            </span>);
-        }
 
         <span class="self">Self</span>::with_name(me, opts)
             .instrument(<span class="macro">error_span!</span>(<span class="string">"magicsock"</span>))
@@ -5621,8 +5580,6 @@
             proxy_url,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify,
-            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-            </span>relay_only,
         } = opts;
 
         <span class="kw">let </span>relay_datagrams_queue = Arc::new(RelayDatagramsQueue::new());
@@ -5686,8 +5643,6 @@
             dns_resolver,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify,
-            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-            </span>relay_only,
         });
 
         <span class="kw">let </span><span class="kw-2">mut </span>actor_tasks = JoinSet::default();
@@ -7855,7 +7810,6 @@
             dns_resolver: <span class="kw">crate</span>::dns::default_resolver().clone(),
             proxy_url: <span class="prelude-val">None</span>,
             insecure_skip_relay_cert_verify: <span class="bool-val">true</span>,
-            relay_only: <span class="bool-val">false</span>,
         };
         <span class="kw">let </span>msock = MagicSock::spawn(opts).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>server_config = <span class="kw">crate</span>::endpoint::make_server_config(

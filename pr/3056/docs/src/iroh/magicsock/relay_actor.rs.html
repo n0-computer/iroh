@@ -1296,7 +1296,7 @@
         <span class="comment">// When this future has an inner, it is a future which is currently sending
         // something to the relay server.  Nothing else can be sent to the relay server at
         // the same time.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>relay_send_fut = MaybeFuture::none();
+        </span><span class="kw">let </span><span class="kw-2">mut </span>relay_send_fut = <span class="macro">std::pin::pin!</span>(MaybeFuture::none());
 
         <span class="kw">loop </span>{
             <span class="comment">// If a read error occurred on the connection it might have been lost.  But we
@@ -1318,7 +1318,7 @@
                 }
                 <span class="comment">// Only poll relay_send_fut if it is sending to the relay.
                 </span><span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>relay_send_fut, <span class="kw">if </span>relay_send_fut.is_some() =&gt; {
-                    relay_send_fut = MaybeFuture::none();
+                    relay_send_fut.as_mut().set_none();
                 }
                 <span class="comment">// Only poll for new datagrams if relay_send_fut is not busy.
                 </span><span class="prelude-val">Some</span>(msg) = <span class="self">self</span>.relay_datagrams_send.recv(), <span class="kw">if </span>relay_send_fut.is_none() =&gt; {
@@ -1326,7 +1326,7 @@
                     <span class="kw">let </span>fut = <span class="kw">async move </span>{
                         relay_client.send(msg.node_id, msg.packet).<span class="kw">await
                     </span>};
-                    relay_send_fut = MaybeFuture::with_future(Box::pin(fut));
+                    relay_send_fut.as_mut().set_future(fut);
                     <span class="self">self</span>.last_write = Instant::now();
 
                 }
