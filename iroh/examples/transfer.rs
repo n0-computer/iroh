@@ -8,7 +8,8 @@ use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use indicatif::HumanBytes;
 use iroh::{
-    endpoint::ConnectionError, Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl, SecretKey,
+    endpoint::ConnectionError, watcher::Watcher as _, Endpoint, NodeAddr, RelayMap, RelayMode,
+    RelayUrl, SecretKey,
 };
 use iroh_base::ticket::NodeTicket;
 use tracing::info;
