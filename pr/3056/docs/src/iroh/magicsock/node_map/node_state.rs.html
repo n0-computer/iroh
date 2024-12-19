@@ -1732,7 +1732,11 @@
 <a href="#1731" id="1731">1731</a>
 <a href="#1732" id="1732">1732</a>
 <a href="#1733" id="1733">1733</a>
-<a href="#1734" id="1734">1734</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1734" id="1734">1734</a>
+<a href="#1735" id="1735">1735</a>
+<a href="#1736" id="1736">1736</a>
+<a href="#1737" id="1737">1737</a>
+<a href="#1738" id="1738">1738</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -1883,6 +1887,8 @@
     <span class="doccomment">/// Is this endpoint currently active (sending data)?
     </span><span class="kw">pub</span>(<span class="kw">super</span>) active: bool,
     <span class="kw">pub</span>(<span class="kw">super</span>) source: <span class="kw">super</span>::Source,
+    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) relay_only: bool,
 }
 
 <span class="kw">impl </span>NodeState {
@@ -1914,7 +1920,7 @@
             conn_type: Watchable::new(ConnectionType::None),
             has_been_direct: <span class="bool-val">false</span>,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-            </span>relay_only: <span class="bool-val">false</span>,
+            </span>relay_only: options.relay_only,
         }
     }
 
@@ -3421,6 +3427,7 @@
                 (d_endpoint.id, d_endpoint),
             ]),
             next_id: <span class="number">5</span>,
+            relay_only: <span class="bool-val">false</span>,
         });
         <span class="kw">let </span><span class="kw-2">mut </span>got = node_map.list_remote_infos(later);
         got.sort_by_key(|p| p.node_id);
@@ -3450,6 +3457,7 @@
             source: <span class="kw">crate</span>::magicsock::Source::NamedApp {
                 name: <span class="string">"test"</span>.into(),
             },
+            relay_only: <span class="bool-val">false</span>,
         };
         <span class="kw">let </span><span class="kw-2">mut </span>ep = NodeState::new(<span class="number">0</span>, opts);
 
