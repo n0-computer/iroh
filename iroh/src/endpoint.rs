@@ -38,7 +38,7 @@ use crate::{
     dns::{default_resolver, DnsResolver},
     magicsock::{self, Handle, QuicMappedAddr},
     tls,
-    watchable::{DirectWatcher, MapWatcher, OrWatcher, Watcher},
+    watchable::{DirectWatcher, MapWatcher, Watcher},
 };
 
 mod rtt_actor;
@@ -78,7 +78,10 @@ type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>>
 ///
 /// Implements [`Watcher`]`<Option<`[`NodeAddr`]`>>`.
 pub type NodeAddrWatcher = MapWatcher<
-    OrWatcher<DirectWatcher<Option<BTreeSet<DirectAddr>>>, DirectWatcher<Option<RelayUrl>>>,
+    (
+        DirectWatcher<Option<BTreeSet<DirectAddr>>>,
+        DirectWatcher<Option<RelayUrl>>,
+    ),
     Option<NodeAddr>,
 >;
 

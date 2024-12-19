@@ -218,8 +218,8 @@ pub trait Watcher: Clone {
 
     /// Returns a watcher that updates every time this or the other watcher
     /// updates, and yields both watcher's items together when that happens.
-    fn or<W: Watcher>(self, other: W) -> OrWatcher<Self, W> {
-        OrWatcher(self, other)
+    fn or<W: Watcher>(self, other: W) -> (Self, W) {
+        (self, other)
     }
 }
 
@@ -262,14 +262,7 @@ impl<T: Clone + Eq> Watcher for DirectWatcher<T> {
     }
 }
 
-/// Combines two [`Watcher`]s into a single watcher.
-///
-/// This watcher updates when one of the inner watchers
-/// is updated at least once.
-#[derive(Clone, Debug)]
-pub struct OrWatcher<S: Watcher, T: Watcher>(S, T);
-
-impl<S: Watcher, T: Watcher> Watcher for OrWatcher<S, T> {
+impl<S: Watcher, T: Watcher> Watcher for (S, T) {
     type Value = (S::Value, T::Value);
 
     fn get(&self) -> Result<Self::Value, Disconnected> {
