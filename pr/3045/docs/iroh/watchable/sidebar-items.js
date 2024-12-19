@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":["DirectWatcher","Disconnected","MapWatcher","OrWatcher","WatchInitializedFut","WatchNextFut","Watchable","WatcherStream"],"trait":["Watcher"]};

@@ -1918,11 +1918,7 @@
 <a href="#1917" id="1917">1917</a>
 <a href="#1918" id="1918">1918</a>
 <a href="#1919" id="1919">1919</a>
-<a href="#1920" id="1920">1920</a>
-<a href="#1921" id="1921">1921</a>
-<a href="#1922" id="1922">1922</a>
-<a href="#1923" id="1923">1923</a>
-<a href="#1924" id="1924">1924</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#1920" id="1920">1920</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -1962,7 +1958,7 @@
     dns::{default_resolver, DnsResolver},
     magicsock::{<span class="self">self</span>, Handle, QuicMappedAddr},
     tls,
-    watchable::{DirectWatcher, MapWatcher, OrWatcher, Watcher},
+    watcher::{<span class="self">self</span>, Watcher},
 };
 
 <span class="kw">mod </span>rtt_actor;
@@ -1998,20 +1994,15 @@
 
 <span class="kw">type </span>DiscoveryBuilder = Box&lt;<span class="kw">dyn </span>FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; + Send + Sync&gt;;
 
-<span class="kw">type </span>NodeAddrMapper = Box&lt;
-    <span class="kw">dyn </span>Fn((<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;, <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;)) -&gt; <span class="prelude-ty">Option</span>&lt;NodeAddr&gt;
-        + Send
-        + Sync
-        + <span class="lifetime">'static</span>,
-&gt;;
-
 <span class="doccomment">/// TODO(matheus23): DOCS (don't even ask)
 ///
 /// Implements [`Watcher`]`&lt;Option&lt;`[`NodeAddr`]`&gt;&gt;`.
-</span><span class="kw">pub type </span>NodeAddrWatcher = MapWatcher&lt;
-    OrWatcher&lt;DirectWatcher&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt;, DirectWatcher&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt;&gt;,
+</span><span class="kw">pub type </span>NodeAddrWatcher = watcher::Map&lt;
+    (
+        watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt;,
+        watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt;,
+    ),
     <span class="prelude-ty">Option</span>&lt;NodeAddr&gt;,
-    NodeAddrMapper,
 &gt;;
 
 <span class="doccomment">/// Builder for [`Endpoint`].
@@ -2701,26 +2692,27 @@
     /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
     /// as they would be returned by [`Endpoint::home_relay`] and
     /// [`Endpoint::direct_addresses`].
-    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;NodeAddrWatcher&gt; {
+    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeAddrWatcher {
         <span class="kw">let </span>watch_addrs = <span class="self">self</span>.direct_addresses();
         <span class="kw">let </span>watch_relay = <span class="self">self</span>.home_relay();
         <span class="kw">let </span>node_id = <span class="self">self</span>.node_id();
-        <span class="kw">let </span>mapper: NodeAddrMapper = Box::new(<span class="kw">move </span>|(addrs, relay)| <span class="kw">match </span>(addrs, relay) {
-            (<span class="prelude-val">Some</span>(addrs), relay) =&gt; <span class="prelude-val">Some</span>(NodeAddr::from_parts(
-                node_id,
-                relay,
-                addrs.into_iter().map(|x| x.addr),
-            )),
-            (<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(relay)) =&gt; <span class="prelude-val">Some</span>(NodeAddr::from_parts(
-                node_id,
-                <span class="prelude-val">Some</span>(relay),
-                std::iter::empty(),
-            )),
-            (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>) =&gt; <span class="prelude-val">None</span>,
-        });
 
-        <span class="kw">let </span>watcher = watch_addrs.or(watch_relay).map(mapper)<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(watcher)
+        watch_addrs
+            .or(watch_relay)
+            .map(<span class="kw">move </span>|(addrs, relay)| <span class="kw">match </span>(addrs, relay) {
+                (<span class="prelude-val">Some</span>(addrs), relay) =&gt; <span class="prelude-val">Some</span>(NodeAddr::from_parts(
+                    node_id,
+                    relay,
+                    addrs.into_iter().map(|x| x.addr),
+                )),
+                (<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(relay)) =&gt; <span class="prelude-val">Some</span>(NodeAddr::from_parts(
+                    node_id,
+                    <span class="prelude-val">Some</span>(relay),
+                    std::iter::empty(),
+                )),
+                (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>) =&gt; <span class="prelude-val">None</span>,
+            })
+            .expect(<span class="string">"watchable is alive - cannot be disconnected yet"</span>)
     }
 
     <span class="doccomment">/// Returns a [`Watcher`] for the [`RelayUrl`] of the Relay server used as home relay.
@@ -2748,7 +2740,7 @@
     /// let _relay_url = mep.home_relay().initialized().await.unwrap();
     /// # });
     /// ```
-    </span><span class="kw">pub fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DirectWatcher&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt; {
+    </span><span class="kw">pub fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt; {
         <span class="self">self</span>.msock.home_relay()
     }
 
@@ -2786,7 +2778,7 @@
     /// ```
     ///
     /// [STUN]: https://en.wikipedia.org/wiki/STUN
-    </span><span class="kw">pub fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DirectWatcher&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
+    </span><span class="kw">pub fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
         <span class="self">self</span>.msock.direct_addresses()
     }
 
@@ -2858,7 +2850,7 @@
     /// # Errors
     ///
     /// Will error if we do not have any address information for the given `node_id`.
-    </span><span class="kw">pub fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;DirectWatcher&lt;ConnectionType&gt;&gt; {
+    </span><span class="kw">pub fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;watcher::Direct&lt;ConnectionType&gt;&gt; {
         <span class="self">self</span>.msock.conn_type(node_id)
     }
 
@@ -3386,7 +3378,7 @@
             .bind()
             .<span class="kw">await
             </span>.unwrap();
-        <span class="kw">let </span>my_addr = ep.node_addr().unwrap().initialized().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>my_addr = ep.node_addr().initialized().<span class="kw">await</span>.unwrap();
         <span class="kw">let </span>res = ep.connect(my_addr.clone(), TEST_ALPN).<span class="kw">await</span>;
         <span class="macro">assert!</span>(res.is_err());
         <span class="kw">let </span>err = res.err().unwrap();
@@ -3668,8 +3660,8 @@
             .bind()
             .<span class="kw">await
             </span>.unwrap();
-        <span class="kw">let </span>ep1_nodeaddr = ep1.node_addr().unwrap().initialized().<span class="kw">await</span>.unwrap();
-        <span class="kw">let </span>ep2_nodeaddr = ep2.node_addr().unwrap().initialized().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>ep1_nodeaddr = ep1.node_addr().initialized().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>ep2_nodeaddr = ep2.node_addr().initialized().<span class="kw">await</span>.unwrap();
         ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();
         ep2.add_node_addr(ep1_nodeaddr.clone()).unwrap();
         <span class="kw">let </span>ep1_nodeid = ep1.node_id();
@@ -3792,7 +3784,7 @@
         <span class="kw">let </span>ep1_nodeid = ep1.node_id();
         <span class="kw">let </span>ep2_nodeid = ep2.node_id();
 
-        <span class="kw">let </span>ep1_nodeaddr = ep1.node_addr().unwrap().initialized().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>ep1_nodeaddr = ep1.node_addr().initialized().<span class="kw">await</span>.unwrap();
         <span class="macro">tracing::info!</span>(
             <span class="string">"node id 1 {ep1_nodeid}, relay URL {:?}"</span>,
             ep1_nodeaddr.relay_url()

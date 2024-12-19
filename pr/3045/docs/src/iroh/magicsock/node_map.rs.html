@@ -844,10 +844,7 @@
 <a href="#843" id="843">843</a>
 <a href="#844" id="844">844</a>
 <a href="#845" id="845">845</a>
-<a href="#846" id="846">846</a>
-<a href="#847" id="847">847</a>
-<a href="#848" id="848">848</a>
-<a href="#849" id="849">849</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#846" id="846">846</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -870,7 +867,7 @@
 };
 <span class="kw">use crate</span>::{
     disco::{CallMeMaybe, Pong, SendAddr},
-    watchable::DirectWatcher,
+    watcher::Direct,
 };
 
 <span class="kw">mod </span>best_addr;
@@ -1140,10 +1137,7 @@
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `node_id`
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>conn_type(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        node_id: NodeId,
-    ) -&gt; anyhow::Result&lt;DirectWatcher&lt;ConnectionType&gt;&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; anyhow::Result&lt;Direct&lt;ConnectionType&gt;&gt; {
         <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).conn_type(node_id)
     }
 
@@ -1311,7 +1305,7 @@
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
-    </span><span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; anyhow::Result&lt;DirectWatcher&lt;ConnectionType&gt;&gt; {
+    </span><span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; anyhow::Result&lt;Direct&lt;ConnectionType&gt;&gt; {
         <span class="kw">match </span><span class="self">self</span>.get(NodeStateKey::NodeId(node_id)) {
             <span class="prelude-val">Some</span>(ep) =&gt; <span class="prelude-val">Ok</span>(ep.conn_type()),
             <span class="prelude-val">None </span>=&gt; <span class="macro">anyhow::bail!</span>(<span class="string">"No endpoint for {node_id:?} found"</span>),

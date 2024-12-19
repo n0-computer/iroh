@@ -225,7 +225,7 @@
 <span class="kw">use crate</span>::{
     magicsock::ConnectionType,
     metrics::MagicsockMetrics,
-    watchable::{DirectWatcher, WatcherStream},
+    watcher::{Direct, Stream},
 };
 
 <span class="attr">#[derive(Debug)]
@@ -264,7 +264,7 @@
         <span class="doccomment">/// The connection.
         </span>connection: quinn::WeakConnectionHandle,
         <span class="doccomment">/// Path changes for this connection from the magic socket.
-        </span>conn_type_changes: WatcherStream&lt;DirectWatcher&lt;ConnectionType&gt;&gt;,
+        </span>conn_type_changes: Stream&lt;Direct&lt;ConnectionType&gt;&gt;,
         <span class="doccomment">/// For reporting-only, the Node ID of this connection.
         </span>node_id: NodeId,
     },
@@ -277,7 +277,7 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>RttActor {
     <span class="doccomment">/// Stream of connection type changes.
-    </span>connection_events: stream_group::Keyed&lt;WatcherStream&lt;DirectWatcher&lt;ConnectionType&gt;&gt;&gt;,
+    </span>connection_events: stream_group::Keyed&lt;Stream&lt;Direct&lt;ConnectionType&gt;&gt;&gt;,
     <span class="doccomment">/// References to the connections.
     ///
     /// These are weak references so not to keep the connections alive.  The key allows
@@ -334,7 +334,7 @@
     </span><span class="kw">fn </span>handle_new_connection(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         connection: quinn::WeakConnectionHandle,
-        conn_type_changes: WatcherStream&lt;DirectWatcher&lt;ConnectionType&gt;&gt;,
+        conn_type_changes: Stream&lt;Direct&lt;ConnectionType&gt;&gt;,
         node_id: NodeId,
     ) {
         <span class="kw">let </span>key = <span class="self">self</span>.connection_events.insert(conn_type_changes);

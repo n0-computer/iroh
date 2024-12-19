@@ -1317,7 +1317,7 @@
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use crate</span>::{watchable::Watcher <span class="kw">as _</span>, RelayMode};
+    <span class="kw">use crate</span>::{watcher::Watcher <span class="kw">as _</span>, RelayMode};
 
     <span class="kw">type </span>InfoStore = HashMap&lt;NodeId, (<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;, BTreeSet&lt;SocketAddr&gt;, u64)&gt;;
 
@@ -1447,7 +1447,7 @@
         </span>};
         <span class="kw">let </span>ep1_addr = NodeAddr::new(ep1.node_id());
         <span class="comment">// wait for our address to be updated and thus published at least once
-        </span>ep1.node_addr()<span class="question-mark">?</span>.initialized().<span class="kw">await</span><span class="question-mark">?</span>;
+        </span>ep1.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>_conn = ep2.connect(ep1_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
@@ -1473,7 +1473,7 @@
         </span>};
         <span class="kw">let </span>ep1_addr = NodeAddr::new(ep1.node_id());
         <span class="comment">// wait for out address to be updated and thus published at least once
-        </span>ep1.node_addr()<span class="question-mark">?</span>.initialized().<span class="kw">await</span><span class="question-mark">?</span>;
+        </span>ep1.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>_conn = ep2.connect(ep1_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
@@ -1503,7 +1503,7 @@
         </span>};
         <span class="kw">let </span>ep1_addr = NodeAddr::new(ep1.node_id());
         <span class="comment">// wait for out address to be updated and thus published at least once
-        </span>ep1.node_addr()<span class="question-mark">?</span>.initialized().<span class="kw">await</span><span class="question-mark">?</span>;
+        </span>ep1.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>_conn = ep2.connect(ep1_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
@@ -1526,7 +1526,7 @@
         </span>};
         <span class="kw">let </span>ep1_addr = NodeAddr::new(ep1.node_id());
         <span class="comment">// wait for out address to be updated and thus published at least once
-        </span>ep1.node_addr()<span class="question-mark">?</span>.initialized().<span class="kw">await</span><span class="question-mark">?</span>;
+        </span>ep1.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>res = ep2.connect(ep1_addr, TEST_ALPN).<span class="kw">await</span>;
         <span class="macro">assert!</span>(res.is_err());
         <span class="prelude-val">Ok</span>(())
@@ -1549,7 +1549,7 @@
             new_endpoint(secret, disco).<span class="kw">await
         </span>};
         <span class="comment">// wait for out address to be updated and thus published at least once
-        </span>ep1.node_addr()<span class="question-mark">?</span>.initialized().<span class="kw">await</span><span class="question-mark">?</span>;
+        </span>ep1.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>ep1_wrong_addr = NodeAddr {
             node_id: ep1.node_id(),
             relay_url: <span class="prelude-val">None</span>,

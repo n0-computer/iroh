@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["KeyParsingError"],"mod":["defaults","discovery","dns","endpoint","metrics","protocol","test_utils","watchable"],"struct":["NodeAddr","PublicKey","RelayMap","RelayNode","RelayUrl","RelayUrlParseError","SecretKey"],"type":["NodeId"]};
+window.SIDEBAR_ITEMS = {"enum":["KeyParsingError"],"mod":["defaults","discovery","dns","endpoint","metrics","protocol","test_utils","watcher"],"struct":["NodeAddr","PublicKey","RelayMap","RelayNode","RelayUrl","RelayUrlParseError","SecretKey"],"type":["NodeId"]};

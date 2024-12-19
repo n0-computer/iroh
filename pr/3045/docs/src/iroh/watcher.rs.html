@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/watchable.rs`."><title>watchable.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../../static.files/src-script-56102188.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/</div>watchable.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/watcher.rs`."><title>watcher.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../../static.files/src-script-56102188.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/</div>watcher.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
 <a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
@@ -679,14 +679,7 @@
 <a href="#678" id="678">678</a>
 <a href="#679" id="679">679</a>
 <a href="#680" id="680">680</a>
-<a href="#681" id="681">681</a>
-<a href="#682" id="682">682</a>
-<a href="#683" id="683">683</a>
-<a href="#684" id="684">684</a>
-<a href="#685" id="685">685</a>
-<a href="#686" id="686">686</a>
-<a href="#687" id="687">687</a>
-<a href="#688" id="688">688</a></pre></div><pre class="rust"><code><span class="doccomment">//! Watchable values.
+<a href="#681" id="681">681</a></pre></div><pre class="rust"><code><span class="doccomment">//! Watchable values.
 //!
 //! A [`Watchable`] exists to keep track of a value which may change over time.  It allows
 //! observers to be notified of changes to the value.  The aim is to always be aware of the
@@ -706,7 +699,6 @@
     task::{<span class="self">self</span>, Poll, Waker},
 };
 
-<span class="kw">use </span>futures_lite::stream::Stream;
 <span class="attr">#[cfg(iroh_loom)]
 </span><span class="kw">use </span>loom::sync;
 <span class="kw">use </span>sync::{Mutex, RwLock};
@@ -776,8 +768,8 @@
     }
 
     <span class="doccomment">/// Creates a [`Watcher`] allowing the value to be observed, but not modified.
-    </span><span class="kw">pub fn </span>watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DirectWatcher&lt;T&gt; {
-        DirectWatcher {
+    </span><span class="kw">pub fn </span>watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Direct&lt;T&gt; {
+        Direct {
             epoch: <span class="self">self</span>.shared.state.read().expect(<span class="string">"poisoned"</span>).epoch,
             shared: Arc::downgrade(<span class="kw-2">&amp;</span><span class="self">self</span>.shared),
         }
@@ -821,8 +813,8 @@
     /// # Cancel Safety
     ///
     /// The returned future is cancel-safe.
-    </span><span class="kw">fn </span>updated(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; WatchNextFut&lt;<span class="self">Self</span>&gt; {
-        WatchNextFut { watcher: <span class="self">self </span>}
+    </span><span class="kw">fn </span>updated(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; NextFut&lt;<span class="self">Self</span>&gt; {
+        NextFut { watcher: <span class="self">self </span>}
     }
 
     <span class="doccomment">/// Returns a future completing once the value is set to [`Some`] value.
@@ -831,11 +823,11 @@
     ///
     /// This is a utility for the common case of storing an [`Option`] inside a
     /// [`Watchable`].
-    </span><span class="kw">fn </span>initialized&lt;T&gt;(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; WatchInitializedFut&lt;T, <span class="self">Self</span>&gt;
+    </span><span class="kw">fn </span>initialized&lt;T&gt;(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; InitializedFut&lt;T, <span class="self">Self</span>&gt;
     <span class="kw">where
         </span><span class="self">Self</span>: Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;T&gt;&gt;,
     {
-        WatchInitializedFut {
+        InitializedFut {
             initial: <span class="kw">match </span><span class="self">self</span>.get() {
                 <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(value)) =&gt; <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(value)),
                 <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; <span class="prelude-val">None</span>,
@@ -858,11 +850,11 @@
     /// # Cancel Safety
     ///
     /// The returned stream is cancel-safe.
-    </span><span class="kw">fn </span>stream(<span class="self">self</span>) -&gt; WatcherStream&lt;<span class="self">Self</span>&gt;
+    </span><span class="kw">fn </span>stream(<span class="self">self</span>) -&gt; Stream&lt;<span class="self">Self</span>&gt;
     <span class="kw">where
         </span><span class="self">Self</span>: Unpin,
     {
-        WatcherStream {
+        Stream {
             initial: <span class="self">self</span>.get().ok(),
             watcher: <span class="self">self</span>,
         }
@@ -882,22 +874,22 @@
     /// # Cancel Safety
     ///
     /// The returned stream is cancel-safe.
-    </span><span class="kw">fn </span>stream_updates_only(<span class="self">self</span>) -&gt; WatcherStream&lt;<span class="self">Self</span>&gt;
+    </span><span class="kw">fn </span>stream_updates_only(<span class="self">self</span>) -&gt; Stream&lt;<span class="self">Self</span>&gt;
     <span class="kw">where
         </span><span class="self">Self</span>: Unpin,
     {
-        WatcherStream {
+        Stream {
             initial: <span class="prelude-val">None</span>,
             watcher: <span class="self">self</span>,
         }
     }
 
     <span class="doccomment">/// Maps this watcher with a function that transforms the observed values.
-    </span><span class="kw">fn </span>map&lt;T: Clone + Eq, F: Fn(<span class="self">Self</span>::Value) -&gt; T&gt;(
+    </span><span class="kw">fn </span>map&lt;T: Clone + Eq&gt;(
         <span class="self">self</span>,
-        map: F,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;MapWatcher&lt;<span class="self">Self</span>, T, F&gt;, Disconnected&gt; {
-        <span class="prelude-val">Ok</span>(MapWatcher {
+        map: <span class="kw">impl </span>Fn(<span class="self">Self</span>::Value) -&gt; T + <span class="lifetime">'static</span>,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;Map&lt;<span class="self">Self</span>, T&gt;, Disconnected&gt; {
+        <span class="prelude-val">Ok</span>(Map {
             current: (map)(<span class="self">self</span>.get()<span class="question-mark">?</span>),
             map: Arc::new(map),
             watcher: <span class="self">self</span>,
@@ -906,8 +898,8 @@
 
     <span class="doccomment">/// Returns a watcher that updates every time this or the other watcher
     /// updates, and yields both watcher's items together when that happens.
-    </span><span class="kw">fn </span>or&lt;W: Watcher&gt;(<span class="self">self</span>, other: W) -&gt; OrWatcher&lt;<span class="self">Self</span>, W&gt; {
-        OrWatcher(<span class="self">self</span>, other)
+    </span><span class="kw">fn </span>or&lt;W: Watcher&gt;(<span class="self">self</span>, other: W) -&gt; (<span class="self">Self</span>, W) {
+        (<span class="self">self</span>, other)
     }
 }
 
@@ -920,12 +912,12 @@
 /// When the thread changing the [`Watchable`] pauses updating, the [`Watcher`] will always
 /// end up reporting the most recent state eventually.
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>DirectWatcher&lt;T&gt; {
+</span><span class="kw">pub struct </span>Direct&lt;T&gt; {
     epoch: u64,
     shared: Weak&lt;Shared&lt;T&gt;&gt;,
 }
 
-<span class="kw">impl</span>&lt;T: Clone + Eq&gt; Watcher <span class="kw">for </span>DirectWatcher&lt;T&gt; {
+<span class="kw">impl</span>&lt;T: Clone + Eq&gt; Watcher <span class="kw">for </span>Direct&lt;T&gt; {
     <span class="kw">type </span>Value = T;
 
     <span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Value, Disconnected&gt; {
@@ -950,14 +942,7 @@
     }
 }
 
-<span class="doccomment">/// Combines two [`Watcher`]s into a single watcher.
-///
-/// This watcher updates when one of the inner watchers
-/// is updated at least once.
-</span><span class="attr">#[derive(Clone, Debug)]
-</span><span class="kw">pub struct </span>OrWatcher&lt;S: Watcher, T: Watcher&gt;(S, T);
-
-<span class="kw">impl</span>&lt;S: Watcher, T: Watcher&gt; Watcher <span class="kw">for </span>OrWatcher&lt;S, T&gt; {
+<span class="kw">impl</span>&lt;S: Watcher, T: Watcher&gt; Watcher <span class="kw">for </span>(S, T) {
     <span class="kw">type </span>Value = (S::Value, T::Value);
 
     <span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Value, Disconnected&gt; {
@@ -980,14 +965,15 @@
 }
 
 <span class="doccomment">/// Maps a [`Watcher`] and allows filtering updates.
-</span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>MapWatcher&lt;W: Watcher, T: Clone + Eq, F: Fn(W::Value) -&gt; T&gt; {
-    map: Arc&lt;F&gt;,
+</span><span class="attr">#[derive(derive_more::Debug)]
+</span><span class="kw">pub struct </span>Map&lt;W: Watcher, T: Clone + Eq&gt; {
+    <span class="attr">#[debug(<span class="string">"Arc&lt;dyn Fn(W::Value) -&gt; T + 'static&gt;"</span>)]
+    </span>map: Arc&lt;<span class="kw">dyn </span>Fn(W::Value) -&gt; T + <span class="lifetime">'static</span>&gt;,
     watcher: W,
     current: T,
 }
 
-<span class="kw">impl</span>&lt;W: Watcher + Clone, T: Clone + Eq, F: Fn(W::Value) -&gt; T&gt; Clone <span class="kw">for </span>MapWatcher&lt;W, T, F&gt; {
+<span class="kw">impl</span>&lt;W: Watcher + Clone, T: Clone + Eq&gt; Clone <span class="kw">for </span>Map&lt;W, T&gt; {
     <span class="kw">fn </span>clone(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             map: <span class="self">self</span>.map.clone(),
@@ -997,7 +983,7 @@
     }
 }
 
-<span class="kw">impl</span>&lt;W: Watcher, T: Clone + Eq, F: Fn(W::Value) -&gt; T&gt; Watcher <span class="kw">for </span>MapWatcher&lt;W, T, F&gt; {
+<span class="kw">impl</span>&lt;W: Watcher, T: Clone + Eq&gt; Watcher <span class="kw">for </span>Map&lt;W, T&gt; {
     <span class="kw">type </span>Value = T;
 
     <span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Value, Disconnected&gt; {
@@ -1029,11 +1015,11 @@
 ///
 /// This future is cancel-safe.
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>WatchNextFut&lt;<span class="lifetime">'a</span>, W: Watcher&gt; {
+</span><span class="kw">pub struct </span>NextFut&lt;<span class="lifetime">'a</span>, W: Watcher&gt; {
     watcher: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>W,
 }
 
-<span class="kw">impl</span>&lt;W: Watcher&gt; Future <span class="kw">for </span>WatchNextFut&lt;<span class="lifetime">'_</span>, W&gt; {
+<span class="kw">impl</span>&lt;W: Watcher&gt; Future <span class="kw">for </span>NextFut&lt;<span class="lifetime">'_</span>, W&gt; {
     <span class="kw">type </span>Output = <span class="prelude-ty">Result</span>&lt;W::Value, Disconnected&gt;;
 
     <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
@@ -1050,13 +1036,13 @@
 ///
 /// This Future is cancel-safe.
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>WatchInitializedFut&lt;<span class="lifetime">'a</span>, T, W: Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;T&gt;&gt;&gt; {
+</span><span class="kw">pub struct </span>InitializedFut&lt;<span class="lifetime">'a</span>, T, W: Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;T&gt;&gt;&gt; {
     initial: <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;T, Disconnected&gt;&gt;,
     watcher: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>W,
 }
 
 <span class="kw">impl</span>&lt;T: Clone + Eq + Unpin, W: Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;T&gt;&gt; + Unpin&gt; Future
-    <span class="kw">for </span>WatchInitializedFut&lt;<span class="lifetime">'_</span>, T, W&gt;
+    <span class="kw">for </span>InitializedFut&lt;<span class="lifetime">'_</span>, T, W&gt;
 {
     <span class="kw">type </span>Output = <span class="prelude-ty">Result</span>&lt;T, Disconnected&gt;;
 
@@ -1080,12 +1066,12 @@
 ///
 /// This stream is cancel-safe.
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>WatcherStream&lt;W: Watcher + Unpin&gt; {
+</span><span class="kw">pub struct </span>Stream&lt;W: Watcher + Unpin&gt; {
     initial: <span class="prelude-ty">Option</span>&lt;W::Value&gt;,
     watcher: W,
 }
 
-<span class="kw">impl</span>&lt;W: Watcher + Unpin&gt; Stream <span class="kw">for </span>WatcherStream&lt;W&gt;
+<span class="kw">impl</span>&lt;W: Watcher + Unpin&gt; futures_lite::stream::Stream <span class="kw">for </span>Stream&lt;W&gt;
 <span class="kw">where
     </span>W::Value: Unpin,
 {
@@ -1106,7 +1092,7 @@
 <span class="doccomment">/// The error for when a [`Watcher`] is disconnected from its underlying
 /// [`Watchable`] value, because of that watchable having been dropped.
 </span><span class="attr">#[derive(thiserror::Error, Debug)]
-#[error(<span class="string">"Watch lost connection to underlying Watchable, it was dropped"</span>)]
+#[error(<span class="string">"Watcher lost connection to underlying Watchable, it was dropped"</span>)]
 </span><span class="kw">pub struct </span>Disconnected;
 
 <span class="comment">// Private:
