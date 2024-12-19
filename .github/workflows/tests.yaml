@@ -102,7 +102,7 @@ jobs:
 
       - name: build tests
         run: |
-          cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --profile ci --no-run
+          cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --no-run
 
       - name: list ignored tests
         run: |
