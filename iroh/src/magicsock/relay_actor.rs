@@ -498,7 +498,7 @@ impl RelayActor {
                 self.send_relay(&url, contents, remote_node).await;
             }
             RelayActorMessage::SetHome { url } => {
-                self.set_home_relay(&url).await;
+                self.set_home_relay(url).await;
             }
             RelayActorMessage::MaybeCloseRelaysOnRebind(ifs) => {
                 self.maybe_close_relays_on_rebind(&ifs).await;
@@ -538,9 +538,10 @@ impl RelayActor {
         }
     }
 
-    async fn set_home_relay(&mut self, home_url: &RelayUrl) {
+    async fn set_home_relay(&mut self, home_url: RelayUrl) {
+        let home_url_ref = &home_url;
         futures_buffered::join_all(self.active_relays.iter().map(|(url, handle)| async move {
-            let is_preferred = url == home_url;
+            let is_preferred = url == home_url_ref;
             handle
                 .inbox_addr
                 .send(ActiveRelayMessage::SetHomeRelay(is_preferred))
@@ -562,15 +563,19 @@ impl RelayActor {
         &mut self,
         url: &RelayUrl,
         remote_node: &NodeId,
-    ) -> &ActiveRelayHandle {
-        let mut found_relay: Option<RelayUrl> = None;
-        if !self.active_relays.contains_key(url) {
-            // If we don't have an open connection to the remote node's home relay, see if
-            // we have an open connection to a relay node where we'd heard from that peer
-            // already.  E.g. maybe they dialed our home relay recently.
-            // TODO: LRU cache the NodeId -> relay mapping so this is much faster for repeat
-            // senders.
+    ) -> ActiveRelayHandle {
+        if let Some(handle) = self.active_relays.get(url) {
+            return handle.clone();
+        }
 
+        let mut found_relay: Option<RelayUrl> = None;
+        // If we don't have an open connection to the remote node's home relay, see if
+        // we have an open connection to a relay node where we'd heard from that peer
+        // already.  E.g. maybe they dialed our home relay recently.
+        // TODO: LRU cache the NodeId -> relay mapping so this is much faster for repeat
+        // senders.
+
+        {
             // Futures which return Some(RelayUrl) if the relay knows about the remote node.
             let check_futs = self.active_relays.iter().map(|(url, handle)| async move {
                 let (tx, rx) = oneshot::channel();
@@ -592,25 +597,28 @@ impl RelayActor {
                 }
             }
         }
-        let url = found_relay.as_ref().unwrap_or(url);
+        let url = found_relay.unwrap_or(url.clone());
         self.active_relay_handle(url)
     }
 
     /// Returns the handle of the [`ActiveRelayActor`].
-    fn active_relay_handle(&mut self, url: &RelayUrl) -> &ActiveRelayHandle {
-        if !self.active_relays.contains_key(url) {
-            let handle = self.start_active_relay(url.clone());
-            if Some(url) == self.msock.my_relay().as_ref() {
-                if let Err(err) = handle
-                    .inbox_addr
-                    .try_send(ActiveRelayMessage::SetHomeRelay(true))
-                {
-                    error!("Home relay not set, send to new actor failed: {err:#}.");
+    fn active_relay_handle(&mut self, url: RelayUrl) -> ActiveRelayHandle {
+        match self.active_relays.get(&url) {
+            Some(e) => e.clone(),
+            None => {
+                let handle = self.start_active_relay(url.clone());
+                if Some(&url) == self.msock.my_relay().as_ref() {
+                    if let Err(err) = handle
+                        .inbox_addr
+                        .try_send(ActiveRelayMessage::SetHomeRelay(true))
+                    {
+                        error!("Home relay not set, send to new actor failed: {err:#}.");
+                    }
                 }
+                self.active_relays.insert(url, handle.clone());
+                handle
             }
-            self.active_relays.insert(url.clone(), handle);
         }
-        self.active_relays.get(url).expect("just inserted")
     }
 
     fn start_active_relay(&mut self, url: RelayUrl) -> ActiveRelayHandle {
@@ -677,7 +685,7 @@ impl RelayActor {
 
         // Make sure home relay exists
         if let Some(ref url) = self.msock.my_relay() {
-            self.active_relay_handle(url);
+            self.active_relay_handle(url.clone());
         }
         self.log_active_relay();
     }
