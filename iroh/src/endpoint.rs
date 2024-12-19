@@ -777,7 +777,7 @@ impl Endpoint {
     /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
     /// as they would be returned by [`Endpoint::home_relay`] and
     /// [`Endpoint::direct_addresses`].
-    pub fn node_addr(&self) -> Result<NodeAddrWatcher> {
+    pub fn node_addr(&self) -> NodeAddrWatcher {
         let watch_addrs = self.direct_addresses();
         let watch_relay = self.home_relay();
         let node_id = self.node_id();
@@ -795,8 +795,10 @@ impl Endpoint {
             (None, None) => None,
         });
 
-        let watcher = watch_addrs.or(watch_relay).map(mapper)?;
-        Ok(watcher)
+        watch_addrs
+            .or(watch_relay)
+            .map(mapper)
+            .expect("watchable is alive - cannot be disconnected yet")
     }
 
     /// Returns a [`Watcher`] for the [`RelayUrl`] of the Relay server used as home relay.
@@ -1462,7 +1464,7 @@ mod tests {
             .bind()
             .await
             .unwrap();
-        let my_addr = ep.node_addr().unwrap().initialized().await.unwrap();
+        let my_addr = ep.node_addr().initialized().await.unwrap();
         let res = ep.connect(my_addr.clone(), TEST_ALPN).await;
         assert!(res.is_err());
         let err = res.err().unwrap();
@@ -1744,8 +1746,8 @@ mod tests {
             .bind()
             .await
             .unwrap();
-        let ep1_nodeaddr = ep1.node_addr().unwrap().initialized().await.unwrap();
-        let ep2_nodeaddr = ep2.node_addr().unwrap().initialized().await.unwrap();
+        let ep1_nodeaddr = ep1.node_addr().initialized().await.unwrap();
+        let ep2_nodeaddr = ep2.node_addr().initialized().await.unwrap();
         ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();
         ep2.add_node_addr(ep1_nodeaddr.clone()).unwrap();
         let ep1_nodeid = ep1.node_id();
@@ -1868,7 +1870,7 @@ mod tests {
         let ep1_nodeid = ep1.node_id();
         let ep2_nodeid = ep2.node_id();
 
-        let ep1_nodeaddr = ep1.node_addr().unwrap().initialized().await.unwrap();
+        let ep1_nodeaddr = ep1.node_addr().initialized().await.unwrap();
         tracing::info!(
             "node id 1 {ep1_nodeid}, relay URL {:?}",
             ep1_nodeaddr.relay_url()

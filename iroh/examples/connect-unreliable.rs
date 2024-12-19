@@ -50,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
         .bind()
         .await?;
 
-    let node_addr = endpoint.node_addr()?.initialized().await?;
+    let node_addr = endpoint.node_addr().initialized().await?;
     let me = node_addr.node_id;
     println!("node id: {me}");
     println!("node listening addresses:");

@@ -418,7 +418,7 @@ where
 /// The error for when a [`Watcher`] is disconnected from its underlying
 /// [`Watchable`] value, because of that watchable having been dropped.
 #[derive(thiserror::Error, Debug)]
-#[error("Watch lost connection to underlying Watchable, it was dropped")]
+#[error("Watcher lost connection to underlying Watchable, it was dropped")]
 pub struct Disconnected;
 
 // Private:
