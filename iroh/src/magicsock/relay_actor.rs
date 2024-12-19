@@ -179,6 +179,7 @@ impl ActiveRelayActor {
         // the last datagrams sent to the relay, received datagrams will trigger ACKs which
         // is sufficient to keep active connections open.
         let mut inactive_timeout = tokio::time::interval(RELAY_INACTIVE_CLEANUP_TIME);
+        inactive_timeout.reset(); // skip immediate tick
 
         loop {
             // If a read error occurred on the connection it might have been lost.  But we
@@ -1092,6 +1093,7 @@ mod tests {
 
         // We now have an idling ActiveRelayActor.  If we advance time just a little it
         // should stay alive.
+        info!("Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME / 2");
         tokio::time::pause();
         tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME / 2).await;
         tokio::time::resume();
@@ -1104,6 +1106,7 @@ mod tests {
         );
 
         // If we advance time a lot it should finish.
+        info!("Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME");
         tokio::time::pause();
         tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME).await;
         tokio::time::resume();
