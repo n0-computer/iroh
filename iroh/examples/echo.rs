@@ -11,6 +11,7 @@ use futures_lite::future::Boxed as BoxedFuture;
 use iroh::{
     endpoint::Connecting,
     protocol::{ProtocolHandler, Router},
+    watcher::Watcher as _,
     Endpoint, NodeAddr,
 };
 
@@ -23,7 +24,7 @@ const ALPN: &[u8] = b"iroh-example/echo/0";
 #[tokio::main]
 async fn main() -> Result<()> {
     let router = accept_side().await?;
-    let node_addr = router.endpoint().node_addr().await?;
+    let node_addr = router.endpoint().node_addr().initialized().await?;
 
     connect_side(node_addr).await?;
 
