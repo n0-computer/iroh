@@ -7,7 +7,7 @@ use url::Url;
 /// A URL identifying a relay server.
 ///
 /// It is cheaply clonable, as the underlying type is wrapped into an `Arc`.
-/// The main type tpye under the hood though is [`Url`], with a few custom tweaks:
+/// The main type under the hood though is [`Url`], with a few custom tweaks:
 ///
 /// - A relay URL is never a relative URL, so an implicit `.` is added at the end of the
 ///   domain name if missing.
