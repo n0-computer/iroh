@@ -1117,14 +1117,7 @@
 <a href="#1116" id="1116">1116</a>
 <a href="#1117" id="1117">1117</a>
 <a href="#1118" id="1118">1118</a>
-<a href="#1119" id="1119">1119</a>
-<a href="#1120" id="1120">1120</a>
-<a href="#1121" id="1121">1121</a>
-<a href="#1122" id="1122">1122</a>
-<a href="#1123" id="1123">1123</a>
-<a href="#1124" id="1124">1124</a>
-<a href="#1125" id="1125">1125</a>
-<a href="#1126" id="1126">1126</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1119" id="1119">1119</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1301,10 +1294,10 @@
         // the same time.
         </span><span class="kw">let </span><span class="kw-2">mut </span>relay_send_fut = <span class="macro">std::pin::pin!</span>(MaybeFuture::none());
 
-        <span class="comment">// If inactive for this long the actor should exit.  Inactivity is only tracked on
+        <span class="comment">// If inactive for one tick the actor should exit.  Inactivity is only tracked on
         // the last datagrams sent to the relay, received datagrams will trigger ACKs which
         // is sufficient to keep active connections open.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>inactive_timeout = <span class="macro">std::pin::pin!</span>(tokio::time::sleep(RELAY_INACTIVE_CLEANUP_TIME));
+        </span><span class="kw">let </span><span class="kw-2">mut </span>inactive_timeout = tokio::time::interval(RELAY_INACTIVE_CLEANUP_TIME);
 
         <span class="kw">loop </span>{
             <span class="comment">// If a read error occurred on the connection it might have been lost.  But we
@@ -1335,7 +1328,7 @@
                         relay_client.send(msg.node_id, msg.packet).<span class="kw">await
                     </span>};
                     relay_send_fut.as_mut().set_future(fut);
-                    inactive_timeout.as_mut().reset(Instant::now() + RELAY_INACTIVE_CLEANUP_TIME);
+                    inactive_timeout.reset();
 
                 }
                 msg = <span class="self">self</span>.relay_client_receiver.recv() =&gt; {
@@ -1347,7 +1340,7 @@
                         }
                     }
                 }
-                <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>inactive_timeout =&gt; {
+                <span class="kw">_ </span>= inactive_timeout.tick() =&gt; {
                     <span class="macro">debug!</span>(<span class="string">"Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting"</span>);
                     <span class="kw">break</span>;
                 }
@@ -1797,15 +1790,8 @@
 
     <span class="doccomment">/// Cleans up [`ActiveRelayActor`]s which have stopped running.
     </span><span class="kw">fn </span>reap_active_relays(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="kw">let </span><span class="kw-2">mut </span>stopped_actors = Vec::with_capacity(<span class="self">self</span>.active_relays.len());
-        <span class="kw">for </span>(url, handle) <span class="kw">in </span><span class="self">self</span>.active_relays.iter() {
-            <span class="kw">if </span>handle.inbox_addr.is_closed() {
-                stopped_actors.push(url.clone());
-            }
-        }
-        <span class="kw">for </span>url <span class="kw">in </span>stopped_actors {
-            <span class="self">self</span>.active_relays.remove(<span class="kw-2">&amp;</span>url);
-        }
+        <span class="self">self</span>.active_relays
+            .retain(|_url, handle| !handle.inbox_addr.is_closed());
 
         <span class="comment">// Make sure home relay exists
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>url) = <span class="self">self</span>.msock.my_relay() {
