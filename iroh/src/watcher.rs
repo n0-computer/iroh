@@ -24,7 +24,7 @@ use sync::{Mutex, RwLock};
 
 /// A wrapper around a value that notifies [`Watcher`]s when the value is modified.
 ///
-/// Only the most recent value is available to any observer, but but observer is guaranteed
+/// Only the most recent value is available to any observer, but the observer is guaranteed
 /// to be notified of the most recent value.
 #[derive(Debug, Default)]
 pub struct Watchable<T> {
@@ -86,7 +86,7 @@ impl<T: Clone + Eq> Watchable<T> {
         ret
     }
 
-    /// Creates a [`Watcher`] allowing the value to be observed, but not modified.
+    /// Creates a [`Direct`] [`Watcher`], allowing the value to be observed, but not modified.
     pub fn watch(&self) -> Direct<T> {
         Direct {
             epoch: self.shared.state.read().expect("poisoned").epoch,
@@ -102,8 +102,22 @@ impl<T: Clone + Eq> Watchable<T> {
 
 /// A handle to a value that's represented by one or more underlying [`Watchable`]s.
 ///
-/// This handle allows one to observe the latest state and be notified
-/// of any changes to this value.
+/// A [`Watcher`] can get the current value, and will be notified when the value changes.
+/// Only the most recent value is accessible, and if the threads with the underlying [`Watchable`]s
+/// change the value faster than the threads with the [`Watcher`] can keep up with, then
+/// it'll miss in-between values.
+/// When the thread changing the [`Watchable`] pauses updating, the [`Watcher`] will always
+/// end up reporting the most recent state eventually.
+///
+/// Watchers can be modified via [`Watcher::map`] to observe a value derived from the original
+/// value via a function.
+///
+/// Watchers can be combined via [`Watcher::or`] to allow observing multiple values at once and
+/// getting an update in case any of the values updates.
+///
+/// One of the underlying [`Watchable`]s might already be dropped. In that case,
+/// the watcher will be "disconnected" and return [`Err(Disconnected)`](Disconnected)
+/// on some function calls or, when turned into a stream, that stream will end.
 pub trait Watcher: Clone {
     /// The type of value that can change.
     ///
@@ -120,7 +134,7 @@ pub trait Watcher: Clone {
     fn get(&self) -> Result<Self::Value, Disconnected>;
 
     /// Polls for the next value, or returns [`Disconnected`] if one of the underlying
-    /// watchables has been dropped.
+    /// [`Watchable`]s has been dropped.
     fn poll_updated(
         &mut self,
         cx: &mut task::Context<'_>,
@@ -142,6 +156,10 @@ pub trait Watcher: Clone {
     ///
     /// This is a utility for the common case of storing an [`Option`] inside a
     /// [`Watchable`].
+    ///
+    /// # Cancel Safety
+    ///
+    /// The returned future is cancel-safe.
     fn initialized<T>(&mut self) -> InitializedFut<T, Self>
     where
         Self: Watcher<Value = Option<T>>,
@@ -204,6 +222,9 @@ pub trait Watcher: Clone {
     }
 
     /// Maps this watcher with a function that transforms the observed values.
+    ///
+    /// The returned watcher will only register updates, when the *mapped* value
+    /// observably changes. For this, it needs to store a clone of `T` in the watcher.
     fn map<T: Clone + Eq>(
         self,
         map: impl Fn(Self::Value) -> T + 'static,
@@ -222,14 +243,9 @@ pub trait Watcher: Clone {
     }
 }
 
-/// An observer for a value.
+/// The immediate, direct observer of a [`Watchable`] value.
 ///
-/// The [`Watcher`] can get the current value, and will be notified when the value changes.
-/// Only the most recent value is accessible, and if the thread with the [`Watchable`]
-/// changes the value faster than the thread with the [`Watcher`] can keep up with, then
-/// it'll miss in-between values.
-/// When the thread changing the [`Watchable`] pauses updating, the [`Watcher`] will always
-/// end up reporting the most recent state eventually.
+/// This type is mainly used via the [`Watcher`] interface.
 #[derive(Debug, Clone)]
 pub struct Direct<T> {
     epoch: u64,
@@ -283,23 +299,15 @@ impl<S: Watcher, T: Watcher> Watcher for (S, T) {
     }
 }
 
-/// Maps a [`Watcher`] and allows filtering updates.
-#[derive(derive_more::Debug)]
+/// Wraps a [`Watcher`] to allow observing a derived value.
+///
+/// See [`Watcher::map`].
+#[derive(derive_more::Debug, Clone)]
 pub struct Map<W: Watcher, T: Clone + Eq> {
     #[debug("Arc<dyn Fn(W::Value) -> T + 'static>")]
     map: Arc<dyn Fn(W::Value) -> T + 'static>,
     watcher: W,
     current: T,
-}
-
-impl<W: Watcher + Clone, T: Clone + Eq> Clone for Map<W, T> {
-    fn clone(&self) -> Self {
-        Self {
-            map: self.map.clone(),
-            watcher: self.watcher.clone(),
-            current: self.current.clone(),
-        }
-    }
 }
 
 impl<W: Watcher, T: Clone + Eq> Watcher for Map<W, T> {

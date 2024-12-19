@@ -74,9 +74,12 @@ const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
 type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync>;
 
-/// TODO(matheus23): DOCS (don't even ask)
+/// A type alias for the return value of [`Endpoint::node_addr`].
 ///
-/// Implements [`Watcher`]`<Option<`[`NodeAddr`]`>>`.
+/// This type implements [`Watcher`] with `Value` being an optional [`NodeAddr`].
+///
+/// We return a named type instead of `impl Watcher<Value = NodeAddr>`, as this allows
+/// you to e.g. store the watcher in a struct.
 pub type NodeAddrWatcher = watcher::Map<
     (
         watcher::Direct<Option<BTreeSet<DirectAddr>>>,
@@ -767,11 +770,26 @@ impl Endpoint {
         self.static_config.secret_key.public()
     }
 
-    /// Returns the current [`NodeAddr`] for this endpoint.
+    /// Returns a [`Watcher`] for the current [`NodeAddr`] for this endpoint.
     ///
-    /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
-    /// as they would be returned by [`Endpoint::home_relay`] and
-    /// [`Endpoint::direct_addresses`].
+    /// The observed [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
+    /// as they would be returned by [`Endpoint::home_relay`] and [`Endpoint::direct_addresses`].
+    ///
+    /// Use [`Watcher::initialized`] to wait for a [`NodeAddr`] that is ready to be connected to:
+    ///
+    /// ```no_run
+    /// # async fn wrapper() -> testresult::TestResult {
+    /// use iroh::{Endpoint, watcher::{Watcher as _}};
+    ///
+    /// let endpoint = Endpoint::builder()
+    ///     .alpns(vec![b"my-alpn".to_vec()])
+    ///     .bind()
+    ///     .await?;
+    /// let node_addr = endpoint.node_addr().initialized().await?;
+    /// # let _ = node_addr;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn node_addr(&self) -> NodeAddrWatcher {
         let watch_addrs = self.direct_addresses();
         let watch_relay = self.home_relay();

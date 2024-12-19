@@ -66,7 +66,7 @@ use crate::{
     discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
-    watcher::{Direct, Watchable},
+    watcher::{self, Watchable},
 };
 
 mod metrics;
@@ -323,7 +323,10 @@ impl MagicSock {
     /// store [`Some`] set of addresses.
     ///
     /// To get the current direct addresses, use [`Watcher::initialized`].
-    pub(crate) fn direct_addresses(&self) -> Direct<Option<BTreeSet<DirectAddr>>> {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
+    pub(crate) fn direct_addresses(&self) -> watcher::Direct<Option<BTreeSet<DirectAddr>>> {
         self.direct_addrs.addrs.watch()
     }
 
@@ -331,7 +334,10 @@ impl MagicSock {
     ///
     /// Note that this can be used to wait for the initial home relay to be known using
     /// [`Watcher::initialized`].
-    pub(crate) fn home_relay(&self) -> Direct<Option<RelayUrl>> {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
+    pub(crate) fn home_relay(&self) -> watcher::Direct<Option<RelayUrl>> {
         self.my_relay.watch()
     }
 
@@ -345,7 +351,9 @@ impl MagicSock {
     ///
     /// Will return an error if there is no address information known about the
     /// given `node_id`.
-    pub(crate) fn conn_type(&self, node_id: NodeId) -> Result<Direct<ConnectionType>> {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    pub(crate) fn conn_type(&self, node_id: NodeId) -> Result<watcher::Direct<ConnectionType>> {
         self.node_map.conn_type(node_id)
     }
 
