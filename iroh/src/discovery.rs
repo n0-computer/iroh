@@ -712,10 +712,13 @@ mod tests {
         let handle = tokio::spawn({
             let ep = ep.clone();
             async move {
+                // Keep connections alive until the task is dropped.
+                let mut connections = Vec::new();
                 // we skip accept() errors, they can be caused by retransmits
                 while let Some(connecting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
-                    let _conn = connecting.await?;
                     // Just accept incoming connections, but don't do anything with them.
+                    let conn = connecting.await?;
+                    connections.push(conn);
                 }
 
                 anyhow::Ok(())
