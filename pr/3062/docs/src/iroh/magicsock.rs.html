@@ -4119,7 +4119,17 @@
 <a href="#4118" id="4118">4118</a>
 <a href="#4119" id="4119">4119</a>
 <a href="#4120" id="4120">4120</a>
-<a href="#4121" id="4121">4121</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4121" id="4121">4121</a>
+<a href="#4122" id="4122">4122</a>
+<a href="#4123" id="4123">4123</a>
+<a href="#4124" id="4124">4124</a>
+<a href="#4125" id="4125">4125</a>
+<a href="#4126" id="4126">4126</a>
+<a href="#4127" id="4127">4127</a>
+<a href="#4128" id="4128">4128</a>
+<a href="#4129" id="4129">4129</a>
+<a href="#4130" id="4130">4130</a>
+<a href="#4131" id="4131">4131</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -5852,6 +5862,16 @@
 ///
 /// These includes the waker coordination required to support [`AsyncUdpSocket::try_send`]
 /// and [`quinn::UdpPoller::poll_writable`].
+///
+/// Note that this implementation has several bugs in them, but they have existed for rather
+/// a while:
+///
+/// - There can be multiple senders, which all have to be woken if they were blocked.  But
+///   only the last sender to install the waker is unblocked.
+///
+/// - poll_writable may return blocking when it doesn't need to.  Leaving the sender stuck
+///   until another recv is called (which hopefully would happen soon given that the channel
+///   is probably still rather full, but still).
 </span><span class="kw">fn </span>relay_datagram_sender() -&gt; (
     RelayDatagramSendChannelSender,
     RelayDatagramSendChannelReceiver,
