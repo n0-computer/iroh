@@ -869,7 +869,10 @@
 <a href="#868" id="868">868</a>
 <a href="#869" id="869">869</a>
 <a href="#870" id="870">870</a>
-<a href="#871" id="871">871</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#871" id="871">871</a>
+<a href="#872" id="872">872</a>
+<a href="#873" id="873">873</a>
+<a href="#874" id="874">874</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1583,11 +1586,14 @@
         <span class="kw">let </span>handle = tokio::spawn({
             <span class="kw">let </span>ep = ep.clone();
             <span class="kw">async move </span>{
+                <span class="comment">// Keep connections alive until the task is dropped.
+                </span><span class="kw">let </span><span class="kw-2">mut </span>connections = Vec::new();
                 <span class="comment">// we skip accept() errors, they can be caused by retransmits
                 </span><span class="kw">while let </span><span class="prelude-val">Some</span>(connecting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
-                    <span class="kw">let </span>_conn = connecting.<span class="kw">await</span><span class="question-mark">?</span>;
                     <span class="comment">// Just accept incoming connections, but don't do anything with them.
-                </span>}
+                    </span><span class="kw">let </span>conn = connecting.<span class="kw">await</span><span class="question-mark">?</span>;
+                    connections.push(conn);
+                }
 
                 anyhow::Ok(())
             }
