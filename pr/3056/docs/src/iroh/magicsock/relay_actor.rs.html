@@ -1112,7 +1112,23 @@
 <a href="#1111" id="1111">1111</a>
 <a href="#1112" id="1112">1112</a>
 <a href="#1113" id="1113">1113</a>
-<a href="#1114" id="1114">1114</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1114" id="1114">1114</a>
+<a href="#1115" id="1115">1115</a>
+<a href="#1116" id="1116">1116</a>
+<a href="#1117" id="1117">1117</a>
+<a href="#1118" id="1118">1118</a>
+<a href="#1119" id="1119">1119</a>
+<a href="#1120" id="1120">1120</a>
+<a href="#1121" id="1121">1121</a>
+<a href="#1122" id="1122">1122</a>
+<a href="#1123" id="1123">1123</a>
+<a href="#1124" id="1124">1124</a>
+<a href="#1125" id="1125">1125</a>
+<a href="#1126" id="1126">1126</a>
+<a href="#1127" id="1127">1127</a>
+<a href="#1128" id="1128">1128</a>
+<a href="#1129" id="1129">1129</a>
+<a href="#1130" id="1130">1130</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1126,7 +1142,6 @@
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::{Duration, Instant},
 };
 
 <span class="kw">use </span>anyhow::Context;
@@ -1140,7 +1155,7 @@
 <span class="kw">use </span>tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
-    time,
+    time::{<span class="self">self</span>, Duration, Instant},
 };
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{debug, error, info, info_span, trace, warn, Instrument};
@@ -1155,9 +1170,6 @@
 <span class="doccomment">/// How long a non-home relay connection needs to be idle (last written to) before we close it.
 </span><span class="kw">const </span>RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(<span class="number">60</span>);
 
-<span class="doccomment">/// How often `clean_stale_relay` runs when there are potentially-stale relay connections to close.
-</span><span class="kw">const </span>RELAY_CLEAN_STALE_INTERVAL: Duration = Duration::from_secs(<span class="number">15</span>);
-
 <span class="doccomment">/// Maximum size a datagram payload is allowed to be.
 </span><span class="kw">const </span>MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PublicKey::LENGTH;
 
@@ -1167,9 +1179,6 @@
 /// communication with it.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>ActiveRelayActor {
-    <span class="doccomment">/// The time of the last request for its write
-    /// channel (currently even if there was no write).
-    </span>last_write: Instant,
     <span class="doccomment">/// Queue to send received relay datagrams on.
     </span>relay_datagrams_recv: Arc&lt;RelayDatagramsQueue&gt;,
     <span class="doccomment">/// Channel on which we receive packets to send to the relay.
@@ -1194,7 +1203,6 @@
 <span class="attr">#[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 </span><span class="kw">enum </span>ActiveRelayMessage {
-    GetLastWrite(oneshot::Sender&lt;Instant&gt;),
     <span class="doccomment">/// Returns whether or not this relay can reach the NodeId.
     </span>HasNodeRoute(NodeId, oneshot::Sender&lt;bool&gt;),
     <span class="doccomment">/// Triggers a connection check to the relay server.
@@ -1245,7 +1253,6 @@
             <span class="self">Self</span>::create_relay_client(url.clone(), connection_opts.clone());
 
         ActiveRelayActor {
-            last_write: Instant::now(),
             relay_datagrams_recv,
             relay_datagrams_send,
             url,
@@ -1298,7 +1305,13 @@
         // the same time.
         </span><span class="kw">let </span><span class="kw-2">mut </span>relay_send_fut = <span class="macro">std::pin::pin!</span>(MaybeFuture::none());
 
-        <span class="kw">loop </span>{
+        <span class="comment">// If inactive for one tick the actor should exit.  Inactivity is only tracked on
+        // the last datagrams sent to the relay, received datagrams will trigger ACKs which
+        // is sufficient to keep active connections open.
+        </span><span class="kw">let </span><span class="kw-2">mut </span>inactive_timeout = tokio::time::interval(RELAY_INACTIVE_CLEANUP_TIME);
+        inactive_timeout.reset(); <span class="comment">// skip immediate tick
+
+        </span><span class="kw">loop </span>{
             <span class="comment">// If a read error occurred on the connection it might have been lost.  But we
             // need this connection to stay alive so we can receive more messages sent by
             // peers via the relay even if we don't start sending again first.
@@ -1327,7 +1340,7 @@
                         relay_client.send(msg.node_id, msg.packet).<span class="kw">await
                     </span>};
                     relay_send_fut.as_mut().set_future(fut);
-                    <span class="self">self</span>.last_write = Instant::now();
+                    inactive_timeout.reset();
 
                 }
                 msg = <span class="self">self</span>.relay_client_receiver.recv() =&gt; {
@@ -1338,6 +1351,10 @@
                             </span><span class="kw">break</span>;
                         }
                     }
+                }
+                <span class="kw">_ </span>= inactive_timeout.tick() =&gt; {
+                    <span class="macro">debug!</span>(<span class="string">"Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting"</span>);
+                    <span class="kw">break</span>;
                 }
             }
         }
@@ -1350,9 +1367,6 @@
     <span class="kw">async fn </span>handle_actor_msg(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: ActiveRelayMessage) -&gt; bool {
         <span class="macro">trace!</span>(<span class="string">"tick: inbox: {:?}"</span>, msg);
         <span class="kw">match </span>msg {
-            ActiveRelayMessage::GetLastWrite(r) =&gt; {
-                r.send(<span class="self">self</span>.last_write).ok();
-            }
             ActiveRelayMessage::SetHomeRelay(is_preferred) =&gt; {
                 <span class="self">self</span>.is_home_relay = is_preferred;
                 <span class="self">self</span>.relay_client.note_preferred(is_preferred).<span class="kw">await</span>;
@@ -1567,11 +1581,6 @@
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>, <span class="kw-2">mut </span>receiver: mpsc::Receiver&lt;RelayActorMessage&gt;) {
-        <span class="kw">let </span><span class="kw-2">mut </span>cleanup_timer = time::interval_at(
-            time::Instant::now() + RELAY_CLEAN_STALE_INTERVAL,
-            RELAY_CLEAN_STALE_INTERVAL,
-        );
-
         <span class="kw">loop </span>{
             <span class="macro">tokio::select!</span> {
                 biased;
@@ -1587,7 +1596,7 @@
                     <span class="kw">if </span>!err.is_cancelled() {
                         <span class="macro">error!</span>(<span class="string">"ActiveRelayActor failed: {err:?}"</span>);
                     }
-                    <span class="self">self</span>.clean_stale_relay().<span class="kw">await</span>;
+                    <span class="self">self</span>.reap_active_relays();
                 }
                 msg = receiver.recv() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
@@ -1597,16 +1606,16 @@
                     <span class="kw">let </span>cancel_token = <span class="self">self</span>.cancel_token.child_token();
                     cancel_token.run_until_cancelled(<span class="self">self</span>.handle_msg(msg)).<span class="kw">await</span>;
                 }
-                <span class="kw">_ </span>= cleanup_timer.tick() =&gt; {
-                    <span class="macro">trace!</span>(<span class="string">"tick: cleanup"</span>);
-                    <span class="kw">let </span>cancel_token = <span class="self">self</span>.cancel_token.child_token();
-                    cancel_token.run_until_cancelled(<span class="self">self</span>.clean_stale_relay()).<span class="kw">await</span>;
-                }
             }
         }
 
         <span class="comment">// try shutdown
-        </span><span class="self">self</span>.close_all_relay(<span class="string">"conn-close"</span>).<span class="kw">await</span>;
+        </span><span class="kw">if </span>tokio::time::timeout(Duration::from_secs(<span class="number">3</span>), <span class="self">self</span>.close_all_active_relays())
+            .<span class="kw">await
+            </span>.is_err()
+        {
+            <span class="macro">warn!</span>(<span class="string">"Failed to shut down all ActiveRelayActors"</span>);
+        }
     }
 
     <span class="kw">async fn </span>handle_msg(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: RelayActorMessage) {
@@ -1619,7 +1628,7 @@
                 <span class="self">self</span>.send_relay(<span class="kw-2">&amp;</span>url, contents, remote_node).<span class="kw">await</span>;
             }
             RelayActorMessage::SetHome { url } =&gt; {
-                <span class="self">self</span>.set_home_relay(<span class="kw-2">&amp;</span>url).<span class="kw">await</span>;
+                <span class="self">self</span>.set_home_relay(url).<span class="kw">await</span>;
             }
             RelayActorMessage::MaybeCloseRelaysOnRebind(ifs) =&gt; {
                 <span class="self">self</span>.maybe_close_relays_on_rebind(<span class="kw-2">&amp;</span>ifs).<span class="kw">await</span>;
@@ -1630,21 +1639,6 @@
         <span class="kw">if let </span><span class="prelude-val">Some</span>(waker) = wakers.take() {
             waker.wake();
         }
-    }
-
-    <span class="kw">async fn </span>set_home_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, home_url: <span class="kw-2">&amp;</span>RelayUrl) {
-        futures_buffered::join_all(<span class="self">self</span>.active_relays.iter().map(|(url, handle)| <span class="kw">async move </span>{
-            <span class="kw">let </span>is_preferred = url == home_url;
-            handle
-                .inbox_addr
-                .send(ActiveRelayMessage::SetHomeRelay(is_preferred))
-                .<span class="kw">await
-                </span>.ok()
-        }))
-        .<span class="kw">await</span>;
-
-        <span class="comment">// Ensure we have an ActiveRelayActor for the current home relay.
-        </span><span class="self">self</span>.active_relay_handle(home_url).<span class="kw">await</span>;
     }
 
     <span class="kw">async fn </span>send_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, contents: RelayContents, remote_node: NodeId) {
@@ -1674,6 +1668,22 @@
         }
     }
 
+    <span class="kw">async fn </span>set_home_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, home_url: RelayUrl) {
+        <span class="kw">let </span>home_url_ref = <span class="kw-2">&amp;</span>home_url;
+        futures_buffered::join_all(<span class="self">self</span>.active_relays.iter().map(|(url, handle)| <span class="kw">async move </span>{
+            <span class="kw">let </span>is_preferred = url == home_url_ref;
+            handle
+                .inbox_addr
+                .send(ActiveRelayMessage::SetHomeRelay(is_preferred))
+                .<span class="kw">await
+                </span>.ok()
+        }))
+        .<span class="kw">await</span>;
+
+        <span class="comment">// Ensure we have an ActiveRelayActor for the current home relay.
+        </span><span class="self">self</span>.active_relay_handle(home_url);
+    }
+
     <span class="doccomment">/// Returns the handle for the [`ActiveRelayActor`] to reach `remote_node`.
     ///
     /// The node is expected to be reachable on `url`, but if no [`ActiveRelayActor`] for
@@ -1683,16 +1693,20 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         url: <span class="kw-2">&amp;</span>RelayUrl,
         remote_node: <span class="kw-2">&amp;</span>NodeId,
-    ) -&gt; <span class="kw-2">&amp;</span>ActiveRelayHandle {
-        <span class="kw">let </span><span class="kw-2">mut </span>found_relay: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt; = <span class="prelude-val">None</span>;
-        <span class="kw">if </span>!<span class="self">self</span>.active_relays.contains_key(url) {
-            <span class="comment">// If we don't have an open connection to the remote node's home relay, see if
-            // we have an open connection to a relay node where we'd heard from that peer
-            // already.  E.g. maybe they dialed our home relay recently.
-            // TODO: LRU cache the NodeId -&gt; relay mapping so this is much faster for repeat
-            // senders.
+    ) -&gt; ActiveRelayHandle {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(handle) = <span class="self">self</span>.active_relays.get(url) {
+            <span class="kw">return </span>handle.clone();
+        }
 
-            // Futures which return Some(RelayUrl) if the relay knows about the remote node.
+        <span class="kw">let </span><span class="kw-2">mut </span>found_relay: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt; = <span class="prelude-val">None</span>;
+        <span class="comment">// If we don't have an open connection to the remote node's home relay, see if
+        // we have an open connection to a relay node where we'd heard from that peer
+        // already.  E.g. maybe they dialed our home relay recently.
+        // TODO: LRU cache the NodeId -&gt; relay mapping so this is much faster for repeat
+        // senders.
+
+        </span>{
+            <span class="comment">// Futures which return Some(RelayUrl) if the relay knows about the remote node.
             </span><span class="kw">let </span>check_futs = <span class="self">self</span>.active_relays.iter().map(|(url, handle)| <span class="kw">async move </span>{
                 <span class="kw">let </span>(tx, rx) = oneshot::channel();
                 handle
@@ -1713,24 +1727,28 @@
                 }
             }
         }
-        <span class="kw">let </span>url = found_relay.as_ref().unwrap_or(url);
-        <span class="self">self</span>.active_relay_handle(url).<span class="kw">await
-    </span>}
+        <span class="kw">let </span>url = found_relay.unwrap_or(url.clone());
+        <span class="self">self</span>.active_relay_handle(url)
+    }
 
     <span class="doccomment">/// Returns the handle of the [`ActiveRelayActor`].
-    </span><span class="kw">async fn </span>active_relay_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl) -&gt; <span class="kw-2">&amp;</span>ActiveRelayHandle {
-        <span class="kw">if </span>!<span class="self">self</span>.active_relays.contains_key(url) {
-            <span class="kw">let </span>handle = <span class="self">self</span>.start_active_relay(url.clone());
-            <span class="kw">if </span><span class="prelude-val">Some</span>(url) == <span class="self">self</span>.msock.my_relay().as_ref() {
+    </span><span class="kw">fn </span>active_relay_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: RelayUrl) -&gt; ActiveRelayHandle {
+        <span class="kw">match </span><span class="self">self</span>.active_relays.get(<span class="kw-2">&amp;</span>url) {
+            <span class="prelude-val">Some</span>(e) =&gt; e.clone(),
+            <span class="prelude-val">None </span>=&gt; {
+                <span class="kw">let </span>handle = <span class="self">self</span>.start_active_relay(url.clone());
+                <span class="kw">if </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>url) == <span class="self">self</span>.msock.my_relay().as_ref() {
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = handle
+                        .inbox_addr
+                        .try_send(ActiveRelayMessage::SetHomeRelay(<span class="bool-val">true</span>))
+                    {
+                        <span class="macro">error!</span>(<span class="string">"Home relay not set, send to new actor failed: {err:#}."</span>);
+                    }
+                }
+                <span class="self">self</span>.active_relays.insert(url, handle.clone());
                 handle
-                    .inbox_addr
-                    .send(ActiveRelayMessage::SetHomeRelay(<span class="bool-val">true</span>))
-                    .<span class="kw">await
-                    </span>.ok();
             }
-            <span class="self">self</span>.active_relays.insert(url.clone(), handle);
         }
-        <span class="self">self</span>.active_relays.get(url).expect(<span class="string">"just inserted"</span>)
     }
 
     <span class="kw">fn </span>start_active_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: RelayUrl) -&gt; ActiveRelayHandle {
@@ -1790,75 +1808,34 @@
         <span class="self">self</span>.log_active_relay();
     }
 
-    <span class="doccomment">/// Cleans up stale [`ActiveRelayActor`]s.
-    ///
-    /// This not only checks if the relays have been used recently, but also makes sure that
-    /// all relay actors are running.  In particular this is called whenever an
-    /// [`ActiveRelayActor`] task finishes.
-    </span><span class="kw">async fn </span>clean_stale_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="macro">trace!</span>(<span class="string">"checking {} relays for staleness"</span>, <span class="self">self</span>.active_relays.len());
-        <span class="kw">let </span>now = Instant::now();
-
-        <span class="comment">// Futures who return Some(RelayUrl) if the relay needs to be cleaned up.
-        </span><span class="kw">let </span>check_futs = <span class="self">self</span>.active_relays.iter().map(|(url, handle)| <span class="kw">async move </span>{
-            <span class="kw">let </span>(tx, rx) = oneshot::channel();
-            handle
-                .inbox_addr
-                .send(ActiveRelayMessage::GetLastWrite(tx))
-                .<span class="kw">await
-                </span>.ok();
-            <span class="kw">match </span>rx.<span class="kw">await </span>{
-                <span class="prelude-val">Ok</span>(last_write) <span class="kw">if </span>last_write.duration_since(now) &lt;= RELAY_INACTIVE_CLEANUP_TIME =&gt; {
-                    <span class="prelude-val">None
-                </span>}
-                <span class="kw">_ </span>=&gt; <span class="prelude-val">Some</span>(url.clone()),
-            }
-        });
-        <span class="kw">let </span>futures = FuturesUnorderedBounded::from_iter(check_futs);
-        <span class="kw">let </span>to_close: Vec&lt;<span class="kw">_</span>&gt; = futures.filter_map(|maybe_url| maybe_url).collect().<span class="kw">await</span>;
-
-        <span class="kw">let </span>dirty = !to_close.is_empty();
-        <span class="macro">trace!</span>(
-            <span class="string">"closing {} of {} relays"</span>,
-            to_close.len(),
-            <span class="self">self</span>.active_relays.len()
-        );
-        <span class="kw">for </span>i <span class="kw">in </span>to_close {
-            <span class="self">self</span>.close_active_relay(<span class="kw-2">&amp;</span>i, <span class="string">"idle"</span>).<span class="kw">await</span>;
-        }
+    <span class="doccomment">/// Cleans up [`ActiveRelayActor`]s which have stopped running.
+    </span><span class="kw">fn </span>reap_active_relays(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="self">self</span>.active_relays
+            .retain(|_url, handle| !handle.inbox_addr.is_closed());
 
         <span class="comment">// Make sure home relay exists
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>url) = <span class="self">self</span>.msock.my_relay() {
-            <span class="self">self</span>.active_relay_handle(url).<span class="kw">await</span>;
-        }
-
-        <span class="kw">if </span>dirty {
-            <span class="self">self</span>.log_active_relay();
-        }
-    }
-
-    <span class="kw">async fn </span>close_all_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) {
-        <span class="kw">if </span><span class="self">self</span>.active_relays.is_empty() {
-            <span class="kw">return</span>;
-        }
-        <span class="comment">// Need to collect to avoid double borrow
-        </span><span class="kw">let </span>urls: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self</span>.active_relays.keys().cloned().collect();
-        <span class="kw">for </span>url <span class="kw">in </span>urls {
-            <span class="self">self</span>.close_active_relay(<span class="kw-2">&amp;</span>url, why).<span class="kw">await</span>;
+            <span class="self">self</span>.active_relay_handle(url.clone());
         }
         <span class="self">self</span>.log_active_relay();
     }
 
-    <span class="kw">async fn </span>close_active_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(handle) = <span class="self">self</span>.active_relays.remove(url) {
-            <span class="macro">debug!</span>(%url, <span class="string">"closing connection: {}"</span>, why);
-
+    <span class="doccomment">/// Stops all [`ActiveRelayActor`]s and awaits for them to finish.
+    </span><span class="kw">async fn </span>close_all_active_relays(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="kw">let </span>send_futs = <span class="self">self</span>.active_relays.iter().map(|(url, handle)| <span class="kw">async move </span>{
+            <span class="macro">debug!</span>(%url, <span class="string">"Shutting down ActiveRelayActor"</span>);
             handle
                 .inbox_addr
                 .send(ActiveRelayMessage::Shutdown)
                 .<span class="kw">await
                 </span>.ok();
-        }
+        });
+        futures_buffered::join_all(send_futs).<span class="kw">await</span>;
+
+        <span class="kw">let </span>tasks = std::mem::take(<span class="kw-2">&amp;mut </span><span class="self">self</span>.active_relay_tasks);
+        tasks.join_all().<span class="kw">await</span>;
+
+        <span class="self">self</span>.log_active_relay();
     }
 
     <span class="kw">fn </span>log_active_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) {
@@ -2222,6 +2199,61 @@
         <span class="comment">// Shut down the actor.
         </span>inbox_tx.send(ActiveRelayMessage::Shutdown).<span class="kw">await</span><span class="question-mark">?</span>;
         task.<span class="kw">await</span><span class="question-mark">??</span>;
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_active_relay_inactive() -&gt; TestResult {
+        <span class="kw">let </span>_guard = iroh_test::logging::setup();
+        <span class="kw">let </span>(_relay_map, relay_url, _server) = test_utils::run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
+        <span class="kw">let </span>node_id = secret_key.public();
+        <span class="kw">let </span>datagram_recv_queue = Arc::new(RelayDatagramsQueue::new());
+        <span class="kw">let </span>(_send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
+        <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
+        <span class="kw">let </span><span class="kw-2">mut </span>task = start_active_relay_actor(
+            secret_key,
+            relay_url,
+            inbox_rx,
+            send_datagram_rx,
+            datagram_recv_queue.clone(),
+        );
+
+        <span class="comment">// Give the task some time to run.  If it responds to HasNodeRoute it is running.
+        </span><span class="kw">let </span>(tx, rx) = oneshot::channel();
+        inbox_tx
+            .send(ActiveRelayMessage::HasNodeRoute(node_id, tx))
+            .<span class="kw">await
+            </span>.ok();
+        rx.<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="comment">// We now have an idling ActiveRelayActor.  If we advance time just a little it
+        // should stay alive.
+        </span><span class="macro">info!</span>(<span class="string">"Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME / 2"</span>);
+        tokio::time::pause();
+        tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME / <span class="number">2</span>).<span class="kw">await</span>;
+        tokio::time::resume();
+
+        <span class="macro">assert!</span>(
+            tokio::time::timeout(Duration::from_millis(<span class="number">100</span>), <span class="kw-2">&amp;mut </span>task)
+                .<span class="kw">await
+                </span>.is_err(),
+            <span class="string">"actor task terminated"
+        </span>);
+
+        <span class="comment">// If we advance time a lot it should finish.
+        </span><span class="macro">info!</span>(<span class="string">"Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME"</span>);
+        tokio::time::pause();
+        tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME).<span class="kw">await</span>;
+        tokio::time::resume();
+        <span class="macro">assert!</span>(
+            tokio::time::timeout(Duration::from_millis(<span class="number">100</span>), task)
+                .<span class="kw">await
+                </span>.is_ok(),
+            <span class="string">"actor task still running"
+        </span>);
 
         <span class="prelude-val">Ok</span>(())
     }

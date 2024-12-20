@@ -859,7 +859,28 @@
 <a href="#858" id="858">858</a>
 <a href="#859" id="859">859</a>
 <a href="#860" id="860">860</a>
-<a href="#861" id="861">861</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#861" id="861">861</a>
+<a href="#862" id="862">862</a>
+<a href="#863" id="863">863</a>
+<a href="#864" id="864">864</a>
+<a href="#865" id="865">865</a>
+<a href="#866" id="866">866</a>
+<a href="#867" id="867">867</a>
+<a href="#868" id="868">868</a>
+<a href="#869" id="869">869</a>
+<a href="#870" id="870">870</a>
+<a href="#871" id="871">871</a>
+<a href="#872" id="872">872</a>
+<a href="#873" id="873">873</a>
+<a href="#874" id="874">874</a>
+<a href="#875" id="875">875</a>
+<a href="#876" id="876">876</a>
+<a href="#877" id="877">877</a>
+<a href="#878" id="878">878</a>
+<a href="#879" id="879">879</a>
+<a href="#880" id="880">880</a>
+<a href="#881" id="881">881</a>
+<a href="#882" id="882">882</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -986,9 +1007,16 @@
 }
 
 <span class="kw">impl </span>NodeMap {
-    <span class="doccomment">/// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
+    <span class="attr">#[cfg(not(any(test, feature = <span class="string">"test-utils"</span>)))]
+    </span><span class="doccomment">/// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>load_from_vec(nodes: Vec&lt;NodeAddr&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::from_inner(NodeMapInner::load_from_vec(nodes))
+    }
+
+    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+    </span><span class="doccomment">/// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>load_from_vec(nodes: Vec&lt;NodeAddr&gt;, relay_only: bool) -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>::from_inner(NodeMapInner::load_from_vec(nodes, relay_only))
     }
 
     <span class="kw">fn </span>from_inner(inner: NodeMapInner) -&gt; <span class="self">Self </span>{
@@ -1177,9 +1205,23 @@
 }
 
 <span class="kw">impl </span>NodeMapInner {
-    <span class="doccomment">/// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
+    <span class="attr">#[cfg(not(any(test, feature = <span class="string">"test-utils"</span>)))]
+    </span><span class="doccomment">/// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
     </span><span class="kw">fn </span>load_from_vec(nodes: Vec&lt;NodeAddr&gt;) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>me = <span class="self">Self</span>::default();
+        <span class="kw">for </span>node_addr <span class="kw">in </span>nodes {
+            me.add_node_addr(node_addr, Source::Saved);
+        }
+        me
+    }
+
+    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+    </span><span class="doccomment">/// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
+    </span><span class="kw">fn </span>load_from_vec(nodes: Vec&lt;NodeAddr&gt;, relay_only: bool) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span><span class="kw-2">mut </span>me = <span class="self">Self </span>{
+            relay_only,
+            ..Default::default()
+        };
         <span class="kw">for </span>node_addr <span class="kw">in </span>nodes {
             me.add_node_addr(node_addr, Source::Saved);
         }
@@ -1590,7 +1632,7 @@
                 <span class="prelude-val">Some</span>(addr)
             })
             .collect();
-        <span class="kw">let </span>loaded_node_map = NodeMap::load_from_vec(addrs.clone());
+        <span class="kw">let </span>loaded_node_map = NodeMap::load_from_vec(addrs.clone(), <span class="bool-val">false</span>);
 
         <span class="kw">let </span><span class="kw-2">mut </span>loaded: Vec&lt;NodeAddr&gt; = loaded_node_map
             .list_remote_infos(Instant::now())

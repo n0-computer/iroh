@@ -2074,7 +2074,7 @@
                     <span class="self">self</span>.handle_run_check(relay_map, opts, response_tx);
                 }
                 Message::ReportReady { report } =&gt; {
-                    <span class="self">self</span>.handle_report_ready(report);
+                    <span class="self">self</span>.handle_report_ready(<span class="kw-2">*</span>report);
                 }
                 Message::ReportAborted { err } =&gt; {
                     <span class="self">self</span>.handle_report_aborted(err);
@@ -2157,8 +2157,8 @@
         });
     }
 
-    <span class="kw">fn </span>handle_report_ready(<span class="kw-2">&amp;mut </span><span class="self">self</span>, report: Box&lt;Report&gt;) {
-        <span class="kw">let </span>report = <span class="self">self</span>.finish_and_store_report(<span class="kw-2">*</span>report);
+    <span class="kw">fn </span>handle_report_ready(<span class="kw-2">&amp;mut </span><span class="self">self</span>, report: Report) {
+        <span class="kw">let </span>report = <span class="self">self</span>.finish_and_store_report(report);
         <span class="self">self</span>.in_flight_stun_requests.clear();
         <span class="kw">if let </span><span class="prelude-val">Some</span>(ReportRun { report_tx, .. }) = <span class="self">self</span>.current_report_run.take() {
             report_tx.send(<span class="prelude-val">Ok</span>(report)).ok();
