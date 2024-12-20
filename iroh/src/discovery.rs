@@ -445,6 +445,7 @@ mod tests {
         time::SystemTime,
     };
 
+    use anyhow::Context;
     use iroh_base::SecretKey;
     use rand::Rng;
     use tokio_util::task::AbortOnDropHandle;
@@ -606,8 +607,11 @@ mod tests {
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
         // wait for out address to be updated and thus published at least once
-        ep1.node_addr().await?;
-        let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
+        ep1.node_addr().await.context("waiting for NodeAddr")?;
+        let _conn = ep2
+            .connect(ep1_addr, TEST_ALPN)
+            .await
+            .context("connecting")?;
         Ok(())
     }
 
