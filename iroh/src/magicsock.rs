@@ -1731,6 +1731,16 @@ enum DiscoBoxError {
 ///
 /// These includes the waker coordination required to support [`AsyncUdpSocket::try_send`]
 /// and [`quinn::UdpPoller::poll_writable`].
+///
+/// Note that this implementation has several bugs in them, but they have existed for rather
+/// a while:
+///
+/// - There can be multiple senders, which all have to be woken if they were blocked.  But
+///   only the last sender to install the waker is unblocked.
+///
+/// - poll_writable may return blocking when it doesn't need to.  Leaving the sender stuck
+///   until another recv is called (which hopefully would happen soon given that the channel
+///   is probably still rather full, but still).
 fn relay_datagram_sender() -> (
     RelayDatagramSendChannelSender,
     RelayDatagramSendChannelReceiver,
