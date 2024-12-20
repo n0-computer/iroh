@@ -127,6 +127,11 @@ pub(crate) struct Options {
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
     pub(crate) insecure_skip_relay_cert_verify: bool,
+
+    /// This implies we only use the relay to communicate
+    /// and do not attempt to do any hole punching.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) relay_only: bool,
 }
 
 impl Default for Options {
@@ -142,6 +147,8 @@ impl Default for Options {
             dns_resolver: crate::dns::default_resolver().clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
+            #[cfg(any(test, feature = "test-utils"))]
+            relay_only: false,
         }
     }
 }
@@ -1517,6 +1524,8 @@ impl Handle {
             proxy_url,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
+            #[cfg(any(test, feature = "test-utils"))]
+            relay_only,
         } = opts;
 
         let relay_datagrams_queue = Arc::new(RelayDatagramsQueue::new());
@@ -1546,6 +1555,9 @@ impl Handle {
 
         // load the node data
         let node_map = node_map.unwrap_or_default();
+        #[cfg(any(test, feature = "test-utils"))]
+        let node_map = NodeMap::load_from_vec(node_map, relay_only);
+        #[cfg(not(any(test, feature = "test-utils")))]
         let node_map = NodeMap::load_from_vec(node_map);
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
@@ -3747,6 +3759,7 @@ mod tests {
             dns_resolver: crate::dns::default_resolver().clone(),
             proxy_url: None,
             insecure_skip_relay_cert_verify: true,
+            relay_only: false,
         };
         let msock = MagicSock::spawn(opts).await?;
         let server_config = crate::endpoint::make_server_config(

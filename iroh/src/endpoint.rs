@@ -164,6 +164,8 @@ impl Builder {
             dns_resolver,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
+            #[cfg(any(test, feature = "test-utils"))]
+            relay_only: self.relay_only,
         };
         Endpoint::bind(static_config, msock_opts, self.alpn_protocols).await
     }
@@ -422,7 +424,7 @@ impl Builder {
         self
     }
 
-    /// "relay_only" mode implies we only use the relay to communicate
+    /// This implies we only use the relay to communicate
     /// and do not attempt to do any hole punching.
     #[cfg(any(test, feature = "test-utils"))]
     pub fn relay_only(mut self, relay_only: bool) -> Self {
