@@ -135,7 +135,7 @@ pub(super) struct NodeState {
     ///
     /// Used for metric reporting.
     has_been_direct: bool,
-    /// "relay_only" mode implies we only use the relay to communicate
+    /// This implies we only use the relay to communicate
     /// and do not attempt to do any hole punching.
     #[cfg(any(test, feature = "test-utils"))]
     relay_only: bool,
