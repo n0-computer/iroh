@@ -10,12 +10,12 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{bail, ensure, Result};
 use bytes::Bytes;
 use futures_lite::Stream;
 use futures_sink::Sink;
 use futures_util::{
-    stream::{SplitSink, SplitStream, StreamExt},
+    stream::{SplitSink, SplitStream},
     SinkExt,
 };
 use iroh_base::{NodeId, SecretKey};
@@ -30,20 +30,75 @@ use tracing::{debug, info_span, trace, Instrument};
 use super::KeyCache;
 use crate::{
     client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
-    defaults::timeouts::CLIENT_RECV_TIMEOUT,
     protos::relay::{
-        write_frame, ClientInfo, Frame, RelayCodec, MAX_PACKET_SIZE, PER_CLIENT_READ_QUEUE_DEPTH,
-        PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+        write_frame, ClientInfo, Frame, RelayCodec, MAX_PACKET_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH,
+        PROTOCOL_VERSION,
     },
 };
 
-impl PartialEq for Conn {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.inner, &other.inner)
-    }
+/// The Builder returns a [`Conn`] and a [`ConnReceiver`] and
+/// runs a [`ConnWriterTasks`] in the background.
+pub struct ConnBuilder {
+    secret_key: SecretKey,
+    reader: ConnReader,
+    writer: ConnWriter,
+    local_addr: Option<SocketAddr>,
 }
 
-impl Eq for Conn {}
+impl ConnBuilder {
+    pub fn new(
+        secret_key: SecretKey,
+        local_addr: Option<SocketAddr>,
+        reader: ConnReader,
+        writer: ConnWriter,
+    ) -> Self {
+        Self {
+            secret_key,
+            reader,
+            writer,
+            local_addr,
+        }
+    }
+
+    async fn server_handshake(&mut self) -> Result<()> {
+        debug!("server_handshake: started");
+        let client_info = ClientInfo {
+            version: PROTOCOL_VERSION,
+        };
+        debug!("server_handshake: sending client_key: {:?}", &client_info);
+        crate::protos::relay::send_client_key(&mut self.writer, &self.secret_key, &client_info)
+            .await?;
+
+        debug!("server_handshake: done");
+        Ok(())
+    }
+
+    pub async fn build(mut self) -> Result<(Conn, ConnMessageStream)> {
+        // exchange information with the server
+        self.server_handshake().await?;
+
+        // create task to handle writing to the server
+        let (writer_sender, writer_recv) = mpsc::channel(PER_CLIENT_SEND_QUEUE_DEPTH);
+        let writer_task = tokio::task::spawn(
+            ConnWriterTasks {
+                writer: self.writer,
+                recv_msgs: writer_recv,
+            }
+            .run()
+            .instrument(info_span!("conn.writer")),
+        );
+
+        let conn = Conn {
+            inner: Arc::new(ConnTasks {
+                local_addr: self.local_addr,
+                writer_channel: writer_sender,
+                writer_task: AbortOnDropHandle::new(writer_task),
+            }),
+        };
+        let stream = ConnMessageStream { inner: self.reader };
+        Ok((conn, stream))
+    }
+}
 
 /// A connection to a relay server.
 ///
@@ -54,43 +109,28 @@ pub struct Conn {
     inner: Arc<ConnTasks>,
 }
 
-/// The channel on which a relay connection sends received messages.
-///
-/// The [`Conn`] to a relay is easily clonable but can only send DISCO messages to a relay
-/// server.  This is the counterpart which receives DISCO messages from the relay server for
-/// a connection.  It is not clonable.
-#[derive(Debug)]
-pub struct ConnReceiver {
-    /// The reader channel, receiving incoming messages.
-    reader_channel: mpsc::Receiver<Result<ReceivedMessage>>,
-}
-
-impl ConnReceiver {
-    /// Reads a messages from a relay server.
-    ///
-    /// Once it returns an error, the [`Conn`] is dead forever.
-    pub async fn recv(&mut self) -> Result<ReceivedMessage> {
-        let msg = self
-            .reader_channel
-            .recv()
-            .await
-            .ok_or(anyhow!("shut down"))??;
-        Ok(msg)
+impl PartialEq for Conn {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
     }
 }
+
+impl Eq for Conn {}
 
 #[derive(derive_more::Debug)]
 pub struct ConnTasks {
     /// Our local address, if known.
     ///
-    /// Is `None` in tests or when using websockets (because we don't control connection establishment in browsers).
+    /// Is `None` in tests or when using websockets (because we don't control connection
+    /// establishment in browsers).
     local_addr: Option<SocketAddr>,
-    /// Channel on which to communicate to the server. The associated [`mpsc::Receiver`] will close
-    /// if there is ever an error writing to the server.
+    /// Channel on which to communicate to the server.
+    ///
+    /// The associated [`mpsc::Receiver`] will close if there is ever an error writing to
+    /// the server.
     writer_channel: mpsc::Sender<ConnWriterMessage>,
     /// JoinHandle for the [`ConnWriter`] task
     writer_task: AbortOnDropHandle<Result<()>>,
-    reader_task: AbortOnDropHandle<()>,
 }
 
 impl Conn {
@@ -156,7 +196,7 @@ impl Conn {
     /// Shuts down the write loop directly and marks the connection as closed. The [`Conn`] will
     /// check if the it is closed before attempting to read from it.
     pub async fn close(&self) {
-        if self.inner.writer_task.is_finished() && self.inner.reader_task.is_finished() {
+        if self.inner.writer_task.is_finished() {
             return;
         }
 
@@ -165,44 +205,6 @@ impl Conn {
             .send(ConnWriterMessage::Shutdown)
             .await
             .ok();
-        self.inner.reader_task.abort();
-    }
-}
-
-fn process_incoming_frame(frame: Frame) -> Result<ReceivedMessage> {
-    match frame {
-        Frame::KeepAlive => {
-            // A one-way keep-alive message that doesn't require an ack.
-            // This predated FrameType::Ping/FrameType::Pong.
-            Ok(ReceivedMessage::KeepAlive)
-        }
-        Frame::NodeGone { node_id } => Ok(ReceivedMessage::NodeGone(node_id)),
-        Frame::RecvPacket { src_key, content } => {
-            let packet = ReceivedMessage::ReceivedPacket {
-                remote_node_id: src_key,
-                data: content,
-            };
-            Ok(packet)
-        }
-        Frame::Ping { data } => Ok(ReceivedMessage::Ping(data)),
-        Frame::Pong { data } => Ok(ReceivedMessage::Pong(data)),
-        Frame::Health { problem } => {
-            let problem = std::str::from_utf8(&problem)?.to_owned();
-            let problem = Some(problem);
-            Ok(ReceivedMessage::Health { problem })
-        }
-        Frame::Restarting {
-            reconnect_in,
-            try_for,
-        } => {
-            let reconnect_in = Duration::from_millis(reconnect_in as u64);
-            let try_for = Duration::from_millis(try_for as u64);
-            Ok(ReceivedMessage::ServerRestarting {
-                reconnect_in,
-                try_for,
-            })
-        }
-        _ => bail!("unexpected packet: {:?}", frame.typ()),
     }
 }
 
@@ -260,23 +262,9 @@ impl ConnWriterTasks {
     }
 }
 
-/// The Builder returns a [`Conn`] and a [`ConnReceiver`] and
-/// runs a [`ConnWriterTasks`] in the background.
-pub struct ConnBuilder {
-    secret_key: SecretKey,
-    reader: ConnReader,
-    writer: ConnWriter,
-    local_addr: Option<SocketAddr>,
-}
-
 pub(crate) enum ConnReader {
     Derp(FramedRead<MaybeTlsStreamReader, RelayCodec>),
     Ws(SplitStream<WebSocketStream>, KeyCache),
-}
-
-pub(crate) enum ConnWriter {
-    Derp(FramedWrite<MaybeTlsStreamWriter, RelayCodec>),
-    Ws(SplitSink<WebSocketStream, tokio_tungstenite_wasm::Message>),
 }
 
 fn tung_wasm_to_io_err(e: tokio_tungstenite_wasm::Error) -> std::io::Error {
@@ -306,6 +294,69 @@ impl Stream for ConnReader {
             },
         }
     }
+}
+
+#[derive(derive_more::Debug)]
+#[debug("ConnMessageStream")]
+pub(crate) struct ConnMessageStream {
+    inner: ConnReader,
+}
+
+impl Stream for ConnMessageStream {
+    type Item = Result<ReceivedMessage>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match Pin::new(&mut self.inner).poll_next(cx) {
+            Poll::Ready(Some(item)) => {
+                let item = item.and_then(process_incoming_frame);
+                Poll::Ready(Some(item))
+            }
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+fn process_incoming_frame(frame: Frame) -> Result<ReceivedMessage> {
+    match frame {
+        Frame::KeepAlive => {
+            // A one-way keep-alive message that doesn't require an ack.
+            // This predated FrameType::Ping/FrameType::Pong.
+            Ok(ReceivedMessage::KeepAlive)
+        }
+        Frame::NodeGone { node_id } => Ok(ReceivedMessage::NodeGone(node_id)),
+        Frame::RecvPacket { src_key, content } => {
+            let packet = ReceivedMessage::ReceivedPacket {
+                remote_node_id: src_key,
+                data: content,
+            };
+            Ok(packet)
+        }
+        Frame::Ping { data } => Ok(ReceivedMessage::Ping(data)),
+        Frame::Pong { data } => Ok(ReceivedMessage::Pong(data)),
+        Frame::Health { problem } => {
+            let problem = std::str::from_utf8(&problem)?.to_owned();
+            let problem = Some(problem);
+            Ok(ReceivedMessage::Health { problem })
+        }
+        Frame::Restarting {
+            reconnect_in,
+            try_for,
+        } => {
+            let reconnect_in = Duration::from_millis(reconnect_in as u64);
+            let try_for = Duration::from_millis(try_for as u64);
+            Ok(ReceivedMessage::ServerRestarting {
+                reconnect_in,
+                try_for,
+            })
+        }
+        _ => bail!("unexpected packet: {:?}", frame.typ()),
+    }
+}
+
+pub(crate) enum ConnWriter {
+    Derp(FramedWrite<MaybeTlsStreamWriter, RelayCodec>),
+    Ws(SplitSink<WebSocketStream, tokio_tungstenite_wasm::Message>),
 }
 
 impl Sink<Frame> for ConnWriter {
@@ -344,104 +395,10 @@ impl Sink<Frame> for ConnWriter {
     }
 }
 
-impl ConnBuilder {
-    pub fn new(
-        secret_key: SecretKey,
-        local_addr: Option<SocketAddr>,
-        reader: ConnReader,
-        writer: ConnWriter,
-    ) -> Self {
-        Self {
-            secret_key,
-            reader,
-            writer,
-            local_addr,
-        }
-    }
-
-    async fn server_handshake(&mut self) -> Result<()> {
-        debug!("server_handshake: started");
-        let client_info = ClientInfo {
-            version: PROTOCOL_VERSION,
-        };
-        debug!("server_handshake: sending client_key: {:?}", &client_info);
-        crate::protos::relay::send_client_key(&mut self.writer, &self.secret_key, &client_info)
-            .await?;
-
-        debug!("server_handshake: done");
-        Ok(())
-    }
-
-    pub async fn build(mut self) -> Result<(Conn, ConnReceiver)> {
-        // exchange information with the server
-        self.server_handshake().await?;
-
-        // create task to handle writing to the server
-        let (writer_sender, writer_recv) = mpsc::channel(PER_CLIENT_SEND_QUEUE_DEPTH);
-        let writer_task = tokio::task::spawn(
-            ConnWriterTasks {
-                writer: self.writer,
-                recv_msgs: writer_recv,
-            }
-            .run()
-            .instrument(info_span!("conn.writer")),
-        );
-
-        let (reader_sender, reader_recv) = mpsc::channel(PER_CLIENT_READ_QUEUE_DEPTH);
-        let reader_task = tokio::task::spawn({
-            let writer_sender = writer_sender.clone();
-            async move {
-                loop {
-                    let frame = tokio::time::timeout(CLIENT_RECV_TIMEOUT, self.reader.next()).await;
-                    let res = match frame {
-                        Ok(Some(Ok(frame))) => process_incoming_frame(frame),
-                        Ok(Some(Err(err))) => {
-                            // Error processing incoming messages
-                            Err(err)
-                        }
-                        Ok(None) => {
-                            // EOF
-                            Err(anyhow::anyhow!("EOF: reader stream ended"))
-                        }
-                        Err(err) => {
-                            // Timeout
-                            Err(err.into())
-                        }
-                    };
-                    if res.is_err() {
-                        // shutdown
-                        writer_sender.send(ConnWriterMessage::Shutdown).await.ok();
-                        break;
-                    }
-                    if reader_sender.send(res).await.is_err() {
-                        // shutdown, as the reader is gone
-                        writer_sender.send(ConnWriterMessage::Shutdown).await.ok();
-                        break;
-                    }
-                }
-            }
-            .instrument(info_span!("conn.reader"))
-        });
-
-        let conn = Conn {
-            inner: Arc::new(ConnTasks {
-                local_addr: self.local_addr,
-                writer_channel: writer_sender,
-                writer_task: AbortOnDropHandle::new(writer_task),
-                reader_task: AbortOnDropHandle::new(reader_task),
-            }),
-        };
-
-        let conn_receiver = ConnReceiver {
-            reader_channel: reader_recv,
-        };
-
-        Ok((conn, conn_receiver))
-    }
-}
-
+/// The messages received from a [`RelayCodec`] framed-stream.
+///
+/// This is a type-validated version of the [`Frame`].
 #[derive(derive_more::Debug, Clone)]
-/// The type of message received by the [`Conn`] from a relay server.
 pub enum ReceivedMessage {
     /// Represents an incoming packet.
     ReceivedPacket {

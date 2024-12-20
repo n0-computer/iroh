@@ -12,7 +12,7 @@ use std::{
 
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use bytes::Bytes;
-use conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMessage};
+use conn::{Conn, ConnBuilder, ConnMessageStream, ConnReader, ConnWriter, ReceivedMessage};
 use futures_util::StreamExt;
 use hickory_resolver::TokioResolver as DnsResolver;
 use http_body_util::Empty;
@@ -148,7 +148,7 @@ pub struct ClientReceiver {
 struct Actor {
     secret_key: SecretKey,
     is_preferred: bool,
-    relay_conn: Option<(Conn, ConnReceiver)>,
+    relay_conn: Option<(Conn, ConnMessageStream)>,
     is_closed: bool,
     #[debug("address family selector callback")]
     address_family_selector: Option<Box<dyn Fn() -> bool + Send + Sync>>,
@@ -557,7 +557,7 @@ impl Actor {
     async fn connect(
         &mut self,
         why: &'static str,
-    ) -> Result<(Conn, &'_ mut ConnReceiver), ClientError> {
+    ) -> Result<(Conn, &'_ mut ConnMessageStream), ClientError> {
         if self.is_closed {
             return Err(ClientError::Closed);
         }
@@ -585,7 +585,7 @@ impl Actor {
         .await
     }
 
-    async fn connect_0(&self) -> Result<(Conn, ConnReceiver), ClientError> {
+    async fn connect_0(&self) -> Result<(Conn, ConnMessageStream), ClientError> {
         let (reader, writer, local_addr) = match self.protocol {
             Protocol::Websocket => {
                 let (reader, writer) = self.connect_ws().await?;
@@ -992,19 +992,23 @@ impl Actor {
     }
 
     async fn recv_detail(&mut self) -> Result<ReceivedMessage, ClientError> {
-        if let Some((_conn, conn_receiver)) = self.relay_conn.as_mut() {
+        if let Some((_conn, conn_message_stream)) = self.relay_conn.as_mut() {
             trace!("recv_detail tick");
-            match conn_receiver.recv().await {
-                Ok(msg) => {
+            match tokio::time::timeout(CLIENT_RECV_TIMEOUT, conn_message_stream.next()).await {
+                Ok(Some(Ok(msg))) => {
                     return Ok(msg);
                 }
-                Err(e) => {
+                Ok(Some(Err(e))) => {
                     self.close_for_reconnect().await;
                     if self.is_closed {
                         return Err(ClientError::Closed);
                     }
                     // TODO(ramfox): more specific error?
                     return Err(ClientError::Receive(e));
+                }
+                Ok(None) | Err(_) => {
+                    self.close_for_reconnect().await;
+                    return Err(ClientError::Closed);
                 }
             }
         }
