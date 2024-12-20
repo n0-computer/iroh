@@ -36,7 +36,7 @@ use crate::{
     },
 };
 
-/// The Builder returns a [`Conn`] and a [`ConnReceiver`] and
+/// The Builder returns a [`Conn`] and a [`ConnMessageStream`] and
 /// runs a [`ConnWriterTasks`] in the background.
 pub struct ConnBuilder {
     secret_key: SecretKey,
@@ -395,9 +395,9 @@ impl Sink<Frame> for ConnWriter {
     }
 }
 
-/// The messages received from a [`RelayCodec`] framed-stream.
+/// The messages received from a framed relay stream.
 ///
-/// This is a type-validated version of the [`Frame`].
+/// This is a type-validated version of the `Frame`s on the `RelayCodec`.
 #[derive(derive_more::Debug, Clone)]
 pub enum ReceivedMessage {
     /// Represents an incoming packet.
