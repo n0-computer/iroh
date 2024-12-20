@@ -7,6 +7,7 @@
 use std::net::SocketAddr;
 use std::{
     collections::{BTreeMap, BTreeSet},
+    future::Future,
     net::IpAddr,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -31,9 +32,10 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 use url::Url;
 
+use super::RelayDatagramSendChannelReceiver;
 use crate::{
     dns::DnsResolver,
-    magicsock::{MagicSock, Metrics as MagicsockMetrics, RelayContents, RelayDatagramsQueue},
+    magicsock::{MagicSock, Metrics as MagicsockMetrics, RelayContents, RelayDatagramRecvQueue},
     util::MaybeFuture,
 };
 
@@ -50,9 +52,9 @@ const MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PublicKey::LENGTH;
 #[derive(Debug)]
 struct ActiveRelayActor {
     /// Queue to send received relay datagrams on.
-    relay_datagrams_recv: Arc<RelayDatagramsQueue>,
+    relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
     /// Channel on which we receive packets to send to the relay.
-    relay_datagrams_send: mpsc::Receiver<RelaySendPacket>,
+    relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
     url: RelayUrl,
     /// Whether or not this is the home relay connection.
     is_home_relay: bool,
@@ -95,8 +97,8 @@ enum ActiveRelayMessage {
 #[derive(Debug)]
 struct ActiveRelayActorOptions {
     url: RelayUrl,
-    relay_datagrams_send: mpsc::Receiver<RelaySendPacket>,
-    relay_datagrams_recv: Arc<RelayDatagramsQueue>,
+    relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
+    relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
     connection_opts: RelayConnectionOptions,
 }
 
@@ -204,11 +206,9 @@ impl ActiveRelayActor {
                     relay_send_fut.as_mut().set_none();
                 }
                 // Only poll for new datagrams if relay_send_fut is not busy.
-                Some(msg) = self.relay_datagrams_send.recv(), if relay_send_fut.is_none() => {
-                    let relay_client = self.relay_client.clone();
-                    let fut = async move {
-                        relay_client.send(msg.node_id, msg.packet).await
-                    };
+                Some(item) = self.relay_datagrams_send.recv(), if relay_send_fut.is_none() => {
+                    debug_assert_eq!(item.url, self.url);
+                    let fut = Self::send_relay(self.relay_client.clone(), item);
                     relay_send_fut.as_mut().set_future(fut);
                     inactive_timeout.reset();
 
@@ -295,6 +295,24 @@ impl ActiveRelayActor {
         self.relay_client_receiver = client_receiver;
         if self.is_home_relay {
             self.relay_client.note_preferred(true).await;
+        }
+    }
+
+    async fn send_relay(relay_client: relay::client::Client, item: RelaySendItem) {
+        // When Quinn sends a GSO Transmit magicsock::split_packets will make us receive
+        // more than one packet to send in a single call.  We join all packets back together
+        // and prefix them with a u16 packet size.  They then get sent as a single DISCO
+        // frame.  However this might still be multiple packets when otherwise the maximum
+        // packet size for the relay protocol would be exceeded.
+        for packet in PacketizeIter::<_, MAX_PAYLOAD_SIZE>::new(item.remote_node, item.datagrams) {
+            let len = packet.len();
+            match relay_client.send(packet.node_id, packet.payload).await {
+                Ok(_) => inc_by!(MagicsockMetrics, send_relay, len as _),
+                Err(err) => {
+                    warn!("send failed: {err:#}");
+                    inc!(MagicsockMetrics, send_relay_error);
+                }
+            }
         }
     }
 
@@ -402,15 +420,18 @@ impl ActiveRelayActor {
 }
 
 pub(super) enum RelayActorMessage {
-    Send {
-        url: RelayUrl,
-        contents: RelayContents,
-        remote_node: NodeId,
-    },
     MaybeCloseRelaysOnRebind(Vec<IpAddr>),
-    SetHome {
-        url: RelayUrl,
-    },
+    SetHome { url: RelayUrl },
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct RelaySendItem {
+    /// The destination for the datagrams.
+    pub(super) remote_node: NodeId,
+    /// The home relay of the remote node.
+    pub(super) url: RelayUrl,
+    /// One or more datagrams to send.
+    pub(super) datagrams: RelayContents,
 }
 
 pub(super) struct RelayActor {
@@ -420,7 +441,7 @@ pub(super) struct RelayActor {
     /// [`AsyncUdpSocket::poll_recv`] will read from this queue.
     ///
     /// [`AsyncUdpSocket::poll_recv`]: quinn::AsyncUdpSocket::poll_recv
-    relay_datagram_recv_queue: Arc<RelayDatagramsQueue>,
+    relay_datagram_recv_queue: Arc<RelayDatagramRecvQueue>,
     /// The actors managing each currently used relay server.
     ///
     /// These actors will exit when they have any inactivity.  Otherwise they will keep
@@ -434,7 +455,7 @@ pub(super) struct RelayActor {
 impl RelayActor {
     pub(super) fn new(
         msock: Arc<MagicSock>,
-        relay_datagram_recv_queue: Arc<RelayDatagramsQueue>,
+        relay_datagram_recv_queue: Arc<RelayDatagramRecvQueue>,
     ) -> Self {
         let cancel_token = CancellationToken::new();
         Self {
@@ -450,11 +471,18 @@ impl RelayActor {
         self.cancel_token.clone()
     }
 
-    pub(super) async fn run(mut self, mut receiver: mpsc::Receiver<RelayActorMessage>) {
+    pub(super) async fn run(
+        mut self,
+        mut receiver: mpsc::Receiver<RelayActorMessage>,
+        mut datagram_send_channel: RelayDatagramSendChannelReceiver,
+    ) {
+        // When this future is present, it is sending pending datagrams to an
+        // ActiveRelayActor.  We can not process further datagrams during this time.
+        let mut datagram_send_fut = std::pin::pin!(MaybeFuture::none());
+
         loop {
             tokio::select! {
                 biased;
-
                 _ = self.cancel_token.cancelled() => {
                     trace!("shutting down");
                     break;
@@ -470,12 +498,27 @@ impl RelayActor {
                 }
                 msg = receiver.recv() => {
                     let Some(msg) = msg else {
-                        trace!("shutting down relay recv loop");
+                        debug!("Inbox dropped, shutting down.");
                         break;
                     };
                     let cancel_token = self.cancel_token.child_token();
                     cancel_token.run_until_cancelled(self.handle_msg(msg)).await;
                 }
+                // Only poll for new datagrams if we are not blocked on sending them.
+                item = datagram_send_channel.recv(), if datagram_send_fut.is_none() => {
+                    let Some(item) = item else {
+                        debug!("Datagram send channel dropped, shutting down.");
+                        break;
+                    };
+                    let token = self.cancel_token.child_token();
+                    if let Some(Some(fut)) = token.run_until_cancelled(
+                        self.try_send_datagram(item)
+                    ).await {
+                        datagram_send_fut.as_mut().set_future(fut);
+                    }
+                }
+                // Only poll this future if it is in use.
+                _ = &mut datagram_send_fut, if datagram_send_fut.is_some() => {}
             }
         }
 
@@ -490,13 +533,6 @@ impl RelayActor {
 
     async fn handle_msg(&mut self, msg: RelayActorMessage) {
         match msg {
-            RelayActorMessage::Send {
-                url,
-                contents,
-                remote_node,
-            } => {
-                self.send_relay(&url, contents, remote_node).await;
-            }
             RelayActorMessage::SetHome { url } => {
                 self.set_home_relay(url).await;
             }
@@ -504,36 +540,32 @@ impl RelayActor {
                 self.maybe_close_relays_on_rebind(&ifs).await;
             }
         }
-        // Wake up the send waker if one is waiting for space in the channel
-        let mut wakers = self.msock.relay_send_waker.lock().expect("poisoned");
-        if let Some(waker) = wakers.take() {
-            waker.wake();
-        }
     }
 
-    async fn send_relay(&mut self, url: &RelayUrl, contents: RelayContents, remote_node: NodeId) {
-        let total_bytes = contents.iter().map(|c| c.len() as u64).sum::<u64>();
-        trace!(
-            %url,
-            remote_node = %remote_node.fmt_short(),
-            len = total_bytes,
-            "sending over relay",
-        );
-        let handle = self.active_relay_handle_for_node(url, &remote_node).await;
-
-        // When Quinn sends a GSO Transmit magicsock::split_packets will make us receive
-        // more than one packet to send in a single call.  We join all packets back together
-        // and prefix them with a u16 packet size.  They then get sent as a single DISCO
-        // frame.  However this might still be multiple packets when otherwise the maximum
-        // packet size for the relay protocol would be exceeded.
-        for packet in PacketizeIter::<_, MAX_PAYLOAD_SIZE>::new(remote_node, contents) {
-            let len = packet.len();
-            match handle.datagrams_send_queue.send(packet).await {
-                Ok(_) => inc_by!(MagicsockMetrics, send_relay, len as _),
-                Err(err) => {
-                    warn!(?url, "send failed: {err:#}");
-                    inc!(MagicsockMetrics, send_relay_error);
-                }
+    /// Sends datagrams to the correct [`ActiveRelayActor`], or returns a future.
+    ///
+    /// If the datagram can not be sent immediately, because the destination channel is
+    /// full, a future is returned that will complete once the datagrams have been sent to
+    /// the [`ActiveRelayActor`].
+    async fn try_send_datagram(&mut self, item: RelaySendItem) -> Option<impl Future<Output = ()>> {
+        let url = item.url.clone();
+        let handle = self
+            .active_relay_handle_for_node(&item.url, &item.remote_node)
+            .await;
+        match handle.datagrams_send_queue.try_send(item) {
+            Ok(()) => None,
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                warn!(?url, "Dropped datagram(s): ActiveRelayActor closed.");
+                None
+            }
+            Err(mpsc::error::TrySendError::Full(item)) => {
+                let sender = handle.datagrams_send_queue.clone();
+                let fut = async move {
+                    if sender.send(item).await.is_err() {
+                        warn!(?url, "Dropped datagram(s): ActiveRelayActor closed.");
+                    }
+                };
+                Some(fut)
             }
         }
     }
@@ -733,7 +765,7 @@ impl RelayActor {
 #[derive(Debug, Clone)]
 struct ActiveRelayHandle {
     inbox_addr: mpsc::Sender<ActiveRelayMessage>,
-    datagrams_send_queue: mpsc::Sender<RelaySendPacket>,
+    datagrams_send_queue: mpsc::Sender<RelaySendItem>,
 }
 
 /// A packet to send over the relay.
@@ -745,12 +777,12 @@ struct ActiveRelayHandle {
 #[derive(Debug, PartialEq, Eq)]
 struct RelaySendPacket {
     node_id: NodeId,
-    packet: Bytes,
+    payload: Bytes,
 }
 
 impl RelaySendPacket {
     fn len(&self) -> usize {
-        self.packet.len()
+        self.payload.len()
     }
 }
 
@@ -819,7 +851,7 @@ where
         if !self.buffer.is_empty() {
             Some(RelaySendPacket {
                 node_id: self.node_id,
-                packet: self.buffer.split().freeze(),
+                payload: self.buffer.split().freeze(),
             })
         } else {
             None
@@ -882,6 +914,7 @@ impl Iterator for PacketSplitIter {
 mod tests {
     use futures_lite::future;
     use iroh_base::SecretKey;
+    use smallvec::smallvec;
     use testresult::TestResult;
     use tokio_util::task::AbortOnDropHandle;
 
@@ -899,7 +932,10 @@ mod tests {
         let iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(node_id, single_vec);
         let result = iter.collect::<Vec<_>>();
         assert_eq!(1, result.len());
-        assert_eq!(&[5, 0, b'H', b'e', b'l', b'l', b'o'], &result[0].packet[..]);
+        assert_eq!(
+            &[5, 0, b'H', b'e', b'l', b'l', b'o'],
+            &result[0].payload[..]
+        );
 
         let spacer = vec![0u8; MAX_PACKET_SIZE - 10];
         let multiple_vec = vec![&b"Hello"[..], &spacer, &b"World"[..]];
@@ -908,9 +944,12 @@ mod tests {
         assert_eq!(2, result.len());
         assert_eq!(
             &[5, 0, b'H', b'e', b'l', b'l', b'o'],
-            &result[0].packet[..7]
+            &result[0].payload[..7]
         );
-        assert_eq!(&[5, 0, b'W', b'o', b'r', b'l', b'd'], &result[1].packet[..]);
+        assert_eq!(
+            &[5, 0, b'W', b'o', b'r', b'l', b'd'],
+            &result[1].payload[..]
+        );
     }
 
     /// Starts a new [`ActiveRelayActor`].
@@ -918,8 +957,8 @@ mod tests {
         secret_key: SecretKey,
         url: RelayUrl,
         inbox_rx: mpsc::Receiver<ActiveRelayMessage>,
-        relay_datagrams_send: mpsc::Receiver<RelaySendPacket>,
-        relay_datagrams_recv: Arc<RelayDatagramsQueue>,
+        relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
+        relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
     ) -> AbortOnDropHandle<anyhow::Result<()>> {
         let opts = ActiveRelayActorOptions {
             url,
@@ -950,32 +989,35 @@ mod tests {
     /// [`ActiveRelayNode`] under test to check connectivity works.
     fn start_echo_node(relay_url: RelayUrl) -> (NodeId, AbortOnDropHandle<()>) {
         let secret_key = SecretKey::from_bytes(&[8u8; 32]);
-        let recv_datagram_queue = Arc::new(RelayDatagramsQueue::new());
+        let recv_datagram_queue = Arc::new(RelayDatagramRecvQueue::new());
         let (send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
         let actor_task = start_active_relay_actor(
             secret_key.clone(),
-            relay_url,
+            relay_url.clone(),
             inbox_rx,
             send_datagram_rx,
             recv_datagram_queue.clone(),
         );
-        let echo_task = tokio::spawn(
+        let echo_task = tokio::spawn({
+            let relay_url = relay_url.clone();
             async move {
                 loop {
                     let datagram = future::poll_fn(|cx| recv_datagram_queue.poll_recv(cx)).await;
                     if let Ok(recv) = datagram {
                         let RelayRecvDatagram { url: _, src, buf } = recv;
                         info!(from = src.fmt_short(), "Received datagram");
-                        let send = PacketizeIter::<_, MAX_PAYLOAD_SIZE>::new(src, [buf])
-                            .next()
-                            .unwrap();
+                        let send = RelaySendItem {
+                            remote_node: src,
+                            url: relay_url.clone(),
+                            datagrams: smallvec![buf],
+                        };
                         send_datagram_tx.send(send).await.ok();
                     }
                 }
             }
-            .instrument(info_span!("echo-task")),
-        );
+            .instrument(info_span!("echo-task"))
+        });
         let echo_task = AbortOnDropHandle::new(echo_task);
         let supervisor_task = tokio::spawn(async move {
             // move the inbox_tx here so it is not dropped, as this stops the actor.
@@ -997,12 +1039,12 @@ mod tests {
         let (peer_node, _echo_node_task) = start_echo_node(relay_url.clone());
 
         let secret_key = SecretKey::from_bytes(&[1u8; 32]);
-        let datagram_recv_queue = Arc::new(RelayDatagramsQueue::new());
+        let datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
         let (send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
         let task = start_active_relay_actor(
             secret_key,
-            relay_url,
+            relay_url.clone(),
             inbox_rx,
             send_datagram_rx,
             datagram_recv_queue.clone(),
@@ -1010,10 +1052,12 @@ mod tests {
 
         // Send a datagram to our echo node.
         info!("first echo");
-        let packet = PacketizeIter::<_, MAX_PAYLOAD_SIZE>::new(peer_node, [b"hello"])
-            .next()
-            .context("no packet")?;
-        send_datagram_tx.send(packet).await?;
+        let hello_send_item = RelaySendItem {
+            remote_node: peer_node,
+            url: relay_url.clone(),
+            datagrams: smallvec![Bytes::from_static(b"hello")],
+        };
+        send_datagram_tx.send(hello_send_item.clone()).await?;
 
         // Check we get it back
         let RelayRecvDatagram {
@@ -1040,10 +1084,7 @@ mod tests {
 
         // Echo should still work.
         info!("second echo");
-        let packet = PacketizeIter::<_, MAX_PAYLOAD_SIZE>::new(peer_node, [b"hello"])
-            .next()
-            .context("no packet")?;
-        send_datagram_tx.send(packet).await?;
+        send_datagram_tx.send(hello_send_item.clone()).await?;
         let recv = future::poll_fn(|cx| datagram_recv_queue.poll_recv(cx)).await?;
         assert_eq!(recv.buf.as_ref(), b"hello");
 
@@ -1059,10 +1100,7 @@ mod tests {
 
         // Echo should still work.
         info!("third echo");
-        let packet = PacketizeIter::<_, MAX_PAYLOAD_SIZE>::new(peer_node, [b"hello"])
-            .next()
-            .context("no packet")?;
-        send_datagram_tx.send(packet).await?;
+        send_datagram_tx.send(hello_send_item).await?;
         let recv = future::poll_fn(|cx| datagram_recv_queue.poll_recv(cx)).await?;
         assert_eq!(recv.buf.as_ref(), b"hello");
 
@@ -1080,7 +1118,7 @@ mod tests {
 
         let secret_key = SecretKey::from_bytes(&[1u8; 32]);
         let node_id = secret_key.public();
-        let datagram_recv_queue = Arc::new(RelayDatagramsQueue::new());
+        let datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
         let (_send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
         let mut task = start_active_relay_actor(
