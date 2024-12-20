@@ -40,7 +40,7 @@ use crate::{
 /// runs a [`ConnWriterTasks`] in the background.
 pub struct ConnBuilder {
     secret_key: SecretKey,
-    reader: ConnReader,
+    reader: ConnFrameStream,
     writer: ConnWriter,
     local_addr: Option<SocketAddr>,
 }
@@ -49,7 +49,7 @@ impl ConnBuilder {
     pub fn new(
         secret_key: SecretKey,
         local_addr: Option<SocketAddr>,
-        reader: ConnReader,
+        reader: ConnFrameStream,
         writer: ConnWriter,
     ) -> Self {
         Self {
@@ -262,7 +262,7 @@ impl ConnWriterTasks {
     }
 }
 
-pub(crate) enum ConnReader {
+pub(crate) enum ConnFrameStream {
     Derp(FramedRead<MaybeTlsStreamReader, RelayCodec>),
     Ws(SplitStream<WebSocketStream>, KeyCache),
 }
@@ -274,7 +274,7 @@ fn tung_wasm_to_io_err(e: tokio_tungstenite_wasm::Error) -> std::io::Error {
     }
 }
 
-impl Stream for ConnReader {
+impl Stream for ConnFrameStream {
     type Item = Result<Frame>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -299,7 +299,7 @@ impl Stream for ConnReader {
 #[derive(derive_more::Debug)]
 #[debug("ConnMessageStream")]
 pub(crate) struct ConnMessageStream {
-    inner: ConnReader,
+    inner: ConnFrameStream,
 }
 
 impl Stream for ConnMessageStream {

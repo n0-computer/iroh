@@ -12,7 +12,7 @@ use std::{
 
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use bytes::Bytes;
-use conn::{Conn, ConnBuilder, ConnMessageStream, ConnReader, ConnWriter, ReceivedMessage};
+use conn::{Conn, ConnBuilder, ConnFrameStream, ConnMessageStream, ConnWriter, ReceivedMessage};
 use futures_util::StreamExt;
 use hickory_resolver::TokioResolver as DnsResolver;
 use http_body_util::Empty;
@@ -620,7 +620,7 @@ impl Actor {
         Ok((conn, receiver))
     }
 
-    async fn connect_ws(&self) -> Result<(ConnReader, ConnWriter), ClientError> {
+    async fn connect_ws(&self) -> Result<(ConnFrameStream, ConnWriter), ClientError> {
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
@@ -635,13 +635,13 @@ impl Actor {
 
         let cache = self.key_cache.clone();
 
-        let reader = ConnReader::Ws(reader, cache);
+        let reader = ConnFrameStream::Ws(reader, cache);
         let writer = ConnWriter::Ws(writer);
 
         Ok((reader, writer))
     }
 
-    async fn connect_derp(&self) -> Result<(ConnReader, ConnWriter, SocketAddr), ClientError> {
+    async fn connect_derp(&self) -> Result<(ConnFrameStream, ConnWriter, SocketAddr), ClientError> {
         let url = self.url.clone();
         let tcp_stream = self.dial_url().await?;
 
@@ -691,7 +691,7 @@ impl Actor {
 
         let cache = self.key_cache.clone();
 
-        let reader = ConnReader::Derp(FramedRead::new(reader, RelayCodec::new(cache.clone())));
+        let reader = ConnFrameStream::Derp(FramedRead::new(reader, RelayCodec::new(cache.clone())));
         let writer = ConnWriter::Derp(FramedWrite::new(writer, RelayCodec::new(cache)));
 
         Ok((reader, writer, local_addr))

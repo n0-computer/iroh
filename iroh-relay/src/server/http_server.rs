@@ -689,7 +689,7 @@ mod tests {
 
     use super::*;
     use crate::client::{
-        conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage},
+        conn::{ConnBuilder, ConnFrameStream, ConnWriter, ReceivedMessage},
         streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
         Client, ClientBuilder,
     };
@@ -919,7 +919,8 @@ mod tests {
         let client_reader = MaybeTlsStreamReader::Mem(client_reader);
         let client_writer = MaybeTlsStreamWriter::Mem(client_writer);
 
-        let client_reader = ConnReader::Derp(FramedRead::new(client_reader, RelayCodec::test()));
+        let client_reader =
+            ConnFrameStream::Derp(FramedRead::new(client_reader, RelayCodec::test()));
         let client_writer = ConnWriter::Derp(FramedWrite::new(client_writer, RelayCodec::test()));
 
         (
