@@ -69,12 +69,11 @@ pub struct Opt {
     #[clap(long, default_value = "1200")]
     pub initial_mtu: u16,
     /// Whether to run a local relay and have the server and clients connect to that.
-    ///
-    /// Can be combined with the `DEV_RELAY_ONLY` environment variable (at compile time)
-    /// to test throughput for relay-only traffic locally.
-    /// (e.g. `DEV_RELAY_ONLY=true cargo run --release -- iroh --with-relay`)
+    /// This will force all traffic over the relay and can be used to test
+    /// throughput for relay-only traffic.
+    #[cfg(feature = "local-relay")]
     #[clap(long, default_value_t = false)]
-    pub with_relay: bool,
+    pub only_relay: bool,
 }
 
 pub enum EndpointSelector {

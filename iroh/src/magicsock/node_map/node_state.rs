@@ -23,7 +23,6 @@ use super::{
 use crate::{
     disco::{self, SendAddr},
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
-    util::relay_only_mode,
     watchable::{Watchable, Watcher},
 };
 
@@ -136,6 +135,10 @@ pub(super) struct NodeState {
     ///
     /// Used for metric reporting.
     has_been_direct: bool,
+    /// This implies we only use the relay to communicate
+    /// and do not attempt to do any hole punching.
+    #[cfg(any(test, feature = "test-utils"))]
+    relay_only: bool,
 }
 
 /// Options for creating a new [`NodeState`].
@@ -146,6 +149,8 @@ pub(super) struct Options {
     /// Is this endpoint currently active (sending data)?
     pub(super) active: bool,
     pub(super) source: super::Source,
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(super) relay_only: bool,
 }
 
 impl NodeState {
@@ -176,6 +181,8 @@ impl NodeState {
             last_call_me_maybe: None,
             conn_type: Watchable::new(ConnectionType::None),
             has_been_direct: false,
+            #[cfg(any(test, feature = "test-utils"))]
+            relay_only: options.relay_only,
         }
     }
 
@@ -271,8 +278,9 @@ impl NodeState {
         now: &Instant,
         have_ipv6: bool,
     ) -> (Option<SocketAddr>, Option<RelayUrl>) {
-        if relay_only_mode() {
-            debug!("in `DEV_relay_ONLY` mode, giving the relay address as the only viable address for this endpoint");
+        #[cfg(any(test, feature = "test-utils"))]
+        if self.relay_only {
+            debug!("in `relay_only` mode, giving the relay address as the only viable address for this endpoint");
             return (None, self.relay_url());
         }
         let (best_addr, relay_url) = match self.udp_paths.send_addr(*now, have_ipv6) {
@@ -456,9 +464,10 @@ impl NodeState {
 
     #[must_use = "pings must be handled"]
     fn start_ping(&self, dst: SendAddr, purpose: DiscoPingPurpose) -> Option<SendPing> {
-        if relay_only_mode() && !dst.is_relay() {
+        #[cfg(any(test, feature = "test-utils"))]
+        if self.relay_only && !dst.is_relay() {
             // don't attempt any hole punching in relay only mode
-            warn!("in `DEV_relay_ONLY` mode, ignoring request to start a hole punching attempt.");
+            warn!("in `relay_only` mode, ignoring request to start a hole punching attempt.");
             return None;
         }
         let tx_id = stun::TransactionId::default();
@@ -601,10 +610,10 @@ impl NodeState {
                 }
             }
         }
-        if relay_only_mode() {
-            warn!(
-                "in `DEV_relay_ONLY` mode, ignoring request to respond to a hole punching attempt."
-            );
+
+        #[cfg(any(test, feature = "test-utils"))]
+        if self.relay_only {
+            warn!("in `relay_only` mode, ignoring request to respond to a hole punching attempt.");
             return ping_msgs;
         }
         self.prune_direct_addresses();
@@ -1495,6 +1504,8 @@ mod tests {
                     last_call_me_maybe: None,
                     conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
                     has_been_direct: true,
+                    #[cfg(any(test, feature = "test-utils"))]
+                    relay_only: false,
                 },
                 ip_port.into(),
             )
@@ -1515,6 +1526,8 @@ mod tests {
                 last_call_me_maybe: None,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
                 has_been_direct: false,
+                #[cfg(any(test, feature = "test-utils"))]
+                relay_only: false,
             }
         };
 
@@ -1542,6 +1555,8 @@ mod tests {
                 last_call_me_maybe: None,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
                 has_been_direct: false,
+                #[cfg(any(test, feature = "test-utils"))]
+                relay_only: false,
             }
         };
 
@@ -1582,6 +1597,8 @@ mod tests {
                         send_addr.clone(),
                     )),
                     has_been_direct: false,
+                    #[cfg(any(test, feature = "test-utils"))]
+                    relay_only: false,
                 },
                 socket_addr,
             )
@@ -1672,6 +1689,7 @@ mod tests {
                 (d_endpoint.id, d_endpoint),
             ]),
             next_id: 5,
+            relay_only: false,
         });
         let mut got = node_map.list_remote_infos(later);
         got.sort_by_key(|p| p.node_id);
@@ -1701,6 +1719,7 @@ mod tests {
             source: crate::magicsock::Source::NamedApp {
                 name: "test".into(),
             },
+            relay_only: false,
         };
         let mut ep = NodeState::new(0, opts);
 
