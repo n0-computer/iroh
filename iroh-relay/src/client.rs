@@ -31,7 +31,6 @@ use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
     sync::{mpsc, oneshot},
-    task::JoinSet,
     time::Instant,
 };
 use tokio_util::{
@@ -127,7 +126,7 @@ pub struct Client {
 
 #[derive(Debug)]
 enum ActorMessage {
-    Connect(oneshot::Sender<Result<Conn, ClientError>>),
+    Connect(oneshot::Sender<Result<(), ClientError>>),
     NotePreferred(bool),
     LocalAddr(oneshot::Sender<Result<Option<SocketAddr>, ClientError>>),
     Ping(oneshot::Sender<Result<Duration, ClientError>>),
@@ -157,7 +156,6 @@ struct Actor {
     #[debug("TlsConnector")]
     tls_connector: tokio_rustls::TlsConnector,
     pings: PingTracker,
-    ping_tasks: JoinSet<()>,
     dns_resolver: DnsResolver,
     proxy_url: Option<Url>,
     key_cache: KeyCache,
@@ -315,7 +313,6 @@ impl ClientBuilder {
             is_closed: false,
             address_family_selector: self.address_family_selector,
             pings: PingTracker::default(),
-            ping_tasks: Default::default(),
             url: self.url,
             protocol: self.protocol,
             tls_connector,
@@ -399,7 +396,7 @@ impl Client {
     ///
     /// If there is already an active relay connection, returns the already
     /// connected [`crate::RelayConn`].
-    pub async fn connect(&self) -> Result<Conn, ClientError> {
+    pub async fn connect(&self) -> Result<(), ClientError> {
         self.send_actor(ActorMessage::Connect).await
     }
 
@@ -505,7 +502,7 @@ impl Actor {
 
                     match msg {
                         ActorMessage::Connect(s) => {
-                            let res = self.connect("actor msg").await.map(|(client, _)| (client));
+                            let res = self.connect("actor msg").await.map(|_| ());
                             s.send(res).ok();
                         },
                         ActorMessage::NotePreferred(is_preferred) => {
@@ -557,7 +554,7 @@ impl Actor {
     async fn connect(
         &mut self,
         why: &'static str,
-    ) -> Result<(Conn, &'_ mut ConnMessageStream), ClientError> {
+    ) -> Result<(&'_ mut Conn, &'_ mut ConnMessageStream), ClientError> {
         if self.is_closed {
             return Err(ClientError::Closed);
         }
@@ -576,7 +573,7 @@ impl Actor {
             let (conn, receiver) = self
                 .relay_conn
                 .as_mut()
-                .map(|(c, r)| (c.clone(), r))
+                .map(|(c, r)| (c, r))
                 .expect("just checked");
 
             Ok((conn, receiver))
@@ -598,7 +595,7 @@ impl Actor {
             }
         };
 
-        let (conn, receiver) =
+        let (mut conn, receiver) =
             ConnBuilder::new(self.secret_key.clone(), local_addr, reader, writer)
                 .build()
                 .await
@@ -743,7 +740,7 @@ impl Actor {
 
         // only send the preference if we already have a connection
         let res = {
-            if let Some((ref conn, _)) = self.relay_conn {
+            if let Some((ref mut conn, _)) = self.relay_conn {
                 conn.note_preferred(is_preferred).await
             } else {
                 return;
@@ -768,29 +765,32 @@ impl Actor {
     }
 
     async fn ping(&mut self, s: oneshot::Sender<Result<Duration, ClientError>>) {
-        let connect_res = self.connect("ping").await.map(|(c, _)| c);
         let (ping, recv) = self.pings.register();
+        let connect_res = self.connect("ping").await.map(|(c, _)| c);
+
         trace!("ping: {}", data_encoding::HEXLOWER.encode(&ping));
 
-        self.ping_tasks.spawn(async move {
-            let res = match connect_res {
-                Ok(conn) => {
-                    let start = Instant::now();
-                    if let Err(err) = conn.send_ping(ping).await {
-                        warn!("failed to send ping: {:?}", err);
-                        Err(ClientError::Send)
-                    } else {
-                        match tokio::time::timeout(PING_TIMEOUT, recv).await {
+        match connect_res {
+            Ok(conn) => {
+                let start = Instant::now();
+                if let Err(err) = conn.send_ping(ping).await {
+                    warn!("failed to send ping: {:?}", err);
+                    s.send(Err(ClientError::Send)).ok();
+                } else {
+                    tokio::task::spawn(async move {
+                        let res = match tokio::time::timeout(PING_TIMEOUT, recv).await {
                             Ok(Ok(())) => Ok(start.elapsed()),
                             Err(_) => Err(ClientError::PingTimeout),
                             Ok(Err(_)) => Err(ClientError::PingAborted),
-                        }
-                    }
+                        };
+                        s.send(res).ok();
+                    });
                 }
-                Err(err) => Err(err),
-            };
-            s.send(res).ok();
-        });
+            }
+            Err(err) => {
+                s.send(Err(err)).ok();
+            }
+        }
     }
 
     async fn send(&mut self, remote_node: NodeId, payload: Bytes) -> Result<(), ClientError> {
@@ -1019,7 +1019,7 @@ impl Actor {
     /// requires a connection, it will call `connect`.
     async fn close_for_reconnect(&mut self) {
         debug!("close for reconnect");
-        if let Some((conn, _)) = self.relay_conn.take() {
+        if let Some((ref mut conn, _)) = self.relay_conn.take() {
             conn.close().await
         }
     }

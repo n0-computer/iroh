@@ -5,7 +5,6 @@
 use std::{
     net::SocketAddr,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
@@ -19,20 +18,15 @@ use futures_util::{
     SinkExt,
 };
 use iroh_base::{NodeId, SecretKey};
-use tokio::sync::mpsc;
 use tokio_tungstenite_wasm::WebSocketStream;
-use tokio_util::{
-    codec::{FramedRead, FramedWrite},
-    task::AbortOnDropHandle,
-};
-use tracing::{debug, info_span, trace, Instrument};
+use tokio_util::codec::{FramedRead, FramedWrite};
+use tracing::{debug, trace};
 
 use super::KeyCache;
 use crate::{
     client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
     protos::relay::{
-        write_frame, ClientInfo, Frame, RelayCodec, MAX_PACKET_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH,
-        PROTOCOL_VERSION,
+        write_frame, ClientInfo, Frame, RelayCodec, MAX_PACKET_SIZE, PROTOCOL_VERSION,
     },
 };
 
@@ -77,23 +71,9 @@ impl ConnBuilder {
         // exchange information with the server
         self.server_handshake().await?;
 
-        // create task to handle writing to the server
-        let (writer_sender, writer_recv) = mpsc::channel(PER_CLIENT_SEND_QUEUE_DEPTH);
-        let writer_task = tokio::task::spawn(
-            ConnWriterTasks {
-                writer: self.writer,
-                recv_msgs: writer_recv,
-            }
-            .run()
-            .instrument(info_span!("conn.writer")),
-        );
-
         let conn = Conn {
-            inner: Arc::new(ConnTasks {
-                local_addr: self.local_addr,
-                writer_channel: writer_sender,
-                writer_task: AbortOnDropHandle::new(writer_task),
-            }),
+            local_addr: self.local_addr,
+            writer: self.writer,
         };
         let stream = ConnMessageStream { inner: self.reader };
         Ok((conn, stream))
@@ -104,76 +84,48 @@ impl ConnBuilder {
 ///
 /// Cheaply clonable.
 /// Call `close` to shut down the write loop and read functionality.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Conn {
-    inner: Arc<ConnTasks>,
-}
-
-impl PartialEq for Conn {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.inner, &other.inner)
-    }
-}
-
-impl Eq for Conn {}
-
-#[derive(derive_more::Debug)]
-pub struct ConnTasks {
     /// Our local address, if known.
     ///
     /// Is `None` in tests or when using websockets (because we don't control connection
     /// establishment in browsers).
     local_addr: Option<SocketAddr>,
-    /// Channel on which to communicate to the server.
-    ///
-    /// The associated [`mpsc::Receiver`] will close if there is ever an error writing to
-    /// the server.
-    writer_channel: mpsc::Sender<ConnWriterMessage>,
-    /// JoinHandle for the [`ConnWriter`] task
-    writer_task: AbortOnDropHandle<Result<()>>,
+    writer: ConnWriter,
 }
 
 impl Conn {
     /// Sends a packet to the node identified by `dstkey`
     ///
     /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
-    pub async fn send(&self, dst: NodeId, packet: Bytes) -> Result<()> {
+    pub async fn send(&mut self, dst: NodeId, packet: Bytes) -> Result<()> {
         trace!(dst = dst.fmt_short(), len = packet.len(), "[RELAY] send");
 
-        self.inner
-            .writer_channel
-            .send(ConnWriterMessage::Packet((dst, packet)))
-            .await?;
+        send_packet(&mut self.writer, dst, packet).await?;
         Ok(())
     }
 
     /// Send a ping with 8 bytes of random data.
-    pub async fn send_ping(&self, data: [u8; 8]) -> Result<()> {
-        self.inner
-            .writer_channel
-            .send(ConnWriterMessage::Ping(data))
-            .await?;
+    pub async fn send_ping(&mut self, data: [u8; 8]) -> Result<()> {
+        write_frame(&mut self.writer, Frame::Ping { data }, None).await?;
+        self.writer.flush().await?;
         Ok(())
     }
 
     /// Respond to a ping request. The `data` field should be filled
     /// by the 8 bytes of random data send by the ping.
-    pub async fn send_pong(&self, data: [u8; 8]) -> Result<()> {
-        self.inner
-            .writer_channel
-            .send(ConnWriterMessage::Pong(data))
-            .await?;
+    pub async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
+        write_frame(&mut self.writer, Frame::Pong { data }, None).await?;
+        self.writer.flush().await?;
         Ok(())
     }
 
     /// Sends a packet that tells the server whether this
     /// connection is to the user's preferred server. This is only
     /// used in the server for stats.
-    pub async fn note_preferred(&self, preferred: bool) -> Result<()> {
-        self.inner
-            .writer_channel
-            .send(ConnWriterMessage::NotePreferred(preferred))
-            .await?;
+    pub async fn note_preferred(&mut self, preferred: bool) -> Result<()> {
+        write_frame(&mut self.writer, Frame::NotePreferred { preferred }, None).await?;
+        self.writer.flush().await?;
         Ok(())
     }
 
@@ -181,84 +133,15 @@ impl Conn {
     ///
     /// `None`, when run in a testing environment or when using websockets.
     pub fn local_addr(&self) -> Option<SocketAddr> {
-        self.inner.local_addr
-    }
-
-    /// Whether or not this [`Conn`] is closed.
-    ///
-    /// The [`Conn`] is considered closed if the write side of the connection is no longer running.
-    pub fn is_closed(&self) -> bool {
-        self.inner.writer_task.is_finished()
+        self.local_addr
     }
 
     /// Close the connection
     ///
     /// Shuts down the write loop directly and marks the connection as closed. The [`Conn`] will
     /// check if the it is closed before attempting to read from it.
-    pub async fn close(&self) {
-        if self.inner.writer_task.is_finished() {
-            return;
-        }
-
-        self.inner
-            .writer_channel
-            .send(ConnWriterMessage::Shutdown)
-            .await
-            .ok();
-    }
-}
-
-/// The kinds of messages we can send to the [`Server`](crate::server::Server)
-#[derive(Debug)]
-enum ConnWriterMessage {
-    /// Send a packet (addressed to the [`NodeId`]) to the server
-    Packet((NodeId, Bytes)),
-    /// Send a pong to the server
-    Pong([u8; 8]),
-    /// Send a ping to the server
-    Ping([u8; 8]),
-    /// Tell the server whether or not this client is the user's preferred client
-    NotePreferred(bool),
-    /// Shutdown the writer
-    Shutdown,
-}
-
-/// Call [`ConnWriterTasks::run`] to listen for messages to send to the connection.
-/// Should be used by the [`Conn`]
-///
-/// Shutsdown when you send a [`ConnWriterMessage::Shutdown`], or if there is an error writing to
-/// the server.
-struct ConnWriterTasks {
-    recv_msgs: mpsc::Receiver<ConnWriterMessage>,
-    writer: ConnWriter,
-}
-
-impl ConnWriterTasks {
-    async fn run(mut self) -> Result<()> {
-        while let Some(msg) = self.recv_msgs.recv().await {
-            match msg {
-                ConnWriterMessage::Packet((key, bytes)) => {
-                    send_packet(&mut self.writer, key, bytes).await?;
-                }
-                ConnWriterMessage::Pong(data) => {
-                    write_frame(&mut self.writer, Frame::Pong { data }, None).await?;
-                    self.writer.flush().await?;
-                }
-                ConnWriterMessage::Ping(data) => {
-                    write_frame(&mut self.writer, Frame::Ping { data }, None).await?;
-                    self.writer.flush().await?;
-                }
-                ConnWriterMessage::NotePreferred(preferred) => {
-                    write_frame(&mut self.writer, Frame::NotePreferred { preferred }, None).await?;
-                    self.writer.flush().await?;
-                }
-                ConnWriterMessage::Shutdown => {
-                    return Ok(());
-                }
-            }
-        }
-
-        bail!("channel unexpectedly closed");
+    pub async fn close(&mut self) {
+        self.writer.close().await.ok();
     }
 }
 
@@ -354,8 +237,10 @@ fn process_incoming_frame(frame: Frame) -> Result<ReceivedMessage> {
     }
 }
 
+#[derive(derive_more::Debug)]
 pub(crate) enum ConnWriter {
     Derp(FramedWrite<MaybeTlsStreamWriter, RelayCodec>),
+    #[debug("Websocket")]
     Ws(SplitSink<WebSocketStream, tokio_tungstenite_wasm::Message>),
 }
 

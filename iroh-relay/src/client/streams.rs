@@ -42,6 +42,7 @@ impl AsyncRead for MaybeTlsStreamReader {
     }
 }
 
+#[derive(Debug)]
 pub enum MaybeTlsStreamWriter {
     Raw(tokio::io::WriteHalf<ProxyStream>),
     Tls(tokio::io::WriteHalf<tokio_rustls::client::TlsStream<ProxyStream>>),
@@ -137,6 +138,7 @@ pub fn downcast_upgrade(
     }
 }
 
+#[derive(Debug)]
 pub enum ProxyStream {
     Raw(TcpStream),
     Proxied(util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream>),
@@ -214,6 +216,7 @@ impl ProxyStream {
     }
 }
 
+#[derive(Debug)]
 pub enum MaybeTlsStream {
     Raw(TcpStream),
     Tls(tokio_rustls::client::TlsStream<TcpStream>),
