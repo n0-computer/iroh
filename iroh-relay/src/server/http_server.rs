@@ -689,7 +689,7 @@ mod tests {
 
     use super::*;
     use crate::client::{
-        conn::{create_connection, ConnFrameStream, ConnWriter, ReceivedMessage},
+        conn::{Conn, ConnFrameStream, ConnWriter, ReceivedMessage},
         streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
         Client, ClientBuilder,
     };
@@ -950,8 +950,7 @@ mod tests {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
                 .await
         });
-        let (mut client_a, mut client_receiver_a) =
-            create_connection(client_a_reader, client_a_writer, &key_a).await?;
+        let mut client_a = Conn::new(client_a_reader, client_a_writer, &key_a).await?;
         handler_task.await??;
 
         info!("Create client B and connect it to the server.");
@@ -963,14 +962,13 @@ mod tests {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
                 .await
         });
-        let (mut client_b, mut client_receiver_b) =
-            create_connection(client_b_reader, client_b_writer, &key_b).await?;
+        let mut client_b = Conn::new(client_b_reader, client_b_writer, &key_b).await?;
         handler_task.await??;
 
         info!("Send message from A to B.");
         let msg = Bytes::from_static(b"hello client b!!");
         client_a.send(public_key_b, msg.clone()).await?;
-        match client_receiver_b.next().await.context("eos")?? {
+        match client_b.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -986,7 +984,7 @@ mod tests {
         info!("Send message from B to A.");
         let msg = Bytes::from_static(b"nice to meet you client a!!");
         client_b.send(public_key_a, msg.clone()).await?;
-        match client_receiver_a.next().await.context("eos")?? {
+        match client_a.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1009,7 +1007,7 @@ mod tests {
             .await;
         // TODO: this send seems to succeed currently.
         // assert!(res.is_err());
-        assert!(client_receiver_b.next().await.is_none());
+        assert!(client_b.next().await.is_none());
         Ok(())
     }
 
@@ -1041,8 +1039,7 @@ mod tests {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
                 .await
         });
-        let (mut client_a, mut client_receiver_a) =
-            create_connection(client_a_reader, client_a_writer, &key_a).await?;
+        let mut client_a = Conn::new(client_a_reader, client_a_writer, &key_a).await?;
         handler_task.await??;
 
         info!("Create client B and connect it to the server.");
@@ -1054,14 +1051,13 @@ mod tests {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
                 .await
         });
-        let (mut client_b, mut client_receiver_b) =
-            create_connection(client_b_reader, client_b_writer, &key_b).await?;
+        let mut client_b = Conn::new(client_b_reader, client_b_writer, &key_b).await?;
         handler_task.await??;
 
         info!("Send message from A to B.");
         let msg = Bytes::from_static(b"hello client b!!");
         client_a.send(public_key_b, msg.clone()).await?;
-        match client_receiver_b.next().await.context("eos")?? {
+        match client_b.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1077,7 +1073,7 @@ mod tests {
         info!("Send message from B to A.");
         let msg = Bytes::from_static(b"nice to meet you client a!!");
         client_b.send(public_key_a, msg.clone()).await?;
-        match client_receiver_a.next().await.context("eos")?? {
+        match client_a.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1097,8 +1093,7 @@ mod tests {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(new_rw_b))
                 .await
         });
-        let (mut new_client_b, mut new_client_receiver_b) =
-            create_connection(new_client_b_reader, new_client_b_writer, &key_b).await?;
+        let mut new_client_b = Conn::new(new_client_b_reader, new_client_b_writer, &key_b).await?;
         handler_task.await??;
 
         // assert!(client_b.recv().await.is_err());
@@ -1106,7 +1101,7 @@ mod tests {
         info!("Send message from A to B.");
         let msg = Bytes::from_static(b"are you still there, b?!");
         client_a.send(public_key_b, msg.clone()).await?;
-        match new_client_receiver_b.next().await.context("eos")?? {
+        match new_client_b.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1122,7 +1117,7 @@ mod tests {
         info!("Send message from B to A.");
         let msg = Bytes::from_static(b"just had a spot of trouble but I'm back now,a!!");
         new_client_b.send(public_key_a, msg.clone()).await?;
-        match client_receiver_a.next().await.context("eos")?? {
+        match client_a.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1144,7 +1139,7 @@ mod tests {
             .await;
         // TODO: This used to pass
         // assert!(res.is_err());
-        assert!(new_client_receiver_b.next().await.is_none());
+        assert!(new_client_b.next().await.is_none());
         Ok(())
     }
 }

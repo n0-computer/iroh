@@ -12,9 +12,7 @@ use std::{
 
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use bytes::Bytes;
-use conn::{
-    create_connection, Conn, ConnFrameStream, ConnMessageStream, ConnWriter, ReceivedMessage,
-};
+use conn::{Conn, ConnFrameStream, ConnWriter, ReceivedMessage};
 use futures_util::StreamExt;
 use hickory_resolver::TokioResolver as DnsResolver;
 use http_body_util::Empty;
@@ -149,7 +147,7 @@ pub struct ClientReceiver {
 struct Actor {
     secret_key: SecretKey,
     is_preferred: bool,
-    relay_conn: Option<(Conn, ConnMessageStream, Option<SocketAddr>)>,
+    relay_conn: Option<(Conn, Option<SocketAddr>)>,
     is_closed: bool,
     #[debug("address family selector callback")]
     address_family_selector: Option<Box<dyn Fn() -> bool + Send + Sync>>,
@@ -556,7 +554,7 @@ impl Actor {
     async fn connect(
         &mut self,
         why: &'static str,
-    ) -> Result<(&'_ mut Conn, &'_ mut ConnMessageStream, Option<SocketAddr>), ClientError> {
+    ) -> Result<(&'_ mut Conn, Option<SocketAddr>), ClientError> {
         if self.is_closed {
             return Err(ClientError::Closed);
         }
@@ -564,26 +562,23 @@ impl Actor {
         async move {
             if self.relay_conn.is_none() {
                 trace!("no connection, trying to connect");
-                let (conn, receiver, local_addr) =
-                    tokio::time::timeout(CONNECT_TIMEOUT, self.connect_0())
-                        .await
-                        .map_err(|_| ClientError::ConnectTimeout)??;
+                let (conn, local_addr) = tokio::time::timeout(CONNECT_TIMEOUT, self.connect_0())
+                    .await
+                    .map_err(|_| ClientError::ConnectTimeout)??;
 
-                self.relay_conn = Some((conn, receiver, local_addr));
+                self.relay_conn = Some((conn, local_addr));
             } else {
                 trace!("already had connection");
             }
-            let (conn, receiver, addr) = self.relay_conn.as_mut().expect("just checked");
+            let (conn, addr) = self.relay_conn.as_mut().expect("just checked");
 
-            Ok((conn, receiver, *addr))
+            Ok((conn, *addr))
         }
         .instrument(info_span!("connect", %url, %why))
         .await
     }
 
-    async fn connect_0(
-        &self,
-    ) -> Result<(Conn, ConnMessageStream, Option<SocketAddr>), ClientError> {
+    async fn connect_0(&self) -> Result<(Conn, Option<SocketAddr>), ClientError> {
         let (reader, writer, local_addr) = match self.protocol {
             Protocol::Websocket => {
                 let (reader, writer) = self.connect_ws().await?;
@@ -596,7 +591,7 @@ impl Actor {
             }
         };
 
-        let (mut conn, receiver) = create_connection(reader, writer, &self.secret_key)
+        let mut conn = Conn::new(reader, writer, &self.secret_key)
             .await
             .map_err(|e| ClientError::Build(e.to_string()))?;
 
@@ -613,7 +608,7 @@ impl Actor {
         );
 
         trace!("connect_0 done");
-        Ok((conn, receiver, local_addr))
+        Ok((conn, local_addr))
     }
 
     async fn connect_ws(&self) -> Result<(ConnFrameStream, ConnWriter), ClientError> {
@@ -739,7 +734,7 @@ impl Actor {
 
         // only send the preference if we already have a connection
         let res = {
-            if let Some((ref mut conn, _, _)) = self.relay_conn {
+            if let Some((ref mut conn, _)) = self.relay_conn {
                 conn.note_preferred(is_preferred).await
             } else {
                 return;
@@ -756,7 +751,7 @@ impl Actor {
         if self.is_closed {
             return None;
         }
-        if let Some((_, _, local_addr)) = self.relay_conn {
+        if let Some((_, local_addr)) = self.relay_conn {
             local_addr
         } else {
             None
@@ -765,7 +760,7 @@ impl Actor {
 
     async fn ping(&mut self, s: oneshot::Sender<Result<Duration, ClientError>>) {
         let (ping, recv) = self.pings.register();
-        let connect_res = self.connect("ping").await.map(|(c, _, _)| c);
+        let connect_res = self.connect("ping").await.map(|(c, _)| c);
 
         trace!("ping: {}", data_encoding::HEXLOWER.encode(&ping));
 
@@ -794,7 +789,7 @@ impl Actor {
 
     async fn send(&mut self, remote_node: NodeId, payload: Bytes) -> Result<(), ClientError> {
         trace!(remote_node = %remote_node.fmt_short(), len = payload.len(), "send");
-        let (conn, _, _) = self.connect("send").await?;
+        let (conn, _) = self.connect("send").await?;
         if conn.send(remote_node, payload).await.is_err() {
             self.close_for_reconnect().await;
             return Err(ClientError::Send);
@@ -804,7 +799,7 @@ impl Actor {
 
     async fn send_pong(&mut self, data: [u8; 8]) -> Result<(), ClientError> {
         debug!("send_pong");
-        let (conn, _, _) = self.connect("send_pong").await?;
+        let (conn, _) = self.connect("send_pong").await?;
         if conn.send_pong(data).await.is_err() {
             self.close_for_reconnect().await;
             return Err(ClientError::Send);
@@ -991,9 +986,9 @@ impl Actor {
     }
 
     async fn recv_detail(&mut self) -> Result<ReceivedMessage, ClientError> {
-        if let Some((_, conn_message_stream, _)) = self.relay_conn.as_mut() {
+        if let Some((conn, _)) = self.relay_conn.as_mut() {
             trace!("recv_detail tick");
-            match tokio::time::timeout(CLIENT_RECV_TIMEOUT, conn_message_stream.next()).await {
+            match tokio::time::timeout(CLIENT_RECV_TIMEOUT, conn.next()).await {
                 Ok(Some(Ok(msg))) => {
                     return Ok(msg);
                 }
@@ -1018,7 +1013,7 @@ impl Actor {
     /// requires a connection, it will call `connect`.
     async fn close_for_reconnect(&mut self) {
         debug!("close for reconnect");
-        if let Some((ref mut conn, _, _)) = self.relay_conn.take() {
+        if let Some((ref mut conn, _)) = self.relay_conn.take() {
             conn.close().await
         }
     }

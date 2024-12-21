@@ -29,6 +29,71 @@ use crate::{
     },
 };
 
+/// A connection to a relay server.
+#[derive(derive_more::Debug)]
+pub(crate) struct Conn {
+    writer: ConnWriter,
+    #[debug("ConnFrameStream")]
+    reader: ConnFrameStream,
+}
+
+impl Conn {
+    /// Constructs the connection, including the initial server handshake.
+    pub(crate) async fn new(
+        reader: ConnFrameStream,
+        mut writer: ConnWriter,
+        secret_key: &SecretKey,
+    ) -> Result<Self> {
+        // exchange information with the server
+        server_handshake(&mut writer, secret_key).await?;
+
+        let conn = Self { writer, reader };
+        Ok(conn)
+    }
+
+    /// Sends a packet to the node identified by `dstkey`
+    ///
+    /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
+    pub(crate) async fn send(&mut self, dst: NodeId, packet: Bytes) -> Result<()> {
+        trace!(dst = dst.fmt_short(), len = packet.len(), "[RELAY] send");
+
+        send_packet(&mut self.writer, dst, packet).await?;
+        Ok(())
+    }
+
+    /// Send a ping with 8 bytes of random data.
+    pub(crate) async fn send_ping(&mut self, data: [u8; 8]) -> Result<()> {
+        write_frame(&mut self.writer, Frame::Ping { data }, None).await?;
+        self.writer.flush().await?;
+        Ok(())
+    }
+
+    /// Respond to a ping request. The `data` field should be filled
+    /// by the 8 bytes of random data send by the ping.
+    pub(crate) async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
+        write_frame(&mut self.writer, Frame::Pong { data }, None).await?;
+        self.writer.flush().await?;
+        Ok(())
+    }
+
+    /// Sends a packet that tells the server whether this
+    /// connection is to the user's preferred server. This is only
+    /// used in the server for stats.
+    pub(crate) async fn note_preferred(&mut self, preferred: bool) -> Result<()> {
+        write_frame(&mut self.writer, Frame::NotePreferred { preferred }, None).await?;
+        self.writer.flush().await?;
+        Ok(())
+    }
+
+    /// Close the connection
+    ///
+    /// Shuts down the write loop directly and marks the connection as closed. The [`Conn`] will
+    /// check if the it is closed before attempting to read from it.
+    pub(crate) async fn close(&mut self) {
+        self.writer.close().await.ok();
+    }
+}
+
 async fn server_handshake(writer: &mut ConnWriter, secret_key: &SecretKey) -> Result<()> {
     debug!("server_handshake: started");
     let client_info = ClientInfo {
@@ -39,73 +104,6 @@ async fn server_handshake(writer: &mut ConnWriter, secret_key: &SecretKey) -> Re
 
     debug!("server_handshake: done");
     Ok(())
-}
-
-/// Constructs the connection, including the initial server handshake.
-pub async fn create_connection(
-    reader: ConnFrameStream,
-    mut writer: ConnWriter,
-    secret_key: &SecretKey,
-) -> Result<(Conn, ConnMessageStream)> {
-    // exchange information with the server
-    server_handshake(&mut writer, secret_key).await?;
-
-    let conn = Conn { writer };
-    let stream = ConnMessageStream { inner: reader };
-    Ok((conn, stream))
-}
-
-/// A connection to a relay server.
-///
-/// Cheaply clonable.
-/// Call `close` to shut down the write loop and read functionality.
-#[derive(Debug)]
-pub struct Conn {
-    writer: ConnWriter,
-}
-
-impl Conn {
-    /// Sends a packet to the node identified by `dstkey`
-    ///
-    /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
-    pub async fn send(&mut self, dst: NodeId, packet: Bytes) -> Result<()> {
-        trace!(dst = dst.fmt_short(), len = packet.len(), "[RELAY] send");
-
-        send_packet(&mut self.writer, dst, packet).await?;
-        Ok(())
-    }
-
-    /// Send a ping with 8 bytes of random data.
-    pub async fn send_ping(&mut self, data: [u8; 8]) -> Result<()> {
-        write_frame(&mut self.writer, Frame::Ping { data }, None).await?;
-        self.writer.flush().await?;
-        Ok(())
-    }
-
-    /// Respond to a ping request. The `data` field should be filled
-    /// by the 8 bytes of random data send by the ping.
-    pub async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
-        write_frame(&mut self.writer, Frame::Pong { data }, None).await?;
-        self.writer.flush().await?;
-        Ok(())
-    }
-
-    /// Sends a packet that tells the server whether this
-    /// connection is to the user's preferred server. This is only
-    /// used in the server for stats.
-    pub async fn note_preferred(&mut self, preferred: bool) -> Result<()> {
-        write_frame(&mut self.writer, Frame::NotePreferred { preferred }, None).await?;
-        self.writer.flush().await?;
-        Ok(())
-    }
-
-    /// Close the connection
-    ///
-    /// Shuts down the write loop directly and marks the connection as closed. The [`Conn`] will
-    /// check if the it is closed before attempting to read from it.
-    pub async fn close(&mut self) {
-        self.writer.close().await.ok();
-    }
 }
 
 pub(crate) enum ConnFrameStream {
@@ -142,17 +140,11 @@ impl Stream for ConnFrameStream {
     }
 }
 
-#[derive(derive_more::Debug)]
-#[debug("ConnMessageStream")]
-pub(crate) struct ConnMessageStream {
-    inner: ConnFrameStream,
-}
-
-impl Stream for ConnMessageStream {
+impl Stream for Conn {
     type Item = Result<ReceivedMessage>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match Pin::new(&mut self.inner).poll_next(cx) {
+        match Pin::new(&mut self.reader).poll_next(cx) {
             Poll::Ready(Some(item)) => {
                 let item = item.and_then(process_incoming_frame);
                 Poll::Ready(Some(item))
