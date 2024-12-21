@@ -532,7 +532,8 @@ mod tests {
         let (io, io_rw) = tokio::io::duplex(1024);
         let mut io_rw = Framed::new(io_rw, RelayCodec::test());
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
-        let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
+        let stream =
+            RelayedStream::Relay(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
 
         let actor = Actor {
             stream: RateLimitedRelayedStream::unlimited(stream),
@@ -672,7 +673,8 @@ mod tests {
         let (io, io_rw) = tokio::io::duplex(1024);
         let mut io_rw = Framed::new(io_rw, RelayCodec::test());
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
-        let stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
+        let stream =
+            RelayedStream::Relay(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
 
         println!("-- create client conn");
         let actor = Actor {
@@ -751,7 +753,7 @@ mod tests {
         // Build the rate limited stream.
         let (io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) as _);
         let mut frame_writer = Framed::new(io_write, RelayCodec::test());
-        let stream = RelayedStream::Derp(Framed::new(
+        let stream = RelayedStream::Relay(Framed::new(
             MaybeTlsStream::Test(io_read),
             RelayCodec::test(),
         ));
