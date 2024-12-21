@@ -402,7 +402,7 @@
 /// Will forcefully abort the server actor loop when dropped.
 /// For stopping gracefully, use [`ServerActorTask::close`].
 ///
-/// Responsible for managing connections to relay [`Conn`](crate::RelayConn)s, sending packets from one client to another.
+/// Responsible for managing connections to a relay, sending packets from one client to another.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ServerActorTask {
     <span class="doccomment">/// Specifies how long to wait before failing when writing to a client.

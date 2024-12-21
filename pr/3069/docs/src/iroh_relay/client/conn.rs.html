@@ -315,8 +315,7 @@
 <a href="#314" id="314">314</a>
 <a href="#315" id="315">315</a>
 <a href="#316" id="316">316</a>
-<a href="#317" id="317">317</a>
-<a href="#318" id="318">318</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
+<a href="#317" id="317">317</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
 //!
 //! based on tailscale/derp/derp_client.go
 
@@ -394,7 +393,6 @@
     /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>send(<span class="kw-2">&amp;mut </span><span class="self">self</span>, dst: NodeId, packet: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="macro">trace!</span>(dst = dst.fmt_short(), len = packet.len(), <span class="string">"[RELAY] send"</span>);
-
         send_packet(<span class="kw-2">&amp;mut *</span><span class="self">self</span>, dst, packet).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
