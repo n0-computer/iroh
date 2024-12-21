@@ -972,25 +972,31 @@ mod tests {
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
+        info!("client a build");
         let mut client_a = ClientBuilder::new(relay_url.clone())
             .protocol(Protocol::Websocket)
             .build(a_secret_key, resolver)
             .await;
+
         // should already be connected after building the client
+        info!("client a connect");
         client_a.connect().await.unwrap();
 
         // set up client b
         let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
+        info!("client b build");
         let mut client_b = ClientBuilder::new(relay_url.clone())
             .protocol(Protocol::Websocket) // another websocket client
             .build(b_secret_key, resolver)
             .await;
 
         // should already be connected after building the client
+        info!("client b connect");
         client_b.connect().await.unwrap();
 
+        info!("sending a -> b");
         // send message from a to b
         let msg = Bytes::from("hello, b");
         client_a.send(b_key, msg.clone()).await.unwrap();
@@ -1007,6 +1013,7 @@ mod tests {
             panic!("client_b received unexpected message {res:?}");
         }
 
+        info!("sending b -> a");
         // send message from b to a
         let msg = Bytes::from("howdy, a");
         client_b.send(a_key, msg.clone()).await.unwrap();

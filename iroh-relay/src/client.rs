@@ -368,27 +368,26 @@ impl Client {
         &mut self,
         why: &'static str,
     ) -> Result<(&'_ mut Conn, Option<SocketAddr>), ClientError> {
+        debug!(url = %self.url, %why, "connecting");
+
         if self.is_closed {
             return Err(ClientError::Closed);
         }
-        let url = self.url.clone();
-        async move {
-            if self.relay_conn.is_none() {
-                trace!("no connection, trying to connect");
-                let (conn, local_addr) = tokio::time::timeout(CONNECT_TIMEOUT, self.connect_0())
-                    .await
-                    .map_err(|_| ClientError::ConnectTimeout)??;
 
-                self.relay_conn = Some((conn, local_addr));
-            } else {
-                trace!("already had connection");
-            }
-            let (conn, addr) = self.relay_conn.as_mut().expect("just checked");
+        if self.relay_conn.is_none() {
+            trace!("no connection, trying to connect");
+            let (conn, local_addr) = tokio::time::timeout(CONNECT_TIMEOUT, self.connect_0())
+                .await
+                .map_err(|_| ClientError::ConnectTimeout)??;
 
-            Ok((conn, *addr))
+            self.relay_conn = Some((conn, local_addr));
+        } else {
+            trace!("already had connection");
         }
-        .instrument(info_span!("connect", %url, %why))
-        .await
+
+        let (conn, addr) = self.relay_conn.as_mut().expect("just checked");
+
+        Ok((conn, *addr))
     }
 
     async fn connect_0(&self) -> Result<(Conn, Option<SocketAddr>), ClientError> {
