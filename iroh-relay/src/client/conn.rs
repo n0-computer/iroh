@@ -76,7 +76,6 @@ impl Conn {
     /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
     pub(crate) async fn send(&mut self, dst: NodeId, packet: Bytes) -> Result<()> {
         trace!(dst = dst.fmt_short(), len = packet.len(), "[RELAY] send");
-
         send_packet(&mut *self, dst, packet).await?;
         Ok(())
     }

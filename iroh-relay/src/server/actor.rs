@@ -52,7 +52,7 @@ pub(super) struct Packet {
 /// Will forcefully abort the server actor loop when dropped.
 /// For stopping gracefully, use [`ServerActorTask::close`].
 ///
-/// Responsible for managing connections to relay [`Conn`](crate::RelayConn)s, sending packets from one client to another.
+/// Responsible for managing connections to a relay, sending packets from one client to another.
 #[derive(Debug)]
 pub(super) struct ServerActorTask {
     /// Specifies how long to wait before failing when writing to a client.
