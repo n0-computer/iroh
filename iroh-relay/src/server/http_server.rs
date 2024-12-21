@@ -746,21 +746,27 @@ mod tests {
         let (a_key, mut client_a) = {
             let span = info_span!("client-a");
             let _guard = span.enter();
-            create_test_client(a_key, relay_addr.clone())
+            create_test_client(a_key, relay_addr.clone()).await
         };
         info!("created client {a_key:?}");
         let (b_key, mut client_b) = {
             let span = info_span!("client-b");
             let _guard = span.enter();
-            create_test_client(b_key, relay_addr)
+            create_test_client(b_key, relay_addr).await
         };
         info!("created client {b_key:?}");
 
         info!("ping a");
-        client_a.ping().await?;
+        let ping_a = client_a.start_ping().await?;
+        let msg = client_a.recv().await.unwrap()?;
+        assert!(matches!(msg, ReceivedMessage::Pong(_)));
+        let _dur = ping_a.await?;
 
         info!("ping b");
-        client_b.ping().await?;
+        let ping_b = client_b.start_ping().await?;
+        let msg = client_b.recv().await.unwrap()?;
+        assert!(matches!(msg, ReceivedMessage::Pong(_)));
+        let _dur = ping_b.await?;
 
         info!("sending message from a to b");
         let msg = Bytes::from_static(b"hi there, client b!");
@@ -780,17 +786,17 @@ mod tests {
         assert_eq!(b_key, got_key);
         assert_eq!(msg, got_msg);
 
-        client_a.close().await?;
-        client_b.close().await?;
+        client_a.close().await;
+        client_b.close().await;
         server.shutdown();
 
         Ok(())
     }
 
-    fn create_test_client(key: SecretKey, server_url: Url) -> (PublicKey, Client) {
+    async fn create_test_client(key: SecretKey, server_url: Url) -> (PublicKey, Client) {
         let client = ClientBuilder::new(server_url).insecure_skip_cert_verify(true);
         let dns_resolver = crate::dns::default_resolver();
-        let client = client.build(key.clone(), dns_resolver.clone());
+        let client = client.build(key.clone(), dns_resolver.clone()).await;
         let public_key = key.public();
 
         (public_key, client)
@@ -859,13 +865,22 @@ mod tests {
         let url: Url = format!("https://localhost:{port}").parse().unwrap();
 
         // create clients
-        let (a_key, mut client_a) = create_test_client(a_key, url.clone());
+        let (a_key, mut client_a) = create_test_client(a_key, url.clone()).await;
         info!("created client {a_key:?}");
-        let (b_key, mut client_b) = create_test_client(b_key, url);
+        let (b_key, mut client_b) = create_test_client(b_key, url).await;
         info!("created client {b_key:?}");
 
-        client_a.ping().await?;
-        client_b.ping().await?;
+        info!("ping a");
+        let ping_a = client_a.start_ping().await?;
+        let msg = client_a.recv().await.unwrap()?;
+        assert!(matches!(msg, ReceivedMessage::Pong(_)));
+        let _dur = ping_a.await?;
+
+        info!("ping b");
+        let ping_b = client_b.start_ping().await?;
+        let msg = client_b.recv().await.unwrap()?;
+        assert!(matches!(msg, ReceivedMessage::Pong(_)));
+        let _dur = ping_b.await?;
 
         info!("sending message from a to b");
         let msg = Bytes::from_static(b"hi there, client b!");
@@ -887,8 +902,9 @@ mod tests {
 
         server.shutdown();
         server.task_handle().await?;
-        client_a.close().await?;
-        client_b.close().await?;
+        client_a.close().await;
+        client_b.close().await;
+
         Ok(())
     }
 

@@ -4,7 +4,7 @@
 
 use std::{
     collections::HashMap,
-    future,
+    future::{self, Future},
     net::{IpAddr, SocketAddr},
     sync::Arc,
     time::Duration,
@@ -30,10 +30,9 @@ use streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
-    sync::{mpsc, oneshot},
+    sync::oneshot,
     time::Instant,
 };
-use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
 use url::Url;
 
@@ -112,30 +111,9 @@ pub enum ClientError {
 /// An HTTP Relay client.
 ///
 /// Cheaply clonable.
-#[derive(Debug)]
-pub struct Client {
-    inner: mpsc::Sender<ActorMessage>,
-    msg_receiver: mpsc::Receiver<Result<ReceivedMessage, ClientError>>,
-    public_key: PublicKey,
-    #[allow(dead_code)]
-    recv_loop: Arc<AbortOnDropHandle<()>>,
-}
-
-#[derive(Debug)]
-enum ActorMessage {
-    Connect(oneshot::Sender<Result<(), ClientError>>),
-    NotePreferred(bool),
-    LocalAddr(oneshot::Sender<Result<Option<SocketAddr>, ClientError>>),
-    Ping(oneshot::Sender<Result<Duration, ClientError>>),
-    Pong([u8; 8], oneshot::Sender<Result<(), ClientError>>),
-    Send(PublicKey, Bytes, oneshot::Sender<Result<(), ClientError>>),
-    Close(oneshot::Sender<Result<(), ClientError>>),
-    CloseForReconnect(oneshot::Sender<Result<(), ClientError>>),
-    IsConnected(oneshot::Sender<Result<bool, ClientError>>),
-}
-
 #[derive(derive_more::Debug)]
-struct Actor {
+pub struct Client {
+    public_key: PublicKey,
     secret_key: SecretKey,
     is_preferred: bool,
     relay_conn: Option<(Conn, Option<SocketAddr>)>,
@@ -272,7 +250,7 @@ impl ClientBuilder {
     }
 
     /// Build the [`Client`]
-    pub fn build(self, key: SecretKey, dns_resolver: DnsResolver) -> Client {
+    pub async fn build(self, key: SecretKey, dns_resolver: DnsResolver) -> Client {
         // TODO: review TLS config
         let roots = rustls::RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
@@ -297,7 +275,8 @@ impl ClientBuilder {
         let tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
         let public_key = key.public();
 
-        let inner = Actor {
+        let mut client = Client {
+            public_key,
             secret_key: key,
             is_preferred: false,
             relay_conn: None,
@@ -312,18 +291,11 @@ impl ClientBuilder {
             key_cache: KeyCache::new(self.key_cache_capacity),
         };
 
-        let (msg_sender, inbox) = mpsc::channel(64);
-        let (s, r) = mpsc::channel(64);
-        let recv_loop = tokio::task::spawn(
-            async move { inner.run(inbox, s).await }.instrument(info_span!("client")),
-        );
-
-        Client {
-            public_key,
-            inner: msg_sender,
-            recv_loop: Arc::new(AbortOnDropHandle::new(recv_loop)),
-            msg_receiver: r,
+        // Add an initial connection attempt.
+        if let Err(err) = client.connect_inner("initial connect").await {
+            warn!("failed initial connection: {:?}", err);
         }
+        client
     }
 
     /// The expected [`PublicKey`] of the relay server we are connecting to.
@@ -351,31 +323,6 @@ pub fn make_dangerous_client_config() -> rustls::ClientConfig {
     .with_no_client_auth()
 }
 
-/// Helper to allow sending from multiple tasks.
-#[derive(Debug, Clone)]
-pub struct Sender(mpsc::Sender<ActorMessage>);
-
-impl Sender {
-    /// Send a packet to the server.
-    ///
-    /// If there is no underlying active relay connection, it creates one before attempting to
-    /// send the message.
-    ///
-    /// If there is an error sending the packet, it closes the underlying relay connection before
-    /// returning.
-    pub async fn send(&self, dst_key: PublicKey, b: Bytes) -> Result<(), ClientError> {
-        let (s, r) = oneshot::channel();
-        let msg = ActorMessage::Send(dst_key, b, s);
-        match self.0.send(msg).await {
-            Ok(_) => {
-                r.await.map_err(|_| ClientError::ActorGone)??;
-                Ok(())
-            }
-            Err(_) => Err(ClientError::ActorGone),
-        }
-    }
-}
-
 impl Client {
     /// The public key for this client
     pub fn public_key(&self) -> PublicKey {
@@ -384,187 +331,40 @@ impl Client {
 
     /// Reads a message from the server.
     pub async fn recv(&mut self) -> Option<Result<ReceivedMessage, ClientError>> {
-        self.msg_receiver.recv().await
-    }
-
-    /// Create a [`Sender`].
-    pub fn sender(&self) -> Sender {
-        Sender(self.inner.clone())
-    }
-
-    async fn send_actor<F, T>(&self, msg_create: F) -> Result<T, ClientError>
-    where
-        F: FnOnce(oneshot::Sender<Result<T, ClientError>>) -> ActorMessage,
-    {
-        let (s, r) = oneshot::channel();
-        let msg = msg_create(s);
-        match self.inner.send(msg).await {
-            Ok(_) => {
-                let res = r.await.map_err(|_| ClientError::ActorGone)??;
-                Ok(res)
+        let msg = self.recv_detail().await;
+        match msg? {
+            Ok(msg @ ReceivedMessage::Pong(ping)) => {
+                match self.pings.unregister(ping, "pong") {
+                    Some(chan) => {
+                        if chan.send(()).is_err() {
+                            warn!("pong received for ping {ping:?}, but the receiving channel was closed");
+                        }
+                    }
+                    None => {
+                        warn!("pong received for ping {ping:?}, but not registered");
+                    }
+                }
+                Some(Ok(msg))
             }
-            Err(_) => Err(ClientError::ActorGone),
+            Ok(msg) => Some(Ok(msg)),
+            Err(err) => Some(Err(err)),
         }
     }
+}
 
+impl Client {
     /// Connects to a relay Server and returns the underlying relay connection.
     ///
     /// Returns [`ClientError::Closed`] if the [`Client`] is closed.
     ///
     /// If there is already an active relay connection, returns the already
     /// connected [`crate::RelayConn`].
-    pub async fn connect(&self) -> Result<(), ClientError> {
-        self.send_actor(ActorMessage::Connect).await
+    pub async fn connect(&mut self) -> Result<(), ClientError> {
+        self.connect_inner("public api").await?;
+        Ok(())
     }
 
-    /// Let the server know that this client is the preferred client
-    pub async fn note_preferred(&self, is_preferred: bool) {
-        self.inner
-            .send(ActorMessage::NotePreferred(is_preferred))
-            .await
-            .ok();
-    }
-
-    /// Get the local addr of the connection. If there is no current underlying relay connection
-    /// or the [`Client`] is closed, returns `None`.
-    pub async fn local_addr(&self) -> Option<SocketAddr> {
-        self.send_actor(ActorMessage::LocalAddr)
-            .await
-            .ok()
-            .flatten()
-    }
-
-    /// Send a ping to the server. Return once we get an expected pong.
-    ///
-    /// This has a built-in timeout `crate::defaults::timeouts::PING_TIMEOUT`.
-    ///
-    /// There must be a task polling `recv_detail` to process the `pong` response.
-    pub async fn ping(&self) -> Result<Duration, ClientError> {
-        self.send_actor(ActorMessage::Ping).await
-    }
-
-    /// Send a pong back to the server.
-    ///
-    /// If there is no underlying active relay connection, it creates one before attempting to
-    /// send the pong message.
-    ///
-    /// If there is an error sending pong, it closes the underlying relay connection before
-    /// returning.
-    pub async fn send_pong(&self, data: [u8; 8]) -> Result<(), ClientError> {
-        self.send_actor(|s| ActorMessage::Pong(data, s)).await
-    }
-
-    /// Send a packet to the server.
-    ///
-    /// If there is no underlying active relay connection, it creates one before attempting to
-    /// send the message.
-    ///
-    /// If there is an error sending the packet, it closes the underlying relay connection before
-    /// returning.
-    pub async fn send(&self, dst_key: PublicKey, b: Bytes) -> Result<(), ClientError> {
-        self.send_actor(|s| ActorMessage::Send(dst_key, b, s)).await
-    }
-
-    /// Close the http relay connection.
-    pub async fn close(self) -> Result<(), ClientError> {
-        self.send_actor(ActorMessage::Close).await
-    }
-
-    /// Disconnect the http relay connection.
-    pub async fn close_for_reconnect(&self) -> Result<(), ClientError> {
-        self.send_actor(ActorMessage::CloseForReconnect).await
-    }
-
-    /// Returns `true` if the underlying relay connection is established.
-    pub async fn is_connected(&self) -> Result<bool, ClientError> {
-        self.send_actor(ActorMessage::IsConnected).await
-    }
-}
-
-impl Actor {
-    async fn run(
-        mut self,
-        mut inbox: mpsc::Receiver<ActorMessage>,
-        msg_sender: mpsc::Sender<Result<ReceivedMessage, ClientError>>,
-    ) {
-        // Add an initial connection attempt.
-        if let Err(err) = self.connect("initial connect").await {
-            msg_sender.send(Err(err)).await.ok();
-        }
-
-        loop {
-            tokio::select! {
-                res = self.recv_detail() => {
-                    if let Ok(ReceivedMessage::Pong(ping)) = res {
-                        match self.pings.unregister(ping, "pong") {
-                            Some(chan) => {
-                                if chan.send(()).is_err() {
-                                    warn!("pong received for ping {ping:?}, but the receiving channel was closed");
-                                }
-                            }
-                            None => {
-                                warn!("pong received for ping {ping:?}, but not registered");
-                            }
-                        }
-                        continue;
-                    }
-                    msg_sender.send(res).await.ok();
-                }
-                msg = inbox.recv() => {
-                    let Some(msg) = msg else {
-                        // Shutting down
-                        self.close().await;
-                        break;
-                    };
-
-                    match msg {
-                        ActorMessage::Connect(s) => {
-                            let res = self.connect("actor msg").await.map(|_| ());
-                            s.send(res).ok();
-                        },
-                        ActorMessage::NotePreferred(is_preferred) => {
-                            self.note_preferred(is_preferred).await;
-                        },
-                        ActorMessage::LocalAddr(s) => {
-                            let res = self.local_addr();
-                            s.send(Ok(res)).ok();
-                        },
-                        ActorMessage::Ping(s) => {
-                            self.ping(s).await;
-                        },
-                        ActorMessage::Pong(data, s) => {
-                            let res = self.send_pong(data).await;
-                            s.send(res).ok();
-                        },
-                        ActorMessage::Send(key, data, s) => {
-                            let res = self.send(key, data).await;
-                            s.send(res).ok();
-                        },
-                        ActorMessage::Close(s) => {
-                            let res = self.close().await;
-                            s.send(Ok(res)).ok();
-                            // shutting down
-                            break;
-                        },
-                        ActorMessage::CloseForReconnect(s) => {
-                            let res = self.close_for_reconnect().await;
-                            s.send(Ok(res)).ok();
-                        },
-                        ActorMessage::IsConnected(s) => {
-                            let res = self.is_connected();
-                            s.send(Ok(res)).ok();
-                        },
-                    }
-                }
-            }
-        }
-    }
-
-    /// Returns a connection to the relay.
-    ///
-    /// If the client is currently connected, the existing connection is returned; otherwise,
-    /// a new connection is made.
-    async fn connect(
+    async fn connect_inner(
         &mut self,
         why: &'static str,
     ) -> Result<(&'_ mut Conn, Option<SocketAddr>), ClientError> {
@@ -729,7 +529,8 @@ impl Actor {
         request_sender.send_request(req).await.map_err(From::from)
     }
 
-    async fn note_preferred(&mut self, is_preferred: bool) {
+    /// Let the server know that this client is the preferred client
+    pub async fn note_preferred(&mut self, is_preferred: bool) {
         let old = &mut self.is_preferred;
         if *old == is_preferred {
             return;
@@ -751,7 +552,9 @@ impl Actor {
         }
     }
 
-    fn local_addr(&self) -> Option<SocketAddr> {
+    /// Get the local addr of the connection. If there is no current underlying relay connection
+    /// or the [`Client`] is closed, returns `None`.
+    pub fn local_addr(&self) -> Option<SocketAddr> {
         if self.is_closed {
             return None;
         }
@@ -762,38 +565,44 @@ impl Actor {
         }
     }
 
-    async fn ping(&mut self, s: oneshot::Sender<Result<Duration, ClientError>>) {
+    /// Send a ping to the server. Return once we get an expected pong.
+    ///
+    /// This has a built-in timeout `crate::defaults::timeouts::PING_TIMEOUT`.
+    pub async fn start_ping(
+        &mut self,
+    ) -> Result<
+        impl Future<Output = Result<Duration, ClientError>> + Send + Sync + 'static,
+        ClientError,
+    > {
         let (ping, recv) = self.pings.register();
-        let connect_res = self.connect("ping").await.map(|(c, _)| c);
-
+        let conn = self.connect_inner("ping").await.map(|(c, _)| c)?;
         trace!("ping: {}", data_encoding::HEXLOWER.encode(&ping));
 
-        match connect_res {
-            Ok(conn) => {
-                let start = Instant::now();
-                if let Err(err) = conn.send_ping(ping).await {
-                    warn!("failed to send ping: {:?}", err);
-                    s.send(Err(ClientError::Send)).ok();
-                } else {
-                    tokio::task::spawn(async move {
-                        let res = match tokio::time::timeout(PING_TIMEOUT, recv).await {
-                            Ok(Ok(())) => Ok(start.elapsed()),
-                            Err(_) => Err(ClientError::PingTimeout),
-                            Ok(Err(_)) => Err(ClientError::PingAborted),
-                        };
-                        s.send(res).ok();
-                    });
+        let start = Instant::now();
+        if let Err(err) = conn.send_ping(ping).await {
+            warn!("failed to send ping: {:?}", err);
+            Err(ClientError::Send)
+        } else {
+            Ok(async move {
+                match tokio::time::timeout(PING_TIMEOUT, recv).await {
+                    Ok(Ok(())) => Ok(start.elapsed()),
+                    Err(_) => Err(ClientError::PingTimeout),
+                    Ok(Err(_)) => Err(ClientError::PingAborted),
                 }
-            }
-            Err(err) => {
-                s.send(Err(err)).ok();
-            }
+            })
         }
     }
 
-    async fn send(&mut self, remote_node: NodeId, payload: Bytes) -> Result<(), ClientError> {
+    /// Send a packet to the server.
+    ///
+    /// If there is no underlying active relay connection, it creates one before attempting to
+    /// send the message.
+    ///
+    /// If there is an error sending the packet, it closes the underlying relay connection before
+    /// returning.
+    pub async fn send(&mut self, remote_node: NodeId, payload: Bytes) -> Result<(), ClientError> {
         trace!(remote_node = %remote_node.fmt_short(), len = payload.len(), "send");
-        let (conn, _) = self.connect("send").await?;
+        let (conn, _) = self.connect_inner("send").await?;
         if conn.send(remote_node, payload).await.is_err() {
             self.close_for_reconnect().await;
             return Err(ClientError::Send);
@@ -801,9 +610,16 @@ impl Actor {
         Ok(())
     }
 
-    async fn send_pong(&mut self, data: [u8; 8]) -> Result<(), ClientError> {
+    /// Send a pong back to the server.
+    ///
+    /// If there is no underlying active relay connection, it creates one before attempting to
+    /// send the pong message.
+    ///
+    /// If there is an error sending pong, it closes the underlying relay connection before
+    /// returning.
+    pub async fn send_pong(&mut self, data: [u8; 8]) -> Result<(), ClientError> {
         debug!("send_pong");
-        let (conn, _) = self.connect("send_pong").await?;
+        let (conn, _) = self.connect_inner("send_pong").await?;
         if conn.send_pong(data).await.is_err() {
             self.close_for_reconnect().await;
             return Err(ClientError::Send);
@@ -811,14 +627,16 @@ impl Actor {
         Ok(())
     }
 
-    async fn close(mut self) {
+    /// Close the http relay connection.
+    pub async fn close(mut self) {
         if !self.is_closed {
             self.is_closed = true;
             self.close_for_reconnect().await;
         }
     }
 
-    fn is_connected(&self) -> bool {
+    /// Returns `true` if the underlying relay connection is established.
+    pub fn is_connected(&self) -> bool {
         if self.is_closed {
             return false;
         }
@@ -989,33 +807,37 @@ impl Actor {
         }
     }
 
-    async fn recv_detail(&mut self) -> Result<ReceivedMessage, ClientError> {
+    async fn recv_detail(&mut self) -> Option<Result<ReceivedMessage, ClientError>> {
         if let Some((conn, _)) = self.relay_conn.as_mut() {
             trace!("recv_detail tick");
             match tokio::time::timeout(CLIENT_RECV_TIMEOUT, conn.next()).await {
-                Ok(Some(Ok(msg))) => {
-                    return Ok(msg);
-                }
+                Ok(Some(Ok(msg))) => Some(Ok(msg)),
                 Ok(Some(Err(e))) => {
                     self.close_for_reconnect().await;
                     if self.is_closed {
-                        return Err(ClientError::Closed);
+                        return Some(Err(ClientError::Closed));
                     }
-                    // TODO(ramfox): more specific error?
-                    return Err(ClientError::Receive(e));
+                    Some(Err(ClientError::Receive(e)))
                 }
-                Ok(None) | Err(_) => {
+                Ok(None) => {
                     self.close_for_reconnect().await;
-                    return Err(ClientError::Closed);
+                    None
+                }
+                Err(_) => {
+                    self.close_for_reconnect().await;
+                    Some(Err(ClientError::Closed))
                 }
             }
+        } else {
+            future::pending().await
         }
-        future::pending().await
     }
 
-    /// Close the underlying relay connection. The next time the client takes some action that
+    /// Disconnect the http relay connection.
+    ///
+    /// Closes the underlying relay connection. The next time the client takes some action that
     /// requires a connection, it will call `connect`.
-    async fn close_for_reconnect(&mut self) {
+    pub async fn close_for_reconnect(&mut self) {
         debug!("close for reconnect");
         if let Some((ref mut conn, _)) = self.relay_conn.take() {
             conn.close().await
@@ -1159,28 +981,9 @@ fn url_port(url: &Url) -> Option<u16> {
 mod tests {
     use std::str::FromStr;
 
-    use anyhow::{bail, Result};
+    use anyhow::Result;
 
     use super::*;
-    use crate::dns::default_resolver;
-
-    #[tokio::test]
-    async fn test_recv_detail_connect_error() -> Result<()> {
-        let _guard = iroh_test::logging::setup();
-
-        let key = SecretKey::generate(rand::thread_rng());
-        let bad_url: Url = "https://bad.url".parse().unwrap();
-        let dns_resolver = default_resolver();
-
-        let mut client = ClientBuilder::new(bad_url).build(key.clone(), dns_resolver.clone());
-
-        // ensure that the client will bubble up any connection error & not
-        // just loop ad infinitum attempting to connect
-        if client.recv().await.and_then(|s| s.ok()).is_some() {
-            bail!("expected client with bad relay node detail to return with an error");
-        }
-        Ok(())
-    }
 
     #[test]
     fn test_host_header_value() -> Result<()> {
