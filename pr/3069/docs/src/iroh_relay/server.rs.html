@@ -1120,7 +1120,14 @@
 <a href="#1119" id="1119">1119</a>
 <a href="#1120" id="1120">1120</a>
 <a href="#1121" id="1121">1121</a>
-<a href="#1122" id="1122">1122</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
+<a href="#1122" id="1122">1122</a>
+<a href="#1123" id="1123">1123</a>
+<a href="#1124" id="1124">1124</a>
+<a href="#1125" id="1125">1125</a>
+<a href="#1126" id="1126">1126</a>
+<a href="#1127" id="1127">1127</a>
+<a href="#1128" id="1128">1128</a>
+<a href="#1129" id="1129">1129</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
 //! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
@@ -2094,25 +2101,31 @@
         </span><span class="kw">let </span>a_secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>a_key = a_secret_key.public();
         <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::default_resolver().clone();
+        <span class="macro">info!</span>(<span class="string">"client a build"</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>client_a = ClientBuilder::new(relay_url.clone())
             .protocol(Protocol::Websocket)
             .build(a_secret_key, resolver)
             .<span class="kw">await</span>;
+
         <span class="comment">// should already be connected after building the client
-        </span>client_a.connect().<span class="kw">await</span>.unwrap();
+        </span><span class="macro">info!</span>(<span class="string">"client a connect"</span>);
+        client_a.connect().<span class="kw">await</span>.unwrap();
 
         <span class="comment">// set up client b
         </span><span class="kw">let </span>b_secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>b_key = b_secret_key.public();
         <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::default_resolver().clone();
+        <span class="macro">info!</span>(<span class="string">"client b build"</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>client_b = ClientBuilder::new(relay_url.clone())
             .protocol(Protocol::Websocket) <span class="comment">// another websocket client
             </span>.build(b_secret_key, resolver)
             .<span class="kw">await</span>;
 
         <span class="comment">// should already be connected after building the client
-        </span>client_b.connect().<span class="kw">await</span>.unwrap();
+        </span><span class="macro">info!</span>(<span class="string">"client b connect"</span>);
+        client_b.connect().<span class="kw">await</span>.unwrap();
 
+        <span class="macro">info!</span>(<span class="string">"sending a -&gt; b"</span>);
         <span class="comment">// send message from a to b
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"hello, b"</span>);
         client_a.send(b_key, msg.clone()).<span class="kw">await</span>.unwrap();
@@ -2129,6 +2142,7 @@
             <span class="macro">panic!</span>(<span class="string">"client_b received unexpected message {res:?}"</span>);
         }
 
+        <span class="macro">info!</span>(<span class="string">"sending b -&gt; a"</span>);
         <span class="comment">// send message from b to a
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"howdy, a"</span>);
         client_b.send(a_key, msg.clone()).<span class="kw">await</span>.unwrap();

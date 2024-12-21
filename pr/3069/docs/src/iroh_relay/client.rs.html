@@ -1005,8 +1005,7 @@
 <a href="#1004" id="1004">1004</a>
 <a href="#1005" id="1005">1005</a>
 <a href="#1006" id="1006">1006</a>
-<a href="#1007" id="1007">1007</a>
-<a href="#1008" id="1008">1008</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#1007" id="1007">1007</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -1376,28 +1375,27 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(<span class="kw-2">&amp;</span><span class="lifetime">'_ </span><span class="kw-2">mut </span>Conn, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;), ClientError&gt; {
+        <span class="macro">debug!</span>(url = %<span class="self">self</span>.url, %why, <span class="string">"connecting"</span>);
+
         <span class="kw">if </span><span class="self">self</span>.is_closed {
             <span class="kw">return </span><span class="prelude-val">Err</span>(ClientError::Closed);
         }
-        <span class="kw">let </span>url = <span class="self">self</span>.url.clone();
-        <span class="kw">async move </span>{
-            <span class="kw">if </span><span class="self">self</span>.relay_conn.is_none() {
-                <span class="macro">trace!</span>(<span class="string">"no connection, trying to connect"</span>);
-                <span class="kw">let </span>(conn, local_addr) = tokio::time::timeout(CONNECT_TIMEOUT, <span class="self">self</span>.connect_0())
-                    .<span class="kw">await
-                    </span>.map_err(|<span class="kw">_</span>| ClientError::ConnectTimeout)<span class="question-mark">??</span>;
 
-                <span class="self">self</span>.relay_conn = <span class="prelude-val">Some</span>((conn, local_addr));
-            } <span class="kw">else </span>{
-                <span class="macro">trace!</span>(<span class="string">"already had connection"</span>);
-            }
-            <span class="kw">let </span>(conn, addr) = <span class="self">self</span>.relay_conn.as_mut().expect(<span class="string">"just checked"</span>);
+        <span class="kw">if </span><span class="self">self</span>.relay_conn.is_none() {
+            <span class="macro">trace!</span>(<span class="string">"no connection, trying to connect"</span>);
+            <span class="kw">let </span>(conn, local_addr) = tokio::time::timeout(CONNECT_TIMEOUT, <span class="self">self</span>.connect_0())
+                .<span class="kw">await
+                </span>.map_err(|<span class="kw">_</span>| ClientError::ConnectTimeout)<span class="question-mark">??</span>;
 
-            <span class="prelude-val">Ok</span>((conn, <span class="kw-2">*</span>addr))
+            <span class="self">self</span>.relay_conn = <span class="prelude-val">Some</span>((conn, local_addr));
+        } <span class="kw">else </span>{
+            <span class="macro">trace!</span>(<span class="string">"already had connection"</span>);
         }
-        .instrument(<span class="macro">info_span!</span>(<span class="string">"connect"</span>, %url, %why))
-        .<span class="kw">await
-    </span>}
+
+        <span class="kw">let </span>(conn, addr) = <span class="self">self</span>.relay_conn.as_mut().expect(<span class="string">"just checked"</span>);
+
+        <span class="prelude-val">Ok</span>((conn, <span class="kw-2">*</span>addr))
+    }
 
     <span class="kw">async fn </span>connect_0(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(Conn, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;), ClientError&gt; {
         <span class="kw">let </span>(<span class="kw-2">mut </span>conn, local_addr) = <span class="kw">match </span><span class="self">self</span>.protocol {
