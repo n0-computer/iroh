@@ -12,10 +12,7 @@ use anyhow::{bail, ensure, Result};
 use bytes::Bytes;
 use futures_lite::Stream;
 use futures_sink::Sink;
-use futures_util::{
-    stream::{SplitSink, SplitStream},
-    SinkExt,
-};
+use futures_util::SinkExt;
 use iroh_base::{NodeId, SecretKey};
 use tokio_tungstenite_wasm::WebSocketStream;
 use tokio_util::codec::Framed;
@@ -31,18 +28,46 @@ use crate::{
 
 /// A connection to a relay server.
 #[derive(derive_more::Debug)]
-pub(crate) struct Conn {
-    #[debug("ConnFrameStream")]
-    conn: ConnFramed,
+pub(crate) enum Conn {
+    Derp {
+        #[debug("Framed<MaybeTlsStreamChained, RelayCodec>")]
+        conn: Framed<MaybeTlsStreamChained, RelayCodec>,
+    },
+    Ws {
+        #[debug("WebSocketStream")]
+        conn: WebSocketStream,
+        key_cache: KeyCache,
+    },
 }
 
 impl Conn {
-    /// Constructs the connection, including the initial server handshake.
-    pub(crate) async fn new(mut conn: ConnFramed, secret_key: &SecretKey) -> Result<Self> {
+    /// Constructs a new websocket connection, including the initial server handshake.
+    pub(crate) async fn new_ws(
+        conn: WebSocketStream,
+        key_cache: KeyCache,
+        secret_key: &SecretKey,
+    ) -> Result<Self> {
+        let mut conn = Self::Ws { conn, key_cache };
+
         // exchange information with the server
         server_handshake(&mut conn, secret_key).await?;
 
-        let conn = Self { conn };
+        Ok(conn)
+    }
+
+    /// Constructs a new websocket connection, including the initial server handshake.
+    pub(crate) async fn new_relay(
+        conn: MaybeTlsStreamChained,
+        key_cache: KeyCache,
+        secret_key: &SecretKey,
+    ) -> Result<Self> {
+        let conn = Framed::new(conn, RelayCodec::new(key_cache));
+
+        let mut conn = Self::Derp { conn };
+
+        // exchange information with the server
+        server_handshake(&mut conn, secret_key).await?;
+
         Ok(conn)
     }
 
@@ -52,22 +77,22 @@ impl Conn {
     pub(crate) async fn send(&mut self, dst: NodeId, packet: Bytes) -> Result<()> {
         trace!(dst = dst.fmt_short(), len = packet.len(), "[RELAY] send");
 
-        send_packet(&mut self.conn, dst, packet).await?;
+        send_packet(&mut *self, dst, packet).await?;
         Ok(())
     }
 
     /// Send a ping with 8 bytes of random data.
     pub(crate) async fn send_ping(&mut self, data: [u8; 8]) -> Result<()> {
-        write_frame(&mut self.conn, Frame::Ping { data }, None).await?;
-        self.conn.flush().await?;
+        write_frame(&mut *self, Frame::Ping { data }, None).await?;
+        self.flush().await?;
         Ok(())
     }
 
     /// Respond to a ping request. The `data` field should be filled
     /// by the 8 bytes of random data send by the ping.
     pub(crate) async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
-        write_frame(&mut self.conn, Frame::Pong { data }, None).await?;
-        self.conn.flush().await?;
+        write_frame(&mut *self, Frame::Pong { data }, None).await?;
+        self.flush().await?;
         Ok(())
     }
 
@@ -75,8 +100,8 @@ impl Conn {
     /// connection is to the user's preferred server. This is only
     /// used in the server for stats.
     pub(crate) async fn note_preferred(&mut self, preferred: bool) -> Result<()> {
-        write_frame(&mut self.conn, Frame::NotePreferred { preferred }, None).await?;
-        self.conn.flush().await?;
+        write_frame(&mut *self, Frame::NotePreferred { preferred }, None).await?;
+        self.flush().await?;
         Ok(())
     }
 
@@ -85,11 +110,11 @@ impl Conn {
     /// Shuts down the write loop directly and marks the connection as closed. The [`Conn`] will
     /// check if the it is closed before attempting to read from it.
     pub(crate) async fn close(&mut self) {
-        self.conn.close().await.ok();
+        SinkExt::close(self).await.ok();
     }
 }
 
-async fn server_handshake(writer: &mut ConnFramed, secret_key: &SecretKey) -> Result<()> {
+async fn server_handshake(writer: &mut Conn, secret_key: &SecretKey) -> Result<()> {
     debug!("server_handshake: started");
     let client_info = ClientInfo {
         version: PROTOCOL_VERSION,
@@ -112,14 +137,6 @@ impl Stream for Conn {
     type Item = Result<ReceivedMessage>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.conn).poll_next(cx)
-    }
-}
-
-impl Stream for ConnFramed {
-    type Item = Result<ReceivedMessage>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
             Self::Derp { ref mut conn } => match Pin::new(conn).poll_next(cx) {
                 Poll::Pending => Poll::Pending,
@@ -131,10 +148,9 @@ impl Stream for ConnFramed {
                 Poll::Ready(None) => Poll::Ready(None),
             },
             Self::Ws {
-                ref mut reader,
+                ref mut conn,
                 ref key_cache,
-                ..
-            } => match Pin::new(reader).poll_next(cx) {
+            } => match Pin::new(conn).poll_next(cx) {
                 Poll::Ready(Some(Ok(tokio_tungstenite_wasm::Message::Binary(vec)))) => {
                     let frame = Frame::decode_from_ws_msg(vec, key_cache);
                     let frame = frame.and_then(process_incoming_frame);
@@ -189,25 +205,14 @@ fn process_incoming_frame(frame: Frame) -> Result<ReceivedMessage> {
     }
 }
 
-pub(crate) enum ConnFramed {
-    Derp {
-        conn: Framed<MaybeTlsStreamChained, RelayCodec>,
-    },
-    Ws {
-        writer: SplitSink<WebSocketStream, tokio_tungstenite_wasm::Message>,
-        reader: SplitStream<WebSocketStream>,
-        key_cache: KeyCache,
-    },
-}
-
-impl Sink<Frame> for ConnFramed {
+impl Sink<Frame> for Conn {
     type Error = std::io::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             Self::Derp { ref mut conn } => Pin::new(conn).poll_ready(cx),
-            Self::Ws { ref mut writer, .. } => {
-                Pin::new(writer).poll_ready(cx).map_err(tung_wasm_to_io_err)
+            Self::Ws { ref mut conn, .. } => {
+                Pin::new(conn).poll_ready(cx).map_err(tung_wasm_to_io_err)
             }
         }
     }
@@ -215,7 +220,7 @@ impl Sink<Frame> for ConnFramed {
     fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
         match *self {
             Self::Derp { ref mut conn } => Pin::new(conn).start_send(item),
-            Self::Ws { ref mut writer, .. } => Pin::new(writer)
+            Self::Ws { ref mut conn, .. } => Pin::new(conn)
                 .start_send(tokio_tungstenite_wasm::Message::binary(
                     item.encode_for_ws_msg(),
                 ))
@@ -226,8 +231,8 @@ impl Sink<Frame> for ConnFramed {
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             Self::Derp { ref mut conn } => Pin::new(conn).poll_flush(cx),
-            Self::Ws { ref mut writer, .. } => {
-                Pin::new(writer).poll_flush(cx).map_err(tung_wasm_to_io_err)
+            Self::Ws { ref mut conn, .. } => {
+                Pin::new(conn).poll_flush(cx).map_err(tung_wasm_to_io_err)
             }
         }
     }
@@ -235,8 +240,8 @@ impl Sink<Frame> for ConnFramed {
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             Self::Derp { ref mut conn } => Pin::new(conn).poll_close(cx),
-            Self::Ws { ref mut writer, .. } => {
-                Pin::new(writer).poll_close(cx).map_err(tung_wasm_to_io_err)
+            Self::Ws { ref mut conn, .. } => {
+                Pin::new(conn).poll_close(cx).map_err(tung_wasm_to_io_err)
             }
         }
     }

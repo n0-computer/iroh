@@ -12,7 +12,7 @@ use std::{
 
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use bytes::Bytes;
-use conn::{Conn, ConnFramed, ReceivedMessage};
+use conn::{Conn, ReceivedMessage};
 use futures_util::StreamExt;
 use hickory_resolver::TokioResolver as DnsResolver;
 use http_body_util::Empty;
@@ -33,14 +33,13 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::Instant,
 };
-use tokio_util::{codec::Framed, task::AbortOnDropHandle};
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
 use url::Url;
 
 use crate::{
     defaults::timeouts::*,
     http::{Protocol, RELAY_PATH},
-    protos::relay::RelayCodec,
     KeyCache,
 };
 
@@ -544,10 +543,6 @@ impl Actor {
     ///
     /// If the client is currently connected, the existing connection is returned; otherwise,
     /// a new connection is made.
-    ///
-    /// Returns:
-    /// - A clonable connection object which can send DISCO messages to the relay.
-    /// - A reference to a channel receiving DISCO messages from the relay.
     async fn connect(
         &mut self,
         why: &'static str,
@@ -576,7 +571,7 @@ impl Actor {
     }
 
     async fn connect_0(&self) -> Result<(Conn, Option<SocketAddr>), ClientError> {
-        let (conn, local_addr) = match self.protocol {
+        let (mut conn, local_addr) = match self.protocol {
             Protocol::Websocket => {
                 let conn = self.connect_ws().await?;
                 let local_addr = None;
@@ -587,10 +582,6 @@ impl Actor {
                 (conn, Some(local_addr))
             }
         };
-
-        let mut conn = Conn::new(conn, &self.secret_key)
-            .await
-            .map_err(|e| ClientError::Build(e.to_string()))?;
 
         if self.is_preferred && conn.note_preferred(true).await.is_err() {
             conn.close().await;
@@ -608,7 +599,7 @@ impl Actor {
         Ok((conn, local_addr))
     }
 
-    async fn connect_ws(&self) -> Result<ConnFramed, ClientError> {
+    async fn connect_ws(&self) -> Result<Conn, ClientError> {
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
@@ -619,16 +610,14 @@ impl Actor {
 
         debug!(%dial_url, "Dialing relay by websocket");
 
-        let (writer, reader) = tokio_tungstenite_wasm::connect(dial_url).await?.split();
-
-        Ok(ConnFramed::Ws {
-            reader,
-            writer,
-            key_cache: self.key_cache.clone(),
-        })
+        let conn = tokio_tungstenite_wasm::connect(dial_url).await?;
+        let conn = Conn::new_ws(conn, self.key_cache.clone(), &self.secret_key)
+            .await
+            .map_err(|e| ClientError::Build(e.to_string()))?;
+        Ok(conn)
     }
 
-    async fn connect_derp(&self) -> Result<(ConnFramed, SocketAddr), ClientError> {
+    async fn connect_derp(&self) -> Result<(Conn, SocketAddr), ClientError> {
         let url = self.url.clone();
         let tcp_stream = self.dial_url().await?;
 
@@ -675,11 +664,11 @@ impl Actor {
         debug!("connection upgraded");
         let conn = downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))?;
 
-        let cache = self.key_cache.clone();
+        let conn = Conn::new_relay(conn, self.key_cache.clone(), &self.secret_key)
+            .await
+            .map_err(|e| ClientError::Build(e.to_string()))?;
 
-        let conn = Framed::new(conn, RelayCodec::new(cache));
-
-        Ok((ConnFramed::Derp { conn }, local_addr))
+        Ok((conn, local_addr))
     }
 
     /// Sends the HTTP upgrade request to the relay server.
