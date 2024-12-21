@@ -683,14 +683,13 @@ mod tests {
     use iroh_base::{PublicKey, SecretKey};
     use reqwest::Url;
     use tokio::{sync::mpsc, task::JoinHandle};
-    use tokio_util::codec::{FramedRead, FramedWrite};
     use tracing::{info, info_span, Instrument};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
     use crate::client::{
         conn::{Conn, ConnFramed, ReceivedMessage},
-        streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
+        streams::MaybeTlsStreamChained,
         Client, ClientBuilder,
     };
 
@@ -914,14 +913,10 @@ mod tests {
 
     fn make_test_client() -> (tokio::io::DuplexStream, ConnFramed) {
         let (client, server) = tokio::io::duplex(10);
-        let (client_reader, client_writer) = tokio::io::split(client);
-
-        let client_reader = MaybeTlsStreamReader::Mem(client_reader);
-        let client_writer = MaybeTlsStreamWriter::Mem(client_writer);
+        let client = MaybeTlsStreamChained::Mem(client);
 
         let client = ConnFramed::Derp {
-            reader: FramedRead::new(client_reader, RelayCodec::test()),
-            writer: FramedWrite::new(client_writer, RelayCodec::test()),
+            conn: Framed::new(client, RelayCodec::test()),
         };
 
         (server, client)

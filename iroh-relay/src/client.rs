@@ -33,10 +33,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::Instant,
 };
-use tokio_util::{
-    codec::{FramedRead, FramedWrite},
-    task::AbortOnDropHandle,
-};
+use tokio_util::{codec::Framed, task::AbortOnDropHandle};
 use tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
 use url::Url;
 
@@ -676,15 +673,13 @@ impl Actor {
         };
 
         debug!("connection upgraded");
-        let (reader, writer) =
-            downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))?;
+        let conn = downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))?;
 
         let cache = self.key_cache.clone();
 
-        let reader = FramedRead::new(reader, RelayCodec::new(cache.clone()));
-        let writer = FramedWrite::new(writer, RelayCodec::new(cache));
+        let conn = Framed::new(conn, RelayCodec::new(cache));
 
-        Ok((ConnFramed::Derp { reader, writer }, local_addr))
+        Ok((ConnFramed::Derp { conn }, local_addr))
     }
 
     /// Sends the HTTP upgrade request to the relay server.

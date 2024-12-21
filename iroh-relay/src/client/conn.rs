@@ -18,12 +18,12 @@ use futures_util::{
 };
 use iroh_base::{NodeId, SecretKey};
 use tokio_tungstenite_wasm::WebSocketStream;
-use tokio_util::codec::{FramedRead, FramedWrite};
+use tokio_util::codec::Framed;
 use tracing::{debug, trace};
 
 use super::KeyCache;
 use crate::{
-    client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
+    client::streams::MaybeTlsStreamChained,
     protos::relay::{
         write_frame, ClientInfo, Frame, RelayCodec, MAX_PACKET_SIZE, PROTOCOL_VERSION,
     },
@@ -121,7 +121,7 @@ impl Stream for ConnFramed {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
-            Self::Derp { ref mut reader, .. } => match Pin::new(reader).poll_next(cx) {
+            Self::Derp { ref mut conn } => match Pin::new(conn).poll_next(cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(Some(Ok(frame))) => {
                     let frame = process_incoming_frame(frame);
@@ -191,8 +191,7 @@ fn process_incoming_frame(frame: Frame) -> Result<ReceivedMessage> {
 
 pub(crate) enum ConnFramed {
     Derp {
-        writer: FramedWrite<MaybeTlsStreamWriter, RelayCodec>,
-        reader: FramedRead<MaybeTlsStreamReader, RelayCodec>,
+        conn: Framed<MaybeTlsStreamChained, RelayCodec>,
     },
     Ws {
         writer: SplitSink<WebSocketStream, tokio_tungstenite_wasm::Message>,
@@ -206,7 +205,7 @@ impl Sink<Frame> for ConnFramed {
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp { ref mut writer, .. } => Pin::new(writer).poll_ready(cx),
+            Self::Derp { ref mut conn } => Pin::new(conn).poll_ready(cx),
             Self::Ws { ref mut writer, .. } => {
                 Pin::new(writer).poll_ready(cx).map_err(tung_wasm_to_io_err)
             }
@@ -215,7 +214,7 @@ impl Sink<Frame> for ConnFramed {
 
     fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
         match *self {
-            Self::Derp { ref mut writer, .. } => Pin::new(writer).start_send(item),
+            Self::Derp { ref mut conn } => Pin::new(conn).start_send(item),
             Self::Ws { ref mut writer, .. } => Pin::new(writer)
                 .start_send(tokio_tungstenite_wasm::Message::binary(
                     item.encode_for_ws_msg(),
@@ -226,7 +225,7 @@ impl Sink<Frame> for ConnFramed {
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp { ref mut writer, .. } => Pin::new(writer).poll_flush(cx),
+            Self::Derp { ref mut conn } => Pin::new(conn).poll_flush(cx),
             Self::Ws { ref mut writer, .. } => {
                 Pin::new(writer).poll_flush(cx).map_err(tung_wasm_to_io_err)
             }
@@ -235,7 +234,7 @@ impl Sink<Frame> for ConnFramed {
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp { ref mut writer, .. } => Pin::new(writer).poll_close(cx),
+            Self::Derp { ref mut conn } => Pin::new(conn).poll_close(cx),
             Self::Ws { ref mut writer, .. } => {
                 Pin::new(writer).poll_close(cx).map_err(tung_wasm_to_io_err)
             }
