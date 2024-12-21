@@ -1146,7 +1146,9 @@
 <a href="#1145" id="1145">1145</a>
 <a href="#1146" id="1146">1146</a>
 <a href="#1147" id="1147">1147</a>
-<a href="#1148" id="1148">1148</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1148" id="1148">1148</a>
+<a href="#1149" id="1149">1149</a>
+<a href="#1150" id="1150">1150</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -1837,7 +1839,7 @@
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span><span class="kw">crate</span>::client::{
-        conn::{ConnBuilder, ConnFrameStream, ConnWriter, ReceivedMessage},
+        conn::{create_connection, ConnFrameStream, ConnWriter, ReceivedMessage},
         streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
         Client, ClientBuilder,
     };
@@ -2060,7 +2062,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>make_test_client(secret_key: SecretKey) -&gt; (tokio::io::DuplexStream, ConnBuilder) {
+    <span class="kw">fn </span>make_test_client() -&gt; (tokio::io::DuplexStream, ConnFrameStream, ConnWriter) {
         <span class="kw">let </span>(client, server) = tokio::io::duplex(<span class="number">10</span>);
         <span class="kw">let </span>(client_reader, client_writer) = tokio::io::split(client);
 
@@ -2071,10 +2073,7 @@
             ConnFrameStream::Derp(FramedRead::new(client_reader, RelayCodec::test()));
         <span class="kw">let </span>client_writer = ConnWriter::Derp(FramedWrite::new(client_writer, RelayCodec::test()));
 
-        (
-            server,
-            ConnBuilder::new(secret_key, client_reader, client_writer),
-        )
+        (server, client_reader, client_writer)
     }
 
     <span class="attr">#[tokio::test]
@@ -2095,25 +2094,27 @@
         <span class="macro">info!</span>(<span class="string">"Create client A and connect it to the server."</span>);
         <span class="kw">let </span>key_a = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>public_key_a = key_a.public();
-        <span class="kw">let </span>(rw_a, client_a_builder) = make_test_client(key_a);
+        <span class="kw">let </span>(rw_a, client_a_reader, client_a_writer) = make_test_client();
         <span class="kw">let </span>s = service.clone();
         <span class="kw">let </span>handler_task = tokio::spawn(<span class="kw">async move </span>{
             s.<span class="number">0</span>.accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
                 .<span class="kw">await
         </span>});
-        <span class="kw">let </span>(<span class="kw-2">mut </span>client_a, <span class="kw-2">mut </span>client_receiver_a) = client_a_builder.build().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>client_a, <span class="kw-2">mut </span>client_receiver_a) =
+            create_connection(client_a_reader, client_a_writer, <span class="kw-2">&amp;</span>key_a).<span class="kw">await</span><span class="question-mark">?</span>;
         handler_task.<span class="kw">await</span><span class="question-mark">??</span>;
 
         <span class="macro">info!</span>(<span class="string">"Create client B and connect it to the server."</span>);
         <span class="kw">let </span>key_b = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>public_key_b = key_b.public();
-        <span class="kw">let </span>(rw_b, client_b_builder) = make_test_client(key_b);
+        <span class="kw">let </span>(rw_b, client_b_reader, client_b_writer) = make_test_client();
         <span class="kw">let </span>s = service.clone();
         <span class="kw">let </span>handler_task = tokio::spawn(<span class="kw">async move </span>{
             s.<span class="number">0</span>.accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
                 .<span class="kw">await
         </span>});
-        <span class="kw">let </span>(<span class="kw-2">mut </span>client_b, <span class="kw-2">mut </span>client_receiver_b) = client_b_builder.build().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>client_b, <span class="kw-2">mut </span>client_receiver_b) =
+            create_connection(client_b_reader, client_b_writer, <span class="kw-2">&amp;</span>key_b).<span class="kw">await</span><span class="question-mark">?</span>;
         handler_task.<span class="kw">await</span><span class="question-mark">??</span>;
 
         <span class="macro">info!</span>(<span class="string">"Send message from A to B."</span>);
@@ -2184,25 +2185,27 @@
         <span class="macro">info!</span>(<span class="string">"Create client A and connect it to the server."</span>);
         <span class="kw">let </span>key_a = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>public_key_a = key_a.public();
-        <span class="kw">let </span>(rw_a, client_a_builder) = make_test_client(key_a);
+        <span class="kw">let </span>(rw_a, client_a_reader, client_a_writer) = make_test_client();
         <span class="kw">let </span>s = service.clone();
         <span class="kw">let </span>handler_task = tokio::spawn(<span class="kw">async move </span>{
             s.<span class="number">0</span>.accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
                 .<span class="kw">await
         </span>});
-        <span class="kw">let </span>(<span class="kw-2">mut </span>client_a, <span class="kw-2">mut </span>client_receiver_a) = client_a_builder.build().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>client_a, <span class="kw-2">mut </span>client_receiver_a) =
+            create_connection(client_a_reader, client_a_writer, <span class="kw-2">&amp;</span>key_a).<span class="kw">await</span><span class="question-mark">?</span>;
         handler_task.<span class="kw">await</span><span class="question-mark">??</span>;
 
         <span class="macro">info!</span>(<span class="string">"Create client B and connect it to the server."</span>);
         <span class="kw">let </span>key_b = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>public_key_b = key_b.public();
-        <span class="kw">let </span>(rw_b, client_b_builder) = make_test_client(key_b.clone());
+        <span class="kw">let </span>(rw_b, client_b_reader, client_b_writer) = make_test_client();
         <span class="kw">let </span>s = service.clone();
         <span class="kw">let </span>handler_task = tokio::spawn(<span class="kw">async move </span>{
             s.<span class="number">0</span>.accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
                 .<span class="kw">await
         </span>});
-        <span class="kw">let </span>(<span class="kw-2">mut </span>client_b, <span class="kw-2">mut </span>client_receiver_b) = client_b_builder.build().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>client_b, <span class="kw-2">mut </span>client_receiver_b) =
+            create_connection(client_b_reader, client_b_writer, <span class="kw-2">&amp;</span>key_b).<span class="kw">await</span><span class="question-mark">?</span>;
         handler_task.<span class="kw">await</span><span class="question-mark">??</span>;
 
         <span class="macro">info!</span>(<span class="string">"Send message from A to B."</span>);
@@ -2238,13 +2241,14 @@
         }
 
         <span class="macro">info!</span>(<span class="string">"Create client B and connect it to the server"</span>);
-        <span class="kw">let </span>(new_rw_b, new_client_b_builder) = make_test_client(key_b);
+        <span class="kw">let </span>(new_rw_b, new_client_b_reader, new_client_b_writer) = make_test_client();
         <span class="kw">let </span>s = service.clone();
         <span class="kw">let </span>handler_task = tokio::spawn(<span class="kw">async move </span>{
             s.<span class="number">0</span>.accept(Protocol::Relay, MaybeTlsStream::Test(new_rw_b))
                 .<span class="kw">await
         </span>});
-        <span class="kw">let </span>(<span class="kw-2">mut </span>new_client_b, <span class="kw-2">mut </span>new_client_receiver_b) = new_client_b_builder.build().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>new_client_b, <span class="kw-2">mut </span>new_client_receiver_b) =
+            create_connection(new_client_b_reader, new_client_b_writer, <span class="kw-2">&amp;</span>key_b).<span class="kw">await</span><span class="question-mark">?</span>;
         handler_task.<span class="kw">await</span><span class="question-mark">??</span>;
 
         <span class="comment">// assert!(client_b.recv().await.is_err());

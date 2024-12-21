@@ -1204,7 +1204,8 @@
 <a href="#1203" id="1203">1203</a>
 <a href="#1204" id="1204">1204</a>
 <a href="#1205" id="1205">1205</a>
-<a href="#1206" id="1206">1206</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#1206" id="1206">1206</a>
+<a href="#1207" id="1207">1207</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -1218,7 +1219,9 @@
 
 <span class="kw">use </span>base64::{engine::general_purpose::URL_SAFE, Engine <span class="kw">as _</span>};
 <span class="kw">use </span>bytes::Bytes;
-<span class="kw">use </span>conn::{Conn, ConnBuilder, ConnFrameStream, ConnMessageStream, ConnWriter, ReceivedMessage};
+<span class="kw">use </span>conn::{
+    create_connection, Conn, ConnFrameStream, ConnMessageStream, ConnWriter, ReceivedMessage,
+};
 <span class="kw">use </span>futures_util::StreamExt;
 <span class="kw">use </span>hickory_resolver::TokioResolver <span class="kw">as </span>DnsResolver;
 <span class="kw">use </span>http_body_util::Empty;
@@ -1800,8 +1803,7 @@
             }
         };
 
-        <span class="kw">let </span>(<span class="kw-2">mut </span>conn, receiver) = ConnBuilder::new(<span class="self">self</span>.secret_key.clone(), reader, writer)
-            .build()
+        <span class="kw">let </span>(<span class="kw-2">mut </span>conn, receiver) = create_connection(reader, writer, <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key)
             .<span class="kw">await
             </span>.map_err(|e| ClientError::Build(e.to_string()))<span class="question-mark">?</span>;
 

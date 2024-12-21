@@ -312,22 +312,7 @@
 <a href="#311" id="311">311</a>
 <a href="#312" id="312">312</a>
 <a href="#313" id="313">313</a>
-<a href="#314" id="314">314</a>
-<a href="#315" id="315">315</a>
-<a href="#316" id="316">316</a>
-<a href="#317" id="317">317</a>
-<a href="#318" id="318">318</a>
-<a href="#319" id="319">319</a>
-<a href="#320" id="320">320</a>
-<a href="#321" id="321">321</a>
-<a href="#322" id="322">322</a>
-<a href="#323" id="323">323</a>
-<a href="#324" id="324">324</a>
-<a href="#325" id="325">325</a>
-<a href="#326" id="326">326</a>
-<a href="#327" id="327">327</a>
-<a href="#328" id="328">328</a>
-<a href="#329" id="329">329</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
+<a href="#314" id="314">314</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
 //!
 //! based on tailscale/derp/derp_client.go
 
@@ -358,45 +343,30 @@
     },
 };
 
-<span class="doccomment">/// The Builder returns a [`Conn`] and a [`ConnMessageStream`].
-</span><span class="kw">pub struct </span>ConnBuilder {
-    secret_key: SecretKey,
-    reader: ConnFrameStream,
-    writer: ConnWriter,
+<span class="kw">async fn </span>server_handshake(writer: <span class="kw-2">&amp;mut </span>ConnWriter, secret_key: <span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="macro">debug!</span>(<span class="string">"server_handshake: started"</span>);
+    <span class="kw">let </span>client_info = ClientInfo {
+        version: PROTOCOL_VERSION,
+    };
+    <span class="macro">debug!</span>(<span class="string">"server_handshake: sending client_key: {:?}"</span>, <span class="kw-2">&amp;</span>client_info);
+    <span class="kw">crate</span>::protos::relay::send_client_key(writer, secret_key, <span class="kw-2">&amp;</span>client_info).<span class="kw">await</span><span class="question-mark">?</span>;
+
+    <span class="macro">debug!</span>(<span class="string">"server_handshake: done"</span>);
+    <span class="prelude-val">Ok</span>(())
 }
 
-<span class="kw">impl </span>ConnBuilder {
-    <span class="kw">pub fn </span>new(secret_key: SecretKey, reader: ConnFrameStream, writer: ConnWriter) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            secret_key,
-            reader,
-            writer,
-        }
-    }
+<span class="doccomment">/// Constructs the connection, including the initial server handshake.
+</span><span class="kw">pub async fn </span>create_connection(
+    reader: ConnFrameStream,
+    <span class="kw-2">mut </span>writer: ConnWriter,
+    secret_key: <span class="kw-2">&amp;</span>SecretKey,
+) -&gt; <span class="prelude-ty">Result</span>&lt;(Conn, ConnMessageStream)&gt; {
+    <span class="comment">// exchange information with the server
+    </span>server_handshake(<span class="kw-2">&amp;mut </span>writer, secret_key).<span class="kw">await</span><span class="question-mark">?</span>;
 
-    <span class="kw">async fn </span>server_handshake(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="macro">debug!</span>(<span class="string">"server_handshake: started"</span>);
-        <span class="kw">let </span>client_info = ClientInfo {
-            version: PROTOCOL_VERSION,
-        };
-        <span class="macro">debug!</span>(<span class="string">"server_handshake: sending client_key: {:?}"</span>, <span class="kw-2">&amp;</span>client_info);
-        <span class="kw">crate</span>::protos::relay::send_client_key(<span class="kw-2">&amp;mut </span><span class="self">self</span>.writer, <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key, <span class="kw-2">&amp;</span>client_info)
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-
-        <span class="macro">debug!</span>(<span class="string">"server_handshake: done"</span>);
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="kw">pub async fn </span>build(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(Conn, ConnMessageStream)&gt; {
-        <span class="comment">// exchange information with the server
-        </span><span class="self">self</span>.server_handshake().<span class="kw">await</span><span class="question-mark">?</span>;
-
-        <span class="kw">let </span>conn = Conn {
-            writer: <span class="self">self</span>.writer,
-        };
-        <span class="kw">let </span>stream = ConnMessageStream { inner: <span class="self">self</span>.reader };
-        <span class="prelude-val">Ok</span>((conn, stream))
-    }
+    <span class="kw">let </span>conn = Conn { writer };
+    <span class="kw">let </span>stream = ConnMessageStream { inner: reader };
+    <span class="prelude-val">Ok</span>((conn, stream))
 }
 
 <span class="doccomment">/// A connection to a relay server.
