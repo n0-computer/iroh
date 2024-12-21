@@ -886,7 +886,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_relay_clients_both_derp() {
+    async fn test_relay_clients_both_relay() {
         let _guard = iroh_test::logging::setup();
         let server = spawn_local_relay().await.unwrap();
         let relay_url = format!("http://{}", server.http_addr().unwrap());
@@ -1039,7 +1039,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_relay_clients_websocket_and_derp() {
+    async fn test_relay_clients_websocket_and_relay() {
         let _guard = iroh_test::logging::setup();
         let server = spawn_local_relay().await.unwrap();
 

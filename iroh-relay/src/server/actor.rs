@@ -270,7 +270,7 @@ mod tests {
         (
             ClientConnConfig {
                 node_id,
-                stream: RelayedStream::Derp(Framed::new(
+                stream: RelayedStream::Relay(Framed::new(
                     MaybeTlsStream::Test(io),
                     RelayCodec::test(),
                 )),

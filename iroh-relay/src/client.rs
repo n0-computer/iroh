@@ -400,7 +400,7 @@ impl Client {
                 (conn, local_addr)
             }
             Protocol::Relay => {
-                let (conn, local_addr) = self.connect_derp().await?;
+                let (conn, local_addr) = self.connect_relay().await?;
                 (conn, Some(local_addr))
             }
         };
@@ -439,7 +439,7 @@ impl Client {
         Ok(conn)
     }
 
-    async fn connect_derp(&self) -> Result<(Conn, SocketAddr), ClientError> {
+    async fn connect_relay(&self) -> Result<(Conn, SocketAddr), ClientError> {
         let url = self.url.clone();
         let tcp_stream = self.dial_url().await?;
 

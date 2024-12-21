@@ -503,8 +503,8 @@ impl Inner {
         trace!(?protocol, "accept: start");
         let mut io = match protocol {
             Protocol::Relay => {
-                inc!(Metrics, derp_accepts);
-                RelayedStream::Derp(Framed::new(io, RelayCodec::new(self.key_cache.clone())))
+                inc!(Metrics, relay_accepts);
+                RelayedStream::Relay(Framed::new(io, RelayCodec::new(self.key_cache.clone())))
             }
             Protocol::Websocket => {
                 inc!(Metrics, websocket_accepts);

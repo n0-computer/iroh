@@ -29,7 +29,7 @@ use crate::{
 /// A connection to a relay server.
 #[derive(derive_more::Debug)]
 pub(crate) enum Conn {
-    Derp {
+    Relay {
         #[debug("Framed<MaybeTlsStreamChained, RelayCodec>")]
         conn: Framed<MaybeTlsStreamChained, RelayCodec>,
     },
@@ -63,7 +63,7 @@ impl Conn {
     ) -> Result<Self> {
         let conn = Framed::new(conn, RelayCodec::new(key_cache));
 
-        let mut conn = Self::Derp { conn };
+        let mut conn = Self::Relay { conn };
 
         // exchange information with the server
         server_handshake(&mut conn, secret_key).await?;
@@ -138,7 +138,7 @@ impl Stream for Conn {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
-            Self::Derp { ref mut conn } => match Pin::new(conn).poll_next(cx) {
+            Self::Relay { ref mut conn } => match Pin::new(conn).poll_next(cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(Some(Ok(frame))) => {
                     let frame = process_incoming_frame(frame);
@@ -210,7 +210,7 @@ impl Sink<Frame> for Conn {
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp { ref mut conn } => Pin::new(conn).poll_ready(cx),
+            Self::Relay { ref mut conn } => Pin::new(conn).poll_ready(cx),
             Self::Ws { ref mut conn, .. } => {
                 Pin::new(conn).poll_ready(cx).map_err(tung_wasm_to_io_err)
             }
@@ -219,7 +219,7 @@ impl Sink<Frame> for Conn {
 
     fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
         match *self {
-            Self::Derp { ref mut conn } => Pin::new(conn).start_send(item),
+            Self::Relay { ref mut conn } => Pin::new(conn).start_send(item),
             Self::Ws { ref mut conn, .. } => Pin::new(conn)
                 .start_send(tokio_tungstenite_wasm::Message::binary(
                     item.encode_for_ws_msg(),
@@ -230,7 +230,7 @@ impl Sink<Frame> for Conn {
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp { ref mut conn } => Pin::new(conn).poll_flush(cx),
+            Self::Relay { ref mut conn } => Pin::new(conn).poll_flush(cx),
             Self::Ws { ref mut conn, .. } => {
                 Pin::new(conn).poll_flush(cx).map_err(tung_wasm_to_io_err)
             }
@@ -239,7 +239,7 @@ impl Sink<Frame> for Conn {
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp { ref mut conn } => Pin::new(conn).poll_close(cx),
+            Self::Relay { ref mut conn } => Pin::new(conn).poll_close(cx),
             Self::Ws { ref mut conn, .. } => {
                 Pin::new(conn).poll_close(cx).map_err(tung_wasm_to_io_err)
             }
