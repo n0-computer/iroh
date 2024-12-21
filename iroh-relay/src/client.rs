@@ -12,7 +12,7 @@ use std::{
 
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use bytes::Bytes;
-use conn::{Conn, ReceivedMessage};
+use conn::Conn;
 use futures_util::StreamExt;
 use hickory_resolver::TokioResolver as DnsResolver;
 use http_body_util::Empty;
@@ -36,6 +36,7 @@ use tokio::{
 use tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
 use url::Url;
 
+pub use self::conn::ReceivedMessage;
 use crate::{
     defaults::timeouts::*,
     http::{Protocol, RELAY_PATH},

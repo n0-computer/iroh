@@ -22,7 +22,11 @@ use futures_buffered::FuturesUnorderedBounded;
 use futures_lite::StreamExt;
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
-use iroh_relay::{self as relay, client::ClientError, ReceivedMessage, MAX_PACKET_SIZE};
+use iroh_relay::{
+    self as relay,
+    client::{ClientError, ReceivedMessage},
+    MAX_PACKET_SIZE,
+};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,

@@ -47,10 +47,4 @@ mod dns;
 
 pub use protos::relay::MAX_PACKET_SIZE;
 
-pub use self::{
-    client::{
-        conn::ReceivedMessage, Client as HttpClient, ClientBuilder as HttpClientBuilder,
-        ClientError as HttpClientError,
-    },
-    relay_map::{RelayMap, RelayNode, RelayQuicConfig},
-};
+pub use self::relay_map::{RelayMap, RelayNode, RelayQuicConfig};
