@@ -1120,34 +1120,7 @@
 <a href="#1119" id="1119">1119</a>
 <a href="#1120" id="1120">1120</a>
 <a href="#1121" id="1121">1121</a>
-<a href="#1122" id="1122">1122</a>
-<a href="#1123" id="1123">1123</a>
-<a href="#1124" id="1124">1124</a>
-<a href="#1125" id="1125">1125</a>
-<a href="#1126" id="1126">1126</a>
-<a href="#1127" id="1127">1127</a>
-<a href="#1128" id="1128">1128</a>
-<a href="#1129" id="1129">1129</a>
-<a href="#1130" id="1130">1130</a>
-<a href="#1131" id="1131">1131</a>
-<a href="#1132" id="1132">1132</a>
-<a href="#1133" id="1133">1133</a>
-<a href="#1134" id="1134">1134</a>
-<a href="#1135" id="1135">1135</a>
-<a href="#1136" id="1136">1136</a>
-<a href="#1137" id="1137">1137</a>
-<a href="#1138" id="1138">1138</a>
-<a href="#1139" id="1139">1139</a>
-<a href="#1140" id="1140">1140</a>
-<a href="#1141" id="1141">1141</a>
-<a href="#1142" id="1142">1142</a>
-<a href="#1143" id="1143">1143</a>
-<a href="#1144" id="1144">1144</a>
-<a href="#1145" id="1145">1145</a>
-<a href="#1146" id="1146">1146</a>
-<a href="#1147" id="1147">1147</a>
-<a href="#1148" id="1148">1148</a>
-<a href="#1149" id="1149">1149</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
+<a href="#1122" id="1122">1122</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
 //! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
@@ -2125,24 +2098,8 @@
             .protocol(Protocol::Websocket)
             .build(a_secret_key, resolver)
             .<span class="kw">await</span>;
-        <span class="kw">let </span>connect_client = <span class="kw-2">&amp;mut </span>client_a;
-
-        <span class="comment">// give the relay server some time to accept connections
-        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), <span class="kw">async move </span>{
-            <span class="kw">loop </span>{
-                <span class="kw">match </span>connect_client.connect().<span class="kw">await </span>{
-                    <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="kw">break</span>,
-                    <span class="prelude-val">Err</span>(err) =&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"client unable to connect to relay server: {err:#}"</span>);
-                        tokio::time::sleep(Duration::from_millis(<span class="number">100</span>)).<span class="kw">await</span>;
-                    }
-                }
-            }
-        })
-        .<span class="kw">await
-        </span>{
-            <span class="macro">panic!</span>(<span class="string">"error connecting to relay server: {err:#}"</span>);
-        }
+        <span class="comment">// should already be connected after building the client
+        </span>client_a.connect().<span class="kw">await</span>.unwrap();
 
         <span class="comment">// set up client b
         </span><span class="kw">let </span>b_secret_key = SecretKey::generate(rand::thread_rng());
@@ -2152,7 +2109,9 @@
             .protocol(Protocol::Websocket) <span class="comment">// another websocket client
             </span>.build(b_secret_key, resolver)
             .<span class="kw">await</span>;
-        client_b.connect().<span class="kw">await</span>.unwrap();
+
+        <span class="comment">// should already be connected after building the client
+        </span>client_b.connect().<span class="kw">await</span>.unwrap();
 
         <span class="comment">// send message from a to b
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"hello, b"</span>);
@@ -2202,24 +2161,9 @@
         <span class="kw">let </span><span class="kw-2">mut </span>client_a = ClientBuilder::new(relay_url.clone())
             .build(a_secret_key, resolver)
             .<span class="kw">await</span>;
-        <span class="kw">let </span>connect_client = <span class="kw-2">&amp;mut </span>client_a;
 
-        <span class="comment">// give the relay server some time to accept connections
-        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), <span class="kw">async move </span>{
-            <span class="kw">loop </span>{
-                <span class="kw">match </span>connect_client.connect().<span class="kw">await </span>{
-                    <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="kw">break</span>,
-                    <span class="prelude-val">Err</span>(err) =&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"client unable to connect to relay server: {err:#}"</span>);
-                        tokio::time::sleep(Duration::from_millis(<span class="number">100</span>)).<span class="kw">await</span>;
-                    }
-                }
-            }
-        })
-        .<span class="kw">await
-        </span>{
-            <span class="macro">panic!</span>(<span class="string">"error connecting to relay server: {err:#}"</span>);
-        }
+        <span class="comment">// should already be connected after building the client
+        </span>client_a.connect().<span class="kw">await</span>.unwrap();
 
         <span class="comment">// set up client b
         </span><span class="kw">let </span>b_secret_key = SecretKey::generate(rand::thread_rng());
@@ -2229,7 +2173,9 @@
             .protocol(Protocol::Websocket) <span class="comment">// Use websockets
             </span>.build(b_secret_key, resolver)
             .<span class="kw">await</span>;
-        client_b.connect().<span class="kw">await</span>.unwrap();
+
+        <span class="comment">// should already be connected after building the client
+        </span>client_b.connect().<span class="kw">await</span>.unwrap();
 
         <span class="comment">// send message from a to b
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"hello, b"</span>);
