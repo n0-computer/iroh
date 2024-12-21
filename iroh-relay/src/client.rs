@@ -12,7 +12,9 @@ use std::{
 
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use bytes::Bytes;
-use conn::{Conn, ConnBuilder, ConnFrameStream, ConnMessageStream, ConnWriter, ReceivedMessage};
+use conn::{
+    create_connection, Conn, ConnFrameStream, ConnMessageStream, ConnWriter, ReceivedMessage,
+};
 use futures_util::StreamExt;
 use hickory_resolver::TokioResolver as DnsResolver;
 use http_body_util::Empty;
@@ -594,8 +596,7 @@ impl Actor {
             }
         };
 
-        let (mut conn, receiver) = ConnBuilder::new(self.secret_key.clone(), reader, writer)
-            .build()
+        let (mut conn, receiver) = create_connection(reader, writer, &self.secret_key)
             .await
             .map_err(|e| ClientError::Build(e.to_string()))?;
 

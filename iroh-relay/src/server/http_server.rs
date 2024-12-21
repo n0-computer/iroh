@@ -689,7 +689,7 @@ mod tests {
 
     use super::*;
     use crate::client::{
-        conn::{ConnBuilder, ConnFrameStream, ConnWriter, ReceivedMessage},
+        conn::{create_connection, ConnFrameStream, ConnWriter, ReceivedMessage},
         streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
         Client, ClientBuilder,
     };
@@ -912,7 +912,7 @@ mod tests {
         Ok(())
     }
 
-    fn make_test_client(secret_key: SecretKey) -> (tokio::io::DuplexStream, ConnBuilder) {
+    fn make_test_client() -> (tokio::io::DuplexStream, ConnFrameStream, ConnWriter) {
         let (client, server) = tokio::io::duplex(10);
         let (client_reader, client_writer) = tokio::io::split(client);
 
@@ -923,10 +923,7 @@ mod tests {
             ConnFrameStream::Derp(FramedRead::new(client_reader, RelayCodec::test()));
         let client_writer = ConnWriter::Derp(FramedWrite::new(client_writer, RelayCodec::test()));
 
-        (
-            server,
-            ConnBuilder::new(secret_key, client_reader, client_writer),
-        )
+        (server, client_reader, client_writer)
     }
 
     #[tokio::test]
@@ -947,25 +944,27 @@ mod tests {
         info!("Create client A and connect it to the server.");
         let key_a = SecretKey::generate(rand::thread_rng());
         let public_key_a = key_a.public();
-        let (rw_a, client_a_builder) = make_test_client(key_a);
+        let (rw_a, client_a_reader, client_a_writer) = make_test_client();
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
                 .await
         });
-        let (mut client_a, mut client_receiver_a) = client_a_builder.build().await?;
+        let (mut client_a, mut client_receiver_a) =
+            create_connection(client_a_reader, client_a_writer, &key_a).await?;
         handler_task.await??;
 
         info!("Create client B and connect it to the server.");
         let key_b = SecretKey::generate(rand::thread_rng());
         let public_key_b = key_b.public();
-        let (rw_b, client_b_builder) = make_test_client(key_b);
+        let (rw_b, client_b_reader, client_b_writer) = make_test_client();
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
                 .await
         });
-        let (mut client_b, mut client_receiver_b) = client_b_builder.build().await?;
+        let (mut client_b, mut client_receiver_b) =
+            create_connection(client_b_reader, client_b_writer, &key_b).await?;
         handler_task.await??;
 
         info!("Send message from A to B.");
@@ -1036,25 +1035,27 @@ mod tests {
         info!("Create client A and connect it to the server.");
         let key_a = SecretKey::generate(rand::thread_rng());
         let public_key_a = key_a.public();
-        let (rw_a, client_a_builder) = make_test_client(key_a);
+        let (rw_a, client_a_reader, client_a_writer) = make_test_client();
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
                 .await
         });
-        let (mut client_a, mut client_receiver_a) = client_a_builder.build().await?;
+        let (mut client_a, mut client_receiver_a) =
+            create_connection(client_a_reader, client_a_writer, &key_a).await?;
         handler_task.await??;
 
         info!("Create client B and connect it to the server.");
         let key_b = SecretKey::generate(rand::thread_rng());
         let public_key_b = key_b.public();
-        let (rw_b, client_b_builder) = make_test_client(key_b.clone());
+        let (rw_b, client_b_reader, client_b_writer) = make_test_client();
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
                 .await
         });
-        let (mut client_b, mut client_receiver_b) = client_b_builder.build().await?;
+        let (mut client_b, mut client_receiver_b) =
+            create_connection(client_b_reader, client_b_writer, &key_b).await?;
         handler_task.await??;
 
         info!("Send message from A to B.");
@@ -1090,13 +1091,14 @@ mod tests {
         }
 
         info!("Create client B and connect it to the server");
-        let (new_rw_b, new_client_b_builder) = make_test_client(key_b);
+        let (new_rw_b, new_client_b_reader, new_client_b_writer) = make_test_client();
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(new_rw_b))
                 .await
         });
-        let (mut new_client_b, mut new_client_receiver_b) = new_client_b_builder.build().await?;
+        let (mut new_client_b, mut new_client_receiver_b) =
+            create_connection(new_client_b_reader, new_client_b_writer, &key_b).await?;
         handler_task.await??;
 
         // assert!(client_b.recv().await.is_err());

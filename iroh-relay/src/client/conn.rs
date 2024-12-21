@@ -29,45 +29,30 @@ use crate::{
     },
 };
 
-/// The Builder returns a [`Conn`] and a [`ConnMessageStream`].
-pub struct ConnBuilder {
-    secret_key: SecretKey,
-    reader: ConnFrameStream,
-    writer: ConnWriter,
+async fn server_handshake(writer: &mut ConnWriter, secret_key: &SecretKey) -> Result<()> {
+    debug!("server_handshake: started");
+    let client_info = ClientInfo {
+        version: PROTOCOL_VERSION,
+    };
+    debug!("server_handshake: sending client_key: {:?}", &client_info);
+    crate::protos::relay::send_client_key(writer, secret_key, &client_info).await?;
+
+    debug!("server_handshake: done");
+    Ok(())
 }
 
-impl ConnBuilder {
-    pub fn new(secret_key: SecretKey, reader: ConnFrameStream, writer: ConnWriter) -> Self {
-        Self {
-            secret_key,
-            reader,
-            writer,
-        }
-    }
+/// Constructs the connection, including the initial server handshake.
+pub async fn create_connection(
+    reader: ConnFrameStream,
+    mut writer: ConnWriter,
+    secret_key: &SecretKey,
+) -> Result<(Conn, ConnMessageStream)> {
+    // exchange information with the server
+    server_handshake(&mut writer, secret_key).await?;
 
-    async fn server_handshake(&mut self) -> Result<()> {
-        debug!("server_handshake: started");
-        let client_info = ClientInfo {
-            version: PROTOCOL_VERSION,
-        };
-        debug!("server_handshake: sending client_key: {:?}", &client_info);
-        crate::protos::relay::send_client_key(&mut self.writer, &self.secret_key, &client_info)
-            .await?;
-
-        debug!("server_handshake: done");
-        Ok(())
-    }
-
-    pub async fn build(mut self) -> Result<(Conn, ConnMessageStream)> {
-        // exchange information with the server
-        self.server_handshake().await?;
-
-        let conn = Conn {
-            writer: self.writer,
-        };
-        let stream = ConnMessageStream { inner: self.reader };
-        Ok((conn, stream))
-    }
+    let conn = Conn { writer };
+    let stream = ConnMessageStream { inner: reader };
+    Ok((conn, stream))
 }
 
 /// A connection to a relay server.
