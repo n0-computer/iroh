@@ -112,9 +112,10 @@ pub enum ClientError {
 /// An HTTP Relay client.
 ///
 /// Cheaply clonable.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Client {
     inner: mpsc::Sender<ActorMessage>,
+    msg_receiver: mpsc::Receiver<Result<ReceivedMessage, ClientError>>,
     public_key: PublicKey,
     #[allow(dead_code)]
     recv_loop: Arc<AbortOnDropHandle<()>>,
@@ -131,12 +132,6 @@ enum ActorMessage {
     Close(oneshot::Sender<Result<(), ClientError>>),
     CloseForReconnect(oneshot::Sender<Result<(), ClientError>>),
     IsConnected(oneshot::Sender<Result<bool, ClientError>>),
-}
-
-/// Receiving end of a [`Client`].
-#[derive(Debug)]
-pub struct ClientReceiver {
-    msg_receiver: mpsc::Receiver<Result<ReceivedMessage, ClientError>>,
 }
 
 #[derive(derive_more::Debug)]
@@ -277,7 +272,7 @@ impl ClientBuilder {
     }
 
     /// Build the [`Client`]
-    pub fn build(self, key: SecretKey, dns_resolver: DnsResolver) -> (Client, ClientReceiver) {
+    pub fn build(self, key: SecretKey, dns_resolver: DnsResolver) -> Client {
         // TODO: review TLS config
         let roots = rustls::RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
@@ -323,14 +318,12 @@ impl ClientBuilder {
             async move { inner.run(inbox, s).await }.instrument(info_span!("client")),
         );
 
-        (
-            Client {
-                public_key,
-                inner: msg_sender,
-                recv_loop: Arc::new(AbortOnDropHandle::new(recv_loop)),
-            },
-            ClientReceiver { msg_receiver: r },
-        )
+        Client {
+            public_key,
+            inner: msg_sender,
+            recv_loop: Arc::new(AbortOnDropHandle::new(recv_loop)),
+            msg_receiver: r,
+        }
     }
 
     /// The expected [`PublicKey`] of the relay server we are connecting to.
@@ -358,10 +351,28 @@ pub fn make_dangerous_client_config() -> rustls::ClientConfig {
     .with_no_client_auth()
 }
 
-impl ClientReceiver {
-    /// Reads a message from the server.
-    pub async fn recv(&mut self) -> Option<Result<ReceivedMessage, ClientError>> {
-        self.msg_receiver.recv().await
+/// Helper to allow sending from multiple tasks.
+#[derive(Debug, Clone)]
+pub struct Sender(mpsc::Sender<ActorMessage>);
+
+impl Sender {
+    /// Send a packet to the server.
+    ///
+    /// If there is no underlying active relay connection, it creates one before attempting to
+    /// send the message.
+    ///
+    /// If there is an error sending the packet, it closes the underlying relay connection before
+    /// returning.
+    pub async fn send(&self, dst_key: PublicKey, b: Bytes) -> Result<(), ClientError> {
+        let (s, r) = oneshot::channel();
+        let msg = ActorMessage::Send(dst_key, b, s);
+        match self.0.send(msg).await {
+            Ok(_) => {
+                r.await.map_err(|_| ClientError::ActorGone)??;
+                Ok(())
+            }
+            Err(_) => Err(ClientError::ActorGone),
+        }
     }
 }
 
@@ -369,6 +380,16 @@ impl Client {
     /// The public key for this client
     pub fn public_key(&self) -> PublicKey {
         self.public_key
+    }
+
+    /// Reads a message from the server.
+    pub async fn recv(&mut self) -> Option<Result<ReceivedMessage, ClientError>> {
+        self.msg_receiver.recv().await
+    }
+
+    /// Create a [`Sender`].
+    pub fn sender(&self) -> Sender {
+        Sender(self.inner.clone())
     }
 
     async fn send_actor<F, T>(&self, msg_create: F) -> Result<T, ClientError>
@@ -1151,12 +1172,11 @@ mod tests {
         let bad_url: Url = "https://bad.url".parse().unwrap();
         let dns_resolver = default_resolver();
 
-        let (_client, mut client_receiver) =
-            ClientBuilder::new(bad_url).build(key.clone(), dns_resolver.clone());
+        let mut client = ClientBuilder::new(bad_url).build(key.clone(), dns_resolver.clone());
 
         // ensure that the client will bubble up any connection error & not
         // just loop ad infinitum attempting to connect
-        if client_receiver.recv().await.and_then(|s| s.ok()).is_some() {
+        if client.recv().await.and_then(|s| s.ok()).is_some() {
             bail!("expected client with bad relay node detail to return with an error");
         }
         Ok(())

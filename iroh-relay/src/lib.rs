@@ -50,7 +50,7 @@ pub use protos::relay::MAX_PACKET_SIZE;
 pub use self::{
     client::{
         conn::ReceivedMessage, Client as HttpClient, ClientBuilder as HttpClientBuilder,
-        ClientError as HttpClientError, ClientReceiver as HttpClientReceiver,
+        ClientError as HttpClientError,
     },
     relay_map::{RelayMap, RelayNode, RelayQuicConfig},
 };

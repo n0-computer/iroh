@@ -682,8 +682,7 @@ mod tests {
     use futures_lite::StreamExt;
     use iroh_base::{PublicKey, SecretKey};
     use reqwest::Url;
-    use tokio::{sync::mpsc, task::JoinHandle};
-    use tracing::{info, info_span, Instrument};
+    use tracing::{info, info_span};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
@@ -744,13 +743,13 @@ mod tests {
         let relay_addr: Url = format!("http://{addr}:{port}").parse().unwrap();
 
         // create clients
-        let (a_key, mut a_recv, client_a_task, client_a) = {
+        let (a_key, mut client_a) = {
             let span = info_span!("client-a");
             let _guard = span.enter();
             create_test_client(a_key, relay_addr.clone())
         };
         info!("created client {a_key:?}");
-        let (b_key, mut b_recv, client_b_task, client_b) = {
+        let (b_key, mut client_b) = {
             let span = info_span!("client-b");
             let _guard = span.enter();
             create_test_client(b_key, relay_addr)
@@ -767,7 +766,8 @@ mod tests {
         let msg = Bytes::from_static(b"hi there, client b!");
         client_a.send(b_key, msg.clone()).await?;
         info!("waiting for message from a on b");
-        let (got_key, got_msg) = b_recv.recv().await.expect("expected message from client_a");
+        let (got_key, got_msg) =
+            process_msg(client_b.recv().await).expect("expected message from client_a");
         assert_eq!(a_key, got_key);
         assert_eq!(msg, got_msg);
 
@@ -775,71 +775,52 @@ mod tests {
         let msg = Bytes::from_static(b"right back at ya, client b!");
         client_b.send(a_key, msg.clone()).await?;
         info!("waiting for message b on a");
-        let (got_key, got_msg) = a_recv.recv().await.expect("expected message from client_b");
+        let (got_key, got_msg) =
+            process_msg(client_a.recv().await).expect("expected message from client_b");
         assert_eq!(b_key, got_key);
         assert_eq!(msg, got_msg);
 
         client_a.close().await?;
-        client_a_task.abort();
         client_b.close().await?;
-        client_b_task.abort();
         server.shutdown();
 
         Ok(())
     }
 
-    fn create_test_client(
-        key: SecretKey,
-        server_url: Url,
-    ) -> (
-        PublicKey,
-        mpsc::Receiver<(PublicKey, Bytes)>,
-        JoinHandle<()>,
-        Client,
-    ) {
+    fn create_test_client(key: SecretKey, server_url: Url) -> (PublicKey, Client) {
         let client = ClientBuilder::new(server_url).insecure_skip_cert_verify(true);
         let dns_resolver = crate::dns::default_resolver();
-        let (client, mut client_reader) = client.build(key.clone(), dns_resolver.clone());
+        let client = client.build(key.clone(), dns_resolver.clone());
         let public_key = key.public();
-        let (received_msg_s, received_msg_r) = tokio::sync::mpsc::channel(10);
-        let client_reader_task = tokio::spawn(
-            async move {
-                loop {
-                    info!("waiting for message on {:?}", key.public());
-                    match client_reader.recv().await {
-                        None => {
-                            info!("client received nothing");
-                            return;
-                        }
-                        Some(Err(e)) => {
-                            info!("client {:?} `recv` error {e}", key.public());
-                            return;
-                        }
-                        Some(Ok(msg)) => {
-                            info!("got message on {:?}: {msg:?}", key.public());
-                            if let ReceivedMessage::ReceivedPacket {
-                                remote_node_id: source,
-                                data,
-                            } = msg
-                            {
-                                received_msg_s
-                                    .send((source, data))
-                                    .await
-                                    .unwrap_or_else(|err| {
-                                        panic!(
-                                            "client {:?}, error sending message over channel: {:?}",
-                                            key.public(),
-                                            err
-                                        )
-                                    });
-                            }
-                        }
-                    }
+
+        (public_key, client)
+    }
+
+    fn process_msg(
+        msg: Option<std::result::Result<ReceivedMessage, crate::client::ClientError>>,
+    ) -> Option<(PublicKey, Bytes)> {
+        match msg {
+            None => {
+                info!("client received nothing");
+                None
+            }
+            Some(Err(e)) => {
+                info!("client `recv` error {e}");
+                None
+            }
+            Some(Ok(msg)) => {
+                info!("got message on: {msg:?}");
+                if let ReceivedMessage::ReceivedPacket {
+                    remote_node_id: source,
+                    data,
+                } = msg
+                {
+                    Some((source, data))
+                } else {
+                    None
                 }
             }
-            .instrument(info_span!("test-client-reader")),
-        );
-        (public_key, received_msg_r, client_reader_task, client)
+        }
     }
 
     #[tokio::test]
@@ -878,9 +859,9 @@ mod tests {
         let url: Url = format!("https://localhost:{port}").parse().unwrap();
 
         // create clients
-        let (a_key, mut a_recv, client_a_task, client_a) = create_test_client(a_key, url.clone());
+        let (a_key, mut client_a) = create_test_client(a_key, url.clone());
         info!("created client {a_key:?}");
-        let (b_key, mut b_recv, client_b_task, client_b) = create_test_client(b_key, url);
+        let (b_key, mut client_b) = create_test_client(b_key, url);
         info!("created client {b_key:?}");
 
         client_a.ping().await?;
@@ -890,7 +871,8 @@ mod tests {
         let msg = Bytes::from_static(b"hi there, client b!");
         client_a.send(b_key, msg.clone()).await?;
         info!("waiting for message from a on b");
-        let (got_key, got_msg) = b_recv.recv().await.expect("expected message from client_a");
+        let (got_key, got_msg) =
+            process_msg(client_b.recv().await).expect("expected message from client_a");
         assert_eq!(a_key, got_key);
         assert_eq!(msg, got_msg);
 
@@ -898,16 +880,15 @@ mod tests {
         let msg = Bytes::from_static(b"right back at ya, client b!");
         client_b.send(a_key, msg.clone()).await?;
         info!("waiting for message b on a");
-        let (got_key, got_msg) = a_recv.recv().await.expect("expected message from client_b");
+        let (got_key, got_msg) =
+            process_msg(client_a.recv().await).expect("expected message from client_b");
         assert_eq!(b_key, got_key);
         assert_eq!(msg, got_msg);
 
         server.shutdown();
         server.task_handle().await?;
         client_a.close().await?;
-        client_a_task.abort();
         client_b.close().await?;
-        client_b_task.abort();
         Ok(())
     }
 

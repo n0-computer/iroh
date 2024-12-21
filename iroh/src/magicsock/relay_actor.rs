@@ -61,7 +61,6 @@ struct ActiveRelayActor {
     /// Configuration to establish connections to a relay server.
     relay_connection_opts: RelayConnectionOptions,
     relay_client: relay::client::Client,
-    relay_client_receiver: relay::client::ClientReceiver,
     /// The set of remote nodes we know are present on this relay server.
     ///
     /// If we receive messages from a remote node via, this server it is added to this set.
@@ -121,8 +120,7 @@ impl ActiveRelayActor {
             relay_datagrams_recv,
             connection_opts,
         } = opts;
-        let (relay_client, relay_client_receiver) =
-            Self::create_relay_client(url.clone(), connection_opts.clone());
+        let relay_client = Self::create_relay_client(url.clone(), connection_opts.clone());
 
         ActiveRelayActor {
             relay_datagrams_recv,
@@ -138,14 +136,10 @@ impl ActiveRelayActor {
             last_packet_src: None,
             relay_connection_opts: connection_opts,
             relay_client,
-            relay_client_receiver,
         }
     }
 
-    fn create_relay_client(
-        url: RelayUrl,
-        opts: RelayConnectionOptions,
-    ) -> (relay::client::Client, relay::client::ClientReceiver) {
+    fn create_relay_client(url: RelayUrl, opts: RelayConnectionOptions) -> relay::client::Client {
         let RelayConnectionOptions {
             secret_key,
             dns_resolver,
@@ -208,12 +202,12 @@ impl ActiveRelayActor {
                 // Only poll for new datagrams if relay_send_fut is not busy.
                 Some(item) = self.relay_datagrams_send.recv(), if relay_send_fut.is_none() => {
                     debug_assert_eq!(item.url, self.url);
-                    let fut = Self::send_relay(self.relay_client.clone(), item);
+                    let sender = self.relay_client.sender();
+                    let fut = Self::send_relay(sender, item);
                     relay_send_fut.as_mut().set_future(fut);
                     inactive_timeout.reset();
-
                 }
-                msg = self.relay_client_receiver.recv() => {
+                msg = self.relay_client.recv() => {
                     trace!("tick: relay_client_receiver");
                     if let Some(msg) = msg {
                         if self.handle_relay_msg(msg).await == ReadResult::Break {
@@ -289,16 +283,15 @@ impl ActiveRelayActor {
     }
 
     async fn reconnect(&mut self) {
-        let (client, client_receiver) =
+        let client =
             Self::create_relay_client(self.url.clone(), self.relay_connection_opts.clone());
         self.relay_client = client;
-        self.relay_client_receiver = client_receiver;
         if self.is_home_relay {
             self.relay_client.note_preferred(true).await;
         }
     }
 
-    async fn send_relay(relay_client: relay::client::Client, item: RelaySendItem) {
+    async fn send_relay(sender: relay::client::Sender, item: RelaySendItem) {
         // When Quinn sends a GSO Transmit magicsock::split_packets will make us receive
         // more than one packet to send in a single call.  We join all packets back together
         // and prefix them with a u16 packet size.  They then get sent as a single DISCO
@@ -306,7 +299,7 @@ impl ActiveRelayActor {
         // packet size for the relay protocol would be exceeded.
         for packet in PacketizeIter::<_, MAX_PAYLOAD_SIZE>::new(item.remote_node, item.datagrams) {
             let len = packet.len();
-            match relay_client.send(packet.node_id, packet.payload).await {
+            match sender.send(packet.node_id, packet.payload).await {
                 Ok(_) => inc_by!(MagicsockMetrics, send_relay, len as _),
                 Err(err) => {
                     warn!("send failed: {err:#}");
@@ -394,13 +387,10 @@ impl ActiveRelayActor {
                     }
                     ReceivedMessage::Ping(data) => {
                         // Best effort reply to the ping.
-                        let dc = self.relay_client.clone();
-                        // TODO: Unbounded tasks/channel
-                        tokio::task::spawn(async move {
-                            if let Err(err) = dc.send_pong(data).await {
-                                warn!("pong error: {:?}", err);
-                            }
-                        });
+                        // TODO: use sth like try_send?
+                        if let Err(err) = self.relay_client.send_pong(data).await {
+                            warn!("pong error: {:?}", err);
+                        }
                         ReadResult::Continue
                     }
                     ReceivedMessage::Health { .. } => ReadResult::Continue,

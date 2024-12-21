@@ -896,9 +896,8 @@ mod tests {
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
-        let (client_a, mut client_a_receiver) =
-            ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
-        let connect_client = client_a.clone();
+        let mut client_a = ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
+        let connect_client = &mut client_a;
 
         // give the relay server some time to accept connections
         if let Err(err) = tokio::time::timeout(Duration::from_secs(10), async move {
@@ -921,15 +920,14 @@ mod tests {
         let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
-        let (client_b, mut client_b_receiver) =
-            ClientBuilder::new(relay_url.clone()).build(b_secret_key, resolver);
+        let mut client_b = ClientBuilder::new(relay_url.clone()).build(b_secret_key, resolver);
         client_b.connect().await.unwrap();
 
         // send message from a to b
         let msg = Bytes::from("hello, b");
         client_a.send(b_key, msg.clone()).await.unwrap();
 
-        let res = client_b_receiver.recv().await.unwrap().unwrap();
+        let res = client_b.recv().await.unwrap().unwrap();
         if let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -945,7 +943,7 @@ mod tests {
         let msg = Bytes::from("howdy, a");
         client_b.send(a_key, msg.clone()).await.unwrap();
 
-        let res = client_a_receiver.recv().await.unwrap().unwrap();
+        let res = client_a.recv().await.unwrap().unwrap();
         if let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -970,10 +968,10 @@ mod tests {
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
-        let (client_a, mut client_a_receiver) = ClientBuilder::new(relay_url.clone())
+        let mut client_a = ClientBuilder::new(relay_url.clone())
             .protocol(Protocol::Websocket)
             .build(a_secret_key, resolver);
-        let connect_client = client_a.clone();
+        let connect_client = &mut client_a;
 
         // give the relay server some time to accept connections
         if let Err(err) = tokio::time::timeout(Duration::from_secs(10), async move {
@@ -996,7 +994,7 @@ mod tests {
         let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
-        let (client_b, mut client_b_receiver) = ClientBuilder::new(relay_url.clone())
+        let mut client_b = ClientBuilder::new(relay_url.clone())
             .protocol(Protocol::Websocket) // another websocket client
             .build(b_secret_key, resolver);
         client_b.connect().await.unwrap();
@@ -1005,7 +1003,7 @@ mod tests {
         let msg = Bytes::from("hello, b");
         client_a.send(b_key, msg.clone()).await.unwrap();
 
-        let res = client_b_receiver.recv().await.unwrap().unwrap();
+        let res = client_b.recv().await.unwrap().unwrap();
         if let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -1021,7 +1019,7 @@ mod tests {
         let msg = Bytes::from("howdy, a");
         client_b.send(a_key, msg.clone()).await.unwrap();
 
-        let res = client_a_receiver.recv().await.unwrap().unwrap();
+        let res = client_a.recv().await.unwrap().unwrap();
         if let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -1046,9 +1044,8 @@ mod tests {
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
-        let (client_a, mut client_a_receiver) =
-            ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
-        let connect_client = client_a.clone();
+        let mut client_a = ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
+        let connect_client = &mut client_a;
 
         // give the relay server some time to accept connections
         if let Err(err) = tokio::time::timeout(Duration::from_secs(10), async move {
@@ -1071,7 +1068,7 @@ mod tests {
         let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
-        let (client_b, mut client_b_receiver) = ClientBuilder::new(relay_url.clone())
+        let mut client_b = ClientBuilder::new(relay_url.clone())
             .protocol(Protocol::Websocket) // Use websockets
             .build(b_secret_key, resolver);
         client_b.connect().await.unwrap();
@@ -1080,7 +1077,7 @@ mod tests {
         let msg = Bytes::from("hello, b");
         client_a.send(b_key, msg.clone()).await.unwrap();
 
-        let res = client_b_receiver.recv().await.unwrap().unwrap();
+        let res = client_b.recv().await.unwrap().unwrap();
         if let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -1096,7 +1093,7 @@ mod tests {
         let msg = Bytes::from("howdy, a");
         client_b.send(a_key, msg.clone()).await.unwrap();
 
-        let res = client_a_receiver.recv().await.unwrap().unwrap();
+        let res = client_a.recv().await.unwrap().unwrap();
         if let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
