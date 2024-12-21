@@ -169,11 +169,6 @@ impl ActiveRelayActor {
             .await
             .context("initial connection")?;
 
-        // When this future has an inner, it is a future which is currently sending
-        // something to the relay server.  Nothing else can be sent to the relay server at
-        // the same time.
-        // let mut relay_send_fut = std::pin::pin!(MaybeFuture::none());
-
         let mut ping_future = std::pin::pin!(MaybeFuture::none());
 
         // If inactive for one tick the actor should exit.  Inactivity is only tracked on
@@ -236,17 +231,17 @@ impl ActiveRelayActor {
                         }
                     }
                 }
-                // // Only poll relay_send_fut if it is sending to the relay.
-                // _ = &mut relay_send_fut, if relay_send_fut.is_some() => {
-                //     relay_send_fut.as_mut().set_none();
-                // }
-                // Only poll for new datagrams if relay_send_fut is not busy.
-                Some(item) = self.relay_datagrams_send.recv()/*, if relay_send_fut.is_none() */=> {
+                Some(item) = self.relay_datagrams_send.recv() => {
                     debug_assert_eq!(item.url, self.url);
-                    // TODO: do not block the loop
-                    self.send_relay(item).await;
-                    // relay_send_fut.as_mut().set_future(fut);
-                    inactive_timeout.reset();
+                    let dur = Duration::from_millis(500); // TODO: constant, and better value
+                    match tokio::time::timeout(dur, self.send_relay(item)).await {
+                        Ok(_) => {
+                            inactive_timeout.reset();
+                        }
+                        Err(_) => {
+                            warn!("relay sending timed out");
+                        }
+                    }
                 }
                 msg = self.relay_client.recv() => {
                     trace!("tick: relay_client_receiver");
