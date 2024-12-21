@@ -45,6 +45,9 @@ pub(crate) const KEEP_ALIVE: Duration = Duration::from_secs(60);
 // TODO: what should this be?
 #[cfg(feature = "server")]
 pub(crate) const SERVER_CHANNEL_SIZE: usize = 1024 * 100;
+/// The number of packets buffered for sending per client
+#[cfg(feature = "server")]
+pub(crate) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512; //32;
 
 /// ProtocolVersion is bumped whenever there's a wire-incompatible change.
 ///  - version 1 (zero on wire): consistent box headers, in use by employee dev nodes a bit

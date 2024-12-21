@@ -925,7 +925,7 @@ mod tests {
 
         (
             server,
-            ConnBuilder::new(secret_key, None, client_reader, client_writer),
+            ConnBuilder::new(secret_key, client_reader, client_writer),
         )
     }
 
@@ -953,7 +953,7 @@ mod tests {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
                 .await
         });
-        let (client_a, mut client_receiver_a) = client_a_builder.build().await?;
+        let (mut client_a, mut client_receiver_a) = client_a_builder.build().await?;
         handler_task.await??;
 
         info!("Create client B and connect it to the server.");
@@ -965,7 +965,7 @@ mod tests {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
                 .await
         });
-        let (client_b, mut client_receiver_b) = client_b_builder.build().await?;
+        let (mut client_b, mut client_receiver_b) = client_b_builder.build().await?;
         handler_task.await??;
 
         info!("Send message from A to B.");
@@ -1042,7 +1042,7 @@ mod tests {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
                 .await
         });
-        let (client_a, mut client_receiver_a) = client_a_builder.build().await?;
+        let (mut client_a, mut client_receiver_a) = client_a_builder.build().await?;
         handler_task.await??;
 
         info!("Create client B and connect it to the server.");
@@ -1054,7 +1054,7 @@ mod tests {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
                 .await
         });
-        let (client_b, mut client_receiver_b) = client_b_builder.build().await?;
+        let (mut client_b, mut client_receiver_b) = client_b_builder.build().await?;
         handler_task.await??;
 
         info!("Send message from A to B.");
@@ -1096,7 +1096,7 @@ mod tests {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(new_rw_b))
                 .await
         });
-        let (new_client_b, mut new_client_receiver_b) = new_client_b_builder.build().await?;
+        let (mut new_client_b, mut new_client_receiver_b) = new_client_b_builder.build().await?;
         handler_task.await??;
 
         // assert!(client_b.recv().await.is_err());

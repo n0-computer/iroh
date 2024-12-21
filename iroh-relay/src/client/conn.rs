@@ -3,7 +3,6 @@
 //! based on tailscale/derp/derp_client.go
 
 use std::{
-    net::SocketAddr,
     pin::Pin,
     task::{Context, Poll},
     time::Duration,
@@ -30,27 +29,19 @@ use crate::{
     },
 };
 
-/// The Builder returns a [`Conn`] and a [`ConnMessageStream`] and
-/// runs a [`ConnWriterTasks`] in the background.
+/// The Builder returns a [`Conn`] and a [`ConnMessageStream`].
 pub struct ConnBuilder {
     secret_key: SecretKey,
     reader: ConnFrameStream,
     writer: ConnWriter,
-    local_addr: Option<SocketAddr>,
 }
 
 impl ConnBuilder {
-    pub fn new(
-        secret_key: SecretKey,
-        local_addr: Option<SocketAddr>,
-        reader: ConnFrameStream,
-        writer: ConnWriter,
-    ) -> Self {
+    pub fn new(secret_key: SecretKey, reader: ConnFrameStream, writer: ConnWriter) -> Self {
         Self {
             secret_key,
             reader,
             writer,
-            local_addr,
         }
     }
 
@@ -72,7 +63,6 @@ impl ConnBuilder {
         self.server_handshake().await?;
 
         let conn = Conn {
-            local_addr: self.local_addr,
             writer: self.writer,
         };
         let stream = ConnMessageStream { inner: self.reader };
@@ -86,11 +76,6 @@ impl ConnBuilder {
 /// Call `close` to shut down the write loop and read functionality.
 #[derive(Debug)]
 pub struct Conn {
-    /// Our local address, if known.
-    ///
-    /// Is `None` in tests or when using websockets (because we don't control connection
-    /// establishment in browsers).
-    local_addr: Option<SocketAddr>,
     writer: ConnWriter,
 }
 
@@ -127,13 +112,6 @@ impl Conn {
         write_frame(&mut self.writer, Frame::NotePreferred { preferred }, None).await?;
         self.writer.flush().await?;
         Ok(())
-    }
-
-    /// The local address that the [`Conn`] is listening on.
-    ///
-    /// `None`, when run in a testing environment or when using websockets.
-    pub fn local_addr(&self) -> Option<SocketAddr> {
-        self.local_addr
     }
 
     /// Close the connection
