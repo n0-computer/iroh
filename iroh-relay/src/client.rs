@@ -358,8 +358,7 @@ impl Client {
     ///
     /// Returns [`ClientError::Closed`] if the [`Client`] is closed.
     ///
-    /// If there is already an active relay connection, returns the already
-    /// connected [`crate::RelayConn`].
+    /// If there is already an active relay connection, returns `Ok(())`.
     pub async fn connect(&mut self) -> Result<(), ClientError> {
         self.connect_inner("public api").await?;
         Ok(())
