@@ -12,7 +12,7 @@ use std::{
 
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use bytes::Bytes;
-use conn::{Conn, ConnFrameStream, ConnWriter, ReceivedMessage};
+use conn::{Conn, ConnFramed, ReceivedMessage};
 use futures_util::StreamExt;
 use hickory_resolver::TokioResolver as DnsResolver;
 use http_body_util::Empty;
@@ -579,19 +579,19 @@ impl Actor {
     }
 
     async fn connect_0(&self) -> Result<(Conn, Option<SocketAddr>), ClientError> {
-        let (reader, writer, local_addr) = match self.protocol {
+        let (conn, local_addr) = match self.protocol {
             Protocol::Websocket => {
-                let (reader, writer) = self.connect_ws().await?;
+                let conn = self.connect_ws().await?;
                 let local_addr = None;
-                (reader, writer, local_addr)
+                (conn, local_addr)
             }
             Protocol::Relay => {
-                let (reader, writer, local_addr) = self.connect_derp().await?;
-                (reader, writer, Some(local_addr))
+                let (conn, local_addr) = self.connect_derp().await?;
+                (conn, Some(local_addr))
             }
         };
 
-        let mut conn = Conn::new(reader, writer, &self.secret_key)
+        let mut conn = Conn::new(conn, &self.secret_key)
             .await
             .map_err(|e| ClientError::Build(e.to_string()))?;
 
@@ -611,7 +611,7 @@ impl Actor {
         Ok((conn, local_addr))
     }
 
-    async fn connect_ws(&self) -> Result<(ConnFrameStream, ConnWriter), ClientError> {
+    async fn connect_ws(&self) -> Result<ConnFramed, ClientError> {
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
@@ -624,15 +624,14 @@ impl Actor {
 
         let (writer, reader) = tokio_tungstenite_wasm::connect(dial_url).await?.split();
 
-        let cache = self.key_cache.clone();
-
-        let reader = ConnFrameStream::Ws(reader, cache);
-        let writer = ConnWriter::Ws(writer);
-
-        Ok((reader, writer))
+        Ok(ConnFramed::Ws {
+            reader,
+            writer,
+            key_cache: self.key_cache.clone(),
+        })
     }
 
-    async fn connect_derp(&self) -> Result<(ConnFrameStream, ConnWriter, SocketAddr), ClientError> {
+    async fn connect_derp(&self) -> Result<(ConnFramed, SocketAddr), ClientError> {
         let url = self.url.clone();
         let tcp_stream = self.dial_url().await?;
 
@@ -682,10 +681,10 @@ impl Actor {
 
         let cache = self.key_cache.clone();
 
-        let reader = ConnFrameStream::Derp(FramedRead::new(reader, RelayCodec::new(cache.clone())));
-        let writer = ConnWriter::Derp(FramedWrite::new(writer, RelayCodec::new(cache)));
+        let reader = FramedRead::new(reader, RelayCodec::new(cache.clone()));
+        let writer = FramedWrite::new(writer, RelayCodec::new(cache));
 
-        Ok((reader, writer, local_addr))
+        Ok((ConnFramed::Derp { reader, writer }, local_addr))
     }
 
     /// Sends the HTTP upgrade request to the relay server.

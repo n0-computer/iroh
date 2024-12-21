@@ -32,22 +32,17 @@ use crate::{
 /// A connection to a relay server.
 #[derive(derive_more::Debug)]
 pub(crate) struct Conn {
-    writer: ConnWriter,
     #[debug("ConnFrameStream")]
-    reader: ConnFrameStream,
+    conn: ConnFramed,
 }
 
 impl Conn {
     /// Constructs the connection, including the initial server handshake.
-    pub(crate) async fn new(
-        reader: ConnFrameStream,
-        mut writer: ConnWriter,
-        secret_key: &SecretKey,
-    ) -> Result<Self> {
+    pub(crate) async fn new(mut conn: ConnFramed, secret_key: &SecretKey) -> Result<Self> {
         // exchange information with the server
-        server_handshake(&mut writer, secret_key).await?;
+        server_handshake(&mut conn, secret_key).await?;
 
-        let conn = Self { writer, reader };
+        let conn = Self { conn };
         Ok(conn)
     }
 
@@ -57,22 +52,22 @@ impl Conn {
     pub(crate) async fn send(&mut self, dst: NodeId, packet: Bytes) -> Result<()> {
         trace!(dst = dst.fmt_short(), len = packet.len(), "[RELAY] send");
 
-        send_packet(&mut self.writer, dst, packet).await?;
+        send_packet(&mut self.conn, dst, packet).await?;
         Ok(())
     }
 
     /// Send a ping with 8 bytes of random data.
     pub(crate) async fn send_ping(&mut self, data: [u8; 8]) -> Result<()> {
-        write_frame(&mut self.writer, Frame::Ping { data }, None).await?;
-        self.writer.flush().await?;
+        write_frame(&mut self.conn, Frame::Ping { data }, None).await?;
+        self.conn.flush().await?;
         Ok(())
     }
 
     /// Respond to a ping request. The `data` field should be filled
     /// by the 8 bytes of random data send by the ping.
     pub(crate) async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
-        write_frame(&mut self.writer, Frame::Pong { data }, None).await?;
-        self.writer.flush().await?;
+        write_frame(&mut self.conn, Frame::Pong { data }, None).await?;
+        self.conn.flush().await?;
         Ok(())
     }
 
@@ -80,8 +75,8 @@ impl Conn {
     /// connection is to the user's preferred server. This is only
     /// used in the server for stats.
     pub(crate) async fn note_preferred(&mut self, preferred: bool) -> Result<()> {
-        write_frame(&mut self.writer, Frame::NotePreferred { preferred }, None).await?;
-        self.writer.flush().await?;
+        write_frame(&mut self.conn, Frame::NotePreferred { preferred }, None).await?;
+        self.conn.flush().await?;
         Ok(())
     }
 
@@ -90,11 +85,11 @@ impl Conn {
     /// Shuts down the write loop directly and marks the connection as closed. The [`Conn`] will
     /// check if the it is closed before attempting to read from it.
     pub(crate) async fn close(&mut self) {
-        self.writer.close().await.ok();
+        self.conn.close().await.ok();
     }
 }
 
-async fn server_handshake(writer: &mut ConnWriter, secret_key: &SecretKey) -> Result<()> {
+async fn server_handshake(writer: &mut ConnFramed, secret_key: &SecretKey) -> Result<()> {
     debug!("server_handshake: started");
     let client_info = ClientInfo {
         version: PROTOCOL_VERSION,
@@ -106,11 +101,6 @@ async fn server_handshake(writer: &mut ConnWriter, secret_key: &SecretKey) -> Re
     Ok(())
 }
 
-pub(crate) enum ConnFrameStream {
-    Derp(FramedRead<MaybeTlsStreamReader, RelayCodec>),
-    Ws(SplitStream<WebSocketStream>, KeyCache),
-}
-
 fn tung_wasm_to_io_err(e: tokio_tungstenite_wasm::Error) -> std::io::Error {
     match e {
         tokio_tungstenite_wasm::Error::Io(io_err) => io_err,
@@ -118,15 +108,37 @@ fn tung_wasm_to_io_err(e: tokio_tungstenite_wasm::Error) -> std::io::Error {
     }
 }
 
-impl Stream for ConnFrameStream {
-    type Item = Result<Frame>;
+impl Stream for Conn {
+    type Item = Result<ReceivedMessage>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.conn).poll_next(cx)
+    }
+}
+
+impl Stream for ConnFramed {
+    type Item = Result<ReceivedMessage>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
-            Self::Derp(ref mut ws) => Pin::new(ws).poll_next(cx),
-            Self::Ws(ref mut ws, ref cache) => match Pin::new(ws).poll_next(cx) {
+            Self::Derp { ref mut reader, .. } => match Pin::new(reader).poll_next(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(Some(Ok(frame))) => {
+                    let frame = process_incoming_frame(frame);
+                    Poll::Ready(Some(frame))
+                }
+                Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err))),
+                Poll::Ready(None) => Poll::Ready(None),
+            },
+            Self::Ws {
+                ref mut reader,
+                ref key_cache,
+                ..
+            } => match Pin::new(reader).poll_next(cx) {
                 Poll::Ready(Some(Ok(tokio_tungstenite_wasm::Message::Binary(vec)))) => {
-                    Poll::Ready(Some(Frame::decode_from_ws_msg(vec, cache)))
+                    let frame = Frame::decode_from_ws_msg(vec, key_cache);
+                    let frame = frame.and_then(process_incoming_frame);
+                    Poll::Ready(Some(frame))
                 }
                 Poll::Ready(Some(Ok(msg))) => {
                     tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
@@ -136,21 +148,6 @@ impl Stream for ConnFrameStream {
                 Poll::Ready(None) => Poll::Ready(None),
                 Poll::Pending => Poll::Pending,
             },
-        }
-    }
-}
-
-impl Stream for Conn {
-    type Item = Result<ReceivedMessage>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match Pin::new(&mut self.reader).poll_next(cx) {
-            Poll::Ready(Some(item)) => {
-                let item = item.and_then(process_incoming_frame);
-                Poll::Ready(Some(item))
-            }
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
         }
     }
 }
@@ -192,27 +189,34 @@ fn process_incoming_frame(frame: Frame) -> Result<ReceivedMessage> {
     }
 }
 
-#[derive(derive_more::Debug)]
-pub(crate) enum ConnWriter {
-    Derp(FramedWrite<MaybeTlsStreamWriter, RelayCodec>),
-    #[debug("Websocket")]
-    Ws(SplitSink<WebSocketStream, tokio_tungstenite_wasm::Message>),
+pub(crate) enum ConnFramed {
+    Derp {
+        writer: FramedWrite<MaybeTlsStreamWriter, RelayCodec>,
+        reader: FramedRead<MaybeTlsStreamReader, RelayCodec>,
+    },
+    Ws {
+        writer: SplitSink<WebSocketStream, tokio_tungstenite_wasm::Message>,
+        reader: SplitStream<WebSocketStream>,
+        key_cache: KeyCache,
+    },
 }
 
-impl Sink<Frame> for ConnWriter {
+impl Sink<Frame> for ConnFramed {
     type Error = std::io::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp(ref mut ws) => Pin::new(ws).poll_ready(cx),
-            Self::Ws(ref mut ws) => Pin::new(ws).poll_ready(cx).map_err(tung_wasm_to_io_err),
+            Self::Derp { ref mut writer, .. } => Pin::new(writer).poll_ready(cx),
+            Self::Ws { ref mut writer, .. } => {
+                Pin::new(writer).poll_ready(cx).map_err(tung_wasm_to_io_err)
+            }
         }
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
         match *self {
-            Self::Derp(ref mut ws) => Pin::new(ws).start_send(item),
-            Self::Ws(ref mut ws) => Pin::new(ws)
+            Self::Derp { ref mut writer, .. } => Pin::new(writer).start_send(item),
+            Self::Ws { ref mut writer, .. } => Pin::new(writer)
                 .start_send(tokio_tungstenite_wasm::Message::binary(
                     item.encode_for_ws_msg(),
                 ))
@@ -222,15 +226,19 @@ impl Sink<Frame> for ConnWriter {
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp(ref mut ws) => Pin::new(ws).poll_flush(cx),
-            Self::Ws(ref mut ws) => Pin::new(ws).poll_flush(cx).map_err(tung_wasm_to_io_err),
+            Self::Derp { ref mut writer, .. } => Pin::new(writer).poll_flush(cx),
+            Self::Ws { ref mut writer, .. } => {
+                Pin::new(writer).poll_flush(cx).map_err(tung_wasm_to_io_err)
+            }
         }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp(ref mut ws) => Pin::new(ws).poll_close(cx),
-            Self::Ws(ref mut ws) => Pin::new(ws).poll_close(cx).map_err(tung_wasm_to_io_err),
+            Self::Derp { ref mut writer, .. } => Pin::new(writer).poll_close(cx),
+            Self::Ws { ref mut writer, .. } => {
+                Pin::new(writer).poll_close(cx).map_err(tung_wasm_to_io_err)
+            }
         }
     }
 }
