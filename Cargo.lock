@@ -2083,7 +2083,6 @@ dependencies = [
  "netlink-packet-route 0.21.0",
  "netlink-sys",
  "netwatch",
- "num_enum",
  "once_cell",
  "parse-size",
  "pin-project",
