@@ -2255,7 +2255,6 @@ dependencies = [
  "iroh-relay",
  "iroh-test 0.30.0",
  "netwatch",
- "once_cell",
  "portmapper",
  "pretty_assertions",
  "rand",

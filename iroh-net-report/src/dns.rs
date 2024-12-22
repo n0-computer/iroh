@@ -182,18 +182,17 @@ async fn stagger_call<T, F: Fn() -> Fut, Fut: Future<Output = Result<T>>>(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::sync::OnceLock;
     use std::{net::Ipv6Addr, sync::atomic::AtomicUsize};
-
-    use once_cell::sync::Lazy;
 
     use super::*;
 
-    static DNS_RESOLVER: Lazy<TokioResolver> =
-        Lazy::new(|| create_default_resolver().expect("unable to create DNS resolver"));
+    static DNS_RESOLVER: OnceLock<TokioResolver> = OnceLock::new();
 
     /// Get a DNS resolver suitable for testing.
     pub fn resolver() -> &'static TokioResolver {
-        Lazy::force(&DNS_RESOLVER)
+        DNS_RESOLVER
+            .get_or_init(|| create_default_resolver().expect("unable to create DNS resolver"))
     }
 
     /// Deprecated IPv6 site-local anycast addresses still configured by windows.
