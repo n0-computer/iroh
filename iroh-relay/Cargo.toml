@@ -15,7 +15,6 @@ workspace = true
 
 [dependencies]
 anyhow = { version = "1" }
-base64 = "0.22.1"
 bytes = "1.7"
 clap = { version = "4", features = ["derive"], optional = true }
 derive_more = { version = "1.0.0", features = [

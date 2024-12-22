@@ -2047,7 +2047,6 @@ dependencies = [
  "anyhow",
  "axum",
  "backoff",
- "base64",
  "bytes",
  "clap",
  "concurrent-queue",
@@ -2308,7 +2307,6 @@ name = "iroh-relay"
 version = "0.30.0"
 dependencies = [
  "anyhow",
- "base64",
  "bytes",
  "clap",
  "crypto_box",

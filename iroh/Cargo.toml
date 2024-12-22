@@ -21,7 +21,6 @@ anyhow = { version = "1" }
 concurrent-queue = "2.5"
 axum = { version = "0.7", optional = true }
 backoff = "0.4.0"
-base64 = "0.22.1"
 bytes = "1.7"
 crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
 data-encoding = "2.2"

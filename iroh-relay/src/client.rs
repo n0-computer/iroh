@@ -10,9 +10,9 @@ use std::{
     time::Duration,
 };
 
-use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use bytes::Bytes;
 use conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMessage};
+use data_encoding::BASE64URL;
 use futures_util::StreamExt;
 use hickory_resolver::TokioResolver as DnsResolver;
 use http_body_util::Empty;
@@ -947,7 +947,7 @@ impl Actor {
                 proxy_url.username(),
                 proxy_url.password().unwrap_or_default()
             );
-            let encoded = URL_SAFE.encode(to_encode);
+            let encoded = BASE64URL.encode(to_encode.as_bytes());
             req_builder = req_builder.header("Proxy-Authorization", format!("Basic {}", encoded));
         }
         let req = req_builder.body(Empty::<Bytes>::new())?;
