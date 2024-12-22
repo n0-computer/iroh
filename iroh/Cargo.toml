@@ -42,7 +42,6 @@ futures-sink = "0.3"
 futures-util = "0.3"
 governor = "0.7.0"
 hickory-resolver = { version = "=0.25.0-alpha.4" }
-hostname = "0.4"
 http = "1"
 http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
