@@ -114,7 +114,6 @@ pub enum ClientError {
 /// Cheaply clonable.
 #[derive(derive_more::Debug)]
 pub struct Client {
-    public_key: PublicKey,
     secret_key: SecretKey,
     is_preferred: bool,
     relay_conn: Option<(Conn, Option<SocketAddr>)>,
@@ -270,10 +269,8 @@ impl ClientBuilder {
         config.resumption = Resumption::default();
 
         let tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
-        let public_key = key.public();
 
         let mut client = Client {
-            public_key,
             secret_key: key,
             is_preferred: false,
             relay_conn: None,
@@ -321,9 +318,30 @@ pub fn make_dangerous_client_config() -> rustls::ClientConfig {
 }
 
 impl Client {
-    /// The public key for this client
-    pub fn public_key(&self) -> PublicKey {
-        self.public_key
+    /// Reads a message from the server.
+    pub async fn recv(&mut self) -> Option<Result<ReceivedMessage, ClientError>> {
+        if let Some((conn, _)) = self.relay_conn.as_mut() {
+            match tokio::time::timeout(CLIENT_RECV_TIMEOUT, conn.next()).await {
+                Ok(Some(Ok(msg))) => Some(Ok(msg)),
+                Ok(Some(Err(e))) => {
+                    self.close_for_reconnect().await;
+                    if self.is_closed {
+                        return Some(Err(ClientError::Closed));
+                    }
+                    Some(Err(ClientError::Receive(e)))
+                }
+                Ok(None) => {
+                    self.close_for_reconnect().await;
+                    None
+                }
+                Err(_) => {
+                    self.close_for_reconnect().await;
+                    Some(Err(ClientError::Closed))
+                }
+            }
+        } else {
+            future::pending().await
+        }
     }
 
     /// Connects to a relay Server and returns the underlying relay connection.
@@ -529,11 +547,7 @@ impl Client {
         if self.is_closed {
             return None;
         }
-        if let Some((_, local_addr)) = self.relay_conn {
-            local_addr
-        } else {
-            None
-        }
+        self.relay_conn.as_ref().and_then(|(_, addr)| *addr)
     }
 
     /// Send a ping to the server. Return once we get an expected pong.
@@ -794,37 +808,11 @@ impl Client {
         }
     }
 
-    /// Reads a message from the server.
-    pub async fn recv(&mut self) -> Option<Result<ReceivedMessage, ClientError>> {
-        if let Some((conn, _)) = self.relay_conn.as_mut() {
-            match tokio::time::timeout(CLIENT_RECV_TIMEOUT, conn.next()).await {
-                Ok(Some(Ok(msg))) => Some(Ok(msg)),
-                Ok(Some(Err(e))) => {
-                    self.close_for_reconnect().await;
-                    if self.is_closed {
-                        return Some(Err(ClientError::Closed));
-                    }
-                    Some(Err(ClientError::Receive(e)))
-                }
-                Ok(None) => {
-                    self.close_for_reconnect().await;
-                    None
-                }
-                Err(_) => {
-                    self.close_for_reconnect().await;
-                    Some(Err(ClientError::Closed))
-                }
-            }
-        } else {
-            future::pending().await
-        }
-    }
-
     /// Disconnect the http relay connection.
     ///
     /// Closes the underlying relay connection. The next time the client takes some action that
     /// requires a connection, it will call `connect`.
-    pub async fn close_for_reconnect(&mut self) {
+    async fn close_for_reconnect(&mut self) {
         debug!("close for reconnect");
         if let Some((ref mut conn, _)) = self.relay_conn.take() {
             conn.close().await
