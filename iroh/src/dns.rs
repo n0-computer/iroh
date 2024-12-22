@@ -8,6 +8,7 @@
 use std::{
     fmt::Write,
     net::{IpAddr, Ipv6Addr},
+    sync::OnceLock,
     time::Duration,
 };
 
@@ -15,27 +16,25 @@ use anyhow::Result;
 use futures_lite::{Future, StreamExt};
 use hickory_resolver::{IntoName, Resolver, TokioResolver};
 use iroh_base::{NodeAddr, NodeId};
-use once_cell::sync::Lazy;
 
 pub mod node_info;
 
 /// The DNS resolver type used throughout `iroh`.
 pub type DnsResolver = TokioResolver;
 
-static DNS_RESOLVER: Lazy<TokioResolver> =
-    Lazy::new(|| create_default_resolver().expect("unable to create DNS resolver"));
+static DNS_RESOLVER: OnceLock<TokioResolver> = OnceLock::new();
 
 /// Get a reference to the default DNS resolver.
 ///
 /// The default resolver can be cheaply cloned and is shared throughout the running process.
 /// It is configured to use the system's DNS configuration.
 pub fn default_resolver() -> &'static DnsResolver {
-    &DNS_RESOLVER
+    resolver()
 }
 
 /// Get the DNS resolver used within iroh.
 pub fn resolver() -> &'static TokioResolver {
-    Lazy::force(&DNS_RESOLVER)
+    DNS_RESOLVER.get_or_init(|| create_default_resolver().expect("unable to create DNS resolver"))
 }
 
 /// Deprecated IPv6 site-local anycast addresses still configured by windows.
