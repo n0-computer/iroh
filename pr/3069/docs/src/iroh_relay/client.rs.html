@@ -981,19 +981,7 @@
 <a href="#980" id="980">980</a>
 <a href="#981" id="981">981</a>
 <a href="#982" id="982">982</a>
-<a href="#983" id="983">983</a>
-<a href="#984" id="984">984</a>
-<a href="#985" id="985">985</a>
-<a href="#986" id="986">986</a>
-<a href="#987" id="987">987</a>
-<a href="#988" id="988">988</a>
-<a href="#989" id="989">989</a>
-<a href="#990" id="990">990</a>
-<a href="#991" id="991">991</a>
-<a href="#992" id="992">992</a>
-<a href="#993" id="993">993</a>
-<a href="#994" id="994">994</a>
-<a href="#995" id="995">995</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#983" id="983">983</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -1109,7 +1097,6 @@
 /// Cheaply clonable.
 </span><span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">pub struct </span>Client {
-    public_key: PublicKey,
     secret_key: SecretKey,
     is_preferred: bool,
     relay_conn: <span class="prelude-ty">Option</span>&lt;(Conn, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;)&gt;,
@@ -1265,10 +1252,8 @@
         config.resumption = Resumption::default();
 
         <span class="kw">let </span>tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
-        <span class="kw">let </span>public_key = key.public();
 
         <span class="kw">let </span><span class="kw-2">mut </span>client = Client {
-            public_key,
             secret_key: key,
             is_preferred: <span class="bool-val">false</span>,
             relay_conn: <span class="prelude-val">None</span>,
@@ -1316,9 +1301,30 @@
 }
 
 <span class="kw">impl </span>Client {
-    <span class="doccomment">/// The public key for this client
-    </span><span class="kw">pub fn </span>public_key(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PublicKey {
-        <span class="self">self</span>.public_key
+    <span class="doccomment">/// Reads a message from the server.
+    </span><span class="kw">pub async fn </span>recv(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;ReceivedMessage, ClientError&gt;&gt; {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>((conn, <span class="kw">_</span>)) = <span class="self">self</span>.relay_conn.as_mut() {
+            <span class="kw">match </span>tokio::time::timeout(CLIENT_RECV_TIMEOUT, conn.next()).<span class="kw">await </span>{
+                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg))) =&gt; <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg)),
+                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e))) =&gt; {
+                    <span class="self">self</span>.close_for_reconnect().<span class="kw">await</span>;
+                    <span class="kw">if </span><span class="self">self</span>.is_closed {
+                        <span class="kw">return </span><span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(ClientError::Closed));
+                    }
+                    <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(ClientError::Receive(e)))
+                }
+                <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
+                    <span class="self">self</span>.close_for_reconnect().<span class="kw">await</span>;
+                    <span class="prelude-val">None
+                </span>}
+                <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
+                    <span class="self">self</span>.close_for_reconnect().<span class="kw">await</span>;
+                    <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(ClientError::Closed))
+                }
+            }
+        } <span class="kw">else </span>{
+            future::pending().<span class="kw">await
+        </span>}
     }
 
     <span class="doccomment">/// Connects to a relay Server and returns the underlying relay connection.
@@ -1524,11 +1530,7 @@
         <span class="kw">if </span><span class="self">self</span>.is_closed {
             <span class="kw">return </span><span class="prelude-val">None</span>;
         }
-        <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, local_addr)) = <span class="self">self</span>.relay_conn {
-            local_addr
-        } <span class="kw">else </span>{
-            <span class="prelude-val">None
-        </span>}
+        <span class="self">self</span>.relay_conn.as_ref().and_then(|(<span class="kw">_</span>, addr)| <span class="kw-2">*</span>addr)
     }
 
     <span class="doccomment">/// Send a ping to the server. Return once we get an expected pong.
@@ -1789,37 +1791,11 @@
         }
     }
 
-    <span class="doccomment">/// Reads a message from the server.
-    </span><span class="kw">pub async fn </span>recv(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;ReceivedMessage, ClientError&gt;&gt; {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>((conn, <span class="kw">_</span>)) = <span class="self">self</span>.relay_conn.as_mut() {
-            <span class="kw">match </span>tokio::time::timeout(CLIENT_RECV_TIMEOUT, conn.next()).<span class="kw">await </span>{
-                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg))) =&gt; <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg)),
-                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e))) =&gt; {
-                    <span class="self">self</span>.close_for_reconnect().<span class="kw">await</span>;
-                    <span class="kw">if </span><span class="self">self</span>.is_closed {
-                        <span class="kw">return </span><span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(ClientError::Closed));
-                    }
-                    <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(ClientError::Receive(e)))
-                }
-                <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
-                    <span class="self">self</span>.close_for_reconnect().<span class="kw">await</span>;
-                    <span class="prelude-val">None
-                </span>}
-                <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
-                    <span class="self">self</span>.close_for_reconnect().<span class="kw">await</span>;
-                    <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(ClientError::Closed))
-                }
-            }
-        } <span class="kw">else </span>{
-            future::pending().<span class="kw">await
-        </span>}
-    }
-
     <span class="doccomment">/// Disconnect the http relay connection.
     ///
     /// Closes the underlying relay connection. The next time the client takes some action that
     /// requires a connection, it will call `connect`.
-    </span><span class="kw">pub async fn </span>close_for_reconnect(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+    </span><span class="kw">async fn </span>close_for_reconnect(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="macro">debug!</span>(<span class="string">"close for reconnect"</span>);
         <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw-2">ref mut </span>conn, <span class="kw">_</span>)) = <span class="self">self</span>.relay_conn.take() {
             conn.close().<span class="kw">await
