@@ -2263,7 +2263,7 @@ dependencies = [
  "rustls",
  "surge-ping",
  "testresult",
- "thiserror 1.0.69",
+ "thiserror 2.0.7",
  "tokio",
  "tokio-util",
  "tracing",

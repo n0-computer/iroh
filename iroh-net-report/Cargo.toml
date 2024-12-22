@@ -32,7 +32,7 @@ rand = "0.8"
 reqwest = { version = "0.12", default-features = false }
 rustls = { version = "0.23", default-features = false }
 surge-ping = "0.8.0"
-thiserror = "1"
+thiserror = "2"
 tokio = { version = "1", default-features = false, features = ["sync", "time", "macros", "rt"] }
 tokio-util = { version = "0.7.12", default-features = false }
 tracing = "0.1"
