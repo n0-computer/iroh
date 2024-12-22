@@ -49,7 +49,6 @@ hyper-util = "0.1.1"
 igd-next = { version = "0.15.1", features = ["aio_tokio"] }
 iroh-base = { version = "0.30.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 iroh-relay = { version = "0.30", path = "../iroh-relay", default-features = false }
-libc = "0.2.139"
 netdev = "0.31.0"
 netwatch = { version = "0.2.0" }
 num_enum = "0.7"
