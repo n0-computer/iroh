@@ -993,19 +993,7 @@
 <a href="#992" id="992">992</a>
 <a href="#993" id="993">993</a>
 <a href="#994" id="994">994</a>
-<a href="#995" id="995">995</a>
-<a href="#996" id="996">996</a>
-<a href="#997" id="997">997</a>
-<a href="#998" id="998">998</a>
-<a href="#999" id="999">999</a>
-<a href="#1000" id="1000">1000</a>
-<a href="#1001" id="1001">1001</a>
-<a href="#1002" id="1002">1002</a>
-<a href="#1003" id="1003">1003</a>
-<a href="#1004" id="1004">1004</a>
-<a href="#1005" id="1005">1005</a>
-<a href="#1006" id="1006">1006</a>
-<a href="#1007" id="1007">1007</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#995" id="995">995</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -1154,12 +1142,8 @@
     <span class="doccomment">/// Remove the associated [`oneshot::Sender`] for `data` &amp; return it.
     ///
     /// If there is no [`oneshot::Sender`] in the tracker, return `None`.
-    </span><span class="kw">fn </span>unregister(<span class="kw-2">&amp;mut </span><span class="self">self</span>, data: [u8; <span class="number">8</span>], why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) -&gt; <span class="prelude-ty">Option</span>&lt;oneshot::Sender&lt;()&gt;&gt; {
-        <span class="macro">trace!</span>(
-            <span class="string">"removing ping {}: {}"</span>,
-            data_encoding::HEXLOWER.encode(<span class="kw-2">&amp;</span>data),
-            why
-        );
+    </span><span class="kw">fn </span>unregister(<span class="kw-2">&amp;mut </span><span class="self">self</span>, data: [u8; <span class="number">8</span>]) -&gt; <span class="prelude-ty">Option</span>&lt;oneshot::Sender&lt;()&gt;&gt; {
+        <span class="macro">trace!</span>(<span class="string">"removing ping {}"</span>, data_encoding::HEXLOWER.encode(<span class="kw-2">&amp;</span>data),);
         <span class="self">self</span>.<span class="number">0</span>.remove(<span class="kw-2">&amp;</span>data)
     }
 }
@@ -1337,30 +1321,6 @@
         <span class="self">self</span>.public_key
     }
 
-    <span class="doccomment">/// Reads a message from the server.
-    </span><span class="kw">pub async fn </span>recv(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;ReceivedMessage, ClientError&gt;&gt; {
-        <span class="kw">let </span>msg = <span class="self">self</span>.recv_detail().<span class="kw">await</span>;
-        <span class="kw">match </span>msg<span class="question-mark">? </span>{
-            <span class="prelude-val">Ok</span>(msg @ ReceivedMessage::Pong(ping)) =&gt; {
-                <span class="kw">match </span><span class="self">self</span>.pings.unregister(ping, <span class="string">"pong"</span>) {
-                    <span class="prelude-val">Some</span>(chan) =&gt; {
-                        <span class="kw">if </span>chan.send(()).is_err() {
-                            <span class="macro">warn!</span>(<span class="string">"pong received for ping {ping:?}, but the receiving channel was closed"</span>);
-                        }
-                    }
-                    <span class="prelude-val">None </span>=&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"pong received for ping {ping:?}, but not registered"</span>);
-                    }
-                }
-                <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg))
-            }
-            <span class="prelude-val">Ok</span>(msg) =&gt; <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg)),
-            <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)),
-        }
-    }
-}
-
-<span class="kw">impl </span>Client {
     <span class="doccomment">/// Connects to a relay Server and returns the underlying relay connection.
     ///
     /// Returns [`ClientError::Closed`] if the [`Client`] is closed.
@@ -1574,6 +1534,8 @@
     <span class="doccomment">/// Send a ping to the server. Return once we get an expected pong.
     ///
     /// This has a built-in timeout `crate::defaults::timeouts::PING_TIMEOUT`.
+    ///
+    /// The caller must process the received `ping` using `finish_ping`.
     </span><span class="kw">pub async fn </span>start_ping(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;
@@ -1596,6 +1558,20 @@
                     <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="kw">_</span>)) =&gt; <span class="prelude-val">Err</span>(ClientError::PingAborted),
                 }
             })
+        }
+    }
+
+    <span class="doccomment">/// Finish a ping message
+    </span><span class="kw">pub fn </span>finish_ping(<span class="kw-2">&amp;mut </span><span class="self">self</span>, ping: [u8; <span class="number">8</span>]) {
+        <span class="kw">match </span><span class="self">self</span>.pings.unregister(ping) {
+            <span class="prelude-val">Some</span>(chan) =&gt; {
+                <span class="kw">if </span>chan.send(()).is_err() {
+                    <span class="macro">warn!</span>(<span class="string">"pong received for ping {ping:?}, but the receiving channel was closed"</span>);
+                }
+            }
+            <span class="prelude-val">None </span>=&gt; {
+                <span class="macro">warn!</span>(<span class="string">"pong received for ping {ping:?}, but not registered"</span>);
+            }
         }
     }
 
@@ -1813,9 +1789,9 @@
         }
     }
 
-    <span class="kw">async fn </span>recv_detail(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;ReceivedMessage, ClientError&gt;&gt; {
+    <span class="doccomment">/// Reads a message from the server.
+    </span><span class="kw">pub async fn </span>recv(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;ReceivedMessage, ClientError&gt;&gt; {
         <span class="kw">if let </span><span class="prelude-val">Some</span>((conn, <span class="kw">_</span>)) = <span class="self">self</span>.relay_conn.as_mut() {
-            <span class="macro">trace!</span>(<span class="string">"recv_detail tick"</span>);
             <span class="kw">match </span>tokio::time::timeout(CLIENT_RECV_TIMEOUT, conn.next()).<span class="kw">await </span>{
                 <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg))) =&gt; <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg)),
                 <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e))) =&gt; {
