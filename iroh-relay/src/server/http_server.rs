@@ -759,13 +759,19 @@ mod tests {
         info!("ping a");
         let ping_a = client_a.start_ping().await?;
         let msg = client_a.recv().await.unwrap()?;
-        assert!(matches!(msg, ReceivedMessage::Pong(_)));
+        let ReceivedMessage::Pong(ping) = msg else {
+            panic!("invalid msg: {:?}", msg);
+        };
+        client_a.finish_ping(ping);
         let _dur = ping_a.await?;
 
         info!("ping b");
         let ping_b = client_b.start_ping().await?;
         let msg = client_b.recv().await.unwrap()?;
-        assert!(matches!(msg, ReceivedMessage::Pong(_)));
+        let ReceivedMessage::Pong(ping) = msg else {
+            panic!("invalid msg: {:?}", msg);
+        };
+        client_b.finish_ping(ping);
         let _dur = ping_b.await?;
 
         info!("sending message from a to b");
@@ -873,13 +879,19 @@ mod tests {
         info!("ping a");
         let ping_a = client_a.start_ping().await?;
         let msg = client_a.recv().await.unwrap()?;
-        assert!(matches!(msg, ReceivedMessage::Pong(_)));
+        let ReceivedMessage::Pong(ping) = msg else {
+            panic!("invalid msg: {:?}", msg);
+        };
+        client_a.finish_ping(ping);
         let _dur = ping_a.await?;
 
         info!("ping b");
         let ping_b = client_b.start_ping().await?;
         let msg = client_b.recv().await.unwrap()?;
-        assert!(matches!(msg, ReceivedMessage::Pong(_)));
+        let ReceivedMessage::Pong(ping) = msg else {
+            panic!("invalid msg: {:?}", msg);
+        };
+        client_b.finish_ping(ping);
         let _dur = ping_b.await?;
 
         info!("sending message from a to b");

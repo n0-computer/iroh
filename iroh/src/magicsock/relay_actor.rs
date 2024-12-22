@@ -412,6 +412,10 @@ impl ActiveRelayActor {
                         }
                         ReadResult::Continue
                     }
+                    ReceivedMessage::Pong(ping) => {
+                        self.relay_client.finish_ping(ping);
+                        ReadResult::Continue
+                    }
                     ReceivedMessage::Health { .. } => ReadResult::Continue,
                     ReceivedMessage::NodeGone(key) => {
                         self.node_present.remove(&key);

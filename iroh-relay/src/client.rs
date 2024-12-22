@@ -147,12 +147,8 @@ impl PingTracker {
     /// Remove the associated [`oneshot::Sender`] for `data` & return it.
     ///
     /// If there is no [`oneshot::Sender`] in the tracker, return `None`.
-    fn unregister(&mut self, data: [u8; 8], why: &'static str) -> Option<oneshot::Sender<()>> {
-        trace!(
-            "removing ping {}: {}",
-            data_encoding::HEXLOWER.encode(&data),
-            why
-        );
+    fn unregister(&mut self, data: [u8; 8]) -> Option<oneshot::Sender<()>> {
+        trace!("removing ping {}", data_encoding::HEXLOWER.encode(&data),);
         self.0.remove(&data)
     }
 }
@@ -330,30 +326,6 @@ impl Client {
         self.public_key
     }
 
-    /// Reads a message from the server.
-    pub async fn recv(&mut self) -> Option<Result<ReceivedMessage, ClientError>> {
-        let msg = self.recv_detail().await;
-        match msg? {
-            Ok(msg @ ReceivedMessage::Pong(ping)) => {
-                match self.pings.unregister(ping, "pong") {
-                    Some(chan) => {
-                        if chan.send(()).is_err() {
-                            warn!("pong received for ping {ping:?}, but the receiving channel was closed");
-                        }
-                    }
-                    None => {
-                        warn!("pong received for ping {ping:?}, but not registered");
-                    }
-                }
-                Some(Ok(msg))
-            }
-            Ok(msg) => Some(Ok(msg)),
-            Err(err) => Some(Err(err)),
-        }
-    }
-}
-
-impl Client {
     /// Connects to a relay Server and returns the underlying relay connection.
     ///
     /// Returns [`ClientError::Closed`] if the [`Client`] is closed.
@@ -567,6 +539,8 @@ impl Client {
     /// Send a ping to the server. Return once we get an expected pong.
     ///
     /// This has a built-in timeout `crate::defaults::timeouts::PING_TIMEOUT`.
+    ///
+    /// The caller must process the received `ping` using `finish_ping`.
     pub async fn start_ping(
         &mut self,
     ) -> Result<
@@ -589,6 +563,20 @@ impl Client {
                     Ok(Err(_)) => Err(ClientError::PingAborted),
                 }
             })
+        }
+    }
+
+    /// Finish a ping message
+    pub fn finish_ping(&mut self, ping: [u8; 8]) {
+        match self.pings.unregister(ping) {
+            Some(chan) => {
+                if chan.send(()).is_err() {
+                    warn!("pong received for ping {ping:?}, but the receiving channel was closed");
+                }
+            }
+            None => {
+                warn!("pong received for ping {ping:?}, but not registered");
+            }
         }
     }
 
@@ -806,9 +794,9 @@ impl Client {
         }
     }
 
-    async fn recv_detail(&mut self) -> Option<Result<ReceivedMessage, ClientError>> {
+    /// Reads a message from the server.
+    pub async fn recv(&mut self) -> Option<Result<ReceivedMessage, ClientError>> {
         if let Some((conn, _)) = self.relay_conn.as_mut() {
-            trace!("recv_detail tick");
             match tokio::time::timeout(CLIENT_RECV_TIMEOUT, conn.next()).await {
                 Ok(Some(Ok(msg))) => Some(Ok(msg)),
                 Ok(Some(Err(e))) => {

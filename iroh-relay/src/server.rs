@@ -961,74 +961,76 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_relay_clients_both_websockets() {
+    async fn test_relay_clients_both_websockets() -> Result<()> {
         let _guard = iroh_test::logging::setup();
-        let server = spawn_local_relay().await.unwrap();
+        let server = spawn_local_relay().await?;
 
         let relay_url = format!("http://{}", server.http_addr().unwrap());
-        let relay_url: RelayUrl = relay_url.parse().unwrap();
+        let relay_url: RelayUrl = relay_url.parse()?;
 
         // set up client a
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
-        let resolver = crate::dns::default_resolver().clone();
+        let resolver = crate::dns::default_resolver();
         info!("client a build");
         let mut client_a = ClientBuilder::new(relay_url.clone())
             .protocol(Protocol::Websocket)
-            .build(a_secret_key, resolver)
+            .build(a_secret_key, resolver.clone())
             .await;
 
         // should already be connected after building the client
         info!("client a connect");
-        client_a.connect().await.unwrap();
+        client_a.connect().await?;
 
         // set up client b
         let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
-        let resolver = crate::dns::default_resolver().clone();
         info!("client b build");
         let mut client_b = ClientBuilder::new(relay_url.clone())
             .protocol(Protocol::Websocket) // another websocket client
-            .build(b_secret_key, resolver)
+            .build(b_secret_key, resolver.clone())
             .await;
 
         // should already be connected after building the client
         info!("client b connect");
-        client_b.connect().await.unwrap();
+        client_b.connect().await?;
 
         info!("sending a -> b");
+
         // send message from a to b
         let msg = Bytes::from("hello, b");
-        client_a.send(b_key, msg.clone()).await.unwrap();
+        client_a.send(b_key, msg.clone()).await?;
 
-        let res = client_b.recv().await.unwrap().unwrap();
-        if let ReceivedMessage::ReceivedPacket {
+        let res = client_b.recv().await.unwrap()?;
+        let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
         } = res
-        {
-            assert_eq!(a_key, remote_node_id);
-            assert_eq!(msg, data);
-        } else {
+        else {
             panic!("client_b received unexpected message {res:?}");
-        }
+        };
+
+        assert_eq!(a_key, remote_node_id);
+        assert_eq!(msg, data);
 
         info!("sending b -> a");
         // send message from b to a
         let msg = Bytes::from("howdy, a");
-        client_b.send(a_key, msg.clone()).await.unwrap();
+        client_b.send(a_key, msg.clone()).await?;
 
-        let res = client_a.recv().await.unwrap().unwrap();
-        if let ReceivedMessage::ReceivedPacket {
+        let res = client_a.recv().await.unwrap()?;
+        let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
         } = res
-        {
-            assert_eq!(b_key, remote_node_id);
-            assert_eq!(msg, data);
-        } else {
+        else {
             panic!("client_a received unexpected message {res:?}");
-        }
+        };
+
+        assert_eq!(b_key, remote_node_id);
+        assert_eq!(msg, data);
+
+        Ok(())
     }
 
     #[tokio::test]
