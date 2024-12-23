@@ -1189,14 +1189,7 @@
 <a href="#1188" id="1188">1188</a>
 <a href="#1189" id="1189">1189</a>
 <a href="#1190" id="1190">1190</a>
-<a href="#1191" id="1191">1191</a>
-<a href="#1192" id="1192">1192</a>
-<a href="#1193" id="1193">1193</a>
-<a href="#1194" id="1194">1194</a>
-<a href="#1195" id="1195">1195</a>
-<a href="#1196" id="1196">1196</a>
-<a href="#1197" id="1197">1197</a>
-<a href="#1198" id="1198">1198</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1191" id="1191">1191</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1258,8 +1251,6 @@
     <span class="doccomment">/// Channel on which we receive packets to send to the relay.
     </span>relay_datagrams_send: mpsc::Receiver&lt;RelaySendItem&gt;,
     url: RelayUrl,
-    <span class="doccomment">/// Whether or not this is the home relay connection.
-    </span>is_home_relay: bool,
     <span class="doccomment">/// Configuration to establish connections to a relay server.
     </span>relay_connection_opts: RelayConnectionOptions,
     relay_client: relay::client::Client,
@@ -1328,7 +1319,6 @@
             relay_datagrams_recv,
             relay_datagrams_send,
             url,
-            is_home_relay: <span class="bool-val">false</span>,
             node_present: BTreeSet::new(),
             backoff: backoff::exponential::ExponentialBackoffBuilder::new()
                 .with_initial_interval(Duration::from_millis(<span class="number">10</span>))
@@ -1392,7 +1382,6 @@
                     };
                     <span class="kw">match </span>msg {
                         ActiveRelayMessage::SetHomeRelay(is_preferred) =&gt; {
-                            <span class="self">self</span>.is_home_relay = is_preferred;
                             <span class="self">self</span>.relay_client.note_preferred(is_preferred).<span class="kw">await</span>;
                         }
                         ActiveRelayMessage::HasNodeRoute(peer, r) =&gt; {
@@ -1426,7 +1415,7 @@
                         }
                         <span class="prelude-val">Err</span>(err) =&gt; {
                             <span class="macro">debug!</span>(<span class="question-mark">?</span>err, <span class="string">"Ping failed, reconnecting."</span>);
-                            <span class="self">self</span>.reconnect().<span class="kw">await</span>;
+                            <span class="self">self</span>.reconnect();
                         }
                     }
                 }
@@ -1478,29 +1467,26 @@
                     }
                     <span class="prelude-val">Err</span>(err) =&gt; {
                         <span class="macro">debug!</span>(<span class="question-mark">?</span>err, <span class="string">"Ping failed, reconnecting."</span>);
-                        <span class="self">self</span>.reconnect().<span class="kw">await</span>;
+                        <span class="self">self</span>.reconnect();
                     }
                 }
             }
             <span class="prelude-val">Some</span>(_local_addr) =&gt; {
                 <span class="macro">debug!</span>(<span class="string">"Local IP no longer valid, reconnecting"</span>);
-                <span class="self">self</span>.reconnect().<span class="kw">await</span>;
+                <span class="self">self</span>.reconnect();
             }
             <span class="prelude-val">None </span>=&gt; {
                 <span class="macro">debug!</span>(<span class="string">"No local address for this relay connection, reconnecting."</span>);
-                <span class="self">self</span>.reconnect().<span class="kw">await</span>;
+                <span class="self">self</span>.reconnect();
             }
         }
         <span class="prelude-val">None
     </span>}
 
-    <span class="kw">async fn </span>reconnect(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+    <span class="kw">fn </span>reconnect(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="kw">let </span>client =
             <span class="self">Self</span>::create_relay_client(<span class="self">self</span>.url.clone(), <span class="self">self</span>.relay_connection_opts.clone());
         <span class="self">self</span>.relay_client = client;
-        <span class="kw">if </span><span class="self">self</span>.is_home_relay {
-            <span class="self">self</span>.relay_client.note_preferred(<span class="bool-val">true</span>).<span class="kw">await</span>;
-        }
     }
 
     <span class="kw">async fn </span>send_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, item: RelaySendItem) {
