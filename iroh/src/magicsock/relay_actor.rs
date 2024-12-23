@@ -60,8 +60,6 @@ struct ActiveRelayActor {
     /// Channel on which we receive packets to send to the relay.
     relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
     url: RelayUrl,
-    /// Whether or not this is the home relay connection.
-    is_home_relay: bool,
     /// Configuration to establish connections to a relay server.
     relay_connection_opts: RelayConnectionOptions,
     relay_client: relay::client::Client,
@@ -130,7 +128,6 @@ impl ActiveRelayActor {
             relay_datagrams_recv,
             relay_datagrams_send,
             url,
-            is_home_relay: false,
             node_present: BTreeSet::new(),
             backoff: backoff::exponential::ExponentialBackoffBuilder::new()
                 .with_initial_interval(Duration::from_millis(10))
@@ -194,7 +191,6 @@ impl ActiveRelayActor {
                     };
                     match msg {
                         ActiveRelayMessage::SetHomeRelay(is_preferred) => {
-                            self.is_home_relay = is_preferred;
                             self.relay_client.note_preferred(is_preferred).await;
                         }
                         ActiveRelayMessage::HasNodeRoute(peer, r) => {
@@ -228,7 +224,7 @@ impl ActiveRelayActor {
                         }
                         Err(err) => {
                             debug!(?err, "Ping failed, reconnecting.");
-                            self.reconnect().await;
+                            self.reconnect();
                         }
                     }
                 }
@@ -280,29 +276,26 @@ impl ActiveRelayActor {
                     }
                     Err(err) => {
                         debug!(?err, "Ping failed, reconnecting.");
-                        self.reconnect().await;
+                        self.reconnect();
                     }
                 }
             }
             Some(_local_addr) => {
                 debug!("Local IP no longer valid, reconnecting");
-                self.reconnect().await;
+                self.reconnect();
             }
             None => {
                 debug!("No local address for this relay connection, reconnecting.");
-                self.reconnect().await;
+                self.reconnect();
             }
         }
         None
     }
 
-    async fn reconnect(&mut self) {
+    fn reconnect(&mut self) {
         let client =
             Self::create_relay_client(self.url.clone(), self.relay_connection_opts.clone());
         self.relay_client = client;
-        if self.is_home_relay {
-            self.relay_client.note_preferred(true).await;
-        }
     }
 
     async fn send_relay(&mut self, item: RelaySendItem) {
