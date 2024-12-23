@@ -758,7 +758,7 @@ mod tests {
 
         info!("ping a");
         let ping_a = client_a.start_ping().await?;
-        let msg = client_a.recv().await.unwrap()?;
+        let msg = client_a.recv().await?.unwrap()?;
         let ReceivedMessage::Pong(ping) = msg else {
             panic!("invalid msg: {:?}", msg);
         };
@@ -767,7 +767,7 @@ mod tests {
 
         info!("ping b");
         let ping_b = client_b.start_ping().await?;
-        let msg = client_b.recv().await.unwrap()?;
+        let msg = client_b.recv().await?.unwrap()?;
         let ReceivedMessage::Pong(ping) = msg else {
             panic!("invalid msg: {:?}", msg);
         };
@@ -809,18 +809,18 @@ mod tests {
     }
 
     fn process_msg(
-        msg: Option<std::result::Result<ReceivedMessage, crate::client::ClientError>>,
+        msg: std::result::Result<Option<Result<ReceivedMessage>>, tokio::time::error::Elapsed>,
     ) -> Option<(PublicKey, Bytes)> {
         match msg {
-            None => {
+            Ok(None) => {
                 info!("client received nothing");
                 None
             }
-            Some(Err(e)) => {
+            Ok(Some(Err(e))) => {
                 info!("client `recv` error {e}");
                 None
             }
-            Some(Ok(msg)) => {
+            Ok(Some(Ok(msg))) => {
                 info!("got message on: {msg:?}");
                 if let ReceivedMessage::ReceivedPacket {
                     remote_node_id: source,
@@ -831,6 +831,10 @@ mod tests {
                 } else {
                     None
                 }
+            }
+            Err(_) => {
+                info!("client `recv` time out");
+                None
             }
         }
     }
@@ -878,7 +882,7 @@ mod tests {
 
         info!("ping a");
         let ping_a = client_a.start_ping().await?;
-        let msg = client_a.recv().await.unwrap()?;
+        let msg = client_a.recv().await?.unwrap()?;
         let ReceivedMessage::Pong(ping) = msg else {
             panic!("invalid msg: {:?}", msg);
         };
@@ -887,7 +891,7 @@ mod tests {
 
         info!("ping b");
         let ping_b = client_b.start_ping().await?;
-        let msg = client_b.recv().await.unwrap()?;
+        let msg = client_b.recv().await?.unwrap()?;
         let ReceivedMessage::Pong(ping) = msg else {
             panic!("invalid msg: {:?}", msg);
         };

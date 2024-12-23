@@ -246,11 +246,9 @@ impl ActiveRelayActor {
                 }
                 msg = self.relay_client.recv() => {
                     trace!("tick: relay_client_receiver");
-                    if let Some(msg) = msg {
-                        if self.handle_relay_msg(msg).await == ReadResult::Break {
-                            // fatal error
-                            break;
-                        }
+                    if self.handle_relay_msg(msg).await == ReadResult::Break {
+                        // fatal error
+                        break;
                     }
                 }
                 _ = inactive_timeout.tick() => {
@@ -325,18 +323,40 @@ impl ActiveRelayActor {
         }
     }
 
-    async fn handle_relay_msg(&mut self, msg: Result<ReceivedMessage, ClientError>) -> ReadResult {
-        match msg {
-            Err(err) => {
-                warn!("recv error {:?}", err);
+    async fn handle_relay_msg(
+        &mut self,
+        msg: Result<Option<anyhow::Result<ReceivedMessage>>, tokio::time::error::Elapsed>,
+    ) -> ReadResult {
+        let mut conn_is_closed = false;
+        let msg = match msg {
+            Ok(Some(Ok(msg))) => Some(msg),
+            Ok(Some(Err(err))) => {
+                warn!("recv error: {:?}", err);
+                self.relay_client.close_for_reconnect().await;
+                if !self.relay_client.is_closed() {
+                    conn_is_closed = true;
+                }
+                None
+            }
+            Ok(None) => {
+                warn!("recv error: no connection");
+                self.relay_client.close_for_reconnect().await;
+                None
+            }
+            Err(_) => {
+                warn!("recv error: timeout");
+                self.relay_client.close_for_reconnect().await;
+                conn_is_closed = true;
+                None
+            }
+        };
 
+        match msg {
+            None => {
                 // Forget that all these peers have routes.
                 self.node_present.clear();
 
-                if matches!(
-                    err,
-                    relay::client::ClientError::Closed | relay::client::ClientError::IPDisabled
-                ) {
+                if conn_is_closed {
                     // drop client
                     return ReadResult::Break;
                 }
@@ -356,7 +376,7 @@ impl ActiveRelayActor {
                     None => ReadResult::Break,
                 }
             }
-            Ok(msg) => {
+            Some(msg) => {
                 // reset
                 self.backoff.reset();
                 let now = Instant::now();

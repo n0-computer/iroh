@@ -927,7 +927,7 @@ mod tests {
         let msg = Bytes::from("hello, b");
         client_a.send(b_key, msg.clone()).await.unwrap();
 
-        let res = client_b.recv().await.unwrap().unwrap();
+        let res = client_b.recv().await.unwrap().unwrap().unwrap();
         if let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -943,7 +943,7 @@ mod tests {
         let msg = Bytes::from("howdy, a");
         client_b.send(a_key, msg.clone()).await.unwrap();
 
-        let res = client_a.recv().await.unwrap().unwrap();
+        let res = client_a.recv().await.unwrap().unwrap().unwrap();
         if let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -995,7 +995,7 @@ mod tests {
         let msg = Bytes::from("hello, b");
         client_a.send(b_key, msg.clone()).await?;
 
-        let res = client_b.recv().await.unwrap()?;
+        let res = client_b.recv().await?.unwrap()?;
         let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -1012,7 +1012,7 @@ mod tests {
         let msg = Bytes::from("howdy, a");
         client_b.send(a_key, msg.clone()).await?;
 
-        let res = client_a.recv().await.unwrap()?;
+        let res = client_a.recv().await?.unwrap()?;
         let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -1059,7 +1059,7 @@ mod tests {
         let msg = Bytes::from("hello, b");
         client_a.send(b_key, msg.clone()).await.unwrap();
 
-        let res = client_b.recv().await.unwrap().unwrap();
+        let res = client_b.recv().await.unwrap().unwrap().unwrap();
         if let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -1075,7 +1075,7 @@ mod tests {
         let msg = Bytes::from("howdy, a");
         client_b.send(a_key, msg.clone()).await.unwrap();
 
-        let res = client_a.recv().await.unwrap().unwrap();
+        let res = client_a.recv().await.unwrap().unwrap().unwrap();
         if let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,

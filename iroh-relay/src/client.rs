@@ -313,26 +313,11 @@ pub fn make_dangerous_client_config() -> rustls::ClientConfig {
 
 impl Client {
     /// Reads a message from the server.
-    pub async fn recv(&mut self) -> Option<Result<ReceivedMessage, ClientError>> {
+    pub async fn recv(
+        &mut self,
+    ) -> Result<Option<anyhow::Result<ReceivedMessage>>, tokio::time::error::Elapsed> {
         if let Some((conn, _)) = self.relay_conn.as_mut() {
-            match tokio::time::timeout(CLIENT_RECV_TIMEOUT, conn.next()).await {
-                Ok(Some(Ok(msg))) => Some(Ok(msg)),
-                Ok(Some(Err(e))) => {
-                    self.close_for_reconnect().await;
-                    if self.is_closed {
-                        return Some(Err(ClientError::Closed));
-                    }
-                    Some(Err(ClientError::Receive(e)))
-                }
-                Ok(None) => {
-                    self.close_for_reconnect().await;
-                    None
-                }
-                Err(_) => {
-                    self.close_for_reconnect().await;
-                    Some(Err(ClientError::Closed))
-                }
-            }
+            tokio::time::timeout(CLIENT_RECV_TIMEOUT, conn.next()).await
         } else {
             future::pending().await
         }
@@ -638,6 +623,11 @@ impl Client {
         self.relay_conn.is_some()
     }
 
+    /// Returns `true`if the connection is being shutdown and closing.
+    pub fn is_closed(&self) -> bool {
+        self.is_closed
+    }
+
     fn tls_servername(&self) -> Option<rustls::pki_types::ServerName> {
         self.url
             .host_str()
@@ -806,7 +796,7 @@ impl Client {
     ///
     /// Closes the underlying relay connection. The next time the client takes some action that
     /// requires a connection, it will call `connect`.
-    async fn close_for_reconnect(&mut self) {
+    pub async fn close_for_reconnect(&mut self) {
         debug!("close for reconnect");
         if let Some((ref mut conn, _)) = self.relay_conn.take() {
             conn.close().await
