@@ -931,41 +931,7 @@
 <a href="#930" id="930">930</a>
 <a href="#931" id="931">931</a>
 <a href="#932" id="932">932</a>
-<a href="#933" id="933">933</a>
-<a href="#934" id="934">934</a>
-<a href="#935" id="935">935</a>
-<a href="#936" id="936">936</a>
-<a href="#937" id="937">937</a>
-<a href="#938" id="938">938</a>
-<a href="#939" id="939">939</a>
-<a href="#940" id="940">940</a>
-<a href="#941" id="941">941</a>
-<a href="#942" id="942">942</a>
-<a href="#943" id="943">943</a>
-<a href="#944" id="944">944</a>
-<a href="#945" id="945">945</a>
-<a href="#946" id="946">946</a>
-<a href="#947" id="947">947</a>
-<a href="#948" id="948">948</a>
-<a href="#949" id="949">949</a>
-<a href="#950" id="950">950</a>
-<a href="#951" id="951">951</a>
-<a href="#952" id="952">952</a>
-<a href="#953" id="953">953</a>
-<a href="#954" id="954">954</a>
-<a href="#955" id="955">955</a>
-<a href="#956" id="956">956</a>
-<a href="#957" id="957">957</a>
-<a href="#958" id="958">958</a>
-<a href="#959" id="959">959</a>
-<a href="#960" id="960">960</a>
-<a href="#961" id="961">961</a>
-<a href="#962" id="962">962</a>
-<a href="#963" id="963">963</a>
-<a href="#964" id="964">964</a>
-<a href="#965" id="965">965</a>
-<a href="#966" id="966">966</a>
-<a href="#967" id="967">967</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#933" id="933">933</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -1017,24 +983,15 @@
 <span class="doccomment">/// Possible connection errors on the [`Client`]
 </span><span class="attr">#[derive(Debug, thiserror::Error)]
 </span><span class="kw">pub enum </span>ClientError {
-    <span class="doccomment">/// The client is closed
-    </span><span class="attr">#[error(<span class="string">"client is closed"</span>)]
-    </span>Closed,
     <span class="doccomment">/// There was an error sending a packet
     </span><span class="attr">#[error(<span class="string">"error sending a packet"</span>)]
     </span>Send,
-    <span class="doccomment">/// There was an error receiving a packet
-    </span><span class="attr">#[error(<span class="string">"error receiving a packet: {0:?}"</span>)]
-    </span>Receive(anyhow::Error),
     <span class="doccomment">/// There was a connection timeout error
     </span><span class="attr">#[error(<span class="string">"connect timeout"</span>)]
     </span>ConnectTimeout,
     <span class="doccomment">/// There was an error dialing
     </span><span class="attr">#[error(<span class="string">"dial error"</span>)]
     </span>DialIO(<span class="attr">#[from] </span>std::io::Error),
-    <span class="doccomment">/// Both IPv4 and IPv6 are disabled for this relay node
-    </span><span class="attr">#[error(<span class="string">"both IPv4 and IPv6 are explicitly disabled for this node"</span>)]
-    </span>IPDisabled,
     <span class="doccomment">/// No local addresses exist
     </span><span class="attr">#[error(<span class="string">"no local addr: {0}"</span>)]
     </span>NoLocalAddr(String),
@@ -1068,9 +1025,6 @@
     <span class="doccomment">/// There was an error with DNS resolution
     </span><span class="attr">#[error(<span class="string">"dns: {0:?}"</span>)]
     </span>Dns(<span class="prelude-ty">Option</span>&lt;anyhow::Error&gt;),
-    <span class="doccomment">/// The inner actor is gone, likely means things are shutdown.
-    </span><span class="attr">#[error(<span class="string">"actor gone"</span>)]
-    </span>ActorGone,
     <span class="doccomment">/// An error related to websockets, either errors with parsing ws messages or the handshake
     </span><span class="attr">#[error(<span class="string">"websocket error: {0}"</span>)]
     </span>WebsocketError(<span class="attr">#[from] </span>tokio_tungstenite_wasm::Error),
@@ -1084,7 +1038,6 @@
     secret_key: SecretKey,
     is_preferred: bool,
     relay_conn: <span class="prelude-ty">Option</span>&lt;(Conn, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;)&gt;,
-    is_closed: bool,
     <span class="attr">#[debug(<span class="string">"address family selector callback"</span>)]
     </span>address_family_selector: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() -&gt; bool + Send + Sync&gt;&gt;,
     url: RelayUrl,
@@ -1241,7 +1194,6 @@
             secret_key: key,
             is_preferred: <span class="bool-val">false</span>,
             relay_conn: <span class="prelude-val">None</span>,
-            is_closed: <span class="bool-val">false</span>,
             address_family_selector: <span class="self">self</span>.address_family_selector,
             pings: PingTracker::default(),
             url: <span class="self">self</span>.url,
@@ -1292,8 +1244,6 @@
 
     <span class="doccomment">/// Connects to a relay Server and returns the underlying relay connection.
     ///
-    /// Returns [`ClientError::Closed`] if the [`Client`] is closed.
-    ///
     /// If there is already an active relay connection, returns `Ok(())`.
     </span><span class="kw">pub async fn </span>connect(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ClientError&gt; {
         <span class="self">self</span>.connect_inner(<span class="string">"public api"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1305,10 +1255,6 @@
         why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(<span class="kw-2">&amp;</span><span class="lifetime">'_ </span><span class="kw-2">mut </span>Conn, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;), ClientError&gt; {
         <span class="macro">debug!</span>(url = %<span class="self">self</span>.url, %why, <span class="string">"connecting"</span>);
-
-        <span class="kw">if </span><span class="self">self</span>.is_closed {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(ClientError::Closed);
-        }
 
         <span class="kw">if </span><span class="self">self</span>.relay_conn.is_none() {
             <span class="macro">trace!</span>(<span class="string">"no connection, trying to connect"</span>);
@@ -1490,9 +1436,6 @@
     <span class="doccomment">/// Get the local addr of the connection. If there is no current underlying relay connection
     /// or the [`Client`] is closed, returns `None`.
     </span><span class="kw">pub fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
-        <span class="kw">if </span><span class="self">self</span>.is_closed {
-            <span class="kw">return </span><span class="prelude-val">None</span>;
-        }
         <span class="self">self</span>.relay_conn.as_ref().and_then(|(<span class="kw">_</span>, addr)| <span class="kw-2">*</span>addr)
     }
 
@@ -1576,23 +1519,12 @@
 
     <span class="doccomment">/// Close the http relay connection.
     </span><span class="kw">pub async fn </span>close(<span class="kw-2">mut </span><span class="self">self</span>) {
-        <span class="kw">if </span>!<span class="self">self</span>.is_closed {
-            <span class="self">self</span>.is_closed = <span class="bool-val">true</span>;
-            <span class="self">self</span>.close_for_reconnect().<span class="kw">await</span>;
-        }
+        <span class="self">self</span>.close_for_reconnect().<span class="kw">await</span>;
     }
 
     <span class="doccomment">/// Returns `true` if the underlying relay connection is established.
     </span><span class="kw">pub fn </span>is_connected(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="kw">if </span><span class="self">self</span>.is_closed {
-            <span class="kw">return </span><span class="bool-val">false</span>;
-        }
         <span class="self">self</span>.relay_conn.is_some()
-    }
-
-    <span class="doccomment">/// Returns `true`if the connection is being shutdown and closing.
-    </span><span class="kw">pub fn </span>is_closed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.is_closed
     }
 
     <span class="kw">fn </span>tls_servername(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;rustls::pki_types::ServerName&gt; {
