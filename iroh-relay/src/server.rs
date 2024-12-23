@@ -989,6 +989,9 @@ mod tests {
         info!("client b connect");
         client_b.connect().await?;
 
+        // wait a moment for the relay server to connect
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
         info!("sending a -> b");
 
         // send message from a to b
