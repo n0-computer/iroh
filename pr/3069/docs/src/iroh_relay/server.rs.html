@@ -2049,7 +2049,7 @@
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"hello, b"</span>);
         client_a.send(b_key, msg.clone()).<span class="kw">await</span>.unwrap();
 
-        <span class="kw">let </span>res = client_b.recv().<span class="kw">await</span>.unwrap().unwrap();
+        <span class="kw">let </span>res = client_b.recv().<span class="kw">await</span>.unwrap().unwrap().unwrap();
         <span class="kw">if let </span>ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -2065,7 +2065,7 @@
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"howdy, a"</span>);
         client_b.send(a_key, msg.clone()).<span class="kw">await</span>.unwrap();
 
-        <span class="kw">let </span>res = client_a.recv().<span class="kw">await</span>.unwrap().unwrap();
+        <span class="kw">let </span>res = client_a.recv().<span class="kw">await</span>.unwrap().unwrap().unwrap();
         <span class="kw">if let </span>ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -2117,7 +2117,7 @@
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"hello, b"</span>);
         client_a.send(b_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">let </span>res = client_b.recv().<span class="kw">await</span>.unwrap()<span class="question-mark">?</span>;
+        <span class="kw">let </span>res = client_b.recv().<span class="kw">await</span><span class="question-mark">?</span>.unwrap()<span class="question-mark">?</span>;
         <span class="kw">let </span>ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -2134,7 +2134,7 @@
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"howdy, a"</span>);
         client_b.send(a_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">let </span>res = client_a.recv().<span class="kw">await</span>.unwrap()<span class="question-mark">?</span>;
+        <span class="kw">let </span>res = client_a.recv().<span class="kw">await</span><span class="question-mark">?</span>.unwrap()<span class="question-mark">?</span>;
         <span class="kw">let </span>ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -2181,7 +2181,7 @@
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"hello, b"</span>);
         client_a.send(b_key, msg.clone()).<span class="kw">await</span>.unwrap();
 
-        <span class="kw">let </span>res = client_b.recv().<span class="kw">await</span>.unwrap().unwrap();
+        <span class="kw">let </span>res = client_b.recv().<span class="kw">await</span>.unwrap().unwrap().unwrap();
         <span class="kw">if let </span>ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -2197,7 +2197,7 @@
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"howdy, a"</span>);
         client_b.send(a_key, msg.clone()).<span class="kw">await</span>.unwrap();
 
-        <span class="kw">let </span>res = client_a.recv().<span class="kw">await</span>.unwrap().unwrap();
+        <span class="kw">let </span>res = client_a.recv().<span class="kw">await</span>.unwrap().unwrap().unwrap();
         <span class="kw">if let </span>ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,

@@ -1176,7 +1176,27 @@
 <a href="#1175" id="1175">1175</a>
 <a href="#1176" id="1176">1176</a>
 <a href="#1177" id="1177">1177</a>
-<a href="#1178" id="1178">1178</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1178" id="1178">1178</a>
+<a href="#1179" id="1179">1179</a>
+<a href="#1180" id="1180">1180</a>
+<a href="#1181" id="1181">1181</a>
+<a href="#1182" id="1182">1182</a>
+<a href="#1183" id="1183">1183</a>
+<a href="#1184" id="1184">1184</a>
+<a href="#1185" id="1185">1185</a>
+<a href="#1186" id="1186">1186</a>
+<a href="#1187" id="1187">1187</a>
+<a href="#1188" id="1188">1188</a>
+<a href="#1189" id="1189">1189</a>
+<a href="#1190" id="1190">1190</a>
+<a href="#1191" id="1191">1191</a>
+<a href="#1192" id="1192">1192</a>
+<a href="#1193" id="1193">1193</a>
+<a href="#1194" id="1194">1194</a>
+<a href="#1195" id="1195">1195</a>
+<a href="#1196" id="1196">1196</a>
+<a href="#1197" id="1197">1197</a>
+<a href="#1198" id="1198">1198</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1424,11 +1444,9 @@
                 }
                 msg = <span class="self">self</span>.relay_client.recv() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: relay_client_receiver"</span>);
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(msg) = msg {
-                        <span class="kw">if </span><span class="self">self</span>.handle_relay_msg(msg).<span class="kw">await </span>== ReadResult::Break {
-                            <span class="comment">// fatal error
-                            </span><span class="kw">break</span>;
-                        }
+                    <span class="kw">if </span><span class="self">self</span>.handle_relay_msg(msg).<span class="kw">await </span>== ReadResult::Break {
+                        <span class="comment">// fatal error
+                        </span><span class="kw">break</span>;
                     }
                 }
                 <span class="kw">_ </span>= inactive_timeout.tick() =&gt; {
@@ -1503,18 +1521,40 @@
         }
     }
 
-    <span class="kw">async fn </span>handle_relay_msg(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: <span class="prelude-ty">Result</span>&lt;ReceivedMessage, ClientError&gt;) -&gt; ReadResult {
-        <span class="kw">match </span>msg {
-            <span class="prelude-val">Err</span>(err) =&gt; {
-                <span class="macro">warn!</span>(<span class="string">"recv error {:?}"</span>, err);
+    <span class="kw">async fn </span>handle_relay_msg(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        msg: <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;anyhow::Result&lt;ReceivedMessage&gt;&gt;, tokio::time::error::Elapsed&gt;,
+    ) -&gt; ReadResult {
+        <span class="kw">let </span><span class="kw-2">mut </span>conn_is_closed = <span class="bool-val">false</span>;
+        <span class="kw">let </span>msg = <span class="kw">match </span>msg {
+            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg))) =&gt; <span class="prelude-val">Some</span>(msg),
+            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err))) =&gt; {
+                <span class="macro">warn!</span>(<span class="string">"recv error: {:?}"</span>, err);
+                <span class="self">self</span>.relay_client.close_for_reconnect().<span class="kw">await</span>;
+                <span class="kw">if </span>!<span class="self">self</span>.relay_client.is_closed() {
+                    conn_is_closed = <span class="bool-val">true</span>;
+                }
+                <span class="prelude-val">None
+            </span>}
+            <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
+                <span class="macro">warn!</span>(<span class="string">"recv error: no connection"</span>);
+                <span class="self">self</span>.relay_client.close_for_reconnect().<span class="kw">await</span>;
+                <span class="prelude-val">None
+            </span>}
+            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
+                <span class="macro">warn!</span>(<span class="string">"recv error: timeout"</span>);
+                <span class="self">self</span>.relay_client.close_for_reconnect().<span class="kw">await</span>;
+                conn_is_closed = <span class="bool-val">true</span>;
+                <span class="prelude-val">None
+            </span>}
+        };
 
+        <span class="kw">match </span>msg {
+            <span class="prelude-val">None </span>=&gt; {
                 <span class="comment">// Forget that all these peers have routes.
                 </span><span class="self">self</span>.node_present.clear();
 
-                <span class="kw">if </span><span class="macro">matches!</span>(
-                    err,
-                    relay::client::ClientError::Closed | relay::client::ClientError::IPDisabled
-                ) {
+                <span class="kw">if </span>conn_is_closed {
                     <span class="comment">// drop client
                     </span><span class="kw">return </span>ReadResult::Break;
                 }
@@ -1534,7 +1574,7 @@
                     <span class="prelude-val">None </span>=&gt; ReadResult::Break,
                 }
             }
-            <span class="prelude-val">Ok</span>(msg) =&gt; {
+            <span class="prelude-val">Some</span>(msg) =&gt; {
                 <span class="comment">// reset
                 </span><span class="self">self</span>.backoff.reset();
                 <span class="kw">let </span>now = Instant::now();

@@ -1143,7 +1143,11 @@
 <a href="#1142" id="1142">1142</a>
 <a href="#1143" id="1143">1143</a>
 <a href="#1144" id="1144">1144</a>
-<a href="#1145" id="1145">1145</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1145" id="1145">1145</a>
+<a href="#1146" id="1146">1146</a>
+<a href="#1147" id="1147">1147</a>
+<a href="#1148" id="1148">1148</a>
+<a href="#1149" id="1149">1149</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -1903,7 +1907,7 @@
 
         <span class="macro">info!</span>(<span class="string">"ping a"</span>);
         <span class="kw">let </span>ping_a = client_a.start_ping().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>msg = client_a.recv().<span class="kw">await</span>.unwrap()<span class="question-mark">?</span>;
+        <span class="kw">let </span>msg = client_a.recv().<span class="kw">await</span><span class="question-mark">?</span>.unwrap()<span class="question-mark">?</span>;
         <span class="kw">let </span>ReceivedMessage::Pong(ping) = msg <span class="kw">else </span>{
             <span class="macro">panic!</span>(<span class="string">"invalid msg: {:?}"</span>, msg);
         };
@@ -1912,7 +1916,7 @@
 
         <span class="macro">info!</span>(<span class="string">"ping b"</span>);
         <span class="kw">let </span>ping_b = client_b.start_ping().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>msg = client_b.recv().<span class="kw">await</span>.unwrap()<span class="question-mark">?</span>;
+        <span class="kw">let </span>msg = client_b.recv().<span class="kw">await</span><span class="question-mark">?</span>.unwrap()<span class="question-mark">?</span>;
         <span class="kw">let </span>ReceivedMessage::Pong(ping) = msg <span class="kw">else </span>{
             <span class="macro">panic!</span>(<span class="string">"invalid msg: {:?}"</span>, msg);
         };
@@ -1954,18 +1958,18 @@
     }
 
     <span class="kw">fn </span>process_msg(
-        msg: <span class="prelude-ty">Option</span>&lt;std::result::Result&lt;ReceivedMessage, <span class="kw">crate</span>::client::ClientError&gt;&gt;,
+        msg: std::result::Result&lt;<span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;ReceivedMessage&gt;&gt;, tokio::time::error::Elapsed&gt;,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;(PublicKey, Bytes)&gt; {
         <span class="kw">match </span>msg {
-            <span class="prelude-val">None </span>=&gt; {
+            <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
                 <span class="macro">info!</span>(<span class="string">"client received nothing"</span>);
                 <span class="prelude-val">None
             </span>}
-            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e)) =&gt; {
+            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e))) =&gt; {
                 <span class="macro">info!</span>(<span class="string">"client `recv` error {e}"</span>);
                 <span class="prelude-val">None
             </span>}
-            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg)) =&gt; {
+            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg))) =&gt; {
                 <span class="macro">info!</span>(<span class="string">"got message on: {msg:?}"</span>);
                 <span class="kw">if let </span>ReceivedMessage::ReceivedPacket {
                     remote_node_id: source,
@@ -1977,6 +1981,10 @@
                     <span class="prelude-val">None
                 </span>}
             }
+            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
+                <span class="macro">info!</span>(<span class="string">"client `recv` time out"</span>);
+                <span class="prelude-val">None
+            </span>}
         }
     }
 
@@ -2023,7 +2031,7 @@
 
         <span class="macro">info!</span>(<span class="string">"ping a"</span>);
         <span class="kw">let </span>ping_a = client_a.start_ping().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>msg = client_a.recv().<span class="kw">await</span>.unwrap()<span class="question-mark">?</span>;
+        <span class="kw">let </span>msg = client_a.recv().<span class="kw">await</span><span class="question-mark">?</span>.unwrap()<span class="question-mark">?</span>;
         <span class="kw">let </span>ReceivedMessage::Pong(ping) = msg <span class="kw">else </span>{
             <span class="macro">panic!</span>(<span class="string">"invalid msg: {:?}"</span>, msg);
         };
@@ -2032,7 +2040,7 @@
 
         <span class="macro">info!</span>(<span class="string">"ping b"</span>);
         <span class="kw">let </span>ping_b = client_b.start_ping().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>msg = client_b.recv().<span class="kw">await</span>.unwrap()<span class="question-mark">?</span>;
+        <span class="kw">let </span>msg = client_b.recv().<span class="kw">await</span><span class="question-mark">?</span>.unwrap()<span class="question-mark">?</span>;
         <span class="kw">let </span>ReceivedMessage::Pong(ping) = msg <span class="kw">else </span>{
             <span class="macro">panic!</span>(<span class="string">"invalid msg: {:?}"</span>, msg);
         };
