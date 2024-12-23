@@ -896,9 +896,7 @@ mod tests {
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
-        let mut client_a = ClientBuilder::new(relay_url.clone())
-            .build(a_secret_key, resolver)
-            .await;
+        let mut client_a = ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
         let connect_client = &mut client_a;
 
         // give the relay server some time to accept connections
@@ -922,9 +920,7 @@ mod tests {
         let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
-        let mut client_b = ClientBuilder::new(relay_url.clone())
-            .build(b_secret_key, resolver)
-            .await;
+        let mut client_b = ClientBuilder::new(relay_url.clone()).build(b_secret_key, resolver);
         client_b.connect().await.unwrap();
 
         // send message from a to b
@@ -975,8 +971,7 @@ mod tests {
         info!("client a build");
         let mut client_a = ClientBuilder::new(relay_url.clone())
             .protocol(Protocol::Websocket)
-            .build(a_secret_key, resolver.clone())
-            .await;
+            .build(a_secret_key, resolver.clone());
 
         // should already be connected after building the client
         info!("client a connect");
@@ -988,8 +983,7 @@ mod tests {
         info!("client b build");
         let mut client_b = ClientBuilder::new(relay_url.clone())
             .protocol(Protocol::Websocket) // another websocket client
-            .build(b_secret_key, resolver.clone())
-            .await;
+            .build(b_secret_key, resolver.clone());
 
         // should already be connected after building the client
         info!("client b connect");
@@ -1045,9 +1039,7 @@ mod tests {
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
-        let mut client_a = ClientBuilder::new(relay_url.clone())
-            .build(a_secret_key, resolver)
-            .await;
+        let mut client_a = ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
 
         // should already be connected after building the client
         client_a.connect().await.unwrap();
@@ -1058,8 +1050,7 @@ mod tests {
         let resolver = crate::dns::default_resolver().clone();
         let mut client_b = ClientBuilder::new(relay_url.clone())
             .protocol(Protocol::Websocket) // Use websockets
-            .build(b_secret_key, resolver)
-            .await;
+            .build(b_secret_key, resolver);
 
         // should already be connected after building the client
         client_b.connect().await.unwrap();

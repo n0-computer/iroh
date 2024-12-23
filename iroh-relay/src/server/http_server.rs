@@ -746,13 +746,13 @@ mod tests {
         let (a_key, mut client_a) = {
             let span = info_span!("client-a");
             let _guard = span.enter();
-            create_test_client(a_key, relay_addr.clone()).await
+            create_test_client(a_key, relay_addr.clone())
         };
         info!("created client {a_key:?}");
         let (b_key, mut client_b) = {
             let span = info_span!("client-b");
             let _guard = span.enter();
-            create_test_client(b_key, relay_addr).await
+            create_test_client(b_key, relay_addr)
         };
         info!("created client {b_key:?}");
 
@@ -799,10 +799,10 @@ mod tests {
         Ok(())
     }
 
-    async fn create_test_client(key: SecretKey, server_url: Url) -> (PublicKey, Client) {
+    fn create_test_client(key: SecretKey, server_url: Url) -> (PublicKey, Client) {
         let client = ClientBuilder::new(server_url).insecure_skip_cert_verify(true);
         let dns_resolver = crate::dns::default_resolver();
-        let client = client.build(key.clone(), dns_resolver.clone()).await;
+        let client = client.build(key.clone(), dns_resolver.clone());
         let public_key = key.public();
 
         (public_key, client)
@@ -871,9 +871,9 @@ mod tests {
         let url: Url = format!("https://localhost:{port}").parse().unwrap();
 
         // create clients
-        let (a_key, mut client_a) = create_test_client(a_key, url.clone()).await;
+        let (a_key, mut client_a) = create_test_client(a_key, url.clone());
         info!("created client {a_key:?}");
-        let (b_key, mut client_b) = create_test_client(b_key, url).await;
+        let (b_key, mut client_b) = create_test_client(b_key, url);
         info!("created client {b_key:?}");
 
         info!("ping a");

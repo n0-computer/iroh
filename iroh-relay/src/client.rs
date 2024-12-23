@@ -246,7 +246,7 @@ impl ClientBuilder {
     }
 
     /// Build the [`Client`]
-    pub async fn build(self, key: SecretKey, dns_resolver: DnsResolver) -> Client {
+    pub fn build(self, key: SecretKey, dns_resolver: DnsResolver) -> Client {
         // TODO: review TLS config
         let roots = rustls::RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
@@ -270,7 +270,7 @@ impl ClientBuilder {
 
         let tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
 
-        let mut client = Client {
+        Client {
             secret_key: key,
             is_preferred: false,
             relay_conn: None,
@@ -283,13 +283,7 @@ impl ClientBuilder {
             dns_resolver,
             proxy_url: self.proxy_url,
             key_cache: KeyCache::new(self.key_cache_capacity),
-        };
-
-        // Add an initial connection attempt.
-        if let Err(err) = client.connect_inner("initial connect").await {
-            warn!("failed initial connection: {:?}", err);
         }
-        client
     }
 
     /// The expected [`PublicKey`] of the relay server we are connecting to.
