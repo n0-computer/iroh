@@ -975,13 +975,7 @@
 <a href="#974" id="974">974</a>
 <a href="#975" id="975">975</a>
 <a href="#976" id="976">976</a>
-<a href="#977" id="977">977</a>
-<a href="#978" id="978">978</a>
-<a href="#979" id="979">979</a>
-<a href="#980" id="980">980</a>
-<a href="#981" id="981">981</a>
-<a href="#982" id="982">982</a>
-<a href="#983" id="983">983</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#977" id="977">977</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -1229,7 +1223,7 @@
     </span>}
 
     <span class="doccomment">/// Build the [`Client`]
-    </span><span class="kw">pub async fn </span>build(<span class="self">self</span>, key: SecretKey, dns_resolver: DnsResolver) -&gt; Client {
+    </span><span class="kw">pub fn </span>build(<span class="self">self</span>, key: SecretKey, dns_resolver: DnsResolver) -&gt; Client {
         <span class="comment">// TODO: review TLS config
         </span><span class="kw">let </span>roots = rustls::RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
@@ -1253,7 +1247,7 @@
 
         <span class="kw">let </span>tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
 
-        <span class="kw">let </span><span class="kw-2">mut </span>client = Client {
+        Client {
             secret_key: key,
             is_preferred: <span class="bool-val">false</span>,
             relay_conn: <span class="prelude-val">None</span>,
@@ -1266,13 +1260,7 @@
             dns_resolver,
             proxy_url: <span class="self">self</span>.proxy_url,
             key_cache: KeyCache::new(<span class="self">self</span>.key_cache_capacity),
-        };
-
-        <span class="comment">// Add an initial connection attempt.
-        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = client.connect_inner(<span class="string">"initial connect"</span>).<span class="kw">await </span>{
-            <span class="macro">warn!</span>(<span class="string">"failed initial connection: {:?}"</span>, err);
         }
-        client
     }
 
     <span class="doccomment">/// The expected [`PublicKey`] of the relay server we are connecting to.

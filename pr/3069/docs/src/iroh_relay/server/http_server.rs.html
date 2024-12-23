@@ -1891,14 +1891,14 @@
         </span><span class="kw">let </span>(a_key, <span class="kw-2">mut </span>client_a) = {
             <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">"client-a"</span>);
             <span class="kw">let </span>_guard = span.enter();
-            create_test_client(a_key, relay_addr.clone()).<span class="kw">await
-        </span>};
+            create_test_client(a_key, relay_addr.clone())
+        };
         <span class="macro">info!</span>(<span class="string">"created client {a_key:?}"</span>);
         <span class="kw">let </span>(b_key, <span class="kw-2">mut </span>client_b) = {
             <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">"client-b"</span>);
             <span class="kw">let </span>_guard = span.enter();
-            create_test_client(b_key, relay_addr).<span class="kw">await
-        </span>};
+            create_test_client(b_key, relay_addr)
+        };
         <span class="macro">info!</span>(<span class="string">"created client {b_key:?}"</span>);
 
         <span class="macro">info!</span>(<span class="string">"ping a"</span>);
@@ -1944,10 +1944,10 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">async fn </span>create_test_client(key: SecretKey, server_url: Url) -&gt; (PublicKey, Client) {
+    <span class="kw">fn </span>create_test_client(key: SecretKey, server_url: Url) -&gt; (PublicKey, Client) {
         <span class="kw">let </span>client = ClientBuilder::new(server_url).insecure_skip_cert_verify(<span class="bool-val">true</span>);
         <span class="kw">let </span>dns_resolver = <span class="kw">crate</span>::dns::default_resolver();
-        <span class="kw">let </span>client = client.build(key.clone(), dns_resolver.clone()).<span class="kw">await</span>;
+        <span class="kw">let </span>client = client.build(key.clone(), dns_resolver.clone());
         <span class="kw">let </span>public_key = key.public();
 
         (public_key, client)
@@ -2016,9 +2016,9 @@
         <span class="kw">let </span>url: Url = <span class="macro">format!</span>(<span class="string">"https://localhost:{port}"</span>).parse().unwrap();
 
         <span class="comment">// create clients
-        </span><span class="kw">let </span>(a_key, <span class="kw-2">mut </span>client_a) = create_test_client(a_key, url.clone()).<span class="kw">await</span>;
+        </span><span class="kw">let </span>(a_key, <span class="kw-2">mut </span>client_a) = create_test_client(a_key, url.clone());
         <span class="macro">info!</span>(<span class="string">"created client {a_key:?}"</span>);
-        <span class="kw">let </span>(b_key, <span class="kw-2">mut </span>client_b) = create_test_client(b_key, url).<span class="kw">await</span>;
+        <span class="kw">let </span>(b_key, <span class="kw-2">mut </span>client_b) = create_test_client(b_key, url);
         <span class="macro">info!</span>(<span class="string">"created client {b_key:?}"</span>);
 
         <span class="macro">info!</span>(<span class="string">"ping a"</span>);
