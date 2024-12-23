@@ -326,9 +326,6 @@ impl ActiveRelayActor {
             Ok(Some(Err(err))) => {
                 warn!("recv error: {:?}", err);
                 self.relay_client.close_for_reconnect().await;
-                if !self.relay_client.is_closed() {
-                    conn_is_closed = true;
-                }
                 None
             }
             Ok(None) => {

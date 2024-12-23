@@ -50,24 +50,15 @@ mod util;
 /// Possible connection errors on the [`Client`]
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
-    /// The client is closed
-    #[error("client is closed")]
-    Closed,
     /// There was an error sending a packet
     #[error("error sending a packet")]
     Send,
-    /// There was an error receiving a packet
-    #[error("error receiving a packet: {0:?}")]
-    Receive(anyhow::Error),
     /// There was a connection timeout error
     #[error("connect timeout")]
     ConnectTimeout,
     /// There was an error dialing
     #[error("dial error")]
     DialIO(#[from] std::io::Error),
-    /// Both IPv4 and IPv6 are disabled for this relay node
-    #[error("both IPv4 and IPv6 are explicitly disabled for this node")]
-    IPDisabled,
     /// No local addresses exist
     #[error("no local addr: {0}")]
     NoLocalAddr(String),
@@ -101,9 +92,6 @@ pub enum ClientError {
     /// There was an error with DNS resolution
     #[error("dns: {0:?}")]
     Dns(Option<anyhow::Error>),
-    /// The inner actor is gone, likely means things are shutdown.
-    #[error("actor gone")]
-    ActorGone,
     /// An error related to websockets, either errors with parsing ws messages or the handshake
     #[error("websocket error: {0}")]
     WebsocketError(#[from] tokio_tungstenite_wasm::Error),
@@ -117,7 +105,6 @@ pub struct Client {
     secret_key: SecretKey,
     is_preferred: bool,
     relay_conn: Option<(Conn, Option<SocketAddr>)>,
-    is_closed: bool,
     #[debug("address family selector callback")]
     address_family_selector: Option<Box<dyn Fn() -> bool + Send + Sync>>,
     url: RelayUrl,
@@ -274,7 +261,6 @@ impl ClientBuilder {
             secret_key: key,
             is_preferred: false,
             relay_conn: None,
-            is_closed: false,
             address_family_selector: self.address_family_selector,
             pings: PingTracker::default(),
             url: self.url,
@@ -338,10 +324,6 @@ impl Client {
         why: &'static str,
     ) -> Result<(&'_ mut Conn, Option<SocketAddr>), ClientError> {
         debug!(url = %self.url, %why, "connecting");
-
-        if self.is_closed {
-            return Err(ClientError::Closed);
-        }
 
         if self.relay_conn.is_none() {
             trace!("no connection, trying to connect");
@@ -523,9 +505,6 @@ impl Client {
     /// Get the local addr of the connection. If there is no current underlying relay connection
     /// or the [`Client`] is closed, returns `None`.
     pub fn local_addr(&self) -> Option<SocketAddr> {
-        if self.is_closed {
-            return None;
-        }
         self.relay_conn.as_ref().and_then(|(_, addr)| *addr)
     }
 
@@ -609,23 +588,12 @@ impl Client {
 
     /// Close the http relay connection.
     pub async fn close(mut self) {
-        if !self.is_closed {
-            self.is_closed = true;
-            self.close_for_reconnect().await;
-        }
+        self.close_for_reconnect().await;
     }
 
     /// Returns `true` if the underlying relay connection is established.
     pub fn is_connected(&self) -> bool {
-        if self.is_closed {
-            return false;
-        }
         self.relay_conn.is_some()
-    }
-
-    /// Returns `true`if the connection is being shutdown and closing.
-    pub fn is_closed(&self) -> bool {
-        self.is_closed
     }
 
     fn tls_servername(&self) -> Option<rustls::pki_types::ServerName> {
