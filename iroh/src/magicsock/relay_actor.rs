@@ -234,15 +234,8 @@ impl ActiveRelayActor {
                 }
                 Some(item) = self.relay_datagrams_send.recv() => {
                     debug_assert_eq!(item.url, self.url);
-                    let dur = Duration::from_millis(500); // TODO: constant, and better value
-                    match tokio::time::timeout(dur, self.send_relay(item)).await {
-                        Ok(_) => {
-                            inactive_timeout.reset();
-                        }
-                        Err(_) => {
-                            warn!("relay sending timed out");
-                        }
-                    }
+                    self.send_relay(item).await;
+                    inactive_timeout.reset();
                 }
                 msg = self.relay_client.recv() => {
                     trace!("tick: relay_client_receiver");
@@ -297,9 +290,9 @@ impl ActiveRelayActor {
     }
 
     fn reconnect(&mut self) {
-        let client =
+        let new_client =
             Self::create_relay_client(self.url.clone(), self.relay_connection_opts.clone());
-        self.relay_client = client;
+        self.relay_client = new_client;
     }
 
     async fn send_relay(&mut self, item: RelaySendItem) {
