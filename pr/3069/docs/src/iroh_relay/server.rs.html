@@ -1120,7 +1120,10 @@
 <a href="#1119" id="1119">1119</a>
 <a href="#1120" id="1120">1120</a>
 <a href="#1121" id="1121">1121</a>
-<a href="#1122" id="1122">1122</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
+<a href="#1122" id="1122">1122</a>
+<a href="#1123" id="1123">1123</a>
+<a href="#1124" id="1124">1124</a>
+<a href="#1125" id="1125">1125</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
 //! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
@@ -2110,6 +2113,9 @@
         <span class="comment">// should already be connected after building the client
         </span><span class="macro">info!</span>(<span class="string">"client b connect"</span>);
         client_b.connect().<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="comment">// wait a moment for the relay server to connect
+        </span>tokio::time::sleep(Duration::from_millis(<span class="number">500</span>)).<span class="kw">await</span>;
 
         <span class="macro">info!</span>(<span class="string">"sending a -&gt; b"</span>);
 
