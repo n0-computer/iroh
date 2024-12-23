@@ -89,7 +89,6 @@ enum ActiveRelayMessage {
     CheckConnection(Vec<IpAddr>),
     /// Sets this relay as the home relay, or not.
     SetHomeRelay(bool),
-    Shutdown,
     #[cfg(test)]
     GetLocalAddr(oneshot::Sender<Option<SocketAddr>>),
 }
@@ -159,7 +158,11 @@ impl ActiveRelayActor {
         builder.build(secret_key, dns_resolver)
     }
 
-    async fn run(mut self, mut inbox: mpsc::Receiver<ActiveRelayMessage>) -> anyhow::Result<()> {
+    async fn run(
+        mut self,
+        cancel_token: CancellationToken,
+        mut inbox: mpsc::Receiver<ActiveRelayMessage>,
+    ) -> anyhow::Result<()> {
         inc!(MagicsockMetrics, num_relay_conns_added);
         debug!("initial dial {}", self.url);
         self.relay_client
@@ -179,11 +182,16 @@ impl ActiveRelayActor {
             // If a read error occurred on the connection it might have been lost.  But we
             // need this connection to stay alive so we can receive more messages sent by
             // peers via the relay even if we don't start sending again first.
-            if !self.relay_client.is_connected() {
-                debug!("relay re-connecting");
-                self.relay_client.connect().await.context("keepalive")?;
-            }
+
+            // Always call this, it shortcircuits under the hood, if connected.
+            self.relay_client.connect().await.context("keepalive")?;
+
             tokio::select! {
+                biased;
+                _ = cancel_token.cancelled() => {
+                    debug!("shutdown");
+                    break;
+                }
                 msg = inbox.recv() => {
                     let Some(msg) = msg else {
                         debug!("all clients closed");
@@ -203,10 +211,6 @@ impl ActiveRelayActor {
                                 // details are used.
                                 ping_future.as_mut().set_future(fut);
                             }
-                        }
-                        ActiveRelayMessage::Shutdown => {
-                            debug!("shutdown");
-                            break;
                         }
                         #[cfg(test)]
                         ActiveRelayMessage::GetLocalAddr(sender) => {
@@ -696,10 +700,11 @@ impl RelayActor {
             connection_opts,
         };
         let actor = ActiveRelayActor::new(opts);
+        let relay_cancel_token = self.cancel_token.child_token();
         self.active_relay_tasks.spawn(
             async move {
                 // TODO: Make the actor itself infallible.
-                if let Err(err) = actor.run(inbox_rx).await {
+                if let Err(err) = actor.run(relay_cancel_token, inbox_rx).await {
                     warn!("actor error: {err:#}");
                 }
             }
@@ -744,16 +749,7 @@ impl RelayActor {
 
     /// Stops all [`ActiveRelayActor`]s and awaits for them to finish.
     async fn close_all_active_relays(&mut self) {
-        let send_futs = self.active_relays.iter().map(|(url, handle)| async move {
-            debug!(%url, "Shutting down ActiveRelayActor");
-            handle
-                .inbox_addr
-                .send(ActiveRelayMessage::Shutdown)
-                .await
-                .ok();
-        });
-        futures_buffered::join_all(send_futs).await;
-
+        self.cancel_token.cancel();
         let tasks = std::mem::take(&mut self.active_relay_tasks);
         tasks.join_all().await;
 
@@ -975,6 +971,7 @@ mod tests {
     /// Starts a new [`ActiveRelayActor`].
     fn start_active_relay_actor(
         secret_key: SecretKey,
+        cancel_token: CancellationToken,
         url: RelayUrl,
         inbox_rx: mpsc::Receiver<ActiveRelayMessage>,
         relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
@@ -995,7 +992,7 @@ mod tests {
         let task = tokio::spawn(
             async move {
                 let actor = ActiveRelayActor::new(opts);
-                actor.run(inbox_rx).await
+                actor.run(cancel_token, inbox_rx).await
             }
             .instrument(info_span!("actor-under-test")),
         );
@@ -1012,8 +1009,10 @@ mod tests {
         let recv_datagram_queue = Arc::new(RelayDatagramRecvQueue::new());
         let (send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
+        let cancel_token = CancellationToken::new();
         let actor_task = start_active_relay_actor(
             secret_key.clone(),
+            cancel_token.clone(),
             relay_url.clone(),
             inbox_rx,
             send_datagram_rx,
@@ -1040,6 +1039,7 @@ mod tests {
         });
         let echo_task = AbortOnDropHandle::new(echo_task);
         let supervisor_task = tokio::spawn(async move {
+            let _guard = cancel_token.drop_guard();
             // move the inbox_tx here so it is not dropped, as this stops the actor.
             let _inbox_tx = inbox_tx;
             tokio::select! {
@@ -1062,8 +1062,10 @@ mod tests {
         let datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
         let (send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
+        let cancel_token = CancellationToken::new();
         let task = start_active_relay_actor(
             secret_key,
+            cancel_token.clone(),
             relay_url.clone(),
             inbox_rx,
             send_datagram_rx,
@@ -1125,7 +1127,7 @@ mod tests {
         assert_eq!(recv.buf.as_ref(), b"hello");
 
         // Shut down the actor.
-        inbox_tx.send(ActiveRelayMessage::Shutdown).await?;
+        cancel_token.cancel();
         task.await??;
 
         Ok(())
@@ -1141,8 +1143,10 @@ mod tests {
         let datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
         let (_send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
+        let cancel_token = CancellationToken::new();
         let mut task = start_active_relay_actor(
             secret_key,
+            cancel_token.clone(),
             relay_url,
             inbox_rx,
             send_datagram_rx,
@@ -1182,6 +1186,8 @@ mod tests {
                 .is_ok(),
             "actor task still running"
         );
+
+        cancel_token.cancel();
 
         Ok(())
     }
