@@ -1,5 +1,7 @@
-use std::net::{IpAddr, Ipv6Addr};
-use std::sync::OnceLock;
+use std::{
+    net::{IpAddr, Ipv6Addr},
+    sync::OnceLock,
+};
 
 use anyhow::Result;
 use hickory_resolver::{Resolver, TokioResolver};

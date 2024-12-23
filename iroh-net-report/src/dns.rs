@@ -182,8 +182,10 @@ async fn stagger_call<T, F: Fn() -> Fut, Fut: Future<Output = Result<T>>>(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::sync::OnceLock;
-    use std::{net::Ipv6Addr, sync::atomic::AtomicUsize};
+    use std::{
+        net::Ipv6Addr,
+        sync::{atomic::AtomicUsize, OnceLock},
+    };
 
     use super::*;
 
