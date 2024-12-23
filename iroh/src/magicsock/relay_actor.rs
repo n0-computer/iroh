@@ -199,9 +199,9 @@ impl ActiveRelayActor {
                         }
                         ActiveRelayMessage::CheckConnection(local_ips) => {
                             if let Some(fut) = self.handle_check_connection(local_ips).await {
-                                if ping_future.is_none() {
-                                    ping_future.as_mut().set_future(fut);
-                                }
+                                // We always override the future, to make sure the latest connection
+                                // details are used.
+                                ping_future.as_mut().set_future(fut);
                             }
                         }
                         ActiveRelayMessage::Shutdown => {
