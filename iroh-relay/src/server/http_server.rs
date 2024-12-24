@@ -24,12 +24,12 @@ use tokio_tungstenite::{
 use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
+use super::clients::Clients;
 use crate::{
-    defaults::DEFAULT_KEY_CACHE_CAPACITY,
+    defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
     protos::relay::{recv_client_key, RelayCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION},
     server::{
-        actor::ServerActorTask,
         client_conn::ClientConnConfig,
         metrics::Metrics,
         streams::{MaybeTlsStream, RelayedStream},
@@ -220,12 +220,10 @@ impl ServerBuilder {
     /// Builds and spawns an HTTP(S) Relay Server.
     pub(super) async fn spawn(self) -> Result<Server> {
         let cancel_token = CancellationToken::new();
-        let server_task = ServerActorTask::default();
 
         let service = RelayService::new(
             self.handlers,
             self.headers,
-            server_task,
             self.client_rx_ratelimit,
             KeyCache::new(self.key_cache_capacity),
         );
@@ -302,7 +300,7 @@ struct RelayService(Arc<Inner>);
 struct Inner {
     handlers: Handlers,
     headers: HeaderMap,
-    server_task: ServerActorTask,
+    clients: Clients,
     write_timeout: Duration,
     rate_limit: Option<ClientConnRateLimit>,
     key_cache: KeyCache,
@@ -527,10 +525,16 @@ impl Inner {
             write_timeout: self.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
             rate_limit: self.rate_limit,
-            clients: self.server_task.clients.clone(),
+            clients: self.clients.clone(),
         };
         trace!("accept: create client");
-        self.server_task.create_client(client_conn_builder).await?;
+        inc!(Metrics, accepts);
+        let node_id = client_conn_builder.node_id;
+        trace!(node_id = node_id.fmt_short(), "create client");
+
+        // build and register client, starting up read & write loops for the client
+        // connection
+        self.clients.register(client_conn_builder).await;
         Ok(())
     }
 }
@@ -549,23 +553,21 @@ impl RelayService {
     fn new(
         handlers: Handlers,
         headers: HeaderMap,
-        server_task: ServerActorTask,
         rate_limit: Option<ClientConnRateLimit>,
         key_cache: KeyCache,
     ) -> Self {
-        let write_timeout = server_task.write_timeout;
         Self(Arc::new(Inner {
             handlers,
             headers,
-            server_task,
-            write_timeout,
+            clients: Clients::default(),
+            write_timeout: SERVER_WRITE_TIMEOUT,
             rate_limit,
             key_cache,
         }))
     }
 
     async fn shutdown(&self) {
-        self.0.server_task.clients.shutdown().await;
+        self.0.clients.shutdown().await;
     }
 
     /// Handle the incoming connection.
@@ -915,11 +917,9 @@ mod tests {
         let _guard = iroh_test::logging::setup();
 
         info!("Create the server.");
-        let server_task: ServerActorTask = ServerActorTask::default();
         let service = RelayService::new(
             Default::default(),
             Default::default(),
-            server_task,
             None,
             KeyCache::test(),
         );
@@ -1002,11 +1002,9 @@ mod tests {
             .ok();
 
         info!("Create the server.");
-        let server_task: ServerActorTask = ServerActorTask::default();
         let service = RelayService::new(
             Default::default(),
             Default::default(),
-            server_task,
             None,
             KeyCache::test(),
         );

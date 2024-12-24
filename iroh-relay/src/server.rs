@@ -42,7 +42,6 @@ use crate::{
     quic::server::{QuicServer, ServerHandle as QuicServerHandle},
 };
 
-pub(crate) mod actor;
 pub(crate) mod client_conn;
 mod clients;
 mod http_server;

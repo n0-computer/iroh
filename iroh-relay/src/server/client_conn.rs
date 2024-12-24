@@ -19,8 +19,17 @@ use crate::{
         disco,
         relay::{write_frame, Frame, KEEP_ALIVE},
     },
-    server::{actor::Packet, metrics::Metrics, streams::RelayedStream, ClientConnRateLimit},
+    server::{metrics::Metrics, streams::RelayedStream, ClientConnRateLimit},
 };
+
+/// A request to write a dataframe to a Client
+#[derive(Debug, Clone)]
+pub(super) struct Packet {
+    /// The sender of the packet
+    pub(super) src: NodeId,
+    /// The data packet bytes.
+    pub(super) data: Bytes,
+}
 
 /// Configuration for a [`ClientConn`].
 #[derive(Debug)]

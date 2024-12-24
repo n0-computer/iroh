@@ -14,8 +14,7 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{trace, warn};
 
 use super::{
-    actor::Packet,
-    client_conn::{ClientConn, ClientConnConfig},
+    client_conn::{ClientConn, ClientConnConfig, Packet},
     metrics::Metrics,
 };
 
@@ -98,7 +97,7 @@ impl Clients {
     pub async fn send_packet(&self, dst: NodeId, data: Bytes, src: NodeId) -> Result<()> {
         let clients = self.inner.read().await;
         if let Some(client) = clients.get(&dst) {
-            let res = client.send_packet(Packet { data, src });
+            let res = client.send_packet(src, data);
             drop(clients);
             return self.process_result(src, dst, res).await;
         }
@@ -108,7 +107,7 @@ impl Clients {
     pub async fn send_disco_packet(&self, dst: NodeId, data: Bytes, src: NodeId) -> Result<()> {
         let clients = self.inner.read().await;
         if let Some(client) = clients.get(&dst) {
-            let res = client.send_disco_packet(Packet { data, src });
+            let res = client.send_disco_packet(src, data);
             drop(clients);
             return self.process_result(src, dst, res).await;
         }
@@ -168,12 +167,12 @@ impl Client {
         self.conn.shutdown().await;
     }
 
-    fn send_packet(&self, packet: Packet) -> Result<(), SendError> {
-        try_send(&self.conn.send_queue, packet)
+    fn send_packet(&self, src: NodeId, data: Bytes) -> Result<(), SendError> {
+        try_send(&self.conn.send_queue, Packet { src, data })
     }
 
-    fn send_disco_packet(&self, packet: Packet) -> Result<(), SendError> {
-        try_send(&self.conn.disco_send_queue, packet)
+    fn send_disco_packet(&self, src: NodeId, data: Bytes) -> Result<(), SendError> {
+        try_send(&self.conn.disco_send_queue, Packet { src, data })
     }
 
     fn send_peer_gone(&self, key: NodeId) -> Result<(), SendError> {
