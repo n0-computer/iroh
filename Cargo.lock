@@ -1132,15 +1132,6 @@ checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
 
 [[package]]
 name = "fastrand"
-version = "1.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e51093e27b0797c359783294ca4f0a911c270184cb10f85783b118614a1501be"
-dependencies = [
- "instant",
-]
-
-[[package]]
-name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
@@ -1150,12 +1141,6 @@ name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
-
-[[package]]
-name = "fixedbitset"
-version = "0.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "flume"
@@ -1238,21 +1223,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "futures-concurrency"
-version = "7.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9b724496da7c26fcce66458526ce68fc2ecf4aaaa994281cf322ded5755520c"
-dependencies = [
- "fixedbitset",
- "futures-buffered",
- "futures-core",
- "futures-lite 1.13.0",
- "pin-project",
- "slab",
- "smallvec",
-]
-
-[[package]]
 name = "futures-core"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1277,26 +1247,11 @@ checksum = "9e5c1b78ca4aae1ac06c48a526a655760685149f0d465d21f37abfe57ce075c6"
 
 [[package]]
 name = "futures-lite"
-version = "1.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49a9d51ce47660b1e808d3c990b4709f2f415d928835a17dfd16991515c46bce"
-dependencies = [
- "fastrand 1.9.0",
- "futures-core",
- "futures-io",
- "memchr",
- "parking",
- "pin-project-lite",
- "waker-fn",
-]
-
-[[package]]
-name = "futures-lite"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cef40d21ae2c515b51041df9ed313ed21e572df340ea58a922a0aefe7e8891a1"
 dependencies = [
- "fastrand 2.3.0",
+ "fastrand",
  "futures-core",
  "futures-io",
  "parking",
@@ -2068,8 +2023,7 @@ dependencies = [
  "derive_more",
  "ed25519-dalek",
  "futures-buffered",
- "futures-concurrency",
- "futures-lite 2.5.0",
+ "futures-lite",
  "futures-sink",
  "futures-util",
  "governor 0.7.0",
@@ -2169,7 +2123,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
- "futures-lite 2.5.0",
+ "futures-lite",
  "hdrhistogram",
  "iroh",
  "iroh-metrics",
@@ -2196,7 +2150,7 @@ dependencies = [
  "criterion",
  "derive_more",
  "dirs-next",
- "futures-lite 2.5.0",
+ "futures-lite",
  "governor 0.6.3",
  "hickory-resolver",
  "hickory-server",
@@ -2261,7 +2215,7 @@ dependencies = [
  "bytes",
  "derive_more",
  "futures-buffered",
- "futures-lite 2.5.0",
+ "futures-lite",
  "hickory-resolver",
  "iroh-base",
  "iroh-metrics",
@@ -2345,7 +2299,7 @@ dependencies = [
  "data-encoding",
  "derive_more",
  "futures-buffered",
- "futures-lite 2.5.0",
+ "futures-lite",
  "futures-sink",
  "futures-util",
  "governor 0.7.0",
@@ -2804,7 +2758,7 @@ dependencies = [
  "atomic-waker",
  "bytes",
  "derive_more",
- "futures-lite 2.5.0",
+ "futures-lite",
  "futures-sink",
  "futures-util",
  "iroh-quinn-udp",
@@ -3279,7 +3233,7 @@ dependencies = [
  "base64",
  "bytes",
  "derive_more",
- "futures-lite 2.5.0",
+ "futures-lite",
  "futures-util",
  "igd-next",
  "iroh-metrics",
@@ -4516,7 +4470,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28cce251fcbc87fac86a866eeb0d6c2d536fc16d06f184bb61aeae11aa4cee0c"
 dependencies = [
  "cfg-if",
- "fastrand 2.3.0",
+ "fastrand",
  "once_cell",
  "rustix",
  "windows-sys 0.59.0",
@@ -5132,12 +5086,6 @@ checksum = "9f200f5b12eb75f8c1ed65abd4b2db8a6e1b138a20de009dacee265a2498f3f6"
 dependencies = [
  "libc",
 ]
-
-[[package]]
-name = "waker-fn"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "317211a0dc0ceedd78fb2ca9a44aed3d7b9b26f81870d485c07122b4350673b7"
 
 [[package]]
 name = "walkdir"

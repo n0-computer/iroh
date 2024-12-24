@@ -36,7 +36,6 @@ derive_more = { version = "1.0.0", features = [
 ] }
 ed25519-dalek = "2.0"
 futures-buffered = "0.2.8"
-futures-concurrency = "7.6"
 futures-lite = "2.5"
 futures-sink = "0.3"
 futures-util = "0.3"
