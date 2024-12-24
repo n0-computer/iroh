@@ -1104,26 +1104,7 @@
 <a href="#1103" id="1103">1103</a>
 <a href="#1104" id="1104">1104</a>
 <a href="#1105" id="1105">1105</a>
-<a href="#1106" id="1106">1106</a>
-<a href="#1107" id="1107">1107</a>
-<a href="#1108" id="1108">1108</a>
-<a href="#1109" id="1109">1109</a>
-<a href="#1110" id="1110">1110</a>
-<a href="#1111" id="1111">1111</a>
-<a href="#1112" id="1112">1112</a>
-<a href="#1113" id="1113">1113</a>
-<a href="#1114" id="1114">1114</a>
-<a href="#1115" id="1115">1115</a>
-<a href="#1116" id="1116">1116</a>
-<a href="#1117" id="1117">1117</a>
-<a href="#1118" id="1118">1118</a>
-<a href="#1119" id="1119">1119</a>
-<a href="#1120" id="1120">1120</a>
-<a href="#1121" id="1121">1121</a>
-<a href="#1122" id="1122">1122</a>
-<a href="#1123" id="1123">1123</a>
-<a href="#1124" id="1124">1124</a>
-<a href="#1125" id="1125">1125</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
+<a href="#1106" id="1106">1106</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
 //! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
@@ -2021,31 +2002,15 @@
         </span><span class="kw">let </span>a_secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>a_key = a_secret_key.public();
         <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::default_resolver().clone();
-        <span class="kw">let </span><span class="kw-2">mut </span>client_a = ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
-        <span class="kw">let </span>connect_client = <span class="kw-2">&amp;mut </span>client_a;
-
-        <span class="comment">// give the relay server some time to accept connections
-        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), <span class="kw">async move </span>{
-            <span class="kw">loop </span>{
-                <span class="kw">match </span>connect_client.connect().<span class="kw">await </span>{
-                    <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="kw">break</span>,
-                    <span class="prelude-val">Err</span>(err) =&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"client unable to connect to relay server: {err:#}"</span>);
-                        tokio::time::sleep(Duration::from_millis(<span class="number">100</span>)).<span class="kw">await</span>;
-                    }
-                }
-            }
-        })
-        .<span class="kw">await
-        </span>{
-            <span class="macro">panic!</span>(<span class="string">"error connecting to relay server: {err:#}"</span>);
-        }
+        <span class="kw">let </span><span class="kw-2">mut </span>client_a =
+            ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver.clone());
+        client_a.connect().<span class="kw">await</span>.unwrap();
 
         <span class="comment">// set up client b
         </span><span class="kw">let </span>b_secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>b_key = b_secret_key.public();
-        <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::default_resolver().clone();
-        <span class="kw">let </span><span class="kw-2">mut </span>client_b = ClientBuilder::new(relay_url.clone()).build(b_secret_key, resolver);
+        <span class="kw">let </span><span class="kw-2">mut </span>client_b =
+            ClientBuilder::new(relay_url.clone()).build(b_secret_key, resolver.clone());
         client_b.connect().<span class="kw">await</span>.unwrap();
 
         <span class="comment">// send message from a to b
@@ -2113,9 +2078,6 @@
         <span class="comment">// should already be connected after building the client
         </span><span class="macro">info!</span>(<span class="string">"client b connect"</span>);
         client_b.connect().<span class="kw">await</span><span class="question-mark">?</span>;
-
-        <span class="comment">// wait a moment for the relay server to connect
-        </span>tokio::time::sleep(Duration::from_millis(<span class="number">500</span>)).<span class="kw">await</span>;
 
         <span class="macro">info!</span>(<span class="string">"sending a -&gt; b"</span>);
 

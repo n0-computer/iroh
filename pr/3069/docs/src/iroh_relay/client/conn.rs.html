@@ -315,7 +315,19 @@
 <a href="#314" id="314">314</a>
 <a href="#315" id="315">315</a>
 <a href="#316" id="316">316</a>
-<a href="#317" id="317">317</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
 //!
 //! based on tailscale/derp/derp_client.go
 
@@ -327,7 +339,7 @@
 
 <span class="kw">use </span>anyhow::{bail, ensure, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
-<span class="kw">use </span>futures_lite::Stream;
+<span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>futures_sink::Sink;
 <span class="kw">use </span>futures_util::SinkExt;
 <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
@@ -436,7 +448,19 @@
         version: PROTOCOL_VERSION,
     };
     <span class="macro">debug!</span>(<span class="string">"server_handshake: sending client_key: {:?}"</span>, <span class="kw-2">&amp;</span>client_info);
-    <span class="kw">crate</span>::protos::relay::send_client_key(writer, secret_key, <span class="kw-2">&amp;</span>client_info).<span class="kw">await</span><span class="question-mark">?</span>;
+    <span class="kw">crate</span>::protos::relay::send_client_key(<span class="kw-2">&amp;mut *</span>writer, secret_key, <span class="kw-2">&amp;</span>client_info).<span class="kw">await</span><span class="question-mark">?</span>;
+
+    <span class="macro">debug!</span>(<span class="string">"server_handshake: recv ing"</span>);
+    <span class="kw">match </span>writer.next().<span class="kw">await </span>{
+        <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(frame)) =&gt; {
+            <span class="kw">let </span>ReceivedMessage::Ping(data) = frame <span class="kw">else </span>{
+                <span class="macro">bail!</span>(<span class="string">"expected pong, got: {:?}"</span>, frame);
+            };
+            <span class="macro">ensure!</span>(data == [<span class="number">1u8</span>; <span class="number">8</span>], <span class="string">"unexpected ping data"</span>);
+        }
+        <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(err),
+        <span class="prelude-val">None </span>=&gt; <span class="macro">bail!</span>(<span class="string">"EOF: unexpected stream end"</span>),
+    }
 
     <span class="macro">debug!</span>(<span class="string">"server_handshake: done"</span>);
     <span class="prelude-val">Ok</span>(())
