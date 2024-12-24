@@ -18,23 +18,29 @@ use crate::{
         disco,
         relay::{write_frame, Frame, KEEP_ALIVE},
     },
-    server::{
-        actor::{self, Packet},
-        metrics::Metrics,
-        streams::RelayedStream,
-        ClientConnRateLimit,
-    },
+    server::{clients::Clients, metrics::Metrics, streams::RelayedStream, ClientRateLimit},
 };
 
-/// Configuration for a [`ClientConn`].
+/// A request to write a dataframe to a Client
+#[derive(Debug, Clone)]
+struct Packet {
+    /// The sender of the packet
+    src: NodeId,
+    /// The data packet bytes.
+    data: Bytes,
+}
+
+/// Number of times we try to send to a client connection before dropping the data;
+const RETRIES: usize = 3;
+
+/// Configuration for a [`Client`].
 #[derive(Debug)]
-pub(super) struct ClientConnConfig {
+pub(super) struct Config {
     pub(super) node_id: NodeId,
     pub(super) stream: RelayedStream,
     pub(super) write_timeout: Duration,
     pub(super) channel_capacity: usize,
-    pub(super) rate_limit: Option<ClientConnRateLimit>,
-    pub(super) server_channel: mpsc::Sender<actor::Message>,
+    pub(super) rate_limit: Option<ClientRateLimit>,
 }
 
 /// The [`Server`] side representation of a [`Client`]'s connection.
@@ -42,35 +48,32 @@ pub(super) struct ClientConnConfig {
 /// [`Server`]: crate::server::Server
 /// [`Client`]: crate::client::Client
 #[derive(Debug)]
-pub(super) struct ClientConn {
-    /// Unique counter, incremented each time we accept a new connection.
-    pub(super) conn_num: usize,
+pub(super) struct Client {
     /// Identity of the connected peer.
-    pub(super) key: NodeId,
+    node_id: NodeId,
     /// Used to close the connection loop.
     done: CancellationToken,
     /// Actor handle.
     handle: AbortOnDropHandle<()>,
     /// Queue of packets intended for the client.
-    pub(super) send_queue: mpsc::Sender<Packet>,
+    send_queue: mpsc::Sender<Packet>,
     /// Queue of disco packets intended for the client.
-    pub(super) disco_send_queue: mpsc::Sender<Packet>,
+    disco_send_queue: mpsc::Sender<Packet>,
     /// Channel to notify the client that a previous sender has disconnected.
-    pub(super) peer_gone: mpsc::Sender<NodeId>,
+    peer_gone: mpsc::Sender<NodeId>,
 }
 
-impl ClientConn {
+impl Client {
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
-    /// Call [`ClientConn::shutdown`] to close the read and write loops before dropping the [`ClientConn`]
-    pub fn new(config: ClientConnConfig, conn_num: usize) -> ClientConn {
-        let ClientConnConfig {
-            node_id: key,
+    /// Call [`Client::shutdown`] to close the read and write loops before dropping the [`Client`]
+    pub(super) fn new(config: Config, clients: &Clients) -> Client {
+        let Config {
+            node_id,
             stream: io,
             write_timeout,
             channel_capacity,
             rate_limit,
-            server_channel,
         } = config;
 
         let stream = match rate_limit {
@@ -86,7 +89,6 @@ impl ClientConn {
         };
 
         let done = CancellationToken::new();
-        let client_id = (key, conn_num);
         let (send_queue_s, send_queue_r) = mpsc::channel(channel_capacity);
 
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(channel_capacity);
@@ -98,43 +100,30 @@ impl ClientConn {
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
             node_gone: peer_gone_r,
-            key,
-            preferred: false,
-            server_channel: server_channel.clone(),
+            node_id,
+            clients: clients.clone(),
         };
 
         // start io loop
         let io_done = done.clone();
-        let io_client_id = client_id;
+        let io_client_id = node_id;
         let handle = tokio::task::spawn(
             async move {
-                let (key, conn_num) = io_client_id;
-                let res = actor.run(io_done).await;
-
-                // remove the client when the actor terminates, no matter how it exits
-                let _ = server_channel
-                    .send(actor::Message::RemoveClient {
-                        node_id: key,
-                        conn_num,
-                    })
-                    .await;
-                match res {
+                let key = io_client_id;
+                match actor.run(io_done).await {
                     Err(e) => {
-                        warn!(
-                            "connection manager for {key:?} {conn_num}: writer closed in error {e}"
-                        );
+                        warn!("connection manager for {key:?}: writer closed in error {e:?}");
                     }
                     Ok(()) => {
-                        info!("connection manager for {key:?} {conn_num}: writer closed");
+                        info!("connection manager for {key:?}: writer closed");
                     }
                 }
             }
             .instrument(tracing::info_span!("client_conn_actor")),
         );
 
-        ClientConn {
-            conn_num,
-            key,
+        Client {
+            node_id,
             handle: AbortOnDropHandle::new(handle),
             done,
             send_queue: send_queue_s,
@@ -146,15 +135,53 @@ impl ClientConn {
     /// Shutdown the reader and writer loops and closes the connection.
     ///
     /// Any shutdown errors will be logged as warnings.
-    pub async fn shutdown(self) {
+    pub(super) async fn shutdown(self) {
         self.done.cancel();
         if let Err(e) = self.handle.await {
             warn!(
-                "error closing actor loop for client connection {:?} {}: {e:?}",
-                self.key, self.conn_num
+                "error closing actor loop for client connection {:?}: {e:?}",
+                self.node_id,
             );
         };
     }
+
+    pub(super) fn send_packet(&self, src: NodeId, data: Bytes) -> Result<(), SendError> {
+        try_send(&self.send_queue, Packet { src, data })
+    }
+
+    pub(super) fn send_disco_packet(&self, src: NodeId, data: Bytes) -> Result<(), SendError> {
+        try_send(&self.disco_send_queue, Packet { src, data })
+    }
+
+    pub(super) fn send_peer_gone(&self, key: NodeId) -> Result<(), SendError> {
+        try_send(&self.peer_gone, key)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(super) enum SendError {
+    #[error("packet dropped")]
+    PacketDropped,
+    #[error("sender closed")]
+    SenderClosed,
+}
+
+/// Tries up to `3` times to send a message into the given channel, retrying iff it is full.
+fn try_send<T>(sender: &mpsc::Sender<T>, msg: T) -> Result<(), SendError> {
+    let mut msg = msg;
+    for _ in 0..RETRIES {
+        match sender.try_send(msg) {
+            Ok(_) => {
+                return Ok(());
+            }
+            // if the queue is full, try again (max 3 times)
+            Err(mpsc::error::TrySendError::Full(m)) => msg = m,
+            // only other option is `TrySendError::Closed`, report the
+            // closed error
+            Err(_) => return Err(SendError::SenderClosed),
+        }
+    }
+    Err(SendError::PacketDropped)
 }
 
 /// Manages all the reads and writes to this client. It periodically sends a `KEEP_ALIVE`
@@ -173,7 +200,6 @@ impl ClientConn {
 ///
 /// On the "read" side, it can:
 ///     - receive a ping and write a pong back
-///     - note whether the client is `preferred`, aka this client is the preferred way
 ///     to speak to the node ID associated with that client.
 #[derive(Debug)]
 struct Actor {
@@ -188,13 +214,9 @@ struct Actor {
     /// Notify the client that a previous sender has disconnected
     node_gone: mpsc::Receiver<NodeId>,
     /// [`NodeId`] of this client
-    key: NodeId,
-    /// Channel used to communicate with the server about actions
-    /// it needs to take on behalf of the client
-    server_channel: mpsc::Sender<actor::Message>,
-    /// Notes that the client considers this the preferred connection (important in cases
-    /// where the client moves to a different network, but has the same NodeId)
-    preferred: bool,
+    node_id: NodeId,
+    /// Reference to the other connected clients.
+    clients: Clients,
 }
 
 impl Actor {
@@ -214,35 +236,24 @@ impl Actor {
                     self.stream.flush().await.context("flush")?;
                     break;
                 }
-                read_res = self.stream.next() => {
-                    trace!("handle frame");
-                    match read_res {
-                        Some(Ok(frame)) => {
-                            self.handle_frame(frame).await.context("handle_read")?;
-                        }
-                        Some(Err(err)) => {
-                            return Err(err);
-                        }
-                        None => {
-                            // Unexpected EOF
-                            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "read stream ended").into());
-                        }
-                    }
+                maybe_frame = self.stream.next() => {
+                    self.handle_frame(maybe_frame).await.context("handle read")?;
                 }
+                // First priority, disco packets
+                packet = self.disco_send_queue.recv() => {
+                    let packet = packet.context("Server.disco_send_queue dropped")?;
+                    self.send_disco_packet(packet).await.context("send packet")?;
+                }
+                // Second priority, sending regular packets
+                packet = self.send_queue.recv() => {
+                    let packet = packet.context("Server.send_queue dropped")?;
+                    self.send_packet(packet).await.context("send packet")?;
+                }
+                // Last priority, sending left nodes
                 node_id = self.node_gone.recv() => {
                     let node_id = node_id.context("Server.node_gone dropped")?;
                     trace!("node_id gone: {:?}", node_id);
                     self.write_frame(Frame::NodeGone { node_id }).await?;
-                }
-                packet = self.send_queue.recv() => {
-                    let packet = packet.context("Server.send_queue dropped")?;
-                    trace!("send packet");
-                    self.send_packet(packet).await.context("send packet")?;
-                }
-                packet = self.disco_send_queue.recv() => {
-                    let packet = packet.context("Server.disco_send_queue dropped")?;
-                    trace!("send disco packet");
-                    self.send_packet(packet).await.context("send packet")?;
                 }
                 _ = keep_alive.tick() => {
                     trace!("keep alive");
@@ -265,7 +276,7 @@ impl Actor {
     ///
     /// Errors if the send does not happen within the `timeout` duration
     /// Does not flush.
-    async fn send_packet(&mut self, packet: Packet) -> Result<()> {
+    async fn send_raw(&mut self, packet: Packet) -> Result<()> {
         let src_key = packet.src;
         let content = packet.data;
 
@@ -276,17 +287,42 @@ impl Actor {
             .await
     }
 
-    /// Handles frame read results.
-    async fn handle_frame(&mut self, frame: Frame) -> Result<()> {
-        // TODO: "note client activity", meaning we update the server that the client with this
-        // public key was the last one to receive data
-        // it will be relevant when we add the ability to hold onto multiple clients
-        // for the same public key
-        match frame {
-            Frame::NotePreferred { preferred } => {
-                self.preferred = preferred;
-                inc!(Metrics, other_packets_recv);
+    async fn send_packet(&mut self, packet: Packet) -> Result<()> {
+        trace!("send packet");
+        match self.send_raw(packet).await {
+            Ok(()) => {
+                inc!(Metrics, send_packets_sent);
+                Ok(())
             }
+            Err(err) => {
+                inc!(Metrics, send_packets_dropped);
+                Err(err)
+            }
+        }
+    }
+
+    async fn send_disco_packet(&mut self, packet: Packet) -> Result<()> {
+        trace!("send disco packet");
+        match self.send_raw(packet).await {
+            Ok(()) => {
+                inc!(Metrics, disco_packets_sent);
+                Ok(())
+            }
+            Err(err) => {
+                inc!(Metrics, disco_packets_dropped);
+                Err(err)
+            }
+        }
+    }
+
+    /// Handles frame read results.
+    async fn handle_frame(&mut self, maybe_frame: Option<Result<Frame>>) -> Result<()> {
+        trace!(?maybe_frame, "handle incoming frame");
+        let frame = match maybe_frame {
+            Some(frame) => frame?,
+            None => anyhow::bail!("stream terminated"),
+        };
+        match frame {
             Frame::SendPacket { dst_key, packet } => {
                 let packet_len = packet.len();
                 self.handle_frame_send_packet(dst_key, packet).await?;
@@ -308,27 +344,16 @@ impl Actor {
         Ok(())
     }
 
-    async fn handle_frame_send_packet(&self, dst_key: NodeId, data: Bytes) -> Result<()> {
-        let message = if disco::looks_like_disco_wrapper(&data) {
+    async fn handle_frame_send_packet(&self, dst: NodeId, data: Bytes) -> Result<()> {
+        if disco::looks_like_disco_wrapper(&data) {
             inc!(Metrics, disco_packets_recv);
-            actor::Message::SendDiscoPacket {
-                dst: dst_key,
-                src: self.key,
-                data,
-            }
+            self.clients
+                .send_disco_packet(dst, data, self.node_id)
+                .await?;
         } else {
             inc!(Metrics, send_packets_recv);
-            actor::Message::SendPacket {
-                dst: dst_key,
-                src: self.key,
-                data,
-            }
-        };
-
-        self.server_channel
-            .send(message)
-            .await
-            .map_err(|_| anyhow::anyhow!("server gone"))?;
+            self.clients.send_packet(dst, data, self.node_id).await?;
+        }
         Ok(())
     }
 }
@@ -509,7 +534,6 @@ impl Sink<Frame> for RateLimitedRelayedStream {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::bail;
     use bytes::Bytes;
     use iroh_base::SecretKey;
     use testresult::TestResult;
@@ -523,27 +547,27 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_actor_basic() -> Result<()> {
+        let _logging = iroh_test::logging::setup();
+
         let (send_queue_s, send_queue_r) = mpsc::channel(10);
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
 
-        let key = SecretKey::generate(rand::thread_rng()).public();
+        let node_id = SecretKey::generate(rand::thread_rng()).public();
         let (io, io_rw) = tokio::io::duplex(1024);
         let mut io_rw = Framed::new(io_rw, RelayCodec::test());
-        let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
         let stream =
             RelayedStream::Relay(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
 
+        let clients = Clients::default();
         let actor = Actor {
             stream: RateLimitedRelayedStream::unlimited(stream),
             timeout: Duration::from_secs(1),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
             node_gone: peer_gone_r,
-
-            key,
-            server_channel: server_channel_s,
-            preferred: true,
+            node_id,
+            clients: clients.clone(),
         };
 
         let done = CancellationToken::new();
@@ -557,7 +581,7 @@ mod tests {
         // send packet
         println!("  send packet");
         let packet = Packet {
-            src: key,
+            src: node_id,
             data: Bytes::from(&data[..]),
         };
         send_queue_s.send(packet.clone()).await?;
@@ -565,7 +589,7 @@ mod tests {
         assert_eq!(
             frame,
             Frame::RecvPacket {
-                src_key: key,
+                src_key: node_id,
                 content: data.to_vec().into()
             }
         );
@@ -577,16 +601,16 @@ mod tests {
         assert_eq!(
             frame,
             Frame::RecvPacket {
-                src_key: key,
+                src_key: node_id,
                 content: data.to_vec().into()
             }
         );
 
         // send peer_gone
         println!("send peer gone");
-        peer_gone_s.send(key).await?;
+        peer_gone_s.send(node_id).await?;
         let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
-        assert_eq!(frame, Frame::NodeGone { node_id: key });
+        assert_eq!(frame, Frame::NodeGone { node_id });
 
         // Read tests
         println!("--read");
@@ -600,72 +624,19 @@ mod tests {
         let frame = recv_frame(FrameType::Pong, &mut io_rw).await?;
         assert_eq!(frame, Frame::Pong { data: *data });
 
-        // change preferred to false
-        println!("  preferred: false");
-        write_frame(&mut io_rw, Frame::NotePreferred { preferred: false }, None).await?;
-        // tokio::time::sleep(Duration::from_millis(100)).await;
-        // assert!(!preferred.load(Ordering::Relaxed));
-
-        // change preferred to true
-        println!("  preferred: true");
-        write_frame(&mut io_rw, Frame::NotePreferred { preferred: true }, None).await?;
-        // tokio::time::sleep(Duration::from_millis(100)).await;
-        // assert!(preferred.fetch_and(true, Ordering::Relaxed));
-
         let target = SecretKey::generate(rand::thread_rng()).public();
 
         // send packet
         println!("  send packet");
         let data = b"hello world!";
-        io_rw
-            .send(Frame::SendPacket {
-                dst_key: target,
-                packet: Bytes::from_static(data),
-            })
-            .await?;
-        let msg = server_channel_r.recv().await.unwrap();
-        match msg {
-            actor::Message::SendPacket {
-                dst: got_target,
-                data: got_data,
-                src: got_src,
-            } => {
-                assert_eq!(target, got_target);
-                assert_eq!(key, got_src);
-                assert_eq!(&data[..], &got_data);
-            }
-            m => {
-                bail!("expected ServerMessage::SendPacket, got {m:?}");
-            }
-        }
-
+        conn::send_packet(&mut io_rw, target, Bytes::from_static(data)).await?;
         // send disco packet
         println!("  send disco packet");
         // starts with `MAGIC` & key, then data
         let mut disco_data = disco::MAGIC.as_bytes().to_vec();
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
-        io_rw
-            .send(Frame::SendPacket {
-                dst_key: target,
-                packet: disco_data.clone().into(),
-            })
-            .await?;
-        let msg = server_channel_r.recv().await.unwrap();
-        match msg {
-            actor::Message::SendDiscoPacket {
-                dst: got_target,
-                src: got_src,
-                data: got_data,
-            } => {
-                assert_eq!(target, got_target);
-                assert_eq!(key, got_src);
-                assert_eq!(&disco_data[..], &got_data);
-            }
-            m => {
-                bail!("expected ServerMessage::SendDiscoPacket, got {m:?}");
-            }
-        }
+        conn::send_packet(&mut io_rw, target, disco_data.clone().into()).await?;
 
         done.cancel();
         handle.await??;

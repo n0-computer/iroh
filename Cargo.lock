@@ -2267,6 +2267,7 @@ dependencies = [
  "bytes",
  "clap",
  "crypto_box",
+ "dashmap 6.1.0",
  "data-encoding",
  "derive_more",
  "futures-buffered",

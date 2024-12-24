@@ -15,10 +15,7 @@ use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
 };
 use iroh_metrics::inc;
-use tokio::{
-    net::{TcpListener, TcpStream},
-    sync::mpsc,
-};
+use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_tungstenite::{
     tungstenite::{handshake::derive_accept_key, protocol::Role},
@@ -27,16 +24,16 @@ use tokio_tungstenite::{
 use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
+use super::clients::Clients;
 use crate::{
-    defaults::DEFAULT_KEY_CACHE_CAPACITY,
+    defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
     protos::relay::{recv_client_key, RelayCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION},
     server::{
-        actor::{Message, ServerActorTask},
-        client_conn::ClientConnConfig,
+        client::Config,
         metrics::Metrics,
         streams::{MaybeTlsStream, RelayedStream},
-        ClientConnRateLimit,
+        ClientRateLimit,
     },
     KeyCache,
 };
@@ -162,7 +159,7 @@ pub(super) struct ServerBuilder {
     ///
     /// Rate-limiting is enforced on received traffic from individual clients.  This
     /// configuration applies to a single client connection.
-    client_rx_ratelimit: Option<ClientConnRateLimit>,
+    client_rx_ratelimit: Option<ClientRateLimit>,
     /// The capacity of the key cache.
     key_cache_capacity: usize,
 }
@@ -190,7 +187,7 @@ impl ServerBuilder {
     ///
     /// On each client connection the incoming data is rate-limited.  By default
     /// no rate limit is enforced.
-    pub(super) fn client_rx_ratelimit(mut self, config: ClientConnRateLimit) -> Self {
+    pub(super) fn client_rx_ratelimit(mut self, config: ClientRateLimit) -> Self {
         self.client_rx_ratelimit = Some(config);
         self
     }
@@ -222,12 +219,11 @@ impl ServerBuilder {
 
     /// Builds and spawns an HTTP(S) Relay Server.
     pub(super) async fn spawn(self) -> Result<Server> {
-        let server_task = ServerActorTask::spawn();
+        let cancel_token = CancellationToken::new();
+
         let service = RelayService::new(
             self.handlers,
             self.headers,
-            server_task.server_channel.clone(),
-            server_task.write_timeout,
             self.client_rx_ratelimit,
             KeyCache::new(self.key_cache_capacity),
         );
@@ -241,14 +237,11 @@ impl ServerBuilder {
             .await
             .with_context(|| format!("failed to bind server socket to {addr}"))?;
 
-        // we will use this cancel token to stop the infinite loop in the `listener.accept() task`
-        let cancel_server_loop = CancellationToken::new();
-
         let addr = listener.local_addr()?;
         let http_str = tls_config.as_ref().map_or("HTTP/WS", |_| "HTTPS/WSS");
         info!("[{http_str}] relay: serving on {addr}");
 
-        let cancel = cancel_server_loop.clone();
+        let cancel = cancel_token.clone();
         let task = tokio::task::spawn(
             async move {
                 // create a join set to track all our connection tasks
@@ -284,9 +277,7 @@ impl ServerBuilder {
                         }
                     }
                 }
-                // TODO: if the task this is running in is aborted this server is not shut
-                // down.
-                server_task.close().await;
+                service.shutdown().await;
                 set.shutdown().await;
                 debug!("server has been shutdown.");
             }
@@ -296,7 +287,7 @@ impl ServerBuilder {
         Ok(Server {
             addr,
             http_server_task: AbortOnDropHandle::new(task),
-            cancel_server_loop,
+            cancel_server_loop: cancel_token,
         })
     }
 }
@@ -309,9 +300,9 @@ struct RelayService(Arc<Inner>);
 struct Inner {
     handlers: Handlers,
     headers: HeaderMap,
-    server_channel: mpsc::Sender<Message>,
+    clients: Clients,
     write_timeout: Duration,
-    rate_limit: Option<ClientConnRateLimit>,
+    rate_limit: Option<ClientRateLimit>,
     key_cache: KeyCache,
 }
 
@@ -528,21 +519,21 @@ impl Inner {
         }
 
         trace!("accept: build client conn");
-        let client_conn_builder = ClientConnConfig {
+        let client_conn_builder = Config {
             node_id: client_key,
             stream: io,
             write_timeout: self.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
             rate_limit: self.rate_limit,
-            server_channel: self.server_channel.clone(),
         };
         trace!("accept: create client");
-        self.server_channel
-            .send(Message::CreateClient(client_conn_builder))
-            .await
-            .map_err(|_| {
-                anyhow::anyhow!("server channel closed, the server is probably shutdown")
-            })?;
+        inc!(Metrics, accepts);
+        let node_id = client_conn_builder.node_id;
+        trace!(node_id = node_id.fmt_short(), "create client");
+
+        // build and register client, starting up read & write loops for the client
+        // connection
+        self.clients.register(client_conn_builder).await;
         Ok(())
     }
 }
@@ -561,19 +552,21 @@ impl RelayService {
     fn new(
         handlers: Handlers,
         headers: HeaderMap,
-        server_channel: mpsc::Sender<Message>,
-        write_timeout: Duration,
-        rate_limit: Option<ClientConnRateLimit>,
+        rate_limit: Option<ClientRateLimit>,
         key_cache: KeyCache,
     ) -> Self {
         Self(Arc::new(Inner {
             handlers,
             headers,
-            server_channel,
-            write_timeout,
+            clients: Clients::default(),
+            write_timeout: SERVER_WRITE_TIMEOUT,
             rate_limit,
             key_cache,
         }))
+    }
+
+    async fn shutdown(&self) {
+        self.0.clients.shutdown().await;
     }
 
     /// Handle the incoming connection.
@@ -911,12 +904,9 @@ mod tests {
         let _guard = iroh_test::logging::setup();
 
         info!("Create the server.");
-        let server_task: ServerActorTask = ServerActorTask::spawn();
         let service = RelayService::new(
             Default::default(),
             Default::default(),
-            server_task.server_channel.clone(),
-            server_task.write_timeout,
             None,
             KeyCache::test(),
         );
@@ -982,18 +972,17 @@ mod tests {
         }
 
         info!("Close the server and clients");
-        server_task.close().await;
+        service.shutdown().await;
         tokio::time::sleep(Duration::from_secs(1)).await;
 
         info!("Fail to send message from A to B.");
-        let _res = client_a
+        let res = client_a
             .send(SendMessage::SendPacket(
                 public_key_b,
                 Bytes::from_static(b"try to send"),
             ))
             .await;
-        // TODO: this send seems to succeed currently.
-        // assert!(res.is_err());
+        assert!(res.is_err());
         assert!(client_b.next().await.is_none());
         Ok(())
     }
@@ -1007,12 +996,9 @@ mod tests {
             .ok();
 
         info!("Create the server.");
-        let server_task: ServerActorTask = ServerActorTask::spawn();
         let service = RelayService::new(
             Default::default(),
             Default::default(),
-            server_task.server_channel.clone(),
-            server_task.write_timeout,
             None,
             KeyCache::test(),
         );
@@ -1126,17 +1112,16 @@ mod tests {
         }
 
         info!("Close the server and clients");
-        server_task.close().await;
+        service.shutdown().await;
 
         info!("Sending message from A to B fails");
-        let _res = client_a
+        let res = client_a
             .send(SendMessage::SendPacket(
                 public_key_b,
                 Bytes::from_static(b"try to send"),
             ))
             .await;
-        // TODO: This used to pass
-        // assert!(res.is_err());
+        assert!(res.is_err());
         assert!(new_client_b.next().await.is_none());
         Ok(())
     }
