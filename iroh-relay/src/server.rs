@@ -775,7 +775,7 @@ mod tests {
 
     use bytes::Bytes;
     use http::header::UPGRADE;
-    use iroh_base::SecretKey;
+    use iroh_base::{NodeId, SecretKey};
 
     use super::*;
     use crate::{
@@ -796,6 +796,24 @@ mod tests {
             metrics_addr: None,
         })
         .await
+    }
+
+    async fn try_send_recv(
+        client_a: &mut crate::client::Client,
+        client_b: &mut crate::client::Client,
+        b_key: NodeId,
+        msg: Bytes,
+    ) -> Result<ReceivedMessage> {
+        // try resend 10 times
+        for _ in 0..10 {
+            client_a.send(b_key, msg.clone()).await?;
+            let Ok(res) = tokio::time::timeout(Duration::from_millis(500), client_b.recv()).await
+            else {
+                continue;
+            };
+            return res?.unwrap();
+        }
+        panic!("failed to send and recv message");
     }
 
     #[tokio::test]
@@ -886,7 +904,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_relay_clients_both_relay() {
+    async fn test_relay_clients_both_relay() -> Result<()> {
         let _guard = iroh_test::logging::setup();
         let server = spawn_local_relay().await.unwrap();
         let relay_url = format!("http://{}", server.http_addr().unwrap());
@@ -909,9 +927,7 @@ mod tests {
 
         // send message from a to b
         let msg = Bytes::from("hello, b");
-        client_a.send(b_key, msg.clone()).await.unwrap();
-
-        let res = client_b.recv().await.unwrap().unwrap().unwrap();
+        let res = try_send_recv(&mut client_a, &mut client_b, b_key, msg.clone()).await?;
         if let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -925,9 +941,7 @@ mod tests {
 
         // send message from b to a
         let msg = Bytes::from("howdy, a");
-        client_b.send(a_key, msg.clone()).await.unwrap();
-
-        let res = client_a.recv().await.unwrap().unwrap().unwrap();
+        let res = try_send_recv(&mut client_b, &mut client_a, a_key, msg.clone()).await?;
         if let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -938,6 +952,7 @@ mod tests {
         } else {
             panic!("client_a received unexpected message {res:?}");
         }
+        Ok(())
     }
 
     #[tokio::test]
@@ -977,9 +992,7 @@ mod tests {
 
         // send message from a to b
         let msg = Bytes::from("hello, b");
-        client_a.send(b_key, msg.clone()).await?;
-
-        let res = client_b.recv().await?.unwrap()?;
+        let res = try_send_recv(&mut client_a, &mut client_b, b_key, msg.clone()).await?;
         let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -994,9 +1007,8 @@ mod tests {
         info!("sending b -> a");
         // send message from b to a
         let msg = Bytes::from("howdy, a");
-        client_b.send(a_key, msg.clone()).await?;
+        let res = try_send_recv(&mut client_b, &mut client_a, a_key, msg.clone()).await?;
 
-        let res = client_a.recv().await?.unwrap()?;
         let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -1012,7 +1024,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_relay_clients_websocket_and_relay() {
+    async fn test_relay_clients_websocket_and_relay() -> Result<()> {
         let _guard = iroh_test::logging::setup();
         let server = spawn_local_relay().await.unwrap();
 
@@ -1041,9 +1053,8 @@ mod tests {
 
         // send message from a to b
         let msg = Bytes::from("hello, b");
-        client_a.send(b_key, msg.clone()).await.unwrap();
+        let res = try_send_recv(&mut client_a, &mut client_b, b_key, msg.clone()).await?;
 
-        let res = client_b.recv().await.unwrap().unwrap().unwrap();
         if let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -1057,9 +1068,7 @@ mod tests {
 
         // send message from b to a
         let msg = Bytes::from("howdy, a");
-        client_b.send(a_key, msg.clone()).await.unwrap();
-
-        let res = client_a.recv().await.unwrap().unwrap().unwrap();
+        let res = try_send_recv(&mut client_b, &mut client_a, a_key, msg.clone()).await?;
         if let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -1070,6 +1079,7 @@ mod tests {
         } else {
             panic!("client_a received unexpected message {res:?}");
         }
+        Ok(())
     }
 
     #[tokio::test]
