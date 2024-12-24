@@ -133,9 +133,9 @@ impl PingTracker {
     /// Remove the associated [`oneshot::Sender`] for `data` & return it.
     ///
     /// If there is no [`oneshot::Sender`] in the tracker, return `None`.
-    fn unregister(&mut self, data: [u8; 8]) -> Option<oneshot::Sender<()>> {
-        trace!("removing ping {}", data_encoding::HEXLOWER.encode(&data),);
-        self.0.remove(&data)
+    fn unregister(&mut self, data: &[u8; 8]) -> Option<oneshot::Sender<()>> {
+        trace!("removing ping {}", data_encoding::HEXLOWER.encode(data),);
+        self.0.remove(data)
     }
 }
 
@@ -299,19 +299,42 @@ pub fn make_dangerous_client_config() -> rustls::ClientConfig {
 
 impl Client {
     /// Reads a message from the server.
+    ///
+    /// Any [`ReceivedMessage::Pong`] messages which are in response to a pong we sent will
+    /// wake up the future returned by [`Client::start_ping`] and not be returned here.  Any
+    /// unknown ping messages are returned.
+    ///
+    /// # Cancel safety
+    ///
+    /// This method is cancel safe.  If the future is dropped before completion it is
+    /// guaranteed that no message is lost.
     pub async fn recv(
         &mut self,
     ) -> Result<Option<anyhow::Result<ReceivedMessage>>, tokio::time::error::Elapsed> {
         if let Some((conn, _)) = self.relay_conn.as_mut() {
-            tokio::time::timeout(CLIENT_RECV_TIMEOUT, conn.next()).await
+            loop {
+                let res = tokio::time::timeout(CLIENT_RECV_TIMEOUT, conn.next()).await;
+                if let Ok(Some(Ok(ReceivedMessage::Pong(ref data)))) = res {
+                    match self.pings.unregister(data) {
+                        Some(chan) => {
+                            chan.send(()).ok();
+                            continue;
+                        }
+                        None => {
+                            warn!(ping = ?data, "Unknown pong received.");
+                        }
+                    }
+                }
+                return res;
+            }
         } else {
             future::pending().await
         }
     }
 
-    /// Connects to a relay Server and returns the underlying relay connection.
+    /// Connects to a relay Server.
     ///
-    /// If there is already an active relay connection, returns `Ok(())`.
+    /// If there already is a connection it is returned rather than re-establishing it.
     pub async fn connect(&mut self) -> Result<(), ClientError> {
         self.connect_inner("public api").await?;
         Ok(())
@@ -496,22 +519,26 @@ impl Client {
         // need to do this outside the above closure because they rely on the same lock
         // if there was an error sending, close the underlying relay connection
         if res.is_err() {
-            self.close_for_reconnect().await;
+            self.close().await;
         }
     }
 
-    /// Get the local addr of the connection. If there is no current underlying relay connection
-    /// or the [`Client`] is closed, returns `None`.
+    /// Returns the local addr of the connection.
+    ///
+    /// If there is no current underlying relay connection, `None` is returned.
     pub fn local_addr(&self) -> Option<SocketAddr> {
         self.relay_conn.as_ref().and_then(|(_, addr)| *addr)
     }
 
-    /// Send a ping to the server. Return once we get an expected pong.
+    /// Send a ping to the server.
+    ///
+    /// The returned future will complete once we get an expected pong.
+    ///
+    /// [`Client::recv`] must be called for any reads to occur and thus to process the pong
+    /// reply.
     ///
     /// This has a built-in timeout `crate::defaults::timeouts::PING_TIMEOUT`.
-    ///
-    /// The caller must process the received `ping` using `finish_ping`.
-    pub async fn start_ping(
+    pub async fn send_ping(
         &mut self,
     ) -> Result<
         impl Future<Output = Result<Duration, ClientError>> + Send + Sync + 'static,
@@ -536,32 +563,18 @@ impl Client {
         }
     }
 
-    /// Finish a ping message
-    pub fn finish_ping(&mut self, ping: [u8; 8]) {
-        match self.pings.unregister(ping) {
-            Some(chan) => {
-                if chan.send(()).is_err() {
-                    warn!("pong received for ping {ping:?}, but the receiving channel was closed");
-                }
-            }
-            None => {
-                warn!("pong received for ping {ping:?}, but not registered");
-            }
-        }
-    }
-
-    /// Send a packet to the server.
+    /// Sends a packet for a remote node to the server.
     ///
-    /// If there is no underlying active relay connection, it creates one before attempting to
-    /// send the message.
+    /// If there is no underlying active relay connection, it creates one before attempting
+    /// to send the message.
     ///
-    /// If there is an error sending the packet, it closes the underlying relay connection before
-    /// returning.
+    /// If there is an error sending the packet, it closes the underlying relay connection
+    /// before returning.
     pub async fn send(&mut self, remote_node: NodeId, payload: Bytes) -> Result<(), ClientError> {
         trace!(remote_node = %remote_node.fmt_short(), len = payload.len(), "send");
         let (conn, _) = self.connect_inner("send").await?;
         if conn.send(remote_node, payload).await.is_err() {
-            self.close_for_reconnect().await;
+            self.close().await;
             return Err(ClientError::Send);
         }
         Ok(())
@@ -578,15 +591,21 @@ impl Client {
         debug!("send_pong");
         let (conn, _) = self.connect_inner("send_pong").await?;
         if conn.send_pong(data).await.is_err() {
-            self.close_for_reconnect().await;
+            self.close().await;
             return Err(ClientError::Send);
         }
         Ok(())
     }
 
-    /// Close the http relay connection.
-    pub async fn close(mut self) {
-        self.close_for_reconnect().await;
+    /// Disconnects the http relay connection.
+    ///
+    /// Closes the underlying relay connection. The next time the client takes some action
+    /// that requires a connection, it will call [`Client::connect`].
+    pub async fn close(&mut self) {
+        if let Some((ref mut conn, _)) = self.relay_conn.take() {
+            debug!("Closing connection");
+            conn.close().await
+        }
     }
 
     /// Returns `true` if the underlying relay connection is established.
@@ -755,17 +774,6 @@ impl Client {
         match self.address_family_selector {
             Some(ref selector) => selector(),
             None => false,
-        }
-    }
-
-    /// Disconnect the http relay connection.
-    ///
-    /// Closes the underlying relay connection. The next time the client takes some action that
-    /// requires a connection, it will call `connect`.
-    pub async fn close_for_reconnect(&mut self) {
-        debug!("close for reconnect");
-        if let Some((ref mut conn, _)) = self.relay_conn.take() {
-            conn.close().await
         }
     }
 }

@@ -267,7 +267,7 @@ impl ActiveRelayActor {
     ) -> Option<impl Future<Output = std::result::Result<Duration, ClientError>>> {
         match self.relay_client.local_addr() {
             Some(local_addr) if local_ips.contains(&local_addr.ip()) => {
-                match self.relay_client.start_ping().await {
+                match self.relay_client.send_ping().await {
                     Ok(fut) => {
                         return Some(fut);
                     }
@@ -322,17 +322,17 @@ impl ActiveRelayActor {
             Ok(Some(Ok(msg))) => Some(msg),
             Ok(Some(Err(err))) => {
                 warn!("recv error: {:?}", err);
-                self.relay_client.close_for_reconnect().await;
+                self.relay_client.close().await;
                 None
             }
             Ok(None) => {
                 warn!("recv error: no connection");
-                self.relay_client.close_for_reconnect().await;
+                self.relay_client.close().await;
                 None
             }
             Err(_) => {
                 warn!("recv error: timeout");
-                self.relay_client.close_for_reconnect().await;
+                self.relay_client.close().await;
                 conn_is_closed = true;
                 None
             }
@@ -416,8 +416,8 @@ impl ActiveRelayActor {
                         }
                         ReadResult::Continue
                     }
-                    ReceivedMessage::Pong(ping) => {
-                        self.relay_client.finish_ping(ping);
+                    ReceivedMessage::Pong(_) => {
+                        // Pong messages are already handled by the client.
                         ReadResult::Continue
                     }
                     ReceivedMessage::Health { .. } => ReadResult::Continue,

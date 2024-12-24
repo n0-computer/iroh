@@ -675,7 +675,7 @@ impl std::ops::DerefMut for Handlers {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{pin::pin, sync::Arc};
 
     use anyhow::Result;
     use bytes::Bytes;
@@ -757,22 +757,18 @@ mod tests {
         info!("created client {b_key:?}");
 
         info!("ping a");
-        let ping_a = client_a.start_ping().await?;
-        let msg = client_a.recv().await?.unwrap()?;
-        let ReceivedMessage::Pong(ping) = msg else {
-            panic!("invalid msg: {:?}", msg);
-        };
-        client_a.finish_ping(ping);
-        let _dur = ping_a.await?;
+        let mut ping_a = pin!(client_a.send_ping().await?);
+        tokio::select! {
+            _ = client_a.recv() => panic!("unexpected msg"),
+            _dur = &mut ping_a => (),
+        }
 
         info!("ping b");
-        let ping_b = client_b.start_ping().await?;
-        let msg = client_b.recv().await?.unwrap()?;
-        let ReceivedMessage::Pong(ping) = msg else {
-            panic!("invalid msg: {:?}", msg);
-        };
-        client_b.finish_ping(ping);
-        let _dur = ping_b.await?;
+        let mut ping_b = pin!(client_b.send_ping().await?);
+        tokio::select! {
+            _ = client_b.recv() => panic!("unexpected msg"),
+            _dur = &mut ping_b => (),
+        }
 
         info!("sending message from a to b");
         let msg = Bytes::from_static(b"hi there, client b!");
@@ -841,11 +837,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_https_clients_and_server() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        let _logging = iroh_test::logging::setup();
 
         let a_key = SecretKey::generate(rand::thread_rng());
         let b_key = SecretKey::generate(rand::thread_rng());
@@ -881,22 +873,18 @@ mod tests {
         info!("created client {b_key:?}");
 
         info!("ping a");
-        let ping_a = client_a.start_ping().await?;
-        let msg = client_a.recv().await?.unwrap()?;
-        let ReceivedMessage::Pong(ping) = msg else {
-            panic!("invalid msg: {:?}", msg);
-        };
-        client_a.finish_ping(ping);
-        let _dur = ping_a.await?;
+        let mut ping_a = pin!(client_a.send_ping().await?);
+        tokio::select! {
+            _msg = client_a.recv() => panic!("unexpected msg"),
+            _dur = &mut ping_a => (),
+        }
 
         info!("ping b");
-        let ping_b = client_b.start_ping().await?;
-        let msg = client_b.recv().await?.unwrap()?;
-        let ReceivedMessage::Pong(ping) = msg else {
-            panic!("invalid msg: {:?}", msg);
-        };
-        client_b.finish_ping(ping);
-        let _dur = ping_b.await?;
+        let mut ping_b = pin!(client_b.send_ping().await?);
+        tokio::select! {
+            _msg = client_b.recv() => panic!("unexpected msg"),
+            _dur = &mut ping_b => (),
+        }
 
         info!("sending message from a to b");
         let msg = Bytes::from_static(b"hi there, client b!");
