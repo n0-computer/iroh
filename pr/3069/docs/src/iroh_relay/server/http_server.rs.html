@@ -1147,11 +1147,7 @@
 <a href="#1146" id="1146">1146</a>
 <a href="#1147" id="1147">1147</a>
 <a href="#1148" id="1148">1148</a>
-<a href="#1149" id="1149">1149</a>
-<a href="#1150" id="1150">1150</a>
-<a href="#1151" id="1151">1151</a>
-<a href="#1152" id="1152">1152</a>
-<a href="#1153" id="1153">1153</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1149" id="1149">1149</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -1159,7 +1155,6 @@
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>derive_more::Debug;
 <span class="kw">use </span>futures_lite::FutureExt;
-<span class="kw">use </span>futures_util::SinkExt;
 <span class="kw">use </span>http::{header::CONNECTION, response::Builder <span class="kw">as </span>ResponseBuilder};
 <span class="kw">use </span>hyper::{
     body::Incoming,
@@ -1672,9 +1667,6 @@
         <span class="kw">let </span>(client_key, info) = recv_client_key(<span class="kw-2">&amp;mut </span>io)
             .<span class="kw">await
             </span>.context(<span class="string">"unable to receive client information"</span>)<span class="question-mark">?</span>;
-
-        io.send(<span class="kw">crate</span>::protos::relay::Frame::Ping { data: [<span class="number">1u8</span>; <span class="number">8</span>] })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">if </span>info.version != PROTOCOL_VERSION {
             <span class="macro">bail!</span>(

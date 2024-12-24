@@ -1104,7 +1104,17 @@
 <a href="#1103" id="1103">1103</a>
 <a href="#1104" id="1104">1104</a>
 <a href="#1105" id="1105">1105</a>
-<a href="#1106" id="1106">1106</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
+<a href="#1106" id="1106">1106</a>
+<a href="#1107" id="1107">1107</a>
+<a href="#1108" id="1108">1108</a>
+<a href="#1109" id="1109">1109</a>
+<a href="#1110" id="1110">1110</a>
+<a href="#1111" id="1111">1111</a>
+<a href="#1112" id="1112">1112</a>
+<a href="#1113" id="1113">1113</a>
+<a href="#1114" id="1114">1114</a>
+<a href="#1115" id="1115">1115</a>
+<a href="#1116" id="1116">1116</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
 //! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
@@ -1881,7 +1891,7 @@
 
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>http::header::UPGRADE;
-    <span class="kw">use </span>iroh_base::SecretKey;
+    <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{
@@ -1903,6 +1913,24 @@
         })
         .<span class="kw">await
     </span>}
+
+    <span class="kw">async fn </span>try_send_recv(
+        client_a: <span class="kw-2">&amp;mut </span><span class="kw">crate</span>::client::Client,
+        client_b: <span class="kw-2">&amp;mut </span><span class="kw">crate</span>::client::Client,
+        b_key: NodeId,
+        msg: Bytes,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;ReceivedMessage&gt; {
+        <span class="comment">// try resend 10 times
+        </span><span class="kw">for _ in </span><span class="number">0</span>..<span class="number">10 </span>{
+            client_a.send(b_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span><span class="prelude-val">Ok</span>(res) = tokio::time::timeout(Duration::from_millis(<span class="number">500</span>), client_b.recv()).<span class="kw">await
+            else </span>{
+                <span class="kw">continue</span>;
+            };
+            <span class="kw">return </span>res<span class="question-mark">?</span>.unwrap();
+        }
+        <span class="macro">panic!</span>(<span class="string">"failed to send and recv message"</span>);
+    }
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_no_services() {
@@ -1992,7 +2020,7 @@
     }
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_relay_clients_both_relay() {
+    </span><span class="kw">async fn </span>test_relay_clients_both_relay() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
         <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
@@ -2015,9 +2043,7 @@
 
         <span class="comment">// send message from a to b
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"hello, b"</span>);
-        client_a.send(b_key, msg.clone()).<span class="kw">await</span>.unwrap();
-
-        <span class="kw">let </span>res = client_b.recv().<span class="kw">await</span>.unwrap().unwrap().unwrap();
+        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_a, <span class="kw-2">&amp;mut </span>client_b, b_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">if let </span>ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -2031,9 +2057,7 @@
 
         <span class="comment">// send message from b to a
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"howdy, a"</span>);
-        client_b.send(a_key, msg.clone()).<span class="kw">await</span>.unwrap();
-
-        <span class="kw">let </span>res = client_a.recv().<span class="kw">await</span>.unwrap().unwrap().unwrap();
+        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_b, <span class="kw-2">&amp;mut </span>client_a, a_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">if let </span>ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -2044,6 +2068,7 @@
         } <span class="kw">else </span>{
             <span class="macro">panic!</span>(<span class="string">"client_a received unexpected message {res:?}"</span>);
         }
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="attr">#[tokio::test]
@@ -2083,9 +2108,7 @@
 
         <span class="comment">// send message from a to b
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"hello, b"</span>);
-        client_a.send(b_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-
-        <span class="kw">let </span>res = client_b.recv().<span class="kw">await</span><span class="question-mark">?</span>.unwrap()<span class="question-mark">?</span>;
+        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_a, <span class="kw-2">&amp;mut </span>client_b, b_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -2100,9 +2123,8 @@
         <span class="macro">info!</span>(<span class="string">"sending b -&gt; a"</span>);
         <span class="comment">// send message from b to a
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"howdy, a"</span>);
-        client_b.send(a_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_b, <span class="kw-2">&amp;mut </span>client_a, a_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">let </span>res = client_a.recv().<span class="kw">await</span><span class="question-mark">?</span>.unwrap()<span class="question-mark">?</span>;
         <span class="kw">let </span>ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -2118,7 +2140,7 @@
     }
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_relay_clients_websocket_and_relay() {
+    </span><span class="kw">async fn </span>test_relay_clients_websocket_and_relay() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
 
@@ -2147,9 +2169,8 @@
 
         <span class="comment">// send message from a to b
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"hello, b"</span>);
-        client_a.send(b_key, msg.clone()).<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_a, <span class="kw-2">&amp;mut </span>client_b, b_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">let </span>res = client_b.recv().<span class="kw">await</span>.unwrap().unwrap().unwrap();
         <span class="kw">if let </span>ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -2163,9 +2184,7 @@
 
         <span class="comment">// send message from b to a
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"howdy, a"</span>);
-        client_b.send(a_key, msg.clone()).<span class="kw">await</span>.unwrap();
-
-        <span class="kw">let </span>res = client_a.recv().<span class="kw">await</span>.unwrap().unwrap().unwrap();
+        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_b, <span class="kw-2">&amp;mut </span>client_a, a_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">if let </span>ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -2176,6 +2195,7 @@
         } <span class="kw">else </span>{
             <span class="macro">panic!</span>(<span class="string">"client_a received unexpected message {res:?}"</span>);
         }
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="attr">#[tokio::test]
