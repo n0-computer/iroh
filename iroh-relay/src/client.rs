@@ -301,7 +301,7 @@ impl Client {
     /// Reads a message from the server.
     ///
     /// Any [`ReceivedMessage::Pong`] messages which are in response to a pong we sent will
-    /// wake up the future returned by [`Client::start_ping`] and not be returned here.  Any
+    /// wake up the future returned by [`Client::send_ping`] and not be returned here.  Any
     /// unknown ping messages are returned.
     ///
     /// # Cancel safety
