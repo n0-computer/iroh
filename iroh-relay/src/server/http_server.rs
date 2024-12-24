@@ -6,6 +6,7 @@ use anyhow::{bail, ensure, Context as _, Result};
 use bytes::Bytes;
 use derive_more::Debug;
 use futures_lite::FutureExt;
+use futures_util::SinkExt;
 use http::{header::CONNECTION, response::Builder as ResponseBuilder};
 use hyper::{
     body::Incoming,
@@ -518,6 +519,9 @@ impl Inner {
         let (client_key, info) = recv_client_key(&mut io)
             .await
             .context("unable to receive client information")?;
+
+        io.send(crate::protos::relay::Frame::Ping { data: [1u8; 8] })
+            .await?;
 
         if info.version != PROTOCOL_VERSION {
             bail!(

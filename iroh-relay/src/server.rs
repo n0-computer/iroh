@@ -896,31 +896,15 @@ mod tests {
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
-        let mut client_a = ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
-        let connect_client = &mut client_a;
-
-        // give the relay server some time to accept connections
-        if let Err(err) = tokio::time::timeout(Duration::from_secs(10), async move {
-            loop {
-                match connect_client.connect().await {
-                    Ok(_) => break,
-                    Err(err) => {
-                        warn!("client unable to connect to relay server: {err:#}");
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    }
-                }
-            }
-        })
-        .await
-        {
-            panic!("error connecting to relay server: {err:#}");
-        }
+        let mut client_a =
+            ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver.clone());
+        client_a.connect().await.unwrap();
 
         // set up client b
         let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
-        let resolver = crate::dns::default_resolver().clone();
-        let mut client_b = ClientBuilder::new(relay_url.clone()).build(b_secret_key, resolver);
+        let mut client_b =
+            ClientBuilder::new(relay_url.clone()).build(b_secret_key, resolver.clone());
         client_b.connect().await.unwrap();
 
         // send message from a to b
@@ -988,9 +972,6 @@ mod tests {
         // should already be connected after building the client
         info!("client b connect");
         client_b.connect().await?;
-
-        // wait a moment for the relay server to connect
-        tokio::time::sleep(Duration::from_millis(500)).await;
 
         info!("sending a -> b");
 

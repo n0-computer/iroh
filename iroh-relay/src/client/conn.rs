@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::{bail, ensure, Result};
 use bytes::Bytes;
-use futures_lite::Stream;
+use futures_lite::{Stream, StreamExt};
 use futures_sink::Sink;
 use futures_util::SinkExt;
 use iroh_base::{NodeId, SecretKey};
@@ -119,7 +119,19 @@ async fn server_handshake(writer: &mut Conn, secret_key: &SecretKey) -> Result<(
         version: PROTOCOL_VERSION,
     };
     debug!("server_handshake: sending client_key: {:?}", &client_info);
-    crate::protos::relay::send_client_key(writer, secret_key, &client_info).await?;
+    crate::protos::relay::send_client_key(&mut *writer, secret_key, &client_info).await?;
+
+    debug!("server_handshake: recv ing");
+    match writer.next().await {
+        Some(Ok(frame)) => {
+            let ReceivedMessage::Ping(data) = frame else {
+                bail!("expected pong, got: {:?}", frame);
+            };
+            ensure!(data == [1u8; 8], "unexpected ping data");
+        }
+        Some(Err(err)) => return Err(err),
+        None => bail!("EOF: unexpected stream end"),
+    }
 
     debug!("server_handshake: done");
     Ok(())
