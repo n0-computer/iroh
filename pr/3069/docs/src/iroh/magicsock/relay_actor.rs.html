@@ -1454,7 +1454,7 @@
     ) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw">impl </span>Future&lt;Output = std::result::Result&lt;Duration, ClientError&gt;&gt;&gt; {
         <span class="kw">match </span><span class="self">self</span>.relay_client.local_addr() {
             <span class="prelude-val">Some</span>(local_addr) <span class="kw">if </span>local_ips.contains(<span class="kw-2">&amp;</span>local_addr.ip()) =&gt; {
-                <span class="kw">match </span><span class="self">self</span>.relay_client.start_ping().<span class="kw">await </span>{
+                <span class="kw">match </span><span class="self">self</span>.relay_client.send_ping().<span class="kw">await </span>{
                     <span class="prelude-val">Ok</span>(fut) =&gt; {
                         <span class="kw">return </span><span class="prelude-val">Some</span>(fut);
                     }
@@ -1509,17 +1509,17 @@
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg))) =&gt; <span class="prelude-val">Some</span>(msg),
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err))) =&gt; {
                 <span class="macro">warn!</span>(<span class="string">"recv error: {:?}"</span>, err);
-                <span class="self">self</span>.relay_client.close_for_reconnect().<span class="kw">await</span>;
+                <span class="self">self</span>.relay_client.close().<span class="kw">await</span>;
                 <span class="prelude-val">None
             </span>}
             <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
                 <span class="macro">warn!</span>(<span class="string">"recv error: no connection"</span>);
-                <span class="self">self</span>.relay_client.close_for_reconnect().<span class="kw">await</span>;
+                <span class="self">self</span>.relay_client.close().<span class="kw">await</span>;
                 <span class="prelude-val">None
             </span>}
             <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
                 <span class="macro">warn!</span>(<span class="string">"recv error: timeout"</span>);
-                <span class="self">self</span>.relay_client.close_for_reconnect().<span class="kw">await</span>;
+                <span class="self">self</span>.relay_client.close().<span class="kw">await</span>;
                 conn_is_closed = <span class="bool-val">true</span>;
                 <span class="prelude-val">None
             </span>}
@@ -1603,9 +1603,9 @@
                         }
                         ReadResult::Continue
                     }
-                    ReceivedMessage::Pong(ping) =&gt; {
-                        <span class="self">self</span>.relay_client.finish_ping(ping);
-                        ReadResult::Continue
+                    ReceivedMessage::Pong(<span class="kw">_</span>) =&gt; {
+                        <span class="comment">// Pong messages are already handled by the client.
+                        </span>ReadResult::Continue
                     }
                     ReceivedMessage::Health { .. } =&gt; ReadResult::Continue,
                     ReceivedMessage::NodeGone(key) =&gt; {

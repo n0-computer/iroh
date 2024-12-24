@@ -1135,19 +1135,7 @@
 <a href="#1134" id="1134">1134</a>
 <a href="#1135" id="1135">1135</a>
 <a href="#1136" id="1136">1136</a>
-<a href="#1137" id="1137">1137</a>
-<a href="#1138" id="1138">1138</a>
-<a href="#1139" id="1139">1139</a>
-<a href="#1140" id="1140">1140</a>
-<a href="#1141" id="1141">1141</a>
-<a href="#1142" id="1142">1142</a>
-<a href="#1143" id="1143">1143</a>
-<a href="#1144" id="1144">1144</a>
-<a href="#1145" id="1145">1145</a>
-<a href="#1146" id="1146">1146</a>
-<a href="#1147" id="1147">1147</a>
-<a href="#1148" id="1148">1148</a>
-<a href="#1149" id="1149">1149</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1137" id="1137">1137</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -1824,7 +1812,7 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>std::sync::Arc;
+    <span class="kw">use </span>std::{pin::pin, sync::Arc};
 
     <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>bytes::Bytes;
@@ -1906,22 +1894,18 @@
         <span class="macro">info!</span>(<span class="string">"created client {b_key:?}"</span>);
 
         <span class="macro">info!</span>(<span class="string">"ping a"</span>);
-        <span class="kw">let </span>ping_a = client_a.start_ping().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>msg = client_a.recv().<span class="kw">await</span><span class="question-mark">?</span>.unwrap()<span class="question-mark">?</span>;
-        <span class="kw">let </span>ReceivedMessage::Pong(ping) = msg <span class="kw">else </span>{
-            <span class="macro">panic!</span>(<span class="string">"invalid msg: {:?}"</span>, msg);
-        };
-        client_a.finish_ping(ping);
-        <span class="kw">let </span>_dur = ping_a.<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>ping_a = <span class="macro">pin!</span>(client_a.send_ping().<span class="kw">await</span><span class="question-mark">?</span>);
+        <span class="macro">tokio::select!</span> {
+            <span class="kw">_ </span>= client_a.recv() =&gt; <span class="macro">panic!</span>(<span class="string">"unexpected msg"</span>),
+            _dur = <span class="kw-2">&amp;mut </span>ping_a =&gt; (),
+        }
 
         <span class="macro">info!</span>(<span class="string">"ping b"</span>);
-        <span class="kw">let </span>ping_b = client_b.start_ping().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>msg = client_b.recv().<span class="kw">await</span><span class="question-mark">?</span>.unwrap()<span class="question-mark">?</span>;
-        <span class="kw">let </span>ReceivedMessage::Pong(ping) = msg <span class="kw">else </span>{
-            <span class="macro">panic!</span>(<span class="string">"invalid msg: {:?}"</span>, msg);
-        };
-        client_b.finish_ping(ping);
-        <span class="kw">let </span>_dur = ping_b.<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>ping_b = <span class="macro">pin!</span>(client_b.send_ping().<span class="kw">await</span><span class="question-mark">?</span>);
+        <span class="macro">tokio::select!</span> {
+            <span class="kw">_ </span>= client_b.recv() =&gt; <span class="macro">panic!</span>(<span class="string">"unexpected msg"</span>),
+            _dur = <span class="kw-2">&amp;mut </span>ping_b =&gt; (),
+        }
 
         <span class="macro">info!</span>(<span class="string">"sending message from a to b"</span>);
         <span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"hi there, client b!"</span>);
@@ -1990,11 +1974,7 @@
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_https_clients_and_server() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        <span class="kw">let </span>_logging = iroh_test::logging::setup();
 
         <span class="kw">let </span>a_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>b_key = SecretKey::generate(rand::thread_rng());
@@ -2030,22 +2010,18 @@
         <span class="macro">info!</span>(<span class="string">"created client {b_key:?}"</span>);
 
         <span class="macro">info!</span>(<span class="string">"ping a"</span>);
-        <span class="kw">let </span>ping_a = client_a.start_ping().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>msg = client_a.recv().<span class="kw">await</span><span class="question-mark">?</span>.unwrap()<span class="question-mark">?</span>;
-        <span class="kw">let </span>ReceivedMessage::Pong(ping) = msg <span class="kw">else </span>{
-            <span class="macro">panic!</span>(<span class="string">"invalid msg: {:?}"</span>, msg);
-        };
-        client_a.finish_ping(ping);
-        <span class="kw">let </span>_dur = ping_a.<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>ping_a = <span class="macro">pin!</span>(client_a.send_ping().<span class="kw">await</span><span class="question-mark">?</span>);
+        <span class="macro">tokio::select!</span> {
+            _msg = client_a.recv() =&gt; <span class="macro">panic!</span>(<span class="string">"unexpected msg"</span>),
+            _dur = <span class="kw-2">&amp;mut </span>ping_a =&gt; (),
+        }
 
         <span class="macro">info!</span>(<span class="string">"ping b"</span>);
-        <span class="kw">let </span>ping_b = client_b.start_ping().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>msg = client_b.recv().<span class="kw">await</span><span class="question-mark">?</span>.unwrap()<span class="question-mark">?</span>;
-        <span class="kw">let </span>ReceivedMessage::Pong(ping) = msg <span class="kw">else </span>{
-            <span class="macro">panic!</span>(<span class="string">"invalid msg: {:?}"</span>, msg);
-        };
-        client_b.finish_ping(ping);
-        <span class="kw">let </span>_dur = ping_b.<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>ping_b = <span class="macro">pin!</span>(client_b.send_ping().<span class="kw">await</span><span class="question-mark">?</span>);
+        <span class="macro">tokio::select!</span> {
+            _msg = client_b.recv() =&gt; <span class="macro">panic!</span>(<span class="string">"unexpected msg"</span>),
+            _dur = <span class="kw-2">&amp;mut </span>ping_b =&gt; (),
+        }
 
         <span class="macro">info!</span>(<span class="string">"sending message from a to b"</span>);
         <span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"hi there, client b!"</span>);

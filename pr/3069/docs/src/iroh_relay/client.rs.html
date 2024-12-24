@@ -931,7 +931,15 @@
 <a href="#930" id="930">930</a>
 <a href="#931" id="931">931</a>
 <a href="#932" id="932">932</a>
-<a href="#933" id="933">933</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#933" id="933">933</a>
+<a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a>
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a>
+<a href="#938" id="938">938</a>
+<a href="#939" id="939">939</a>
+<a href="#940" id="940">940</a>
+<a href="#941" id="941">941</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -1066,9 +1074,9 @@
     <span class="doccomment">/// Remove the associated [`oneshot::Sender`] for `data` &amp; return it.
     ///
     /// If there is no [`oneshot::Sender`] in the tracker, return `None`.
-    </span><span class="kw">fn </span>unregister(<span class="kw-2">&amp;mut </span><span class="self">self</span>, data: [u8; <span class="number">8</span>]) -&gt; <span class="prelude-ty">Option</span>&lt;oneshot::Sender&lt;()&gt;&gt; {
-        <span class="macro">trace!</span>(<span class="string">"removing ping {}"</span>, data_encoding::HEXLOWER.encode(<span class="kw-2">&amp;</span>data),);
-        <span class="self">self</span>.<span class="number">0</span>.remove(<span class="kw-2">&amp;</span>data)
+    </span><span class="kw">fn </span>unregister(<span class="kw-2">&amp;mut </span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>[u8; <span class="number">8</span>]) -&gt; <span class="prelude-ty">Option</span>&lt;oneshot::Sender&lt;()&gt;&gt; {
+        <span class="macro">trace!</span>(<span class="string">"removing ping {}"</span>, data_encoding::HEXLOWER.encode(data),);
+        <span class="self">self</span>.<span class="number">0</span>.remove(data)
     }
 }
 
@@ -1232,19 +1240,42 @@
 
 <span class="kw">impl </span>Client {
     <span class="doccomment">/// Reads a message from the server.
+    ///
+    /// Any [`ReceivedMessage::Pong`] messages which are in response to a pong we sent will
+    /// wake up the future returned by [`Client::send_ping`] and not be returned here.  Any
+    /// unknown ping messages are returned.
+    ///
+    /// # Cancel safety
+    ///
+    /// This method is cancel safe.  If the future is dropped before completion it is
+    /// guaranteed that no message is lost.
     </span><span class="kw">pub async fn </span>recv(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;anyhow::Result&lt;ReceivedMessage&gt;&gt;, tokio::time::error::Elapsed&gt; {
         <span class="kw">if let </span><span class="prelude-val">Some</span>((conn, <span class="kw">_</span>)) = <span class="self">self</span>.relay_conn.as_mut() {
-            tokio::time::timeout(CLIENT_RECV_TIMEOUT, conn.next()).<span class="kw">await
-        </span>} <span class="kw">else </span>{
+            <span class="kw">loop </span>{
+                <span class="kw">let </span>res = tokio::time::timeout(CLIENT_RECV_TIMEOUT, conn.next()).<span class="kw">await</span>;
+                <span class="kw">if let </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(ReceivedMessage::Pong(<span class="kw-2">ref </span>data)))) = res {
+                    <span class="kw">match </span><span class="self">self</span>.pings.unregister(data) {
+                        <span class="prelude-val">Some</span>(chan) =&gt; {
+                            chan.send(()).ok();
+                            <span class="kw">continue</span>;
+                        }
+                        <span class="prelude-val">None </span>=&gt; {
+                            <span class="macro">warn!</span>(ping = <span class="question-mark">?</span>data, <span class="string">"Unknown pong received."</span>);
+                        }
+                    }
+                }
+                <span class="kw">return </span>res;
+            }
+        } <span class="kw">else </span>{
             future::pending().<span class="kw">await
         </span>}
     }
 
-    <span class="doccomment">/// Connects to a relay Server and returns the underlying relay connection.
+    <span class="doccomment">/// Connects to a relay Server.
     ///
-    /// If there is already an active relay connection, returns `Ok(())`.
+    /// If there already is a connection it is returned rather than re-establishing it.
     </span><span class="kw">pub async fn </span>connect(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ClientError&gt; {
         <span class="self">self</span>.connect_inner(<span class="string">"public api"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
@@ -1429,22 +1460,26 @@
         <span class="comment">// need to do this outside the above closure because they rely on the same lock
         // if there was an error sending, close the underlying relay connection
         </span><span class="kw">if </span>res.is_err() {
-            <span class="self">self</span>.close_for_reconnect().<span class="kw">await</span>;
+            <span class="self">self</span>.close().<span class="kw">await</span>;
         }
     }
 
-    <span class="doccomment">/// Get the local addr of the connection. If there is no current underlying relay connection
-    /// or the [`Client`] is closed, returns `None`.
+    <span class="doccomment">/// Returns the local addr of the connection.
+    ///
+    /// If there is no current underlying relay connection, `None` is returned.
     </span><span class="kw">pub fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
         <span class="self">self</span>.relay_conn.as_ref().and_then(|(<span class="kw">_</span>, addr)| <span class="kw-2">*</span>addr)
     }
 
-    <span class="doccomment">/// Send a ping to the server. Return once we get an expected pong.
+    <span class="doccomment">/// Send a ping to the server.
+    ///
+    /// The returned future will complete once we get an expected pong.
+    ///
+    /// [`Client::recv`] must be called for any reads to occur and thus to process the pong
+    /// reply.
     ///
     /// This has a built-in timeout `crate::defaults::timeouts::PING_TIMEOUT`.
-    ///
-    /// The caller must process the received `ping` using `finish_ping`.
-    </span><span class="kw">pub async fn </span>start_ping(
+    </span><span class="kw">pub async fn </span>send_ping(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;
         <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Duration, ClientError&gt;&gt; + Send + Sync + <span class="lifetime">'static</span>,
@@ -1469,32 +1504,18 @@
         }
     }
 
-    <span class="doccomment">/// Finish a ping message
-    </span><span class="kw">pub fn </span>finish_ping(<span class="kw-2">&amp;mut </span><span class="self">self</span>, ping: [u8; <span class="number">8</span>]) {
-        <span class="kw">match </span><span class="self">self</span>.pings.unregister(ping) {
-            <span class="prelude-val">Some</span>(chan) =&gt; {
-                <span class="kw">if </span>chan.send(()).is_err() {
-                    <span class="macro">warn!</span>(<span class="string">"pong received for ping {ping:?}, but the receiving channel was closed"</span>);
-                }
-            }
-            <span class="prelude-val">None </span>=&gt; {
-                <span class="macro">warn!</span>(<span class="string">"pong received for ping {ping:?}, but not registered"</span>);
-            }
-        }
-    }
-
-    <span class="doccomment">/// Send a packet to the server.
+    <span class="doccomment">/// Sends a packet for a remote node to the server.
     ///
-    /// If there is no underlying active relay connection, it creates one before attempting to
-    /// send the message.
+    /// If there is no underlying active relay connection, it creates one before attempting
+    /// to send the message.
     ///
-    /// If there is an error sending the packet, it closes the underlying relay connection before
-    /// returning.
+    /// If there is an error sending the packet, it closes the underlying relay connection
+    /// before returning.
     </span><span class="kw">pub async fn </span>send(<span class="kw-2">&amp;mut </span><span class="self">self</span>, remote_node: NodeId, payload: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;(), ClientError&gt; {
         <span class="macro">trace!</span>(remote_node = %remote_node.fmt_short(), len = payload.len(), <span class="string">"send"</span>);
         <span class="kw">let </span>(conn, <span class="kw">_</span>) = <span class="self">self</span>.connect_inner(<span class="string">"send"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">if </span>conn.send(remote_node, payload).<span class="kw">await</span>.is_err() {
-            <span class="self">self</span>.close_for_reconnect().<span class="kw">await</span>;
+            <span class="self">self</span>.close().<span class="kw">await</span>;
             <span class="kw">return </span><span class="prelude-val">Err</span>(ClientError::Send);
         }
         <span class="prelude-val">Ok</span>(())
@@ -1511,15 +1532,21 @@
         <span class="macro">debug!</span>(<span class="string">"send_pong"</span>);
         <span class="kw">let </span>(conn, <span class="kw">_</span>) = <span class="self">self</span>.connect_inner(<span class="string">"send_pong"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">if </span>conn.send_pong(data).<span class="kw">await</span>.is_err() {
-            <span class="self">self</span>.close_for_reconnect().<span class="kw">await</span>;
+            <span class="self">self</span>.close().<span class="kw">await</span>;
             <span class="kw">return </span><span class="prelude-val">Err</span>(ClientError::Send);
         }
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="doccomment">/// Close the http relay connection.
-    </span><span class="kw">pub async fn </span>close(<span class="kw-2">mut </span><span class="self">self</span>) {
-        <span class="self">self</span>.close_for_reconnect().<span class="kw">await</span>;
+    <span class="doccomment">/// Disconnects the http relay connection.
+    ///
+    /// Closes the underlying relay connection. The next time the client takes some action
+    /// that requires a connection, it will call [`Client::connect`].
+    </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw-2">ref mut </span>conn, <span class="kw">_</span>)) = <span class="self">self</span>.relay_conn.take() {
+            <span class="macro">debug!</span>(<span class="string">"Closing connection"</span>);
+            conn.close().<span class="kw">await
+        </span>}
     }
 
     <span class="doccomment">/// Returns `true` if the underlying relay connection is established.
@@ -1689,17 +1716,6 @@
             <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>selector) =&gt; selector(),
             <span class="prelude-val">None </span>=&gt; <span class="bool-val">false</span>,
         }
-    }
-
-    <span class="doccomment">/// Disconnect the http relay connection.
-    ///
-    /// Closes the underlying relay connection. The next time the client takes some action that
-    /// requires a connection, it will call `connect`.
-    </span><span class="kw">pub async fn </span>close_for_reconnect(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="macro">debug!</span>(<span class="string">"close for reconnect"</span>);
-        <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw-2">ref mut </span>conn, <span class="kw">_</span>)) = <span class="self">self</span>.relay_conn.take() {
-            conn.close().<span class="kw">await
-        </span>}
     }
 }
 
