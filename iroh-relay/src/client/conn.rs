@@ -3,9 +3,7 @@
 //! based on tailscale/derp/derp_client.go
 
 use std::{
-    net::SocketAddr,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
@@ -14,257 +12,117 @@ use anyhow::{bail, ensure, Result};
 use bytes::Bytes;
 use futures_lite::Stream;
 use futures_sink::Sink;
-use futures_util::{
-    stream::{SplitSink, SplitStream},
-    SinkExt,
-};
+use futures_util::SinkExt;
 use iroh_base::{NodeId, SecretKey};
-use tokio::sync::mpsc;
 use tokio_tungstenite_wasm::WebSocketStream;
-use tokio_util::{
-    codec::{FramedRead, FramedWrite},
-    task::AbortOnDropHandle,
-};
-use tracing::{debug, info_span, trace, Instrument};
+use tokio_util::codec::Framed;
+use tracing::{debug, trace};
 
 use super::KeyCache;
 use crate::{
-    client::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
+    client::streams::MaybeTlsStreamChained,
     protos::relay::{
-        write_frame, ClientInfo, Frame, RelayCodec, MAX_PACKET_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH,
-        PROTOCOL_VERSION,
+        write_frame, ClientInfo, Frame, RelayCodec, MAX_PACKET_SIZE, PROTOCOL_VERSION,
     },
 };
 
-/// The Builder returns a [`Conn`] and a [`ConnMessageStream`] and
-/// runs a [`ConnWriterTasks`] in the background.
-pub struct ConnBuilder {
-    secret_key: SecretKey,
-    reader: ConnFrameStream,
-    writer: ConnWriter,
-    local_addr: Option<SocketAddr>,
-}
-
-impl ConnBuilder {
-    pub fn new(
-        secret_key: SecretKey,
-        local_addr: Option<SocketAddr>,
-        reader: ConnFrameStream,
-        writer: ConnWriter,
-    ) -> Self {
-        Self {
-            secret_key,
-            reader,
-            writer,
-            local_addr,
-        }
-    }
-
-    async fn server_handshake(&mut self) -> Result<()> {
-        debug!("server_handshake: started");
-        let client_info = ClientInfo {
-            version: PROTOCOL_VERSION,
-        };
-        debug!("server_handshake: sending client_key: {:?}", &client_info);
-        crate::protos::relay::send_client_key(&mut self.writer, &self.secret_key, &client_info)
-            .await?;
-
-        debug!("server_handshake: done");
-        Ok(())
-    }
-
-    pub async fn build(mut self) -> Result<(Conn, ConnMessageStream)> {
-        // exchange information with the server
-        self.server_handshake().await?;
-
-        // create task to handle writing to the server
-        let (writer_sender, writer_recv) = mpsc::channel(PER_CLIENT_SEND_QUEUE_DEPTH);
-        let writer_task = tokio::task::spawn(
-            ConnWriterTasks {
-                writer: self.writer,
-                recv_msgs: writer_recv,
-            }
-            .run()
-            .instrument(info_span!("conn.writer")),
-        );
-
-        let conn = Conn {
-            inner: Arc::new(ConnTasks {
-                local_addr: self.local_addr,
-                writer_channel: writer_sender,
-                writer_task: AbortOnDropHandle::new(writer_task),
-            }),
-        };
-        let stream = ConnMessageStream { inner: self.reader };
-        Ok((conn, stream))
-    }
-}
-
 /// A connection to a relay server.
-///
-/// Cheaply clonable.
-/// Call `close` to shut down the write loop and read functionality.
-#[derive(Debug, Clone)]
-pub struct Conn {
-    inner: Arc<ConnTasks>,
-}
-
-impl PartialEq for Conn {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.inner, &other.inner)
-    }
-}
-
-impl Eq for Conn {}
-
 #[derive(derive_more::Debug)]
-pub struct ConnTasks {
-    /// Our local address, if known.
-    ///
-    /// Is `None` in tests or when using websockets (because we don't control connection
-    /// establishment in browsers).
-    local_addr: Option<SocketAddr>,
-    /// Channel on which to communicate to the server.
-    ///
-    /// The associated [`mpsc::Receiver`] will close if there is ever an error writing to
-    /// the server.
-    writer_channel: mpsc::Sender<ConnWriterMessage>,
-    /// JoinHandle for the [`ConnWriter`] task
-    writer_task: AbortOnDropHandle<Result<()>>,
+pub(crate) enum Conn {
+    Relay {
+        #[debug("Framed<MaybeTlsStreamChained, RelayCodec>")]
+        conn: Framed<MaybeTlsStreamChained, RelayCodec>,
+    },
+    Ws {
+        #[debug("WebSocketStream")]
+        conn: WebSocketStream,
+        key_cache: KeyCache,
+    },
 }
 
 impl Conn {
+    /// Constructs a new websocket connection, including the initial server handshake.
+    pub(crate) async fn new_ws(
+        conn: WebSocketStream,
+        key_cache: KeyCache,
+        secret_key: &SecretKey,
+    ) -> Result<Self> {
+        let mut conn = Self::Ws { conn, key_cache };
+
+        // exchange information with the server
+        server_handshake(&mut conn, secret_key).await?;
+
+        Ok(conn)
+    }
+
+    /// Constructs a new websocket connection, including the initial server handshake.
+    pub(crate) async fn new_relay(
+        conn: MaybeTlsStreamChained,
+        key_cache: KeyCache,
+        secret_key: &SecretKey,
+    ) -> Result<Self> {
+        let conn = Framed::new(conn, RelayCodec::new(key_cache));
+
+        let mut conn = Self::Relay { conn };
+
+        // exchange information with the server
+        server_handshake(&mut conn, secret_key).await?;
+
+        Ok(conn)
+    }
+
     /// Sends a packet to the node identified by `dstkey`
     ///
     /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
-    pub async fn send(&self, dst: NodeId, packet: Bytes) -> Result<()> {
+    pub(crate) async fn send(&mut self, dst: NodeId, packet: Bytes) -> Result<()> {
         trace!(dst = dst.fmt_short(), len = packet.len(), "[RELAY] send");
-
-        self.inner
-            .writer_channel
-            .send(ConnWriterMessage::Packet((dst, packet)))
-            .await?;
+        send_packet(&mut *self, dst, packet).await?;
         Ok(())
     }
 
     /// Send a ping with 8 bytes of random data.
-    pub async fn send_ping(&self, data: [u8; 8]) -> Result<()> {
-        self.inner
-            .writer_channel
-            .send(ConnWriterMessage::Ping(data))
-            .await?;
+    pub(crate) async fn send_ping(&mut self, data: [u8; 8]) -> Result<()> {
+        write_frame(&mut *self, Frame::Ping { data }, None).await?;
+        self.flush().await?;
         Ok(())
     }
 
     /// Respond to a ping request. The `data` field should be filled
     /// by the 8 bytes of random data send by the ping.
-    pub async fn send_pong(&self, data: [u8; 8]) -> Result<()> {
-        self.inner
-            .writer_channel
-            .send(ConnWriterMessage::Pong(data))
-            .await?;
+    pub(crate) async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
+        write_frame(&mut *self, Frame::Pong { data }, None).await?;
+        self.flush().await?;
         Ok(())
     }
 
     /// Sends a packet that tells the server whether this
     /// connection is to the user's preferred server. This is only
     /// used in the server for stats.
-    pub async fn note_preferred(&self, preferred: bool) -> Result<()> {
-        self.inner
-            .writer_channel
-            .send(ConnWriterMessage::NotePreferred(preferred))
-            .await?;
+    pub(crate) async fn note_preferred(&mut self, preferred: bool) -> Result<()> {
+        write_frame(&mut *self, Frame::NotePreferred { preferred }, None).await?;
+        self.flush().await?;
         Ok(())
-    }
-
-    /// The local address that the [`Conn`] is listening on.
-    ///
-    /// `None`, when run in a testing environment or when using websockets.
-    pub fn local_addr(&self) -> Option<SocketAddr> {
-        self.inner.local_addr
-    }
-
-    /// Whether or not this [`Conn`] is closed.
-    ///
-    /// The [`Conn`] is considered closed if the write side of the connection is no longer running.
-    pub fn is_closed(&self) -> bool {
-        self.inner.writer_task.is_finished()
     }
 
     /// Close the connection
     ///
     /// Shuts down the write loop directly and marks the connection as closed. The [`Conn`] will
     /// check if the it is closed before attempting to read from it.
-    pub async fn close(&self) {
-        if self.inner.writer_task.is_finished() {
-            return;
-        }
-
-        self.inner
-            .writer_channel
-            .send(ConnWriterMessage::Shutdown)
-            .await
-            .ok();
+    pub(crate) async fn close(&mut self) {
+        SinkExt::close(self).await.ok();
     }
 }
 
-/// The kinds of messages we can send to the [`Server`](crate::server::Server)
-#[derive(Debug)]
-enum ConnWriterMessage {
-    /// Send a packet (addressed to the [`NodeId`]) to the server
-    Packet((NodeId, Bytes)),
-    /// Send a pong to the server
-    Pong([u8; 8]),
-    /// Send a ping to the server
-    Ping([u8; 8]),
-    /// Tell the server whether or not this client is the user's preferred client
-    NotePreferred(bool),
-    /// Shutdown the writer
-    Shutdown,
-}
+async fn server_handshake(writer: &mut Conn, secret_key: &SecretKey) -> Result<()> {
+    debug!("server_handshake: started");
+    let client_info = ClientInfo {
+        version: PROTOCOL_VERSION,
+    };
+    debug!("server_handshake: sending client_key: {:?}", &client_info);
+    crate::protos::relay::send_client_key(&mut *writer, secret_key, &client_info).await?;
 
-/// Call [`ConnWriterTasks::run`] to listen for messages to send to the connection.
-/// Should be used by the [`Conn`]
-///
-/// Shutsdown when you send a [`ConnWriterMessage::Shutdown`], or if there is an error writing to
-/// the server.
-struct ConnWriterTasks {
-    recv_msgs: mpsc::Receiver<ConnWriterMessage>,
-    writer: ConnWriter,
-}
-
-impl ConnWriterTasks {
-    async fn run(mut self) -> Result<()> {
-        while let Some(msg) = self.recv_msgs.recv().await {
-            match msg {
-                ConnWriterMessage::Packet((key, bytes)) => {
-                    send_packet(&mut self.writer, key, bytes).await?;
-                }
-                ConnWriterMessage::Pong(data) => {
-                    write_frame(&mut self.writer, Frame::Pong { data }, None).await?;
-                    self.writer.flush().await?;
-                }
-                ConnWriterMessage::Ping(data) => {
-                    write_frame(&mut self.writer, Frame::Ping { data }, None).await?;
-                    self.writer.flush().await?;
-                }
-                ConnWriterMessage::NotePreferred(preferred) => {
-                    write_frame(&mut self.writer, Frame::NotePreferred { preferred }, None).await?;
-                    self.writer.flush().await?;
-                }
-                ConnWriterMessage::Shutdown => {
-                    return Ok(());
-                }
-            }
-        }
-
-        bail!("channel unexpectedly closed");
-    }
-}
-
-pub(crate) enum ConnFrameStream {
-    Derp(FramedRead<MaybeTlsStreamReader, RelayCodec>),
-    Ws(SplitStream<WebSocketStream>, KeyCache),
+    debug!("server_handshake: done");
+    Ok(())
 }
 
 fn tung_wasm_to_io_err(e: tokio_tungstenite_wasm::Error) -> std::io::Error {
@@ -274,15 +132,28 @@ fn tung_wasm_to_io_err(e: tokio_tungstenite_wasm::Error) -> std::io::Error {
     }
 }
 
-impl Stream for ConnFrameStream {
-    type Item = Result<Frame>;
+impl Stream for Conn {
+    type Item = Result<ReceivedMessage>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
-            Self::Derp(ref mut ws) => Pin::new(ws).poll_next(cx),
-            Self::Ws(ref mut ws, ref cache) => match Pin::new(ws).poll_next(cx) {
+            Self::Relay { ref mut conn } => match Pin::new(conn).poll_next(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(Some(Ok(frame))) => {
+                    let message = ReceivedMessage::try_from(frame);
+                    Poll::Ready(Some(message))
+                }
+                Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err))),
+                Poll::Ready(None) => Poll::Ready(None),
+            },
+            Self::Ws {
+                ref mut conn,
+                ref key_cache,
+            } => match Pin::new(conn).poll_next(cx) {
                 Poll::Ready(Some(Ok(tokio_tungstenite_wasm::Message::Binary(vec)))) => {
-                    Poll::Ready(Some(Frame::decode_from_ws_msg(vec, cache)))
+                    let frame = Frame::decode_from_ws_msg(vec, key_cache);
+                    let message = frame.and_then(ReceivedMessage::try_from);
+                    Poll::Ready(Some(message))
                 }
                 Poll::Ready(Some(Ok(msg))) => {
                     tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
@@ -296,83 +167,22 @@ impl Stream for ConnFrameStream {
     }
 }
 
-#[derive(derive_more::Debug)]
-#[debug("ConnMessageStream")]
-pub(crate) struct ConnMessageStream {
-    inner: ConnFrameStream,
-}
-
-impl Stream for ConnMessageStream {
-    type Item = Result<ReceivedMessage>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match Pin::new(&mut self.inner).poll_next(cx) {
-            Poll::Ready(Some(item)) => {
-                let item = item.and_then(process_incoming_frame);
-                Poll::Ready(Some(item))
-            }
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
-
-fn process_incoming_frame(frame: Frame) -> Result<ReceivedMessage> {
-    match frame {
-        Frame::KeepAlive => {
-            // A one-way keep-alive message that doesn't require an ack.
-            // This predated FrameType::Ping/FrameType::Pong.
-            Ok(ReceivedMessage::KeepAlive)
-        }
-        Frame::NodeGone { node_id } => Ok(ReceivedMessage::NodeGone(node_id)),
-        Frame::RecvPacket { src_key, content } => {
-            let packet = ReceivedMessage::ReceivedPacket {
-                remote_node_id: src_key,
-                data: content,
-            };
-            Ok(packet)
-        }
-        Frame::Ping { data } => Ok(ReceivedMessage::Ping(data)),
-        Frame::Pong { data } => Ok(ReceivedMessage::Pong(data)),
-        Frame::Health { problem } => {
-            let problem = std::str::from_utf8(&problem)?.to_owned();
-            let problem = Some(problem);
-            Ok(ReceivedMessage::Health { problem })
-        }
-        Frame::Restarting {
-            reconnect_in,
-            try_for,
-        } => {
-            let reconnect_in = Duration::from_millis(reconnect_in as u64);
-            let try_for = Duration::from_millis(try_for as u64);
-            Ok(ReceivedMessage::ServerRestarting {
-                reconnect_in,
-                try_for,
-            })
-        }
-        _ => bail!("unexpected packet: {:?}", frame.typ()),
-    }
-}
-
-pub(crate) enum ConnWriter {
-    Derp(FramedWrite<MaybeTlsStreamWriter, RelayCodec>),
-    Ws(SplitSink<WebSocketStream, tokio_tungstenite_wasm::Message>),
-}
-
-impl Sink<Frame> for ConnWriter {
+impl Sink<Frame> for Conn {
     type Error = std::io::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp(ref mut ws) => Pin::new(ws).poll_ready(cx),
-            Self::Ws(ref mut ws) => Pin::new(ws).poll_ready(cx).map_err(tung_wasm_to_io_err),
+            Self::Relay { ref mut conn } => Pin::new(conn).poll_ready(cx),
+            Self::Ws { ref mut conn, .. } => {
+                Pin::new(conn).poll_ready(cx).map_err(tung_wasm_to_io_err)
+            }
         }
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
         match *self {
-            Self::Derp(ref mut ws) => Pin::new(ws).start_send(item),
-            Self::Ws(ref mut ws) => Pin::new(ws)
+            Self::Relay { ref mut conn } => Pin::new(conn).start_send(item),
+            Self::Ws { ref mut conn, .. } => Pin::new(conn)
                 .start_send(tokio_tungstenite_wasm::Message::binary(
                     item.encode_for_ws_msg(),
                 ))
@@ -382,15 +192,19 @@ impl Sink<Frame> for ConnWriter {
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp(ref mut ws) => Pin::new(ws).poll_flush(cx),
-            Self::Ws(ref mut ws) => Pin::new(ws).poll_flush(cx).map_err(tung_wasm_to_io_err),
+            Self::Relay { ref mut conn } => Pin::new(conn).poll_flush(cx),
+            Self::Ws { ref mut conn, .. } => {
+                Pin::new(conn).poll_flush(cx).map_err(tung_wasm_to_io_err)
+            }
         }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp(ref mut ws) => Pin::new(ws).poll_close(cx),
-            Self::Ws(ref mut ws) => Pin::new(ws).poll_close(cx).map_err(tung_wasm_to_io_err),
+            Self::Relay { ref mut conn } => Pin::new(conn).poll_close(cx),
+            Self::Ws { ref mut conn, .. } => {
+                Pin::new(conn).poll_close(cx).map_err(tung_wasm_to_io_err)
+            }
         }
     }
 }
@@ -442,6 +256,47 @@ pub enum ReceivedMessage {
         /// than a few seconds.
         try_for: Duration,
     },
+}
+
+impl TryFrom<Frame> for ReceivedMessage {
+    type Error = anyhow::Error;
+
+    fn try_from(frame: Frame) -> std::result::Result<Self, Self::Error> {
+        match frame {
+            Frame::KeepAlive => {
+                // A one-way keep-alive message that doesn't require an ack.
+                // This predated FrameType::Ping/FrameType::Pong.
+                Ok(ReceivedMessage::KeepAlive)
+            }
+            Frame::NodeGone { node_id } => Ok(ReceivedMessage::NodeGone(node_id)),
+            Frame::RecvPacket { src_key, content } => {
+                let packet = ReceivedMessage::ReceivedPacket {
+                    remote_node_id: src_key,
+                    data: content,
+                };
+                Ok(packet)
+            }
+            Frame::Ping { data } => Ok(ReceivedMessage::Ping(data)),
+            Frame::Pong { data } => Ok(ReceivedMessage::Pong(data)),
+            Frame::Health { problem } => {
+                let problem = std::str::from_utf8(&problem)?.to_owned();
+                let problem = Some(problem);
+                Ok(ReceivedMessage::Health { problem })
+            }
+            Frame::Restarting {
+                reconnect_in,
+                try_for,
+            } => {
+                let reconnect_in = Duration::from_millis(reconnect_in as u64);
+                let try_for = Duration::from_millis(try_for as u64);
+                Ok(ReceivedMessage::ServerRestarting {
+                    reconnect_in,
+                    try_for,
+                })
+            }
+            _ => bail!("unexpected packet: {:?}", frame.typ()),
+        }
+    }
 }
 
 pub(crate) async fn send_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(

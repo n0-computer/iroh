@@ -22,7 +22,7 @@ use crate::{
 /// The stream receives message from the client while the sink sends them to the client.
 #[derive(Debug)]
 pub(crate) enum RelayedStream {
-    Derp(Framed<MaybeTlsStream, RelayCodec>),
+    Relay(Framed<MaybeTlsStream, RelayCodec>),
     Ws(WebSocketStream<MaybeTlsStream>, KeyCache),
 }
 
@@ -38,14 +38,14 @@ impl Sink<Frame> for RelayedStream {
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp(ref mut framed) => Pin::new(framed).poll_ready(cx),
+            Self::Relay(ref mut framed) => Pin::new(framed).poll_ready(cx),
             Self::Ws(ref mut ws, _) => Pin::new(ws).poll_ready(cx).map_err(tung_to_io_err),
         }
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
         match *self {
-            Self::Derp(ref mut framed) => Pin::new(framed).start_send(item),
+            Self::Relay(ref mut framed) => Pin::new(framed).start_send(item),
             Self::Ws(ref mut ws, _) => Pin::new(ws)
                 .start_send(tungstenite::Message::Binary(item.encode_for_ws_msg()))
                 .map_err(tung_to_io_err),
@@ -54,14 +54,14 @@ impl Sink<Frame> for RelayedStream {
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp(ref mut framed) => Pin::new(framed).poll_flush(cx),
+            Self::Relay(ref mut framed) => Pin::new(framed).poll_flush(cx),
             Self::Ws(ref mut ws, _) => Pin::new(ws).poll_flush(cx).map_err(tung_to_io_err),
         }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp(ref mut framed) => Pin::new(framed).poll_close(cx),
+            Self::Relay(ref mut framed) => Pin::new(framed).poll_close(cx),
             Self::Ws(ref mut ws, _) => Pin::new(ws).poll_close(cx).map_err(tung_to_io_err),
         }
     }
@@ -72,7 +72,7 @@ impl Stream for RelayedStream {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
-            Self::Derp(ref mut framed) => Pin::new(framed).poll_next(cx),
+            Self::Relay(ref mut framed) => Pin::new(framed).poll_next(cx),
             Self::Ws(ref mut ws, ref cache) => match Pin::new(ws).poll_next(cx) {
                 Poll::Ready(Some(Ok(tungstenite::Message::Binary(vec)))) => {
                     Poll::Ready(Some(Frame::decode_from_ws_msg(vec, cache)))
