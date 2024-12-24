@@ -140,8 +140,8 @@ impl Stream for Conn {
             Self::Relay { ref mut conn } => match Pin::new(conn).poll_next(cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(Some(Ok(frame))) => {
-                    let frame = process_incoming_frame(frame);
-                    Poll::Ready(Some(frame))
+                    let message = ReceivedMessage::try_from(frame);
+                    Poll::Ready(Some(message))
                 }
                 Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err))),
                 Poll::Ready(None) => Poll::Ready(None),
@@ -152,8 +152,8 @@ impl Stream for Conn {
             } => match Pin::new(conn).poll_next(cx) {
                 Poll::Ready(Some(Ok(tokio_tungstenite_wasm::Message::Binary(vec)))) => {
                     let frame = Frame::decode_from_ws_msg(vec, key_cache);
-                    let frame = frame.and_then(process_incoming_frame);
-                    Poll::Ready(Some(frame))
+                    let message = frame.and_then(ReceivedMessage::try_from);
+                    Poll::Ready(Some(message))
                 }
                 Poll::Ready(Some(Ok(msg))) => {
                     tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
@@ -164,43 +164,6 @@ impl Stream for Conn {
                 Poll::Pending => Poll::Pending,
             },
         }
-    }
-}
-
-fn process_incoming_frame(frame: Frame) -> Result<ReceivedMessage> {
-    match frame {
-        Frame::KeepAlive => {
-            // A one-way keep-alive message that doesn't require an ack.
-            // This predated FrameType::Ping/FrameType::Pong.
-            Ok(ReceivedMessage::KeepAlive)
-        }
-        Frame::NodeGone { node_id } => Ok(ReceivedMessage::NodeGone(node_id)),
-        Frame::RecvPacket { src_key, content } => {
-            let packet = ReceivedMessage::ReceivedPacket {
-                remote_node_id: src_key,
-                data: content,
-            };
-            Ok(packet)
-        }
-        Frame::Ping { data } => Ok(ReceivedMessage::Ping(data)),
-        Frame::Pong { data } => Ok(ReceivedMessage::Pong(data)),
-        Frame::Health { problem } => {
-            let problem = std::str::from_utf8(&problem)?.to_owned();
-            let problem = Some(problem);
-            Ok(ReceivedMessage::Health { problem })
-        }
-        Frame::Restarting {
-            reconnect_in,
-            try_for,
-        } => {
-            let reconnect_in = Duration::from_millis(reconnect_in as u64);
-            let try_for = Duration::from_millis(try_for as u64);
-            Ok(ReceivedMessage::ServerRestarting {
-                reconnect_in,
-                try_for,
-            })
-        }
-        _ => bail!("unexpected packet: {:?}", frame.typ()),
     }
 }
 
@@ -293,6 +256,47 @@ pub enum ReceivedMessage {
         /// than a few seconds.
         try_for: Duration,
     },
+}
+
+impl TryFrom<Frame> for ReceivedMessage {
+    type Error = anyhow::Error;
+
+    fn try_from(frame: Frame) -> std::result::Result<Self, Self::Error> {
+        match frame {
+            Frame::KeepAlive => {
+                // A one-way keep-alive message that doesn't require an ack.
+                // This predated FrameType::Ping/FrameType::Pong.
+                Ok(ReceivedMessage::KeepAlive)
+            }
+            Frame::NodeGone { node_id } => Ok(ReceivedMessage::NodeGone(node_id)),
+            Frame::RecvPacket { src_key, content } => {
+                let packet = ReceivedMessage::ReceivedPacket {
+                    remote_node_id: src_key,
+                    data: content,
+                };
+                Ok(packet)
+            }
+            Frame::Ping { data } => Ok(ReceivedMessage::Ping(data)),
+            Frame::Pong { data } => Ok(ReceivedMessage::Pong(data)),
+            Frame::Health { problem } => {
+                let problem = std::str::from_utf8(&problem)?.to_owned();
+                let problem = Some(problem);
+                Ok(ReceivedMessage::Health { problem })
+            }
+            Frame::Restarting {
+                reconnect_in,
+                try_for,
+            } => {
+                let reconnect_in = Duration::from_millis(reconnect_in as u64);
+                let try_for = Duration::from_millis(try_for as u64);
+                Ok(ReceivedMessage::ServerRestarting {
+                    reconnect_in,
+                    try_for,
+                })
+            }
+            _ => bail!("unexpected packet: {:?}", frame.typ()),
+        }
+    }
 }
 
 pub(crate) async fn send_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(
