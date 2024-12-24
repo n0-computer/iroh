@@ -1612,17 +1612,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hostname"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9c7c7c8ac16c798734b8a24560c1362120597c40d5e1459f09498f8f6c8f2ba"
-dependencies = [
- "cfg-if",
- "libc",
- "windows 0.52.0",
-]
-
-[[package]]
 name = "hostname-validator"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2013,7 +2002,6 @@ dependencies = [
  "anyhow",
  "axum",
  "backoff",
- "base64",
  "bytes",
  "clap",
  "concurrent-queue",
@@ -2028,7 +2016,6 @@ dependencies = [
  "futures-util",
  "governor 0.7.0",
  "hickory-resolver",
- "hostname 0.4.0",
  "http 1.2.0",
  "http-body-util",
  "hyper",
@@ -2043,42 +2030,28 @@ dependencies = [
  "iroh-quinn-udp",
  "iroh-relay",
  "iroh-test 0.30.0",
- "libc",
  "netdev",
- "netlink-packet-core",
- "netlink-packet-route 0.19.0",
- "netlink-packet-route 0.21.0",
- "netlink-sys",
  "netwatch",
- "num_enum",
- "once_cell",
  "parse-size",
  "pin-project",
  "pkarr",
  "portmapper",
- "postcard",
  "pretty_assertions",
  "rand",
  "rand_chacha",
  "rcgen",
- "regex",
  "reqwest",
  "ring",
- "rtnetlink 0.13.1",
- "rtnetlink 0.14.1",
  "rustls",
  "rustls-webpki",
  "serde",
  "serde_json",
  "smallvec",
- "socket2",
  "strum",
  "stun-rs",
- "surge-ping",
  "swarm-discovery",
  "testresult",
  "thiserror 2.0.7",
- "time",
  "tokio",
  "tokio-rustls",
  "tokio-stream",
@@ -2089,8 +2062,6 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "webpki-roots",
- "windows 0.58.0",
- "wmi",
  "x509-parser",
  "z32",
 ]
@@ -2130,7 +2101,6 @@ dependencies = [
  "iroh-quinn",
  "rcgen",
  "rustls",
- "socket2",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2223,7 +2193,6 @@ dependencies = [
  "iroh-relay",
  "iroh-test 0.30.0",
  "netwatch",
- "once_cell",
  "portmapper",
  "pretty_assertions",
  "rand",
@@ -2231,7 +2200,7 @@ dependencies = [
  "rustls",
  "surge-ping",
  "testresult",
- "thiserror 1.0.69",
+ "thiserror 2.0.7",
  "tokio",
  "tokio-util",
  "tracing",
@@ -2292,7 +2261,6 @@ name = "iroh-relay"
 version = "0.30.0"
 dependencies = [
  "anyhow",
- "base64",
  "bytes",
  "clap",
  "crypto_box",
@@ -2305,7 +2273,6 @@ dependencies = [
  "governor 0.7.0",
  "hickory-proto",
  "hickory-resolver",
- "hostname 0.4.0",
  "http 1.2.0",
  "http-body-util",
  "hyper",
@@ -2315,10 +2282,8 @@ dependencies = [
  "iroh-quinn",
  "iroh-quinn-proto",
  "iroh-test 0.30.0",
- "libc",
  "lru",
  "num_enum",
- "once_cell",
  "pin-project",
  "postcard",
  "proptest",
@@ -2328,7 +2293,6 @@ dependencies = [
  "regex",
  "reloadable-state",
  "reqwest",
- "ring",
  "rustls",
  "rustls-cert-file-reader",
  "rustls-cert-reloadable-resolver",
@@ -2336,8 +2300,6 @@ dependencies = [
  "rustls-webpki",
  "serde",
  "serde_json",
- "smallvec",
- "socket2",
  "stun-rs",
  "testresult",
  "thiserror 2.0.7",
@@ -2686,21 +2648,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "74c171cd77b4ee8c7708da746ce392440cb7bcf618d122ec9ecc607b12938bf4"
 dependencies = [
  "anyhow",
- "byteorder",
- "libc",
- "log",
- "netlink-packet-core",
- "netlink-packet-utils",
-]
-
-[[package]]
-name = "netlink-packet-route"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "483325d4bfef65699214858f097d504eb812c38ce7077d165f301ec406c3066e"
-dependencies = [
- "anyhow",
- "bitflags 2.6.0",
  "byteorder",
  "libc",
  "log",
@@ -3724,7 +3671,7 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52e44394d2086d010551b14b53b1f24e31647570cd1deb0379e2c21b329aba00"
 dependencies = [
- "hostname 0.3.1",
+ "hostname",
  "quick-error",
 ]
 
@@ -5252,16 +5199,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e686886bc078bc1b0b600cac0147aadb815089b6e4da64016cbd754b6342700f"
 dependencies = [
  "windows-targets 0.48.5",
-]
-
-[[package]]
-name = "windows"
-version = "0.52.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e48a53791691ab099e5e2ad123536d0fff50652600abaf43bbf952894110d0be"
-dependencies = [
- "windows-core 0.52.0",
- "windows-targets 0.52.6",
 ]
 
 [[package]]
