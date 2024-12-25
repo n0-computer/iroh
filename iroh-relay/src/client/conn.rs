@@ -3,12 +3,13 @@
 //! based on tailscale/derp/derp_client.go
 
 use std::{
+    io,
     pin::Pin,
     task::{Context, Poll},
     time::Duration,
 };
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{bail, Result};
 use bytes::Bytes;
 use futures_lite::Stream;
 use futures_sink::Sink;
@@ -21,14 +22,20 @@ use tracing::{debug, trace};
 use super::KeyCache;
 use crate::{
     client::streams::MaybeTlsStreamChained,
-    protos::relay::{
-        write_frame, ClientInfo, Frame, RelayCodec, MAX_PACKET_SIZE, PROTOCOL_VERSION,
-    },
+    protos::relay::{ClientInfo, Frame, RelayCodec, MAX_PACKET_SIZE, PROTOCOL_VERSION},
 };
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ConnSendError {
+    #[error("IO error")]
+    Io(#[from] io::Error),
+    #[error("Protocol error")]
+    Protocol(&'static str),
+}
 
 /// A connection to a relay server.
 #[derive(derive_more::Debug)]
-pub(crate) enum Conn {
+pub enum Conn {
     Relay {
         #[debug("Framed<MaybeTlsStreamChained, RelayCodec>")]
         conn: Framed<MaybeTlsStreamChained, RelayCodec>,
@@ -71,18 +78,27 @@ impl Conn {
         Ok(conn)
     }
 
+    /// Convenience flush function.
+    ///
+    /// Because this implements two sink types rust makes calling flush a bit verbose.
+    pub(crate) async fn flush(&mut self) -> Result<(), ConnSendError> {
+        <Conn as SinkExt<Frame>>::flush(self).await
+    }
+
     /// Sends a packet to the node identified by `dstkey`
     ///
     /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
-    pub(crate) async fn send(&mut self, dst: NodeId, packet: Bytes) -> Result<()> {
+    pub(crate) async fn send_packet(&mut self, dst: NodeId, packet: Bytes) -> Result<()> {
         trace!(dst = dst.fmt_short(), len = packet.len(), "[RELAY] send");
-        send_packet(&mut *self, dst, packet).await?;
+        SinkExt::send(self, SendMessage::SendPacket(dst, packet)).await?;
+        // Note we do not flush frames!
+        // self.flush().await?;
         Ok(())
     }
 
     /// Send a ping with 8 bytes of random data.
     pub(crate) async fn send_ping(&mut self, data: [u8; 8]) -> Result<()> {
-        write_frame(&mut *self, Frame::Ping { data }, None).await?;
+        SinkExt::send(self, SendMessage::Ping(data)).await?;
         self.flush().await?;
         Ok(())
     }
@@ -90,7 +106,7 @@ impl Conn {
     /// Respond to a ping request. The `data` field should be filled
     /// by the 8 bytes of random data send by the ping.
     pub(crate) async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
-        write_frame(&mut *self, Frame::Pong { data }, None).await?;
+        SinkExt::send(self, SendMessage::Pong(data)).await?;
         self.flush().await?;
         Ok(())
     }
@@ -99,7 +115,7 @@ impl Conn {
     /// connection is to the user's preferred server. This is only
     /// used in the server for stats.
     pub(crate) async fn note_preferred(&mut self, preferred: bool) -> Result<()> {
-        write_frame(&mut *self, Frame::NotePreferred { preferred }, None).await?;
+        SinkExt::send(self, SendMessage::NotePreferred(preferred)).await?;
         self.flush().await?;
         Ok(())
     }
@@ -109,10 +125,11 @@ impl Conn {
     /// Shuts down the write loop directly and marks the connection as closed. The [`Conn`] will
     /// check if the it is closed before attempting to read from it.
     pub(crate) async fn close(&mut self) {
-        SinkExt::close(self).await.ok();
+        <Conn as SinkExt<Frame>>::close(self).await.ok();
     }
 }
 
+/// Sends the server handshake message.
 async fn server_handshake(writer: &mut Conn, secret_key: &SecretKey) -> Result<()> {
     debug!("server_handshake: started");
     let client_info = ClientInfo {
@@ -168,43 +185,104 @@ impl Stream for Conn {
 }
 
 impl Sink<Frame> for Conn {
-    type Error = std::io::Error;
+    type Error = ConnSendError;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Relay { ref mut conn } => Pin::new(conn).poll_ready(cx),
-            Self::Ws { ref mut conn, .. } => {
-                Pin::new(conn).poll_ready(cx).map_err(tung_wasm_to_io_err)
-            }
+            Self::Relay { ref mut conn } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
+            Self::Ws { ref mut conn, .. } => Pin::new(conn)
+                .poll_ready(cx)
+                .map_err(tung_wasm_to_io_err)
+                .map_err(Into::into),
         }
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
+    fn start_send(mut self: Pin<&mut Self>, frame: Frame) -> Result<(), Self::Error> {
+        if let Frame::SendPacket { dst_key: _, packet } = &frame {
+            if packet.len() > MAX_PACKET_SIZE {
+                return Err(ConnSendError::Protocol("Packet exceeds MAX_PACKET_SIZE"));
+            }
+        }
         match *self {
-            Self::Relay { ref mut conn } => Pin::new(conn).start_send(item),
+            Self::Relay { ref mut conn } => Pin::new(conn).start_send(frame).map_err(Into::into),
             Self::Ws { ref mut conn, .. } => Pin::new(conn)
                 .start_send(tokio_tungstenite_wasm::Message::binary(
-                    item.encode_for_ws_msg(),
+                    frame.encode_for_ws_msg(),
                 ))
-                .map_err(tung_wasm_to_io_err),
+                .map_err(tung_wasm_to_io_err)
+                .map_err(Into::into),
         }
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Relay { ref mut conn } => Pin::new(conn).poll_flush(cx),
-            Self::Ws { ref mut conn, .. } => {
-                Pin::new(conn).poll_flush(cx).map_err(tung_wasm_to_io_err)
-            }
+            Self::Relay { ref mut conn } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
+            Self::Ws { ref mut conn, .. } => Pin::new(conn)
+                .poll_flush(cx)
+                .map_err(tung_wasm_to_io_err)
+                .map_err(Into::into),
         }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Relay { ref mut conn } => Pin::new(conn).poll_close(cx),
-            Self::Ws { ref mut conn, .. } => {
-                Pin::new(conn).poll_close(cx).map_err(tung_wasm_to_io_err)
+            Self::Relay { ref mut conn } => Pin::new(conn).poll_close(cx).map_err(Into::into),
+            Self::Ws { ref mut conn, .. } => Pin::new(conn)
+                .poll_close(cx)
+                .map_err(tung_wasm_to_io_err)
+                .map_err(Into::into),
+        }
+    }
+}
+
+impl Sink<SendMessage> for Conn {
+    type Error = ConnSendError;
+
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match *self {
+            Self::Relay { ref mut conn } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
+            Self::Ws { ref mut conn, .. } => Pin::new(conn)
+                .poll_ready(cx)
+                .map_err(tung_wasm_to_io_err)
+                .map_err(Into::into),
+        }
+    }
+
+    fn start_send(mut self: Pin<&mut Self>, item: SendMessage) -> Result<(), Self::Error> {
+        if let SendMessage::SendPacket(_, bytes) = &item {
+            if bytes.len() > MAX_PACKET_SIZE {
+                return Err(ConnSendError::Protocol("Packet exceeds MAX_PACKET_SIZE"));
             }
+        }
+        let frame = Frame::from(item);
+        match *self {
+            Self::Relay { ref mut conn } => Pin::new(conn).start_send(frame).map_err(Into::into),
+            Self::Ws { ref mut conn, .. } => Pin::new(conn)
+                .start_send(tokio_tungstenite_wasm::Message::binary(
+                    frame.encode_for_ws_msg(),
+                ))
+                .map_err(tung_wasm_to_io_err)
+                .map_err(Into::into),
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match *self {
+            Self::Relay { ref mut conn } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
+            Self::Ws { ref mut conn, .. } => Pin::new(conn)
+                .poll_flush(cx)
+                .map_err(tung_wasm_to_io_err)
+                .map_err(Into::into),
+        }
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        match *self {
+            Self::Relay { ref mut conn } => Pin::new(conn).poll_close(cx).map_err(Into::into),
+            Self::Ws { ref mut conn, .. } => Pin::new(conn)
+                .poll_close(cx)
+                .map_err(tung_wasm_to_io_err)
+                .map_err(Into::into),
         }
     }
 }
@@ -299,23 +377,22 @@ impl TryFrom<Frame> for ReceivedMessage {
     }
 }
 
-pub(crate) async fn send_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(
-    mut writer: S,
-    dst: NodeId,
-    packet: Bytes,
-) -> Result<()> {
-    ensure!(
-        packet.len() <= MAX_PACKET_SIZE,
-        "packet too big: {}",
-        packet.len()
-    );
+/// Messages we can send to a relay server.
+#[derive(Debug)]
+pub(crate) enum SendMessage {
+    SendPacket(NodeId, Bytes),
+    NotePreferred(bool),
+    Ping([u8; 8]),
+    Pong([u8; 8]),
+}
 
-    let frame = Frame::SendPacket {
-        dst_key: dst,
-        packet,
-    };
-    writer.send(frame).await?;
-    writer.flush().await?;
-
-    Ok(())
+impl From<SendMessage> for Frame {
+    fn from(source: SendMessage) -> Self {
+        match source {
+            SendMessage::SendPacket(dst_key, packet) => Frame::SendPacket { dst_key, packet },
+            SendMessage::NotePreferred(preferred) => Frame::NotePreferred { preferred },
+            SendMessage::Ping(data) => Frame::Ping { data },
+            SendMessage::Pong(data) => Frame::Pong { data },
+        }
+    }
 }

@@ -25,6 +25,7 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio_util::codec::{Decoder, Encoder};
 
+use crate::client::conn::ConnSendError;
 use crate::KeyCache;
 
 /// The maximum size of a packet sent over relay.
@@ -148,7 +149,7 @@ pub(crate) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
 /// and the client's [`ClientInfo`], sealed using the server's [`PublicKey`].
 ///
 /// Flushes after writing.
-pub(crate) async fn send_client_key<S: Sink<Frame, Error = std::io::Error> + Unpin>(
+pub(crate) async fn send_client_key<S: Sink<Frame, Error = ConnSendError> + Unpin>(
     mut writer: S,
     client_secret_key: &SecretKey,
     client_info: &ClientInfo,
@@ -614,7 +615,8 @@ mod tests {
     async fn test_send_recv_client_key() -> anyhow::Result<()> {
         let (reader, writer) = tokio::io::duplex(1024);
         let mut reader = FramedRead::new(reader, RelayCodec::test());
-        let mut writer = FramedWrite::new(writer, RelayCodec::test());
+        let mut writer =
+            FramedWrite::new(writer, RelayCodec::test()).sink_map_err(ConnSendError::from);
 
         let client_key = SecretKey::generate(rand::thread_rng());
         let client_info = ClientInfo {

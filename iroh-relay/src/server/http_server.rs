@@ -959,7 +959,7 @@ mod tests {
 
         info!("Send message from A to B.");
         let msg = Bytes::from_static(b"hello client b!!");
-        client_a.send(public_key_b, msg.clone()).await?;
+        client_a.send_packet(public_key_b, msg.clone()).await?;
         match client_b.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
@@ -975,7 +975,7 @@ mod tests {
 
         info!("Send message from B to A.");
         let msg = Bytes::from_static(b"nice to meet you client a!!");
-        client_b.send(public_key_a, msg.clone()).await?;
+        client_b.send_packet(public_key_a, msg.clone()).await?;
         match client_a.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
@@ -995,7 +995,7 @@ mod tests {
 
         info!("Fail to send message from A to B.");
         let _res = client_a
-            .send(public_key_b, Bytes::from_static(b"try to send"))
+            .send_packet(public_key_b, Bytes::from_static(b"try to send"))
             .await;
         // TODO: this send seems to succeed currently.
         // assert!(res.is_err());
@@ -1048,7 +1048,7 @@ mod tests {
 
         info!("Send message from A to B.");
         let msg = Bytes::from_static(b"hello client b!!");
-        client_a.send(public_key_b, msg.clone()).await?;
+        client_a.send_packet(public_key_b, msg.clone()).await?;
         match client_b.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
@@ -1064,7 +1064,7 @@ mod tests {
 
         info!("Send message from B to A.");
         let msg = Bytes::from_static(b"nice to meet you client a!!");
-        client_b.send(public_key_a, msg.clone()).await?;
+        client_b.send_packet(public_key_a, msg.clone()).await?;
         match client_a.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
@@ -1092,7 +1092,7 @@ mod tests {
 
         info!("Send message from A to B.");
         let msg = Bytes::from_static(b"are you still there, b?!");
-        client_a.send(public_key_b, msg.clone()).await?;
+        client_a.send_packet(public_key_b, msg.clone()).await?;
         match new_client_b.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
@@ -1108,7 +1108,7 @@ mod tests {
 
         info!("Send message from B to A.");
         let msg = Bytes::from_static(b"just had a spot of trouble but I'm back now,a!!");
-        new_client_b.send(public_key_a, msg.clone()).await?;
+        new_client_b.send_packet(public_key_a, msg.clone()).await?;
         match client_a.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
@@ -1127,7 +1127,7 @@ mod tests {
 
         info!("Sending message from A to B fails");
         let _res = client_a
-            .send(public_key_b, Bytes::from_static(b"try to send"))
+            .send_packet(public_key_b, Bytes::from_static(b"try to send"))
             .await;
         // TODO: This used to pass
         // assert!(res.is_err());

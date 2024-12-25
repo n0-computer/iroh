@@ -577,7 +577,7 @@ impl Client {
     ) -> Result<(), ClientError> {
         trace!(remote_node = %remote_node.fmt_short(), len = payload.len(), "send");
         let (conn, _) = self.connect_inner("send").await?;
-        if conn.send(remote_node, payload).await.is_err() {
+        if conn.send_packet(remote_node, payload).await.is_err() {
             self.close().await;
             return Err(ClientError::Send);
         }
