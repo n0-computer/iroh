@@ -563,14 +563,18 @@ impl Client {
         }
     }
 
-    /// Sends a packet for a remote node to the server.
+    /// Sends a packet of datagrams for a remote node to the server.
     ///
     /// If there is no underlying active relay connection, it creates one before attempting
     /// to send the message.
     ///
     /// If there is an error sending the packet, it closes the underlying relay connection
     /// before returning.
-    pub async fn send(&mut self, remote_node: NodeId, payload: Bytes) -> Result<(), ClientError> {
+    pub async fn send_packet(
+        &mut self,
+        remote_node: NodeId,
+        payload: Bytes,
+    ) -> Result<(), ClientError> {
         trace!(remote_node = %remote_node.fmt_short(), len = payload.len(), "send");
         let (conn, _) = self.connect_inner("send").await?;
         if conn.send(remote_node, payload).await.is_err() {
@@ -606,11 +610,6 @@ impl Client {
             debug!("Closing connection");
             conn.close().await
         }
-    }
-
-    /// Returns `true` if the underlying relay connection is established.
-    pub fn is_connected(&self) -> bool {
-        self.relay_conn.is_some()
     }
 
     fn tls_servername(&self) -> Option<rustls::pki_types::ServerName> {

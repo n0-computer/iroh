@@ -772,7 +772,7 @@ mod tests {
 
         info!("sending message from a to b");
         let msg = Bytes::from_static(b"hi there, client b!");
-        client_a.send(b_key, msg.clone()).await?;
+        client_a.send_packet(b_key, msg.clone()).await?;
         info!("waiting for message from a on b");
         let (got_key, got_msg) =
             process_msg(client_b.recv().await).expect("expected message from client_a");
@@ -781,7 +781,7 @@ mod tests {
 
         info!("sending message from b to a");
         let msg = Bytes::from_static(b"right back at ya, client b!");
-        client_b.send(a_key, msg.clone()).await?;
+        client_b.send_packet(a_key, msg.clone()).await?;
         info!("waiting for message b on a");
         let (got_key, got_msg) =
             process_msg(client_a.recv().await).expect("expected message from client_b");
@@ -888,7 +888,7 @@ mod tests {
 
         info!("sending message from a to b");
         let msg = Bytes::from_static(b"hi there, client b!");
-        client_a.send(b_key, msg.clone()).await?;
+        client_a.send_packet(b_key, msg.clone()).await?;
         info!("waiting for message from a on b");
         let (got_key, got_msg) =
             process_msg(client_b.recv().await).expect("expected message from client_a");
@@ -897,7 +897,7 @@ mod tests {
 
         info!("sending message from b to a");
         let msg = Bytes::from_static(b"right back at ya, client b!");
-        client_b.send(a_key, msg.clone()).await?;
+        client_b.send_packet(a_key, msg.clone()).await?;
         info!("waiting for message b on a");
         let (got_key, got_msg) =
             process_msg(client_a.recv().await).expect("expected message from client_b");

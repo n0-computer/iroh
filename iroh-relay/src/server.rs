@@ -806,7 +806,7 @@ mod tests {
     ) -> Result<ReceivedMessage> {
         // try resend 10 times
         for _ in 0..10 {
-            client_a.send(b_key, msg.clone()).await?;
+            client_a.send_packet(b_key, msg.clone()).await?;
             let Ok(res) = tokio::time::timeout(Duration::from_millis(500), client_b.recv()).await
             else {
                 continue;

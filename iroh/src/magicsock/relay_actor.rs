@@ -303,7 +303,11 @@ impl ActiveRelayActor {
         // packet size for the relay protocol would be exceeded.
         for packet in PacketizeIter::<_, MAX_PAYLOAD_SIZE>::new(item.remote_node, item.datagrams) {
             let len = packet.len();
-            match self.relay_client.send(packet.node_id, packet.payload).await {
+            match self
+                .relay_client
+                .send_packet(packet.node_id, packet.payload)
+                .await
+            {
                 Ok(_) => inc_by!(MagicsockMetrics, send_relay, len as _),
                 Err(err) => {
                     warn!("send failed: {err:#}");
