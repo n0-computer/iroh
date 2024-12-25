@@ -1120,8 +1120,7 @@
 <a href="#1119" id="1119">1119</a>
 <a href="#1120" id="1120">1120</a>
 <a href="#1121" id="1121">1121</a>
-<a href="#1122" id="1122">1122</a>
-<a href="#1123" id="1123">1123</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1122" id="1122">1122</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -1648,7 +1647,6 @@
             write_timeout: <span class="self">self</span>.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
             rate_limit: <span class="self">self</span>.rate_limit,
-            clients: <span class="self">self</span>.clients.clone(),
         };
         <span class="macro">trace!</span>(<span class="string">"accept: create client"</span>);
         <span class="macro">inc!</span>(Metrics, accepts);

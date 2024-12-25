@@ -672,9 +672,7 @@
 <a href="#671" id="671">671</a>
 <a href="#672" id="672">672</a>
 <a href="#673" id="673">673</a>
-<a href="#674" id="674">674</a>
-<a href="#675" id="675">675</a>
-<a href="#676" id="676">676</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#674" id="674">674</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
@@ -715,7 +713,6 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) write_timeout: Duration,
     <span class="kw">pub</span>(<span class="kw">super</span>) channel_capacity: usize,
     <span class="kw">pub</span>(<span class="kw">super</span>) rate_limit: <span class="prelude-ty">Option</span>&lt;ClientConnRateLimit&gt;,
-    <span class="kw">pub</span>(<span class="kw">super</span>) clients: Clients,
 }
 
 <span class="doccomment">/// The [`Server`] side representation of a [`Client`]'s connection.
@@ -744,14 +741,13 @@
     <span class="doccomment">/// Creates a client from a connection &amp; starts a read and write loop to handle io to and from
     /// the client
     /// Call [`ClientConn::shutdown`] to close the read and write loops before dropping the [`ClientConn`]
-    </span><span class="kw">pub fn </span>new(config: ClientConnConfig, conn_num: usize) -&gt; ClientConn {
+    </span><span class="kw">pub fn </span>new(config: ClientConnConfig, clients: <span class="kw-2">&amp;</span>Clients, conn_num: usize) -&gt; ClientConn {
         <span class="kw">let </span>ClientConnConfig {
             node_id: key,
             stream: io,
             write_timeout,
             channel_capacity,
             rate_limit,
-            clients,
         } = config;
 
         <span class="kw">let </span>stream = <span class="kw">match </span>rate_limit {
