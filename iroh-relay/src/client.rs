@@ -12,8 +12,8 @@ use std::{
 
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use bytes::Bytes;
-use conn::Conn;
-use futures_util::StreamExt;
+use conn::{Conn, SendMessage};
+use futures_util::{SinkExt, StreamExt};
 use hickory_resolver::TokioResolver as DnsResolver;
 use http_body_util::Empty;
 use hyper::{
@@ -375,9 +375,11 @@ impl Client {
             }
         };
 
-        if self.is_preferred && conn.note_preferred(true).await.is_err() {
-            conn.close().await;
-            return Err(ClientError::Send);
+        if self.is_preferred {
+            conn.send(SendMessage::NotePreferred(true))
+                .await
+                .map_err(|_| ClientError::Send)?;
+            conn.flush().await.map_err(|_| ClientError::Send)?;
         }
 
         event!(
@@ -508,18 +510,14 @@ impl Client {
         }
         *old = is_preferred;
 
-        // only send the preference if we already have a connection
-        let res = {
-            if let Some((ref mut conn, _)) = self.relay_conn {
-                conn.note_preferred(is_preferred).await
-            } else {
-                return;
+        if let Some((ref mut conn, _)) = self.relay_conn {
+            let fut = async {
+                conn.send(SendMessage::NotePreferred(is_preferred)).await?;
+                conn.flush().await
+            };
+            if fut.await.is_err() {
+                self.close().await;
             }
-        };
-        // need to do this outside the above closure because they rely on the same lock
-        // if there was an error sending, close the underlying relay connection
-        if res.is_err() {
-            self.close().await;
         }
     }
 
@@ -549,18 +547,19 @@ impl Client {
         trace!("ping: {}", data_encoding::HEXLOWER.encode(&ping));
 
         let start = Instant::now();
-        if let Err(err) = conn.send_ping(ping).await {
-            warn!("failed to send ping: {:?}", err);
-            Err(ClientError::Send)
-        } else {
-            Ok(async move {
-                match tokio::time::timeout(PING_TIMEOUT, recv).await {
-                    Ok(Ok(())) => Ok(start.elapsed()),
-                    Err(_) => Err(ClientError::PingTimeout),
-                    Ok(Err(_)) => Err(ClientError::PingAborted),
-                }
-            })
-        }
+        conn.send(SendMessage::Ping(ping))
+            .await
+            .map_err(|_| ClientError::Send)?;
+        conn.flush().await.map_err(|_| ClientError::Send)?;
+
+        let fut = async move {
+            match tokio::time::timeout(PING_TIMEOUT, recv).await {
+                Ok(Ok(())) => Ok(start.elapsed()),
+                Err(_) => Err(ClientError::PingTimeout),
+                Ok(Err(_)) => Err(ClientError::PingAborted),
+            }
+        };
+        Ok(fut)
     }
 
     /// Sends a packet of datagrams for a remote node to the server.
@@ -577,7 +576,11 @@ impl Client {
     ) -> Result<(), ClientError> {
         trace!(remote_node = %remote_node.fmt_short(), len = payload.len(), "send");
         let (conn, _) = self.connect_inner("send").await?;
-        if conn.send_packet(remote_node, payload).await.is_err() {
+        if conn
+            .send(SendMessage::SendPacket(remote_node, payload))
+            .await
+            .is_err()
+        {
             self.close().await;
             return Err(ClientError::Send);
         }
@@ -594,11 +597,17 @@ impl Client {
     pub async fn send_pong(&mut self, data: [u8; 8]) -> Result<(), ClientError> {
         debug!("send_pong");
         let (conn, _) = self.connect_inner("send_pong").await?;
-        if conn.send_pong(data).await.is_err() {
-            self.close().await;
-            return Err(ClientError::Send);
+        let fut = async {
+            conn.send(SendMessage::Pong(data)).await?;
+            conn.flush().await
+        };
+        match fut.await {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                self.close().await;
+                Err(ClientError::Send)
+            }
         }
-        Ok(())
     }
 
     /// Disconnects the http relay connection.
@@ -606,7 +615,7 @@ impl Client {
     /// Closes the underlying relay connection. The next time the client takes some action
     /// that requires a connection, it will call [`Client::connect`].
     pub async fn close(&mut self) {
-        if let Some((ref mut conn, _)) = self.relay_conn.take() {
+        if let Some((mut conn, _)) = self.relay_conn.take() {
             debug!("Closing connection");
             conn.close().await
         }

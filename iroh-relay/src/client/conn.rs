@@ -17,7 +17,7 @@ use futures_util::SinkExt;
 use iroh_base::{NodeId, SecretKey};
 use tokio_tungstenite_wasm::WebSocketStream;
 use tokio_util::codec::Framed;
-use tracing::{debug, trace};
+use tracing::debug;
 
 use super::KeyCache;
 use crate::{
@@ -83,41 +83,6 @@ impl Conn {
     /// Because this implements two sink types rust makes calling flush a bit verbose.
     pub(crate) async fn flush(&mut self) -> Result<(), ConnSendError> {
         <Conn as SinkExt<Frame>>::flush(self).await
-    }
-
-    /// Sends a packet to the node identified by `dstkey`
-    ///
-    /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
-    pub(crate) async fn send_packet(&mut self, dst: NodeId, packet: Bytes) -> Result<()> {
-        trace!(dst = dst.fmt_short(), len = packet.len(), "[RELAY] send");
-        SinkExt::send(self, SendMessage::SendPacket(dst, packet)).await?;
-        // Note we do not flush frames!
-        // self.flush().await?;
-        Ok(())
-    }
-
-    /// Send a ping with 8 bytes of random data.
-    pub(crate) async fn send_ping(&mut self, data: [u8; 8]) -> Result<()> {
-        SinkExt::send(self, SendMessage::Ping(data)).await?;
-        self.flush().await?;
-        Ok(())
-    }
-
-    /// Respond to a ping request. The `data` field should be filled
-    /// by the 8 bytes of random data send by the ping.
-    pub(crate) async fn send_pong(&mut self, data: [u8; 8]) -> Result<()> {
-        SinkExt::send(self, SendMessage::Pong(data)).await?;
-        self.flush().await?;
-        Ok(())
-    }
-
-    /// Sends a packet that tells the server whether this
-    /// connection is to the user's preferred server. This is only
-    /// used in the server for stats.
-    pub(crate) async fn note_preferred(&mut self, preferred: bool) -> Result<()> {
-        SinkExt::send(self, SendMessage::NotePreferred(preferred)).await?;
-        self.flush().await?;
-        Ok(())
     }
 
     /// Close the connection
