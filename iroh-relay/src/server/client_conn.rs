@@ -489,299 +489,188 @@ impl Sink<Frame> for RateLimitedRelayedStream {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use anyhow::bail;
-//     use bytes::Bytes;
-//     use iroh_base::SecretKey;
-//     use testresult::TestResult;
-//     use tokio_util::codec::Framed;
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+    use iroh_base::SecretKey;
+    use testresult::TestResult;
+    use tokio_util::codec::Framed;
 
-//     use super::*;
-//     use crate::{
-//         client::conn,
-//         protos::relay::{recv_frame, FrameType, RelayCodec},
-//         server::streams::MaybeTlsStream,
-//     };
+    use super::*;
+    use crate::{
+        client::conn,
+        protos::relay::{recv_frame, FrameType, RelayCodec},
+        server::streams::MaybeTlsStream,
+    };
 
-//     #[tokio::test]
-//     async fn test_client_actor_basic() -> Result<()> {
-//         let (send_queue_s, send_queue_r) = mpsc::channel(10);
-//         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
-//         let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
+    #[tokio::test]
+    async fn test_client_actor_basic() -> Result<()> {
+        let _logging = iroh_test::logging::setup();
 
-//         let key = SecretKey::generate(rand::thread_rng()).public();
-//         let (io, io_rw) = tokio::io::duplex(1024);
-//         let mut io_rw = Framed::new(io_rw, RelayCodec::test());
-//         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
-//         let stream =
-//             RelayedStream::Relay(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
+        let (send_queue_s, send_queue_r) = mpsc::channel(10);
+        let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
+        let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
 
-//         let actor = Actor {
-//             stream: RateLimitedRelayedStream::unlimited(stream),
-//             timeout: Duration::from_secs(1),
-//             send_queue: send_queue_r,
-//             disco_send_queue: disco_send_queue_r,
-//             node_gone: peer_gone_r,
+        let key = SecretKey::generate(rand::thread_rng()).public();
+        let (io, io_rw) = tokio::io::duplex(1024);
+        let mut io_rw = Framed::new(io_rw, RelayCodec::test());
+        let stream =
+            RelayedStream::Relay(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
 
-//             key,
-//             // server_channel: server_channel_s,
-//             preferred: true,
-//         };
+        let clients = Clients::default();
+        let actor = Actor {
+            stream: RateLimitedRelayedStream::unlimited(stream),
+            timeout: Duration::from_secs(1),
+            send_queue: send_queue_r,
+            disco_send_queue: disco_send_queue_r,
+            node_gone: peer_gone_r,
+            key,
+            clients: clients.clone(),
+            preferred: true,
+        };
 
-//         let done = CancellationToken::new();
-//         let io_done = done.clone();
-//         let handle = tokio::task::spawn(async move { actor.run(io_done).await });
+        let done = CancellationToken::new();
+        let io_done = done.clone();
+        let handle = tokio::task::spawn(async move { actor.run(io_done).await });
 
-//         // Write tests
-//         println!("-- write");
-//         let data = b"hello world!";
+        // Write tests
+        println!("-- write");
+        let data = b"hello world!";
 
-//         // send packet
-//         println!("  send packet");
-//         let packet = Packet {
-//             src: key,
-//             data: Bytes::from(&data[..]),
-//         };
-//         send_queue_s.send(packet.clone()).await?;
-//         let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
-//         assert_eq!(
-//             frame,
-//             Frame::RecvPacket {
-//                 src_key: key,
-//                 content: data.to_vec().into()
-//             }
-//         );
+        // send packet
+        println!("  send packet");
+        let packet = Packet {
+            src: key,
+            data: Bytes::from(&data[..]),
+        };
+        send_queue_s.send(packet.clone()).await?;
+        let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
+        assert_eq!(
+            frame,
+            Frame::RecvPacket {
+                src_key: key,
+                content: data.to_vec().into()
+            }
+        );
 
-//         // send disco packet
-//         println!("  send disco packet");
-//         disco_send_queue_s.send(packet.clone()).await?;
-//         let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
-//         assert_eq!(
-//             frame,
-//             Frame::RecvPacket {
-//                 src_key: key,
-//                 content: data.to_vec().into()
-//             }
-//         );
+        // send disco packet
+        println!("  send disco packet");
+        disco_send_queue_s.send(packet.clone()).await?;
+        let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
+        assert_eq!(
+            frame,
+            Frame::RecvPacket {
+                src_key: key,
+                content: data.to_vec().into()
+            }
+        );
 
-//         // send peer_gone
-//         println!("send peer gone");
-//         peer_gone_s.send(key).await?;
-//         let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
-//         assert_eq!(frame, Frame::NodeGone { node_id: key });
+        // send peer_gone
+        println!("send peer gone");
+        peer_gone_s.send(key).await?;
+        let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
+        assert_eq!(frame, Frame::NodeGone { node_id: key });
 
-//         // Read tests
-//         println!("--read");
+        // Read tests
+        println!("--read");
 
-//         // send ping, expect pong
-//         let data = b"pingpong";
-//         write_frame(&mut io_rw, Frame::Ping { data: *data }, None).await?;
+        // send ping, expect pong
+        let data = b"pingpong";
+        write_frame(&mut io_rw, Frame::Ping { data: *data }, None).await?;
 
-//         // recv pong
-//         println!(" recv pong");
-//         let frame = recv_frame(FrameType::Pong, &mut io_rw).await?;
-//         assert_eq!(frame, Frame::Pong { data: *data });
+        // recv pong
+        println!(" recv pong");
+        let frame = recv_frame(FrameType::Pong, &mut io_rw).await?;
+        assert_eq!(frame, Frame::Pong { data: *data });
 
-//         // change preferred to false
-//         println!("  preferred: false");
-//         write_frame(&mut io_rw, Frame::NotePreferred { preferred: false }, None).await?;
-//         // tokio::time::sleep(Duration::from_millis(100)).await;
-//         // assert!(!preferred.load(Ordering::Relaxed));
+        // change preferred to false
+        println!("  preferred: false");
+        write_frame(&mut io_rw, Frame::NotePreferred { preferred: false }, None).await?;
 
-//         // change preferred to true
-//         println!("  preferred: true");
-//         write_frame(&mut io_rw, Frame::NotePreferred { preferred: true }, None).await?;
-//         // tokio::time::sleep(Duration::from_millis(100)).await;
-//         // assert!(preferred.fetch_and(true, Ordering::Relaxed));
+        // change preferred to true
+        println!("  preferred: true");
+        write_frame(&mut io_rw, Frame::NotePreferred { preferred: true }, None).await?;
 
-//         let target = SecretKey::generate(rand::thread_rng()).public();
+        let target = SecretKey::generate(rand::thread_rng()).public();
 
-//         // send packet
-//         println!("  send packet");
-//         let data = b"hello world!";
-//         conn::send_packet(&mut io_rw, target, Bytes::from_static(data)).await?;
-//         let msg = server_channel_r.recv().await.unwrap();
-//         match msg {
-//             actor::Message::SendPacket {
-//                 dst: got_target,
-//                 data: got_data,
-//                 src: got_src,
-//             } => {
-//                 assert_eq!(target, got_target);
-//                 assert_eq!(key, got_src);
-//                 assert_eq!(&data[..], &got_data);
-//             }
-//             m => {
-//                 bail!("expected ServerMessage::SendPacket, got {m:?}");
-//             }
-//         }
+        // send packet
+        println!("  send packet");
+        let data = b"hello world!";
+        conn::send_packet(&mut io_rw, target, Bytes::from_static(data)).await?;
+        // send disco packet
+        println!("  send disco packet");
+        // starts with `MAGIC` & key, then data
+        let mut disco_data = disco::MAGIC.as_bytes().to_vec();
+        disco_data.extend_from_slice(target.as_bytes());
+        disco_data.extend_from_slice(data);
+        conn::send_packet(&mut io_rw, target, disco_data.clone().into()).await?;
 
-//         // send disco packet
-//         println!("  send disco packet");
-//         // starts with `MAGIC` & key, then data
-//         let mut disco_data = disco::MAGIC.as_bytes().to_vec();
-//         disco_data.extend_from_slice(target.as_bytes());
-//         disco_data.extend_from_slice(data);
-//         conn::send_packet(&mut io_rw, target, disco_data.clone().into()).await?;
-//         let msg = server_channel_r.recv().await.unwrap();
-//         match msg {
-//             actor::Message::SendDiscoPacket {
-//                 dst: got_target,
-//                 src: got_src,
-//                 data: got_data,
-//             } => {
-//                 assert_eq!(target, got_target);
-//                 assert_eq!(key, got_src);
-//                 assert_eq!(&disco_data[..], &got_data);
-//             }
-//             m => {
-//                 bail!("expected ServerMessage::SendDiscoPacket, got {m:?}");
-//             }
-//         }
+        done.cancel();
+        handle.await??;
+        Ok(())
+    }
 
-//         done.cancel();
-//         handle.await??;
-//         Ok(())
-//     }
+    #[tokio::test]
+    async fn test_rate_limit() -> TestResult {
+        let _logging = iroh_test::logging::setup();
 
-//     #[tokio::test]
-//     async fn test_client_conn_read_err() -> Result<()> {
-//         let (_send_queue_s, send_queue_r) = mpsc::channel(10);
-//         let (_disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
-//         let (_peer_gone_s, peer_gone_r) = mpsc::channel(10);
+        const LIMIT: u32 = 50;
+        const MAX_FRAMES: u32 = 100;
 
-//         let key = SecretKey::generate(rand::thread_rng()).public();
-//         let (io, io_rw) = tokio::io::duplex(1024);
-//         let mut io_rw = Framed::new(io_rw, RelayCodec::test());
-//         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
-//         let stream =
-//             RelayedStream::Relay(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
+        // Rate limiter allowing LIMIT bytes/s
+        let quota = governor::Quota::per_second(NonZeroU32::try_from(LIMIT)?);
+        let limiter = governor::RateLimiter::direct(quota);
 
-//         println!("-- create client conn");
-//         let actor = Actor {
-//             stream: RateLimitedRelayedStream::unlimited(stream),
-//             timeout: Duration::from_secs(1),
-//             send_queue: send_queue_r,
-//             disco_send_queue: disco_send_queue_r,
-//             node_gone: peer_gone_r,
+        // Build the rate limited stream.
+        let (io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) as _);
+        let mut frame_writer = Framed::new(io_write, RelayCodec::test());
+        let stream = RelayedStream::Relay(Framed::new(
+            MaybeTlsStream::Test(io_read),
+            RelayCodec::test(),
+        ));
+        let mut stream = RateLimitedRelayedStream::new(stream, limiter);
 
-//             key,
-//             // server_channel: server_channel_s,
-//             preferred: true,
-//         };
+        // Prepare a frame to send, assert its size.
+        let data = Bytes::from_static(b"hello world!!");
+        let target = SecretKey::generate(rand::thread_rng()).public();
+        let frame = Frame::SendPacket {
+            dst_key: target,
+            packet: data.clone(),
+        };
+        let frame_len = frame.len_with_header();
+        assert_eq!(frame_len, LIMIT as usize);
 
-//         let done = CancellationToken::new();
-//         let io_done = done.clone();
+        // Send a frame, it should arrive.
+        info!("-- send packet");
+        frame_writer.send(frame.clone()).await?;
+        frame_writer.flush().await?;
+        let recv_frame = tokio::time::timeout(Duration::from_millis(500), stream.next())
+            .await
+            .expect("timeout")
+            .expect("option")
+            .expect("ok");
+        assert_eq!(recv_frame, frame);
 
-//         println!("-- run client conn");
-//         let handle = tokio::task::spawn(async move { actor.run(io_done).await });
+        // Next frame does not arrive.
+        info!("-- send packet");
+        frame_writer.send(frame.clone()).await?;
+        frame_writer.flush().await?;
+        let res = tokio::time::timeout(Duration::from_millis(100), stream.next()).await;
+        assert!(res.is_err(), "expecting a timeout");
+        info!("-- timeout happened");
 
-//         // send packet
-//         println!("   send packet");
-//         let data = b"hello world!";
-//         let target = SecretKey::generate(rand::thread_rng()).public();
+        // Wait long enough.
+        info!("-- sleep");
+        tokio::time::sleep(Duration::from_secs(1)).await;
 
-//         conn::send_packet(&mut io_rw, target, Bytes::from_static(data)).await?;
-//         let msg = server_channel_r.recv().await.unwrap();
-//         match msg {
-//             actor::Message::SendPacket {
-//                 dst: got_target,
-//                 src: got_src,
-//                 data: got_data,
-//             } => {
-//                 assert_eq!(target, got_target);
-//                 assert_eq!(key, got_src);
-//                 assert_eq!(&data[..], &got_data);
-//                 println!("    send packet success");
-//             }
-//             m => {
-//                 bail!("expected ServerMessage::SendPacket, got {m:?}");
-//             }
-//         }
+        // Frame arrives.
+        let recv_frame = tokio::time::timeout(Duration::from_millis(500), stream.next())
+            .await
+            .expect("timeout")
+            .expect("option")
+            .expect("ok");
+        assert_eq!(recv_frame, frame);
 
-//         println!("-- drop io");
-//         drop(io_rw);
-
-//         // expect task to complete after encountering an error
-//         if let Err(err) = tokio::time::timeout(Duration::from_secs(1), handle).await?? {
-//             if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
-//                 if io_err.kind() == std::io::ErrorKind::UnexpectedEof {
-//                     println!("   task closed successfully with `UnexpectedEof` error");
-//                 } else {
-//                     bail!("expected `UnexpectedEof` error, got unknown error: {io_err:?}");
-//                 }
-//             } else {
-//                 bail!("expected `std::io::Error`, got `None`");
-//             }
-//         } else {
-//             bail!("expected task to finish in `UnexpectedEof` error, got `Ok(())`");
-//         }
-
-//         Ok(())
-//     }
-
-//     #[tokio::test]
-//     async fn test_rate_limit() -> TestResult {
-//         let _logging = iroh_test::logging::setup();
-
-//         const LIMIT: u32 = 50;
-//         const MAX_FRAMES: u32 = 100;
-
-//         // Rate limiter allowing LIMIT bytes/s
-//         let quota = governor::Quota::per_second(NonZeroU32::try_from(LIMIT)?);
-//         let limiter = governor::RateLimiter::direct(quota);
-
-//         // Build the rate limited stream.
-//         let (io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) as _);
-//         let mut frame_writer = Framed::new(io_write, RelayCodec::test());
-//         let stream = RelayedStream::Relay(Framed::new(
-//             MaybeTlsStream::Test(io_read),
-//             RelayCodec::test(),
-//         ));
-//         let mut stream = RateLimitedRelayedStream::new(stream, limiter);
-
-//         // Prepare a frame to send, assert its size.
-//         let data = Bytes::from_static(b"hello world!!");
-//         let target = SecretKey::generate(rand::thread_rng()).public();
-//         let frame = Frame::SendPacket {
-//             dst_key: target,
-//             packet: data.clone(),
-//         };
-//         let frame_len = frame.len_with_header();
-//         assert_eq!(frame_len, LIMIT as usize);
-
-//         // Send a frame, it should arrive.
-//         info!("-- send packet");
-//         frame_writer.send(frame.clone()).await?;
-//         frame_writer.flush().await?;
-//         let recv_frame = tokio::time::timeout(Duration::from_millis(500), stream.next())
-//             .await
-//             .expect("timeout")
-//             .expect("option")
-//             .expect("ok");
-//         assert_eq!(recv_frame, frame);
-
-//         // Next frame does not arrive.
-//         info!("-- send packet");
-//         frame_writer.send(frame.clone()).await?;
-//         frame_writer.flush().await?;
-//         let res = tokio::time::timeout(Duration::from_millis(100), stream.next()).await;
-//         assert!(res.is_err(), "expecting a timeout");
-//         info!("-- timeout happened");
-
-//         // Wait long enough.
-//         info!("-- sleep");
-//         tokio::time::sleep(Duration::from_secs(1)).await;
-
-//         // Frame arrives.
-//         let recv_frame = tokio::time::timeout(Duration::from_millis(500), stream.next())
-//             .await
-//             .expect("timeout")
-//             .expect("option")
-//             .expect("ok");
-//         assert_eq!(recv_frame, frame);
-
-//         Ok(())
-//     }
-// }
+        Ok(())
+    }
+}
