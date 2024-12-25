@@ -39,7 +39,6 @@ pub(super) struct ClientConnConfig {
     pub(super) write_timeout: Duration,
     pub(super) channel_capacity: usize,
     pub(super) rate_limit: Option<ClientConnRateLimit>,
-    pub(super) clients: Clients,
 }
 
 /// The [`Server`] side representation of a [`Client`]'s connection.
@@ -68,14 +67,13 @@ impl ClientConn {
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
     /// Call [`ClientConn::shutdown`] to close the read and write loops before dropping the [`ClientConn`]
-    pub fn new(config: ClientConnConfig, conn_num: usize) -> ClientConn {
+    pub fn new(config: ClientConnConfig, clients: &Clients, conn_num: usize) -> ClientConn {
         let ClientConnConfig {
             node_id: key,
             stream: io,
             write_timeout,
             channel_capacity,
             rate_limit,
-            clients,
         } = config;
 
         let stream = match rate_limit {

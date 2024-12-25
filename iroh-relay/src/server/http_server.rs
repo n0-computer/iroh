@@ -525,7 +525,6 @@ impl Inner {
             write_timeout: self.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
             rate_limit: self.rate_limit,
-            clients: self.clients.clone(),
         };
         trace!("accept: create client");
         inc!(Metrics, accepts);

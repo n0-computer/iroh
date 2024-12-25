@@ -52,7 +52,7 @@ impl Clients {
         let key = client_config.node_id;
         trace!("registering client: {:?}", key);
         let conn_num = self.next_conn_num();
-        let client = ClientConn::new(client_config, conn_num);
+        let client = ClientConn::new(client_config, self, conn_num);
         // TODO: in future, do not remove clients that share a NodeId, instead,
         // expand the `Client` struct to handle multiple connections & a policy for
         // how to handle who we write to when multiple connections exist.
@@ -211,93 +211,83 @@ enum SendError {
     SenderClosed,
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use std::time::Duration;
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
 
-//     use bytes::Bytes;
-//     use iroh_base::SecretKey;
-//     use tokio::io::DuplexStream;
-//     use tokio_util::codec::{Framed, FramedRead};
+    use bytes::Bytes;
+    use iroh_base::SecretKey;
+    use tokio::io::DuplexStream;
+    use tokio_util::codec::{Framed, FramedRead};
 
-//     use super::*;
-//     use crate::{
-//         protos::relay::{recv_frame, Frame, FrameType, RelayCodec},
-//         server::streams::{MaybeTlsStream, RelayedStream},
-//     };
+    use super::*;
+    use crate::{
+        protos::relay::{recv_frame, Frame, FrameType, RelayCodec},
+        server::streams::{MaybeTlsStream, RelayedStream},
+    };
 
-//     fn test_client_builder(
-//         key: NodeId,
-//     ) -> (ClientConnConfig, FramedRead<DuplexStream, RelayCodec>) {
-//         let (test_io, io) = tokio::io::duplex(1024);
-//         // let (server_channel, _) = mpsc::channel(10);
-//         (
-//             ClientConnConfig {
-//                 node_id: key,
-//                 stream: RelayedStream::Relay(Framed::new(
-//                     MaybeTlsStream::Test(io),
-//                     RelayCodec::test(),
-//                 )),
-//                 write_timeout: Duration::from_secs(1),
-//                 channel_capacity: 10,
-//                 rate_limit: None,
-//                 // server_channel,
-//             },
-//             FramedRead::new(test_io, RelayCodec::test()),
-//         )
-//     }
+    fn test_client_builder(
+        key: NodeId,
+    ) -> (ClientConnConfig, FramedRead<DuplexStream, RelayCodec>) {
+        let (test_io, io) = tokio::io::duplex(1024);
+        (
+            ClientConnConfig {
+                node_id: key,
+                stream: RelayedStream::Relay(Framed::new(
+                    MaybeTlsStream::Test(io),
+                    RelayCodec::test(),
+                )),
+                write_timeout: Duration::from_secs(1),
+                channel_capacity: 10,
+                rate_limit: None,
+            },
+            FramedRead::new(test_io, RelayCodec::test()),
+        )
+    }
 
-//     #[tokio::test]
-//     async fn test_clients() -> Result<()> {
-//         let a_key = SecretKey::generate(rand::thread_rng()).public();
-//         let b_key = SecretKey::generate(rand::thread_rng()).public();
+    #[tokio::test]
+    async fn test_clients() -> Result<()> {
+        let a_key = SecretKey::generate(rand::thread_rng()).public();
+        let b_key = SecretKey::generate(rand::thread_rng()).public();
 
-//         let (builder_a, mut a_rw) = test_client_builder(a_key);
+        let (builder_a, mut a_rw) = test_client_builder(a_key);
 
-//         let mut clients = Clients::default();
-//         clients.register(builder_a).await;
+        let clients = Clients::default();
+        clients.register(builder_a).await;
 
-//         // send packet
-//         let data = b"hello world!";
-//         let expect_packet = Packet {
-//             src: b_key,
-//             data: Bytes::from(&data[..]),
-//         };
-//         clients
-//             .send_packet(&a_key.clone(), expect_packet.clone())
-//             .await?;
-//         let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
-//         assert_eq!(
-//             frame,
-//             Frame::RecvPacket {
-//                 src_key: b_key,
-//                 content: data.to_vec().into(),
-//             }
-//         );
+        // send packet
+        let data = b"hello world!";
+        clients
+            .send_packet(a_key, Bytes::from(&data[..]), b_key)
+            .await?;
+        let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
+        assert_eq!(
+            frame,
+            Frame::RecvPacket {
+                src_key: b_key,
+                content: data.to_vec().into(),
+            }
+        );
 
-//         // send disco packet
-//         clients
-//             .send_disco_packet(&a_key.clone(), expect_packet)
-//             .await?;
-//         let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
-//         assert_eq!(
-//             frame,
-//             Frame::RecvPacket {
-//                 src_key: b_key,
-//                 content: data.to_vec().into(),
-//             }
-//         );
+        // send disco packet
+        clients
+            .send_disco_packet(a_key, Bytes::from(&data[..]), b_key)
+            .await?;
+        let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
+        assert_eq!(
+            frame,
+            Frame::RecvPacket {
+                src_key: b_key,
+                content: data.to_vec().into(),
+            }
+        );
 
-//         // send peer_gone
-//         clients.send_peer_gone(&a_key, b_key);
-//         let frame = recv_frame(FrameType::PeerGone, &mut a_rw).await?;
-//         assert_eq!(frame, Frame::NodeGone { node_id: b_key });
+        // send peer_gone
+        clients.unregister(a_key, None).await;
 
-//         clients.unregister(&a_key.clone()).await;
+        assert!(!clients.inner.read().await.contains_key(&a_key));
+        clients.shutdown().await;
 
-//         assert!(!clients.inner.contains_key(&a_key));
-
-//         clients.shutdown().await;
-//         Ok(())
-//     }
-// }
+        Ok(())
+    }
+}
