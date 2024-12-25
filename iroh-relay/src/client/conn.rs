@@ -34,6 +34,16 @@ pub(crate) enum ConnSendError {
 }
 
 /// A connection to a relay server.
+///
+/// This holds a connection to a relay server.  It is:
+///
+/// - A [`Stream`] for [`ReceivedMessage`] to receive from the server.
+/// - A [`Sink`] for [`SendMessage`] to send to the server.
+/// - A [`Sink`] for [`Frame`] to send to the server.
+///
+/// The [`Frame`] sink is a more internal interface, it allows performing the handshake.
+/// The [`SendMessage`] and [`ReceivedMessage`] are safer wrappers enforcing some protocol
+/// invariants.
 #[derive(derive_more::Debug)]
 pub enum Conn {
     Relay {
@@ -78,17 +88,14 @@ impl Conn {
         Ok(conn)
     }
 
-    /// Convenience flush function.
+    /// Flushes the sink.
     ///
     /// Because this implements two sink types rust makes calling flush a bit verbose.
     pub(crate) async fn flush(&mut self) -> Result<(), ConnSendError> {
         <Conn as SinkExt<Frame>>::flush(self).await
     }
 
-    /// Close the connection
-    ///
-    /// Shuts down the write loop directly and marks the connection as closed. The [`Conn`] will
-    /// check if the it is closed before attempting to read from it.
+    /// Close the connection.
     pub(crate) async fn close(&mut self) {
         <Conn as SinkExt<Frame>>::close(self).await.ok();
     }
