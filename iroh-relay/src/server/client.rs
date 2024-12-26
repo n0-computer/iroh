@@ -19,7 +19,7 @@ use crate::{
         disco,
         relay::{write_frame, Frame, KEEP_ALIVE},
     },
-    server::{metrics::Metrics, streams::RelayedStream, ClientConnRateLimit},
+    server::{metrics::Metrics, streams::RelayedStream, ClientRateLimit},
 };
 
 /// A request to write a dataframe to a Client
@@ -34,14 +34,14 @@ struct Packet {
 /// Number of times we try to send to a client connection before dropping the data;
 const RETRIES: usize = 3;
 
-/// Configuration for a [`ClientConn`].
+/// Configuration for a [`Client`].
 #[derive(Debug)]
-pub(super) struct ClientConnConfig {
+pub(super) struct Config {
     pub(super) node_id: NodeId,
     pub(super) stream: RelayedStream,
     pub(super) write_timeout: Duration,
     pub(super) channel_capacity: usize,
-    pub(super) rate_limit: Option<ClientConnRateLimit>,
+    pub(super) rate_limit: Option<ClientRateLimit>,
 }
 
 /// The [`Server`] side representation of a [`Client`]'s connection.
@@ -49,7 +49,7 @@ pub(super) struct ClientConnConfig {
 /// [`Server`]: crate::server::Server
 /// [`Client`]: crate::client::Client
 #[derive(Debug)]
-pub(super) struct ClientConn {
+pub(super) struct Client {
     /// Identity of the connected peer.
     node_id: NodeId,
     /// Used to close the connection loop.
@@ -64,12 +64,12 @@ pub(super) struct ClientConn {
     peer_gone: mpsc::Sender<NodeId>,
 }
 
-impl ClientConn {
+impl Client {
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
-    /// Call [`ClientConn::shutdown`] to close the read and write loops before dropping the [`ClientConn`]
-    pub(super) fn new(config: ClientConnConfig, clients: &Clients) -> ClientConn {
-        let ClientConnConfig {
+    /// Call [`Client::shutdown`] to close the read and write loops before dropping the [`Client`]
+    pub(super) fn new(config: Config, clients: &Clients) -> Client {
+        let Config {
             node_id,
             stream: io,
             write_timeout,
@@ -123,7 +123,7 @@ impl ClientConn {
             .instrument(tracing::info_span!("client_conn_actor")),
         );
 
-        ClientConn {
+        Client {
             node_id,
             handle: AbortOnDropHandle::new(handle),
             done,

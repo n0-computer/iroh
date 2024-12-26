@@ -30,10 +30,10 @@ use crate::{
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
     protos::relay::{recv_client_key, RelayCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION},
     server::{
-        client_conn::ClientConnConfig,
+        client::Config,
         metrics::Metrics,
         streams::{MaybeTlsStream, RelayedStream},
-        ClientConnRateLimit,
+        ClientRateLimit,
     },
     KeyCache,
 };
@@ -159,7 +159,7 @@ pub(super) struct ServerBuilder {
     ///
     /// Rate-limiting is enforced on received traffic from individual clients.  This
     /// configuration applies to a single client connection.
-    client_rx_ratelimit: Option<ClientConnRateLimit>,
+    client_rx_ratelimit: Option<ClientRateLimit>,
     /// The capacity of the key cache.
     key_cache_capacity: usize,
 }
@@ -187,7 +187,7 @@ impl ServerBuilder {
     ///
     /// On each client connection the incoming data is rate-limited.  By default
     /// no rate limit is enforced.
-    pub(super) fn client_rx_ratelimit(mut self, config: ClientConnRateLimit) -> Self {
+    pub(super) fn client_rx_ratelimit(mut self, config: ClientRateLimit) -> Self {
         self.client_rx_ratelimit = Some(config);
         self
     }
@@ -302,7 +302,7 @@ struct Inner {
     headers: HeaderMap,
     clients: Clients,
     write_timeout: Duration,
-    rate_limit: Option<ClientConnRateLimit>,
+    rate_limit: Option<ClientRateLimit>,
     key_cache: KeyCache,
 }
 
@@ -519,7 +519,7 @@ impl Inner {
         }
 
         trace!("accept: build client conn");
-        let client_conn_builder = ClientConnConfig {
+        let client_conn_builder = Config {
             node_id: client_key,
             stream: io,
             write_timeout: self.write_timeout,
@@ -552,7 +552,7 @@ impl RelayService {
     fn new(
         handlers: Handlers,
         headers: HeaderMap,
-        rate_limit: Option<ClientConnRateLimit>,
+        rate_limit: Option<ClientRateLimit>,
         key_cache: KeyCache,
     ) -> Self {
         Self(Arc::new(Inner {

@@ -42,7 +42,7 @@ use crate::{
     quic::server::{QuicServer, ServerHandle as QuicServerHandle},
 };
 
-pub(crate) mod client_conn;
+mod client;
 mod clients;
 mod http_server;
 mod metrics;
@@ -176,12 +176,12 @@ pub struct Limits {
     /// Burst limit for accepting new connection. Unlimited if not set.
     pub accept_conn_burst: Option<usize>,
     /// Rate limits for incoming traffic from a client connection.
-    pub client_rx: Option<ClientConnRateLimit>,
+    pub client_rx: Option<ClientRateLimit>,
 }
 
 /// Per-client rate limit configuration.
 #[derive(Debug, Copy, Clone)]
-pub struct ClientConnRateLimit {
+pub struct ClientRateLimit {
     /// Max number of bytes per second to read from the client connection.
     pub bytes_per_second: NonZeroU32,
     /// Max number of bytes to read in a single burst.

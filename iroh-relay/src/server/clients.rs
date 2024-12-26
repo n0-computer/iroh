@@ -10,7 +10,7 @@ use iroh_base::NodeId;
 use iroh_metrics::inc;
 use tracing::{trace, warn};
 
-use super::client_conn::{ClientConn, ClientConnConfig, SendError};
+use super::client::{Client, Config, SendError};
 use crate::server::metrics::Metrics;
 
 /// Manages the connections to all currently connected clients.
@@ -20,7 +20,7 @@ pub(super) struct Clients(Arc<Inner>);
 #[derive(Debug, Default)]
 struct Inner {
     /// The list of all currently connected clients.
-    clients: DashMap<NodeId, ClientConn>,
+    clients: DashMap<NodeId, Client>,
     /// Map of which client has sent where
     sent_to: DashMap<NodeId, HashSet<NodeId>>,
 }
@@ -38,10 +38,10 @@ impl Clients {
     }
 
     /// Builds the client handler and starts the read & write loops for the connection.
-    pub async fn register(&self, client_config: ClientConnConfig) {
+    pub async fn register(&self, client_config: Config) {
         let key = client_config.node_id;
         trace!("registering client: {:?}", key);
-        let client = ClientConn::new(client_config, self);
+        let client = Client::new(client_config, self);
         if let Some(old_client) = self.0.clients.insert(key, client) {
             warn!("multiple connections found for {key:?}, pruning old connection",);
             old_client.shutdown().await;
@@ -133,12 +133,10 @@ mod tests {
         server::streams::{MaybeTlsStream, RelayedStream},
     };
 
-    fn test_client_builder(
-        key: NodeId,
-    ) -> (ClientConnConfig, FramedRead<DuplexStream, RelayCodec>) {
+    fn test_client_builder(key: NodeId) -> (Config, FramedRead<DuplexStream, RelayCodec>) {
         let (test_io, io) = tokio::io::duplex(1024);
         (
-            ClientConnConfig {
+            Config {
                 node_id: key,
                 stream: RelayedStream::Relay(Framed::new(
                     MaybeTlsStream::Test(io),
