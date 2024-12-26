@@ -1157,7 +1157,7 @@
     quic::server::{QuicServer, ServerHandle <span class="kw">as </span>QuicServerHandle},
 };
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>client_conn;
+<span class="kw">mod </span>client;
 <span class="kw">mod </span>clients;
 <span class="kw">mod </span>http_server;
 <span class="kw">mod </span>metrics;
@@ -1291,12 +1291,12 @@
     <span class="doccomment">/// Burst limit for accepting new connection. Unlimited if not set.
     </span><span class="kw">pub </span>accept_conn_burst: <span class="prelude-ty">Option</span>&lt;usize&gt;,
     <span class="doccomment">/// Rate limits for incoming traffic from a client connection.
-    </span><span class="kw">pub </span>client_rx: <span class="prelude-ty">Option</span>&lt;ClientConnRateLimit&gt;,
+    </span><span class="kw">pub </span>client_rx: <span class="prelude-ty">Option</span>&lt;ClientRateLimit&gt;,
 }
 
 <span class="doccomment">/// Per-client rate limit configuration.
 </span><span class="attr">#[derive(Debug, Copy, Clone)]
-</span><span class="kw">pub struct </span>ClientConnRateLimit {
+</span><span class="kw">pub struct </span>ClientRateLimit {
     <span class="doccomment">/// Max number of bytes per second to read from the client connection.
     </span><span class="kw">pub </span>bytes_per_second: NonZeroU32,
     <span class="doccomment">/// Max number of bytes to read in a single burst.

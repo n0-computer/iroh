@@ -196,9 +196,7 @@
 <a href="#195" id="195">195</a>
 <a href="#196" id="196">196</a>
 <a href="#197" id="197">197</a>
-<a href="#198" id="198">198</a>
-<a href="#199" id="199">199</a>
-<a href="#200" id="200">200</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
+<a href="#198" id="198">198</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
 </span><span class="comment">// Based on tailscale/derp/derp_server.go
 
 </span><span class="kw">use </span>std::{collections::HashSet, sync::Arc};
@@ -210,7 +208,7 @@
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>tracing::{trace, warn};
 
-<span class="kw">use </span><span class="kw">super</span>::client_conn::{ClientConn, ClientConnConfig, SendError};
+<span class="kw">use </span><span class="kw">super</span>::client::{Client, Config, SendError};
 <span class="kw">use </span><span class="kw">crate</span>::server::metrics::Metrics;
 
 <span class="doccomment">/// Manages the connections to all currently connected clients.
@@ -220,7 +218,7 @@
 <span class="attr">#[derive(Debug, Default)]
 </span><span class="kw">struct </span>Inner {
     <span class="doccomment">/// The list of all currently connected clients.
-    </span>clients: DashMap&lt;NodeId, ClientConn&gt;,
+    </span>clients: DashMap&lt;NodeId, Client&gt;,
     <span class="doccomment">/// Map of which client has sent where
     </span>sent_to: DashMap&lt;NodeId, HashSet&lt;NodeId&gt;&gt;,
 }
@@ -238,10 +236,10 @@
     }
 
     <span class="doccomment">/// Builds the client handler and starts the read &amp; write loops for the connection.
-    </span><span class="kw">pub async fn </span>register(<span class="kw-2">&amp;</span><span class="self">self</span>, client_config: ClientConnConfig) {
+    </span><span class="kw">pub async fn </span>register(<span class="kw-2">&amp;</span><span class="self">self</span>, client_config: Config) {
         <span class="kw">let </span>key = client_config.node_id;
         <span class="macro">trace!</span>(<span class="string">"registering client: {:?}"</span>, key);
-        <span class="kw">let </span>client = ClientConn::new(client_config, <span class="self">self</span>);
+        <span class="kw">let </span>client = Client::new(client_config, <span class="self">self</span>);
         <span class="kw">if let </span><span class="prelude-val">Some</span>(old_client) = <span class="self">self</span>.<span class="number">0</span>.clients.insert(key, client) {
             <span class="macro">warn!</span>(<span class="string">"multiple connections found for {key:?}, pruning old connection"</span>,);
             old_client.shutdown().<span class="kw">await</span>;
@@ -333,12 +331,10 @@
         server::streams::{MaybeTlsStream, RelayedStream},
     };
 
-    <span class="kw">fn </span>test_client_builder(
-        key: NodeId,
-    ) -&gt; (ClientConnConfig, FramedRead&lt;DuplexStream, RelayCodec&gt;) {
+    <span class="kw">fn </span>test_client_builder(key: NodeId) -&gt; (Config, FramedRead&lt;DuplexStream, RelayCodec&gt;) {
         <span class="kw">let </span>(test_io, io) = tokio::io::duplex(<span class="number">1024</span>);
         (
-            ClientConnConfig {
+            Config {
                 node_id: key,
                 stream: RelayedStream::Relay(Framed::new(
                     MaybeTlsStream::Test(io),

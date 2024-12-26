@@ -1152,10 +1152,10 @@
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
     protos::relay::{recv_client_key, RelayCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION},
     server::{
-        client_conn::ClientConnConfig,
+        client::Config,
         metrics::Metrics,
         streams::{MaybeTlsStream, RelayedStream},
-        ClientConnRateLimit,
+        ClientRateLimit,
     },
     KeyCache,
 };
@@ -1281,7 +1281,7 @@
     ///
     /// Rate-limiting is enforced on received traffic from individual clients.  This
     /// configuration applies to a single client connection.
-    </span>client_rx_ratelimit: <span class="prelude-ty">Option</span>&lt;ClientConnRateLimit&gt;,
+    </span>client_rx_ratelimit: <span class="prelude-ty">Option</span>&lt;ClientRateLimit&gt;,
     <span class="doccomment">/// The capacity of the key cache.
     </span>key_cache_capacity: usize,
 }
@@ -1309,7 +1309,7 @@
     ///
     /// On each client connection the incoming data is rate-limited.  By default
     /// no rate limit is enforced.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>client_rx_ratelimit(<span class="kw-2">mut </span><span class="self">self</span>, config: ClientConnRateLimit) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>client_rx_ratelimit(<span class="kw-2">mut </span><span class="self">self</span>, config: ClientRateLimit) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.client_rx_ratelimit = <span class="prelude-val">Some</span>(config);
         <span class="self">self
     </span>}
@@ -1424,7 +1424,7 @@
     headers: HeaderMap,
     clients: Clients,
     write_timeout: Duration,
-    rate_limit: <span class="prelude-ty">Option</span>&lt;ClientConnRateLimit&gt;,
+    rate_limit: <span class="prelude-ty">Option</span>&lt;ClientRateLimit&gt;,
     key_cache: KeyCache,
 }
 
@@ -1641,7 +1641,7 @@
         }
 
         <span class="macro">trace!</span>(<span class="string">"accept: build client conn"</span>);
-        <span class="kw">let </span>client_conn_builder = ClientConnConfig {
+        <span class="kw">let </span>client_conn_builder = Config {
             node_id: client_key,
             stream: io,
             write_timeout: <span class="self">self</span>.write_timeout,
@@ -1674,7 +1674,7 @@
     <span class="kw">fn </span>new(
         handlers: Handlers,
         headers: HeaderMap,
-        rate_limit: <span class="prelude-ty">Option</span>&lt;ClientConnRateLimit&gt;,
+        rate_limit: <span class="prelude-ty">Option</span>&lt;ClientRateLimit&gt;,
         key_cache: KeyCache,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>(Arc::new(Inner {
