@@ -7,9 +7,11 @@ use anyhow::{bail, Result};
 use bytes::Bytes;
 use dashmap::DashMap;
 use iroh_base::NodeId;
+use iroh_metrics::inc;
 use tracing::{trace, warn};
 
 use super::client_conn::{ClientConn, ClientConnConfig, SendError};
+use crate::server::metrics::Metrics;
 
 /// Manages the connections to all currently connected clients.
 #[derive(Debug, Default, Clone)]
@@ -76,7 +78,9 @@ impl Clients {
             let res = client.send_packet(src, data);
             return self.process_result(src, dst, res).await;
         }
-        bail!("Could not find client for {dst:?}, dropped packet");
+        warn!("could not find client for {dst:?}, dropped packet");
+        inc!(Metrics, send_packets_dropped);
+        Ok(())
     }
 
     pub async fn send_disco_packet(&self, dst: NodeId, data: Bytes, src: NodeId) -> Result<()> {
@@ -84,7 +88,9 @@ impl Clients {
             let res = client.send_disco_packet(src, data);
             return self.process_result(src, dst, res).await;
         }
-        bail!("Could not find client for {dst:?}, dropped disco packet");
+        warn!("could not find client for {dst:?}, dropped disco packet");
+        inc!(Metrics, disco_packets_dropped);
+        Ok(())
     }
 
     async fn process_result(
