@@ -31,6 +31,9 @@ pub(super) struct Packet {
     pub(super) data: Bytes,
 }
 
+/// Number of times we try to send to a client connection before dropping the data;
+const RETRIES: usize = 3;
+
 /// Configuration for a [`ClientConn`].
 #[derive(Debug)]
 pub(super) struct ClientConnConfig {
@@ -50,24 +53,24 @@ pub(super) struct ClientConn {
     /// Unique counter, incremented each time we accept a new connection.
     pub(super) conn_num: usize,
     /// Identity of the connected peer.
-    pub(super) key: NodeId,
+    key: NodeId,
     /// Used to close the connection loop.
     done: CancellationToken,
     /// Actor handle.
     handle: AbortOnDropHandle<()>,
     /// Queue of packets intended for the client.
-    pub(super) send_queue: mpsc::Sender<Packet>,
+    send_queue: mpsc::Sender<Packet>,
     /// Queue of disco packets intended for the client.
-    pub(super) disco_send_queue: mpsc::Sender<Packet>,
+    disco_send_queue: mpsc::Sender<Packet>,
     /// Channel to notify the client that a previous sender has disconnected.
-    pub(super) peer_gone: mpsc::Sender<NodeId>,
+    peer_gone: mpsc::Sender<NodeId>,
 }
 
 impl ClientConn {
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
     /// Call [`ClientConn::shutdown`] to close the read and write loops before dropping the [`ClientConn`]
-    pub fn new(config: ClientConnConfig, clients: &Clients, conn_num: usize) -> ClientConn {
+    pub(super) fn new(config: ClientConnConfig, clients: &Clients, conn_num: usize) -> ClientConn {
         let ClientConnConfig {
             node_id: key,
             stream: io,
@@ -140,7 +143,7 @@ impl ClientConn {
     /// Shutdown the reader and writer loops and closes the connection.
     ///
     /// Any shutdown errors will be logged as warnings.
-    pub async fn shutdown(self) {
+    pub(super) async fn shutdown(self) {
         self.done.cancel();
         if let Err(e) = self.handle.await {
             warn!(
@@ -149,6 +152,51 @@ impl ClientConn {
             );
         };
     }
+
+    pub(super) fn send_packet(&self, src: NodeId, data: Bytes) -> Result<(), SendError> {
+        try_send(&self.send_queue, Packet { src, data })
+    }
+
+    pub(super) fn send_disco_packet(&self, src: NodeId, data: Bytes) -> Result<(), SendError> {
+        try_send(&self.disco_send_queue, Packet { src, data })
+    }
+
+    pub(super) fn send_peer_gone(&self, key: NodeId) -> Result<(), SendError> {
+        let res = try_send(&self.peer_gone, key);
+        match res {
+            Ok(_) => {
+                inc!(Metrics, other_packets_sent);
+            }
+            Err(_) => {
+                inc!(Metrics, other_packets_dropped);
+            }
+        }
+        res
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(super) enum SendError {
+    #[error("packet dropped")]
+    PacketDropped,
+    #[error("sender closed")]
+    SenderClosed,
+}
+
+/// Tries up to `3` times to send a message into the given channel, retrying iff it is full.
+fn try_send<T>(sender: &mpsc::Sender<T>, msg: T) -> Result<(), SendError> {
+    let mut msg = msg;
+    for _ in 0..RETRIES {
+        match sender.try_send(msg) {
+            Ok(_) => return Ok(()),
+            // if the queue is full, try again (max 3 times)
+            Err(mpsc::error::TrySendError::Full(m)) => msg = m,
+            // only other option is `TrySendError::Closed`, report the
+            // closed error
+            Err(_) => return Err(SendError::SenderClosed),
+        }
+    }
+    Err(SendError::PacketDropped)
 }
 
 /// Manages all the reads and writes to this client. It periodically sends a `KEEP_ALIVE`

@@ -10,17 +10,9 @@ use anyhow::{bail, Result};
 use bytes::Bytes;
 use dashmap::DashMap;
 use iroh_base::NodeId;
-use iroh_metrics::inc;
-use tokio::sync::mpsc;
 use tracing::{trace, warn};
 
-use super::{
-    client_conn::{ClientConn, ClientConnConfig, Packet},
-    metrics::Metrics,
-};
-
-/// Number of times we try to send to a client connection before dropping the data;
-const RETRIES: usize = 3;
+use super::client_conn::{ClientConn, ClientConnConfig, SendError};
 
 /// Manages the connections to all currently connected clients.
 #[derive(Debug, Default, Clone)]
@@ -29,9 +21,11 @@ pub(super) struct Clients(Arc<Inner>);
 #[derive(Debug, Default)]
 struct Inner {
     /// The list of all currently connected clients.
-    clients: DashMap<NodeId, Client>,
+    clients: DashMap<NodeId, ClientConn>,
     /// The next connection number to use.
     conn_num: AtomicUsize,
+    /// Map of which client has sent where
+    sent_to: DashMap<NodeId, HashSet<NodeId>>,
 }
 
 impl Clients {
@@ -58,10 +52,6 @@ impl Clients {
         trace!("registering client: {:?}", key);
         let conn_num = self.next_conn_num();
         let client = ClientConn::new(client_config, self, conn_num);
-        // TODO: in future, do not remove clients that share a NodeId, instead,
-        // expand the `Client` struct to handle multiple connections & a policy for
-        // how to handle who we write to when multiple connections exist.
-        let client = Client::new(client);
         if let Some(old_client) = self.0.clients.insert(key, client) {
             warn!("multiple connections found for {key:?}, pruning old connection",);
             old_client.shutdown().await;
@@ -75,20 +65,22 @@ impl Clients {
         trace!("unregistering client: {:?}", dst);
         if let Some((_, client)) = self.0.clients.remove(&dst) {
             if let Some(conn_num) = conn_num {
-                if client.conn.conn_num != conn_num {
+                if client.conn_num != conn_num {
                     // put it back
                     self.0.clients.insert(dst, client);
                     return;
                 }
             }
-            for key in client.sent_to.iter() {
-                match client.send_peer_gone(dst) {
-                    Ok(_) => {}
-                    Err(SendError::PacketDropped) => {
-                        warn!("client {key:?} too busy to receive packet, dropping packet");
-                    }
-                    Err(SendError::SenderClosed) => {
-                        warn!("Can no longer write to client {key:?}");
+            if let Some((_, sent_to)) = self.0.sent_to.remove(&dst) {
+                for key in sent_to {
+                    match client.send_peer_gone(key) {
+                        Ok(_) => {}
+                        Err(SendError::PacketDropped) => {
+                            warn!("client {key:?} too busy to receive packet, dropping packet");
+                        }
+                        Err(SendError::SenderClosed) => {
+                            warn!("Can no longer write to client {key:?}");
+                        }
                     }
                 }
             }
@@ -122,9 +114,9 @@ impl Clients {
     ) -> Result<()> {
         match res {
             Ok(_) => {
-                if let Some(ref mut client) = self.0.clients.get_mut(&src) {
-                    client.record_send(dst);
-                }
+                // Record send_to relationship
+                let mut e = self.0.sent_to.entry(src).or_default();
+                e.insert(dst);
                 return Ok(());
             }
             Err(SendError::PacketDropped) => {
@@ -137,78 +129,6 @@ impl Clients {
         }
         bail!("unable to send msg");
     }
-}
-
-/// Represents a connection to a client.
-// TODO: expand to allow for _multiple connections_ associated with a single NodeId. This
-// introduces some questions around which connection should be prioritized when forwarding packets
-#[derive(Debug)]
-pub(super) struct Client {
-    /// The client connection associated with the [`NodeId`]
-    conn: ClientConn,
-    /// list of peers we have sent messages to
-    sent_to: HashSet<NodeId>,
-}
-
-impl Client {
-    fn new(conn: ClientConn) -> Self {
-        Self {
-            conn,
-            sent_to: HashSet::default(),
-        }
-    }
-
-    /// Record that this client sent a packet to the `dst` client
-    fn record_send(&mut self, dst: NodeId) {
-        self.sent_to.insert(dst);
-    }
-
-    async fn shutdown(self) {
-        self.conn.shutdown().await;
-    }
-
-    fn send_packet(&self, src: NodeId, data: Bytes) -> Result<(), SendError> {
-        try_send(&self.conn.send_queue, Packet { src, data })
-    }
-
-    fn send_disco_packet(&self, src: NodeId, data: Bytes) -> Result<(), SendError> {
-        try_send(&self.conn.disco_send_queue, Packet { src, data })
-    }
-
-    fn send_peer_gone(&self, key: NodeId) -> Result<(), SendError> {
-        let res = try_send(&self.conn.peer_gone, key);
-        match res {
-            Ok(_) => {
-                inc!(Metrics, other_packets_sent);
-            }
-            Err(_) => {
-                inc!(Metrics, other_packets_dropped);
-            }
-        }
-        res
-    }
-}
-
-/// Tries up to `3` times to send a message into the given channel, retrying iff it is full.
-fn try_send<T>(sender: &mpsc::Sender<T>, msg: T) -> Result<(), SendError> {
-    let mut msg = msg;
-    for _ in 0..RETRIES {
-        match sender.try_send(msg) {
-            Ok(_) => return Ok(()),
-            // if the queue is full, try again (max 3 times)
-            Err(mpsc::error::TrySendError::Full(m)) => msg = m,
-            // only other option is `TrySendError::Closed`, report the
-            // closed error
-            Err(_) => return Err(SendError::SenderClosed),
-        }
-    }
-    Err(SendError::PacketDropped)
-}
-
-#[derive(Debug)]
-enum SendError {
-    PacketDropped,
-    SenderClosed,
 }
 
 #[cfg(test)]
