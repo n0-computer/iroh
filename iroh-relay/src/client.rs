@@ -379,7 +379,6 @@ impl Client {
             conn.send(SendMessage::NotePreferred(true))
                 .await
                 .map_err(|_| ClientError::Send)?;
-            conn.flush().await.map_err(|_| ClientError::Send)?;
         }
 
         event!(
@@ -511,11 +510,11 @@ impl Client {
         *old = is_preferred;
 
         if let Some((ref mut conn, _)) = self.relay_conn {
-            let fut = async {
-                conn.send(SendMessage::NotePreferred(is_preferred)).await?;
-                conn.flush().await
-            };
-            if fut.await.is_err() {
+            if conn
+                .send(SendMessage::NotePreferred(is_preferred))
+                .await
+                .is_err()
+            {
                 self.close().await;
             }
         }
@@ -550,7 +549,6 @@ impl Client {
         conn.send(SendMessage::Ping(ping))
             .await
             .map_err(|_| ClientError::Send)?;
-        conn.flush().await.map_err(|_| ClientError::Send)?;
 
         let fut = async move {
             match tokio::time::timeout(PING_TIMEOUT, recv).await {
@@ -597,11 +595,7 @@ impl Client {
     pub async fn send_pong(&mut self, data: [u8; 8]) -> Result<(), ClientError> {
         debug!("send_pong");
         let (conn, _) = self.connect_inner("send_pong").await?;
-        let fut = async {
-            conn.send(SendMessage::Pong(data)).await?;
-            conn.flush().await
-        };
-        match fut.await {
+        match conn.send(SendMessage::Pong(data)).await {
             Ok(_) => Ok(()),
             Err(_) => {
                 self.close().await;

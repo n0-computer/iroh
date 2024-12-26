@@ -88,13 +88,6 @@ impl Conn {
         Ok(conn)
     }
 
-    /// Flushes the sink.
-    ///
-    /// Because this implements two sink types rust makes calling flush a bit verbose.
-    pub(crate) async fn flush(&mut self) -> Result<(), ConnSendError> {
-        <Conn as SinkExt<Frame>>::flush(self).await
-    }
-
     /// Close the connection.
     pub(crate) async fn close(&mut self) {
         <Conn as SinkExt<Frame>>::close(self).await.ok();
