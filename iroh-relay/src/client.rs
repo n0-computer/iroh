@@ -375,9 +375,12 @@ impl Client {
             }
         };
 
-        if self.is_preferred && conn.note_preferred(true).await.is_err() {
-            conn.close().await;
-            return Err(ClientError::Send);
+        if self.is_preferred {
+            if let Err(err) = conn.note_preferred(true).await {
+                warn!("failed to note preferred connection: {:?}", err);
+                conn.close().await;
+                return Err(ClientError::Send);
+            }
         }
 
         event!(
