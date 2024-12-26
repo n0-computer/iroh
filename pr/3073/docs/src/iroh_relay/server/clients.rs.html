@@ -192,7 +192,13 @@
 <a href="#191" id="191">191</a>
 <a href="#192" id="192">192</a>
 <a href="#193" id="193">193</a>
-<a href="#194" id="194">194</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
 </span><span class="comment">// Based on tailscale/derp/derp_server.go
 
 </span><span class="kw">use </span>std::{collections::HashSet, sync::Arc};
@@ -201,9 +207,11 @@
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>dashmap::DashMap;
 <span class="kw">use </span>iroh_base::NodeId;
+<span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>tracing::{trace, warn};
 
 <span class="kw">use </span><span class="kw">super</span>::client_conn::{ClientConn, ClientConnConfig, SendError};
+<span class="kw">use </span><span class="kw">crate</span>::server::metrics::Metrics;
 
 <span class="doccomment">/// Manages the connections to all currently connected clients.
 </span><span class="attr">#[derive(Debug, Default, Clone)]
@@ -270,7 +278,9 @@
             <span class="kw">let </span>res = client.send_packet(src, data);
             <span class="kw">return </span><span class="self">self</span>.process_result(src, dst, res).<span class="kw">await</span>;
         }
-        <span class="macro">bail!</span>(<span class="string">"Could not find client for {dst:?}, dropped packet"</span>);
+        <span class="macro">warn!</span>(<span class="string">"could not find client for {dst:?}, dropped packet"</span>);
+        <span class="macro">inc!</span>(Metrics, send_packets_dropped);
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="kw">pub async fn </span>send_disco_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId, data: Bytes, src: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
@@ -278,7 +288,9 @@
             <span class="kw">let </span>res = client.send_disco_packet(src, data);
             <span class="kw">return </span><span class="self">self</span>.process_result(src, dst, res).<span class="kw">await</span>;
         }
-        <span class="macro">bail!</span>(<span class="string">"Could not find client for {dst:?}, dropped disco packet"</span>);
+        <span class="macro">warn!</span>(<span class="string">"could not find client for {dst:?}, dropped disco packet"</span>);
+        <span class="macro">inc!</span>(Metrics, disco_packets_dropped);
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="kw">async fn </span>process_result(
