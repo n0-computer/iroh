@@ -910,42 +910,7 @@
 <a href="#909" id="909">909</a>
 <a href="#910" id="910">910</a>
 <a href="#911" id="911">911</a>
-<a href="#912" id="912">912</a>
-<a href="#913" id="913">913</a>
-<a href="#914" id="914">914</a>
-<a href="#915" id="915">915</a>
-<a href="#916" id="916">916</a>
-<a href="#917" id="917">917</a>
-<a href="#918" id="918">918</a>
-<a href="#919" id="919">919</a>
-<a href="#920" id="920">920</a>
-<a href="#921" id="921">921</a>
-<a href="#922" id="922">922</a>
-<a href="#923" id="923">923</a>
-<a href="#924" id="924">924</a>
-<a href="#925" id="925">925</a>
-<a href="#926" id="926">926</a>
-<a href="#927" id="927">927</a>
-<a href="#928" id="928">928</a>
-<a href="#929" id="929">929</a>
-<a href="#930" id="930">930</a>
-<a href="#931" id="931">931</a>
-<a href="#932" id="932">932</a>
-<a href="#933" id="933">933</a>
-<a href="#934" id="934">934</a>
-<a href="#935" id="935">935</a>
-<a href="#936" id="936">936</a>
-<a href="#937" id="937">937</a>
-<a href="#938" id="938">938</a>
-<a href="#939" id="939">939</a>
-<a href="#940" id="940">940</a>
-<a href="#941" id="941">941</a>
-<a href="#942" id="942">942</a>
-<a href="#943" id="943">943</a>
-<a href="#944" id="944">944</a>
-<a href="#945" id="945">945</a>
-<a href="#946" id="946">946</a>
-<a href="#947" id="947">947</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#912" id="912">912</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -1050,7 +1015,6 @@
 </span><span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">pub struct </span>Client {
     secret_key: SecretKey,
-    is_preferred: bool,
     relay_conn: <span class="prelude-ty">Option</span>&lt;(Conn, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;)&gt;,
     <span class="attr">#[debug(<span class="string">"address family selector callback"</span>)]
     </span>address_family_selector: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Fn() -&gt; bool + Send + Sync&gt;&gt;,
@@ -1206,7 +1170,6 @@
 
         Client {
             secret_key: key,
-            is_preferred: <span class="bool-val">false</span>,
             relay_conn: <span class="prelude-val">None</span>,
             address_family_selector: <span class="self">self</span>.address_family_selector,
             pings: PingTracker::default(),
@@ -1310,7 +1273,7 @@
     }
 
     <span class="kw">async fn </span>connect_0(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(Conn, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;), ClientError&gt; {
-        <span class="kw">let </span>(<span class="kw-2">mut </span>conn, local_addr) = <span class="kw">match </span><span class="self">self</span>.protocol {
+        <span class="kw">let </span>(conn, local_addr) = <span class="kw">match </span><span class="self">self</span>.protocol {
             Protocol::Websocket =&gt; {
                 <span class="kw">let </span>conn = <span class="self">self</span>.connect_ws().<span class="kw">await</span><span class="question-mark">?</span>;
                 <span class="kw">let </span>local_addr = <span class="prelude-val">None</span>;
@@ -1322,18 +1285,9 @@
             }
         };
 
-        <span class="kw">if </span><span class="self">self</span>.is_preferred {
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = conn.note_preferred(<span class="bool-val">true</span>).<span class="kw">await </span>{
-                <span class="macro">warn!</span>(<span class="string">"failed to note preferred connection: {:?}"</span>, err);
-                conn.close().<span class="kw">await</span>;
-                <span class="kw">return </span><span class="prelude-val">Err</span>(ClientError::Send);
-            }
-        }
-
         <span class="macro">event!</span>(
             target: <span class="string">"events.net.relay.connected"</span>,
             Level::DEBUG,
-            home = <span class="self">self</span>.is_preferred,
             url = %<span class="self">self</span>.url,
         );
 
@@ -1448,30 +1402,6 @@
             </span>.header(HOST, host_header_value)
             .body(http_body_util::Empty::&lt;hyper::body::Bytes&gt;::new())<span class="question-mark">?</span>;
         request_sender.send_request(req).<span class="kw">await</span>.map_err(From::from)
-    }
-
-    <span class="doccomment">/// Let the server know that this client is the preferred client
-    </span><span class="kw">pub async fn </span>note_preferred(<span class="kw-2">&amp;mut </span><span class="self">self</span>, is_preferred: bool) {
-        <span class="kw">let </span>old = <span class="kw-2">&amp;mut </span><span class="self">self</span>.is_preferred;
-        <span class="kw">if </span><span class="kw-2">*</span>old == is_preferred {
-            <span class="kw">return</span>;
-        }
-        <span class="kw-2">*</span>old = is_preferred;
-
-        <span class="comment">// only send the preference if we already have a connection
-        </span><span class="kw">let </span>res = {
-            <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw-2">ref mut </span>conn, <span class="kw">_</span>)) = <span class="self">self</span>.relay_conn {
-                conn.note_preferred(is_preferred).<span class="kw">await
-            </span>} <span class="kw">else </span>{
-                <span class="kw">return</span>;
-            }
-        };
-        <span class="comment">// need to do this outside the above closure because they rely on the same lock
-        // if there was an error sending, close the underlying relay connection
-        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
-            <span class="macro">warn!</span>(<span class="string">"failed to note preferred: {:?}"</span>, err);
-            <span class="self">self</span>.close().<span class="kw">await</span>;
-        }
     }
 
     <span class="doccomment">/// Returns the local addr of the connection.

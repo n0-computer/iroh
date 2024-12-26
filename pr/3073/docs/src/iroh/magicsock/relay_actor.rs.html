@@ -1161,31 +1161,7 @@
 <a href="#1160" id="1160">1160</a>
 <a href="#1161" id="1161">1161</a>
 <a href="#1162" id="1162">1162</a>
-<a href="#1163" id="1163">1163</a>
-<a href="#1164" id="1164">1164</a>
-<a href="#1165" id="1165">1165</a>
-<a href="#1166" id="1166">1166</a>
-<a href="#1167" id="1167">1167</a>
-<a href="#1168" id="1168">1168</a>
-<a href="#1169" id="1169">1169</a>
-<a href="#1170" id="1170">1170</a>
-<a href="#1171" id="1171">1171</a>
-<a href="#1172" id="1172">1172</a>
-<a href="#1173" id="1173">1173</a>
-<a href="#1174" id="1174">1174</a>
-<a href="#1175" id="1175">1175</a>
-<a href="#1176" id="1176">1176</a>
-<a href="#1177" id="1177">1177</a>
-<a href="#1178" id="1178">1178</a>
-<a href="#1179" id="1179">1179</a>
-<a href="#1180" id="1180">1180</a>
-<a href="#1181" id="1181">1181</a>
-<a href="#1182" id="1182">1182</a>
-<a href="#1183" id="1183">1183</a>
-<a href="#1184" id="1184">1184</a>
-<a href="#1185" id="1185">1185</a>
-<a href="#1186" id="1186">1186</a>
-<a href="#1187" id="1187">1187</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1163" id="1163">1163</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1274,8 +1250,6 @@
     /// connection uses a local socket with an IP address not in this list the server will
     /// always re-connect.
     </span>CheckConnection(Vec&lt;IpAddr&gt;),
-    <span class="doccomment">/// Sets this relay as the home relay, or not.
-    </span>SetHomeRelay(bool),
     <span class="attr">#[cfg(test)]
     </span>GetLocalAddr(oneshot::Sender&lt;<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;&gt;),
 }
@@ -1385,9 +1359,6 @@
                         <span class="kw">break</span>;
                     };
                     <span class="kw">match </span>msg {
-                        ActiveRelayMessage::SetHomeRelay(is_preferred) =&gt; {
-                            <span class="self">self</span>.relay_client.note_preferred(is_preferred).<span class="kw">await</span>;
-                        }
                         ActiveRelayMessage::HasNodeRoute(peer, r) =&gt; {
                             <span class="kw">let </span>has_peer = <span class="self">self</span>.node_present.contains(<span class="kw-2">&amp;</span>peer);
                             r.send(has_peer).ok();
@@ -1738,7 +1709,7 @@
     <span class="kw">async fn </span>handle_msg(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: RelayActorMessage) {
         <span class="kw">match </span>msg {
             RelayActorMessage::SetHome { url } =&gt; {
-                <span class="self">self</span>.set_home_relay(url).<span class="kw">await</span>;
+                <span class="self">self</span>.set_home_relay(url);
             }
             RelayActorMessage::MaybeCloseRelaysOnRebind(ifs) =&gt; {
                 <span class="self">self</span>.maybe_close_relays_on_rebind(<span class="kw-2">&amp;</span>ifs).<span class="kw">await</span>;
@@ -1774,18 +1745,7 @@
         }
     }
 
-    <span class="kw">async fn </span>set_home_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, home_url: RelayUrl) {
-        <span class="kw">let </span>home_url_ref = <span class="kw-2">&amp;</span>home_url;
-        futures_buffered::join_all(<span class="self">self</span>.active_relays.iter().map(|(url, handle)| <span class="kw">async move </span>{
-            <span class="kw">let </span>is_preferred = url == home_url_ref;
-            handle
-                .inbox_addr
-                .send(ActiveRelayMessage::SetHomeRelay(is_preferred))
-                .<span class="kw">await
-                </span>.ok()
-        }))
-        .<span class="kw">await</span>;
-
+    <span class="kw">fn </span>set_home_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, home_url: RelayUrl) {
         <span class="comment">// Ensure we have an ActiveRelayActor for the current home relay.
         </span><span class="self">self</span>.active_relay_handle(home_url);
     }
@@ -1843,14 +1803,6 @@
             <span class="prelude-val">Some</span>(e) =&gt; e.clone(),
             <span class="prelude-val">None </span>=&gt; {
                 <span class="kw">let </span>handle = <span class="self">self</span>.start_active_relay(url.clone());
-                <span class="kw">if </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>url) == <span class="self">self</span>.msock.my_relay().as_ref() {
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = handle
-                        .inbox_addr
-                        .try_send(ActiveRelayMessage::SetHomeRelay(<span class="bool-val">true</span>))
-                    {
-                        <span class="macro">error!</span>(<span class="string">"Home relay not set, send to new actor failed: {err:#}."</span>);
-                    }
-                }
                 <span class="self">self</span>.active_relays.insert(url, handle.clone());
                 handle
             }

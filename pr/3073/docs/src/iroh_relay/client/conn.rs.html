@@ -310,16 +310,7 @@
 <a href="#309" id="309">309</a>
 <a href="#310" id="310">310</a>
 <a href="#311" id="311">311</a>
-<a href="#312" id="312">312</a>
-<a href="#313" id="313">313</a>
-<a href="#314" id="314">314</a>
-<a href="#315" id="315">315</a>
-<a href="#316" id="316">316</a>
-<a href="#317" id="317">317</a>
-<a href="#318" id="318">318</a>
-<a href="#319" id="319">319</a>
-<a href="#320" id="320">320</a>
-<a href="#321" id="321">321</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
+<a href="#312" id="312">312</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
 //!
 //! based on tailscale/derp/derp_client.go
 
@@ -412,15 +403,6 @@
     /// by the 8 bytes of random data send by the ping.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>send_pong(<span class="kw-2">&amp;mut </span><span class="self">self</span>, data: [u8; <span class="number">8</span>]) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         write_frame(<span class="kw-2">&amp;mut *</span><span class="self">self</span>, Frame::Pong { data }, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="self">self</span>.flush().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="doccomment">/// Sends a packet that tells the server whether this
-    /// connection is to the user's preferred server. This is only
-    /// used in the server for stats.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>note_preferred(<span class="kw-2">&amp;mut </span><span class="self">self</span>, preferred: bool) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        write_frame(<span class="kw-2">&amp;mut *</span><span class="self">self</span>, Frame::NotePreferred { preferred }, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="self">self</span>.flush().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
