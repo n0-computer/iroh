@@ -942,7 +942,10 @@
 <a href="#941" id="941">941</a>
 <a href="#942" id="942">942</a>
 <a href="#943" id="943">943</a>
-<a href="#944" id="944">944</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -1465,7 +1468,8 @@
         };
         <span class="comment">// need to do this outside the above closure because they rely on the same lock
         // if there was an error sending, close the underlying relay connection
-        </span><span class="kw">if </span>res.is_err() {
+        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
+            <span class="macro">warn!</span>(<span class="string">"failed to note preferred: {:?}"</span>, err);
             <span class="self">self</span>.close().<span class="kw">await</span>;
         }
     }
@@ -1520,7 +1524,8 @@
     </span><span class="kw">pub async fn </span>send(<span class="kw-2">&amp;mut </span><span class="self">self</span>, remote_node: NodeId, payload: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;(), ClientError&gt; {
         <span class="macro">trace!</span>(remote_node = %remote_node.fmt_short(), len = payload.len(), <span class="string">"send"</span>);
         <span class="kw">let </span>(conn, <span class="kw">_</span>) = <span class="self">self</span>.connect_inner(<span class="string">"send"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">if </span>conn.send(remote_node, payload).<span class="kw">await</span>.is_err() {
+        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = conn.send(remote_node, payload).<span class="kw">await </span>{
+            <span class="macro">warn!</span>(<span class="string">"failed to send: {:?}"</span>, err);
             <span class="self">self</span>.close().<span class="kw">await</span>;
             <span class="kw">return </span><span class="prelude-val">Err</span>(ClientError::Send);
         }
@@ -1537,7 +1542,8 @@
     </span><span class="kw">pub async fn </span>send_pong(<span class="kw-2">&amp;mut </span><span class="self">self</span>, data: [u8; <span class="number">8</span>]) -&gt; <span class="prelude-ty">Result</span>&lt;(), ClientError&gt; {
         <span class="macro">debug!</span>(<span class="string">"send_pong"</span>);
         <span class="kw">let </span>(conn, <span class="kw">_</span>) = <span class="self">self</span>.connect_inner(<span class="string">"send_pong"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">if </span>conn.send_pong(data).<span class="kw">await</span>.is_err() {
+        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = conn.send_pong(data).<span class="kw">await </span>{
+            <span class="macro">warn!</span>(<span class="string">"failed to send pong: {:?}"</span>, err);
             <span class="self">self</span>.close().<span class="kw">await</span>;
             <span class="kw">return </span><span class="prelude-val">Err</span>(ClientError::Send);
         }
