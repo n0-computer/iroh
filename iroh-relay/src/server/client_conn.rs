@@ -24,11 +24,11 @@ use crate::{
 
 /// A request to write a dataframe to a Client
 #[derive(Debug, Clone)]
-pub(super) struct Packet {
+struct Packet {
     /// The sender of the packet
-    pub(super) src: NodeId,
+    src: NodeId,
     /// The data packet bytes.
-    pub(super) data: Bytes,
+    data: Bytes,
 }
 
 /// Number of times we try to send to a client connection before dropping the data;
