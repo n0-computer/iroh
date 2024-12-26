@@ -698,7 +698,10 @@
 <a href="#697" id="697">697</a>
 <a href="#698" id="698">698</a>
 <a href="#699" id="699">699</a>
-<a href="#700" id="700">700</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#700" id="700">700</a>
+<a href="#701" id="701">701</a>
+<a href="#702" id="702">702</a>
+<a href="#703" id="703">703</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
@@ -959,20 +962,23 @@
                         }
                     }
                 }
-                node_id = <span class="self">self</span>.node_gone.recv() =&gt; {
-                    <span class="kw">let </span>node_id = node_id.context(<span class="string">"Server.node_gone dropped"</span>)<span class="question-mark">?</span>;
-                    <span class="macro">trace!</span>(<span class="string">"node_id gone: {:?}"</span>, node_id);
-                    <span class="self">self</span>.write_frame(Frame::NodeGone { node_id }).<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="comment">// First priority, disco packets
+                </span>packet = <span class="self">self</span>.disco_send_queue.recv() =&gt; {
+                    <span class="kw">let </span>packet = packet.context(<span class="string">"Server.disco_send_queue dropped"</span>)<span class="question-mark">?</span>;
+                    <span class="macro">trace!</span>(<span class="string">"send disco packet"</span>);
+                    <span class="self">self</span>.send_packet(packet).<span class="kw">await</span>.context(<span class="string">"send packet"</span>)<span class="question-mark">?</span>;
                 }
-                packet = <span class="self">self</span>.send_queue.recv() =&gt; {
+                <span class="comment">// Second priority, sending regular packets
+                </span>packet = <span class="self">self</span>.send_queue.recv() =&gt; {
                     <span class="kw">let </span>packet = packet.context(<span class="string">"Server.send_queue dropped"</span>)<span class="question-mark">?</span>;
                     <span class="macro">trace!</span>(<span class="string">"send packet"</span>);
                     <span class="self">self</span>.send_packet(packet).<span class="kw">await</span>.context(<span class="string">"send packet"</span>)<span class="question-mark">?</span>;
                 }
-                packet = <span class="self">self</span>.disco_send_queue.recv() =&gt; {
-                    <span class="kw">let </span>packet = packet.context(<span class="string">"Server.disco_send_queue dropped"</span>)<span class="question-mark">?</span>;
-                    <span class="macro">trace!</span>(<span class="string">"send disco packet"</span>);
-                    <span class="self">self</span>.send_packet(packet).<span class="kw">await</span>.context(<span class="string">"send packet"</span>)<span class="question-mark">?</span>;
+                <span class="comment">// Last priority, sending left nodes
+                </span>node_id = <span class="self">self</span>.node_gone.recv() =&gt; {
+                    <span class="kw">let </span>node_id = node_id.context(<span class="string">"Server.node_gone dropped"</span>)<span class="question-mark">?</span>;
+                    <span class="macro">trace!</span>(<span class="string">"node_id gone: {:?}"</span>, node_id);
+                    <span class="self">self</span>.write_frame(Frame::NodeGone { node_id }).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
                 <span class="kw">_ </span>= keep_alive.tick() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"keep alive"</span>);
