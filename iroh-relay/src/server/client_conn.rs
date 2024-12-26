@@ -50,10 +50,8 @@ pub(super) struct ClientConnConfig {
 /// [`Client`]: crate::client::Client
 #[derive(Debug)]
 pub(super) struct ClientConn {
-    /// Unique counter, incremented each time we accept a new connection.
-    pub(super) conn_num: usize,
     /// Identity of the connected peer.
-    key: NodeId,
+    node_id: NodeId,
     /// Used to close the connection loop.
     done: CancellationToken,
     /// Actor handle.
@@ -70,9 +68,9 @@ impl ClientConn {
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
     /// Call [`ClientConn::shutdown`] to close the read and write loops before dropping the [`ClientConn`]
-    pub(super) fn new(config: ClientConnConfig, clients: &Clients, conn_num: usize) -> ClientConn {
+    pub(super) fn new(config: ClientConnConfig, clients: &Clients) -> ClientConn {
         let ClientConnConfig {
-            node_id: key,
+            node_id,
             stream: io,
             write_timeout,
             channel_capacity,
@@ -92,7 +90,6 @@ impl ClientConn {
         };
 
         let done = CancellationToken::new();
-        let client_id = (key, conn_num);
         let (send_queue_s, send_queue_r) = mpsc::channel(channel_capacity);
 
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(channel_capacity);
@@ -104,25 +101,23 @@ impl ClientConn {
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
             node_gone: peer_gone_r,
-            key,
+            node_id,
             preferred: false,
             clients: clients.clone(),
         };
 
         // start io loop
         let io_done = done.clone();
-        let io_client_id = client_id;
+        let io_client_id = node_id;
         let handle = tokio::task::spawn(
             async move {
-                let (key, conn_num) = io_client_id;
+                let key = io_client_id;
                 match actor.run(io_done).await {
                     Err(e) => {
-                        warn!(
-                            "connection manager for {key:?} {conn_num}: writer closed in error {e}"
-                        );
+                        warn!("connection manager for {key:?}: writer closed in error {e}");
                     }
                     Ok(()) => {
-                        info!("connection manager for {key:?} {conn_num}: writer closed");
+                        info!("connection manager for {key:?}: writer closed");
                     }
                 }
             }
@@ -130,8 +125,7 @@ impl ClientConn {
         );
 
         ClientConn {
-            conn_num,
-            key,
+            node_id,
             handle: AbortOnDropHandle::new(handle),
             done,
             send_queue: send_queue_s,
@@ -147,8 +141,8 @@ impl ClientConn {
         self.done.cancel();
         if let Err(e) = self.handle.await {
             warn!(
-                "error closing actor loop for client connection {:?} {}: {e:?}",
-                self.key, self.conn_num
+                "error closing actor loop for client connection {:?}: {e:?}",
+                self.node_id,
             );
         };
     }
@@ -230,7 +224,7 @@ struct Actor {
     /// Notify the client that a previous sender has disconnected
     node_gone: mpsc::Receiver<NodeId>,
     /// [`NodeId`] of this client
-    key: NodeId,
+    node_id: NodeId,
     /// Reference to the other connected clients.
     clients: Clients,
     /// Notes that the client considers this the preferred connection (important in cases
@@ -352,10 +346,12 @@ impl Actor {
     async fn handle_frame_send_packet(&self, dst: NodeId, data: Bytes) -> Result<()> {
         if disco::looks_like_disco_wrapper(&data) {
             inc!(Metrics, disco_packets_recv);
-            self.clients.send_disco_packet(dst, data, self.key).await?;
+            self.clients
+                .send_disco_packet(dst, data, self.node_id)
+                .await?;
         } else {
             inc!(Metrics, send_packets_recv);
-            self.clients.send_packet(dst, data, self.key).await?;
+            self.clients.send_packet(dst, data, self.node_id).await?;
         }
         Ok(())
     }
@@ -557,7 +553,7 @@ mod tests {
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
 
-        let key = SecretKey::generate(rand::thread_rng()).public();
+        let node_id = SecretKey::generate(rand::thread_rng()).public();
         let (io, io_rw) = tokio::io::duplex(1024);
         let mut io_rw = Framed::new(io_rw, RelayCodec::test());
         let stream =
@@ -570,7 +566,7 @@ mod tests {
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
             node_gone: peer_gone_r,
-            key,
+            node_id,
             clients: clients.clone(),
             preferred: true,
         };
@@ -586,7 +582,7 @@ mod tests {
         // send packet
         println!("  send packet");
         let packet = Packet {
-            src: key,
+            src: node_id,
             data: Bytes::from(&data[..]),
         };
         send_queue_s.send(packet.clone()).await?;
@@ -594,7 +590,7 @@ mod tests {
         assert_eq!(
             frame,
             Frame::RecvPacket {
-                src_key: key,
+                src_key: node_id,
                 content: data.to_vec().into()
             }
         );
@@ -606,16 +602,16 @@ mod tests {
         assert_eq!(
             frame,
             Frame::RecvPacket {
-                src_key: key,
+                src_key: node_id,
                 content: data.to_vec().into()
             }
         );
 
         // send peer_gone
         println!("send peer gone");
-        peer_gone_s.send(key).await?;
+        peer_gone_s.send(node_id).await?;
         let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
-        assert_eq!(frame, Frame::NodeGone { node_id: key });
+        assert_eq!(frame, Frame::NodeGone { node_id });
 
         // Read tests
         println!("--read");

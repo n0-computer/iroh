@@ -1,10 +1,7 @@
 //! The "Server" side of the client. Uses the `ClientConnManager`.
 // Based on tailscale/derp/derp_server.go
 
-use std::{
-    collections::HashSet,
-    sync::{atomic::AtomicUsize, Arc},
-};
+use std::{collections::HashSet, sync::Arc};
 
 use anyhow::{bail, Result};
 use bytes::Bytes;
@@ -22,8 +19,6 @@ pub(super) struct Clients(Arc<Inner>);
 struct Inner {
     /// The list of all currently connected clients.
     clients: DashMap<NodeId, ClientConn>,
-    /// The next connection number to use.
-    conn_num: AtomicUsize,
     /// Map of which client has sent where
     sent_to: DashMap<NodeId, HashSet<NodeId>>,
 }
@@ -40,18 +35,11 @@ impl Clients {
         .await;
     }
 
-    fn next_conn_num(&self) -> usize {
-        self.0
-            .conn_num
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    }
-
     /// Builds the client handler and starts the read & write loops for the connection.
     pub async fn register(&self, client_config: ClientConnConfig) {
         let key = client_config.node_id;
         trace!("registering client: {:?}", key);
-        let conn_num = self.next_conn_num();
-        let client = ClientConn::new(client_config, self, conn_num);
+        let client = ClientConn::new(client_config, self);
         if let Some(old_client) = self.0.clients.insert(key, client) {
             warn!("multiple connections found for {key:?}, pruning old connection",);
             old_client.shutdown().await;
@@ -61,16 +49,9 @@ impl Clients {
     /// Removes the client from the map of clients, & sends a notification
     /// to each client that peers has sent data to, to let them know that
     /// peer is gone from the network.
-    pub async fn unregister(&self, dst: NodeId, conn_num: Option<usize>) {
+    async fn unregister(&self, dst: NodeId) {
         trace!("unregistering client: {:?}", dst);
         if let Some((_, client)) = self.0.clients.remove(&dst) {
-            if let Some(conn_num) = conn_num {
-                if client.conn_num != conn_num {
-                    // put it back
-                    self.0.clients.insert(dst, client);
-                    return;
-                }
-            }
             if let Some((_, sent_to)) = self.0.sent_to.remove(&dst) {
                 for key in sent_to {
                     match client.send_peer_gone(key) {
@@ -124,7 +105,7 @@ impl Clients {
             }
             Err(SendError::SenderClosed) => {
                 warn!("Can no longer write to client {dst:?}, dropping message and pruning connection");
-                self.unregister(dst, None).await;
+                self.unregister(dst).await;
             }
         }
         bail!("unable to send msg");
@@ -203,7 +184,7 @@ mod tests {
         );
 
         // send peer_gone
-        clients.unregister(a_key, None).await;
+        clients.unregister(a_key).await;
 
         assert!(!clients.0.clients.contains_key(&a_key));
         clients.shutdown().await;
