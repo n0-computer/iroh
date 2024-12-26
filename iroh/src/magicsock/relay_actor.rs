@@ -87,8 +87,6 @@ enum ActiveRelayMessage {
     /// connection uses a local socket with an IP address not in this list the server will
     /// always re-connect.
     CheckConnection(Vec<IpAddr>),
-    /// Sets this relay as the home relay, or not.
-    SetHomeRelay(bool),
     #[cfg(test)]
     GetLocalAddr(oneshot::Sender<Option<SocketAddr>>),
 }
@@ -198,9 +196,6 @@ impl ActiveRelayActor {
                         break;
                     };
                     match msg {
-                        ActiveRelayMessage::SetHomeRelay(is_preferred) => {
-                            self.relay_client.note_preferred(is_preferred).await;
-                        }
                         ActiveRelayMessage::HasNodeRoute(peer, r) => {
                             let has_peer = self.node_present.contains(&peer);
                             r.send(has_peer).ok();
@@ -551,7 +546,7 @@ impl RelayActor {
     async fn handle_msg(&mut self, msg: RelayActorMessage) {
         match msg {
             RelayActorMessage::SetHome { url } => {
-                self.set_home_relay(url).await;
+                self.set_home_relay(url);
             }
             RelayActorMessage::MaybeCloseRelaysOnRebind(ifs) => {
                 self.maybe_close_relays_on_rebind(&ifs).await;
@@ -587,18 +582,7 @@ impl RelayActor {
         }
     }
 
-    async fn set_home_relay(&mut self, home_url: RelayUrl) {
-        let home_url_ref = &home_url;
-        futures_buffered::join_all(self.active_relays.iter().map(|(url, handle)| async move {
-            let is_preferred = url == home_url_ref;
-            handle
-                .inbox_addr
-                .send(ActiveRelayMessage::SetHomeRelay(is_preferred))
-                .await
-                .ok()
-        }))
-        .await;
-
+    fn set_home_relay(&mut self, home_url: RelayUrl) {
         // Ensure we have an ActiveRelayActor for the current home relay.
         self.active_relay_handle(home_url);
     }
@@ -656,14 +640,6 @@ impl RelayActor {
             Some(e) => e.clone(),
             None => {
                 let handle = self.start_active_relay(url.clone());
-                if Some(&url) == self.msock.my_relay().as_ref() {
-                    if let Err(err) = handle
-                        .inbox_addr
-                        .try_send(ActiveRelayMessage::SetHomeRelay(true))
-                    {
-                        error!("Home relay not set, send to new actor failed: {err:#}.");
-                    }
-                }
                 self.active_relays.insert(url, handle.clone());
                 handle
             }

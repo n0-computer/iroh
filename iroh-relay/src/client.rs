@@ -103,7 +103,6 @@ pub enum ClientError {
 #[derive(derive_more::Debug)]
 pub struct Client {
     secret_key: SecretKey,
-    is_preferred: bool,
     relay_conn: Option<(Conn, Option<SocketAddr>)>,
     #[debug("address family selector callback")]
     address_family_selector: Option<Box<dyn Fn() -> bool + Send + Sync>>,
@@ -259,7 +258,6 @@ impl ClientBuilder {
 
         Client {
             secret_key: key,
-            is_preferred: false,
             relay_conn: None,
             address_family_selector: self.address_family_selector,
             pings: PingTracker::default(),
@@ -363,7 +361,7 @@ impl Client {
     }
 
     async fn connect_0(&self) -> Result<(Conn, Option<SocketAddr>), ClientError> {
-        let (mut conn, local_addr) = match self.protocol {
+        let (conn, local_addr) = match self.protocol {
             Protocol::Websocket => {
                 let conn = self.connect_ws().await?;
                 let local_addr = None;
@@ -375,18 +373,9 @@ impl Client {
             }
         };
 
-        if self.is_preferred {
-            if let Err(err) = conn.note_preferred(true).await {
-                warn!("failed to note preferred connection: {:?}", err);
-                conn.close().await;
-                return Err(ClientError::Send);
-            }
-        }
-
         event!(
             target: "events.net.relay.connected",
             Level::DEBUG,
-            home = self.is_preferred,
             url = %self.url,
         );
 
@@ -501,30 +490,6 @@ impl Client {
             .header(HOST, host_header_value)
             .body(http_body_util::Empty::<hyper::body::Bytes>::new())?;
         request_sender.send_request(req).await.map_err(From::from)
-    }
-
-    /// Let the server know that this client is the preferred client
-    pub async fn note_preferred(&mut self, is_preferred: bool) {
-        let old = &mut self.is_preferred;
-        if *old == is_preferred {
-            return;
-        }
-        *old = is_preferred;
-
-        // only send the preference if we already have a connection
-        let res = {
-            if let Some((ref mut conn, _)) = self.relay_conn {
-                conn.note_preferred(is_preferred).await
-            } else {
-                return;
-            }
-        };
-        // need to do this outside the above closure because they rely on the same lock
-        // if there was an error sending, close the underlying relay connection
-        if let Err(err) = res {
-            warn!("failed to note preferred: {:?}", err);
-            self.close().await;
-        }
     }
 
     /// Returns the local addr of the connection.

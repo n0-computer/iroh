@@ -95,15 +95,6 @@ impl Conn {
         Ok(())
     }
 
-    /// Sends a packet that tells the server whether this
-    /// connection is to the user's preferred server. This is only
-    /// used in the server for stats.
-    pub(crate) async fn note_preferred(&mut self, preferred: bool) -> Result<()> {
-        write_frame(&mut *self, Frame::NotePreferred { preferred }, None).await?;
-        self.flush().await?;
-        Ok(())
-    }
-
     /// Close the connection
     ///
     /// Shuts down the write loop directly and marks the connection as closed. The [`Conn`] will

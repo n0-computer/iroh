@@ -102,7 +102,6 @@ impl ClientConn {
             disco_send_queue: disco_send_queue_r,
             node_gone: peer_gone_r,
             node_id,
-            preferred: false,
             clients: clients.clone(),
         };
 
@@ -209,7 +208,6 @@ fn try_send<T>(sender: &mpsc::Sender<T>, msg: T) -> Result<(), SendError> {
 ///
 /// On the "read" side, it can:
 ///     - receive a ping and write a pong back
-///     - note whether the client is `preferred`, aka this client is the preferred way
 ///     to speak to the node ID associated with that client.
 #[derive(Debug)]
 struct Actor {
@@ -227,9 +225,6 @@ struct Actor {
     node_id: NodeId,
     /// Reference to the other connected clients.
     clients: Clients,
-    /// Notes that the client considers this the preferred connection (important in cases
-    /// where the client moves to a different network, but has the same NodeId)
-    preferred: bool,
 }
 
 impl Actor {
@@ -318,10 +313,6 @@ impl Actor {
         // it will be relevant when we add the ability to hold onto multiple clients
         // for the same public key
         match frame {
-            Frame::NotePreferred { preferred } => {
-                self.preferred = preferred;
-                inc!(Metrics, other_packets_recv);
-            }
             Frame::SendPacket { dst_key, packet } => {
                 let packet_len = packet.len();
                 self.handle_frame_send_packet(dst_key, packet).await?;
@@ -568,7 +559,6 @@ mod tests {
             node_gone: peer_gone_r,
             node_id,
             clients: clients.clone(),
-            preferred: true,
         };
 
         let done = CancellationToken::new();
@@ -624,14 +614,6 @@ mod tests {
         println!(" recv pong");
         let frame = recv_frame(FrameType::Pong, &mut io_rw).await?;
         assert_eq!(frame, Frame::Pong { data: *data });
-
-        // change preferred to false
-        println!("  preferred: false");
-        write_frame(&mut io_rw, Frame::NotePreferred { preferred: false }, None).await?;
-
-        // change preferred to true
-        println!("  preferred: true");
-        write_frame(&mut io_rw, Frame::NotePreferred { preferred: true }, None).await?;
 
         let target = SecretKey::generate(rand::thread_rng()).public();
 
