@@ -259,20 +259,23 @@ impl Actor {
                         }
                     }
                 }
-                node_id = self.node_gone.recv() => {
-                    let node_id = node_id.context("Server.node_gone dropped")?;
-                    trace!("node_id gone: {:?}", node_id);
-                    self.write_frame(Frame::NodeGone { node_id }).await?;
+                // First priority, disco packets
+                packet = self.disco_send_queue.recv() => {
+                    let packet = packet.context("Server.disco_send_queue dropped")?;
+                    trace!("send disco packet");
+                    self.send_packet(packet).await.context("send packet")?;
                 }
+                // Second priority, sending regular packets
                 packet = self.send_queue.recv() => {
                     let packet = packet.context("Server.send_queue dropped")?;
                     trace!("send packet");
                     self.send_packet(packet).await.context("send packet")?;
                 }
-                packet = self.disco_send_queue.recv() => {
-                    let packet = packet.context("Server.disco_send_queue dropped")?;
-                    trace!("send disco packet");
-                    self.send_packet(packet).await.context("send packet")?;
+                // Last priority, sending left nodes
+                node_id = self.node_gone.recv() => {
+                    let node_id = node_id.context("Server.node_gone dropped")?;
+                    trace!("node_id gone: {:?}", node_id);
+                    self.write_frame(Frame::NodeGone { node_id }).await?;
                 }
                 _ = keep_alive.tick() => {
                     trace!("keep alive");
