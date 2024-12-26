@@ -295,15 +295,16 @@
 </span><span class="comment">// Based on tailscale/derp/derp_server.go
 
 </span><span class="kw">use </span>std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     sync::{atomic::AtomicUsize, Arc},
 };
 
 <span class="kw">use </span>anyhow::{bail, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
+<span class="kw">use </span>dashmap::DashMap;
 <span class="kw">use </span>iroh_base::NodeId;
 <span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>tokio::sync::{mpsc, RwLock};
+<span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tracing::{trace, warn};
 
 <span class="kw">use super</span>::{
@@ -316,27 +317,31 @@
 
 <span class="doccomment">/// Manages the connections to all currently connected clients.
 </span><span class="attr">#[derive(Debug, Default, Clone)]
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Clients {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Clients(Arc&lt;Inner&gt;);
+
+<span class="attr">#[derive(Debug, Default)]
+</span><span class="kw">struct </span>Inner {
     <span class="doccomment">/// The list of all currently connected clients.
-    </span>inner: Arc&lt;RwLock&lt;HashMap&lt;NodeId, Client&gt;&gt;&gt;, <span class="comment">// TODO: look into lock free
-    </span><span class="doccomment">/// The next connection number to use.
-    </span>conn_num: Arc&lt;AtomicUsize&gt;,
+    </span>clients: DashMap&lt;NodeId, Client&gt;,
+    <span class="doccomment">/// The next connection number to use.
+    </span>conn_num: AtomicUsize,
 }
 
 <span class="kw">impl </span>Clients {
     <span class="kw">pub async fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="kw">let </span><span class="kw-2">mut </span>clients = <span class="self">self</span>.inner.write().<span class="kw">await</span>;
-        <span class="macro">trace!</span>(<span class="string">"shutting down {} clients"</span>, clients.len());
+        <span class="macro">trace!</span>(<span class="string">"shutting down {} clients"</span>, <span class="self">self</span>.<span class="number">0</span>.clients.len());
+        <span class="kw">let </span>keys: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self</span>.<span class="number">0</span>.clients.iter().map(|x| <span class="kw-2">*</span>x.key()).collect();
+        <span class="kw">let </span>clients = keys.into_iter().filter_map(|k| <span class="self">self</span>.<span class="number">0</span>.clients.remove(<span class="kw-2">&amp;</span>k));
+
         futures_buffered::join_all(
-            clients
-                .drain()
-                .map(|(<span class="kw">_</span>, client)| <span class="kw">async move </span>{ client.shutdown().<span class="kw">await </span>}),
+            clients.map(|(<span class="kw">_</span>, client)| <span class="kw">async move </span>{ client.shutdown().<span class="kw">await </span>}),
         )
         .<span class="kw">await</span>;
     }
 
     <span class="kw">fn </span>next_conn_num(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.conn_num
+        <span class="self">self</span>.<span class="number">0
+            </span>.conn_num
             .fetch_add(<span class="number">1</span>, std::sync::atomic::Ordering::Relaxed)
     }
 
@@ -350,7 +355,7 @@
         // expand the `Client` struct to handle multiple connections &amp; a policy for
         // how to handle who we write to when multiple connections exist.
         </span><span class="kw">let </span>client = Client::new(client);
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(old_client) = <span class="self">self</span>.inner.write().<span class="kw">await</span>.insert(key, client) {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(old_client) = <span class="self">self</span>.<span class="number">0</span>.clients.insert(key, client) {
             <span class="macro">warn!</span>(<span class="string">"multiple connections found for {key:?}, pruning old connection"</span>,);
             old_client.shutdown().<span class="kw">await</span>;
         }
@@ -361,12 +366,11 @@
     /// peer is gone from the network.
     </span><span class="kw">pub async fn </span>unregister(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId, conn_num: <span class="prelude-ty">Option</span>&lt;usize&gt;) {
         <span class="macro">trace!</span>(<span class="string">"unregistering client: {:?}"</span>, dst);
-        <span class="kw">let </span><span class="kw-2">mut </span>clients = <span class="self">self</span>.inner.write().<span class="kw">await</span>;
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(client) = clients.remove(<span class="kw-2">&amp;</span>dst) {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, client)) = <span class="self">self</span>.<span class="number">0</span>.clients.remove(<span class="kw-2">&amp;</span>dst) {
             <span class="kw">if let </span><span class="prelude-val">Some</span>(conn_num) = conn_num {
                 <span class="kw">if </span>client.conn.conn_num != conn_num {
                     <span class="comment">// put it back
-                    </span>clients.insert(dst, client);
+                    </span><span class="self">self</span>.<span class="number">0</span>.clients.insert(dst, client);
                     <span class="kw">return</span>;
                 }
             }
@@ -388,20 +392,16 @@
 
     <span class="doccomment">/// Attempt to send a packet to client with [`NodeId`] `dst`
     </span><span class="kw">pub async fn </span>send_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId, data: Bytes, src: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>clients = <span class="self">self</span>.inner.read().<span class="kw">await</span>;
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(client) = clients.get(<span class="kw-2">&amp;</span>dst) {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.<span class="number">0</span>.clients.get(<span class="kw-2">&amp;</span>dst) {
             <span class="kw">let </span>res = client.send_packet(src, data);
-            drop(clients);
             <span class="kw">return </span><span class="self">self</span>.process_result(src, dst, res).<span class="kw">await</span>;
         }
         <span class="macro">bail!</span>(<span class="string">"Could not find client for {dst:?}, dropped packet"</span>);
     }
 
     <span class="kw">pub async fn </span>send_disco_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId, data: Bytes, src: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>clients = <span class="self">self</span>.inner.read().<span class="kw">await</span>;
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(client) = clients.get(<span class="kw-2">&amp;</span>dst) {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.<span class="number">0</span>.clients.get(<span class="kw-2">&amp;</span>dst) {
             <span class="kw">let </span>res = client.send_disco_packet(src, data);
-            drop(clients);
             <span class="kw">return </span><span class="self">self</span>.process_result(src, dst, res).<span class="kw">await</span>;
         }
         <span class="macro">bail!</span>(<span class="string">"Could not find client for {dst:?}, dropped disco packet"</span>);
@@ -415,7 +415,7 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">match </span>res {
             <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.inner.write().<span class="kw">await</span>.get_mut(<span class="kw-2">&amp;</span>src) {
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref mut </span>client) = <span class="self">self</span>.<span class="number">0</span>.clients.get_mut(<span class="kw-2">&amp;</span>src) {
                     client.record_send(dst);
                 }
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(());
@@ -578,7 +578,7 @@
         <span class="comment">// send peer_gone
         </span>clients.unregister(a_key, <span class="prelude-val">None</span>).<span class="kw">await</span>;
 
-        <span class="macro">assert!</span>(!clients.inner.read().<span class="kw">await</span>.contains_key(<span class="kw-2">&amp;</span>a_key));
+        <span class="macro">assert!</span>(!clients.<span class="number">0</span>.clients.contains_key(<span class="kw-2">&amp;</span>a_key));
         clients.shutdown().<span class="kw">await</span>;
 
         <span class="prelude-val">Ok</span>(())
