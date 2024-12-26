@@ -2,15 +2,16 @@
 // Based on tailscale/derp/derp_server.go
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     sync::{atomic::AtomicUsize, Arc},
 };
 
 use anyhow::{bail, Result};
 use bytes::Bytes;
+use dashmap::DashMap;
 use iroh_base::NodeId;
 use iroh_metrics::inc;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::mpsc;
 use tracing::{trace, warn};
 
 use super::{
@@ -23,27 +24,31 @@ const RETRIES: usize = 3;
 
 /// Manages the connections to all currently connected clients.
 #[derive(Debug, Default, Clone)]
-pub(super) struct Clients {
+pub(super) struct Clients(Arc<Inner>);
+
+#[derive(Debug, Default)]
+struct Inner {
     /// The list of all currently connected clients.
-    inner: Arc<RwLock<HashMap<NodeId, Client>>>, // TODO: look into lock free
+    clients: DashMap<NodeId, Client>,
     /// The next connection number to use.
-    conn_num: Arc<AtomicUsize>,
+    conn_num: AtomicUsize,
 }
 
 impl Clients {
     pub async fn shutdown(&self) {
-        let mut clients = self.inner.write().await;
-        trace!("shutting down {} clients", clients.len());
+        trace!("shutting down {} clients", self.0.clients.len());
+        let keys: Vec<_> = self.0.clients.iter().map(|x| *x.key()).collect();
+        let clients = keys.into_iter().filter_map(|k| self.0.clients.remove(&k));
+
         futures_buffered::join_all(
-            clients
-                .drain()
-                .map(|(_, client)| async move { client.shutdown().await }),
+            clients.map(|(_, client)| async move { client.shutdown().await }),
         )
         .await;
     }
 
     fn next_conn_num(&self) -> usize {
-        self.conn_num
+        self.0
+            .conn_num
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
 
@@ -57,7 +62,7 @@ impl Clients {
         // expand the `Client` struct to handle multiple connections & a policy for
         // how to handle who we write to when multiple connections exist.
         let client = Client::new(client);
-        if let Some(old_client) = self.inner.write().await.insert(key, client) {
+        if let Some(old_client) = self.0.clients.insert(key, client) {
             warn!("multiple connections found for {key:?}, pruning old connection",);
             old_client.shutdown().await;
         }
@@ -68,12 +73,11 @@ impl Clients {
     /// peer is gone from the network.
     pub async fn unregister(&self, dst: NodeId, conn_num: Option<usize>) {
         trace!("unregistering client: {:?}", dst);
-        let mut clients = self.inner.write().await;
-        if let Some(client) = clients.remove(&dst) {
+        if let Some((_, client)) = self.0.clients.remove(&dst) {
             if let Some(conn_num) = conn_num {
                 if client.conn.conn_num != conn_num {
                     // put it back
-                    clients.insert(dst, client);
+                    self.0.clients.insert(dst, client);
                     return;
                 }
             }
@@ -95,20 +99,16 @@ impl Clients {
 
     /// Attempt to send a packet to client with [`NodeId`] `dst`
     pub async fn send_packet(&self, dst: NodeId, data: Bytes, src: NodeId) -> Result<()> {
-        let clients = self.inner.read().await;
-        if let Some(client) = clients.get(&dst) {
+        if let Some(client) = self.0.clients.get(&dst) {
             let res = client.send_packet(src, data);
-            drop(clients);
             return self.process_result(src, dst, res).await;
         }
         bail!("Could not find client for {dst:?}, dropped packet");
     }
 
     pub async fn send_disco_packet(&self, dst: NodeId, data: Bytes, src: NodeId) -> Result<()> {
-        let clients = self.inner.read().await;
-        if let Some(client) = clients.get(&dst) {
+        if let Some(client) = self.0.clients.get(&dst) {
             let res = client.send_disco_packet(src, data);
-            drop(clients);
             return self.process_result(src, dst, res).await;
         }
         bail!("Could not find client for {dst:?}, dropped disco packet");
@@ -122,7 +122,7 @@ impl Clients {
     ) -> Result<()> {
         match res {
             Ok(_) => {
-                if let Some(client) = self.inner.write().await.get_mut(&src) {
+                if let Some(ref mut client) = self.0.clients.get_mut(&src) {
                     client.record_send(dst);
                 }
                 return Ok(());
@@ -285,7 +285,7 @@ mod tests {
         // send peer_gone
         clients.unregister(a_key, None).await;
 
-        assert!(!clients.inner.read().await.contains_key(&a_key));
+        assert!(!clients.0.clients.contains_key(&a_key));
         clients.shutdown().await;
 
         Ok(())
