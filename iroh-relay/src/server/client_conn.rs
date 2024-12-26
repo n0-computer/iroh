@@ -114,7 +114,7 @@ impl ClientConn {
                 let key = io_client_id;
                 match actor.run(io_done).await {
                     Err(e) => {
-                        warn!("connection manager for {key:?}: writer closed in error {e}");
+                        warn!("connection manager for {key:?}: writer closed in error {e:?}");
                     }
                     Ok(()) => {
                         info!("connection manager for {key:?}: writer closed");
