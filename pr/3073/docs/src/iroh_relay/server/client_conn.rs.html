@@ -742,11 +742,11 @@
 
 <span class="doccomment">/// A request to write a dataframe to a Client
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Packet {
+</span><span class="kw">struct </span>Packet {
     <span class="doccomment">/// The sender of the packet
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) src: NodeId,
+    </span>src: NodeId,
     <span class="doccomment">/// The data packet bytes.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) data: Bytes,
+    </span>data: Bytes,
 }
 
 <span class="doccomment">/// Number of times we try to send to a client connection before dropping the data;
