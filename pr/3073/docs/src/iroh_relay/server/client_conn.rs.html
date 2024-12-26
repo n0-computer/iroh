@@ -832,7 +832,7 @@
                 <span class="kw">let </span>key = io_client_id;
                 <span class="kw">match </span>actor.run(io_done).<span class="kw">await </span>{
                     <span class="prelude-val">Err</span>(e) =&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"connection manager for {key:?}: writer closed in error {e}"</span>);
+                        <span class="macro">warn!</span>(<span class="string">"connection manager for {key:?}: writer closed in error {e:?}"</span>);
                     }
                     <span class="prelude-val">Ok</span>(()) =&gt; {
                         <span class="macro">info!</span>(<span class="string">"connection manager for {key:?}: writer closed"</span>);

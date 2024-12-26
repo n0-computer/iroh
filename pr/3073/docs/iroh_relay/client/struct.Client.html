@@ -21,7 +21,7 @@ reply.</p>
 <p>This has a built-in timeout <code>crate::defaults::timeouts::PING_TIMEOUT</code>.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.send" class="method"><a class="src rightside" href="../../src/iroh_relay/client.rs.html#573-581">Source</a><h4 class="code-header">pub async fn <a href="#method.send" class="fn">send</a>(
     &amp;mut self,
-    remote_node: <a class="type" href="../../iroh_base/key/type.NodeId.html" title="type iroh_base::key::NodeId">NodeId</a>,
+    remote_node: NodeId,
     payload: Bytes,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>, <a class="enum" href="enum.ClientError.html" title="enum iroh_relay::client::ClientError">ClientError</a>&gt;</h4></section></summary><div class="docblock"><p>Sends a packet for a remote node to the server.</p>
 <p>If there is no underlying active relay connection, it creates one before attempting
