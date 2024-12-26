@@ -521,7 +521,8 @@ impl Client {
         };
         // need to do this outside the above closure because they rely on the same lock
         // if there was an error sending, close the underlying relay connection
-        if res.is_err() {
+        if let Err(err) = res {
+            warn!("failed to note preferred: {:?}", err);
             self.close().await;
         }
     }
@@ -576,7 +577,8 @@ impl Client {
     pub async fn send(&mut self, remote_node: NodeId, payload: Bytes) -> Result<(), ClientError> {
         trace!(remote_node = %remote_node.fmt_short(), len = payload.len(), "send");
         let (conn, _) = self.connect_inner("send").await?;
-        if conn.send(remote_node, payload).await.is_err() {
+        if let Err(err) = conn.send(remote_node, payload).await {
+            warn!("failed to send: {:?}", err);
             self.close().await;
             return Err(ClientError::Send);
         }
@@ -593,7 +595,8 @@ impl Client {
     pub async fn send_pong(&mut self, data: [u8; 8]) -> Result<(), ClientError> {
         debug!("send_pong");
         let (conn, _) = self.connect_inner("send_pong").await?;
-        if conn.send_pong(data).await.is_err() {
+        if let Err(err) = conn.send_pong(data).await {
+            warn!("failed to send pong: {:?}", err);
             self.close().await;
             return Err(ClientError::Send);
         }
