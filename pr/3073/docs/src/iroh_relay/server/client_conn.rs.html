@@ -672,7 +672,51 @@
 <a href="#671" id="671">671</a>
 <a href="#672" id="672">672</a>
 <a href="#673" id="673">673</a>
-<a href="#674" id="674">674</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#674" id="674">674</a>
+<a href="#675" id="675">675</a>
+<a href="#676" id="676">676</a>
+<a href="#677" id="677">677</a>
+<a href="#678" id="678">678</a>
+<a href="#679" id="679">679</a>
+<a href="#680" id="680">680</a>
+<a href="#681" id="681">681</a>
+<a href="#682" id="682">682</a>
+<a href="#683" id="683">683</a>
+<a href="#684" id="684">684</a>
+<a href="#685" id="685">685</a>
+<a href="#686" id="686">686</a>
+<a href="#687" id="687">687</a>
+<a href="#688" id="688">688</a>
+<a href="#689" id="689">689</a>
+<a href="#690" id="690">690</a>
+<a href="#691" id="691">691</a>
+<a href="#692" id="692">692</a>
+<a href="#693" id="693">693</a>
+<a href="#694" id="694">694</a>
+<a href="#695" id="695">695</a>
+<a href="#696" id="696">696</a>
+<a href="#697" id="697">697</a>
+<a href="#698" id="698">698</a>
+<a href="#699" id="699">699</a>
+<a href="#700" id="700">700</a>
+<a href="#701" id="701">701</a>
+<a href="#702" id="702">702</a>
+<a href="#703" id="703">703</a>
+<a href="#704" id="704">704</a>
+<a href="#705" id="705">705</a>
+<a href="#706" id="706">706</a>
+<a href="#707" id="707">707</a>
+<a href="#708" id="708">708</a>
+<a href="#709" id="709">709</a>
+<a href="#710" id="710">710</a>
+<a href="#711" id="711">711</a>
+<a href="#712" id="712">712</a>
+<a href="#713" id="713">713</a>
+<a href="#714" id="714">714</a>
+<a href="#715" id="715">715</a>
+<a href="#716" id="716">716</a>
+<a href="#717" id="717">717</a>
+<a href="#718" id="718">718</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
@@ -705,6 +749,9 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) data: Bytes,
 }
 
+<span class="doccomment">/// Number of times we try to send to a client connection before dropping the data;
+</span><span class="kw">const </span>RETRIES: usize = <span class="number">3</span>;
+
 <span class="doccomment">/// Configuration for a [`ClientConn`].
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ClientConnConfig {
@@ -721,29 +768,27 @@
 /// [`Client`]: crate::client::Client
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ClientConn {
-    <span class="doccomment">/// Unique counter, incremented each time we accept a new connection.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) conn_num: usize,
     <span class="doccomment">/// Identity of the connected peer.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) key: NodeId,
+    </span>node_id: NodeId,
     <span class="doccomment">/// Used to close the connection loop.
     </span>done: CancellationToken,
     <span class="doccomment">/// Actor handle.
     </span>handle: AbortOnDropHandle&lt;()&gt;,
     <span class="doccomment">/// Queue of packets intended for the client.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) send_queue: mpsc::Sender&lt;Packet&gt;,
+    </span>send_queue: mpsc::Sender&lt;Packet&gt;,
     <span class="doccomment">/// Queue of disco packets intended for the client.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) disco_send_queue: mpsc::Sender&lt;Packet&gt;,
+    </span>disco_send_queue: mpsc::Sender&lt;Packet&gt;,
     <span class="doccomment">/// Channel to notify the client that a previous sender has disconnected.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) peer_gone: mpsc::Sender&lt;NodeId&gt;,
+    </span>peer_gone: mpsc::Sender&lt;NodeId&gt;,
 }
 
 <span class="kw">impl </span>ClientConn {
     <span class="doccomment">/// Creates a client from a connection &amp; starts a read and write loop to handle io to and from
     /// the client
     /// Call [`ClientConn::shutdown`] to close the read and write loops before dropping the [`ClientConn`]
-    </span><span class="kw">pub fn </span>new(config: ClientConnConfig, clients: <span class="kw-2">&amp;</span>Clients, conn_num: usize) -&gt; ClientConn {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(config: ClientConnConfig, clients: <span class="kw-2">&amp;</span>Clients) -&gt; ClientConn {
         <span class="kw">let </span>ClientConnConfig {
-            node_id: key,
+            node_id,
             stream: io,
             write_timeout,
             channel_capacity,
@@ -763,7 +808,6 @@
         };
 
         <span class="kw">let </span>done = CancellationToken::new();
-        <span class="kw">let </span>client_id = (key, conn_num);
         <span class="kw">let </span>(send_queue_s, send_queue_r) = mpsc::channel(channel_capacity);
 
         <span class="kw">let </span>(disco_send_queue_s, disco_send_queue_r) = mpsc::channel(channel_capacity);
@@ -775,25 +819,23 @@
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
             node_gone: peer_gone_r,
-            key,
+            node_id,
             preferred: <span class="bool-val">false</span>,
             clients: clients.clone(),
         };
 
         <span class="comment">// start io loop
         </span><span class="kw">let </span>io_done = done.clone();
-        <span class="kw">let </span>io_client_id = client_id;
+        <span class="kw">let </span>io_client_id = node_id;
         <span class="kw">let </span>handle = tokio::task::spawn(
             <span class="kw">async move </span>{
-                <span class="kw">let </span>(key, conn_num) = io_client_id;
+                <span class="kw">let </span>key = io_client_id;
                 <span class="kw">match </span>actor.run(io_done).<span class="kw">await </span>{
                     <span class="prelude-val">Err</span>(e) =&gt; {
-                        <span class="macro">warn!</span>(
-                            <span class="string">"connection manager for {key:?} {conn_num}: writer closed in error {e}"
-                        </span>);
+                        <span class="macro">warn!</span>(<span class="string">"connection manager for {key:?}: writer closed in error {e}"</span>);
                     }
                     <span class="prelude-val">Ok</span>(()) =&gt; {
-                        <span class="macro">info!</span>(<span class="string">"connection manager for {key:?} {conn_num}: writer closed"</span>);
+                        <span class="macro">info!</span>(<span class="string">"connection manager for {key:?}: writer closed"</span>);
                     }
                 }
             }
@@ -801,8 +843,7 @@
         );
 
         ClientConn {
-            conn_num,
-            key,
+            node_id,
             handle: AbortOnDropHandle::new(handle),
             done,
             send_queue: send_queue_s,
@@ -814,15 +855,60 @@
     <span class="doccomment">/// Shutdown the reader and writer loops and closes the connection.
     ///
     /// Any shutdown errors will be logged as warnings.
-    </span><span class="kw">pub async fn </span>shutdown(<span class="self">self</span>) {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>shutdown(<span class="self">self</span>) {
         <span class="self">self</span>.done.cancel();
         <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.handle.<span class="kw">await </span>{
             <span class="macro">warn!</span>(
-                <span class="string">"error closing actor loop for client connection {:?} {}: {e:?}"</span>,
-                <span class="self">self</span>.key, <span class="self">self</span>.conn_num
+                <span class="string">"error closing actor loop for client connection {:?}: {e:?}"</span>,
+                <span class="self">self</span>.node_id,
             );
         };
     }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>send_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, src: NodeId, data: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendError&gt; {
+        try_send(<span class="kw-2">&amp;</span><span class="self">self</span>.send_queue, Packet { src, data })
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>send_disco_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, src: NodeId, data: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendError&gt; {
+        try_send(<span class="kw-2">&amp;</span><span class="self">self</span>.disco_send_queue, Packet { src, data })
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>send_peer_gone(<span class="kw-2">&amp;</span><span class="self">self</span>, key: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendError&gt; {
+        <span class="kw">let </span>res = try_send(<span class="kw-2">&amp;</span><span class="self">self</span>.peer_gone, key);
+        <span class="kw">match </span>res {
+            <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
+                <span class="macro">inc!</span>(Metrics, other_packets_sent);
+            }
+            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
+                <span class="macro">inc!</span>(Metrics, other_packets_dropped);
+            }
+        }
+        res
+    }
+}
+
+<span class="attr">#[derive(Debug, thiserror::Error)]
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>SendError {
+    <span class="attr">#[error(<span class="string">"packet dropped"</span>)]
+    </span>PacketDropped,
+    <span class="attr">#[error(<span class="string">"sender closed"</span>)]
+    </span>SenderClosed,
+}
+
+<span class="doccomment">/// Tries up to `3` times to send a message into the given channel, retrying iff it is full.
+</span><span class="kw">fn </span>try_send&lt;T&gt;(sender: <span class="kw-2">&amp;</span>mpsc::Sender&lt;T&gt;, msg: T) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendError&gt; {
+    <span class="kw">let </span><span class="kw-2">mut </span>msg = msg;
+    <span class="kw">for _ in </span><span class="number">0</span>..RETRIES {
+        <span class="kw">match </span>sender.try_send(msg) {
+            <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
+            <span class="comment">// if the queue is full, try again (max 3 times)
+            </span><span class="prelude-val">Err</span>(mpsc::error::TrySendError::Full(m)) =&gt; msg = m,
+            <span class="comment">// only other option is `TrySendError::Closed`, report the
+            // closed error
+            </span><span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(SendError::SenderClosed),
+        }
+    }
+    <span class="prelude-val">Err</span>(SendError::PacketDropped)
 }
 
 <span class="doccomment">/// Manages all the reads and writes to this client. It periodically sends a `KEEP_ALIVE`
@@ -856,7 +942,7 @@
     <span class="doccomment">/// Notify the client that a previous sender has disconnected
     </span>node_gone: mpsc::Receiver&lt;NodeId&gt;,
     <span class="doccomment">/// [`NodeId`] of this client
-    </span>key: NodeId,
+    </span>node_id: NodeId,
     <span class="doccomment">/// Reference to the other connected clients.
     </span>clients: Clients,
     <span class="doccomment">/// Notes that the client considers this the preferred connection (important in cases
@@ -978,10 +1064,12 @@
     <span class="kw">async fn </span>handle_frame_send_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId, data: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">if </span>disco::looks_like_disco_wrapper(<span class="kw-2">&amp;</span>data) {
             <span class="macro">inc!</span>(Metrics, disco_packets_recv);
-            <span class="self">self</span>.clients.send_disco_packet(dst, data, <span class="self">self</span>.key).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="self">self</span>.clients
+                .send_disco_packet(dst, data, <span class="self">self</span>.node_id)
+                .<span class="kw">await</span><span class="question-mark">?</span>;
         } <span class="kw">else </span>{
             <span class="macro">inc!</span>(Metrics, send_packets_recv);
-            <span class="self">self</span>.clients.send_packet(dst, data, <span class="self">self</span>.key).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="self">self</span>.clients.send_packet(dst, data, <span class="self">self</span>.node_id).<span class="kw">await</span><span class="question-mark">?</span>;
         }
         <span class="prelude-val">Ok</span>(())
     }
@@ -1183,7 +1271,7 @@
         <span class="kw">let </span>(disco_send_queue_s, disco_send_queue_r) = mpsc::channel(<span class="number">10</span>);
         <span class="kw">let </span>(peer_gone_s, peer_gone_r) = mpsc::channel(<span class="number">10</span>);
 
-        <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng()).public();
+        <span class="kw">let </span>node_id = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>(io, io_rw) = tokio::io::duplex(<span class="number">1024</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>io_rw = Framed::new(io_rw, RelayCodec::test());
         <span class="kw">let </span>stream =
@@ -1196,7 +1284,7 @@
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
             node_gone: peer_gone_r,
-            key,
+            node_id,
             clients: clients.clone(),
             preferred: <span class="bool-val">true</span>,
         };
@@ -1212,7 +1300,7 @@
         <span class="comment">// send packet
         </span><span class="macro">println!</span>(<span class="string">"  send packet"</span>);
         <span class="kw">let </span>packet = Packet {
-            src: key,
+            src: node_id,
             data: Bytes::from(<span class="kw-2">&amp;</span>data[..]),
         };
         send_queue_s.send(packet.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1220,7 +1308,7 @@
         <span class="macro">assert_eq!</span>(
             frame,
             Frame::RecvPacket {
-                src_key: key,
+                src_key: node_id,
                 content: data.to_vec().into()
             }
         );
@@ -1232,16 +1320,16 @@
         <span class="macro">assert_eq!</span>(
             frame,
             Frame::RecvPacket {
-                src_key: key,
+                src_key: node_id,
                 content: data.to_vec().into()
             }
         );
 
         <span class="comment">// send peer_gone
         </span><span class="macro">println!</span>(<span class="string">"send peer gone"</span>);
-        peer_gone_s.send(key).<span class="kw">await</span><span class="question-mark">?</span>;
+        peer_gone_s.send(node_id).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>frame = recv_frame(FrameType::PeerGone, <span class="kw-2">&amp;mut </span>io_rw).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="macro">assert_eq!</span>(frame, Frame::NodeGone { node_id: key });
+        <span class="macro">assert_eq!</span>(frame, Frame::NodeGone { node_id });
 
         <span class="comment">// Read tests
         </span><span class="macro">println!</span>(<span class="string">"--read"</span>);
