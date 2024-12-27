@@ -12,8 +12,7 @@ use std::{
 use anyhow::{bail, Result};
 use bytes::Bytes;
 use futures_lite::Stream;
-use futures_sink::Sink;
-use futures_util::SinkExt;
+use futures_util::{Sink, SinkExt};
 use iroh_base::{NodeId, SecretKey};
 use tokio_tungstenite_wasm::WebSocketStream;
 use tokio_util::codec::Framed;
