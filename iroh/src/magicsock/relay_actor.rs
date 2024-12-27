@@ -9,29 +9,42 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
     net::IpAddr,
+    ops::ControlFlow,
+    pin::{pin, Pin},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
+    task::{self, Poll},
 };
 
-use anyhow::Context;
-use backoff::backoff::Backoff;
+use anyhow::{anyhow, bail, Context, Result};
+use backoff::{
+    backoff::Backoff,
+    exponential::{ExponentialBackoff, ExponentialBackoffBuilder},
+};
 use bytes::{Bytes, BytesMut};
 use futures_buffered::FuturesUnorderedBounded;
+use futures_concurrency::future::FutureExt;
 use futures_lite::StreamExt;
+use futures_util::SinkExt;
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::{
     self as relay,
-    client::{ClientError, ReceivedMessage},
+    client::{
+        ClientError, ClientSink, ConnSendError, ConnectedClient, PingTracker, ReceivedMessage,
+        SendMessage,
+    },
     MAX_PACKET_SIZE,
 };
+use pin_project::pin_project;
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
     time::{self, Duration, Instant},
 };
+use tokio_tungstenite::client_async;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 use url::Url;
@@ -62,7 +75,8 @@ struct ActiveRelayActor {
     url: RelayUrl,
     /// Configuration to establish connections to a relay server.
     relay_connection_opts: RelayConnectionOptions,
-    relay_client: relay::client::Client,
+    relay_client_builder: relay::client::ClientBuilder,
+    is_home_relay: bool,
     /// The set of remote nodes we know are present on this relay server.
     ///
     /// If we receive messages from a remote node via, this server it is added to this set.
@@ -121,25 +135,29 @@ impl ActiveRelayActor {
             relay_datagrams_recv,
             connection_opts,
         } = opts;
-        let relay_client = Self::create_relay_client(url.clone(), connection_opts.clone());
+        let relay_client_builder = Self::create_relay_builder(url.clone(), connection_opts.clone());
 
         ActiveRelayActor {
             relay_datagrams_recv,
             relay_datagrams_send,
             url,
             node_present: BTreeSet::new(),
-            backoff: backoff::exponential::ExponentialBackoffBuilder::new()
+            backoff: ExponentialBackoffBuilder::new()
                 .with_initial_interval(Duration::from_millis(10))
                 .with_max_interval(Duration::from_secs(5))
                 .build(),
             last_packet_time: None,
             last_packet_src: None,
             relay_connection_opts: connection_opts,
-            relay_client,
+            relay_client_builder,
+            is_home_relay: false,
         }
     }
 
-    fn create_relay_client(url: RelayUrl, opts: RelayConnectionOptions) -> relay::client::Client {
+    fn create_relay_builder(
+        url: RelayUrl,
+        opts: RelayConnectionOptions,
+    ) -> relay::client::ClientBuilder {
         let RelayConnectionOptions {
             secret_key,
             dns_resolver,
@@ -155,7 +173,7 @@ impl ActiveRelayActor {
         }
         #[cfg(any(test, feature = "test-utils"))]
         let builder = builder.insecure_skip_cert_verify(insecure_skip_cert_verify);
-        builder.build(secret_key, dns_resolver)
+        builder
     }
 
     async fn run(
@@ -164,279 +182,503 @@ impl ActiveRelayActor {
         mut inbox: mpsc::Receiver<ActiveRelayMessage>,
     ) -> anyhow::Result<()> {
         inc!(MagicsockMetrics, num_relay_conns_added);
-        debug!("initial dial {}", self.url);
-        self.relay_client
-            .connect()
-            .await
-            .context("initial connection")?;
+        // debug!("initial dial {}", self.url);
+        // self.relay_client
+        //     .connect()
+        //     .await
+        //     .context("initial connection")?;
 
-        let mut ping_future = std::pin::pin!(MaybeFuture::none());
+        // let mut ping_future = std::pin::pin!(MaybeFuture::none());
 
-        // If inactive for one tick the actor should exit.  Inactivity is only tracked on
-        // the last datagrams sent to the relay, received datagrams will trigger ACKs which
+        // // If inactive for one tick the actor should exit.  Inactivity is only tracked on
+        // // the last datagrams sent to the relay, received datagrams will trigger ACKs which
         // is sufficient to keep active connections open.
         let mut inactive_timeout = tokio::time::interval(RELAY_INACTIVE_CLEANUP_TIME);
         inactive_timeout.reset(); // skip immediate tick
 
         loop {
-            // If a read error occurred on the connection it might have been lost.  But we
-            // need this connection to stay alive so we can receive more messages sent by
-            // peers via the relay even if we don't start sending again first.
-
-            // Always call this, it shortcircuits under the hood, if connected.
-            self.relay_client.connect().await.context("keepalive")?;
-
-            tokio::select! {
-                biased;
-                _ = cancel_token.cancelled() => {
-                    debug!("shutdown");
-                    break;
-                }
-                msg = inbox.recv() => {
-                    let Some(msg) = msg else {
-                        debug!("all clients closed");
-                        break;
-                    };
-                    match msg {
-                        ActiveRelayMessage::SetHomeRelay(is_preferred) => {
-                            self.relay_client.note_preferred(is_preferred).await;
-                        }
-                        ActiveRelayMessage::HasNodeRoute(peer, r) => {
-                            let has_peer = self.node_present.contains(&peer);
-                            r.send(has_peer).ok();
-                        }
-                        ActiveRelayMessage::CheckConnection(local_ips) => {
-                            if let Some(fut) = self.handle_check_connection(local_ips).await {
-                                // We always override the future, to make sure the latest connection
-                                // details are used.
-                                ping_future.as_mut().set_future(fut);
-                            }
-                        }
-                        #[cfg(test)]
-                        ActiveRelayMessage::GetLocalAddr(sender) => {
-                            let addr = self.relay_client.local_addr();
-                            sender.send(addr).ok();
-                        }
-                    }
-                }
-                // Poll for pings
-                ping_res = &mut ping_future, if ping_future.is_some() => {
-                    ping_future.as_mut().set_none();
-                    match ping_res {
-                        Ok(latency) => {
-                            debug!(?latency, "Still connected.");
-                        }
-                        Err(err) => {
-                            debug!(?err, "Ping failed, reconnecting.");
-                            self.reconnect();
-                        }
-                    }
-                }
-                Some(item) = self.relay_datagrams_send.recv() => {
-                    debug_assert_eq!(item.url, self.url);
-                    self.send_relay(item).await;
-                    inactive_timeout.reset();
-                }
-                msg = self.relay_client.recv() => {
-                    trace!("tick: relay_client_receiver");
-                    if self.handle_relay_msg(msg).await == ReadResult::Break {
-                        // fatal error
-                        break;
-                    }
-                }
-                _ = inactive_timeout.tick() => {
-                    debug!("Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting");
-                    break;
+            let client = match self
+                .run_connecting(&cancel_token, &mut inbox, &mut inactive_timeout)
+                .await
+            {
+                ControlFlow::Continue(client) => client,
+                ControlFlow::Break(_) => break,
+            };
+            match self
+                .run_connected(&cancel_token, &mut inbox, &mut inactive_timeout, client)
+                .await
+            {
+                Ok(_) => break,
+                Err(err) => {
+                    debug!("Connection to relay server lost: {err:#}");
+                    continue;
                 }
             }
+            // // If a read error occurred on the connection it might have been lost.  But we
+            // // need this connection to stay alive so we can receive more messages sent by
+            // // peers via the relay even if we don't start sending again first.
+
+            // // Always call this, it shortcircuits under the hood, if connected.
+            // self.relay_client.connect().await.context("keepalive")?;
+
+            // tokio::select! {
+            //     biased;
+            //     _ = cancel_token.cancelled() => {
+            //         debug!("shutdown");
+            //         break;
+            //     }
+            //     msg = inbox.recv() => {
+            //         let Some(msg) = msg else {
+            //             debug!("all clients closed");
+            //             break;
+            //         };
+            //         match msg {
+            //             ActiveRelayMessage::SetHomeRelay(is_preferred) => {
+            //                 self.relay_client.note_preferred(is_preferred).await;
+            //             }
+            //             ActiveRelayMessage::HasNodeRoute(peer, r) => {
+            //                 let has_peer = self.node_present.contains(&peer);
+            //                 r.send(has_peer).ok();
+            //             }
+            //             ActiveRelayMessage::CheckConnection(local_ips) => {
+            //                 if let Some(fut) = self.handle_check_connection(local_ips).await {
+            //                     // We always override the future, to make sure the latest connection
+            //                     // details are used.
+            //                     ping_future.as_mut().set_future(fut);
+            //                 }
+            //             }
+            //             #[cfg(test)]
+            //             ActiveRelayMessage::GetLocalAddr(sender) => {
+            //                 let addr = self.relay_client.local_addr();
+            //                 sender.send(addr).ok();
+            //             }
+            //         }
+            //     }
+            //     // Poll for pings
+            //     ping_res = &mut ping_future, if ping_future.is_some() => {
+            //         ping_future.as_mut().set_none();
+            //         match ping_res {
+            //             Ok(latency) => {
+            //                 debug!(?latency, "Still connected.");
+            //             }
+            //             Err(err) => {
+            //                 debug!(?err, "Ping failed, reconnecting.");
+            //                 self.reconnect();
+            //             }
+            //         }
+            //     }
+            //     Some(item) = self.relay_datagrams_send.recv() => {
+            //         debug_assert_eq!(item.url, self.url);
+            //         self.send_relay(item).await;
+            //         inactive_timeout.reset();
+            //     }
+            //     msg = self.relay_client.recv() => {
+            //         trace!("tick: relay_client_receiver");
+            //         if self.handle_relay_msg(msg).await == ReadResult::Break {
+            //             // fatal error
+            //             break;
+            //         }
+            //     }
+            //     _ = inactive_timeout.tick() => {
+            //         debug!("Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting");
+            //         break;
+            //     }
+            // }
         }
         debug!("exiting");
-        self.relay_client.close().await;
+        // self.relay_client.close().await;
         inc!(MagicsockMetrics, num_relay_conns_removed);
         Ok(())
     }
 
-    /// Checks if the current relay connection is fine or needs reconnecting.
+    /// Actor loop when connecting to the relay server.
     ///
-    /// If the local IP address of the current relay connection is in `local_ips` then this
-    /// pings the relay, recreating the connection on ping failure.  Otherwise it always
-    /// recreates the connection.
-    async fn handle_check_connection(
+    /// Returns [`ControlFlow::Break`] if the actor needs to shut down.  Returns the relay
+    /// client in [`ControlFlow::Continue`] when the connection is established.
+    // TODO: consider storing cancel_token and inbox inside the actor.
+    async fn run_connecting(
         &mut self,
-        local_ips: Vec<IpAddr>,
-    ) -> Option<impl Future<Output = std::result::Result<Duration, ClientError>>> {
-        match self.relay_client.local_addr() {
-            Some(local_addr) if local_ips.contains(&local_addr.ip()) => {
-                match self.relay_client.send_ping().await {
-                    Ok(fut) => {
-                        return Some(fut);
-                    }
-                    Err(err) => {
-                        debug!(?err, "Ping failed, reconnecting.");
-                        self.reconnect();
+        cancel_token: &CancellationToken,
+        inbox: &mut mpsc::Receiver<ActiveRelayMessage>,
+        inactive_timeout: &mut tokio::time::Interval,
+    ) -> ControlFlow<(), iroh_relay::client::ConnectedClient> {
+        let mut connecting_fut = self.connect_relay();
+        loop {
+            tokio::select! {
+                biased;
+                _ = cancel_token.cancelled() => {
+                    debug!("Shutdown.");
+                    break ControlFlow::Break(());
+                }
+                res = &mut connecting_fut => {
+                    match res {
+                        Ok(client) => {
+                            break ControlFlow::Continue(client);
+                        }
+                        Err(err) => {
+                            warn!("Client failed to connect: {err:#}");
+                            connecting_fut = self.connect_relay();
+                        }
                     }
                 }
-            }
-            Some(_local_addr) => {
-                debug!("Local IP no longer valid, reconnecting");
-                self.reconnect();
-            }
-            None => {
-                debug!("No local address for this relay connection, reconnecting.");
-                self.reconnect();
+                msg = inbox.recv() => {
+                    let Some(msg) = msg else {
+                        debug!("Inbox closed, shutdown.");
+                        break ControlFlow::Break(());
+                    };
+                    match msg {
+                        ActiveRelayMessage::SetHomeRelay(is_preferred) => {
+                            self.is_home_relay = is_preferred;
+                        }
+                        ActiveRelayMessage::HasNodeRoute(_peer, sender) => {
+                            sender.send(false).ok();
+                        }
+                        ActiveRelayMessage::CheckConnection(_local_ips) => {}
+                        #[cfg(test)]
+                        ActiveRelayMessage::GetLocalAddr(sender) => {
+                            sender.send(None).ok();
+                        }
+                    }
+                }
+                // TODO: pull datagrams out to stop them from going stale
+                _ = inactive_timeout.tick(), if !self.is_home_relay => {
+                    // TODO: we probably want to reset this when popping datagrams
+                    // off the send queue, otherwise we'll expire too soon.
+                    debug!("Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting");
+                    break ControlFlow::Break(());
+                }
             }
         }
-        None
     }
 
-    fn reconnect(&mut self) {
-        let new_client =
-            Self::create_relay_client(self.url.clone(), self.relay_connection_opts.clone());
-        self.relay_client = new_client;
+    /// Returns a future which will repeatedly connect to a relay server.
+    ///
+    /// The future only completes once the connection is established and retries
+    /// connections.  It currently does not ever return `Err` as the retries continue
+    /// forever.
+    fn connect_relay(&self) -> Pin<Box<dyn Future<Output = Result<ConnectedClient>> + Send>> {
+        let backoff: ExponentialBackoff<backoff::SystemClock> = ExponentialBackoffBuilder::new()
+            .with_initial_interval(Duration::from_millis(10))
+            .with_max_interval(Duration::from_secs(5))
+            .build();
+        let connect_fn = {
+            // TODO: sort out this builder
+            let client_builder = self.relay_client_builder.clone();
+            let secret_key = self.relay_connection_opts.secret_key.clone();
+            let dns_resolver = self.relay_connection_opts.dns_resolver.clone();
+            move || {
+                let client_builder = client_builder.clone();
+                let secret_key = secret_key.clone();
+                let dns_resolver = dns_resolver.clone();
+                async move {
+                    let client = client_builder
+                        .connect(secret_key, dns_resolver)
+                        .await
+                        .map_err(|err| {
+                            warn!("Relay connection failed: {err:#}");
+                            err
+                        })?;
+                    Ok(client)
+                }
+            }
+        };
+        let retry_fut = backoff::future::retry(backoff, connect_fn);
+        Box::pin(retry_fut)
     }
+
+    /// Runs the actor loop when connected to a relay server.
+    ///
+    /// Returns `Ok` if the actor needs to shut down.  `Err` is returned if the connection
+    /// to the relay server is lost.
+    async fn run_connected(
+        &mut self,
+        cancel_token: &CancellationToken,
+        inbox: &mut mpsc::Receiver<ActiveRelayMessage>,
+        inactive_timeout: &mut tokio::time::Interval,
+        client: iroh_relay::client::ConnectedClient,
+    ) -> Result<()> {
+        let (client_stream, mut client_sink) = client.split();
+
+        enum SendState {
+            Sending(Pin<Box<dyn Future<Output = Result<ClientSink, ConnSendError>> + Send>>),
+            Ready(iroh_relay::client::ClientSink),
+        }
+        impl SendState {
+            fn is_sending(&self) -> bool {
+                matches!(self, SendState::Sending(_))
+            }
+
+            fn is_ready(&self) -> bool {
+                matches!(self, SendState::Ready(_))
+            }
+
+            fn send(self, msg: SendMessage) -> Result<Self> {
+                let SendState::Ready(client_sink) = self else {
+                    bail!("SendState not ready");
+                };
+                let fut = client_sink.send_to_relay(msg);
+                Ok(Self::Sending(Box::pin(fut)))
+            }
+        }
+        impl Future for SendState {
+            type Output = Result<ClientSink, ConnSendError>;
+
+            fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
+                match *self {
+                    SendState::Sending(ref mut fut) => fut.as_mut().poll(cx),
+                    SendState::Ready(_) => Poll::Pending,
+                }
+            }
+        }
+
+        let mut send_state = if self.is_home_relay {
+            let fut = client_sink.send_to_relay(SendMessage::NotePreferred(true));
+            SendState::Sending(Box::pin(fut))
+        } else {
+            SendState::Ready(client_sink)
+        };
+
+        let mut last_ping: Option<[u8; 8]> = None;
+
+        loop {
+            tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    debug!("Shutdown.");
+                    break Ok(());
+                }
+                res = &mut send_state, if send_state.is_sending() => {
+                    let client = res?;
+                    send_state = SendState::Ready(client);
+                }
+                msg = inbox.recv(), if send_state.is_ready() => {
+                    let Some(msg) = msg else {
+                        debug!("Inbox closed, shutdown.");
+                        break Ok(());
+                    };
+                    match msg {
+                        ActiveRelayMessage::SetHomeRelay(is_preferred) => {
+                            send_state = send_state.send(SendMessage::NotePreferred(is_preferred))?;
+                        }
+                        ActiveRelayMessage::HasNodeRoute(peer, sender) => {
+                            let has_peer = self.node_present.contains(&peer);
+                            sender.send(has_peer).ok();
+                        }
+                        ActiveRelayMessage::CheckConnection(local_ips) => {
+                            match client_stream.local_addr() {
+                                Some(addr) if local_ips.contains(&addr.ip()) => {
+                                    // TODO: continue
+                                    let data: [u8; 8] = rand::random();
+                                    let (tx, rx) = oneshot::channel();
+                                    let fut = async move {
+                                        let received = rx.await;
+                                    };
+                                    send_state = send_state.send(SendMessage::Ping(()));
+                                }
+                                Some(_) => break Err(anyhow!("Local IP no longer valid")),
+                                None => break Err(anyhow!("No local addr, reconnecting")),
+                            }
+                        }
+                        #[cfg(test)]
+                        ActiveRelayMessage::GetLocalAddr(sender) => {
+                            let addr = client_stream.local_addr();
+                            sender.send(addr).ok();
+                        }
+                    }
+                    // TODO: read datagrams etc
+                }
+                _ = inactive_timeout.tick(), if !self.is_home_relay => {
+                    // TODO: we probably want to reset this when popping datagrams
+                    // off the send queue, otherwise we'll expire too soon.
+                    debug!("Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting.");
+                    break Ok(());
+                }
+            }
+        }
+    }
+
+    // /// Checks if the current relay connection is fine or needs reconnecting.
+    // ///
+    // /// If the local IP address of the current relay connection is in `local_ips` then this
+    // /// pings the relay, recreating the connection on ping failure.  Otherwise it always
+    // /// recreates the connection.
+    // async fn handle_check_connection(
+    //     &mut self,
+    //     local_ips: Vec<IpAddr>,
+    // ) -> Option<impl Future<Output = std::result::Result<Duration, ClientError>>> {
+    //     match self.relay_client.local_addr() {
+    //         Some(local_addr) if local_ips.contains(&local_addr.ip()) => {
+    //             match self.relay_client.send_ping().await {
+    //                 Ok(fut) => {
+    //                     return Some(fut);
+    //                 }
+    //                 Err(err) => {
+    //                     debug!(?err, "Ping failed, reconnecting.");
+    //                     self.reconnect();
+    //                 }
+    //             }
+    //         }
+    //         Some(_local_addr) => {
+    //             debug!("Local IP no longer valid, reconnecting");
+    //             self.reconnect();
+    //         }
+    //         None => {
+    //             debug!("No local address for this relay connection, reconnecting.");
+    //             self.reconnect();
+    //         }
+    //     }
+    //     None
+    // }
+
+    // fn reconnect(&mut self) {
+    //     let new_client =
+    //         Self::create_relay_builder(self.url.clone(), self.relay_connection_opts.clone());
+    //     self.relay_client = new_client;
+    // }
 
     async fn send_relay(&mut self, item: RelaySendItem) {
-        // When Quinn sends a GSO Transmit magicsock::split_packets will make us receive
-        // more than one packet to send in a single call.  We join all packets back together
-        // and prefix them with a u16 packet size.  They then get sent as a single DISCO
-        // frame.  However this might still be multiple packets when otherwise the maximum
-        // packet size for the relay protocol would be exceeded.
-        for packet in PacketizeIter::<_, MAX_PAYLOAD_SIZE>::new(item.remote_node, item.datagrams) {
-            let len = packet.len();
-            match self
-                .relay_client
-                .send_packet(packet.node_id, packet.payload)
-                .await
-            {
-                Ok(_) => inc_by!(MagicsockMetrics, send_relay, len as _),
-                Err(err) => {
-                    warn!("send failed: {err:#}");
-                    inc!(MagicsockMetrics, send_relay_error);
-                }
-            }
-        }
+        todo!()
+        // // When Quinn sends a GSO Transmit magicsock::split_packets will make us receive
+        // // more than one packet to send in a single call.  We join all packets back together
+        // // and prefix them with a u16 packet size.  They then get sent as a single DISCO
+        // // frame.  However this might still be multiple packets when otherwise the maximum
+        // // packet size for the relay protocol would be exceeded.
+        // for packet in PacketizeIter::<_, MAX_PAYLOAD_SIZE>::new(item.remote_node, item.datagrams) {
+        //     let len = packet.len();
+        //     match self
+        //         .relay_client
+        //         .send_packet(packet.node_id, packet.payload)
+        //         .await
+        //     {
+        //         Ok(_) => inc_by!(MagicsockMetrics, send_relay, len as _),
+        //         Err(err) => {
+        //             warn!("send failed: {err:#}");
+        //             inc!(MagicsockMetrics, send_relay_error);
+        //         }
+        //     }
+        // }
     }
 
     async fn handle_relay_msg(
         &mut self,
         msg: Result<Option<anyhow::Result<ReceivedMessage>>, tokio::time::error::Elapsed>,
     ) -> ReadResult {
-        let mut conn_is_closed = false;
-        let msg = match msg {
-            Ok(Some(Ok(msg))) => Some(msg),
-            Ok(Some(Err(err))) => {
-                warn!("recv error: {:?}", err);
-                self.relay_client.close().await;
-                None
-            }
-            Ok(None) => {
-                warn!("recv error: no connection");
-                self.relay_client.close().await;
-                None
-            }
-            Err(_) => {
-                warn!("recv error: timeout");
-                self.relay_client.close().await;
-                conn_is_closed = true;
-                None
-            }
-        };
+        todo!()
+        // let mut conn_is_closed = false;
+        // let msg = match msg {
+        //     Ok(Some(Ok(msg))) => Some(msg),
+        //     Ok(Some(Err(err))) => {
+        //         warn!("recv error: {:?}", err);
+        //         self.relay_client.close().await;
+        //         None
+        //     }
+        //     Ok(None) => {
+        //         warn!("recv error: no connection");
+        //         self.relay_client.close().await;
+        //         None
+        //     }
+        //     Err(_) => {
+        //         warn!("recv error: timeout");
+        //         self.relay_client.close().await;
+        //         conn_is_closed = true;
+        //         None
+        //     }
+        // };
 
-        match msg {
-            None => {
-                // Forget that all these peers have routes.
-                self.node_present.clear();
+        // match msg {
+        //     None => {
+        //         // Forget that all these peers have routes.
+        //         self.node_present.clear();
 
-                if conn_is_closed {
-                    // drop client
-                    return ReadResult::Break;
-                }
+        //         if conn_is_closed {
+        //             // drop client
+        //             return ReadResult::Break;
+        //         }
 
-                // If our relay connection broke, it might be because our network
-                // conditions changed. Start that check.
-                // TODO:
-                // self.re_stun("relay-recv-error").await;
+        //         // If our relay connection broke, it might be because our network
+        //         // conditions changed. Start that check.
+        //         // TODO:
+        //         // self.re_stun("relay-recv-error").await;
 
-                // Back off a bit before reconnecting.
-                match self.backoff.next_backoff() {
-                    Some(t) => {
-                        debug!("backoff sleep: {}ms", t.as_millis());
-                        time::sleep(t).await;
-                        ReadResult::Continue
-                    }
-                    None => ReadResult::Break,
-                }
-            }
-            Some(msg) => {
-                // reset
-                self.backoff.reset();
-                let now = Instant::now();
-                if self
-                    .last_packet_time
-                    .as_ref()
-                    .map(|t| t.elapsed() > Duration::from_secs(5))
-                    .unwrap_or(true)
-                {
-                    self.last_packet_time = Some(now);
-                }
+        //         // Back off a bit before reconnecting.
+        //         match self.backoff.next_backoff() {
+        //             Some(t) => {
+        //                 debug!("backoff sleep: {}ms", t.as_millis());
+        //                 time::sleep(t).await;
+        //                 ReadResult::Continue
+        //             }
+        //             None => ReadResult::Break,
+        //         }
+        //     }
+        //     Some(msg) => {
+        //         // reset
+        //         self.backoff.reset();
+        //         let now = Instant::now();
+        //         if self
+        //             .last_packet_time
+        //             .as_ref()
+        //             .map(|t| t.elapsed() > Duration::from_secs(5))
+        //             .unwrap_or(true)
+        //         {
+        //             self.last_packet_time = Some(now);
+        //         }
 
-                match msg {
-                    ReceivedMessage::ReceivedPacket {
-                        remote_node_id,
-                        data,
-                    } => {
-                        trace!(len=%data.len(), "received msg");
-                        // If this is a new sender we hadn't seen before, remember it and
-                        // register a route for this peer.
-                        if self
-                            .last_packet_src
-                            .as_ref()
-                            .map(|p| *p != remote_node_id)
-                            .unwrap_or(true)
-                        {
-                            // avoid map lookup w/ high throughput single peer
-                            self.last_packet_src = Some(remote_node_id);
-                            self.node_present.insert(remote_node_id);
-                        }
+        //         match msg {
+        //             ReceivedMessage::ReceivedPacket {
+        //                 remote_node_id,
+        //                 data,
+        //             } => {
+        //                 trace!(len=%data.len(), "received msg");
+        //                 // If this is a new sender we hadn't seen before, remember it and
+        //                 // register a route for this peer.
+        //                 if self
+        //                     .last_packet_src
+        //                     .as_ref()
+        //                     .map(|p| *p != remote_node_id)
+        //                     .unwrap_or(true)
+        //                 {
+        //                     // avoid map lookup w/ high throughput single peer
+        //                     self.last_packet_src = Some(remote_node_id);
+        //                     self.node_present.insert(remote_node_id);
+        //                 }
 
-                        for datagram in PacketSplitIter::new(self.url.clone(), remote_node_id, data)
-                        {
-                            let Ok(datagram) = datagram else {
-                                error!("Invalid packet split");
-                                break;
-                            };
-                            if let Err(err) = self.relay_datagrams_recv.try_send(datagram) {
-                                warn!("dropping received relay packet: {err:#}");
-                            }
-                        }
+        //                 for datagram in PacketSplitIter::new(self.url.clone(), remote_node_id, data)
+        //                 {
+        //                     let Ok(datagram) = datagram else {
+        //                         error!("Invalid packet split");
+        //                         break;
+        //                     };
+        //                     if let Err(err) = self.relay_datagrams_recv.try_send(datagram) {
+        //                         warn!("dropping received relay packet: {err:#}");
+        //                     }
+        //                 }
 
-                        ReadResult::Continue
-                    }
-                    ReceivedMessage::Ping(data) => {
-                        // Best effort reply to the ping.
-                        // TODO: use sth like try_send?
-                        if let Err(err) = self.relay_client.send_pong(data).await {
-                            warn!("pong error: {:?}", err);
-                        }
-                        ReadResult::Continue
-                    }
-                    ReceivedMessage::Pong(_) => {
-                        // Pong messages are already handled by the client.
-                        ReadResult::Continue
-                    }
-                    ReceivedMessage::Health { .. } => ReadResult::Continue,
-                    ReceivedMessage::NodeGone(key) => {
-                        self.node_present.remove(&key);
-                        ReadResult::Continue
-                    }
-                    other => {
-                        trace!("ignoring: {:?}", other);
-                        // Ignore.
-                        ReadResult::Continue
-                    }
-                }
-            }
-        }
+        //                 ReadResult::Continue
+        //             }
+        //             ReceivedMessage::Ping(data) => {
+        //                 // Best effort reply to the ping.
+        //                 // TODO: use sth like try_send?
+        //                 if let Err(err) = self.relay_client.send_pong(data).await {
+        //                     warn!("pong error: {:?}", err);
+        //                 }
+        //                 ReadResult::Continue
+        //             }
+        //             ReceivedMessage::Pong(_) => {
+        //                 // Pong messages are already handled by the client.
+        //                 ReadResult::Continue
+        //             }
+        //             ReceivedMessage::Health { .. } => ReadResult::Continue,
+        //             ReceivedMessage::NodeGone(key) => {
+        //                 self.node_present.remove(&key);
+        //                 ReadResult::Continue
+        //             }
+        //             other => {
+        //                 trace!("ignoring: {:?}", other);
+        //                 // Ignore.
+        //                 ReadResult::Continue
+        //             }
+        //         }
+        //     }
+        // }
     }
 }
 
@@ -922,6 +1164,10 @@ impl Iterator for PacketSplitIter {
         }
     }
 }
+
+#[derive(Debug, thiserror::Error)]
+#[error("ping timed out")]
+struct PingTimeout;
 
 #[cfg(test)]
 mod tests {

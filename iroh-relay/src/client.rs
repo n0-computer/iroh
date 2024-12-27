@@ -15,7 +15,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use bytes::Bytes;
-use conn::{Conn, ConnSendError, SendMessage};
+use conn::Conn;
 use futures_lite::Stream;
 use futures_util::{
     stream::{SplitSink, SplitStream},
@@ -43,7 +43,7 @@ use tokio::{
 use tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
 use url::Url;
 
-pub use self::conn::ReceivedMessage;
+pub use self::conn::{ConnSendError, ReceivedMessage, SendMessage};
 use crate::{
     defaults::timeouts::*,
     http::{Protocol, RELAY_PATH},
@@ -135,6 +135,16 @@ pub struct ClientSink {
     local_addr: Option<SocketAddr>,
 }
 
+impl ClientSink {
+    /// Send to the relay or something
+    pub async fn send_to_relay(mut self, msg: SendMessage) -> Result<Self, ConnSendError> {
+        match self.sink.send(msg).await {
+            Ok(_) => Ok(self),
+            Err(err) => Err(err),
+        }
+    }
+}
+
 impl Sink<SendMessage> for ClientSink {
     type Error = ConnSendError;
 
@@ -171,6 +181,12 @@ pub struct ClientStream {
     local_addr: Option<SocketAddr>,
 }
 
+impl ClientStream {
+    pub fn local_addr(&self) -> Option<SocketAddr> {
+        self.local_addr
+    }
+}
+
 impl Stream for ClientStream {
     type Item = Result<ReceivedMessage>;
 
@@ -197,6 +213,7 @@ pub struct Client {
     key_cache: KeyCache,
 }
 
+/// Track pings sent and received.
 #[derive(Default, Debug)]
 struct PingTracker(HashMap<[u8; 8], oneshot::Sender<()>>);
 
@@ -220,7 +237,7 @@ impl PingTracker {
 }
 
 /// Build a Client.
-#[derive(derive_more::Debug)]
+#[derive(derive_more::Debug, Clone)]
 pub struct ClientBuilder {
     /// Default is None
     #[debug("address family selector callback")]

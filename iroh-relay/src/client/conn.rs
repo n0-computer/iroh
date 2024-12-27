@@ -24,10 +24,13 @@ use crate::{
     protos::relay::{ClientInfo, Frame, RelayCodec, MAX_PACKET_SIZE, PROTOCOL_VERSION},
 };
 
+/// Error for sending messages to the relay server.
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum ConnSendError {
+pub enum ConnSendError {
+    /// An IO error.
     #[error("IO error")]
     Io(#[from] io::Error),
+    /// A protocol error.
     #[error("Protocol error")]
     Protocol(&'static str),
 }
@@ -343,10 +346,14 @@ impl TryFrom<Frame> for ReceivedMessage {
 
 /// Messages we can send to a relay server.
 #[derive(Debug)]
-pub(crate) enum SendMessage {
+pub enum SendMessage {
+    /// Send a packet of data to the [`NodeId`].
     SendPacket(NodeId, Bytes),
+    /// Mark or unmark the connected relay as the home relay.
     NotePreferred(bool),
+    /// Sends a ping message to the connected relay server.
     Ping([u8; 8]),
+    /// Sends a pong message to the connected relay server.
     Pong([u8; 8]),
 }
 
