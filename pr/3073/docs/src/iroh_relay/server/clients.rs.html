@@ -201,7 +201,8 @@
 <a href="#200" id="200">200</a>
 <a href="#201" id="201">201</a>
 <a href="#202" id="202">202</a>
-<a href="#203" id="203">203</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
 </span><span class="comment">// Based on tailscale/derp/derp_server.go
 
 </span><span class="kw">use </span>std::{collections::HashSet, sync::Arc};
@@ -211,7 +212,7 @@
 <span class="kw">use </span>dashmap::DashMap;
 <span class="kw">use </span>iroh_base::NodeId;
 <span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>tracing::{trace, warn};
+<span class="kw">use </span>tracing::{debug, trace, warn};
 
 <span class="kw">use </span><span class="kw">super</span>::client::{Client, Config, SendError};
 <span class="kw">use </span><span class="kw">crate</span>::server::metrics::Metrics;
@@ -230,8 +231,8 @@
 
 <span class="kw">impl </span>Clients {
     <span class="kw">pub async fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="macro">trace!</span>(<span class="string">"shutting down {} clients"</span>, <span class="self">self</span>.<span class="number">0</span>.clients.len());
         <span class="kw">let </span>keys: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self</span>.<span class="number">0</span>.clients.iter().map(|x| <span class="kw-2">*</span>x.key()).collect();
+        <span class="macro">trace!</span>(<span class="string">"shutting down {} clients"</span>, keys.len());
         <span class="kw">let </span>clients = keys.into_iter().filter_map(|k| <span class="self">self</span>.<span class="number">0</span>.clients.remove(<span class="kw-2">&amp;</span>k));
 
         futures_buffered::join_all(
@@ -242,11 +243,12 @@
 
     <span class="doccomment">/// Builds the client handler and starts the read &amp; write loops for the connection.
     </span><span class="kw">pub async fn </span>register(<span class="kw-2">&amp;</span><span class="self">self</span>, client_config: Config) {
-        <span class="kw">let </span>key = client_config.node_id;
-        <span class="macro">trace!</span>(<span class="string">"registering client: {:?}"</span>, key);
+        <span class="kw">let </span>node_id = client_config.node_id;
+        <span class="macro">trace!</span>(node_id = node_id.fmt_short(), <span class="string">"registering client"</span>);
+
         <span class="kw">let </span>client = Client::new(client_config, <span class="self">self</span>);
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(old_client) = <span class="self">self</span>.<span class="number">0</span>.clients.insert(key, client) {
-            <span class="macro">warn!</span>(<span class="string">"multiple connections found for {key:?}, pruning old connection"</span>,);
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(old_client) = <span class="self">self</span>.<span class="number">0</span>.clients.insert(node_id, client) {
+            <span class="macro">warn!</span>(<span class="string">"multiple connections found for {node_id:?}, pruning old connection"</span>,);
             old_client.shutdown().<span class="kw">await</span>;
         }
     }
@@ -254,10 +256,11 @@
     <span class="doccomment">/// Removes the client from the map of clients, &amp; sends a notification
     /// to each client that peers has sent data to, to let them know that
     /// peer is gone from the network.
-    </span><span class="kw">async fn </span>unregister(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId) {
-        <span class="macro">trace!</span>(<span class="string">"unregistering client: {:?}"</span>, dst);
-        <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, client)) = <span class="self">self</span>.<span class="number">0</span>.clients.remove(<span class="kw-2">&amp;</span>dst) {
-            <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, sent_to)) = <span class="self">self</span>.<span class="number">0</span>.sent_to.remove(<span class="kw-2">&amp;</span>dst) {
+    </span><span class="kw">async fn </span>unregister(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) {
+        <span class="macro">trace!</span>(node_id = node_id.fmt_short(), <span class="string">"unregistering client"</span>);
+
+        <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, client)) = <span class="self">self</span>.<span class="number">0</span>.clients.remove(<span class="kw-2">&amp;</span>node_id) {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, sent_to)) = <span class="self">self</span>.<span class="number">0</span>.sent_to.remove(<span class="kw-2">&amp;</span>node_id) {
                 <span class="kw">for </span>key <span class="kw">in </span>sent_to {
                     <span class="kw">match </span>client.send_peer_gone(key) {
                         <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {}
@@ -265,12 +268,11 @@
                             <span class="macro">warn!</span>(<span class="string">"client {key:?} too busy to receive packet, dropping packet"</span>);
                         }
                         <span class="prelude-val">Err</span>(SendError::SenderClosed) =&gt; {
-                            <span class="macro">warn!</span>(<span class="string">"Can no longer write to client {key:?}"</span>);
+                            <span class="macro">debug!</span>(<span class="string">"can no longer write to client {key:?}, dropping packet"</span>);
                         }
                     }
                 }
             }
-            <span class="macro">warn!</span>(<span class="string">"pruning connection {dst:?}"</span>);
             client.shutdown().<span class="kw">await</span>;
         }
     }
@@ -309,20 +311,20 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">match </span>res {
             <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
-                <span class="comment">// Record send_to relationship
-                </span><span class="kw">let </span><span class="kw-2">mut </span>e = <span class="self">self</span>.<span class="number">0</span>.sent_to.entry(src).or_default();
-                e.insert(dst);
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                <span class="comment">// Record sent_to relationship
+                </span><span class="self">self</span>.<span class="number">0</span>.sent_to.entry(src).or_default().insert(dst);
+                <span class="prelude-val">Ok</span>(())
             }
             <span class="prelude-val">Err</span>(SendError::PacketDropped) =&gt; {
                 <span class="macro">warn!</span>(<span class="string">"client {dst:?} too busy to receive packet, dropping packet"</span>);
+                <span class="macro">bail!</span>(<span class="string">"failed to send message"</span>);
             }
             <span class="prelude-val">Err</span>(SendError::SenderClosed) =&gt; {
-                <span class="macro">warn!</span>(<span class="string">"Can no longer write to client {dst:?}, dropping message and pruning connection"</span>);
+                <span class="macro">debug!</span>(<span class="string">"can no longer write to client {dst:?}, dropping message and pruning connection"</span>);
                 <span class="self">self</span>.unregister(dst).<span class="kw">await</span>;
+                <span class="macro">bail!</span>(<span class="string">"failed to send message"</span>);
             }
         }
-        <span class="macro">bail!</span>(<span class="string">"unable to send msg"</span>);
     }
 }
 
