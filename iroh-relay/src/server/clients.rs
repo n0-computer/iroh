@@ -8,7 +8,7 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use iroh_base::NodeId;
 use iroh_metrics::inc;
-use tracing::{trace, warn};
+use tracing::{debug, trace, warn};
 
 use super::client::{Client, Config, SendError};
 use crate::server::metrics::Metrics;
@@ -27,8 +27,8 @@ struct Inner {
 
 impl Clients {
     pub async fn shutdown(&self) {
-        trace!("shutting down {} clients", self.0.clients.len());
         let keys: Vec<_> = self.0.clients.iter().map(|x| *x.key()).collect();
+        trace!("shutting down {} clients", keys.len());
         let clients = keys.into_iter().filter_map(|k| self.0.clients.remove(&k));
 
         futures_buffered::join_all(
@@ -39,11 +39,12 @@ impl Clients {
 
     /// Builds the client handler and starts the read & write loops for the connection.
     pub async fn register(&self, client_config: Config) {
-        let key = client_config.node_id;
-        trace!("registering client: {:?}", key);
+        let node_id = client_config.node_id;
+        trace!(node_id = node_id.fmt_short(), "registering client");
+
         let client = Client::new(client_config, self);
-        if let Some(old_client) = self.0.clients.insert(key, client) {
-            warn!("multiple connections found for {key:?}, pruning old connection",);
+        if let Some(old_client) = self.0.clients.insert(node_id, client) {
+            warn!("multiple connections found for {node_id:?}, pruning old connection",);
             old_client.shutdown().await;
         }
     }
@@ -51,10 +52,11 @@ impl Clients {
     /// Removes the client from the map of clients, & sends a notification
     /// to each client that peers has sent data to, to let them know that
     /// peer is gone from the network.
-    async fn unregister(&self, dst: NodeId) {
-        trace!("unregistering client: {:?}", dst);
-        if let Some((_, client)) = self.0.clients.remove(&dst) {
-            if let Some((_, sent_to)) = self.0.sent_to.remove(&dst) {
+    async fn unregister(&self, node_id: NodeId) {
+        trace!(node_id = node_id.fmt_short(), "unregistering client");
+
+        if let Some((_, client)) = self.0.clients.remove(&node_id) {
+            if let Some((_, sent_to)) = self.0.sent_to.remove(&node_id) {
                 for key in sent_to {
                     match client.send_peer_gone(key) {
                         Ok(_) => {}
@@ -62,12 +64,11 @@ impl Clients {
                             warn!("client {key:?} too busy to receive packet, dropping packet");
                         }
                         Err(SendError::SenderClosed) => {
-                            warn!("Can no longer write to client {key:?}");
+                            debug!("can no longer write to client {key:?}, dropping packet");
                         }
                     }
                 }
             }
-            warn!("pruning connection {dst:?}");
             client.shutdown().await;
         }
     }
@@ -106,20 +107,20 @@ impl Clients {
     ) -> Result<()> {
         match res {
             Ok(_) => {
-                // Record send_to relationship
-                let mut e = self.0.sent_to.entry(src).or_default();
-                e.insert(dst);
-                return Ok(());
+                // Record sent_to relationship
+                self.0.sent_to.entry(src).or_default().insert(dst);
+                Ok(())
             }
             Err(SendError::PacketDropped) => {
                 warn!("client {dst:?} too busy to receive packet, dropping packet");
+                bail!("failed to send message");
             }
             Err(SendError::SenderClosed) => {
-                warn!("Can no longer write to client {dst:?}, dropping message and pruning connection");
+                debug!("can no longer write to client {dst:?}, dropping message and pruning connection");
                 self.unregister(dst).await;
+                bail!("failed to send message");
             }
         }
-        bail!("unable to send msg");
     }
 }
 
