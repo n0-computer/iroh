@@ -54,7 +54,6 @@ pub mod testing;
 pub use self::{
     metrics::{Metrics, StunMetrics},
     resolver::{ReloadingResolver, DEFAULT_CERT_RELOAD_INTERVAL},
-    streams::MaybeTlsStream as MaybeTlsStreamServer,
 };
 
 const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Tailscale-Challenge";
