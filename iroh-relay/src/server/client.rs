@@ -236,20 +236,8 @@ impl Actor {
                     self.stream.flush().await.context("flush")?;
                     break;
                 }
-                read_res = self.stream.next() => {
-                    trace!(frame = ?read_res, "handle frame");
-                    match read_res {
-                        Some(Ok(frame)) => {
-                            self.handle_frame(frame).await.context("handle_read")?;
-                        }
-                        Some(Err(err)) => {
-                            return Err(err);
-                        }
-                        None => {
-                            // Unexpected EOF
-                            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "read stream ended").into());
-                        }
-                    }
+                maybe_frame = self.stream.next() => {
+                    self.handle_frame(maybe_frame).await.context("handle read")?;
                 }
                 // First priority, disco packets
                 packet = self.disco_send_queue.recv() => {
@@ -328,11 +316,12 @@ impl Actor {
     }
 
     /// Handles frame read results.
-    async fn handle_frame(&mut self, frame: Frame) -> Result<()> {
-        // TODO: "note client activity", meaning we update the server that the client with this
-        // public key was the last one to receive data
-        // it will be relevant when we add the ability to hold onto multiple clients
-        // for the same public key
+    async fn handle_frame(&mut self, maybe_frame: Option<Result<Frame>>) -> Result<()> {
+        trace!(?maybe_frame, "handle incoming frame");
+        let frame = match maybe_frame {
+            Some(frame) => frame?,
+            None => anyhow::bail!("stream terminated"),
+        };
         match frame {
             Frame::SendPacket { dst_key, packet } => {
                 let packet_len = packet.len();
