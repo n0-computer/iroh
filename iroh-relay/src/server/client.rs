@@ -13,13 +13,12 @@ use tokio::sync::mpsc;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{error, info, instrument, trace, warn, Instrument};
 
-use super::clients::Clients;
 use crate::{
     protos::{
         disco,
         relay::{write_frame, Frame, KEEP_ALIVE},
     },
-    server::{metrics::Metrics, streams::RelayedStream, ClientRateLimit},
+    server::{clients::Clients, metrics::Metrics, streams::RelayedStream, ClientRateLimit},
 };
 
 /// A request to write a dataframe to a Client
@@ -155,16 +154,7 @@ impl Client {
     }
 
     pub(super) fn send_peer_gone(&self, key: NodeId) -> Result<(), SendError> {
-        let res = try_send(&self.peer_gone, key);
-        match res {
-            Ok(_) => {
-                inc!(Metrics, other_packets_sent);
-            }
-            Err(_) => {
-                inc!(Metrics, other_packets_dropped);
-            }
-        }
-        res
+        try_send(&self.peer_gone, key)
     }
 }
 
@@ -181,7 +171,9 @@ fn try_send<T>(sender: &mpsc::Sender<T>, msg: T) -> Result<(), SendError> {
     let mut msg = msg;
     for _ in 0..RETRIES {
         match sender.try_send(msg) {
-            Ok(_) => return Ok(()),
+            Ok(_) => {
+                return Ok(());
+            }
             // if the queue is full, try again (max 3 times)
             Err(mpsc::error::TrySendError::Full(m)) => msg = m,
             // only other option is `TrySendError::Closed`, report the
@@ -262,13 +254,11 @@ impl Actor {
                 // First priority, disco packets
                 packet = self.disco_send_queue.recv() => {
                     let packet = packet.context("Server.disco_send_queue dropped")?;
-                    trace!("send disco packet");
-                    self.send_packet(packet).await.context("send packet")?;
+                    self.send_disco_packet(packet).await.context("send packet")?;
                 }
                 // Second priority, sending regular packets
                 packet = self.send_queue.recv() => {
                     let packet = packet.context("Server.send_queue dropped")?;
-                    trace!("send packet");
                     self.send_packet(packet).await.context("send packet")?;
                 }
                 // Last priority, sending left nodes
@@ -298,7 +288,7 @@ impl Actor {
     ///
     /// Errors if the send does not happen within the `timeout` duration
     /// Does not flush.
-    async fn send_packet(&mut self, packet: Packet) -> Result<()> {
+    async fn send_raw(&mut self, packet: Packet) -> Result<()> {
         let src_key = packet.src;
         let content = packet.data;
 
@@ -307,6 +297,34 @@ impl Actor {
         }
         self.write_frame(Frame::RecvPacket { src_key, content })
             .await
+    }
+
+    async fn send_packet(&mut self, packet: Packet) -> Result<()> {
+        trace!("send packet");
+        match self.send_raw(packet).await {
+            Ok(()) => {
+                inc!(Metrics, send_packets_sent);
+                Ok(())
+            }
+            Err(err) => {
+                inc!(Metrics, send_packets_dropped);
+                Err(err)
+            }
+        }
+    }
+
+    async fn send_disco_packet(&mut self, packet: Packet) -> Result<()> {
+        trace!("send disco packet");
+        match self.send_raw(packet).await {
+            Ok(()) => {
+                inc!(Metrics, disco_packets_sent);
+                Ok(())
+            }
+            Err(err) => {
+                inc!(Metrics, disco_packets_dropped);
+                Err(err)
+            }
+        }
     }
 
     /// Handles frame read results.

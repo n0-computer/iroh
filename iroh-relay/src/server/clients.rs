@@ -73,7 +73,7 @@ impl Clients {
     }
 
     /// Attempt to send a packet to client with [`NodeId`] `dst`
-    pub async fn send_packet(&self, dst: NodeId, data: Bytes, src: NodeId) -> Result<()> {
+    pub(super) async fn send_packet(&self, dst: NodeId, data: Bytes, src: NodeId) -> Result<()> {
         if let Some(client) = self.0.clients.get(&dst) {
             let res = client.send_packet(src, data);
             return self.process_result(src, dst, res).await;
@@ -83,7 +83,12 @@ impl Clients {
         Ok(())
     }
 
-    pub async fn send_disco_packet(&self, dst: NodeId, data: Bytes, src: NodeId) -> Result<()> {
+    pub(super) async fn send_disco_packet(
+        &self,
+        dst: NodeId,
+        data: Bytes,
+        src: NodeId,
+    ) -> Result<()> {
         if let Some(client) = self.0.clients.get(&dst) {
             let res = client.send_disco_packet(src, data);
             return self.process_result(src, dst, res).await;
