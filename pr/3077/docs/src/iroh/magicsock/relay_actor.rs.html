@@ -1510,7 +1510,11 @@
 <a href="#1509" id="1509">1509</a>
 <a href="#1510" id="1510">1510</a>
 <a href="#1511" id="1511">1511</a>
-<a href="#1512" id="1512">1512</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1512" id="1512">1512</a>
+<a href="#1513" id="1513">1513</a>
+<a href="#1514" id="1514">1514</a>
+<a href="#1515" id="1515">1515</a>
+<a href="#1516" id="1516">1516</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -2724,6 +2728,7 @@
         <span class="kw">match </span><span class="self">self</span>.inner {
             <span class="prelude-val">Some</span>(PingInner { deadline, .. }) =&gt; {
                 tokio::time::sleep_until(deadline).<span class="kw">await</span>;
+                <span class="self">self</span>.inner = <span class="prelude-val">None</span>;
             }
             <span class="prelude-val">None </span>=&gt; future::pending().<span class="kw">await</span>,
         }
@@ -3020,6 +3025,9 @@
         tokio::time::sleep(Duration::from_secs(<span class="number">10</span>)).<span class="kw">await</span>;
         <span class="kw">let </span>res = tokio::time::timeout(Duration::from_millis(<span class="number">1</span>), tracker.timeout()).<span class="kw">await</span>;
         <span class="macro">assert!</span>(res.is_ok(), <span class="string">"ping timeout happened in the past"</span>);
+
+        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tracker.timeout()).<span class="kw">await</span>;
+        <span class="macro">assert!</span>(res.is_err(), <span class="string">"ping timeout should only happen once"</span>);
     }
 }
 </code></pre></div></section></main></body></html>
