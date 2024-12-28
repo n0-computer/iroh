@@ -1475,7 +1475,42 @@
 <a href="#1474" id="1474">1474</a>
 <a href="#1475" id="1475">1475</a>
 <a href="#1476" id="1476">1476</a>
-<a href="#1477" id="1477">1477</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1477" id="1477">1477</a>
+<a href="#1478" id="1478">1478</a>
+<a href="#1479" id="1479">1479</a>
+<a href="#1480" id="1480">1480</a>
+<a href="#1481" id="1481">1481</a>
+<a href="#1482" id="1482">1482</a>
+<a href="#1483" id="1483">1483</a>
+<a href="#1484" id="1484">1484</a>
+<a href="#1485" id="1485">1485</a>
+<a href="#1486" id="1486">1486</a>
+<a href="#1487" id="1487">1487</a>
+<a href="#1488" id="1488">1488</a>
+<a href="#1489" id="1489">1489</a>
+<a href="#1490" id="1490">1490</a>
+<a href="#1491" id="1491">1491</a>
+<a href="#1492" id="1492">1492</a>
+<a href="#1493" id="1493">1493</a>
+<a href="#1494" id="1494">1494</a>
+<a href="#1495" id="1495">1495</a>
+<a href="#1496" id="1496">1496</a>
+<a href="#1497" id="1497">1497</a>
+<a href="#1498" id="1498">1498</a>
+<a href="#1499" id="1499">1499</a>
+<a href="#1500" id="1500">1500</a>
+<a href="#1501" id="1501">1501</a>
+<a href="#1502" id="1502">1502</a>
+<a href="#1503" id="1503">1503</a>
+<a href="#1504" id="1504">1504</a>
+<a href="#1505" id="1505">1505</a>
+<a href="#1506" id="1506">1506</a>
+<a href="#1507" id="1507">1507</a>
+<a href="#1508" id="1508">1508</a>
+<a href="#1509" id="1509">1509</a>
+<a href="#1510" id="1510">1510</a>
+<a href="#1511" id="1511">1511</a>
+<a href="#1512" id="1512">1512</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1504,7 +1539,7 @@
 <span class="kw">use </span>futures_buffered::FuturesUnorderedBounded;
 <span class="kw">use </span>futures_concurrency::future::FutureExt;
 <span class="kw">use </span>futures_lite::StreamExt;
-<span class="kw">use </span>futures_util::SinkExt;
+<span class="kw">use </span>futures_util::{future, SinkExt};
 <span class="kw">use </span>iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>iroh_relay::{
@@ -2647,16 +2682,29 @@
 ///
 /// Only the last ping needs is useful, any previously sent ping is forgotten and ignored.
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">struct </span>PingTracker {}
+</span><span class="kw">struct </span>PingTracker {
+    inner: <span class="prelude-ty">Option</span>&lt;PingInner&gt;,
+}
+
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">struct </span>PingInner {
+    data: [u8; <span class="number">8</span>],
+    deadline: Instant,
+}
 
 <span class="kw">impl </span>PingTracker {
     <span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{}
+        <span class="self">Self </span>{ inner: <span class="prelude-val">None </span>}
     }
 
     <span class="doccomment">/// Starts a new ping.
     </span><span class="kw">fn </span>new_ping(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; [u8; <span class="number">8</span>] {
-        <span class="macro">todo!</span>()
+        <span class="kw">let </span>ping_data = rand::random();
+        <span class="self">self</span>.inner = <span class="prelude-val">Some</span>(PingInner {
+            data: ping_data,
+            deadline: Instant::now() + Duration::from_secs(<span class="number">5</span>),
+        });
+        ping_data
     }
 
     <span class="doccomment">/// Updates the ping tracker with a received pong.
@@ -2664,25 +2712,21 @@
     /// Only the pong of the most recent ping will do anything.  There is no harm feeding
     /// any pong however.
     </span><span class="kw">fn </span>pong_received(<span class="kw-2">&amp;mut </span><span class="self">self</span>, data: [u8; <span class="number">8</span>]) {
-        <span class="macro">todo!</span>()
+        <span class="kw">if </span><span class="self">self</span>.inner.as_ref().map(|inner| inner.data) == <span class="prelude-val">Some</span>(data) {
+            <span class="self">self</span>.inner = <span class="prelude-val">None</span>;
+        }
     }
 
-    <span class="comment">// /// Cancel-safe waiting for a ping to complete or timeout out.
-    // ///
-    // /// When a ping has been created using [`PingTracker::new_ping`] this method will return
-    // /// when the pong is received in [`PingTracker::pong_receveived`].  If the pong is not
-    // /// received in time a [`PingTimeout`] will be returned.
-    // ///
-    // /// When there is no pending ping, this will never return.
-    // async fn recv(&amp;mut self) -&gt; Result&lt;(), PingTimeout&gt; {
-    //     todo!()
-    // }
-
-    </span><span class="doccomment">/// Cancel-safe waiting for a ping timeout.
+    <span class="doccomment">/// Cancel-safe waiting for a ping timeout.
     ///
     /// Unless the most recent sent ping times out, this will never return.
     </span><span class="kw">async fn </span>timeout(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="macro">todo!</span>()
+        <span class="kw">match </span><span class="self">self</span>.inner {
+            <span class="prelude-val">Some</span>(PingInner { deadline, .. }) =&gt; {
+                tokio::time::sleep_until(deadline).<span class="kw">await</span>;
+            }
+            <span class="prelude-val">None </span>=&gt; future::pending().<span class="kw">await</span>,
+        }
     }
 }
 
@@ -2950,6 +2994,32 @@
         cancel_token.cancel();
 
         <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_ping_tracker() {
+        tokio::time::pause();
+        <span class="kw">let </span><span class="kw-2">mut </span>tracker = PingTracker::new();
+
+        <span class="kw">let </span>ping0 = tracker.new_ping();
+
+        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">1</span>), tracker.timeout()).<span class="kw">await</span>;
+        <span class="macro">assert!</span>(res.is_err(), <span class="string">"no ping timeout has elapsed yet"</span>);
+
+        tracker.pong_received(ping0);
+        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tracker.timeout()).<span class="kw">await</span>;
+        <span class="macro">assert!</span>(res.is_err(), <span class="string">"ping completed before timeout"</span>);
+
+        <span class="kw">let </span>_ping1 = tracker.new_ping();
+
+        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tracker.timeout()).<span class="kw">await</span>;
+        <span class="macro">assert!</span>(res.is_ok(), <span class="string">"ping timeout should have happened"</span>);
+
+        <span class="kw">let </span>ping2 = tracker.new_ping();
+
+        tokio::time::sleep(Duration::from_secs(<span class="number">10</span>)).<span class="kw">await</span>;
+        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_millis(<span class="number">1</span>), tracker.timeout()).<span class="kw">await</span>;
+        <span class="macro">assert!</span>(res.is_ok(), <span class="string">"ping timeout happened in the past"</span>);
     }
 }
 </code></pre></div></section></main></body></html>
