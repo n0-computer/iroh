@@ -27,7 +27,7 @@ use bytes::{Bytes, BytesMut};
 use futures_buffered::FuturesUnorderedBounded;
 use futures_concurrency::future::FutureExt;
 use futures_lite::StreamExt;
-use futures_util::SinkExt;
+use futures_util::{future, SinkExt};
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::{
@@ -1170,16 +1170,29 @@ struct PingTimeout;
 ///
 /// Only the last ping needs is useful, any previously sent ping is forgotten and ignored.
 #[derive(Debug)]
-struct PingTracker {}
+struct PingTracker {
+    inner: Option<PingInner>,
+}
+
+#[derive(Debug)]
+struct PingInner {
+    data: [u8; 8],
+    deadline: Instant,
+}
 
 impl PingTracker {
     fn new() -> Self {
-        Self {}
+        Self { inner: None }
     }
 
     /// Starts a new ping.
     fn new_ping(&mut self) -> [u8; 8] {
-        todo!()
+        let ping_data = rand::random();
+        self.inner = Some(PingInner {
+            data: ping_data,
+            deadline: Instant::now() + Duration::from_secs(5),
+        });
+        ping_data
     }
 
     /// Updates the ping tracker with a received pong.
@@ -1187,25 +1200,21 @@ impl PingTracker {
     /// Only the pong of the most recent ping will do anything.  There is no harm feeding
     /// any pong however.
     fn pong_received(&mut self, data: [u8; 8]) {
-        todo!()
+        if self.inner.as_ref().map(|inner| inner.data) == Some(data) {
+            self.inner = None;
+        }
     }
-
-    // /// Cancel-safe waiting for a ping to complete or timeout out.
-    // ///
-    // /// When a ping has been created using [`PingTracker::new_ping`] this method will return
-    // /// when the pong is received in [`PingTracker::pong_receveived`].  If the pong is not
-    // /// received in time a [`PingTimeout`] will be returned.
-    // ///
-    // /// When there is no pending ping, this will never return.
-    // async fn recv(&mut self) -> Result<(), PingTimeout> {
-    //     todo!()
-    // }
 
     /// Cancel-safe waiting for a ping timeout.
     ///
     /// Unless the most recent sent ping times out, this will never return.
     async fn timeout(&mut self) {
-        todo!()
+        match self.inner {
+            Some(PingInner { deadline, .. }) => {
+                tokio::time::sleep_until(deadline).await;
+            }
+            None => future::pending().await,
+        }
     }
 }
 
@@ -1473,5 +1482,31 @@ mod tests {
         cancel_token.cancel();
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_ping_tracker() {
+        tokio::time::pause();
+        let mut tracker = PingTracker::new();
+
+        let ping0 = tracker.new_ping();
+
+        let res = tokio::time::timeout(Duration::from_secs(1), tracker.timeout()).await;
+        assert!(res.is_err(), "no ping timeout has elapsed yet");
+
+        tracker.pong_received(ping0);
+        let res = tokio::time::timeout(Duration::from_secs(10), tracker.timeout()).await;
+        assert!(res.is_err(), "ping completed before timeout");
+
+        let _ping1 = tracker.new_ping();
+
+        let res = tokio::time::timeout(Duration::from_secs(10), tracker.timeout()).await;
+        assert!(res.is_ok(), "ping timeout should have happened");
+
+        let ping2 = tracker.new_ping();
+
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        let res = tokio::time::timeout(Duration::from_millis(1), tracker.timeout()).await;
+        assert!(res.is_ok(), "ping timeout happened in the past");
     }
 }
