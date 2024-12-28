@@ -182,6 +182,7 @@ pub struct ClientStream {
 }
 
 impl ClientStream {
+    /// Returns the local address of the client.
     pub fn local_addr(&self) -> Option<SocketAddr> {
         self.local_addr
     }

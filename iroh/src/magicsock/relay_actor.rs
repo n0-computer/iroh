@@ -33,8 +33,7 @@ use iroh_metrics::{inc, inc_by};
 use iroh_relay::{
     self as relay,
     client::{
-        ClientError, ClientSink, ConnSendError, ConnectedClient, PingTracker, ReceivedMessage,
-        SendMessage,
+        ClientError, ClientSink, ConnSendError, ConnectedClient, ReceivedMessage, SendMessage,
     },
     MAX_PACKET_SIZE,
 };
@@ -438,7 +437,7 @@ impl ActiveRelayActor {
             SendState::Ready(client_sink)
         };
 
-        let mut last_ping: Option<[u8; 8]> = None;
+        let mut ping_tracker = PingTracker::new();
 
         loop {
             tokio::select! {
@@ -449,6 +448,9 @@ impl ActiveRelayActor {
                 res = &mut send_state, if send_state.is_sending() => {
                     let client = res?;
                     send_state = SendState::Ready(client);
+                }
+                _ = ping_tracker.timeout() => {
+                    break Err(anyhow!("Ping timeout"));
                 }
                 msg = inbox.recv(), if send_state.is_ready() => {
                     let Some(msg) = msg else {
@@ -466,13 +468,8 @@ impl ActiveRelayActor {
                         ActiveRelayMessage::CheckConnection(local_ips) => {
                             match client_stream.local_addr() {
                                 Some(addr) if local_ips.contains(&addr.ip()) => {
-                                    // TODO: continue
-                                    let data: [u8; 8] = rand::random();
-                                    let (tx, rx) = oneshot::channel();
-                                    let fut = async move {
-                                        let received = rx.await;
-                                    };
-                                    send_state = send_state.send(SendMessage::Ping(()));
+                                    let data = ping_tracker.new_ping();
+                                    send_state = send_state.send(SendMessage::Ping(data))?;
                                 }
                                 Some(_) => break Err(anyhow!("Local IP no longer valid")),
                                 None => break Err(anyhow!("No local addr, reconnecting")),
@@ -1168,6 +1165,49 @@ impl Iterator for PacketSplitIter {
 #[derive(Debug, thiserror::Error)]
 #[error("ping timed out")]
 struct PingTimeout;
+
+/// Tracks pings on a single relay connection.
+///
+/// Only the last ping needs is useful, any previously sent ping is forgotten and ignored.
+#[derive(Debug)]
+struct PingTracker {}
+
+impl PingTracker {
+    fn new() -> Self {
+        Self {}
+    }
+
+    /// Starts a new ping.
+    fn new_ping(&mut self) -> [u8; 8] {
+        todo!()
+    }
+
+    /// Updates the ping tracker with a received pong.
+    ///
+    /// Only the pong of the most recent ping will do anything.  There is no harm feeding
+    /// any pong however.
+    fn pong_received(&mut self, data: [u8; 8]) {
+        todo!()
+    }
+
+    // /// Cancel-safe waiting for a ping to complete or timeout out.
+    // ///
+    // /// When a ping has been created using [`PingTracker::new_ping`] this method will return
+    // /// when the pong is received in [`PingTracker::pong_receveived`].  If the pong is not
+    // /// received in time a [`PingTimeout`] will be returned.
+    // ///
+    // /// When there is no pending ping, this will never return.
+    // async fn recv(&mut self) -> Result<(), PingTimeout> {
+    //     todo!()
+    // }
+
+    /// Cancel-safe waiting for a ping timeout.
+    ///
+    /// Unless the most recent sent ping times out, this will never return.
+    async fn timeout(&mut self) {
+        todo!()
+    }
+}
 
 #[cfg(test)]
 mod tests {
