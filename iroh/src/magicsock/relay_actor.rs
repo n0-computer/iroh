@@ -1212,6 +1212,7 @@ impl PingTracker {
         match self.inner {
             Some(PingInner { deadline, .. }) => {
                 tokio::time::sleep_until(deadline).await;
+                self.inner = None;
             }
             None => future::pending().await,
         }
@@ -1508,5 +1509,8 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(10)).await;
         let res = tokio::time::timeout(Duration::from_millis(1), tracker.timeout()).await;
         assert!(res.is_ok(), "ping timeout happened in the past");
+
+        let res = tokio::time::timeout(Duration::from_secs(10), tracker.timeout()).await;
+        assert!(res.is_err(), "ping timeout should only happen once");
     }
 }
