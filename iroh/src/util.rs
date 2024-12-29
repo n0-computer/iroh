@@ -29,11 +29,6 @@ impl<T> MaybeFuture<T> {
         Self::default()
     }
 
-    /// Clears the value
-    pub(crate) fn set_none(mut self: Pin<&mut Self>) {
-        self.as_mut().project_replace(Self::None);
-    }
-
     /// Sets a new future.
     pub(crate) fn set_future(mut self: Pin<&mut Self>, fut: T) {
         self.as_mut().project_replace(Self::Some(fut));
