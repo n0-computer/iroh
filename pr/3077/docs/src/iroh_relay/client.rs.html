@@ -1362,17 +1362,7 @@
 <a href="#1361" id="1361">1361</a>
 <a href="#1362" id="1362">1362</a>
 <a href="#1363" id="1363">1363</a>
-<a href="#1364" id="1364">1364</a>
-<a href="#1365" id="1365">1365</a>
-<a href="#1366" id="1366">1366</a>
-<a href="#1367" id="1367">1367</a>
-<a href="#1368" id="1368">1368</a>
-<a href="#1369" id="1369">1369</a>
-<a href="#1370" id="1370">1370</a>
-<a href="#1371" id="1371">1371</a>
-<a href="#1372" id="1372">1372</a>
-<a href="#1373" id="1373">1373</a>
-<a href="#1374" id="1374">1374</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#1364" id="1364">1364</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -1503,16 +1493,6 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>ClientSink {
     sink: SplitSink&lt;Conn, SendMessage&gt;,
-}
-
-<span class="kw">impl </span>ClientSink {
-    <span class="doccomment">/// Send to the relay or something
-    </span><span class="kw">pub async fn </span>send_to_relay(<span class="kw-2">mut </span><span class="self">self</span>, msg: SendMessage) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ConnSendError&gt; {
-        <span class="kw">match </span><span class="self">self</span>.sink.send(msg).<span class="kw">await </span>{
-            <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="self">self</span>),
-            <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err),
-        }
-    }
 }
 
 <span class="kw">impl </span>Sink&lt;SendMessage&gt; <span class="kw">for </span>ClientSink {
