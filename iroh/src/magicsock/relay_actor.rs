@@ -53,6 +53,9 @@ const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
 /// Maximum size a datagram payload is allowed to be.
 const MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PublicKey::LENGTH;
 
+/// Maximum time for a relay server to respond to a relay protocol ping.
+const PING_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// An actor which handles the connection to a single relay server.
 ///
 /// It is responsible for maintaining the connection to the relay server and handling all
@@ -1009,7 +1012,7 @@ impl PingTracker {
         let ping_data = rand::random();
         self.inner = Some(PingInner {
             data: ping_data,
-            deadline: Instant::now() + Duration::from_secs(5),
+            deadline: Instant::now() + PING_TIMEOUT,
         });
         ping_data
     }

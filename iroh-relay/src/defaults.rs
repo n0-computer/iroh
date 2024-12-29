@@ -34,8 +34,6 @@ pub(crate) mod timeouts {
     /// Timeout used by the relay client while connecting to the relay server,
     /// using `TcpStream::connect`
     pub(crate) const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
-    /// Timeout for expecting a pong from the relay server
-    pub(crate) const PING_TIMEOUT: Duration = Duration::from_secs(5);
     /// Timeout for the entire relay connection, which includes dns, dialing
     /// the server, upgrading the connection, and completing the handshake
     pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
