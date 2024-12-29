@@ -28,7 +28,7 @@ use tokio::{
     time::{self, Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, info_span, trace, warn, Instrument};
+use tracing::{debug, error, info_span, trace, warn, Instrument};
 use url::Url;
 
 use crate::{
@@ -622,7 +622,7 @@ impl RelayActor {
     }
 
     fn start_active_relay(&mut self, url: RelayUrl) -> ActiveRelayHandle {
-        info!(?url, "Adding relay connection");
+        debug!(?url, "Adding relay connection");
 
         let connection_opts = RelayConnectionOptions {
             secret_key: self.msock.secret_key.clone(),
@@ -884,6 +884,7 @@ mod tests {
     use iroh_base::SecretKey;
     use testresult::TestResult;
     use tokio_util::task::AbortOnDropHandle;
+    use tracing::info;
 
     use super::*;
     use crate::test_utils;
