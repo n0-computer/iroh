@@ -120,10 +120,7 @@ impl ConnectedClient {
                 stream,
                 local_addr: self.local_addr,
             },
-            ClientSink {
-                sink,
-                local_addr: self.local_addr,
-            },
+            ClientSink { sink },
         )
     }
 }
@@ -132,7 +129,6 @@ impl ConnectedClient {
 #[derive(Debug)]
 pub struct ClientSink {
     sink: SplitSink<Conn, SendMessage>,
-    local_addr: Option<SocketAddr>,
 }
 
 impl ClientSink {
