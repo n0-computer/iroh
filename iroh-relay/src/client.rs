@@ -131,16 +131,6 @@ pub struct ClientSink {
     sink: SplitSink<Conn, SendMessage>,
 }
 
-impl ClientSink {
-    /// Send to the relay or something
-    pub async fn send_to_relay(mut self, msg: SendMessage) -> Result<Self, ConnSendError> {
-        match self.sink.send(msg).await {
-            Ok(_) => Ok(self),
-            Err(err) => Err(err),
-        }
-    }
-}
-
 impl Sink<SendMessage> for ClientSink {
     type Error = ConnSendError;
 

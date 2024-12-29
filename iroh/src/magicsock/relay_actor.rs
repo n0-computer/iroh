@@ -25,7 +25,7 @@ use futures_buffered::FuturesUnorderedBounded;
 use futures_lite::StreamExt;
 use futures_util::{future, SinkExt};
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
-use iroh_metrics::inc;
+use iroh_metrics::{inc, inc_by};
 use iroh_relay::{
     self as relay,
     client::{ClientSink, ConnSendError, ConnectedClient, ReceivedMessage, SendMessage},
@@ -173,13 +173,6 @@ impl ActiveRelayActor {
         mut inbox: mpsc::Receiver<ActiveRelayMessage>,
     ) -> anyhow::Result<()> {
         inc!(MagicsockMetrics, num_relay_conns_added);
-        // debug!("initial dial {}", self.url);
-        // self.relay_client
-        //     .connect()
-        //     .await
-        //     .context("initial connection")?;
-
-        // let mut ping_future = std::pin::pin!(MaybeFuture::none());
 
         // // If inactive for one tick the actor should exit.  Inactivity is only tracked on
         // // the last datagrams sent to the relay, received datagrams will trigger ACKs which
@@ -407,11 +400,20 @@ impl ActiveRelayActor {
             }
 
             fn send(self, msg: SendMessage) -> Result<Self> {
-                let SendState::Ready(client_sink) = self else {
+                let SendState::Ready(mut client_sink) = self else {
                     error!("SendState send when not ready!");
                     bail!("SendState not ready");
                 };
-                let fut = client_sink.send_to_relay(msg);
+                let fut = async move {
+                    match client_sink.send(msg).await {
+                        Ok(_) => Ok(client_sink),
+                        Err(err) => {
+                            debug!("Send failed: {err:#}");
+                            inc!(MagicsockMetrics, send_relay_error);
+                            Err(err)
+                        }
+                    }
+                };
                 Ok(Self::Sending(Box::pin(fut)))
             }
 
@@ -426,7 +428,14 @@ impl ActiveRelayActor {
                 let fut = async move {
                     let msg_stream = futures_util::stream::iter(msg_iter);
                     let mut stream = pin!(msg_stream);
-                    client_sink.send_all(&mut stream).await.map(|_| client_sink)
+                    match client_sink.send_all(&mut stream).await {
+                        Ok(_) => Ok(client_sink),
+                        Err(err) => {
+                            debug!("Send all failed: {err:#}");
+                            inc!(MagicsockMetrics, send_relay_error);
+                            Err(err)
+                        }
+                    }
                 };
                 Ok(Self::Sending(Box::pin(fut)))
             }
@@ -442,12 +451,10 @@ impl ActiveRelayActor {
             }
         }
 
-        let mut send_state = if self.is_home_relay {
-            let fut = client_sink.send_to_relay(SendMessage::NotePreferred(true));
-            SendState::Sending(Box::pin(fut))
-        } else {
-            SendState::Ready(client_sink)
-        };
+        let mut send_state = SendState::Ready(client_sink);
+        if self.is_home_relay {
+            send_state = send_state.send(SendMessage::NotePreferred(true))?;
+        }
 
         let mut pending_pong = None;
         let mut ping_tracker = PingTracker::new();
@@ -512,7 +519,10 @@ impl ActiveRelayActor {
                         datagrams.remote_node,
                         datagrams.datagrams,
                     )
-                        .map(|p| SendMessage::SendPacket(p.node_id, p.payload))
+                        .map(|p| {
+                            inc_by!(MagicsockMetrics, send_relay, p.payload.len() as _);
+                            SendMessage::SendPacket(p.node_id, p.payload)
+                        })
                         .map(Ok);
                     send_state = send_state.send_all(packet_iter)?;
                 }
