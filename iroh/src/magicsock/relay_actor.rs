@@ -28,7 +28,7 @@ use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::{
     self as relay,
-    client::{ClientSink, ConnSendError, ConnectedClient, ReceivedMessage, SendMessage},
+    client::{Client, ClientSink, ConnSendError, ReceivedMessage, SendMessage},
     MAX_PACKET_SIZE,
 };
 use tokio::{
@@ -64,8 +64,6 @@ struct ActiveRelayActor {
     /// Channel on which we receive packets to send to the relay.
     relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
     url: RelayUrl,
-    /// Configuration to establish connections to a relay server.
-    relay_connection_opts: RelayConnectionOptions,
     relay_client_builder: relay::client::ClientBuilder,
     is_home_relay: bool,
     /// The set of remote nodes we know are present on this relay server.
@@ -125,7 +123,7 @@ impl ActiveRelayActor {
             relay_datagrams_recv,
             connection_opts,
         } = opts;
-        let relay_client_builder = Self::create_relay_builder(url.clone(), connection_opts.clone());
+        let relay_client_builder = Self::create_relay_builder(url.clone(), connection_opts);
 
         ActiveRelayActor {
             relay_datagrams_recv,
@@ -134,7 +132,6 @@ impl ActiveRelayActor {
             node_present: BTreeSet::new(),
             last_packet_time: None,
             last_packet_src: None,
-            relay_connection_opts: connection_opts,
             relay_client_builder,
             is_home_relay: false,
         }
@@ -152,7 +149,7 @@ impl ActiveRelayActor {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify,
         } = opts;
-        let mut builder = relay::client::ClientBuilder::new(url)
+        let mut builder = relay::client::ClientBuilder::new(url, secret_key, dns_resolver)
             .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
@@ -209,7 +206,7 @@ impl ActiveRelayActor {
         cancel_token: &CancellationToken,
         inbox: &mut mpsc::Receiver<ActiveRelayMessage>,
         inactive_timeout: &mut tokio::time::Interval,
-    ) -> ControlFlow<(), iroh_relay::client::ConnectedClient> {
+    ) -> ControlFlow<(), iroh_relay::client::Client> {
         let mut connecting_fut = self.connect_relay();
         loop {
             tokio::select! {
@@ -264,7 +261,7 @@ impl ActiveRelayActor {
     /// The future only completes once the connection is established and retries
     /// connections.  It currently does not ever return `Err` as the retries continue
     /// forever.
-    fn connect_relay(&self) -> Pin<Box<dyn Future<Output = Result<ConnectedClient>> + Send>> {
+    fn connect_relay(&self) -> Pin<Box<dyn Future<Output = Result<Client>> + Send>> {
         let backoff: ExponentialBackoff<backoff::SystemClock> = ExponentialBackoffBuilder::new()
             .with_initial_interval(Duration::from_millis(10))
             .with_max_interval(Duration::from_secs(5))
@@ -272,20 +269,13 @@ impl ActiveRelayActor {
         let connect_fn = {
             // TODO: sort out this builder
             let client_builder = self.relay_client_builder.clone();
-            let secret_key = self.relay_connection_opts.secret_key.clone();
-            let dns_resolver = self.relay_connection_opts.dns_resolver.clone();
             move || {
                 let client_builder = client_builder.clone();
-                let secret_key = secret_key.clone();
-                let dns_resolver = dns_resolver.clone();
                 async move {
-                    let client = client_builder
-                        .connect(secret_key, dns_resolver)
-                        .await
-                        .map_err(|err| {
-                            warn!("Relay connection failed: {err:#}");
-                            err
-                        })?;
+                    let client = client_builder.connect().await.map_err(|err| {
+                        warn!("Relay connection failed: {err:#}");
+                        err
+                    })?;
                     Ok(client)
                 }
             }
@@ -303,7 +293,7 @@ impl ActiveRelayActor {
         cancel_token: &CancellationToken,
         inbox: &mut mpsc::Receiver<ActiveRelayMessage>,
         inactive_timeout: &mut tokio::time::Interval,
-        client: iroh_relay::client::ConnectedClient,
+        client: iroh_relay::client::Client,
     ) -> Result<()> {
         let (mut client_stream, client_sink) = client.split();
 

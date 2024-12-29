@@ -12,7 +12,7 @@ use std::{
 use anyhow::{bail, Result};
 use bytes::Bytes;
 use futures_lite::Stream;
-use futures_util::{Sink, SinkExt};
+use futures_util::Sink;
 use iroh_base::{NodeId, SecretKey};
 use tokio_tungstenite_wasm::WebSocketStream;
 use tokio_util::codec::Framed;
@@ -88,11 +88,6 @@ impl Conn {
         server_handshake(&mut conn, secret_key).await?;
 
         Ok(conn)
-    }
-
-    /// Close the connection.
-    pub(crate) async fn close(&mut self) {
-        <Conn as SinkExt<Frame>>::close(self).await.ok();
     }
 }
 
