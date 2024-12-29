@@ -1514,7 +1514,104 @@
 <a href="#1513" id="1513">1513</a>
 <a href="#1514" id="1514">1514</a>
 <a href="#1515" id="1515">1515</a>
-<a href="#1516" id="1516">1516</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1516" id="1516">1516</a>
+<a href="#1517" id="1517">1517</a>
+<a href="#1518" id="1518">1518</a>
+<a href="#1519" id="1519">1519</a>
+<a href="#1520" id="1520">1520</a>
+<a href="#1521" id="1521">1521</a>
+<a href="#1522" id="1522">1522</a>
+<a href="#1523" id="1523">1523</a>
+<a href="#1524" id="1524">1524</a>
+<a href="#1525" id="1525">1525</a>
+<a href="#1526" id="1526">1526</a>
+<a href="#1527" id="1527">1527</a>
+<a href="#1528" id="1528">1528</a>
+<a href="#1529" id="1529">1529</a>
+<a href="#1530" id="1530">1530</a>
+<a href="#1531" id="1531">1531</a>
+<a href="#1532" id="1532">1532</a>
+<a href="#1533" id="1533">1533</a>
+<a href="#1534" id="1534">1534</a>
+<a href="#1535" id="1535">1535</a>
+<a href="#1536" id="1536">1536</a>
+<a href="#1537" id="1537">1537</a>
+<a href="#1538" id="1538">1538</a>
+<a href="#1539" id="1539">1539</a>
+<a href="#1540" id="1540">1540</a>
+<a href="#1541" id="1541">1541</a>
+<a href="#1542" id="1542">1542</a>
+<a href="#1543" id="1543">1543</a>
+<a href="#1544" id="1544">1544</a>
+<a href="#1545" id="1545">1545</a>
+<a href="#1546" id="1546">1546</a>
+<a href="#1547" id="1547">1547</a>
+<a href="#1548" id="1548">1548</a>
+<a href="#1549" id="1549">1549</a>
+<a href="#1550" id="1550">1550</a>
+<a href="#1551" id="1551">1551</a>
+<a href="#1552" id="1552">1552</a>
+<a href="#1553" id="1553">1553</a>
+<a href="#1554" id="1554">1554</a>
+<a href="#1555" id="1555">1555</a>
+<a href="#1556" id="1556">1556</a>
+<a href="#1557" id="1557">1557</a>
+<a href="#1558" id="1558">1558</a>
+<a href="#1559" id="1559">1559</a>
+<a href="#1560" id="1560">1560</a>
+<a href="#1561" id="1561">1561</a>
+<a href="#1562" id="1562">1562</a>
+<a href="#1563" id="1563">1563</a>
+<a href="#1564" id="1564">1564</a>
+<a href="#1565" id="1565">1565</a>
+<a href="#1566" id="1566">1566</a>
+<a href="#1567" id="1567">1567</a>
+<a href="#1568" id="1568">1568</a>
+<a href="#1569" id="1569">1569</a>
+<a href="#1570" id="1570">1570</a>
+<a href="#1571" id="1571">1571</a>
+<a href="#1572" id="1572">1572</a>
+<a href="#1573" id="1573">1573</a>
+<a href="#1574" id="1574">1574</a>
+<a href="#1575" id="1575">1575</a>
+<a href="#1576" id="1576">1576</a>
+<a href="#1577" id="1577">1577</a>
+<a href="#1578" id="1578">1578</a>
+<a href="#1579" id="1579">1579</a>
+<a href="#1580" id="1580">1580</a>
+<a href="#1581" id="1581">1581</a>
+<a href="#1582" id="1582">1582</a>
+<a href="#1583" id="1583">1583</a>
+<a href="#1584" id="1584">1584</a>
+<a href="#1585" id="1585">1585</a>
+<a href="#1586" id="1586">1586</a>
+<a href="#1587" id="1587">1587</a>
+<a href="#1588" id="1588">1588</a>
+<a href="#1589" id="1589">1589</a>
+<a href="#1590" id="1590">1590</a>
+<a href="#1591" id="1591">1591</a>
+<a href="#1592" id="1592">1592</a>
+<a href="#1593" id="1593">1593</a>
+<a href="#1594" id="1594">1594</a>
+<a href="#1595" id="1595">1595</a>
+<a href="#1596" id="1596">1596</a>
+<a href="#1597" id="1597">1597</a>
+<a href="#1598" id="1598">1598</a>
+<a href="#1599" id="1599">1599</a>
+<a href="#1600" id="1600">1600</a>
+<a href="#1601" id="1601">1601</a>
+<a href="#1602" id="1602">1602</a>
+<a href="#1603" id="1603">1603</a>
+<a href="#1604" id="1604">1604</a>
+<a href="#1605" id="1605">1605</a>
+<a href="#1606" id="1606">1606</a>
+<a href="#1607" id="1607">1607</a>
+<a href="#1608" id="1608">1608</a>
+<a href="#1609" id="1609">1609</a>
+<a href="#1610" id="1610">1610</a>
+<a href="#1611" id="1611">1611</a>
+<a href="#1612" id="1612">1612</a>
+<a href="#1613" id="1613">1613</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1534,32 +1631,24 @@
     task::{<span class="self">self</span>, Poll},
 };
 
-<span class="kw">use </span>anyhow::{anyhow, bail, Context, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>backoff::{
-    backoff::Backoff,
-    exponential::{ExponentialBackoff, ExponentialBackoffBuilder},
-};
+<span class="kw">use </span>anyhow::{anyhow, bail, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>backoff::exponential::{ExponentialBackoff, ExponentialBackoffBuilder};
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
 <span class="kw">use </span>futures_buffered::FuturesUnorderedBounded;
-<span class="kw">use </span>futures_concurrency::future::FutureExt;
 <span class="kw">use </span>futures_lite::StreamExt;
 <span class="kw">use </span>futures_util::{future, SinkExt};
 <span class="kw">use </span>iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
-<span class="kw">use </span>iroh_metrics::{inc, inc_by};
+<span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>iroh_relay::{
     <span class="self">self </span><span class="kw">as </span>relay,
-    client::{
-        ClientError, ClientSink, ConnSendError, ConnectedClient, ReceivedMessage, SendMessage,
-    },
+    client::{ClientSink, ConnSendError, ConnectedClient, ReceivedMessage, SendMessage},
     MAX_PACKET_SIZE,
 };
-<span class="kw">use </span>pin_project::pin_project;
 <span class="kw">use </span>tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
-    time::{<span class="self">self</span>, Duration, Instant},
+    time::{Duration, Instant},
 };
-<span class="kw">use </span>tokio_tungstenite::client_async;
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{debug, error, info, info_span, trace, warn, Instrument};
 <span class="kw">use </span>url::Url;
@@ -1912,9 +2001,12 @@
         inactive_timeout: <span class="kw-2">&amp;mut </span>tokio::time::Interval,
         client: iroh_relay::client::ConnectedClient,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>(client_stream, <span class="kw-2">mut </span>client_sink) = client.split();
+        <span class="kw">let </span>(<span class="kw-2">mut </span>client_stream, client_sink) = client.split();
 
-        <span class="kw">enum </span>SendState {
+        <span class="comment">// TODO: an alternative to consider is to create another `run_sending` loop to call
+        // when sending.  It would borrow the sink and be awaited in-place.  The benefit is
+        // that the send methods wouldn't have to be fallible, as they are bugs really.
+        </span><span class="kw">enum </span>SendState {
             Sending(Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;ClientSink, ConnSendError&gt;&gt; + Send&gt;&gt;),
             Ready(iroh_relay::client::ClientSink),
         }
@@ -1929,9 +2021,26 @@
 
             <span class="kw">fn </span>send(<span class="self">self</span>, msg: SendMessage) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
                 <span class="kw">let </span>SendState::Ready(client_sink) = <span class="self">self </span><span class="kw">else </span>{
+                    <span class="macro">error!</span>(<span class="string">"SendState send when not ready!"</span>);
                     <span class="macro">bail!</span>(<span class="string">"SendState not ready"</span>);
                 };
                 <span class="kw">let </span>fut = client_sink.send_to_relay(msg);
+                <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Sending(Box::pin(fut)))
+            }
+
+            <span class="kw">fn </span>send_all(
+                <span class="self">self</span>,
+                msg_iter: <span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;SendMessage, ConnSendError&gt;&gt; + Send + <span class="lifetime">'static</span>,
+            ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+                <span class="kw">let </span>SendState::Ready(<span class="kw-2">mut </span>client_sink) = <span class="self">self </span><span class="kw">else </span>{
+                    <span class="macro">error!</span>(<span class="string">"SendState send_all when not ready!"</span>);
+                    <span class="macro">bail!</span>(<span class="string">"SendState not ready"</span>);
+                };
+                <span class="kw">let </span>fut = <span class="kw">async move </span>{
+                    <span class="kw">let </span>msg_stream = futures_util::stream::iter(msg_iter);
+                    <span class="kw">let </span><span class="kw-2">mut </span>stream = <span class="macro">pin!</span>(msg_stream);
+                    client_sink.send_all(<span class="kw-2">&amp;mut </span>stream).<span class="kw">await</span>.map(|<span class="kw">_</span>| client_sink)
+                };
                 <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Sending(Box::pin(fut)))
             }
         }
@@ -1953,9 +2062,16 @@
             SendState::Ready(client_sink)
         };
 
+        <span class="kw">let </span><span class="kw-2">mut </span>pending_pong = <span class="prelude-val">None</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>ping_tracker = PingTracker::new();
 
         <span class="kw">loop </span>{
+            <span class="kw">if </span>pending_pong.is_some() &amp;&amp; send_state.is_ready() {
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(data) = pending_pong.take() {
+                    send_state = send_state.send(SendMessage::Pong(data))<span class="question-mark">?</span>;
+                    <span class="kw">continue</span>;
+                }
+            }
             <span class="macro">tokio::select!</span> {
                 <span class="kw">_ </span>= cancel_token.cancelled() =&gt; {
                     <span class="macro">debug!</span>(<span class="string">"Shutdown."</span>);
@@ -1970,7 +2086,7 @@
                 }
                 msg = inbox.recv(), <span class="kw">if </span>send_state.is_ready() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
-                        <span class="macro">debug!</span>(<span class="string">"Inbox closed, shutdown."</span>);
+                        <span class="macro">warn!</span>(<span class="string">"Inbox closed, shutdown."</span>);
                         <span class="kw">break </span><span class="prelude-val">Ok</span>(());
                     };
                     <span class="kw">match </span>msg {
@@ -1997,12 +2113,37 @@
                             sender.send(addr).ok();
                         }
                     }
-                    <span class="comment">// TODO: read datagrams etc
-                </span>}
+                }
+                item = <span class="self">self</span>.relay_datagrams_send.recv() =&gt; {
+                    <span class="comment">// TODO: Read in bulk using recv_many, send in bulk.
+                    </span><span class="kw">let </span><span class="prelude-val">Some</span>(datagrams) = item <span class="kw">else </span>{
+                        <span class="macro">warn!</span>(<span class="string">"Datagram inbox closed, shutdown"</span>);
+                        <span class="kw">break </span><span class="prelude-val">Ok</span>(());
+                    };
+                    inactive_timeout.reset();
+                    <span class="kw">let </span>packet_iter = PacketizeIter::&lt;<span class="kw">_</span>, MAX_PAYLOAD_SIZE&gt;::new(
+                        datagrams.remote_node,
+                        datagrams.datagrams,
+                    )
+                        .map(|p| SendMessage::SendPacket(p.node_id, p.payload))
+                        .map(<span class="prelude-val">Ok</span>);
+                    send_state = send_state.send_all(packet_iter)<span class="question-mark">?</span>;
+                }
+                msg = client_stream.next() =&gt; {
+                    <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
+                        <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream finished"</span>));
+                    };
+                    <span class="kw">match </span>msg {
+                        <span class="prelude-val">Ok</span>(msg) =&gt; {
+                            <span class="kw">if let </span><span class="prelude-val">Some</span>(pong_msg) = <span class="self">self</span>.handle_relay_msg(msg, <span class="kw-2">&amp;mut </span>ping_tracker) {
+                                pending_pong = <span class="prelude-val">Some</span>(pong_msg);
+                            }
+                        }
+                        <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream read error: {err:#}"</span>)),
+                    }
+                }
                 <span class="kw">_ </span>= inactive_timeout.tick(), <span class="kw">if </span>!<span class="self">self</span>.is_home_relay =&gt; {
-                    <span class="comment">// TODO: we probably want to reset this when popping datagrams
-                    // off the send queue, otherwise we'll expire too soon.
-                    </span><span class="macro">debug!</span>(<span class="string">"Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting."</span>);
+                    <span class="macro">debug!</span>(<span class="string">"Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting."</span>);
                     <span class="kw">break </span><span class="prelude-val">Ok</span>(());
                 }
             }
@@ -2048,7 +2189,7 @@
     //     self.relay_client = new_client;
     // }
 
-    </span><span class="kw">async fn </span>send_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, item: RelaySendItem) {
+    </span><span class="kw">async fn </span>send_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, cancellation_token: <span class="kw-2">&amp;</span>CancellationToken, item: RelaySendItem) {
         <span class="macro">todo!</span>()
         <span class="comment">// // When Quinn sends a GSO Transmit magicsock::split_packets will make us receive
         // // more than one packet to send in a single call.  We join all packets back together
@@ -2071,129 +2212,181 @@
         // }
     </span>}
 
-    <span class="kw">async fn </span>handle_relay_msg(
+    <span class="kw">fn </span>handle_relay_msg(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        msg: <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;anyhow::Result&lt;ReceivedMessage&gt;&gt;, tokio::time::error::Elapsed&gt;,
-    ) -&gt; ReadResult {
-        <span class="macro">todo!</span>()
-        <span class="comment">// let mut conn_is_closed = false;
-        // let msg = match msg {
-        //     Ok(Some(Ok(msg))) =&gt; Some(msg),
-        //     Ok(Some(Err(err))) =&gt; {
-        //         warn!("recv error: {:?}", err);
-        //         self.relay_client.close().await;
-        //         None
-        //     }
-        //     Ok(None) =&gt; {
-        //         warn!("recv error: no connection");
-        //         self.relay_client.close().await;
-        //         None
-        //     }
-        //     Err(_) =&gt; {
-        //         warn!("recv error: timeout");
-        //         self.relay_client.close().await;
-        //         conn_is_closed = true;
-        //         None
-        //     }
-        // };
+        msg: ReceivedMessage,
+        ping_tracker: <span class="kw-2">&amp;mut </span>PingTracker,
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;[u8; <span class="number">8</span>]&gt; {
+        <span class="kw">let </span>now = Instant::now();
+        <span class="comment">// TODO: pretty sure this is entirely unused.
+        </span><span class="self">self</span>.last_packet_time = <span class="prelude-val">Some</span>(now);
 
-        // match msg {
-        //     None =&gt; {
-        //         // Forget that all these peers have routes.
-        //         self.node_present.clear();
-
-        //         if conn_is_closed {
-        //             // drop client
-        //             return ReadResult::Break;
-        //         }
-
-        //         // If our relay connection broke, it might be because our network
-        //         // conditions changed. Start that check.
-        //         // TODO:
-        //         // self.re_stun("relay-recv-error").await;
-
-        //         // Back off a bit before reconnecting.
-        //         match self.backoff.next_backoff() {
-        //             Some(t) =&gt; {
-        //                 debug!("backoff sleep: {}ms", t.as_millis());
-        //                 time::sleep(t).await;
-        //                 ReadResult::Continue
-        //             }
-        //             None =&gt; ReadResult::Break,
-        //         }
-        //     }
-        //     Some(msg) =&gt; {
-        //         // reset
-        //         self.backoff.reset();
-        //         let now = Instant::now();
-        //         if self
-        //             .last_packet_time
-        //             .as_ref()
-        //             .map(|t| t.elapsed() &gt; Duration::from_secs(5))
-        //             .unwrap_or(true)
-        //         {
-        //             self.last_packet_time = Some(now);
-        //         }
-
-        //         match msg {
-        //             ReceivedMessage::ReceivedPacket {
-        //                 remote_node_id,
-        //                 data,
-        //             } =&gt; {
-        //                 trace!(len=%data.len(), "received msg");
-        //                 // If this is a new sender we hadn't seen before, remember it and
-        //                 // register a route for this peer.
-        //                 if self
-        //                     .last_packet_src
-        //                     .as_ref()
-        //                     .map(|p| *p != remote_node_id)
-        //                     .unwrap_or(true)
-        //                 {
-        //                     // avoid map lookup w/ high throughput single peer
-        //                     self.last_packet_src = Some(remote_node_id);
-        //                     self.node_present.insert(remote_node_id);
-        //                 }
-
-        //                 for datagram in PacketSplitIter::new(self.url.clone(), remote_node_id, data)
-        //                 {
-        //                     let Ok(datagram) = datagram else {
-        //                         error!("Invalid packet split");
-        //                         break;
-        //                     };
-        //                     if let Err(err) = self.relay_datagrams_recv.try_send(datagram) {
-        //                         warn!("dropping received relay packet: {err:#}");
-        //                     }
-        //                 }
-
-        //                 ReadResult::Continue
-        //             }
-        //             ReceivedMessage::Ping(data) =&gt; {
-        //                 // Best effort reply to the ping.
-        //                 // TODO: use sth like try_send?
-        //                 if let Err(err) = self.relay_client.send_pong(data).await {
-        //                     warn!("pong error: {:?}", err);
-        //                 }
-        //                 ReadResult::Continue
-        //             }
-        //             ReceivedMessage::Pong(_) =&gt; {
-        //                 // Pong messages are already handled by the client.
-        //                 ReadResult::Continue
-        //             }
-        //             ReceivedMessage::Health { .. } =&gt; ReadResult::Continue,
-        //             ReceivedMessage::NodeGone(key) =&gt; {
-        //                 self.node_present.remove(&amp;key);
-        //                 ReadResult::Continue
-        //             }
-        //             other =&gt; {
-        //                 trace!("ignoring: {:?}", other);
-        //                 // Ignore.
-        //                 ReadResult::Continue
-        //             }
-        //         }
-        //     }
-        // }
+        <span class="kw">match </span>msg {
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } =&gt; {
+                <span class="macro">trace!</span>(len = %data.len(), <span class="string">"received msg"</span>);
+                <span class="comment">// If this is a new sender, register a route for this peer.
+                </span><span class="kw">if </span><span class="self">self
+                    </span>.last_packet_src
+                    .as_ref()
+                    .map(|p| <span class="kw-2">*</span>p != remote_node_id)
+                    .unwrap_or(<span class="bool-val">true</span>)
+                {
+                    <span class="comment">// Avoid map lookup with high throughput single peer.
+                    </span><span class="self">self</span>.last_packet_src = <span class="prelude-val">Some</span>(remote_node_id);
+                    <span class="self">self</span>.node_present.insert(remote_node_id);
+                }
+                <span class="kw">for </span>datagram <span class="kw">in </span>PacketSplitIter::new(<span class="self">self</span>.url.clone(), remote_node_id, data) {
+                    <span class="kw">let </span><span class="prelude-val">Ok</span>(datagram) = datagram <span class="kw">else </span>{
+                        <span class="macro">warn!</span>(<span class="string">"Invalid packet split"</span>);
+                        <span class="kw">break</span>;
+                    };
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.relay_datagrams_recv.try_send(datagram) {
+                        <span class="macro">warn!</span>(<span class="string">"Dropping received relay packet: {err:#}"</span>);
+                    }
+                }
+            }
+            ReceivedMessage::NodeGone(node_id) =&gt; {
+                <span class="self">self</span>.node_present.remove(<span class="kw-2">&amp;</span>node_id);
+            }
+            ReceivedMessage::Ping(data) =&gt; <span class="kw">return </span><span class="prelude-val">Some</span>(data),
+            ReceivedMessage::Pong(data) =&gt; {
+                ping_tracker.pong_received(data);
+            }
+            ReceivedMessage::KeepAlive
+            | ReceivedMessage::Health { .. }
+            | ReceivedMessage::ServerRestarting { .. } =&gt; {
+                <span class="macro">trace!</span>(<span class="string">"Ignoring {msg:?}"</span>);
+            }
+        }
+        <span class="prelude-val">None
     </span>}
-}
+
+    <span class="comment">// async fn handle_relay_msg(
+    //     &amp;mut self,
+    //     msg: Result&lt;Option&lt;anyhow::Result&lt;ReceivedMessage&gt;&gt;, tokio::time::error::Elapsed&gt;,
+    // ) -&gt; ReadResult {
+    //     todo!()
+    // let mut conn_is_closed = false;
+    // let msg = match msg {
+    //     Ok(Some(Ok(msg))) =&gt; Some(msg),
+    //     Ok(Some(Err(err))) =&gt; {
+    //         warn!("recv error: {:?}", err);
+    //         self.relay_client.close().await;
+    //         None
+    //     }
+    //     Ok(None) =&gt; {
+    //         warn!("recv error: no connection");
+    //         self.relay_client.close().await;
+    //         None
+    //     }
+    //     Err(_) =&gt; {
+    //         warn!("recv error: timeout");
+    //         self.relay_client.close().await;
+    //         conn_is_closed = true;
+    //         None
+    //     }
+    // };
+
+    // match msg {
+    //     None =&gt; {
+    //         // Forget that all these peers have routes.
+    //         self.node_present.clear();
+
+    //         if conn_is_closed {
+    //             // drop client
+    //             return ReadResult::Break;
+    //         }
+
+    //         // If our relay connection broke, it might be because our network
+    //         // conditions changed. Start that check.
+    //         // TODO:
+    //         // self.re_stun("relay-recv-error").await;
+
+    //         // Back off a bit before reconnecting.
+    //         match self.backoff.next_backoff() {
+    //             Some(t) =&gt; {
+    //                 debug!("backoff sleep: {}ms", t.as_millis());
+    //                 time::sleep(t).await;
+    //                 ReadResult::Continue
+    //             }
+    //             None =&gt; ReadResult::Break,
+    //         }
+    //     }
+    //     Some(msg) =&gt; {
+    //         // reset
+    //         self.backoff.reset();
+    //         let now = Instant::now();
+    //         if self
+    //             .last_packet_time
+    //             .as_ref()
+    //             .map(|t| t.elapsed() &gt; Duration::from_secs(5))
+    //             .unwrap_or(true)
+    //         {
+    //             self.last_packet_time = Some(now);
+    //         }
+
+    //         match msg {
+    //             ReceivedMessage::ReceivedPacket {
+    //                 remote_node_id,
+    //                 data,
+    //             } =&gt; {
+    //                 trace!(len=%data.len(), "received msg");
+    //                 // If this is a new sender we hadn't seen before, remember it and
+    //                 // register a route for this peer.
+    //                 if self
+    //                     .last_packet_src
+    //                     .as_ref()
+    //                     .map(|p| *p != remote_node_id)
+    //                     .unwrap_or(true)
+    //                 {
+    //                     // avoid map lookup w/ high throughput single peer
+    //                     self.last_packet_src = Some(remote_node_id);
+    //                     self.node_present.insert(remote_node_id);
+    //                 }
+
+    //                 for datagram in PacketSplitIter::new(self.url.clone(), remote_node_id, data)
+    //                 {
+    //                     let Ok(datagram) = datagram else {
+    //                         error!("Invalid packet split");
+    //                         break;
+    //                     };
+    //                     if let Err(err) = self.relay_datagrams_recv.try_send(datagram) {
+    //                         warn!("dropping received relay packet: {err:#}");
+    //                     }
+    //                 }
+
+    //                 ReadResult::Continue
+    //             }
+    //             ReceivedMessage::Ping(data) =&gt; {
+    //                 // Best effort reply to the ping.
+    //                 // TODO: use sth like try_send?
+    //                 if let Err(err) = self.relay_client.send_pong(data).await {
+    //                     warn!("pong error: {:?}", err);
+    //                 }
+    //                 ReadResult::Continue
+    //             }
+    //             ReceivedMessage::Pong(_) =&gt; {
+    //                 // Pong messages are already handled by the client.
+    //                 ReadResult::Continue
+    //             }
+    //             ReceivedMessage::Health { .. } =&gt; ReadResult::Continue,
+    //             ReceivedMessage::NodeGone(key) =&gt; {
+    //                 self.node_present.remove(&amp;key);
+    //                 ReadResult::Continue
+    //             }
+    //             other =&gt; {
+    //                 trace!("ignoring: {:?}", other);
+    //                 // Ignore.
+    //                 ReadResult::Continue
+    //             }
+    //         }
+    //     }
+    // }
+    // }
+</span>}
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>RelayActorMessage {
     MaybeCloseRelaysOnRebind(Vec&lt;IpAddr&gt;),
@@ -2737,6 +2930,7 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
+    <span class="kw">use </span>anyhow::Context;
     <span class="kw">use </span>futures_lite::future;
     <span class="kw">use </span>iroh_base::SecretKey;
     <span class="kw">use </span>smallvec::smallvec;

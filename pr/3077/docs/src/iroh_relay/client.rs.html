@@ -1372,11 +1372,7 @@
 <a href="#1371" id="1371">1371</a>
 <a href="#1372" id="1372">1372</a>
 <a href="#1373" id="1373">1373</a>
-<a href="#1374" id="1374">1374</a>
-<a href="#1375" id="1375">1375</a>
-<a href="#1376" id="1376">1376</a>
-<a href="#1377" id="1377">1377</a>
-<a href="#1378" id="1378">1378</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#1374" id="1374">1374</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -1498,10 +1494,7 @@
                 stream,
                 local_addr: <span class="self">self</span>.local_addr,
             },
-            ClientSink {
-                sink,
-                local_addr: <span class="self">self</span>.local_addr,
-            },
+            ClientSink { sink },
         )
     }
 }
@@ -1510,7 +1503,6 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>ClientSink {
     sink: SplitSink&lt;Conn, SendMessage&gt;,
-    local_addr: <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;,
 }
 
 <span class="kw">impl </span>ClientSink {
