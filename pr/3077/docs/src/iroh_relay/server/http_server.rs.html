@@ -1141,20 +1141,7 @@
 <a href="#1140" id="1140">1140</a>
 <a href="#1141" id="1141">1141</a>
 <a href="#1142" id="1142">1142</a>
-<a href="#1143" id="1143">1143</a>
-<a href="#1144" id="1144">1144</a>
-<a href="#1145" id="1145">1145</a>
-<a href="#1146" id="1146">1146</a>
-<a href="#1147" id="1147">1147</a>
-<a href="#1148" id="1148">1148</a>
-<a href="#1149" id="1149">1149</a>
-<a href="#1150" id="1150">1150</a>
-<a href="#1151" id="1151">1151</a>
-<a href="#1152" id="1152">1152</a>
-<a href="#1153" id="1153">1153</a>
-<a href="#1154" id="1154">1154</a>
-<a href="#1155" id="1155">1155</a>
-<a href="#1156" id="1156">1156</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1143" id="1143">1143</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -1831,7 +1818,7 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>std::{pin::pin, sync::Arc};
+    <span class="kw">use </span>std::sync::Arc;
 
     <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>bytes::Bytes;
@@ -1839,7 +1826,7 @@
     <span class="kw">use </span>futures_util::SinkExt;
     <span class="kw">use </span>iroh_base::{PublicKey, SecretKey};
     <span class="kw">use </span>reqwest::Url;
-    <span class="kw">use </span>tracing::{info, info_span};
+    <span class="kw">use </span>tracing::info;
     <span class="kw">use </span>tracing_subscriber::{prelude::<span class="kw-2">*</span>, EnvFilter};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
@@ -1900,80 +1887,67 @@
         <span class="kw">let </span>relay_addr: Url = <span class="macro">format!</span>(<span class="string">"http://{addr}:{port}"</span>).parse().unwrap();
 
         <span class="comment">// create clients
-        </span><span class="kw">let </span>(a_key, <span class="kw-2">mut </span>client_a) = {
-            <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">"client-a"</span>);
-            <span class="kw">let </span>_guard = span.enter();
-            create_test_client(a_key, relay_addr.clone())
-        };
+        </span><span class="kw">let </span>(a_key, <span class="kw-2">mut </span>client_a) = create_test_client(a_key, relay_addr.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">info!</span>(<span class="string">"created client {a_key:?}"</span>);
-        <span class="kw">let </span>(b_key, <span class="kw-2">mut </span>client_b) = {
-            <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">"client-b"</span>);
-            <span class="kw">let </span>_guard = span.enter();
-            create_test_client(b_key, relay_addr)
-        };
+        <span class="kw">let </span>(b_key, <span class="kw-2">mut </span>client_b) = create_test_client(b_key, relay_addr).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">info!</span>(<span class="string">"created client {b_key:?}"</span>);
 
         <span class="macro">info!</span>(<span class="string">"ping a"</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>ping_a = <span class="macro">pin!</span>(client_a.send_ping().<span class="kw">await</span><span class="question-mark">?</span>);
-        <span class="macro">tokio::select!</span> {
-            <span class="kw">_ </span>= client_a.recv() =&gt; <span class="macro">panic!</span>(<span class="string">"unexpected msg"</span>),
-            _dur = <span class="kw-2">&amp;mut </span>ping_a =&gt; (),
-        }
+        client_a.send(SendMessage::Ping([<span class="number">1u8</span>; <span class="number">8</span>])).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>pong = client_a.next().<span class="kw">await</span>.context(<span class="string">"eos"</span>)<span class="question-mark">??</span>;
+        <span class="macro">assert!</span>(<span class="macro">matches!</span>(pong, ReceivedMessage::Pong(<span class="kw">_</span>)));
 
         <span class="macro">info!</span>(<span class="string">"ping b"</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>ping_b = <span class="macro">pin!</span>(client_b.send_ping().<span class="kw">await</span><span class="question-mark">?</span>);
-        <span class="macro">tokio::select!</span> {
-            <span class="kw">_ </span>= client_b.recv() =&gt; <span class="macro">panic!</span>(<span class="string">"unexpected msg"</span>),
-            _dur = <span class="kw-2">&amp;mut </span>ping_b =&gt; (),
-        }
+        client_b.send(SendMessage::Ping([<span class="number">2u8</span>; <span class="number">8</span>])).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>pong = client_b.next().<span class="kw">await</span>.context(<span class="string">"eos"</span>)<span class="question-mark">??</span>;
+        <span class="macro">assert!</span>(<span class="macro">matches!</span>(pong, ReceivedMessage::Pong(<span class="kw">_</span>)));
 
         <span class="macro">info!</span>(<span class="string">"sending message from a to b"</span>);
         <span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"hi there, client b!"</span>);
-        client_a.send_packet(b_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+        client_a
+            .send(SendMessage::SendPacket(b_key, msg.clone()))
+            .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">info!</span>(<span class="string">"waiting for message from a on b"</span>);
         <span class="kw">let </span>(got_key, got_msg) =
-            process_msg(client_b.recv().<span class="kw">await</span>).expect(<span class="string">"expected message from client_a"</span>);
+            process_msg(client_b.next().<span class="kw">await</span>).expect(<span class="string">"expected message from client_a"</span>);
         <span class="macro">assert_eq!</span>(a_key, got_key);
         <span class="macro">assert_eq!</span>(msg, got_msg);
 
         <span class="macro">info!</span>(<span class="string">"sending message from b to a"</span>);
         <span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"right back at ya, client b!"</span>);
-        client_b.send_packet(a_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+        client_b
+            .send(SendMessage::SendPacket(a_key, msg.clone()))
+            .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">info!</span>(<span class="string">"waiting for message b on a"</span>);
         <span class="kw">let </span>(got_key, got_msg) =
-            process_msg(client_a.recv().<span class="kw">await</span>).expect(<span class="string">"expected message from client_b"</span>);
+            process_msg(client_a.next().<span class="kw">await</span>).expect(<span class="string">"expected message from client_b"</span>);
         <span class="macro">assert_eq!</span>(b_key, got_key);
         <span class="macro">assert_eq!</span>(msg, got_msg);
 
-        client_a.close().<span class="kw">await</span>;
-        client_b.close().<span class="kw">await</span>;
+        client_a.close().<span class="kw">await</span><span class="question-mark">?</span>;
+        client_b.close().<span class="kw">await</span><span class="question-mark">?</span>;
         server.shutdown();
 
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>create_test_client(key: SecretKey, server_url: Url) -&gt; (PublicKey, Client) {
-        <span class="kw">let </span>client = ClientBuilder::new(server_url).insecure_skip_cert_verify(<span class="bool-val">true</span>);
-        <span class="kw">let </span>dns_resolver = <span class="kw">crate</span>::dns::default_resolver();
-        <span class="kw">let </span>client = client.build(key.clone(), dns_resolver.clone());
+    <span class="kw">async fn </span>create_test_client(key: SecretKey, server_url: Url) -&gt; <span class="prelude-ty">Result</span>&lt;(PublicKey, Client)&gt; {
         <span class="kw">let </span>public_key = key.public();
+        <span class="kw">let </span>dns_resolver = <span class="kw">crate</span>::dns::default_resolver();
+        <span class="kw">let </span>client = ClientBuilder::new(server_url, key, dns_resolver.clone())
+            .insecure_skip_cert_verify(<span class="bool-val">true</span>);
+        <span class="kw">let </span>client = client.connect().<span class="kw">await</span><span class="question-mark">?</span>;
 
-        (public_key, client)
+        <span class="prelude-val">Ok</span>((public_key, client))
     }
 
-    <span class="kw">fn </span>process_msg(
-        msg: std::result::Result&lt;<span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;ReceivedMessage&gt;&gt;, tokio::time::error::Elapsed&gt;,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;(PublicKey, Bytes)&gt; {
+    <span class="kw">fn </span>process_msg(msg: <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;ReceivedMessage&gt;&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;(PublicKey, Bytes)&gt; {
         <span class="kw">match </span>msg {
-            <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
-                <span class="macro">info!</span>(<span class="string">"client received nothing"</span>);
-                <span class="prelude-val">None
-            </span>}
-            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e))) =&gt; {
+            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e)) =&gt; {
                 <span class="macro">info!</span>(<span class="string">"client `recv` error {e}"</span>);
                 <span class="prelude-val">None
             </span>}
-            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg))) =&gt; {
+            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg)) =&gt; {
                 <span class="macro">info!</span>(<span class="string">"got message on: {msg:?}"</span>);
                 <span class="kw">if let </span>ReceivedMessage::ReceivedPacket {
                     remote_node_id: source,
@@ -1985,8 +1959,8 @@
                     <span class="prelude-val">None
                 </span>}
             }
-            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
-                <span class="macro">info!</span>(<span class="string">"client `recv` time out"</span>);
+            <span class="prelude-val">None </span>=&gt; {
+                <span class="macro">info!</span>(<span class="string">"client end of stream"</span>);
                 <span class="prelude-val">None
             </span>}
         }
@@ -2024,47 +1998,47 @@
         <span class="kw">let </span>url: Url = <span class="macro">format!</span>(<span class="string">"https://localhost:{port}"</span>).parse().unwrap();
 
         <span class="comment">// create clients
-        </span><span class="kw">let </span>(a_key, <span class="kw-2">mut </span>client_a) = create_test_client(a_key, url.clone());
+        </span><span class="kw">let </span>(a_key, <span class="kw-2">mut </span>client_a) = create_test_client(a_key, url.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">info!</span>(<span class="string">"created client {a_key:?}"</span>);
-        <span class="kw">let </span>(b_key, <span class="kw-2">mut </span>client_b) = create_test_client(b_key, url);
+        <span class="kw">let </span>(b_key, <span class="kw-2">mut </span>client_b) = create_test_client(b_key, url).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">info!</span>(<span class="string">"created client {b_key:?}"</span>);
 
         <span class="macro">info!</span>(<span class="string">"ping a"</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>ping_a = <span class="macro">pin!</span>(client_a.send_ping().<span class="kw">await</span><span class="question-mark">?</span>);
-        <span class="macro">tokio::select!</span> {
-            _msg = client_a.recv() =&gt; <span class="macro">panic!</span>(<span class="string">"unexpected msg"</span>),
-            _dur = <span class="kw-2">&amp;mut </span>ping_a =&gt; (),
-        }
+        client_a.send(SendMessage::Ping([<span class="number">1u8</span>; <span class="number">8</span>])).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>pong = client_a.next().<span class="kw">await</span>.context(<span class="string">"eos"</span>)<span class="question-mark">??</span>;
+        <span class="macro">assert!</span>(<span class="macro">matches!</span>(pong, ReceivedMessage::Pong(<span class="kw">_</span>)));
 
         <span class="macro">info!</span>(<span class="string">"ping b"</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>ping_b = <span class="macro">pin!</span>(client_b.send_ping().<span class="kw">await</span><span class="question-mark">?</span>);
-        <span class="macro">tokio::select!</span> {
-            _msg = client_b.recv() =&gt; <span class="macro">panic!</span>(<span class="string">"unexpected msg"</span>),
-            _dur = <span class="kw-2">&amp;mut </span>ping_b =&gt; (),
-        }
+        client_b.send(SendMessage::Ping([<span class="number">2u8</span>; <span class="number">8</span>])).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>pong = client_b.next().<span class="kw">await</span>.context(<span class="string">"eos"</span>)<span class="question-mark">??</span>;
+        <span class="macro">assert!</span>(<span class="macro">matches!</span>(pong, ReceivedMessage::Pong(<span class="kw">_</span>)));
 
         <span class="macro">info!</span>(<span class="string">"sending message from a to b"</span>);
         <span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"hi there, client b!"</span>);
-        client_a.send_packet(b_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+        client_a
+            .send(SendMessage::SendPacket(b_key, msg.clone()))
+            .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">info!</span>(<span class="string">"waiting for message from a on b"</span>);
         <span class="kw">let </span>(got_key, got_msg) =
-            process_msg(client_b.recv().<span class="kw">await</span>).expect(<span class="string">"expected message from client_a"</span>);
+            process_msg(client_b.next().<span class="kw">await</span>).expect(<span class="string">"expected message from client_a"</span>);
         <span class="macro">assert_eq!</span>(a_key, got_key);
         <span class="macro">assert_eq!</span>(msg, got_msg);
 
         <span class="macro">info!</span>(<span class="string">"sending message from b to a"</span>);
         <span class="kw">let </span>msg = Bytes::from_static(<span class="string">b"right back at ya, client b!"</span>);
-        client_b.send_packet(a_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+        client_b
+            .send(SendMessage::SendPacket(a_key, msg.clone()))
+            .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">info!</span>(<span class="string">"waiting for message b on a"</span>);
         <span class="kw">let </span>(got_key, got_msg) =
-            process_msg(client_a.recv().<span class="kw">await</span>).expect(<span class="string">"expected message from client_b"</span>);
+            process_msg(client_a.next().<span class="kw">await</span>).expect(<span class="string">"expected message from client_b"</span>);
         <span class="macro">assert_eq!</span>(b_key, got_key);
         <span class="macro">assert_eq!</span>(msg, got_msg);
 
         server.shutdown();
         server.task_handle().<span class="kw">await</span><span class="question-mark">?</span>;
-        client_a.close().<span class="kw">await</span>;
-        client_b.close().<span class="kw">await</span>;
+        client_a.close().<span class="kw">await</span><span class="question-mark">?</span>;
+        client_b.close().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(())
     }

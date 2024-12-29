@@ -362,12 +362,7 @@
 <a href="#361" id="361">361</a>
 <a href="#362" id="362">362</a>
 <a href="#363" id="363">363</a>
-<a href="#364" id="364">364</a>
-<a href="#365" id="365">365</a>
-<a href="#366" id="366">366</a>
-<a href="#367" id="367">367</a>
-<a href="#368" id="368">368</a>
-<a href="#369" id="369">369</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
+<a href="#364" id="364">364</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
 //!
 //! based on tailscale/derp/derp_client.go
 
@@ -381,7 +376,7 @@
 <span class="kw">use </span>anyhow::{bail, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>futures_lite::Stream;
-<span class="kw">use </span>futures_util::{Sink, SinkExt};
+<span class="kw">use </span>futures_util::Sink;
 <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
 <span class="kw">use </span>tokio_tungstenite_wasm::WebSocketStream;
 <span class="kw">use </span>tokio_util::codec::Framed;
@@ -457,11 +452,6 @@
         </span>server_handshake(<span class="kw-2">&amp;mut </span>conn, secret_key).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(conn)
-    }
-
-    <span class="doccomment">/// Close the connection.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>close(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        &lt;Conn <span class="kw">as </span>SinkExt&lt;Frame&gt;&gt;::close(<span class="self">self</span>).<span class="kw">await</span>.ok();
     }
 }
 
