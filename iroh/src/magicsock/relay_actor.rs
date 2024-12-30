@@ -56,6 +56,12 @@ const MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PublicKey::LENGTH;
 /// Maximum time for a relay server to respond to a relay protocol ping.
 const PING_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Timeout for establishing the relay connection.
+///
+/// This includes DNS, dialing the server, upgrading the connection, and completing the
+/// handshake.
+pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// An actor which handles the connection to a single relay server.
 ///
 /// It is responsible for maintaining the connection to the relay server and handling all
@@ -187,6 +193,7 @@ impl ActiveRelayActor {
                 .run_connected(&cancel_token, &mut inbox, &mut inactive_timeout, client)
                 .await
             {
+                // TODO: clear the node routes, somewhere at least
                 Ok(_) => break,
                 Err(err) => {
                     debug!("Connection to relay server lost: {err:#}");
@@ -270,16 +277,21 @@ impl ActiveRelayActor {
             .with_max_interval(Duration::from_secs(5))
             .build();
         let connect_fn = {
-            // TODO: sort out this builder
             let client_builder = self.relay_client_builder.clone();
             move || {
                 let client_builder = client_builder.clone();
                 async move {
-                    let client = client_builder.connect().await.map_err(|err| {
-                        warn!("Relay connection failed: {err:#}");
-                        err
-                    })?;
-                    Ok(client)
+                    match tokio::time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
+                        Ok(Ok(client)) => Ok(client),
+                        Ok(Err(err)) => {
+                            warn!("Relay connection failed: {err:#}");
+                            Err(err.into())
+                        }
+                        Err(_) => {
+                            warn!(?CONNECT_TIMEOUT, "Timeout connecting to relay");
+                            Err(anyhow!("Timeout").into())
+                        }
+                    }
                 }
             }
         };
