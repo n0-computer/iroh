@@ -81,11 +81,6 @@ struct ActiveRelayActor {
     url: RelayUrl,
     relay_client_builder: relay::client::ClientBuilder,
     is_home_relay: bool,
-    /// The set of remote nodes we know are present on this relay server.
-    ///
-    /// If we receive messages from a remote node via, this server it is added to this set.
-    /// If the server notifies us this node is gone, it is removed from this set.
-    node_present: BTreeSet<NodeId>,
     last_packet_src: Option<NodeId>,
 }
 
@@ -142,7 +137,6 @@ impl ActiveRelayActor {
             relay_datagrams_recv,
             relay_datagrams_send,
             url,
-            node_present: BTreeSet::new(),
             last_packet_src: None,
             relay_client_builder,
             is_home_relay: false,
@@ -197,7 +191,6 @@ impl ActiveRelayActor {
                 .instrument(info_span!("connected"))
                 .await
             {
-                // TODO: clear the node routes, somewhere at least
                 Ok(_) => break,
                 Err(err) => {
                     debug!("Connection to relay server lost: {err:#}");
@@ -405,8 +398,16 @@ impl ActiveRelayActor {
             send_state = send_state.send(SendMessage::NotePreferred(true))?;
         }
 
-        let mut pending_pong = None;
+        // A pong message which needs to be sent as soon as possible.
+        let mut pending_pong: Option<[u8; 8]> = None;
+
+        // Tracks pings we have sent, awaiting pong replies.
         let mut ping_tracker = PingTracker::new();
+
+        // Tracks the iroh nodes we know are connected to the this relay server.  Used to
+        // save on a relay connection in case we want to send to this node but are not yet
+        // connected to its home relay.
+        let mut nodes_present: BTreeSet<NodeId> = BTreeSet::new();
 
         loop {
             if pending_pong.is_some() && send_state.is_ready() {
@@ -437,7 +438,7 @@ impl ActiveRelayActor {
                             send_state = send_state.send(SendMessage::NotePreferred(is_preferred))?;
                         }
                         ActiveRelayMessage::HasNodeRoute(peer, sender) => {
-                            let has_peer = self.node_present.contains(&peer);
+                            let has_peer = nodes_present.contains(&peer);
                             sender.send(has_peer).ok();
                         }
                         ActiveRelayMessage::CheckConnection(local_ips) => {
@@ -481,7 +482,8 @@ impl ActiveRelayActor {
                     };
                     match msg {
                         Ok(msg) => {
-                            if let Some(pong_msg) = self.handle_relay_msg(msg, &mut ping_tracker) {
+                            if let Some(pong_msg) =
+                                self.handle_relay_msg(msg, &mut ping_tracker, &mut nodes_present) {
                                 pending_pong = Some(pong_msg);
                             }
                         }
@@ -500,6 +502,7 @@ impl ActiveRelayActor {
         &mut self,
         msg: ReceivedMessage,
         ping_tracker: &mut PingTracker,
+        nodes_present: &mut BTreeSet<NodeId>,
     ) -> Option<[u8; 8]> {
         match msg {
             ReceivedMessage::ReceivedPacket {
@@ -516,7 +519,7 @@ impl ActiveRelayActor {
                 {
                     // Avoid map lookup with high throughput single peer.
                     self.last_packet_src = Some(remote_node_id);
-                    self.node_present.insert(remote_node_id);
+                    nodes_present.insert(remote_node_id);
                 }
                 for datagram in PacketSplitIter::new(self.url.clone(), remote_node_id, data) {
                     let Ok(datagram) = datagram else {
@@ -529,7 +532,7 @@ impl ActiveRelayActor {
                 }
             }
             ReceivedMessage::NodeGone(node_id) => {
-                self.node_present.remove(&node_id);
+                nodes_present.remove(&node_id);
             }
             ReceivedMessage::Ping(data) => return Some(data),
             ReceivedMessage::Pong(data) => {
