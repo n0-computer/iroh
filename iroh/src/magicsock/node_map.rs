@@ -709,7 +709,7 @@ mod tests {
             .into_iter()
             .filter_map(|info| {
                 let addr: NodeAddr = info.into();
-                if addr.direct_addresses.is_empty() && addr.relay_url.is_none() {
+                if addr.is_empty() {
                     return None;
                 }
                 Some(addr)
@@ -722,7 +722,7 @@ mod tests {
             .into_iter()
             .filter_map(|info| {
                 let addr: NodeAddr = info.into();
-                if addr.direct_addresses.is_empty() && addr.relay_url.is_none() {
+                if addr.is_empty() {
                     return None;
                 }
                 Some(addr)
