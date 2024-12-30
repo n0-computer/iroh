@@ -1334,7 +1334,22 @@
 <a href="#1333" id="1333">1333</a>
 <a href="#1334" id="1334">1334</a>
 <a href="#1335" id="1335">1335</a>
-<a href="#1336" id="1336">1336</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1336" id="1336">1336</a>
+<a href="#1337" id="1337">1337</a>
+<a href="#1338" id="1338">1338</a>
+<a href="#1339" id="1339">1339</a>
+<a href="#1340" id="1340">1340</a>
+<a href="#1341" id="1341">1341</a>
+<a href="#1342" id="1342">1342</a>
+<a href="#1343" id="1343">1343</a>
+<a href="#1344" id="1344">1344</a>
+<a href="#1345" id="1345">1345</a>
+<a href="#1346" id="1346">1346</a>
+<a href="#1347" id="1347">1347</a>
+<a href="#1348" id="1348">1348</a>
+<a href="#1349" id="1349">1349</a>
+<a href="#1350" id="1350">1350</a>
+<a href="#1351" id="1351">1351</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1388,6 +1403,15 @@
 
 <span class="doccomment">/// Maximum size a datagram payload is allowed to be.
 </span><span class="kw">const </span>MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PublicKey::LENGTH;
+
+<span class="doccomment">/// Maximum time for a relay server to respond to a relay protocol ping.
+</span><span class="kw">const </span>PING_TIMEOUT: Duration = Duration::from_secs(<span class="number">5</span>);
+
+<span class="doccomment">/// Timeout for establishing the relay connection.
+///
+/// This includes DNS, dialing the server, upgrading the connection, and completing the
+/// handshake.
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>CONNECT_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
 
 <span class="doccomment">/// An actor which handles the connection to a single relay server.
 ///
@@ -1520,7 +1544,8 @@
                 </span>.run_connected(<span class="kw-2">&amp;</span>cancel_token, <span class="kw-2">&amp;mut </span>inbox, <span class="kw-2">&amp;mut </span>inactive_timeout, client)
                 .<span class="kw">await
             </span>{
-                <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="kw">break</span>,
+                <span class="comment">// TODO: clear the node routes, somewhere at least
+                </span><span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="kw">break</span>,
                 <span class="prelude-val">Err</span>(err) =&gt; {
                     <span class="macro">debug!</span>(<span class="string">"Connection to relay server lost: {err:#}"</span>);
                     <span class="kw">continue</span>;
@@ -1603,16 +1628,21 @@
             .with_max_interval(Duration::from_secs(<span class="number">5</span>))
             .build();
         <span class="kw">let </span>connect_fn = {
-            <span class="comment">// TODO: sort out this builder
-            </span><span class="kw">let </span>client_builder = <span class="self">self</span>.relay_client_builder.clone();
+            <span class="kw">let </span>client_builder = <span class="self">self</span>.relay_client_builder.clone();
             <span class="kw">move </span>|| {
                 <span class="kw">let </span>client_builder = client_builder.clone();
                 <span class="kw">async move </span>{
-                    <span class="kw">let </span>client = client_builder.connect().<span class="kw">await</span>.map_err(|err| {
-                        <span class="macro">warn!</span>(<span class="string">"Relay connection failed: {err:#}"</span>);
-                        err
-                    })<span class="question-mark">?</span>;
-                    <span class="prelude-val">Ok</span>(client)
+                    <span class="kw">match </span>tokio::time::timeout(CONNECT_TIMEOUT, client_builder.connect()).<span class="kw">await </span>{
+                        <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(client)) =&gt; <span class="prelude-val">Ok</span>(client),
+                        <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
+                            <span class="macro">warn!</span>(<span class="string">"Relay connection failed: {err:#}"</span>);
+                            <span class="prelude-val">Err</span>(err.into())
+                        }
+                        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
+                            <span class="macro">warn!</span>(<span class="question-mark">?</span>CONNECT_TIMEOUT, <span class="string">"Timeout connecting to relay"</span>);
+                            <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Timeout"</span>).into())
+                        }
+                    }
                 }
             }
         };
@@ -2345,7 +2375,7 @@
         <span class="kw">let </span>ping_data = rand::random();
         <span class="self">self</span>.inner = <span class="prelude-val">Some</span>(PingInner {
             data: ping_data,
-            deadline: Instant::now() + Duration::from_secs(<span class="number">5</span>),
+            deadline: Instant::now() + PING_TIMEOUT,
         });
         ping_data
     }
