@@ -1365,7 +1365,10 @@
 <a href="#1364" id="1364">1364</a>
 <a href="#1365" id="1365">1365</a>
 <a href="#1366" id="1366">1366</a>
-<a href="#1367" id="1367">1367</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1367" id="1367">1367</a>
+<a href="#1368" id="1368">1368</a>
+<a href="#1369" id="1369">1369</a>
+<a href="#1370" id="1370">1370</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1448,11 +1451,6 @@
     url: RelayUrl,
     relay_client_builder: relay::client::ClientBuilder,
     is_home_relay: bool,
-    <span class="doccomment">/// The set of remote nodes we know are present on this relay server.
-    ///
-    /// If we receive messages from a remote node via, this server it is added to this set.
-    /// If the server notifies us this node is gone, it is removed from this set.
-    </span>node_present: BTreeSet&lt;NodeId&gt;,
     last_packet_src: <span class="prelude-ty">Option</span>&lt;NodeId&gt;,
 }
 
@@ -1509,7 +1507,6 @@
             relay_datagrams_recv,
             relay_datagrams_send,
             url,
-            node_present: BTreeSet::new(),
             last_packet_src: <span class="prelude-val">None</span>,
             relay_client_builder,
             is_home_relay: <span class="bool-val">false</span>,
@@ -1564,8 +1561,7 @@
                 .instrument(<span class="macro">info_span!</span>(<span class="string">"connected"</span>))
                 .<span class="kw">await
             </span>{
-                <span class="comment">// TODO: clear the node routes, somewhere at least
-                </span><span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="kw">break</span>,
+                <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="kw">break</span>,
                 <span class="prelude-val">Err</span>(err) =&gt; {
                     <span class="macro">debug!</span>(<span class="string">"Connection to relay server lost: {err:#}"</span>);
                     <span class="kw">continue</span>;
@@ -1772,8 +1768,16 @@
             send_state = send_state.send(SendMessage::NotePreferred(<span class="bool-val">true</span>))<span class="question-mark">?</span>;
         }
 
-        <span class="kw">let </span><span class="kw-2">mut </span>pending_pong = <span class="prelude-val">None</span>;
-        <span class="kw">let </span><span class="kw-2">mut </span>ping_tracker = PingTracker::new();
+        <span class="comment">// A pong message which needs to be sent as soon as possible.
+        </span><span class="kw">let </span><span class="kw-2">mut </span>pending_pong: <span class="prelude-ty">Option</span>&lt;[u8; <span class="number">8</span>]&gt; = <span class="prelude-val">None</span>;
+
+        <span class="comment">// Tracks pings we have sent, awaiting pong replies.
+        </span><span class="kw">let </span><span class="kw-2">mut </span>ping_tracker = PingTracker::new();
+
+        <span class="comment">// Tracks the iroh nodes we know are connected to the this relay server.  Used to
+        // save on a relay connection in case we want to send to this node but are not yet
+        // connected to its home relay.
+        </span><span class="kw">let </span><span class="kw-2">mut </span>nodes_present: BTreeSet&lt;NodeId&gt; = BTreeSet::new();
 
         <span class="kw">loop </span>{
             <span class="kw">if </span>pending_pong.is_some() &amp;&amp; send_state.is_ready() {
@@ -1804,7 +1808,7 @@
                             send_state = send_state.send(SendMessage::NotePreferred(is_preferred))<span class="question-mark">?</span>;
                         }
                         ActiveRelayMessage::HasNodeRoute(peer, sender) =&gt; {
-                            <span class="kw">let </span>has_peer = <span class="self">self</span>.node_present.contains(<span class="kw-2">&amp;</span>peer);
+                            <span class="kw">let </span>has_peer = nodes_present.contains(<span class="kw-2">&amp;</span>peer);
                             sender.send(has_peer).ok();
                         }
                         ActiveRelayMessage::CheckConnection(local_ips) =&gt; {
@@ -1848,7 +1852,8 @@
                     };
                     <span class="kw">match </span>msg {
                         <span class="prelude-val">Ok</span>(msg) =&gt; {
-                            <span class="kw">if let </span><span class="prelude-val">Some</span>(pong_msg) = <span class="self">self</span>.handle_relay_msg(msg, <span class="kw-2">&amp;mut </span>ping_tracker) {
+                            <span class="kw">if let </span><span class="prelude-val">Some</span>(pong_msg) =
+                                <span class="self">self</span>.handle_relay_msg(msg, <span class="kw-2">&amp;mut </span>ping_tracker, <span class="kw-2">&amp;mut </span>nodes_present) {
                                 pending_pong = <span class="prelude-val">Some</span>(pong_msg);
                             }
                         }
@@ -1867,6 +1872,7 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         msg: ReceivedMessage,
         ping_tracker: <span class="kw-2">&amp;mut </span>PingTracker,
+        nodes_present: <span class="kw-2">&amp;mut </span>BTreeSet&lt;NodeId&gt;,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;[u8; <span class="number">8</span>]&gt; {
         <span class="kw">match </span>msg {
             ReceivedMessage::ReceivedPacket {
@@ -1883,7 +1889,7 @@
                 {
                     <span class="comment">// Avoid map lookup with high throughput single peer.
                     </span><span class="self">self</span>.last_packet_src = <span class="prelude-val">Some</span>(remote_node_id);
-                    <span class="self">self</span>.node_present.insert(remote_node_id);
+                    nodes_present.insert(remote_node_id);
                 }
                 <span class="kw">for </span>datagram <span class="kw">in </span>PacketSplitIter::new(<span class="self">self</span>.url.clone(), remote_node_id, data) {
                     <span class="kw">let </span><span class="prelude-val">Ok</span>(datagram) = datagram <span class="kw">else </span>{
@@ -1896,7 +1902,7 @@
                 }
             }
             ReceivedMessage::NodeGone(node_id) =&gt; {
-                <span class="self">self</span>.node_present.remove(<span class="kw-2">&amp;</span>node_id);
+                nodes_present.remove(<span class="kw-2">&amp;</span>node_id);
             }
             ReceivedMessage::Ping(data) =&gt; <span class="kw">return </span><span class="prelude-val">Some</span>(data),
             ReceivedMessage::Pong(data) =&gt; {
