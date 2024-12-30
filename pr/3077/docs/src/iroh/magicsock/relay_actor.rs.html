@@ -1349,7 +1349,29 @@
 <a href="#1348" id="1348">1348</a>
 <a href="#1349" id="1349">1349</a>
 <a href="#1350" id="1350">1350</a>
-<a href="#1351" id="1351">1351</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1351" id="1351">1351</a>
+<a href="#1352" id="1352">1352</a>
+<a href="#1353" id="1353">1353</a>
+<a href="#1354" id="1354">1354</a>
+<a href="#1355" id="1355">1355</a>
+<a href="#1356" id="1356">1356</a>
+<a href="#1357" id="1357">1357</a>
+<a href="#1358" id="1358">1358</a>
+<a href="#1359" id="1359">1359</a>
+<a href="#1360" id="1360">1360</a>
+<a href="#1361" id="1361">1361</a>
+<a href="#1362" id="1362">1362</a>
+<a href="#1363" id="1363">1363</a>
+<a href="#1364" id="1364">1364</a>
+<a href="#1365" id="1365">1365</a>
+<a href="#1366" id="1366">1366</a>
+<a href="#1367" id="1367">1367</a>
+<a href="#1368" id="1368">1368</a>
+<a href="#1369" id="1369">1369</a>
+<a href="#1370" id="1370">1370</a>
+<a href="#1371" id="1371">1371</a>
+<a href="#1372" id="1372">1372</a>
+<a href="#1373" id="1373">1373</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1360,7 +1382,6 @@
     collections::{BTreeMap, BTreeSet},
     future::Future,
     net::IpAddr,
-    ops::ControlFlow,
     pin::{pin, Pin},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -1385,7 +1406,7 @@
 <span class="kw">use </span>tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
-    time::{Duration, Instant},
+    time::{Duration, Instant, MissedTickBehavior},
 };
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{debug, error, info, info_span, trace, warn, Instrument};
@@ -1411,7 +1432,14 @@
 ///
 /// This includes DNS, dialing the server, upgrading the connection, and completing the
 /// handshake.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>CONNECT_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
+</span><span class="kw">const </span>CONNECT_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
+
+<span class="doccomment">/// Time after which the [`ActiveRelayActor`] will drop undeliverable datagrams.
+///
+/// When the [`ActiveRelayActor`] is not connected it can not deliver datagrams.  However it
+/// will still receive datagrams to send from the [`RelayActor`].  If connecting takes
+/// longer than this timeout datagrams will be dropped.
+</span><span class="kw">const </span>UNDELIVERABLE_DATAGRAM_TIMEOUT: Duration = Duration::from_millis(<span class="number">400</span>);
 
 <span class="doccomment">/// An actor which handles the connection to a single relay server.
 ///
@@ -1484,7 +1512,6 @@
             connection_opts,
         } = opts;
         <span class="kw">let </span>relay_client_builder = <span class="self">Self</span>::create_relay_builder(url.clone(), connection_opts);
-
         ActiveRelayActor {
             relay_datagrams_recv,
             relay_datagrams_send,
@@ -1533,15 +1560,16 @@
         inactive_timeout.reset(); <span class="comment">// skip immediate tick
 
         </span><span class="kw">loop </span>{
-            <span class="kw">let </span>client = <span class="kw">match </span><span class="self">self
+            <span class="kw">let </span><span class="prelude-val">Some</span>(client) = <span class="self">self
                 </span>.run_connecting(<span class="kw-2">&amp;</span>cancel_token, <span class="kw-2">&amp;mut </span>inbox, <span class="kw-2">&amp;mut </span>inactive_timeout)
+                .instrument(<span class="macro">info_span!</span>(<span class="string">"connecting"</span>))
                 .<span class="kw">await
-            </span>{
-                ControlFlow::Continue(client) =&gt; client,
-                ControlFlow::Break(<span class="kw">_</span>) =&gt; <span class="kw">break</span>,
+            else </span>{
+                <span class="kw">break</span>;
             };
             <span class="kw">match </span><span class="self">self
                 </span>.run_connected(<span class="kw-2">&amp;</span>cancel_token, <span class="kw-2">&amp;mut </span>inbox, <span class="kw-2">&amp;mut </span>inactive_timeout, client)
+                .instrument(<span class="macro">info_span!</span>(<span class="string">"connected"</span>))
                 .<span class="kw">await
             </span>{
                 <span class="comment">// TODO: clear the node routes, somewhere at least
@@ -1559,27 +1587,39 @@
 
     <span class="doccomment">/// Actor loop when connecting to the relay server.
     ///
-    /// Returns [`ControlFlow::Break`] if the actor needs to shut down.  Returns the relay
-    /// client in [`ControlFlow::Continue`] when the connection is established.
+    /// Returns `None` if the actor needs to shut down.  Returns `Some(client)` when the
+    /// connection is established.
     </span><span class="comment">// TODO: consider storing cancel_token and inbox inside the actor.
     </span><span class="kw">async fn </span>run_connecting(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         cancel_token: <span class="kw-2">&amp;</span>CancellationToken,
         inbox: <span class="kw-2">&amp;mut </span>mpsc::Receiver&lt;ActiveRelayMessage&gt;,
         inactive_timeout: <span class="kw-2">&amp;mut </span>tokio::time::Interval,
-    ) -&gt; ControlFlow&lt;(), iroh_relay::client::Client&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>connecting_fut = <span class="self">self</span>.connect_relay();
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;iroh_relay::client::Client&gt; {
+        <span class="macro">debug!</span>(<span class="string">"Actor loop: connecting to relay."</span>);
+
+        <span class="comment">// We regularly flush the relay_datagrams_send queue so it is not full of stale
+        // packets while reconnecting.  Those datagrams are dropped and the QUIC congestion
+        // controller will have to handle this (DISCO packets do not yet have retry).  This
+        // is not an ideal mechanism, an alternative approach would be to use
+        // e.g. ConcurrentQueue with force_push, though now you might still send very stale
+        // packets when eventually connected.  So perhaps this is a reasonable compromise.
+        </span><span class="kw">let </span><span class="kw-2">mut </span>send_datagram_flush = tokio::time::interval(UNDELIVERABLE_DATAGRAM_TIMEOUT);
+        send_datagram_flush.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        send_datagram_flush.reset_immediately(); <span class="comment">// Skip the immediate interval
+
+        </span><span class="kw">let </span><span class="kw-2">mut </span>connecting_fut = <span class="self">self</span>.connect_relay();
         <span class="kw">loop </span>{
             <span class="macro">tokio::select!</span> {
                 biased;
                 <span class="kw">_ </span>= cancel_token.cancelled() =&gt; {
                     <span class="macro">debug!</span>(<span class="string">"Shutdown."</span>);
-                    <span class="kw">break </span>ControlFlow::Break(());
+                    <span class="kw">break </span><span class="prelude-val">None</span>;
                 }
                 res = <span class="kw-2">&amp;mut </span>connecting_fut =&gt; {
                     <span class="kw">match </span>res {
                         <span class="prelude-val">Ok</span>(client) =&gt; {
-                            <span class="kw">break </span>ControlFlow::Continue(client);
+                            <span class="kw">break </span><span class="prelude-val">Some</span>(client);
                         }
                         <span class="prelude-val">Err</span>(err) =&gt; {
                             <span class="macro">warn!</span>(<span class="string">"Client failed to connect: {err:#}"</span>);
@@ -1590,7 +1630,7 @@
                 msg = inbox.recv() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
                         <span class="macro">debug!</span>(<span class="string">"Inbox closed, shutdown."</span>);
-                        <span class="kw">break </span>ControlFlow::Break(());
+                        <span class="kw">break </span><span class="prelude-val">None</span>;
                     };
                     <span class="kw">match </span>msg {
                         ActiveRelayMessage::SetHomeRelay(is_preferred) =&gt; {
@@ -1606,12 +1646,14 @@
                         }
                     }
                 }
-                <span class="comment">// TODO: pull datagrams out to stop them from going stale
-                </span><span class="kw">_ </span>= inactive_timeout.tick(), <span class="kw">if </span>!<span class="self">self</span>.is_home_relay =&gt; {
-                    <span class="comment">// TODO: we probably want to reset this when popping datagrams
-                    // off the send queue, otherwise we'll expire too soon.
-                    </span><span class="macro">debug!</span>(<span class="string">"Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting"</span>);
-                    <span class="kw">break </span>ControlFlow::Break(());
+                <span class="kw">_ </span>= send_datagram_flush.tick() =&gt; {
+                    <span class="macro">debug!</span>(<span class="question-mark">?</span>UNDELIVERABLE_DATAGRAM_TIMEOUT, <span class="string">"Dropping datagrams to send."</span>);
+                    inactive_timeout.reset();
+                    <span class="kw">while </span><span class="self">self</span>.relay_datagrams_send.try_recv().is_ok() {}
+                }
+                <span class="kw">_ </span>= inactive_timeout.tick(), <span class="kw">if </span>!<span class="self">self</span>.is_home_relay =&gt; {
+                    <span class="macro">debug!</span>(<span class="question-mark">?</span>RELAY_INACTIVE_CLEANUP_TIME, <span class="string">"Inactive, exiting."</span>);
+                    <span class="kw">break </span><span class="prelude-val">None</span>;
                 }
             }
         }
@@ -1661,6 +1703,8 @@
         inactive_timeout: <span class="kw-2">&amp;mut </span>tokio::time::Interval,
         client: iroh_relay::client::Client,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="macro">debug!</span>(<span class="string">"Actor loop: connected to relay"</span>);
+
         <span class="kw">let </span>(<span class="kw-2">mut </span>client_stream, client_sink) = client.split();
 
         <span class="comment">// TODO: an alternative to consider is to create another `run_sending` loop to call
