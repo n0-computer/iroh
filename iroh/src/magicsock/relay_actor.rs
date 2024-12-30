@@ -9,7 +9,6 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
     net::IpAddr,
-    ops::ControlFlow,
     pin::{pin, Pin},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -34,7 +33,7 @@ use iroh_relay::{
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
-    time::{Duration, Instant},
+    time::{Duration, Instant, MissedTickBehavior},
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
@@ -60,7 +59,14 @@ const PING_TIMEOUT: Duration = Duration::from_secs(5);
 ///
 /// This includes DNS, dialing the server, upgrading the connection, and completing the
 /// handshake.
-pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Time after which the [`ActiveRelayActor`] will drop undeliverable datagrams.
+///
+/// When the [`ActiveRelayActor`] is not connected it can not deliver datagrams.  However it
+/// will still receive datagrams to send from the [`RelayActor`].  If connecting takes
+/// longer than this timeout datagrams will be dropped.
+const UNDELIVERABLE_DATAGRAM_TIMEOUT: Duration = Duration::from_millis(400);
 
 /// An actor which handles the connection to a single relay server.
 ///
@@ -133,7 +139,6 @@ impl ActiveRelayActor {
             connection_opts,
         } = opts;
         let relay_client_builder = Self::create_relay_builder(url.clone(), connection_opts);
-
         ActiveRelayActor {
             relay_datagrams_recv,
             relay_datagrams_send,
@@ -182,15 +187,16 @@ impl ActiveRelayActor {
         inactive_timeout.reset(); // skip immediate tick
 
         loop {
-            let client = match self
+            let Some(client) = self
                 .run_connecting(&cancel_token, &mut inbox, &mut inactive_timeout)
+                .instrument(info_span!("connecting"))
                 .await
-            {
-                ControlFlow::Continue(client) => client,
-                ControlFlow::Break(_) => break,
+            else {
+                break;
             };
             match self
                 .run_connected(&cancel_token, &mut inbox, &mut inactive_timeout, client)
+                .instrument(info_span!("connected"))
                 .await
             {
                 // TODO: clear the node routes, somewhere at least
@@ -208,27 +214,39 @@ impl ActiveRelayActor {
 
     /// Actor loop when connecting to the relay server.
     ///
-    /// Returns [`ControlFlow::Break`] if the actor needs to shut down.  Returns the relay
-    /// client in [`ControlFlow::Continue`] when the connection is established.
+    /// Returns `None` if the actor needs to shut down.  Returns `Some(client)` when the
+    /// connection is established.
     // TODO: consider storing cancel_token and inbox inside the actor.
     async fn run_connecting(
         &mut self,
         cancel_token: &CancellationToken,
         inbox: &mut mpsc::Receiver<ActiveRelayMessage>,
         inactive_timeout: &mut tokio::time::Interval,
-    ) -> ControlFlow<(), iroh_relay::client::Client> {
+    ) -> Option<iroh_relay::client::Client> {
+        debug!("Actor loop: connecting to relay.");
+
+        // We regularly flush the relay_datagrams_send queue so it is not full of stale
+        // packets while reconnecting.  Those datagrams are dropped and the QUIC congestion
+        // controller will have to handle this (DISCO packets do not yet have retry).  This
+        // is not an ideal mechanism, an alternative approach would be to use
+        // e.g. ConcurrentQueue with force_push, though now you might still send very stale
+        // packets when eventually connected.  So perhaps this is a reasonable compromise.
+        let mut send_datagram_flush = tokio::time::interval(UNDELIVERABLE_DATAGRAM_TIMEOUT);
+        send_datagram_flush.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        send_datagram_flush.reset_immediately(); // Skip the immediate interval
+
         let mut connecting_fut = self.connect_relay();
         loop {
             tokio::select! {
                 biased;
                 _ = cancel_token.cancelled() => {
                     debug!("Shutdown.");
-                    break ControlFlow::Break(());
+                    break None;
                 }
                 res = &mut connecting_fut => {
                     match res {
                         Ok(client) => {
-                            break ControlFlow::Continue(client);
+                            break Some(client);
                         }
                         Err(err) => {
                             warn!("Client failed to connect: {err:#}");
@@ -239,7 +257,7 @@ impl ActiveRelayActor {
                 msg = inbox.recv() => {
                     let Some(msg) = msg else {
                         debug!("Inbox closed, shutdown.");
-                        break ControlFlow::Break(());
+                        break None;
                     };
                     match msg {
                         ActiveRelayMessage::SetHomeRelay(is_preferred) => {
@@ -255,12 +273,14 @@ impl ActiveRelayActor {
                         }
                     }
                 }
-                // TODO: pull datagrams out to stop them from going stale
+                _ = send_datagram_flush.tick() => {
+                    debug!(?UNDELIVERABLE_DATAGRAM_TIMEOUT, "Dropping datagrams to send.");
+                    inactive_timeout.reset();
+                    while self.relay_datagrams_send.try_recv().is_ok() {}
+                }
                 _ = inactive_timeout.tick(), if !self.is_home_relay => {
-                    // TODO: we probably want to reset this when popping datagrams
-                    // off the send queue, otherwise we'll expire too soon.
-                    debug!("Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting");
-                    break ControlFlow::Break(());
+                    debug!(?RELAY_INACTIVE_CLEANUP_TIME, "Inactive, exiting.");
+                    break None;
                 }
             }
         }
@@ -310,6 +330,8 @@ impl ActiveRelayActor {
         inactive_timeout: &mut tokio::time::Interval,
         client: iroh_relay::client::Client,
     ) -> Result<()> {
+        debug!("Actor loop: connected to relay");
+
         let (mut client_stream, client_sink) = client.split();
 
         // TODO: an alternative to consider is to create another `run_sending` loop to call
