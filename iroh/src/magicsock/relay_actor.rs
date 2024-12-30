@@ -86,7 +86,6 @@ struct ActiveRelayActor {
     /// If we receive messages from a remote node via, this server it is added to this set.
     /// If the server notifies us this node is gone, it is removed from this set.
     node_present: BTreeSet<NodeId>,
-    last_packet_time: Option<Instant>,
     last_packet_src: Option<NodeId>,
 }
 
@@ -144,7 +143,6 @@ impl ActiveRelayActor {
             relay_datagrams_send,
             url,
             node_present: BTreeSet::new(),
-            last_packet_time: None,
             last_packet_src: None,
             relay_client_builder,
             is_home_relay: false,
@@ -503,10 +501,6 @@ impl ActiveRelayActor {
         msg: ReceivedMessage,
         ping_tracker: &mut PingTracker,
     ) -> Option<[u8; 8]> {
-        let now = Instant::now();
-        // TODO: pretty sure this is entirely unused.
-        self.last_packet_time = Some(now);
-
         match msg {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
