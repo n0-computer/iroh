@@ -1428,7 +1428,12 @@
 <a href="#1427" id="1427">1427</a>
 <a href="#1428" id="1428">1428</a>
 <a href="#1429" id="1429">1429</a>
-<a href="#1430" id="1430">1430</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1430" id="1430">1430</a>
+<a href="#1431" id="1431">1431</a>
+<a href="#1432" id="1432">1432</a>
+<a href="#1433" id="1433">1433</a>
+<a href="#1434" id="1434">1434</a>
+<a href="#1435" id="1435">1435</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1892,7 +1897,7 @@
                         }
                     }
                 }
-                item = <span class="self">self</span>.relay_datagrams_send.recv() =&gt; {
+                item = <span class="self">self</span>.relay_datagrams_send.recv(), <span class="kw">if </span>send_state.is_ready() =&gt; {
                     <span class="comment">// TODO: Read in bulk using recv_many, send in bulk.
                     </span><span class="kw">let </span><span class="prelude-val">Some</span>(datagrams) = item <span class="kw">else </span>{
                         <span class="macro">warn!</span>(<span class="string">"Datagram inbox closed, shutdown"</span>);
@@ -2649,23 +2654,28 @@
         rx: <span class="kw-2">&amp;</span>Arc&lt;RelayDatagramRecvQueue&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="macro">assert!</span>(item.datagrams.len() == <span class="number">1</span>);
-        <span class="comment">// try for 10s in total, 500ms each.
-        </span><span class="kw">for </span>_attempt <span class="kw">in </span><span class="number">0</span>..<span class="number">20 </span>{
-            <span class="kw">let </span>res = tokio::time::timeout(Duration::from_millis(<span class="number">500</span>), <span class="kw">async </span>{
-                tx.send(item.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-                <span class="kw">let </span>RelayRecvDatagram {
-                    url: <span class="kw">_</span>,
-                    src: <span class="kw">_</span>,
-                    buf,
-                } = future::poll_fn(|cx| rx.poll_recv(cx)).<span class="kw">await</span><span class="question-mark">?</span>;
-                <span class="macro">assert_eq!</span>(buf.as_ref(), item.datagrams[<span class="number">0</span>]);
-                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, anyhow::Error&gt;(())
-            })
-            .<span class="kw">await</span>;
-            <span class="kw">if </span>res.is_ok() {
-                <span class="kw">break</span>;
+        tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), <span class="kw">async move </span>{
+            <span class="kw">loop </span>{
+                <span class="kw">let </span>res = tokio::time::timeout(UNDELIVERABLE_DATAGRAM_TIMEOUT, <span class="kw">async </span>{
+                    tx.send(item.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+                    <span class="kw">let </span>RelayRecvDatagram {
+                        url: <span class="kw">_</span>,
+                        src: <span class="kw">_</span>,
+                        buf,
+                    } = future::poll_fn(|cx| rx.poll_recv(cx)).<span class="kw">await</span><span class="question-mark">?</span>;
+
+                    <span class="macro">assert_eq!</span>(buf.as_ref(), item.datagrams[<span class="number">0</span>]);
+
+                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, anyhow::Error&gt;(())
+                })
+                .<span class="kw">await</span>;
+                <span class="kw">if </span>res.is_ok() {
+                    <span class="kw">break</span>;
+                }
             }
-        }
+        })
+        .<span class="kw">await
+        </span>.expect(<span class="string">"overall timeout exceeded"</span>);
         <span class="prelude-val">Ok</span>(())
     }
 

@@ -3518,8 +3518,8 @@
                     <span class="kw">let </span>eps = ep.bound_sockets();
                     <span class="macro">info!</span>(me = %ep.node_id().fmt_short(), ipv4=%eps.<span class="number">0</span>, ipv6=<span class="question-mark">?</span>eps.<span class="number">1</span>, <span class="string">"server listening on"</span>);
                     <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..n_clients {
-                        <span class="kw">let </span>now = Instant::now();
-                        <span class="macro">println!</span>(<span class="string">"[server] round {}"</span>, i + <span class="number">1</span>);
+                        <span class="kw">let </span>round_start = Instant::now();
+                        <span class="macro">info!</span>(<span class="string">"[server] round {i}"</span>);
                         <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.unwrap();
                         <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.unwrap();
                         <span class="kw">let </span>peer_id = get_remote_node_id(<span class="kw-2">&amp;</span>conn).unwrap();
@@ -3534,7 +3534,7 @@
                         send.stopped().<span class="kw">await</span>.unwrap();
                         recv.read_to_end(<span class="number">0</span>).<span class="kw">await</span>.unwrap();
                         <span class="macro">info!</span>(%i, peer = %peer_id.fmt_short(), <span class="string">"finished"</span>);
-                        <span class="macro">println!</span>(<span class="string">"[server] round {} done in {:?}"</span>, i + <span class="number">1</span>, now.elapsed());
+                        <span class="macro">info!</span>(<span class="string">"[server] round {i} done in {:?}"</span>, round_start.elapsed());
                     }
                 }
                 .instrument(<span class="macro">error_span!</span>(<span class="string">"server"</span>)),
@@ -3546,8 +3546,8 @@
         });
 
         <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..n_clients {
-            <span class="kw">let </span>now = Instant::now();
-            <span class="macro">println!</span>(<span class="string">"[client] round {}"</span>, i + <span class="number">1</span>);
+            <span class="kw">let </span>round_start = Instant::now();
+            <span class="macro">info!</span>(<span class="string">"[client] round {}"</span>, i);
             <span class="kw">let </span>relay_map = relay_map.clone();
             <span class="kw">let </span>client_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
             <span class="kw">let </span>relay_url = relay_url.clone();
@@ -3584,7 +3584,7 @@
             }
             .instrument(<span class="macro">error_span!</span>(<span class="string">"client"</span>, %i))
             .<span class="kw">await</span>;
-            <span class="macro">println!</span>(<span class="string">"[client] round {} done in {:?}"</span>, i + <span class="number">1</span>, now.elapsed());
+            <span class="macro">info!</span>(<span class="string">"[client] round {i} done in {:?}"</span>, round_start.elapsed());
         }
 
         server.<span class="kw">await</span>.unwrap();
