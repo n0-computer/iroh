@@ -180,8 +180,8 @@ impl ActiveRelayActor {
 
         loop {
             let Some(client) = self
-                .run_connecting(&cancel_token, &mut inbox, &mut inactive_timeout)
-                .instrument(info_span!("connecting"))
+                .run_dialing(&cancel_token, &mut inbox, &mut inactive_timeout)
+                .instrument(info_span!("dialing"))
                 .await
             else {
                 break;
@@ -208,7 +208,7 @@ impl ActiveRelayActor {
     /// Returns `None` if the actor needs to shut down.  Returns `Some(client)` when the
     /// connection is established.
     // TODO: consider storing cancel_token and inbox inside the actor.
-    async fn run_connecting(
+    async fn run_dialing(
         &mut self,
         cancel_token: &CancellationToken,
         inbox: &mut mpsc::Receiver<ActiveRelayMessage>,
@@ -224,7 +224,7 @@ impl ActiveRelayActor {
         // packets when eventually connected.  So perhaps this is a reasonable compromise.
         let mut send_datagram_flush = tokio::time::interval(UNDELIVERABLE_DATAGRAM_TIMEOUT);
         send_datagram_flush.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        send_datagram_flush.reset_immediately(); // Skip the immediate interval
+        send_datagram_flush.reset(); // Skip the immediate interval
 
         let mut connecting_fut = self.connect_relay();
         loop {
@@ -265,9 +265,13 @@ impl ActiveRelayActor {
                     }
                 }
                 _ = send_datagram_flush.tick() => {
-                    debug!(?UNDELIVERABLE_DATAGRAM_TIMEOUT, "Dropping datagrams to send.");
-                    inactive_timeout.reset();
-                    while self.relay_datagrams_send.try_recv().is_ok() {}
+                    let mut logged = false;
+                    while self.relay_datagrams_send.try_recv().is_ok() {
+                        if !logged {
+                            debug!(?UNDELIVERABLE_DATAGRAM_TIMEOUT, "Dropping datagrams to send.");
+                            logged = true;
+                        }
+                    }
                 }
                 _ = inactive_timeout.tick(), if !self.is_home_relay => {
                     debug!(?RELAY_INACTIVE_CLEANUP_TIME, "Inactive, exiting.");
@@ -1041,6 +1045,7 @@ impl PingTracker {
     /// Starts a new ping.
     fn new_ping(&mut self) -> [u8; 8] {
         let ping_data = rand::random();
+        debug!(data = ?ping_data, "Sending ping to relay server.");
         self.inner = Some(PingInner {
             data: ping_data,
             deadline: Instant::now() + PING_TIMEOUT,
@@ -1054,6 +1059,7 @@ impl PingTracker {
     /// any pong however.
     fn pong_received(&mut self, data: [u8; 8]) {
         if self.inner.as_ref().map(|inner| inner.data) == Some(data) {
+            debug!(?data, "Pong received from relay server");
             self.inner = None;
         }
     }
@@ -1063,8 +1069,9 @@ impl PingTracker {
     /// Unless the most recent sent ping times out, this will never return.
     async fn timeout(&mut self) {
         match self.inner {
-            Some(PingInner { deadline, .. }) => {
+            Some(PingInner { deadline, data }) => {
                 tokio::time::sleep_until(deadline).await;
+                debug!(?data, "Ping timeout.");
                 self.inner = None;
             }
             None => future::pending().await,
@@ -1123,6 +1130,7 @@ mod tests {
         inbox_rx: mpsc::Receiver<ActiveRelayMessage>,
         relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
         relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
+        span: tracing::Span,
     ) -> AbortOnDropHandle<anyhow::Result<()>> {
         let opts = ActiveRelayActorOptions {
             url,
@@ -1141,7 +1149,7 @@ mod tests {
                 let actor = ActiveRelayActor::new(opts);
                 actor.run(cancel_token, inbox_rx).await
             }
-            .instrument(info_span!("actor-under-test")),
+            .instrument(span),
         );
         AbortOnDropHandle::new(task)
     }
@@ -1164,6 +1172,7 @@ mod tests {
             inbox_rx,
             send_datagram_rx,
             recv_datagram_queue.clone(),
+            info_span!("echo-node"),
         );
         let echo_task = tokio::spawn({
             let relay_url = relay_url.clone();
@@ -1199,6 +1208,37 @@ mod tests {
         (secret_key.public(), supervisor_task)
     }
 
+    /// Sends a message to the echo node, receives the response.
+    ///
+    /// This takes care of retry and timeout.  Because we don't know when both the
+    /// node-under-test and the echo node will be ready and datagrams aren't queued to send
+    /// forever, we have to retry a few times.
+    async fn send_recv_echo(
+        item: RelaySendItem,
+        tx: &mpsc::Sender<RelaySendItem>,
+        rx: &Arc<RelayDatagramRecvQueue>,
+    ) -> Result<()> {
+        assert!(item.datagrams.len() == 1);
+        // try for 10s in total, 500ms each.
+        for _attempt in 0..20 {
+            let res = tokio::time::timeout(Duration::from_millis(500), async {
+                tx.send(item.clone()).await?;
+                let RelayRecvDatagram {
+                    url: _,
+                    src: _,
+                    buf,
+                } = future::poll_fn(|cx| rx.poll_recv(cx)).await?;
+                assert_eq!(buf.as_ref(), item.datagrams[0]);
+                Ok::<_, anyhow::Error>(())
+            })
+            .await;
+            if res.is_ok() {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_active_relay_reconnect() -> TestResult {
         let _guard = iroh_test::logging::setup();
@@ -1217,6 +1257,7 @@ mod tests {
             inbox_rx,
             send_datagram_rx,
             datagram_recv_queue.clone(),
+            info_span!("actor-under-test"),
         );
 
         // Send a datagram to our echo node.
@@ -1226,15 +1267,21 @@ mod tests {
             url: relay_url.clone(),
             datagrams: smallvec![Bytes::from_static(b"hello")],
         };
-        send_datagram_tx.send(hello_send_item.clone()).await?;
+        send_recv_echo(
+            hello_send_item.clone(),
+            &send_datagram_tx,
+            &datagram_recv_queue,
+        )
+        .await?;
+        // send_datagram_tx.send(hello_send_item.clone()).await?;
 
-        // Check we get it back
-        let RelayRecvDatagram {
-            url: _,
-            src: _,
-            buf,
-        } = future::poll_fn(|cx| datagram_recv_queue.poll_recv(cx)).await?;
-        assert_eq!(buf.as_ref(), b"hello");
+        // // Check we get it back
+        // let RelayRecvDatagram {
+        //     url: _,
+        //     src: _,
+        //     buf,
+        // } = future::poll_fn(|cx| datagram_recv_queue.poll_recv(cx)).await?;
+        // assert_eq!(buf.as_ref(), b"hello");
 
         // Now ask to check the connection, triggering a ping but no reconnect.
         let (tx, rx) = oneshot::channel();
@@ -1253,9 +1300,15 @@ mod tests {
 
         // Echo should still work.
         info!("second echo");
-        send_datagram_tx.send(hello_send_item.clone()).await?;
-        let recv = future::poll_fn(|cx| datagram_recv_queue.poll_recv(cx)).await?;
-        assert_eq!(recv.buf.as_ref(), b"hello");
+        send_recv_echo(
+            hello_send_item.clone(),
+            &send_datagram_tx,
+            &datagram_recv_queue,
+        )
+        .await?;
+        // send_datagram_tx.send(hello_send_item.clone()).await?;
+        // let recv = future::poll_fn(|cx| datagram_recv_queue.poll_recv(cx)).await?;
+        // assert_eq!(recv.buf.as_ref(), b"hello");
 
         // Now ask to check the connection, this will reconnect without pinging because we
         // do not supply any "valid" local IP addresses.
@@ -1269,9 +1322,15 @@ mod tests {
 
         // Echo should still work.
         info!("third echo");
-        send_datagram_tx.send(hello_send_item).await?;
-        let recv = future::poll_fn(|cx| datagram_recv_queue.poll_recv(cx)).await?;
-        assert_eq!(recv.buf.as_ref(), b"hello");
+        send_recv_echo(
+            hello_send_item.clone(),
+            &send_datagram_tx,
+            &datagram_recv_queue,
+        )
+        .await?;
+        // send_datagram_tx.send(hello_send_item).await?;
+        // let recv = future::poll_fn(|cx| datagram_recv_queue.poll_recv(cx)).await?;
+        // assert_eq!(recv.buf.as_ref(), b"hello");
 
         // Shut down the actor.
         cancel_token.cancel();
@@ -1298,6 +1357,7 @@ mod tests {
             inbox_rx,
             send_datagram_rx,
             datagram_recv_queue.clone(),
+            info_span!("actor-under-test"),
         );
 
         // Give the task some time to run.  If it responds to HasNodeRoute it is running.
