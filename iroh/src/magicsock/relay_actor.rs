@@ -462,7 +462,7 @@ impl ActiveRelayActor {
                         }
                     }
                 }
-                item = self.relay_datagrams_send.recv() => {
+                item = self.relay_datagrams_send.recv(), if send_state.is_ready() => {
                     // TODO: Read in bulk using recv_many, send in bulk.
                     let Some(datagrams) = item else {
                         warn!("Datagram inbox closed, shutdown");
@@ -1219,23 +1219,28 @@ mod tests {
         rx: &Arc<RelayDatagramRecvQueue>,
     ) -> Result<()> {
         assert!(item.datagrams.len() == 1);
-        // try for 10s in total, 500ms each.
-        for _attempt in 0..20 {
-            let res = tokio::time::timeout(Duration::from_millis(500), async {
-                tx.send(item.clone()).await?;
-                let RelayRecvDatagram {
-                    url: _,
-                    src: _,
-                    buf,
-                } = future::poll_fn(|cx| rx.poll_recv(cx)).await?;
-                assert_eq!(buf.as_ref(), item.datagrams[0]);
-                Ok::<_, anyhow::Error>(())
-            })
-            .await;
-            if res.is_ok() {
-                break;
+        tokio::time::timeout(Duration::from_secs(10), async move {
+            loop {
+                let res = tokio::time::timeout(UNDELIVERABLE_DATAGRAM_TIMEOUT, async {
+                    tx.send(item.clone()).await?;
+                    let RelayRecvDatagram {
+                        url: _,
+                        src: _,
+                        buf,
+                    } = future::poll_fn(|cx| rx.poll_recv(cx)).await?;
+
+                    assert_eq!(buf.as_ref(), item.datagrams[0]);
+
+                    Ok::<_, anyhow::Error>(())
+                })
+                .await;
+                if res.is_ok() {
+                    break;
+                }
             }
-        }
+        })
+        .await
+        .expect("overall timeout exceeded");
         Ok(())
     }
 
