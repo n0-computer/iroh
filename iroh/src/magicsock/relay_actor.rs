@@ -1361,15 +1361,6 @@ mod tests {
             &datagram_recv_queue,
         )
         .await?;
-        // send_datagram_tx.send(hello_send_item.clone()).await?;
-
-        // // Check we get it back
-        // let RelayRecvDatagram {
-        //     url: _,
-        //     src: _,
-        //     buf,
-        // } = future::poll_fn(|cx| datagram_recv_queue.poll_recv(cx)).await?;
-        // assert_eq!(buf.as_ref(), b"hello");
 
         // Now ask to check the connection, triggering a ping but no reconnect.
         let (tx, rx) = oneshot::channel();
@@ -1394,9 +1385,6 @@ mod tests {
             &datagram_recv_queue,
         )
         .await?;
-        // send_datagram_tx.send(hello_send_item.clone()).await?;
-        // let recv = future::poll_fn(|cx| datagram_recv_queue.poll_recv(cx)).await?;
-        // assert_eq!(recv.buf.as_ref(), b"hello");
 
         // Now ask to check the connection, this will reconnect without pinging because we
         // do not supply any "valid" local IP addresses.
@@ -1416,9 +1404,6 @@ mod tests {
             &datagram_recv_queue,
         )
         .await?;
-        // send_datagram_tx.send(hello_send_item).await?;
-        // let recv = future::poll_fn(|cx| datagram_recv_queue.poll_recv(cx)).await?;
-        // assert_eq!(recv.buf.as_ref(), b"hello");
 
         // Shut down the actor.
         cancel_token.cancel();
