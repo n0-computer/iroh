@@ -1433,7 +1433,31 @@
 <a href="#1432" id="1432">1432</a>
 <a href="#1433" id="1433">1433</a>
 <a href="#1434" id="1434">1434</a>
-<a href="#1435" id="1435">1435</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1435" id="1435">1435</a>
+<a href="#1436" id="1436">1436</a>
+<a href="#1437" id="1437">1437</a>
+<a href="#1438" id="1438">1438</a>
+<a href="#1439" id="1439">1439</a>
+<a href="#1440" id="1440">1440</a>
+<a href="#1441" id="1441">1441</a>
+<a href="#1442" id="1442">1442</a>
+<a href="#1443" id="1443">1443</a>
+<a href="#1444" id="1444">1444</a>
+<a href="#1445" id="1445">1445</a>
+<a href="#1446" id="1446">1446</a>
+<a href="#1447" id="1447">1447</a>
+<a href="#1448" id="1448">1448</a>
+<a href="#1449" id="1449">1449</a>
+<a href="#1450" id="1450">1450</a>
+<a href="#1451" id="1451">1451</a>
+<a href="#1452" id="1452">1452</a>
+<a href="#1453" id="1453">1453</a>
+<a href="#1454" id="1454">1454</a>
+<a href="#1455" id="1455">1455</a>
+<a href="#1456" id="1456">1456</a>
+<a href="#1457" id="1457">1457</a>
+<a href="#1458" id="1458">1458</a>
+<a href="#1459" id="1459">1459</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1449,10 +1473,9 @@
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    task::{<span class="self">self</span>, Poll},
 };
 
-<span class="kw">use </span>anyhow::{anyhow, bail, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>backoff::exponential::{ExponentialBackoff, ExponentialBackoffBuilder};
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
 <span class="kw">use </span>futures_buffered::FuturesUnorderedBounded;
@@ -1462,7 +1485,7 @@
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>iroh_relay::{
     <span class="self">self </span><span class="kw">as </span>relay,
-    client::{Client, ClientSink, ConnSendError, ReceivedMessage, SendMessage},
+    client::{Client, ReceivedMessage, SendMessage},
     MAX_PACKET_SIZE,
 };
 <span class="kw">use </span>tokio::{
@@ -1489,6 +1512,13 @@
 
 <span class="doccomment">/// Maximum time for a relay server to respond to a relay protocol ping.
 </span><span class="kw">const </span>PING_TIMEOUT: Duration = Duration::from_secs(<span class="number">5</span>);
+
+<span class="doccomment">/// Number of datagrams which can be sent to the relay server in one batch.
+///
+/// This means while this batch is sending to the server no other relay protocol frames can
+/// be sent to the server, e.g. no Ping frames or so.  While the maximum packet size is
+/// rather large, each item can typically be expected to up to 1500 or the max GSO size.
+</span><span class="kw">const </span>SEND_DATAGRAM_BATCH_SIZE: usize = <span class="number">20</span>;
 
 <span class="doccomment">/// Timeout for establishing the relay connection.
 ///
@@ -1762,129 +1792,58 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="macro">debug!</span>(<span class="string">"Actor loop: connected to relay"</span>);
 
-        <span class="kw">let </span>(<span class="kw-2">mut </span>client_stream, client_sink) = client.split();
+        <span class="kw">let </span>(<span class="kw-2">mut </span>client_stream, <span class="kw-2">mut </span>client_sink) = client.split();
 
-        <span class="comment">// TODO: an alternative to consider is to create another `run_sending` loop to call
-        // when sending.  It would borrow the sink and be awaited in-place.  The benefit is
-        // that the send methods wouldn't have to be fallible, as they are bugs really.
-        </span><span class="kw">enum </span>SendState {
-            Sending(Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;ClientSink, ConnSendError&gt;&gt; + Send&gt;&gt;),
-            Ready(iroh_relay::client::ClientSink),
-        }
-        <span class="kw">impl </span>SendState {
-            <span class="kw">fn </span>is_sending(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-                <span class="macro">matches!</span>(<span class="self">self</span>, SendState::Sending(<span class="kw">_</span>))
-            }
+        <span class="kw">let </span><span class="kw-2">mut </span>state = ConnectedRelayState {
+            stop_token: cancel_token,
+            inactive_timeout,
+            ping_tracker: PingTracker::new(),
+            nodes_present: BTreeSet::new(),
+            pong_pending: <span class="prelude-val">None</span>,
+        };
+        <span class="kw">let </span><span class="kw-2">mut </span>send_datagrams_buf = Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE);
 
-            <span class="kw">fn </span>is_ready(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-                <span class="macro">matches!</span>(<span class="self">self</span>, SendState::Ready(<span class="kw">_</span>))
-            }
-
-            <span class="kw">fn </span>send(<span class="self">self</span>, msg: SendMessage) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-                <span class="kw">let </span>SendState::Ready(<span class="kw-2">mut </span>client_sink) = <span class="self">self </span><span class="kw">else </span>{
-                    <span class="macro">error!</span>(<span class="string">"SendState send when not ready!"</span>);
-                    <span class="macro">bail!</span>(<span class="string">"SendState not ready"</span>);
-                };
-                <span class="kw">let </span>fut = <span class="kw">async move </span>{
-                    <span class="kw">match </span>client_sink.send(msg).<span class="kw">await </span>{
-                        <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Ok</span>(client_sink),
-                        <span class="prelude-val">Err</span>(err) =&gt; {
-                            <span class="macro">debug!</span>(<span class="string">"Send failed: {err:#}"</span>);
-                            <span class="macro">inc!</span>(MagicsockMetrics, send_relay_error);
-                            <span class="prelude-val">Err</span>(err)
-                        }
-                    }
-                };
-                <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Sending(Box::pin(fut)))
-            }
-
-            <span class="kw">fn </span>send_all(
-                <span class="self">self</span>,
-                msg_iter: <span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;SendMessage, ConnSendError&gt;&gt; + Send + <span class="lifetime">'static</span>,
-            ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-                <span class="kw">let </span>SendState::Ready(<span class="kw-2">mut </span>client_sink) = <span class="self">self </span><span class="kw">else </span>{
-                    <span class="macro">error!</span>(<span class="string">"SendState send_all when not ready!"</span>);
-                    <span class="macro">bail!</span>(<span class="string">"SendState not ready"</span>);
-                };
-                <span class="kw">let </span>fut = <span class="kw">async move </span>{
-                    <span class="kw">let </span>msg_stream = futures_util::stream::iter(msg_iter);
-                    <span class="kw">let </span><span class="kw-2">mut </span>stream = <span class="macro">pin!</span>(msg_stream);
-                    <span class="kw">match </span>client_sink.send_all(<span class="kw-2">&amp;mut </span>stream).<span class="kw">await </span>{
-                        <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Ok</span>(client_sink),
-                        <span class="prelude-val">Err</span>(err) =&gt; {
-                            <span class="macro">debug!</span>(<span class="string">"Send all failed: {err:#}"</span>);
-                            <span class="macro">inc!</span>(MagicsockMetrics, send_relay_error);
-                            <span class="prelude-val">Err</span>(err)
-                        }
-                    }
-                };
-                <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Sending(Box::pin(fut)))
-            }
-        }
-        <span class="kw">impl </span>Future <span class="kw">for </span>SendState {
-            <span class="kw">type </span>Output = <span class="prelude-ty">Result</span>&lt;ClientSink, ConnSendError&gt;;
-
-            <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
-                <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
-                    SendState::Sending(<span class="kw-2">ref mut </span>fut) =&gt; fut.as_mut().poll(cx),
-                    SendState::Ready(<span class="kw">_</span>) =&gt; Poll::Pending,
-                }
-            }
-        }
-
-        <span class="kw">let </span><span class="kw-2">mut </span>send_state = SendState::Ready(client_sink);
         <span class="kw">if </span><span class="self">self</span>.is_home_relay {
-            send_state = send_state.send(SendMessage::NotePreferred(<span class="bool-val">true</span>))<span class="question-mark">?</span>;
+            <span class="kw">let </span>fut = client_sink.send(SendMessage::NotePreferred(<span class="bool-val">true</span>));
+            <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream)
+                .<span class="kw">await</span><span class="question-mark">?</span>;
         }
-
-        <span class="comment">// A pong message which needs to be sent as soon as possible.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>pending_pong: <span class="prelude-ty">Option</span>&lt;[u8; <span class="number">8</span>]&gt; = <span class="prelude-val">None</span>;
-
-        <span class="comment">// Tracks pings we have sent, awaiting pong replies.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>ping_tracker = PingTracker::new();
-
-        <span class="comment">// Tracks the iroh nodes we know are connected to the this relay server.  Used to
-        // save on a relay connection in case we want to send to this node but are not yet
-        // connected to its home relay.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>nodes_present: BTreeSet&lt;NodeId&gt; = BTreeSet::new();
 
         <span class="kw">loop </span>{
-            <span class="kw">if </span>pending_pong.is_some() &amp;&amp; send_state.is_ready() {
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(data) = pending_pong.take() {
-                    send_state = send_state.send(SendMessage::Pong(data))<span class="question-mark">?</span>;
-                    <span class="kw">continue</span>;
-                }
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(data) = state.pong_pending.take() {
+                <span class="kw">let </span>fut = client_sink.send(SendMessage::Pong(data));
+                <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream)
+                    .<span class="kw">await</span><span class="question-mark">?</span>;
             }
             <span class="macro">tokio::select!</span> {
-                <span class="kw">_ </span>= cancel_token.cancelled() =&gt; {
+                biased;
+                <span class="kw">_ </span>= state.stop_token.cancelled() =&gt; {
                     <span class="macro">debug!</span>(<span class="string">"Shutdown."</span>);
                     <span class="kw">break </span><span class="prelude-val">Ok</span>(());
                 }
-                res = <span class="kw-2">&amp;mut </span>send_state, <span class="kw">if </span>send_state.is_sending() =&gt; {
-                    <span class="kw">let </span>client = res<span class="question-mark">?</span>;
-                    send_state = SendState::Ready(client);
-                }
-                <span class="kw">_ </span>= ping_tracker.timeout() =&gt; {
+                <span class="kw">_ </span>= state.ping_tracker.timeout() =&gt; {
                     <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Ping timeout"</span>));
                 }
-                msg = inbox.recv(), <span class="kw">if </span>send_state.is_ready() =&gt; {
+                msg = inbox.recv() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
                         <span class="macro">warn!</span>(<span class="string">"Inbox closed, shutdown."</span>);
                         <span class="kw">break </span><span class="prelude-val">Ok</span>(());
                     };
                     <span class="kw">match </span>msg {
                         ActiveRelayMessage::SetHomeRelay(is_preferred) =&gt; {
-                            send_state = send_state.send(SendMessage::NotePreferred(is_preferred))<span class="question-mark">?</span>;
+                            <span class="kw">let </span>fut = client_sink.send(SendMessage::NotePreferred(is_preferred));
+                            <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream).<span class="kw">await</span><span class="question-mark">?</span>;
                         }
                         ActiveRelayMessage::HasNodeRoute(peer, sender) =&gt; {
-                            <span class="kw">let </span>has_peer = nodes_present.contains(<span class="kw-2">&amp;</span>peer);
+                            <span class="kw">let </span>has_peer = state.nodes_present.contains(<span class="kw-2">&amp;</span>peer);
                             sender.send(has_peer).ok();
                         }
                         ActiveRelayMessage::CheckConnection(local_ips) =&gt; {
                             <span class="kw">match </span>client_stream.local_addr() {
                                 <span class="prelude-val">Some</span>(addr) <span class="kw">if </span>local_ips.contains(<span class="kw-2">&amp;</span>addr.ip()) =&gt; {
-                                    <span class="kw">let </span>data = ping_tracker.new_ping();
-                                    send_state = send_state.send(SendMessage::Ping(data))<span class="question-mark">?</span>;
+                                    <span class="kw">let </span>data = state.ping_tracker.new_ping();
+                                    <span class="kw">let </span>fut = client_sink.send(SendMessage::Ping(data));
+                                    <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream).<span class="kw">await</span><span class="question-mark">?</span>;
                                 }
                                 <span class="prelude-val">Some</span>(<span class="kw">_</span>) =&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Local IP no longer valid"</span>)),
                                 <span class="prelude-val">None </span>=&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No local addr, reconnecting"</span>)),
@@ -1897,23 +1856,35 @@
                         }
                     }
                 }
-                item = <span class="self">self</span>.relay_datagrams_send.recv(), <span class="kw">if </span>send_state.is_ready() =&gt; {
-                    <span class="comment">// TODO: Read in bulk using recv_many, send in bulk.
-                    </span><span class="kw">let </span><span class="prelude-val">Some</span>(datagrams) = item <span class="kw">else </span>{
+                count = <span class="self">self</span>.relay_datagrams_send.recv_many(
+                    <span class="kw-2">&amp;mut </span>send_datagrams_buf,
+                    SEND_DATAGRAM_BATCH_SIZE,
+                ) =&gt; {
+                    <span class="kw">if </span>count == <span class="number">0 </span>{
                         <span class="macro">warn!</span>(<span class="string">"Datagram inbox closed, shutdown"</span>);
                         <span class="kw">break </span><span class="prelude-val">Ok</span>(());
                     };
-                    inactive_timeout.reset();
-                    <span class="kw">let </span>packet_iter = PacketizeIter::&lt;<span class="kw">_</span>, MAX_PAYLOAD_SIZE&gt;::new(
-                        datagrams.remote_node,
-                        datagrams.datagrams,
-                    )
+                    state.inactive_timeout.reset();
+                    <span class="comment">// TODO: This allocation is *very* unfortunate.  But so is the
+                    // allocation *inside* of PacketizeIter...
+                    </span><span class="kw">let </span>dgrams = std::mem::replace(
+                        <span class="kw-2">&amp;mut </span>send_datagrams_buf,
+                        Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE),
+                    );
+                    <span class="kw">let </span>packet_iter = dgrams.into_iter().flat_map(|datagrams| {
+                        PacketizeIter::&lt;<span class="kw">_</span>, MAX_PAYLOAD_SIZE&gt;::new(
+                            datagrams.remote_node,
+                            datagrams.datagrams.clone(),
+                        )
                         .map(|p| {
                             <span class="macro">inc_by!</span>(MagicsockMetrics, send_relay, p.payload.len() <span class="kw">as _</span>);
                             SendMessage::SendPacket(p.node_id, p.payload)
                         })
-                        .map(<span class="prelude-val">Ok</span>);
-                    send_state = send_state.send_all(packet_iter)<span class="question-mark">?</span>;
+                        .map(<span class="prelude-val">Ok</span>)
+                    });
+                    <span class="kw">let </span><span class="kw-2">mut </span>packet_stream = futures_util::stream::iter(packet_iter);
+                    <span class="kw">let </span>fut = client_sink.send_all(<span class="kw-2">&amp;mut </span>packet_stream);
+                    <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
                 msg = client_stream.next() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
@@ -1921,15 +1892,18 @@
                     };
                     <span class="kw">match </span>msg {
                         <span class="prelude-val">Ok</span>(msg) =&gt; {
-                            <span class="kw">if let </span><span class="prelude-val">Some</span>(pong_msg) =
-                                <span class="self">self</span>.handle_relay_msg(msg, <span class="kw-2">&amp;mut </span>ping_tracker, <span class="kw-2">&amp;mut </span>nodes_present) {
-                                pending_pong = <span class="prelude-val">Some</span>(pong_msg);
+                            <span class="kw">if let </span><span class="prelude-val">Some</span>(pong_msg) = <span class="self">self</span>.handle_relay_msg(
+                                msg,
+                                <span class="kw-2">&amp;mut </span>state.ping_tracker,
+                                <span class="kw-2">&amp;mut </span>state.nodes_present,
+                            ) {
+                                state.pong_pending = <span class="prelude-val">Some</span>(pong_msg);
                             }
                         }
                         <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream read error: {err:#}"</span>)),
                     }
                 }
-                <span class="kw">_ </span>= inactive_timeout.tick(), <span class="kw">if </span>!<span class="self">self</span>.is_home_relay =&gt; {
+                <span class="kw">_ </span>= state.inactive_timeout.tick(), <span class="kw">if </span>!<span class="self">self</span>.is_home_relay =&gt; {
                     <span class="macro">debug!</span>(<span class="string">"Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting."</span>);
                     <span class="kw">break </span><span class="prelude-val">Ok</span>(());
                 }
@@ -1985,6 +1959,80 @@
         }
         <span class="prelude-val">None
     </span>}
+
+    <span class="doccomment">/// Run the actor main loop while sending to the relay server.
+    ///
+    /// While sending the actor should not read any inboxes which will give it more things
+    /// to send to the relay server.
+    ///
+    /// # Returns
+    ///
+    /// On `Err` the relay connection should be disconnected.  An `Ok` return means either
+    /// the actor should shut down, consult the [`CancellationToken`] for this, or the send
+    /// was successful.
+    </span><span class="kw">async fn </span>run_sending&lt;T, E: Into&lt;anyhow::Error&gt;&gt;(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        sending_fut: <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;T, E&gt;&gt;,
+        state: <span class="kw-2">&amp;mut </span>ConnectedRelayState&lt;<span class="lifetime">'_</span>&gt;,
+        client_stream: <span class="kw-2">&amp;mut </span>iroh_relay::client::ClientStream,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>sending_fut = <span class="macro">pin!</span>(sending_fut);
+        <span class="kw">loop </span>{
+            <span class="macro">tokio::select!</span> {
+                biased;
+                <span class="kw">_ </span>= state.stop_token.cancelled() =&gt; {
+                    <span class="kw">break </span><span class="prelude-val">Ok</span>(());
+                }
+                res = <span class="kw-2">&amp;mut </span>sending_fut =&gt; {
+                    <span class="kw">match </span>res {
+                        <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="kw">break </span><span class="prelude-val">Ok</span>(()),
+                        <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(err.into()),
+                    }
+                }
+                <span class="kw">_ </span>= state.ping_tracker.timeout() =&gt; {
+                    <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Ping timeout"</span>));
+                }
+                <span class="comment">// No need to read the inbox or datagrams to send.
+                </span>msg = client_stream.next() =&gt; {
+                    <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
+                        <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream finished"</span>));
+                    };
+                    <span class="kw">match </span>msg {
+                        <span class="prelude-val">Ok</span>(msg) =&gt; {
+                            <span class="kw">if let </span><span class="prelude-val">Some</span>(pong_msg) = <span class="self">self</span>.handle_relay_msg(
+                                msg, <span class="kw-2">&amp;mut </span>state.ping_tracker, <span class="kw-2">&amp;mut </span>state.nodes_present) {
+                                    state.pong_pending = <span class="prelude-val">Some</span>(pong_msg);
+                                }
+                        }
+                        <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream read error: {err:#}"</span>)),
+                    }
+                }
+                <span class="kw">_ </span>= state.inactive_timeout.tick(), <span class="kw">if </span>!<span class="self">self</span>.is_home_relay =&gt; {
+                    <span class="comment">// TODO: this shutdown will not propagate
+                    </span><span class="macro">debug!</span>(<span class="string">"Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting."</span>);
+                    <span class="kw">break </span><span class="prelude-val">Ok</span>(());
+                }
+            }
+        }
+    }
+}
+
+<span class="doccomment">/// Shared state when the [`ActiveRelayActor`] is connected to a relay server.
+///
+/// Common state between [`ActiveRelayActor::run_connected`] and
+/// [`ActiveRelayActor::run_sending`].
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">struct </span>ConnectedRelayState&lt;<span class="lifetime">'a</span>&gt; {
+    <span class="doccomment">/// Token indicating the [`ActiveRelayActor`] should stop.
+    </span>stop_token: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>CancellationToken,
+    <span class="doccomment">/// If this expires the actor has been inactive too long and should stop.
+    </span>inactive_timeout: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>tokio::time::Interval, <span class="comment">// TODO: Make it a Sleep again?
+    </span><span class="doccomment">/// Tracks pings we have sent, awaits pong replies.
+    </span>ping_tracker: PingTracker,
+    <span class="doccomment">/// Nodes which are reachable via this relay server.
+    </span>nodes_present: BTreeSet&lt;NodeId&gt;,
+    <span class="doccomment">/// A pong we need to send ASAP.
+    </span>pong_pending: <span class="prelude-ty">Option</span>&lt;[u8; <span class="number">8</span>]&gt;,
 }
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>RelayActorMessage {
