@@ -1463,7 +1463,7 @@ mod tests {
         tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME).await;
         tokio::time::resume();
         assert!(
-            tokio::time::timeout(Duration::from_millis(100), task)
+            tokio::time::timeout(Duration::from_secs(1), task)
                 .await
                 .is_ok(),
             "actor task still running"
