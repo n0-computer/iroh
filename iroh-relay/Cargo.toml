@@ -97,6 +97,7 @@ webpki = { package = "rustls-webpki", version = "0.102" }
 webpki-roots = "0.26"
 data-encoding = "2.6.0"
 lru = "0.12"
+fnv = "1.0.7"
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }

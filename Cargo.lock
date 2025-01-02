@@ -2344,6 +2344,7 @@ dependencies = [
  "crypto_box",
  "data-encoding",
  "derive_more",
+ "fnv",
  "futures-buffered",
  "futures-lite 2.5.0",
  "futures-sink",

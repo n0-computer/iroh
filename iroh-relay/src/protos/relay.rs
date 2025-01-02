@@ -12,7 +12,7 @@
 //!  * clients sends `FrameType::SendPacket`
 //!  * server then sends `FrameType::RecvPacket` to recipient
 
-use std::time::Duration;
+use std::{hash::Hasher, time::Duration};
 
 use anyhow::{bail, ensure};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
@@ -495,12 +495,18 @@ impl Frame {
 
 const HEADER_LEN: usize = 5;
 
+fn fp(data: &[u8]) -> String {
+    let mut fnv = fnv::FnvHasher::with_key(0);
+    fnv.write(data);
+    let res = fnv.finish() & 0xffffff;
+    format!("{:06x}", res)
+}
+
 impl Decoder for DerpCodec {
     type Item = Frame;
     type Error = anyhow::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        tracing::warn!("decoding frame {}", src.len());
         // Need at least 5 bytes
         if src.len() < HEADER_LEN {
             return Ok(None);
@@ -535,8 +541,28 @@ impl Decoder for DerpCodec {
 
         let content = src.split_to(frame_len).freeze();
         let frame = Frame::from_bytes(frame_type, content, &self.cache)?;
+        if let Frame::RecvPacket { content  , .. } = &frame {
+            let fp = fp(&content);
+            tracing::error!("< decoded frame {} {}", frame_len, fp);
+        } else {
+            tracing::error!("< decoded frame {} {:?}", frame_len, frame.typ());
+        }
 
         Ok(Some(frame))
+    }
+
+    fn decode_eof(&mut self, buf: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        tracing::error!("decoding eof frame {}", buf.len());
+        match self.decode(buf)? {
+            Some(frame) => Ok(Some(frame)),
+            None => {
+                if buf.is_empty() {
+                    Ok(None)
+                } else {
+                    Err(std::io::Error::new(std::io::ErrorKind::Other, "bytes remaining on stream").into())
+                }
+            }
+        }
     }
 }
 
@@ -558,7 +584,12 @@ impl Encoder<Frame> for DerpCodec {
         dst.put_u8(frame.typ().into());
         dst.put_u32(frame_len_u32);
         frame.write_to(dst);
-
+        if let Frame::SendPacket { packet, .. } = &frame {
+            let fp = fp(&packet);
+            tracing::error!("> encoded frame {} {}", frame_len, fp);
+        } else {
+            tracing::error!("> encoded frame {} {:?}", frame_len, frame.typ());
+        }
         Ok(())
     }
 }
