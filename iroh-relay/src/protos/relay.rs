@@ -98,7 +98,7 @@ pub(crate) enum FrameType {
     /// Sent from server to client to tell the client if their connection is
     /// unhealthy somehow.
     ///
-    /// Currently this is used to indicate that the connection was closed beacause of authentication issues.
+    /// Currently this is used to indicate that the connection was closed because of authentication issues.
     Health = 14,
 
     /// Sent from server to client for the server to declare that it's restarting.
