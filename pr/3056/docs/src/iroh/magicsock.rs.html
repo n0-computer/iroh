@@ -4074,7 +4074,66 @@
 <a href="#4073" id="4073">4073</a>
 <a href="#4074" id="4074">4074</a>
 <a href="#4075" id="4075">4075</a>
-<a href="#4076" id="4076">4076</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4076" id="4076">4076</a>
+<a href="#4077" id="4077">4077</a>
+<a href="#4078" id="4078">4078</a>
+<a href="#4079" id="4079">4079</a>
+<a href="#4080" id="4080">4080</a>
+<a href="#4081" id="4081">4081</a>
+<a href="#4082" id="4082">4082</a>
+<a href="#4083" id="4083">4083</a>
+<a href="#4084" id="4084">4084</a>
+<a href="#4085" id="4085">4085</a>
+<a href="#4086" id="4086">4086</a>
+<a href="#4087" id="4087">4087</a>
+<a href="#4088" id="4088">4088</a>
+<a href="#4089" id="4089">4089</a>
+<a href="#4090" id="4090">4090</a>
+<a href="#4091" id="4091">4091</a>
+<a href="#4092" id="4092">4092</a>
+<a href="#4093" id="4093">4093</a>
+<a href="#4094" id="4094">4094</a>
+<a href="#4095" id="4095">4095</a>
+<a href="#4096" id="4096">4096</a>
+<a href="#4097" id="4097">4097</a>
+<a href="#4098" id="4098">4098</a>
+<a href="#4099" id="4099">4099</a>
+<a href="#4100" id="4100">4100</a>
+<a href="#4101" id="4101">4101</a>
+<a href="#4102" id="4102">4102</a>
+<a href="#4103" id="4103">4103</a>
+<a href="#4104" id="4104">4104</a>
+<a href="#4105" id="4105">4105</a>
+<a href="#4106" id="4106">4106</a>
+<a href="#4107" id="4107">4107</a>
+<a href="#4108" id="4108">4108</a>
+<a href="#4109" id="4109">4109</a>
+<a href="#4110" id="4110">4110</a>
+<a href="#4111" id="4111">4111</a>
+<a href="#4112" id="4112">4112</a>
+<a href="#4113" id="4113">4113</a>
+<a href="#4114" id="4114">4114</a>
+<a href="#4115" id="4115">4115</a>
+<a href="#4116" id="4116">4116</a>
+<a href="#4117" id="4117">4117</a>
+<a href="#4118" id="4118">4118</a>
+<a href="#4119" id="4119">4119</a>
+<a href="#4120" id="4120">4120</a>
+<a href="#4121" id="4121">4121</a>
+<a href="#4122" id="4122">4122</a>
+<a href="#4123" id="4123">4123</a>
+<a href="#4124" id="4124">4124</a>
+<a href="#4125" id="4125">4125</a>
+<a href="#4126" id="4126">4126</a>
+<a href="#4127" id="4127">4127</a>
+<a href="#4128" id="4128">4128</a>
+<a href="#4129" id="4129">4129</a>
+<a href="#4130" id="4130">4130</a>
+<a href="#4131" id="4131">4131</a>
+<a href="#4132" id="4132">4132</a>
+<a href="#4133" id="4133">4133</a>
+<a href="#4134" id="4134">4134</a>
+<a href="#4135" id="4135">4135</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4447,7 +4506,7 @@
                 pruned += <span class="number">1</span>;
             }
         }
-        <span class="kw">if </span>!addr.direct_addresses.is_empty() || addr.relay_url.is_some() {
+        <span class="kw">if </span>!addr.is_empty() {
             <span class="self">self</span>.node_map.add_node_addr(addr, source);
             <span class="prelude-val">Ok</span>(())
         } <span class="kw">else if </span>pruned != <span class="number">0 </span>{
@@ -8148,6 +8207,65 @@
         }
 
         tasks.join_all().<span class="kw">await</span>;
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_add_node_addr() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">let </span>stack = MagicStack::new(RelayMode::Default).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand::thread_rng();
+
+        <span class="macro">assert_eq!</span>(stack.endpoint.magic_sock().node_map.node_count(), <span class="number">0</span>);
+
+        <span class="comment">// Empty
+        </span><span class="kw">let </span>empty_addr = NodeAddr {
+            node_id: SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public(),
+            relay_url: <span class="prelude-val">None</span>,
+            direct_addresses: Default::default(),
+        };
+        <span class="kw">let </span>err = stack
+            .endpoint
+            .magic_sock()
+            .add_node_addr(empty_addr, node_map::Source::App)
+            .unwrap_err();
+        <span class="macro">assert!</span>(err.to_string().contains(<span class="string">"empty addressing info"</span>));
+
+        <span class="comment">// relay url only
+        </span><span class="kw">let </span>addr = NodeAddr {
+            node_id: SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public(),
+            relay_url: <span class="prelude-val">Some</span>(<span class="string">"http://my-relay.com"</span>.parse()<span class="question-mark">?</span>),
+            direct_addresses: Default::default(),
+        };
+        stack
+            .endpoint
+            .magic_sock()
+            .add_node_addr(addr, node_map::Source::App)<span class="question-mark">?</span>;
+        <span class="macro">assert_eq!</span>(stack.endpoint.magic_sock().node_map.node_count(), <span class="number">1</span>);
+
+        <span class="comment">// addrs only
+        </span><span class="kw">let </span>addr = NodeAddr {
+            node_id: SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public(),
+            relay_url: <span class="prelude-val">None</span>,
+            direct_addresses: [<span class="string">"127.0.0.1:1234"</span>.parse()<span class="question-mark">?</span>].into_iter().collect(),
+        };
+        stack
+            .endpoint
+            .magic_sock()
+            .add_node_addr(addr, node_map::Source::App)<span class="question-mark">?</span>;
+        <span class="macro">assert_eq!</span>(stack.endpoint.magic_sock().node_map.node_count(), <span class="number">2</span>);
+
+        <span class="comment">// both
+        </span><span class="kw">let </span>addr = NodeAddr {
+            node_id: SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public(),
+            relay_url: <span class="prelude-val">Some</span>(<span class="string">"http://my-relay.com"</span>.parse()<span class="question-mark">?</span>),
+            direct_addresses: [<span class="string">"127.0.0.1:1234"</span>.parse()<span class="question-mark">?</span>].into_iter().collect(),
+        };
+        stack
+            .endpoint
+            .magic_sock()
+            .add_node_addr(addr, node_map::Source::App)<span class="question-mark">?</span>;
+        <span class="macro">assert_eq!</span>(stack.endpoint.magic_sock().node_map.node_count(), <span class="number">3</span>);
+
+        <span class="prelude-val">Ok</span>(())
     }
 }
 </code></pre></div></section></main></body></html>

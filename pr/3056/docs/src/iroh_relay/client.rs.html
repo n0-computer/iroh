@@ -1214,9 +1214,9 @@
     time::Duration,
 };
 
-<span class="kw">use </span>base64::{engine::general_purpose::URL_SAFE, Engine <span class="kw">as _</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>conn::{Conn, ConnBuilder, ConnReader, ConnReceiver, ConnWriter, ReceivedMessage};
+<span class="kw">use </span>data_encoding::BASE64URL;
 <span class="kw">use </span>futures_util::StreamExt;
 <span class="kw">use </span>hickory_resolver::TokioResolver <span class="kw">as </span>DnsResolver;
 <span class="kw">use </span>http_body_util::Empty;
@@ -2151,7 +2151,7 @@
                 proxy_url.username(),
                 proxy_url.password().unwrap_or_default()
             );
-            <span class="kw">let </span>encoded = URL_SAFE.encode(to_encode);
+            <span class="kw">let </span>encoded = BASE64URL.encode(to_encode.as_bytes());
             req_builder = req_builder.header(<span class="string">"Proxy-Authorization"</span>, <span class="macro">format!</span>(<span class="string">"Basic {}"</span>, encoded));
         }
         <span class="kw">let </span>req = req_builder.body(Empty::&lt;Bytes&gt;::new())<span class="question-mark">?</span>;
