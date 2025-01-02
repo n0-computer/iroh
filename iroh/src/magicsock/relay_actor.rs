@@ -104,12 +104,17 @@ const UNDELIVERABLE_DATAGRAM_TIMEOUT: Duration = Duration::from_millis(400);
 /// All these are driven from the top-level [`ActiveRelayActor::run`] loop.
 #[derive(Debug)]
 struct ActiveRelayActor {
-    // TODO: move to run arg
+    // The inboxes and channels this actor communicates over.
+    /// Inbox for messages which should be handled without any blocking.
+    fast_inbox: mpsc::Receiver<ActiveRelayFastMessage>,
+    /// Inbox for messages which involve sending to the relay server.
+    inbox: mpsc::Receiver<ActiveRelayMessage>,
     /// Queue to send received relay datagrams on.
     relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
-    // TODO: move to run arg
     /// Channel on which we receive packets to send to the relay.
     relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
+
+    // Other actor state.
     /// The relay server for this actor.
     url: RelayUrl,
     /// Builder which can repeatedly build a relay client.
@@ -161,6 +166,8 @@ enum ActiveRelayFastMessage {
 #[derive(Debug)]
 struct ActiveRelayActorOptions {
     url: RelayUrl,
+    fast_inbox: mpsc::Receiver<ActiveRelayFastMessage>,
+    inbox: mpsc::Receiver<ActiveRelayMessage>,
     relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
     relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
     connection_opts: RelayConnectionOptions,
@@ -182,6 +189,8 @@ impl ActiveRelayActor {
     fn new(opts: ActiveRelayActorOptions) -> Self {
         let ActiveRelayActorOptions {
             url,
+            fast_inbox,
+            inbox,
             relay_datagrams_send,
             relay_datagrams_recv,
             connection_opts,
@@ -189,6 +198,8 @@ impl ActiveRelayActor {
         } = opts;
         let relay_client_builder = Self::create_relay_builder(url.clone(), connection_opts);
         ActiveRelayActor {
+            fast_inbox,
+            inbox,
             relay_datagrams_recv,
             relay_datagrams_send,
             url,
@@ -224,23 +235,15 @@ impl ActiveRelayActor {
     /// The main actor run loop.
     ///
     /// Primarily switches between the dialing and connected states.
-    async fn run(
-        mut self,
-        mut fast_inbox: mpsc::Receiver<ActiveRelayFastMessage>,
-        mut inbox: mpsc::Receiver<ActiveRelayMessage>,
-    ) -> anyhow::Result<()> {
+    async fn run(mut self) -> anyhow::Result<()> {
         inc!(MagicsockMetrics, num_relay_conns_added);
 
         loop {
-            let Some(client) = self
-                .run_dialing(&mut fast_inbox, &mut inbox)
-                .instrument(info_span!("dialing"))
-                .await
-            else {
+            let Some(client) = self.run_dialing().instrument(info_span!("dialing")).await else {
                 break;
             };
             match self
-                .run_connected(&mut fast_inbox, &mut inbox, client)
+                .run_connected(client)
                 .instrument(info_span!("connected"))
                 .await
             {
@@ -266,11 +269,7 @@ impl ActiveRelayActor {
     ///
     /// Returns `None` if the actor needs to shut down.  Returns `Some(client)` when the
     /// connection is established.
-    async fn run_dialing(
-        &mut self,
-        fast_inbox: &mut mpsc::Receiver<ActiveRelayFastMessage>,
-        inbox: &mut mpsc::Receiver<ActiveRelayMessage>,
-    ) -> Option<iroh_relay::client::Client> {
+    async fn run_dialing(&mut self) -> Option<iroh_relay::client::Client> {
         debug!("Actor loop: connecting to relay.");
 
         // We regularly flush the relay_datagrams_send queue so it is not full of stale
@@ -291,7 +290,7 @@ impl ActiveRelayActor {
                     debug!("Shutdown.");
                     break None;
                 }
-                msg = fast_inbox.recv() => {
+                msg = self.fast_inbox.recv() => {
                     let Some(msg) = msg else {
                         warn!("Fast inbox closed, shutdown.");
                         break None;
@@ -313,7 +312,7 @@ impl ActiveRelayActor {
                         }
                     }
                 }
-                msg = inbox.recv() => {
+                msg = self.inbox.recv() => {
                     let Some(msg) = msg else {
                         debug!("Inbox closed, shutdown.");
                         break None;
@@ -384,12 +383,7 @@ impl ActiveRelayActor {
     ///
     /// Returns `Ok` if the actor needs to shut down.  `Err` is returned if the connection
     /// to the relay server is lost.
-    async fn run_connected(
-        &mut self,
-        fast_inbox: &mut mpsc::Receiver<ActiveRelayFastMessage>,
-        inbox: &mut mpsc::Receiver<ActiveRelayMessage>,
-        client: iroh_relay::client::Client,
-    ) -> Result<()> {
+    async fn run_connected(&mut self, client: iroh_relay::client::Client) -> Result<()> {
         debug!("Actor loop: connected to relay");
 
         let (mut client_stream, mut client_sink) = client.split();
@@ -404,14 +398,14 @@ impl ActiveRelayActor {
 
         if self.is_home_relay {
             let fut = client_sink.send(SendMessage::NotePreferred(true));
-            self.run_sending(fast_inbox, fut, &mut state, &mut client_stream)
+            self.run_sending(fut, &mut state, &mut client_stream)
                 .await?;
         }
 
         loop {
             if let Some(data) = state.pong_pending.take() {
                 let fut = client_sink.send(SendMessage::Pong(data));
-                self.run_sending(fast_inbox, fut, &mut state, &mut client_stream)
+                self.run_sending(fut, &mut state, &mut client_stream)
                     .await?;
             }
             tokio::select! {
@@ -420,7 +414,7 @@ impl ActiveRelayActor {
                     debug!("Shutdown.");
                     break Ok(());
                 }
-                msg = fast_inbox.recv() => {
+                msg = self.fast_inbox.recv() => {
                     let Some(msg) = msg else {
                         warn!("Fast inbox closed, shutdown.");
                         break Ok(());
@@ -435,7 +429,7 @@ impl ActiveRelayActor {
                 _ = state.ping_tracker.timeout() => {
                     break Err(anyhow!("Ping timeout"));
                 }
-                msg = inbox.recv() => {
+                msg = self.inbox.recv() => {
                     let Some(msg) = msg else {
                         warn!("Inbox closed, shutdown.");
                         break Ok(());
@@ -443,24 +437,14 @@ impl ActiveRelayActor {
                     match msg {
                         ActiveRelayMessage::SetHomeRelay(is_preferred) => {
                             let fut = client_sink.send(SendMessage::NotePreferred(is_preferred));
-                            self.run_sending(
-                                fast_inbox,
-                                fut,
-                                &mut state,
-                                &mut client_stream,
-                            ).await?;
+                            self.run_sending(fut, &mut state, &mut client_stream).await?;
                         }
                         ActiveRelayMessage::CheckConnection(local_ips) => {
                             match client_stream.local_addr() {
                                 Some(addr) if local_ips.contains(&addr.ip()) => {
                                     let data = state.ping_tracker.new_ping();
                                     let fut = client_sink.send(SendMessage::Ping(data));
-                                    self.run_sending(
-                                        fast_inbox,
-                                        fut,
-                                        &mut state,
-                                        &mut client_stream,
-                                    ).await?;
+                                    self.run_sending(fut, &mut state, &mut client_stream).await?;
                                 }
                                 Some(_) => break Err(anyhow!("Local IP no longer valid")),
                                 None => break Err(anyhow!("No local addr, reconnecting")),
@@ -501,7 +485,7 @@ impl ActiveRelayActor {
                     });
                     let mut packet_stream = futures_util::stream::iter(packet_iter);
                     let fut = client_sink.send_all(&mut packet_stream);
-                    self.run_sending(fast_inbox, fut, &mut state, &mut client_stream).await?;
+                    self.run_sending(fut, &mut state, &mut client_stream).await?;
                 }
                 msg = client_stream.next() => {
                     let Some(msg) = msg else {
@@ -572,7 +556,6 @@ impl ActiveRelayActor {
     #[instrument(name = "tx", skip_all)]
     async fn run_sending<T, E: Into<anyhow::Error>>(
         &mut self,
-        fast_inbox: &mut mpsc::Receiver<ActiveRelayFastMessage>,
         sending_fut: impl Future<Output = Result<T, E>>,
         state: &mut ConnectedRelayState,
         client_stream: &mut iroh_relay::client::ClientStream,
@@ -584,7 +567,7 @@ impl ActiveRelayActor {
                 _ = self.stop_token.cancelled() => {
                     break Ok(());
                 }
-                msg = fast_inbox.recv() => {
+                msg = self.fast_inbox.recv() => {
                     let Some(msg) = msg else {
                         warn!("Fast inbox closed, shutdown.");
                         break Ok(());
@@ -891,11 +874,13 @@ impl RelayActor {
 
         // TODO: Replace 64 with PER_CLIENT_SEND_QUEUE_DEPTH once that's unused
         let (send_datagram_tx, send_datagram_rx) = mpsc::channel(64);
-        let (inbox_tx, inbox_rx) = mpsc::channel(64);
         let (fast_inbox_tx, fast_inbox_rx) = mpsc::channel(32);
+        let (inbox_tx, inbox_rx) = mpsc::channel(64);
         let span = info_span!("active-relay", %url);
         let opts = ActiveRelayActorOptions {
             url,
+            fast_inbox: fast_inbox_rx,
+            inbox: inbox_rx,
             relay_datagrams_send: send_datagram_rx,
             relay_datagrams_recv: self.relay_datagram_recv_queue.clone(),
             connection_opts,
@@ -905,7 +890,7 @@ impl RelayActor {
         self.active_relay_tasks.spawn(
             async move {
                 // TODO: Make the actor itself infallible.
-                if let Err(err) = actor.run(fast_inbox_rx, inbox_rx).await {
+                if let Err(err) = actor.run().await {
                     warn!("actor error: {err:#}");
                 }
             }
@@ -1230,6 +1215,8 @@ mod tests {
     ) -> AbortOnDropHandle<anyhow::Result<()>> {
         let opts = ActiveRelayActorOptions {
             url,
+            fast_inbox: fast_inbox_rx,
+            inbox: inbox_rx,
             relay_datagrams_send,
             relay_datagrams_recv,
             connection_opts: RelayConnectionOptions {
@@ -1241,13 +1228,7 @@ mod tests {
             },
             stop_token,
         };
-        let task = tokio::spawn(
-            async move {
-                let actor = ActiveRelayActor::new(opts);
-                actor.run(fast_inbox_rx, inbox_rx).await
-            }
-            .instrument(span),
-        );
+        let task = tokio::spawn(ActiveRelayActor::new(opts).run().instrument(span));
         AbortOnDropHandle::new(task)
     }
 
