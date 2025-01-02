@@ -411,7 +411,7 @@
 /// The [`SendMessage`] and [`ReceivedMessage`] are safer wrappers enforcing some protocol
 /// invariants.
 </span><span class="attr">#[derive(derive_more::Debug)]
-</span><span class="kw">pub enum </span>Conn {
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>Conn {
     Relay {
         <span class="attr">#[debug(<span class="string">"Framed&lt;MaybeTlsStreamChained, RelayCodec&gt;"</span>)]
         </span>conn: Framed&lt;MaybeTlsStreamChained, RelayCodec&gt;,
