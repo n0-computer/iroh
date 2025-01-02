@@ -1470,7 +1470,8 @@ mod tests {
                 inbox_tx.send(ActiveRelayMessage::PingServer(tx)).await.ok();
                 if tokio::time::timeout(Duration::from_millis(200), rx)
                     .await
-                    .is_ok()
+                    .map(|resp| resp.is_ok())
+                    .unwrap_or_default()
                 {
                     break;
                 }
