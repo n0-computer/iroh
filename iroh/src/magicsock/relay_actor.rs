@@ -108,10 +108,15 @@ struct ActiveRelayActor {
     relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
     /// Channel on which we receive packets to send to the relay.
     relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
+    /// The relay server for this actor.
     url: RelayUrl,
+    /// Builder which can repeatedly build a relay client.
     relay_client_builder: relay::client::ClientBuilder,
+    /// Whether or not this is the home relay server.
+    ///
+    /// The home relay server needs to maintain it's connection to the relay server, even if
+    /// the relay actor is otherwise idle.
     is_home_relay: bool,
-    last_packet_src: Option<NodeId>,
     /// Token indicating the [`ActiveRelayActor`] should stop.
     stop_token: CancellationToken,
 }
@@ -171,7 +176,6 @@ impl ActiveRelayActor {
             relay_datagrams_recv,
             relay_datagrams_send,
             url,
-            last_packet_src: None,
             relay_client_builder,
             is_home_relay: false,
             stop_token,
@@ -366,6 +370,7 @@ impl ActiveRelayActor {
             inactive_timeout,
             ping_tracker: PingTracker::new(),
             nodes_present: BTreeSet::new(),
+            last_packet_src: None,
             pong_pending: None,
         };
         let mut send_datagrams_buf = Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE);
@@ -458,15 +463,7 @@ impl ActiveRelayActor {
                         break Err(anyhow!("Client stream finished"));
                     };
                     match msg {
-                        Ok(msg) => {
-                            if let Some(pong_msg) = self.handle_relay_msg(
-                                msg,
-                                &mut state.ping_tracker,
-                                &mut state.nodes_present,
-                            ) {
-                                state.pong_pending = Some(pong_msg);
-                            }
-                        }
+                        Ok(msg) => self.handle_relay_msg(msg, &mut state),
                         Err(err) => break Err(anyhow!("Client stream read error: {err:#}")),
                     }
                 }
@@ -478,12 +475,7 @@ impl ActiveRelayActor {
         }
     }
 
-    fn handle_relay_msg(
-        &mut self,
-        msg: ReceivedMessage,
-        ping_tracker: &mut PingTracker,
-        nodes_present: &mut BTreeSet<NodeId>,
-    ) -> Option<[u8; 8]> {
+    fn handle_relay_msg(&mut self, msg: ReceivedMessage, state: &mut ConnectedRelayState) {
         match msg {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
@@ -491,15 +483,15 @@ impl ActiveRelayActor {
             } => {
                 trace!(len = %data.len(), "received msg");
                 // If this is a new sender, register a route for this peer.
-                if self
+                if state
                     .last_packet_src
                     .as_ref()
                     .map(|p| *p != remote_node_id)
                     .unwrap_or(true)
                 {
                     // Avoid map lookup with high throughput single peer.
-                    self.last_packet_src = Some(remote_node_id);
-                    nodes_present.insert(remote_node_id);
+                    state.last_packet_src = Some(remote_node_id);
+                    state.nodes_present.insert(remote_node_id);
                 }
                 for datagram in PacketSplitIter::new(self.url.clone(), remote_node_id, data) {
                     let Ok(datagram) = datagram else {
@@ -512,19 +504,14 @@ impl ActiveRelayActor {
                 }
             }
             ReceivedMessage::NodeGone(node_id) => {
-                nodes_present.remove(&node_id);
+                state.nodes_present.remove(&node_id);
             }
-            ReceivedMessage::Ping(data) => return Some(data),
-            ReceivedMessage::Pong(data) => {
-                ping_tracker.pong_received(data);
-            }
+            ReceivedMessage::Ping(data) => state.pong_pending = Some(data),
+            ReceivedMessage::Pong(data) => state.ping_tracker.pong_received(data),
             ReceivedMessage::KeepAlive
             | ReceivedMessage::Health { .. }
-            | ReceivedMessage::ServerRestarting { .. } => {
-                trace!("Ignoring {msg:?}");
-            }
+            | ReceivedMessage::ServerRestarting { .. } => trace!("Ignoring {msg:?}"),
         }
-        None
     }
 
     /// Run the actor main loop while sending to the relay server.
@@ -565,12 +552,7 @@ impl ActiveRelayActor {
                         break Err(anyhow!("Client stream finished"));
                     };
                     match msg {
-                        Ok(msg) => {
-                            if let Some(pong_msg) = self.handle_relay_msg(
-                                msg, &mut state.ping_tracker, &mut state.nodes_present) {
-                                    state.pong_pending = Some(pong_msg);
-                                }
-                        }
+                        Ok(msg) => self.handle_relay_msg(msg, state),
                         Err(err) => break Err(anyhow!("Client stream read error: {err:#}")),
                     }
                 }
@@ -596,6 +578,11 @@ struct ConnectedRelayState<'a> {
     ping_tracker: PingTracker,
     /// Nodes which are reachable via this relay server.
     nodes_present: BTreeSet<NodeId>,
+    /// The [`NodeId`] from whom we received the last packet.
+    ///
+    /// This is to avoid a slower lookup in the [`ConnectedRelayState::nodes_present`] map
+    /// when we are only communicating to a single remote node.
+    last_packet_src: Option<NodeId>,
     /// A pong we need to send ASAP.
     pong_pending: Option<[u8; 8]>,
 }
