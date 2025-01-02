@@ -172,13 +172,15 @@ struct Config {
     /// The capacity of the key cache.
     key_cache_capacity: Option<usize>,
     /// Access control
+    #[serde(default)]
     access: AccessConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 enum AccessConfig {
     /// Allows everyone
     #[serde(rename = "everyone")]
+    #[default]
     Everyone,
     /// Allows only these nodes.
     #[serde(rename = "allowlist")]
