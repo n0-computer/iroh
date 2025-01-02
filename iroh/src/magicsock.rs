@@ -364,7 +364,7 @@ impl MagicSock {
                 pruned += 1;
             }
         }
-        if !addr.direct_addresses.is_empty() || addr.relay_url.is_some() {
+        if !addr.is_empty() {
             self.node_map.add_node_addr(addr, source);
             Ok(())
         } else if pruned != 0 {
@@ -4064,5 +4064,64 @@ mod tests {
         }
 
         tasks.join_all().await;
+    }
+
+    #[tokio::test]
+    async fn test_add_node_addr() -> Result<()> {
+        let stack = MagicStack::new(RelayMode::Default).await?;
+        let mut rng = rand::thread_rng();
+
+        assert_eq!(stack.endpoint.magic_sock().node_map.node_count(), 0);
+
+        // Empty
+        let empty_addr = NodeAddr {
+            node_id: SecretKey::generate(&mut rng).public(),
+            relay_url: None,
+            direct_addresses: Default::default(),
+        };
+        let err = stack
+            .endpoint
+            .magic_sock()
+            .add_node_addr(empty_addr, node_map::Source::App)
+            .unwrap_err();
+        assert!(err.to_string().contains("empty addressing info"));
+
+        // relay url only
+        let addr = NodeAddr {
+            node_id: SecretKey::generate(&mut rng).public(),
+            relay_url: Some("http://my-relay.com".parse()?),
+            direct_addresses: Default::default(),
+        };
+        stack
+            .endpoint
+            .magic_sock()
+            .add_node_addr(addr, node_map::Source::App)?;
+        assert_eq!(stack.endpoint.magic_sock().node_map.node_count(), 1);
+
+        // addrs only
+        let addr = NodeAddr {
+            node_id: SecretKey::generate(&mut rng).public(),
+            relay_url: None,
+            direct_addresses: ["127.0.0.1:1234".parse()?].into_iter().collect(),
+        };
+        stack
+            .endpoint
+            .magic_sock()
+            .add_node_addr(addr, node_map::Source::App)?;
+        assert_eq!(stack.endpoint.magic_sock().node_map.node_count(), 2);
+
+        // both
+        let addr = NodeAddr {
+            node_id: SecretKey::generate(&mut rng).public(),
+            relay_url: Some("http://my-relay.com".parse()?),
+            direct_addresses: ["127.0.0.1:1234".parse()?].into_iter().collect(),
+        };
+        stack
+            .endpoint
+            .magic_sock()
+            .add_node_addr(addr, node_map::Source::App)?;
+        assert_eq!(stack.endpoint.magic_sock().node_map.node_count(), 3);
+
+        Ok(())
     }
 }

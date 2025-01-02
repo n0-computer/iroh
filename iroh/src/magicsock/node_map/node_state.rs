@@ -634,17 +634,17 @@ impl NodeState {
 
     pub(super) fn update_from_node_addr(
         &mut self,
-        relay_url: Option<&RelayUrl>,
-        addrs: &BTreeSet<SocketAddr>,
+        new_relay_url: Option<&RelayUrl>,
+        new_addrs: &BTreeSet<SocketAddr>,
         source: super::Source,
     ) {
         if self.udp_paths.best_addr.is_empty() {
             // we do not have a direct connection, so changing the relay information may
             // have an effect on our connection status
-            if self.relay_url.is_none() && relay_url.is_some() {
+            if self.relay_url.is_none() && new_relay_url.is_some() {
                 // we did not have a relay connection before, but now we do
                 inc!(MagicsockMetrics, num_relay_conns_added)
-            } else if self.relay_url.is_some() && relay_url.is_none() {
+            } else if self.relay_url.is_some() && new_relay_url.is_none() {
                 // we had a relay connection before but do not have one now
                 inc!(MagicsockMetrics, num_relay_conns_removed)
             }
@@ -652,12 +652,12 @@ impl NodeState {
 
         let now = Instant::now();
 
-        if relay_url.is_some() && relay_url != self.relay_url().as_ref() {
+        if new_relay_url.is_some() && new_relay_url != self.relay_url().as_ref() {
             debug!(
                 "Changing relay node from {:?} to {:?}",
-                self.relay_url, relay_url
+                self.relay_url, new_relay_url
             );
-            self.relay_url = relay_url.map(|url| {
+            self.relay_url = new_relay_url.map(|url| {
                 (
                     url.clone(),
                     PathState::new(self.node_id, url.clone().into(), source.clone(), now),
@@ -665,7 +665,7 @@ impl NodeState {
             });
         }
 
-        for &addr in addrs.iter() {
+        for &addr in new_addrs.iter() {
             self.udp_paths
                 .paths
                 .entry(addr.into())
@@ -677,7 +677,7 @@ impl NodeState {
                 });
         }
         let paths = summarize_node_paths(&self.udp_paths.paths);
-        debug!(new = ?addrs , %paths, "added new direct paths for endpoint");
+        debug!(new = ?new_addrs , %paths, "added new direct paths for endpoint");
     }
 
     /// Clears all the endpoint's p2p state, reverting it to a relay-only endpoint.
