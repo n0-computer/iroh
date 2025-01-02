@@ -12,6 +12,7 @@
 //!  * clients sends `FrameType::SendPacket`
 //!  * server then sends `FrameType::RecvPacket` to recipient
 
+#[cfg(feature = "server")]
 use std::time::Duration;
 
 use anyhow::{bail, ensure};
@@ -25,8 +26,7 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::client::conn::ConnSendError;
-use crate::KeyCache;
+use crate::{client::conn::ConnSendError, KeyCache};
 
 /// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
@@ -131,6 +131,7 @@ pub(crate) struct ClientInfo {
 /// Ignores the timeout if `None`
 ///
 /// Does not flush.
+#[cfg(feature = "server")]
 pub(crate) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
     mut writer: S,
     frame: Frame,

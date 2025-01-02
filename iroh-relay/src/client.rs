@@ -35,7 +35,9 @@ use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
 };
-use tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
+#[cfg(any(test, feature = "test-utils"))]
+use tracing::warn;
+use tracing::{debug, error, event, info_span, trace, Instrument, Level};
 use url::Url;
 
 pub use self::conn::{ConnSendError, ReceivedMessage, SendMessage};
