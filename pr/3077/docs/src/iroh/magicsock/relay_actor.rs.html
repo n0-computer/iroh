@@ -1471,7 +1471,54 @@
 <a href="#1470" id="1470">1470</a>
 <a href="#1471" id="1471">1471</a>
 <a href="#1472" id="1472">1472</a>
-<a href="#1473" id="1473">1473</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1473" id="1473">1473</a>
+<a href="#1474" id="1474">1474</a>
+<a href="#1475" id="1475">1475</a>
+<a href="#1476" id="1476">1476</a>
+<a href="#1477" id="1477">1477</a>
+<a href="#1478" id="1478">1478</a>
+<a href="#1479" id="1479">1479</a>
+<a href="#1480" id="1480">1480</a>
+<a href="#1481" id="1481">1481</a>
+<a href="#1482" id="1482">1482</a>
+<a href="#1483" id="1483">1483</a>
+<a href="#1484" id="1484">1484</a>
+<a href="#1485" id="1485">1485</a>
+<a href="#1486" id="1486">1486</a>
+<a href="#1487" id="1487">1487</a>
+<a href="#1488" id="1488">1488</a>
+<a href="#1489" id="1489">1489</a>
+<a href="#1490" id="1490">1490</a>
+<a href="#1491" id="1491">1491</a>
+<a href="#1492" id="1492">1492</a>
+<a href="#1493" id="1493">1493</a>
+<a href="#1494" id="1494">1494</a>
+<a href="#1495" id="1495">1495</a>
+<a href="#1496" id="1496">1496</a>
+<a href="#1497" id="1497">1497</a>
+<a href="#1498" id="1498">1498</a>
+<a href="#1499" id="1499">1499</a>
+<a href="#1500" id="1500">1500</a>
+<a href="#1501" id="1501">1501</a>
+<a href="#1502" id="1502">1502</a>
+<a href="#1503" id="1503">1503</a>
+<a href="#1504" id="1504">1504</a>
+<a href="#1505" id="1505">1505</a>
+<a href="#1506" id="1506">1506</a>
+<a href="#1507" id="1507">1507</a>
+<a href="#1508" id="1508">1508</a>
+<a href="#1509" id="1509">1509</a>
+<a href="#1510" id="1510">1510</a>
+<a href="#1511" id="1511">1511</a>
+<a href="#1512" id="1512">1512</a>
+<a href="#1513" id="1513">1513</a>
+<a href="#1514" id="1514">1514</a>
+<a href="#1515" id="1515">1515</a>
+<a href="#1516" id="1516">1516</a>
+<a href="#1517" id="1517">1517</a>
+<a href="#1518" id="1518">1518</a>
+<a href="#1519" id="1519">1519</a>
+<a href="#1520" id="1520">1520</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1577,11 +1624,18 @@
 /// All these are driven from the top-level [`ActiveRelayActor::run`] loop.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>ActiveRelayActor {
+    <span class="comment">// The inboxes and channels this actor communicates over.
+    </span><span class="doccomment">/// Inbox for messages which should be handled without any blocking.
+    </span>fast_inbox: mpsc::Receiver&lt;ActiveRelayFastMessage&gt;,
+    <span class="doccomment">/// Inbox for messages which involve sending to the relay server.
+    </span>inbox: mpsc::Receiver&lt;ActiveRelayMessage&gt;,
     <span class="doccomment">/// Queue to send received relay datagrams on.
     </span>relay_datagrams_recv: Arc&lt;RelayDatagramRecvQueue&gt;,
     <span class="doccomment">/// Channel on which we receive packets to send to the relay.
     </span>relay_datagrams_send: mpsc::Receiver&lt;RelaySendItem&gt;,
-    <span class="doccomment">/// The relay server for this actor.
+
+    <span class="comment">// Other actor state.
+    </span><span class="doccomment">/// The relay server for this actor.
     </span>url: RelayUrl,
     <span class="doccomment">/// Builder which can repeatedly build a relay client.
     </span>relay_client_builder: relay::client::ClientBuilder,
@@ -1601,10 +1655,7 @@
 }
 
 <span class="attr">#[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
 </span><span class="kw">enum </span>ActiveRelayMessage {
-    <span class="doccomment">/// Returns whether or not this relay can reach the NodeId.
-    </span>HasNodeRoute(NodeId, oneshot::Sender&lt;bool&gt;),
     <span class="doccomment">/// Triggers a connection check to the relay server.
     ///
     /// Sometimes it is known the local network interfaces have changed in which case it
@@ -1620,10 +1671,23 @@
     </span>GetLocalAddr(oneshot::Sender&lt;<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;&gt;),
 }
 
+<span class="doccomment">/// Messages for the [`ActiveRelayActor`] which should never block.
+///
+/// Most messages in the [`ActiveRelayMessage`] enum trigger sending to the relay server,
+/// which can be blocking.  So the actor may not always be processing that inbox.  Messages
+/// here are processed immediately.
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">enum </span>ActiveRelayFastMessage {
+    <span class="doccomment">/// Returns whether or not this relay can reach the NodeId.
+    </span>HasNodeRoute(NodeId, oneshot::Sender&lt;bool&gt;),
+}
+
 <span class="doccomment">/// Configuration needed to start an [`ActiveRelayActor`].
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>ActiveRelayActorOptions {
     url: RelayUrl,
+    fast_inbox: mpsc::Receiver&lt;ActiveRelayFastMessage&gt;,
+    inbox: mpsc::Receiver&lt;ActiveRelayMessage&gt;,
     relay_datagrams_send: mpsc::Receiver&lt;RelaySendItem&gt;,
     relay_datagrams_recv: Arc&lt;RelayDatagramRecvQueue&gt;,
     connection_opts: RelayConnectionOptions,
@@ -1645,6 +1709,8 @@
     <span class="kw">fn </span>new(opts: ActiveRelayActorOptions) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>ActiveRelayActorOptions {
             url,
+            fast_inbox,
+            inbox,
             relay_datagrams_send,
             relay_datagrams_recv,
             connection_opts,
@@ -1652,6 +1718,8 @@
         } = opts;
         <span class="kw">let </span>relay_client_builder = <span class="self">Self</span>::create_relay_builder(url.clone(), connection_opts);
         ActiveRelayActor {
+            fast_inbox,
+            inbox,
             relay_datagrams_recv,
             relay_datagrams_send,
             url,
@@ -1687,19 +1755,15 @@
     <span class="doccomment">/// The main actor run loop.
     ///
     /// Primarily switches between the dialing and connected states.
-    </span><span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>, <span class="kw-2">mut </span>inbox: mpsc::Receiver&lt;ActiveRelayMessage&gt;) -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; anyhow::Result&lt;()&gt; {
         <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added);
 
         <span class="kw">loop </span>{
-            <span class="kw">let </span><span class="prelude-val">Some</span>(client) = <span class="self">self
-                </span>.run_dialing(<span class="kw-2">&amp;mut </span>inbox)
-                .instrument(<span class="macro">info_span!</span>(<span class="string">"dialing"</span>))
-                .<span class="kw">await
-            else </span>{
+            <span class="kw">let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.run_dialing().instrument(<span class="macro">info_span!</span>(<span class="string">"dialing"</span>)).<span class="kw">await else </span>{
                 <span class="kw">break</span>;
             };
             <span class="kw">match </span><span class="self">self
-                </span>.run_connected(<span class="kw-2">&amp;mut </span>inbox, client)
+                </span>.run_connected(client)
                 .instrument(<span class="macro">info_span!</span>(<span class="string">"connected"</span>))
                 .<span class="kw">await
             </span>{
@@ -1725,11 +1789,7 @@
     ///
     /// Returns `None` if the actor needs to shut down.  Returns `Some(client)` when the
     /// connection is established.
-    </span><span class="comment">// TODO: consider storing cancel_token and inbox inside the actor.
-    </span><span class="kw">async fn </span>run_dialing(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        inbox: <span class="kw-2">&amp;mut </span>mpsc::Receiver&lt;ActiveRelayMessage&gt;,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;iroh_relay::client::Client&gt; {
+    </span><span class="kw">async fn </span>run_dialing(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;iroh_relay::client::Client&gt; {
         <span class="macro">debug!</span>(<span class="string">"Actor loop: connecting to relay."</span>);
 
         <span class="comment">// We regularly flush the relay_datagrams_send queue so it is not full of stale
@@ -1750,6 +1810,17 @@
                     <span class="macro">debug!</span>(<span class="string">"Shutdown."</span>);
                     <span class="kw">break </span><span class="prelude-val">None</span>;
                 }
+                msg = <span class="self">self</span>.fast_inbox.recv() =&gt; {
+                    <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
+                        <span class="macro">warn!</span>(<span class="string">"Fast inbox closed, shutdown."</span>);
+                        <span class="kw">break </span><span class="prelude-val">None</span>;
+                    };
+                    <span class="kw">match </span>msg {
+                        ActiveRelayFastMessage::HasNodeRoute(_peer, sender) =&gt; {
+                            sender.send(<span class="bool-val">false</span>).ok();
+                        }
+                    }
+                }
                 res = <span class="kw-2">&amp;mut </span>dialing_fut =&gt; {
                     <span class="kw">match </span>res {
                         <span class="prelude-val">Ok</span>(client) =&gt; {
@@ -1761,7 +1832,7 @@
                         }
                     }
                 }
-                msg = inbox.recv() =&gt; {
+                msg = <span class="self">self</span>.inbox.recv() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
                         <span class="macro">debug!</span>(<span class="string">"Inbox closed, shutdown."</span>);
                         <span class="kw">break </span><span class="prelude-val">None</span>;
@@ -1769,9 +1840,6 @@
                     <span class="kw">match </span>msg {
                         ActiveRelayMessage::SetHomeRelay(is_preferred) =&gt; {
                             <span class="self">self</span>.is_home_relay = is_preferred;
-                        }
-                        ActiveRelayMessage::HasNodeRoute(_peer, sender) =&gt; {
-                            sender.send(<span class="bool-val">false</span>).ok();
                         }
                         ActiveRelayMessage::CheckConnection(_local_ips) =&gt; {}
                         <span class="attr">#[cfg(test)]
@@ -1835,11 +1903,7 @@
     ///
     /// Returns `Ok` if the actor needs to shut down.  `Err` is returned if the connection
     /// to the relay server is lost.
-    </span><span class="kw">async fn </span>run_connected(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        inbox: <span class="kw-2">&amp;mut </span>mpsc::Receiver&lt;ActiveRelayMessage&gt;,
-        client: iroh_relay::client::Client,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>run_connected(<span class="kw-2">&amp;mut </span><span class="self">self</span>, client: iroh_relay::client::Client) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="macro">debug!</span>(<span class="string">"Actor loop: connected to relay"</span>);
 
         <span class="kw">let </span>(<span class="kw-2">mut </span>client_stream, <span class="kw-2">mut </span>client_sink) = client.split();
@@ -1870,10 +1934,22 @@
                     <span class="macro">debug!</span>(<span class="string">"Shutdown."</span>);
                     <span class="kw">break </span><span class="prelude-val">Ok</span>(());
                 }
+                msg = <span class="self">self</span>.fast_inbox.recv() =&gt; {
+                    <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
+                        <span class="macro">warn!</span>(<span class="string">"Fast inbox closed, shutdown."</span>);
+                        <span class="kw">break </span><span class="prelude-val">Ok</span>(());
+                    };
+                    <span class="kw">match </span>msg {
+                        ActiveRelayFastMessage::HasNodeRoute(peer, sender) =&gt; {
+                            <span class="kw">let </span>has_peer = state.nodes_present.contains(<span class="kw-2">&amp;</span>peer);
+                            sender.send(has_peer).ok();
+                        }
+                    }
+                }
                 <span class="kw">_ </span>= state.ping_tracker.timeout() =&gt; {
                     <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Ping timeout"</span>));
                 }
-                msg = inbox.recv() =&gt; {
+                msg = <span class="self">self</span>.inbox.recv() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
                         <span class="macro">warn!</span>(<span class="string">"Inbox closed, shutdown."</span>);
                         <span class="kw">break </span><span class="prelude-val">Ok</span>(());
@@ -1882,10 +1958,6 @@
                         ActiveRelayMessage::SetHomeRelay(is_preferred) =&gt; {
                             <span class="kw">let </span>fut = client_sink.send(SendMessage::NotePreferred(is_preferred));
                             <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream).<span class="kw">await</span><span class="question-mark">?</span>;
-                        }
-                        ActiveRelayMessage::HasNodeRoute(peer, sender) =&gt; {
-                            <span class="kw">let </span>has_peer = state.nodes_present.contains(<span class="kw-2">&amp;</span>peer);
-                            sender.send(has_peer).ok();
                         }
                         ActiveRelayMessage::CheckConnection(local_ips) =&gt; {
                             <span class="kw">match </span>client_stream.local_addr() {
@@ -1999,8 +2071,8 @@
     /// # Returns
     ///
     /// On `Err` the relay connection should be disconnected.  An `Ok` return means either
-    /// the actor should shut down, consult the [`CancellationToken`] for this, or the send
-    /// was successful.
+    /// the actor should shut down, consult the [`ActiveRelayActor::stop_token`] and
+    /// [`ActiveRelayActor::inactive_timeout`] for this, or the send was successful.
     </span><span class="attr">#[instrument(name = <span class="string">"tx"</span>, skip_all)]
     </span><span class="kw">async fn </span>run_sending&lt;T, E: Into&lt;anyhow::Error&gt;&gt;(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
@@ -2014,6 +2086,18 @@
                 biased;
                 <span class="kw">_ </span>= <span class="self">self</span>.stop_token.cancelled() =&gt; {
                     <span class="kw">break </span><span class="prelude-val">Ok</span>(());
+                }
+                msg = <span class="self">self</span>.fast_inbox.recv() =&gt; {
+                    <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
+                        <span class="macro">warn!</span>(<span class="string">"Fast inbox closed, shutdown."</span>);
+                        <span class="kw">break </span><span class="prelude-val">Ok</span>(());
+                    };
+                    <span class="kw">match </span>msg {
+                        ActiveRelayFastMessage::HasNodeRoute(peer, sender) =&gt; {
+                            <span class="kw">let </span>has_peer = state.nodes_present.contains(<span class="kw-2">&amp;</span>peer);
+                            sender.send(has_peer).ok();
+                        }
+                    }
                 }
                 res = <span class="kw-2">&amp;mut </span>sending_fut =&gt; {
                     <span class="kw">match </span>res {
@@ -2255,8 +2339,8 @@
             </span><span class="kw">let </span>check_futs = <span class="self">self</span>.active_relays.iter().map(|(url, handle)| <span class="kw">async move </span>{
                 <span class="kw">let </span>(tx, rx) = oneshot::channel();
                 handle
-                    .inbox_addr
-                    .send(ActiveRelayMessage::HasNodeRoute(<span class="kw-2">*</span>remote_node, tx))
+                    .fast_inbox_addr
+                    .send(ActiveRelayFastMessage::HasNodeRoute(<span class="kw-2">*</span>remote_node, tx))
                     .<span class="kw">await
                     </span>.ok();
                 <span class="kw">match </span>rx.<span class="kw">await </span>{
@@ -2310,10 +2394,13 @@
 
         <span class="comment">// TODO: Replace 64 with PER_CLIENT_SEND_QUEUE_DEPTH once that's unused
         </span><span class="kw">let </span>(send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">64</span>);
+        <span class="kw">let </span>(fast_inbox_tx, fast_inbox_rx) = mpsc::channel(<span class="number">32</span>);
         <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">64</span>);
         <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">"active-relay"</span>, %url);
         <span class="kw">let </span>opts = ActiveRelayActorOptions {
             url,
+            fast_inbox: fast_inbox_rx,
+            inbox: inbox_rx,
             relay_datagrams_send: send_datagram_rx,
             relay_datagrams_recv: <span class="self">self</span>.relay_datagram_recv_queue.clone(),
             connection_opts,
@@ -2323,13 +2410,14 @@
         <span class="self">self</span>.active_relay_tasks.spawn(
             <span class="kw">async move </span>{
                 <span class="comment">// TODO: Make the actor itself infallible.
-                </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = actor.run(inbox_rx).<span class="kw">await </span>{
+                </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = actor.run().<span class="kw">await </span>{
                     <span class="macro">warn!</span>(<span class="string">"actor error: {err:#}"</span>);
                 }
             }
             .instrument(span),
         );
         <span class="kw">let </span>handle = ActiveRelayHandle {
+            fast_inbox_addr: fast_inbox_tx,
             inbox_addr: inbox_tx,
             datagrams_send_queue: send_datagram_tx,
         };
@@ -2399,6 +2487,7 @@
 <span class="doccomment">/// Handle to one [`ActiveRelayActor`].
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">struct </span>ActiveRelayHandle {
+    fast_inbox_addr: mpsc::Sender&lt;ActiveRelayFastMessage&gt;,
     inbox_addr: mpsc::Sender&lt;ActiveRelayMessage&gt;,
     datagrams_send_queue: mpsc::Sender&lt;RelaySendItem&gt;,
 }
@@ -2633,10 +2722,12 @@
     }
 
     <span class="doccomment">/// Starts a new [`ActiveRelayActor`].
+    </span><span class="attr">#[allow(clippy::too_many_arguments)]
     </span><span class="kw">fn </span>start_active_relay_actor(
         secret_key: SecretKey,
         stop_token: CancellationToken,
         url: RelayUrl,
+        fast_inbox_rx: mpsc::Receiver&lt;ActiveRelayFastMessage&gt;,
         inbox_rx: mpsc::Receiver&lt;ActiveRelayMessage&gt;,
         relay_datagrams_send: mpsc::Receiver&lt;RelaySendItem&gt;,
         relay_datagrams_recv: Arc&lt;RelayDatagramRecvQueue&gt;,
@@ -2644,6 +2735,8 @@
     ) -&gt; AbortOnDropHandle&lt;anyhow::Result&lt;()&gt;&gt; {
         <span class="kw">let </span>opts = ActiveRelayActorOptions {
             url,
+            fast_inbox: fast_inbox_rx,
+            inbox: inbox_rx,
             relay_datagrams_send,
             relay_datagrams_recv,
             connection_opts: RelayConnectionOptions {
@@ -2655,13 +2748,7 @@
             },
             stop_token,
         };
-        <span class="kw">let </span>task = tokio::spawn(
-            <span class="kw">async move </span>{
-                <span class="kw">let </span>actor = ActiveRelayActor::new(opts);
-                actor.run(inbox_rx).<span class="kw">await
-            </span>}
-            .instrument(span),
-        );
+        <span class="kw">let </span>task = tokio::spawn(ActiveRelayActor::new(opts).run().instrument(span));
         AbortOnDropHandle::new(task)
     }
 
@@ -2674,12 +2761,14 @@
         <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">8u8</span>; <span class="number">32</span>]);
         <span class="kw">let </span>recv_datagram_queue = Arc::new(RelayDatagramRecvQueue::new());
         <span class="kw">let </span>(send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
+        <span class="kw">let </span>(fast_inbox_tx, fast_inbox_rx) = mpsc::channel(<span class="number">8</span>);
         <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
         <span class="kw">let </span>cancel_token = CancellationToken::new();
         <span class="kw">let </span>actor_task = start_active_relay_actor(
             secret_key.clone(),
             cancel_token.clone(),
             relay_url.clone(),
+            fast_inbox_rx,
             inbox_rx,
             send_datagram_rx,
             recv_datagram_queue.clone(),
@@ -2707,8 +2796,9 @@
         <span class="kw">let </span>echo_task = AbortOnDropHandle::new(echo_task);
         <span class="kw">let </span>supervisor_task = tokio::spawn(<span class="kw">async move </span>{
             <span class="kw">let </span>_guard = cancel_token.drop_guard();
-            <span class="comment">// move the inbox_tx here so it is not dropped, as this stops the actor.
-            </span><span class="kw">let </span>_inbox_tx = inbox_tx;
+            <span class="comment">// move the inboxes here so it is not dropped, as this stops the actor.
+            </span><span class="kw">let </span>_fast_inbox_tx = fast_inbox_tx;
+            <span class="kw">let </span>_inbox_tx = inbox_tx;
             <span class="macro">tokio::select!</span> {
                 biased;
                 <span class="kw">_ </span>= actor_task =&gt; (),
@@ -2764,12 +2854,14 @@
         <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
         <span class="kw">let </span>datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
         <span class="kw">let </span>(send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
+        <span class="kw">let </span>(_fast_inbox_tx, fast_inbox_rx) = mpsc::channel(<span class="number">8</span>);
         <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
         <span class="kw">let </span>cancel_token = CancellationToken::new();
         <span class="kw">let </span>task = start_active_relay_actor(
             secret_key,
             cancel_token.clone(),
             relay_url.clone(),
+            fast_inbox_rx,
             inbox_rx,
             send_datagram_rx,
             datagram_recv_queue.clone(),
@@ -2864,12 +2956,14 @@
         <span class="kw">let </span>node_id = secret_key.public();
         <span class="kw">let </span>datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
         <span class="kw">let </span>(_send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
-        <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
+        <span class="kw">let </span>(fast_inbox_tx, fast_inbox_rx) = mpsc::channel(<span class="number">8</span>);
+        <span class="kw">let </span>(_inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
         <span class="kw">let </span>cancel_token = CancellationToken::new();
         <span class="kw">let </span><span class="kw-2">mut </span>task = start_active_relay_actor(
             secret_key,
             cancel_token.clone(),
             relay_url,
+            fast_inbox_rx,
             inbox_rx,
             send_datagram_rx,
             datagram_recv_queue.clone(),
@@ -2878,8 +2972,8 @@
 
         <span class="comment">// Give the task some time to run.  If it responds to HasNodeRoute it is running.
         </span><span class="kw">let </span>(tx, rx) = oneshot::channel();
-        inbox_tx
-            .send(ActiveRelayMessage::HasNodeRoute(node_id, tx))
+        fast_inbox_tx
+            .send(ActiveRelayFastMessage::HasNodeRoute(node_id, tx))
             .<span class="kw">await
             </span>.ok();
         rx.<span class="kw">await</span><span class="question-mark">?</span>;
