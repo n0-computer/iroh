@@ -149,6 +149,8 @@ enum ActiveRelayMessage {
     SetHomeRelay(bool),
     #[cfg(test)]
     GetLocalAddr(oneshot::Sender<Option<SocketAddr>>),
+    #[cfg(test)]
+    PingServer(oneshot::Sender<()>),
 }
 
 /// Messages for the [`ActiveRelayActor`] which should never block.
@@ -326,6 +328,10 @@ impl ActiveRelayActor {
                         ActiveRelayMessage::GetLocalAddr(sender) => {
                             sender.send(None).ok();
                         }
+                        #[cfg(test)]
+                        ActiveRelayMessage::PingServer(sender) => {
+                            drop(sender);
+                        }
                     }
                 }
                 _ = send_datagram_flush.tick() => {
@@ -393,6 +399,8 @@ impl ActiveRelayActor {
             nodes_present: BTreeSet::new(),
             last_packet_src: None,
             pong_pending: None,
+            #[cfg(test)]
+            test_pong: None,
         };
         let mut send_datagrams_buf = Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE);
 
@@ -454,6 +462,13 @@ impl ActiveRelayActor {
                         ActiveRelayMessage::GetLocalAddr(sender) => {
                             let addr = client_stream.local_addr();
                             sender.send(addr).ok();
+                        }
+                        #[cfg(test)]
+                        ActiveRelayMessage::PingServer(sender) => {
+                            let data = rand::random();
+                            state.test_pong = Some((data, sender));
+                            let fut = client_sink.send(SendMessage::Ping(data));
+                            self.run_sending(fut, &mut state, &mut client_stream).await?;
                         }
                     }
                 }
@@ -536,7 +551,19 @@ impl ActiveRelayActor {
                 state.nodes_present.remove(&node_id);
             }
             ReceivedMessage::Ping(data) => state.pong_pending = Some(data),
-            ReceivedMessage::Pong(data) => state.ping_tracker.pong_received(data),
+            ReceivedMessage::Pong(data) => {
+                #[cfg(test)]
+                {
+                    if let Some((expected_data, sender)) = state.test_pong.take() {
+                        if data == expected_data {
+                            sender.send(()).ok();
+                        } else {
+                            state.test_pong = Some((expected_data, sender));
+                        }
+                    }
+                }
+                state.ping_tracker.pong_received(data)
+            }
             ReceivedMessage::KeepAlive
             | ReceivedMessage::Health { .. }
             | ReceivedMessage::ServerRestarting { .. } => trace!("Ignoring {msg:?}"),
@@ -624,6 +651,8 @@ struct ConnectedRelayState {
     last_packet_src: Option<NodeId>,
     /// A pong we need to send ASAP.
     pong_pending: Option<[u8; 8]>,
+    #[cfg(test)]
+    test_pong: Option<([u8; 8], oneshot::Sender<()>)>,
 }
 
 pub(super) enum RelayActorMessage {
@@ -1418,11 +1447,10 @@ mod tests {
         let (_relay_map, relay_url, _server) = test_utils::run_relay_server().await?;
 
         let secret_key = SecretKey::from_bytes(&[1u8; 32]);
-        let node_id = secret_key.public();
         let datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
         let (_send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
-        let (fast_inbox_tx, fast_inbox_rx) = mpsc::channel(8);
-        let (_inbox_tx, inbox_rx) = mpsc::channel(16);
+        let (_fast_inbox_tx, fast_inbox_rx) = mpsc::channel(8);
+        let (inbox_tx, inbox_rx) = mpsc::channel(16);
         let cancel_token = CancellationToken::new();
         let mut task = start_active_relay_actor(
             secret_key,
@@ -1435,13 +1463,20 @@ mod tests {
             info_span!("actor-under-test"),
         );
 
-        // Give the task some time to run.  If it responds to HasNodeRoute it is running.
-        let (tx, rx) = oneshot::channel();
-        fast_inbox_tx
-            .send(ActiveRelayFastMessage::HasNodeRoute(node_id, tx))
-            .await
-            .ok();
-        rx.await?;
+        // Wait until the actor is connected to the relay server.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let (tx, rx) = oneshot::channel();
+                inbox_tx.send(ActiveRelayMessage::PingServer(tx)).await.ok();
+                if tokio::time::timeout(Duration::from_millis(200), rx)
+                    .await
+                    .is_ok()
+                {
+                    break;
+                }
+            }
+        })
+        .await?;
 
         // We now have an idling ActiveRelayActor.  If we advance time just a little it
         // should stay alive.
