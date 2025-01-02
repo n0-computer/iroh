@@ -1469,7 +1469,9 @@
 <a href="#1468" id="1468">1468</a>
 <a href="#1469" id="1469">1469</a>
 <a href="#1470" id="1470">1470</a>
-<a href="#1471" id="1471">1471</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1471" id="1471">1471</a>
+<a href="#1472" id="1472">1472</a>
+<a href="#1473" id="1473">1473</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1506,7 +1508,7 @@
     time::{Duration, Instant, MissedTickBehavior},
 };
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
-<span class="kw">use </span>tracing::{debug, error, info, info_span, trace, warn, Instrument};
+<span class="kw">use </span>tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 <span class="kw">use </span>url::Url;
 
 <span class="kw">use </span><span class="kw">super</span>::RelayDatagramSendChannelReceiver;
@@ -1588,6 +1590,12 @@
     /// The home relay server needs to maintain it's connection to the relay server, even if
     /// the relay actor is otherwise idle.
     </span>is_home_relay: bool,
+    <span class="doccomment">/// When this expires the actor has been idle and should shut down.
+    ///
+    /// Unless it is managing the home relay connection.  Inactivity is only tracked on the
+    /// last datagram sent to the relay, received datagrams will trigger QUIC ACKs which is
+    /// sufficient to keep active connections open.
+    </span>inactive_timeout: Pin&lt;Box&lt;tokio::time::Sleep&gt;&gt;,
     <span class="doccomment">/// Token indicating the [`ActiveRelayActor`] should stop.
     </span>stop_token: CancellationToken,
 }
@@ -1649,6 +1657,7 @@
             url,
             relay_client_builder,
             is_home_relay: <span class="bool-val">false</span>,
+            inactive_timeout: Box::pin(tokio::time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
             stop_token,
         }
     }
@@ -1681,23 +1690,16 @@
     </span><span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>, <span class="kw-2">mut </span>inbox: mpsc::Receiver&lt;ActiveRelayMessage&gt;) -&gt; anyhow::Result&lt;()&gt; {
         <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added);
 
-        <span class="comment">// TODO: Move this to an actor state since every run loop accesses this.
-        // If inactive for one tick the actor should exit.  Inactivity is only tracked on
-        // the last datagrams sent to the relay, received datagrams will trigger ACKs which
-        // is sufficient to keep active connections open.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>inactive_timeout = tokio::time::interval(RELAY_INACTIVE_CLEANUP_TIME);
-        inactive_timeout.reset(); <span class="comment">// skip immediate tick
-
-        </span><span class="kw">loop </span>{
+        <span class="kw">loop </span>{
             <span class="kw">let </span><span class="prelude-val">Some</span>(client) = <span class="self">self
-                </span>.run_dialing(<span class="kw-2">&amp;mut </span>inbox, <span class="kw-2">&amp;mut </span>inactive_timeout)
+                </span>.run_dialing(<span class="kw-2">&amp;mut </span>inbox)
                 .instrument(<span class="macro">info_span!</span>(<span class="string">"dialing"</span>))
                 .<span class="kw">await
             else </span>{
                 <span class="kw">break</span>;
             };
             <span class="kw">match </span><span class="self">self
-                </span>.run_connected(<span class="kw-2">&amp;mut </span>inbox, <span class="kw-2">&amp;mut </span>inactive_timeout, client)
+                </span>.run_connected(<span class="kw-2">&amp;mut </span>inbox, client)
                 .instrument(<span class="macro">info_span!</span>(<span class="string">"connected"</span>))
                 .<span class="kw">await
             </span>{
@@ -1713,6 +1715,12 @@
         <span class="prelude-val">Ok</span>(())
     }
 
+    <span class="kw">fn </span>reset_inactive_timeout(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="self">self</span>.inactive_timeout
+            .as_mut()
+            .reset(Instant::now() + RELAY_INACTIVE_CLEANUP_TIME);
+    }
+
     <span class="doccomment">/// Actor loop when connecting to the relay server.
     ///
     /// Returns `None` if the actor needs to shut down.  Returns `Some(client)` when the
@@ -1721,7 +1729,6 @@
     </span><span class="kw">async fn </span>run_dialing(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         inbox: <span class="kw-2">&amp;mut </span>mpsc::Receiver&lt;ActiveRelayMessage&gt;,
-        inactive_timeout: <span class="kw-2">&amp;mut </span>tokio::time::Interval,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;iroh_relay::client::Client&gt; {
         <span class="macro">debug!</span>(<span class="string">"Actor loop: connecting to relay."</span>);
 
@@ -1774,6 +1781,7 @@
                     }
                 }
                 <span class="kw">_ </span>= send_datagram_flush.tick() =&gt; {
+                    <span class="self">self</span>.reset_inactive_timeout();
                     <span class="kw">let </span><span class="kw-2">mut </span>logged = <span class="bool-val">false</span>;
                     <span class="kw">while </span><span class="self">self</span>.relay_datagrams_send.try_recv().is_ok() {
                         <span class="kw">if </span>!logged {
@@ -1782,7 +1790,7 @@
                         }
                     }
                 }
-                <span class="kw">_ </span>= inactive_timeout.tick(), <span class="kw">if </span>!<span class="self">self</span>.is_home_relay =&gt; {
+                <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span><span class="self">self</span>.inactive_timeout, <span class="kw">if </span>!<span class="self">self</span>.is_home_relay =&gt; {
                     <span class="macro">debug!</span>(<span class="question-mark">?</span>RELAY_INACTIVE_CLEANUP_TIME, <span class="string">"Inactive, exiting."</span>);
                     <span class="kw">break </span><span class="prelude-val">None</span>;
                 }
@@ -1830,7 +1838,6 @@
     </span><span class="kw">async fn </span>run_connected(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         inbox: <span class="kw-2">&amp;mut </span>mpsc::Receiver&lt;ActiveRelayMessage&gt;,
-        inactive_timeout: <span class="kw-2">&amp;mut </span>tokio::time::Interval,
         client: iroh_relay::client::Client,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="macro">debug!</span>(<span class="string">"Actor loop: connected to relay"</span>);
@@ -1838,7 +1845,6 @@
         <span class="kw">let </span>(<span class="kw-2">mut </span>client_stream, <span class="kw-2">mut </span>client_sink) = client.split();
 
         <span class="kw">let </span><span class="kw-2">mut </span>state = ConnectedRelayState {
-            inactive_timeout,
             ping_tracker: PingTracker::new(),
             nodes_present: BTreeSet::new(),
             last_packet_src: <span class="prelude-val">None</span>,
@@ -1907,7 +1913,7 @@
                         <span class="macro">warn!</span>(<span class="string">"Datagram inbox closed, shutdown"</span>);
                         <span class="kw">break </span><span class="prelude-val">Ok</span>(());
                     };
-                    state.inactive_timeout.reset();
+                    <span class="self">self</span>.reset_inactive_timeout();
                     <span class="comment">// TODO: This allocation is *very* unfortunate.  But so is the
                     // allocation *inside* of PacketizeIter...
                     </span><span class="kw">let </span>dgrams = std::mem::replace(
@@ -1938,7 +1944,7 @@
                         <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream read error: {err:#}"</span>)),
                     }
                 }
-                <span class="kw">_ </span>= state.inactive_timeout.tick(), <span class="kw">if </span>!<span class="self">self</span>.is_home_relay =&gt; {
+                <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span><span class="self">self</span>.inactive_timeout, <span class="kw">if </span>!<span class="self">self</span>.is_home_relay =&gt; {
                     <span class="macro">debug!</span>(<span class="string">"Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting."</span>);
                     <span class="kw">break </span><span class="prelude-val">Ok</span>(());
                 }
@@ -1995,10 +2001,11 @@
     /// On `Err` the relay connection should be disconnected.  An `Ok` return means either
     /// the actor should shut down, consult the [`CancellationToken`] for this, or the send
     /// was successful.
+    </span><span class="attr">#[instrument(name = <span class="string">"tx"</span>, skip_all)]
     </span><span class="kw">async fn </span>run_sending&lt;T, E: Into&lt;anyhow::Error&gt;&gt;(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         sending_fut: <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;T, E&gt;&gt;,
-        state: <span class="kw-2">&amp;mut </span>ConnectedRelayState&lt;<span class="lifetime">'_</span>&gt;,
+        state: <span class="kw-2">&amp;mut </span>ConnectedRelayState,
         client_stream: <span class="kw-2">&amp;mut </span>iroh_relay::client::ClientStream,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>sending_fut = <span class="macro">pin!</span>(sending_fut);
@@ -2027,9 +2034,8 @@
                         <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream read error: {err:#}"</span>)),
                     }
                 }
-                <span class="kw">_ </span>= state.inactive_timeout.tick(), <span class="kw">if </span>!<span class="self">self</span>.is_home_relay =&gt; {
-                    <span class="comment">// TODO: this shutdown will not propagate
-                    </span><span class="macro">debug!</span>(<span class="string">"Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting."</span>);
+                <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span><span class="self">self</span>.inactive_timeout, <span class="kw">if </span>!<span class="self">self</span>.is_home_relay =&gt; {
+                    <span class="macro">debug!</span>(<span class="string">"Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting."</span>);
                     <span class="kw">break </span><span class="prelude-val">Ok</span>(());
                 }
             }
@@ -2042,10 +2048,8 @@
 /// Common state between [`ActiveRelayActor::run_connected`] and
 /// [`ActiveRelayActor::run_sending`].
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">struct </span>ConnectedRelayState&lt;<span class="lifetime">'a</span>&gt; {
-    <span class="doccomment">/// If this expires the actor has been inactive too long and should stop.
-    </span>inactive_timeout: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>tokio::time::Interval, <span class="comment">// TODO: Make it a Sleep again?
-    </span><span class="doccomment">/// Tracks pings we have sent, awaits pong replies.
+</span><span class="kw">struct </span>ConnectedRelayState {
+    <span class="doccomment">/// Tracks pings we have sent, awaits pong replies.
     </span>ping_tracker: PingTracker,
     <span class="doccomment">/// Nodes which are reachable via this relay server.
     </span>nodes_present: BTreeSet&lt;NodeId&gt;,
