@@ -47,7 +47,7 @@ pub enum ConnSendError {
 /// The [`SendMessage`] and [`ReceivedMessage`] are safer wrappers enforcing some protocol
 /// invariants.
 #[derive(derive_more::Debug)]
-pub enum Conn {
+pub(crate) enum Conn {
     Relay {
         #[debug("Framed<MaybeTlsStreamChained, RelayCodec>")]
         conn: Framed<MaybeTlsStreamChained, RelayCodec>,
