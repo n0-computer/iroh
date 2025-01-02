@@ -1538,7 +1538,8 @@
 <a href="#1537" id="1537">1537</a>
 <a href="#1538" id="1538">1538</a>
 <a href="#1539" id="1539">1539</a>
-<a href="#1540" id="1540">1540</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1540" id="1540">1540</a>
+<a href="#1541" id="1541">1541</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -3010,7 +3011,8 @@
                 inbox_tx.send(ActiveRelayMessage::PingServer(tx)).<span class="kw">await</span>.ok();
                 <span class="kw">if </span>tokio::time::timeout(Duration::from_millis(<span class="number">200</span>), rx)
                     .<span class="kw">await
-                    </span>.is_ok()
+                    </span>.map(|resp| resp.is_ok())
+                    .unwrap_or_default()
                 {
                     <span class="kw">break</span>;
                 }
