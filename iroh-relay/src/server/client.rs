@@ -2,7 +2,7 @@
 
 use std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use bytes::Bytes;
 use futures_lite::FutureExt;
 use futures_sink::Sink;
@@ -333,8 +333,8 @@ impl Actor {
                 self.write_frame(Frame::Pong { data }).await?;
                 inc!(Metrics, sent_pong);
             }
-            Frame::Health { .. } => {
-                inc!(Metrics, other_packets_recv);
+            Frame::Health { problem } => {
+                bail!("server issue: {:?}", problem);
             }
             _ => {
                 inc!(Metrics, unknown_frames);

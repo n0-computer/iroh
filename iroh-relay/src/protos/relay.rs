@@ -96,10 +96,9 @@ pub(crate) enum FrameType {
     /// 8 byte payload, the contents of ping being replied to
     Pong = 13,
     /// Sent from server to client to tell the client if their connection is
-    /// unhealthy somehow. Currently the only unhealthy state is whether the
-    /// connection is detected as a duplicate.
-    /// The entire frame body is the text of the error message. An empty message
-    /// clears the error state.
+    /// unhealthy somehow.
+    ///
+    /// Currently this is used to indicate that the connection was closed beacause of authentication issues.
     Health = 14,
 
     /// Sent from server to client for the server to declare that it's restarting.

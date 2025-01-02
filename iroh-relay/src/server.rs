@@ -25,6 +25,7 @@ use http::{
     response::Builder as ResponseBuilder, HeaderMap, Method, Request, Response, StatusCode,
 };
 use hyper::body::Incoming;
+use iroh_base::NodeId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
 use iroh_metrics::inc;
@@ -120,6 +121,39 @@ pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     pub limits: Limits,
     /// Key cache capacity.
     pub key_cache_capacity: Option<usize>,
+    /// Access configuration.
+    pub access: AccessConfig,
+}
+
+/// Controls which nodes are allowed to use the relay.
+#[derive(derive_more::Debug)]
+pub enum AccessConfig {
+    /// Everyone
+    Everyone,
+    /// Only nodes for which the function returns `Access::Allow`.
+    #[debug("restricted")]
+    Restricted(Box<dyn Fn(NodeId) -> Access + Send + Sync + 'static>),
+}
+
+impl AccessConfig {
+    /// Is this node allowed?
+    pub fn is_allowed(&self, node: NodeId) -> bool {
+        match self {
+            Self::Everyone => true,
+            Self::Restricted(check) => {
+                matches!(check(node), Access::Allow)
+            }
+        }
+    }
+}
+
+/// Access restriction for a node.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Access {
+    /// Access is allowed.
+    Allow,
+    /// Access is denied.
+    Deny,
 }
 
 /// Configuration for the STUN server.
@@ -318,6 +352,7 @@ impl Server {
                 let mut builder = http_server::ServerBuilder::new(relay_bind_addr)
                     .headers(headers)
                     .key_cache_capacity(key_cache_capacity)
+                    .access(relay_config.access)
                     .request_handler(Method::GET, "/", Box::new(root_handler))
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
                     .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
@@ -790,6 +825,7 @@ mod tests {
                 tls: None,
                 limits: Default::default(),
                 key_cache_capacity: Some(1024),
+                access: AccessConfig::Everyone,
             }),
             quic: None,
             stun: None,
@@ -840,6 +876,7 @@ mod tests {
                 tls: None,
                 limits: Default::default(),
                 key_cache_capacity: Some(1024),
+                access: AccessConfig::Everyone,
             }),
             stun: None,
             quic: None,
@@ -1105,5 +1142,75 @@ mod tests {
         let (txid_back, response_addr) = protos::stun::parse_response(&buf).unwrap();
         assert_eq!(txid, txid_back);
         assert_eq!(response_addr, socket.local_addr().unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_relay_access_reject() {
+        let _guard = iroh_test::logging::setup();
+
+        let a_secret_key = SecretKey::generate(rand::thread_rng());
+        let a_key = a_secret_key.public();
+
+        let server = Server::spawn(ServerConfig::<(), ()> {
+            relay: Some(RelayConfig::<(), ()> {
+                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                tls: None,
+                limits: Default::default(),
+                key_cache_capacity: Some(1024),
+                access: AccessConfig::Restricted(Box::new(move |node_id| {
+                    info!("checking {}", node_id);
+                    // reject node a
+                    if node_id == a_key {
+                        Access::Deny
+                    } else {
+                        Access::Allow
+                    }
+                })),
+            }),
+            quic: None,
+            stun: None,
+            metrics_addr: None,
+        })
+        .await
+        .unwrap();
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
+        let relay_url: RelayUrl = relay_url.parse().unwrap();
+
+        // set up client a
+        let resolver = crate::dns::default_resolver().clone();
+        let (client_a, mut client_a_receiver) =
+            ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
+        let connect_client = client_a.clone();
+
+        // give the relay server some time to accept connections
+        if let Err(err) = tokio::time::timeout(Duration::from_secs(10), async move {
+            loop {
+                match connect_client.connect().await {
+                    Ok(_) => break,
+                    Err(err) => {
+                        warn!("client unable to connect to relay server: {err:#}");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
+            }
+        })
+        .await
+        {
+            panic!("timeout connecting to relay server: {err:#}");
+        }
+
+        // wait for a moment, until the connection is shutdown
+        tokio::time::timeout(Duration::from_millis(500), async move {
+            match client_a_receiver.recv().await.unwrap().unwrap() {
+                ReceivedMessage::Health { problem } => {
+                    assert_eq!(problem, Some("not authenticated".to_string()));
+                }
+                msg => {
+                    panic!("other msg: {:?}", msg);
+                }
+            }
+        })
+        .await
+        .unwrap();
     }
 }
