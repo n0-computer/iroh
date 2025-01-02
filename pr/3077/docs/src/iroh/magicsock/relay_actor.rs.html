@@ -2968,7 +2968,7 @@
         tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME).<span class="kw">await</span>;
         tokio::time::resume();
         <span class="macro">assert!</span>(
-            tokio::time::timeout(Duration::from_millis(<span class="number">100</span>), task)
+            tokio::time::timeout(Duration::from_secs(<span class="number">1</span>), task)
                 .<span class="kw">await
                 </span>.is_ok(),
             <span class="string">"actor task still running"
