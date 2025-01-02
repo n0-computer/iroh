@@ -751,7 +751,9 @@
 <a href="#750" id="750">750</a>
 <a href="#751" id="751">751</a>
 <a href="#752" id="752">752</a>
-<a href="#753" id="753">753</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#753" id="753">753</a>
+<a href="#754" id="754">754</a>
+<a href="#755" id="755">755</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -788,7 +790,9 @@
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
 };
-<span class="kw">use </span>tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
+<span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+</span><span class="kw">use </span>tracing::warn;
+<span class="kw">use </span>tracing::{debug, error, event, info_span, trace, Instrument, Level};
 <span class="kw">use </span>url::Url;
 
 <span class="kw">pub use </span><span class="self">self</span>::conn::{ConnSendError, ReceivedMessage, SendMessage};

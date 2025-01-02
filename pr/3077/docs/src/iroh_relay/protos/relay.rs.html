@@ -841,7 +841,8 @@
 <a href="#840" id="840">840</a>
 <a href="#841" id="841">841</a>
 <a href="#842" id="842">842</a>
-<a href="#843" id="843">843</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
+<a href="#843" id="843">843</a>
+<a href="#844" id="844">844</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
 //!
 //! Protocol flow:
 //!
@@ -855,6 +856,7 @@
 //!  * clients sends `FrameType::SendPacket`
 //!  * server then sends `FrameType::RecvPacket` to recipient
 
+</span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
 </span><span class="kw">use </span>std::time::Duration;
 
 <span class="kw">use </span>anyhow::{bail, ensure};
@@ -868,8 +870,7 @@
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio_util::codec::{Decoder, Encoder};
 
-<span class="kw">use </span><span class="kw">crate</span>::client::conn::ConnSendError;
-<span class="kw">use </span><span class="kw">crate</span>::KeyCache;
+<span class="kw">use crate</span>::{client::conn::ConnSendError, KeyCache};
 
 <span class="doccomment">/// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
@@ -974,6 +975,7 @@
 /// Ignores the timeout if `None`
 ///
 /// Does not flush.
+</span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>write_frame&lt;S: Sink&lt;Frame, Error = std::io::Error&gt; + Unpin&gt;(
     <span class="kw-2">mut </span>writer: S,
     frame: Frame,
