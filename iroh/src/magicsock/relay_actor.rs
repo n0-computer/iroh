@@ -35,7 +35,7 @@ use tokio::{
     time::{Duration, Instant, MissedTickBehavior},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, info_span, trace, warn, Instrument};
+use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
 use url::Url;
 
 use super::RelayDatagramSendChannelReceiver;
@@ -117,6 +117,12 @@ struct ActiveRelayActor {
     /// The home relay server needs to maintain it's connection to the relay server, even if
     /// the relay actor is otherwise idle.
     is_home_relay: bool,
+    /// When this expires the actor has been idle and should shut down.
+    ///
+    /// Unless it is managing the home relay connection.  Inactivity is only tracked on the
+    /// last datagram sent to the relay, received datagrams will trigger QUIC ACKs which is
+    /// sufficient to keep active connections open.
+    inactive_timeout: Pin<Box<tokio::time::Sleep>>,
     /// Token indicating the [`ActiveRelayActor`] should stop.
     stop_token: CancellationToken,
 }
@@ -178,6 +184,7 @@ impl ActiveRelayActor {
             url,
             relay_client_builder,
             is_home_relay: false,
+            inactive_timeout: Box::pin(tokio::time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
             stop_token,
         }
     }
@@ -210,23 +217,16 @@ impl ActiveRelayActor {
     async fn run(mut self, mut inbox: mpsc::Receiver<ActiveRelayMessage>) -> anyhow::Result<()> {
         inc!(MagicsockMetrics, num_relay_conns_added);
 
-        // TODO: Move this to an actor state since every run loop accesses this.
-        // If inactive for one tick the actor should exit.  Inactivity is only tracked on
-        // the last datagrams sent to the relay, received datagrams will trigger ACKs which
-        // is sufficient to keep active connections open.
-        let mut inactive_timeout = tokio::time::interval(RELAY_INACTIVE_CLEANUP_TIME);
-        inactive_timeout.reset(); // skip immediate tick
-
         loop {
             let Some(client) = self
-                .run_dialing(&mut inbox, &mut inactive_timeout)
+                .run_dialing(&mut inbox)
                 .instrument(info_span!("dialing"))
                 .await
             else {
                 break;
             };
             match self
-                .run_connected(&mut inbox, &mut inactive_timeout, client)
+                .run_connected(&mut inbox, client)
                 .instrument(info_span!("connected"))
                 .await
             {
@@ -242,6 +242,12 @@ impl ActiveRelayActor {
         Ok(())
     }
 
+    fn reset_inactive_timeout(&mut self) {
+        self.inactive_timeout
+            .as_mut()
+            .reset(Instant::now() + RELAY_INACTIVE_CLEANUP_TIME);
+    }
+
     /// Actor loop when connecting to the relay server.
     ///
     /// Returns `None` if the actor needs to shut down.  Returns `Some(client)` when the
@@ -250,7 +256,6 @@ impl ActiveRelayActor {
     async fn run_dialing(
         &mut self,
         inbox: &mut mpsc::Receiver<ActiveRelayMessage>,
-        inactive_timeout: &mut tokio::time::Interval,
     ) -> Option<iroh_relay::client::Client> {
         debug!("Actor loop: connecting to relay.");
 
@@ -303,6 +308,7 @@ impl ActiveRelayActor {
                     }
                 }
                 _ = send_datagram_flush.tick() => {
+                    self.reset_inactive_timeout();
                     let mut logged = false;
                     while self.relay_datagrams_send.try_recv().is_ok() {
                         if !logged {
@@ -311,7 +317,7 @@ impl ActiveRelayActor {
                         }
                     }
                 }
-                _ = inactive_timeout.tick(), if !self.is_home_relay => {
+                _ = &mut self.inactive_timeout, if !self.is_home_relay => {
                     debug!(?RELAY_INACTIVE_CLEANUP_TIME, "Inactive, exiting.");
                     break None;
                 }
@@ -359,7 +365,6 @@ impl ActiveRelayActor {
     async fn run_connected(
         &mut self,
         inbox: &mut mpsc::Receiver<ActiveRelayMessage>,
-        inactive_timeout: &mut tokio::time::Interval,
         client: iroh_relay::client::Client,
     ) -> Result<()> {
         debug!("Actor loop: connected to relay");
@@ -367,7 +372,6 @@ impl ActiveRelayActor {
         let (mut client_stream, mut client_sink) = client.split();
 
         let mut state = ConnectedRelayState {
-            inactive_timeout,
             ping_tracker: PingTracker::new(),
             nodes_present: BTreeSet::new(),
             last_packet_src: None,
@@ -436,7 +440,7 @@ impl ActiveRelayActor {
                         warn!("Datagram inbox closed, shutdown");
                         break Ok(());
                     };
-                    state.inactive_timeout.reset();
+                    self.reset_inactive_timeout();
                     // TODO: This allocation is *very* unfortunate.  But so is the
                     // allocation *inside* of PacketizeIter...
                     let dgrams = std::mem::replace(
@@ -467,7 +471,7 @@ impl ActiveRelayActor {
                         Err(err) => break Err(anyhow!("Client stream read error: {err:#}")),
                     }
                 }
-                _ = state.inactive_timeout.tick(), if !self.is_home_relay => {
+                _ = &mut self.inactive_timeout, if !self.is_home_relay => {
                     debug!("Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting.");
                     break Ok(());
                 }
@@ -524,10 +528,11 @@ impl ActiveRelayActor {
     /// On `Err` the relay connection should be disconnected.  An `Ok` return means either
     /// the actor should shut down, consult the [`CancellationToken`] for this, or the send
     /// was successful.
+    #[instrument(name = "tx", skip_all)]
     async fn run_sending<T, E: Into<anyhow::Error>>(
         &mut self,
         sending_fut: impl Future<Output = Result<T, E>>,
-        state: &mut ConnectedRelayState<'_>,
+        state: &mut ConnectedRelayState,
         client_stream: &mut iroh_relay::client::ClientStream,
     ) -> Result<()> {
         let mut sending_fut = pin!(sending_fut);
@@ -556,8 +561,7 @@ impl ActiveRelayActor {
                         Err(err) => break Err(anyhow!("Client stream read error: {err:#}")),
                     }
                 }
-                _ = state.inactive_timeout.tick(), if !self.is_home_relay => {
-                    // TODO: this shutdown will not propagate
+                _ = &mut self.inactive_timeout, if !self.is_home_relay => {
                     debug!("Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting.");
                     break Ok(());
                 }
@@ -571,9 +575,7 @@ impl ActiveRelayActor {
 /// Common state between [`ActiveRelayActor::run_connected`] and
 /// [`ActiveRelayActor::run_sending`].
 #[derive(Debug)]
-struct ConnectedRelayState<'a> {
-    /// If this expires the actor has been inactive too long and should stop.
-    inactive_timeout: &'a mut tokio::time::Interval, // TODO: Make it a Sleep again?
+struct ConnectedRelayState {
     /// Tracks pings we have sent, awaits pong replies.
     ping_tracker: PingTracker,
     /// Nodes which are reachable via this relay server.
