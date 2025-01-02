@@ -1469,20 +1469,7 @@
 <a href="#1468" id="1468">1468</a>
 <a href="#1469" id="1469">1469</a>
 <a href="#1470" id="1470">1470</a>
-<a href="#1471" id="1471">1471</a>
-<a href="#1472" id="1472">1472</a>
-<a href="#1473" id="1473">1473</a>
-<a href="#1474" id="1474">1474</a>
-<a href="#1475" id="1475">1475</a>
-<a href="#1476" id="1476">1476</a>
-<a href="#1477" id="1477">1477</a>
-<a href="#1478" id="1478">1478</a>
-<a href="#1479" id="1479">1479</a>
-<a href="#1480" id="1480">1480</a>
-<a href="#1481" id="1481">1481</a>
-<a href="#1482" id="1482">1482</a>
-<a href="#1483" id="1483">1483</a>
-<a href="#1484" id="1484">1484</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1471" id="1471">1471</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1592,10 +1579,15 @@
     </span>relay_datagrams_recv: Arc&lt;RelayDatagramRecvQueue&gt;,
     <span class="doccomment">/// Channel on which we receive packets to send to the relay.
     </span>relay_datagrams_send: mpsc::Receiver&lt;RelaySendItem&gt;,
-    url: RelayUrl,
-    relay_client_builder: relay::client::ClientBuilder,
-    is_home_relay: bool,
-    last_packet_src: <span class="prelude-ty">Option</span>&lt;NodeId&gt;,
+    <span class="doccomment">/// The relay server for this actor.
+    </span>url: RelayUrl,
+    <span class="doccomment">/// Builder which can repeatedly build a relay client.
+    </span>relay_client_builder: relay::client::ClientBuilder,
+    <span class="doccomment">/// Whether or not this is the home relay server.
+    ///
+    /// The home relay server needs to maintain it's connection to the relay server, even if
+    /// the relay actor is otherwise idle.
+    </span>is_home_relay: bool,
     <span class="doccomment">/// Token indicating the [`ActiveRelayActor`] should stop.
     </span>stop_token: CancellationToken,
 }
@@ -1655,7 +1647,6 @@
             relay_datagrams_recv,
             relay_datagrams_send,
             url,
-            last_packet_src: <span class="prelude-val">None</span>,
             relay_client_builder,
             is_home_relay: <span class="bool-val">false</span>,
             stop_token,
@@ -1850,6 +1841,7 @@
             inactive_timeout,
             ping_tracker: PingTracker::new(),
             nodes_present: BTreeSet::new(),
+            last_packet_src: <span class="prelude-val">None</span>,
             pong_pending: <span class="prelude-val">None</span>,
         };
         <span class="kw">let </span><span class="kw-2">mut </span>send_datagrams_buf = Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE);
@@ -1942,15 +1934,7 @@
                         <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream finished"</span>));
                     };
                     <span class="kw">match </span>msg {
-                        <span class="prelude-val">Ok</span>(msg) =&gt; {
-                            <span class="kw">if let </span><span class="prelude-val">Some</span>(pong_msg) = <span class="self">self</span>.handle_relay_msg(
-                                msg,
-                                <span class="kw-2">&amp;mut </span>state.ping_tracker,
-                                <span class="kw-2">&amp;mut </span>state.nodes_present,
-                            ) {
-                                state.pong_pending = <span class="prelude-val">Some</span>(pong_msg);
-                            }
-                        }
+                        <span class="prelude-val">Ok</span>(msg) =&gt; <span class="self">self</span>.handle_relay_msg(msg, <span class="kw-2">&amp;mut </span>state),
                         <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream read error: {err:#}"</span>)),
                     }
                 }
@@ -1962,12 +1946,7 @@
         }
     }
 
-    <span class="kw">fn </span>handle_relay_msg(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        msg: ReceivedMessage,
-        ping_tracker: <span class="kw-2">&amp;mut </span>PingTracker,
-        nodes_present: <span class="kw-2">&amp;mut </span>BTreeSet&lt;NodeId&gt;,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;[u8; <span class="number">8</span>]&gt; {
+    <span class="kw">fn </span>handle_relay_msg(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: ReceivedMessage, state: <span class="kw-2">&amp;mut </span>ConnectedRelayState) {
         <span class="kw">match </span>msg {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
@@ -1975,15 +1954,15 @@
             } =&gt; {
                 <span class="macro">trace!</span>(len = %data.len(), <span class="string">"received msg"</span>);
                 <span class="comment">// If this is a new sender, register a route for this peer.
-                </span><span class="kw">if </span><span class="self">self
-                    </span>.last_packet_src
+                </span><span class="kw">if </span>state
+                    .last_packet_src
                     .as_ref()
                     .map(|p| <span class="kw-2">*</span>p != remote_node_id)
                     .unwrap_or(<span class="bool-val">true</span>)
                 {
                     <span class="comment">// Avoid map lookup with high throughput single peer.
-                    </span><span class="self">self</span>.last_packet_src = <span class="prelude-val">Some</span>(remote_node_id);
-                    nodes_present.insert(remote_node_id);
+                    </span>state.last_packet_src = <span class="prelude-val">Some</span>(remote_node_id);
+                    state.nodes_present.insert(remote_node_id);
                 }
                 <span class="kw">for </span>datagram <span class="kw">in </span>PacketSplitIter::new(<span class="self">self</span>.url.clone(), remote_node_id, data) {
                     <span class="kw">let </span><span class="prelude-val">Ok</span>(datagram) = datagram <span class="kw">else </span>{
@@ -1996,20 +1975,15 @@
                 }
             }
             ReceivedMessage::NodeGone(node_id) =&gt; {
-                nodes_present.remove(<span class="kw-2">&amp;</span>node_id);
+                state.nodes_present.remove(<span class="kw-2">&amp;</span>node_id);
             }
-            ReceivedMessage::Ping(data) =&gt; <span class="kw">return </span><span class="prelude-val">Some</span>(data),
-            ReceivedMessage::Pong(data) =&gt; {
-                ping_tracker.pong_received(data);
-            }
+            ReceivedMessage::Ping(data) =&gt; state.pong_pending = <span class="prelude-val">Some</span>(data),
+            ReceivedMessage::Pong(data) =&gt; state.ping_tracker.pong_received(data),
             ReceivedMessage::KeepAlive
             | ReceivedMessage::Health { .. }
-            | ReceivedMessage::ServerRestarting { .. } =&gt; {
-                <span class="macro">trace!</span>(<span class="string">"Ignoring {msg:?}"</span>);
-            }
+            | ReceivedMessage::ServerRestarting { .. } =&gt; <span class="macro">trace!</span>(<span class="string">"Ignoring {msg:?}"</span>),
         }
-        <span class="prelude-val">None
-    </span>}
+    }
 
     <span class="doccomment">/// Run the actor main loop while sending to the relay server.
     ///
@@ -2049,12 +2023,7 @@
                         <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream finished"</span>));
                     };
                     <span class="kw">match </span>msg {
-                        <span class="prelude-val">Ok</span>(msg) =&gt; {
-                            <span class="kw">if let </span><span class="prelude-val">Some</span>(pong_msg) = <span class="self">self</span>.handle_relay_msg(
-                                msg, <span class="kw-2">&amp;mut </span>state.ping_tracker, <span class="kw-2">&amp;mut </span>state.nodes_present) {
-                                    state.pong_pending = <span class="prelude-val">Some</span>(pong_msg);
-                                }
-                        }
+                        <span class="prelude-val">Ok</span>(msg) =&gt; <span class="self">self</span>.handle_relay_msg(msg, state),
                         <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream read error: {err:#}"</span>)),
                     }
                 }
@@ -2080,6 +2049,11 @@
     </span>ping_tracker: PingTracker,
     <span class="doccomment">/// Nodes which are reachable via this relay server.
     </span>nodes_present: BTreeSet&lt;NodeId&gt;,
+    <span class="doccomment">/// The [`NodeId`] from whom we received the last packet.
+    ///
+    /// This is to avoid a slower lookup in the [`ConnectedRelayState::nodes_present`] map
+    /// when we are only communicating to a single remote node.
+    </span>last_packet_src: <span class="prelude-ty">Option</span>&lt;NodeId&gt;,
     <span class="doccomment">/// A pong we need to send ASAP.
     </span>pong_pending: <span class="prelude-ty">Option</span>&lt;[u8; <span class="number">8</span>]&gt;,
 }
