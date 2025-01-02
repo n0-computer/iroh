@@ -78,6 +78,30 @@ const UNDELIVERABLE_DATAGRAM_TIMEOUT: Duration = Duration::from_millis(400);
 ///
 /// It is responsible for maintaining the connection to the relay server and handling all
 /// communication with it.
+///
+/// The actor shuts down itself on inactivity: inactivity is determined when no more
+/// datagrams are being received to send.
+///
+/// This actor has 3 main states it can be in, each has it's dedicated run loop:
+///
+/// - Dialing the relay server.
+///
+///   This will continuously dial the server until connected, using exponential backoff if
+///   it can not connect.  See [`ActiveRelayActor::run_dialing`].
+///
+/// - Connected to the relay server.
+///
+///   This state allows receiving from the relay server, though sending is idle in this
+///   state.  See [`ActiveRelayActor::run_connected`].
+///
+/// - Sending to the relay server.
+///
+///   This is a sub-state of `connected` so the actor can still be receiving from the relay
+///   server at this time.  However it is actively sending data to the server so can not
+///   consume any further items from inboxes which will result in sending more data to the
+///   server until the actor goes back to the `connected` state.
+///
+/// All these are driven from the top-level [`ActiveRelayActor::run`] loop.
 #[derive(Debug)]
 struct ActiveRelayActor {
     /// Queue to send received relay datagrams on.
@@ -88,6 +112,8 @@ struct ActiveRelayActor {
     relay_client_builder: relay::client::ClientBuilder,
     is_home_relay: bool,
     last_packet_src: Option<NodeId>,
+    /// Token indicating the [`ActiveRelayActor`] should stop.
+    stop_token: CancellationToken,
 }
 
 #[derive(Debug)]
@@ -117,6 +143,7 @@ struct ActiveRelayActorOptions {
     relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
     relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
     connection_opts: RelayConnectionOptions,
+    stop_token: CancellationToken,
 }
 
 /// Configuration needed to create a connection to a relay server.
@@ -137,6 +164,7 @@ impl ActiveRelayActor {
             relay_datagrams_send,
             relay_datagrams_recv,
             connection_opts,
+            stop_token,
         } = opts;
         let relay_client_builder = Self::create_relay_builder(url.clone(), connection_opts);
         ActiveRelayActor {
@@ -146,6 +174,7 @@ impl ActiveRelayActor {
             last_packet_src: None,
             relay_client_builder,
             is_home_relay: false,
+            stop_token,
         }
     }
 
@@ -171,13 +200,13 @@ impl ActiveRelayActor {
         builder
     }
 
-    async fn run(
-        mut self,
-        cancel_token: CancellationToken,
-        mut inbox: mpsc::Receiver<ActiveRelayMessage>,
-    ) -> anyhow::Result<()> {
+    /// The main actor run loop.
+    ///
+    /// Primarily switches between the dialing and connected states.
+    async fn run(mut self, mut inbox: mpsc::Receiver<ActiveRelayMessage>) -> anyhow::Result<()> {
         inc!(MagicsockMetrics, num_relay_conns_added);
 
+        // TODO: Move this to an actor state since every run loop accesses this.
         // If inactive for one tick the actor should exit.  Inactivity is only tracked on
         // the last datagrams sent to the relay, received datagrams will trigger ACKs which
         // is sufficient to keep active connections open.
@@ -186,14 +215,14 @@ impl ActiveRelayActor {
 
         loop {
             let Some(client) = self
-                .run_dialing(&cancel_token, &mut inbox, &mut inactive_timeout)
+                .run_dialing(&mut inbox, &mut inactive_timeout)
                 .instrument(info_span!("dialing"))
                 .await
             else {
                 break;
             };
             match self
-                .run_connected(&cancel_token, &mut inbox, &mut inactive_timeout, client)
+                .run_connected(&mut inbox, &mut inactive_timeout, client)
                 .instrument(info_span!("connected"))
                 .await
             {
@@ -216,7 +245,6 @@ impl ActiveRelayActor {
     // TODO: consider storing cancel_token and inbox inside the actor.
     async fn run_dialing(
         &mut self,
-        cancel_token: &CancellationToken,
         inbox: &mut mpsc::Receiver<ActiveRelayMessage>,
         inactive_timeout: &mut tokio::time::Interval,
     ) -> Option<iroh_relay::client::Client> {
@@ -232,22 +260,22 @@ impl ActiveRelayActor {
         send_datagram_flush.set_missed_tick_behavior(MissedTickBehavior::Delay);
         send_datagram_flush.reset(); // Skip the immediate interval
 
-        let mut connecting_fut = self.connect_relay();
+        let mut dialing_fut = self.dial_relay();
         loop {
             tokio::select! {
                 biased;
-                _ = cancel_token.cancelled() => {
+                _ = self.stop_token.cancelled() => {
                     debug!("Shutdown.");
                     break None;
                 }
-                res = &mut connecting_fut => {
+                res = &mut dialing_fut => {
                     match res {
                         Ok(client) => {
                             break Some(client);
                         }
                         Err(err) => {
                             warn!("Client failed to connect: {err:#}");
-                            connecting_fut = self.connect_relay();
+                            dialing_fut = self.dial_relay();
                         }
                     }
                 }
@@ -287,12 +315,12 @@ impl ActiveRelayActor {
         }
     }
 
-    /// Returns a future which will repeatedly connect to a relay server.
+    /// Returns a future which will complete once connected to the relay server.
     ///
     /// The future only completes once the connection is established and retries
     /// connections.  It currently does not ever return `Err` as the retries continue
     /// forever.
-    fn connect_relay(&self) -> Pin<Box<dyn Future<Output = Result<Client>> + Send>> {
+    fn dial_relay(&self) -> Pin<Box<dyn Future<Output = Result<Client>> + Send>> {
         let backoff: ExponentialBackoff<backoff::SystemClock> = ExponentialBackoffBuilder::new()
             .with_initial_interval(Duration::from_millis(10))
             .with_max_interval(Duration::from_secs(5))
@@ -326,7 +354,6 @@ impl ActiveRelayActor {
     /// to the relay server is lost.
     async fn run_connected(
         &mut self,
-        cancel_token: &CancellationToken,
         inbox: &mut mpsc::Receiver<ActiveRelayMessage>,
         inactive_timeout: &mut tokio::time::Interval,
         client: iroh_relay::client::Client,
@@ -336,7 +363,6 @@ impl ActiveRelayActor {
         let (mut client_stream, mut client_sink) = client.split();
 
         let mut state = ConnectedRelayState {
-            stop_token: cancel_token,
             inactive_timeout,
             ping_tracker: PingTracker::new(),
             nodes_present: BTreeSet::new(),
@@ -358,7 +384,7 @@ impl ActiveRelayActor {
             }
             tokio::select! {
                 biased;
-                _ = state.stop_token.cancelled() => {
+                _ = self.stop_token.cancelled() => {
                     debug!("Shutdown.");
                     break Ok(());
                 }
@@ -521,7 +547,7 @@ impl ActiveRelayActor {
         loop {
             tokio::select! {
                 biased;
-                _ = state.stop_token.cancelled() => {
+                _ = self.stop_token.cancelled() => {
                     break Ok(());
                 }
                 res = &mut sending_fut => {
@@ -564,8 +590,6 @@ impl ActiveRelayActor {
 /// [`ActiveRelayActor::run_sending`].
 #[derive(Debug)]
 struct ConnectedRelayState<'a> {
-    /// Token indicating the [`ActiveRelayActor`] should stop.
-    stop_token: &'a CancellationToken,
     /// If this expires the actor has been inactive too long and should stop.
     inactive_timeout: &'a mut tokio::time::Interval, // TODO: Make it a Sleep again?
     /// Tracks pings we have sent, awaits pong replies.
@@ -831,13 +855,13 @@ impl RelayActor {
             relay_datagrams_send: send_datagram_rx,
             relay_datagrams_recv: self.relay_datagram_recv_queue.clone(),
             connection_opts,
+            stop_token: self.cancel_token.child_token(),
         };
         let actor = ActiveRelayActor::new(opts);
-        let relay_cancel_token = self.cancel_token.child_token();
         self.active_relay_tasks.spawn(
             async move {
                 // TODO: Make the actor itself infallible.
-                if let Err(err) = actor.run(relay_cancel_token, inbox_rx).await {
+                if let Err(err) = actor.run(inbox_rx).await {
                     warn!("actor error: {err:#}");
                 }
             }
@@ -1149,7 +1173,7 @@ mod tests {
     /// Starts a new [`ActiveRelayActor`].
     fn start_active_relay_actor(
         secret_key: SecretKey,
-        cancel_token: CancellationToken,
+        stop_token: CancellationToken,
         url: RelayUrl,
         inbox_rx: mpsc::Receiver<ActiveRelayMessage>,
         relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
@@ -1167,11 +1191,12 @@ mod tests {
                 prefer_ipv6: Arc::new(AtomicBool::new(true)),
                 insecure_skip_cert_verify: true,
             },
+            stop_token,
         };
         let task = tokio::spawn(
             async move {
                 let actor = ActiveRelayActor::new(opts);
-                actor.run(cancel_token, inbox_rx).await
+                actor.run(inbox_rx).await
             }
             .instrument(span),
         );
