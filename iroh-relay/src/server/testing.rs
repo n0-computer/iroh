@@ -1,7 +1,9 @@
 //! Exposes functions to quickly configure a server suitable for testing.
 use std::net::Ipv4Addr;
 
-use super::{CertConfig, QuicConfig, RelayConfig, ServerConfig, StunConfig, TlsConfig};
+use super::{
+    AccessConfig, CertConfig, QuicConfig, RelayConfig, ServerConfig, StunConfig, TlsConfig,
+};
 
 /// Creates a [`StunConfig`] suitable for testing.
 ///
@@ -67,6 +69,7 @@ pub fn relay_config() -> RelayConfig<()> {
         tls: Some(tls_config()),
         limits: Default::default(),
         key_cache_capacity: Some(1024),
+        access: AccessConfig::Everyone,
     }
 }
 

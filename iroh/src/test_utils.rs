@@ -6,7 +6,10 @@ pub use dns_and_pkarr_servers::DnsPkarrServer;
 pub use dns_server::create_dns_resolver;
 use iroh_base::RelayUrl;
 use iroh_relay::{
-    server::{CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
+    server::{
+        AccessConfig, CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig,
+        TlsConfig,
+    },
     RelayMap, RelayNode, RelayQuicConfig,
 };
 use tokio::sync::oneshot;
@@ -85,6 +88,7 @@ pub async fn run_relay_server_with(
             tls: Some(tls),
             limits: Default::default(),
             key_cache_capacity: Some(1024),
+            access: AccessConfig::Everyone,
         }),
         quic,
         stun,

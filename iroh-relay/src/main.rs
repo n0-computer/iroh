@@ -11,6 +11,7 @@ use std::{
 
 use anyhow::{bail, Context as _, Result};
 use clap::Parser;
+use iroh_base::NodeId;
 use iroh_relay::{
     defaults::{
         DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_RELAY_QUIC_PORT,
@@ -170,6 +171,47 @@ struct Config {
     metrics_bind_addr: Option<SocketAddr>,
     /// The capacity of the key cache.
     key_cache_capacity: Option<usize>,
+    /// Access control
+    access: AccessConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum AccessConfig {
+    /// Allows everyone
+    #[serde(rename = "everyone")]
+    Everyone,
+    /// Allows only these nodes.
+    #[serde(rename = "allowlist")]
+    Allowlist(Vec<NodeId>),
+    /// Allows everyone, except these nodes.
+    #[serde(rename = "denylist")]
+    Denylist(Vec<NodeId>),
+}
+
+impl From<AccessConfig> for iroh_relay::server::AccessConfig {
+    fn from(cfg: AccessConfig) -> Self {
+        match cfg {
+            AccessConfig::Everyone => iroh_relay::server::AccessConfig::Everyone,
+            AccessConfig::Allowlist(allow_list) => {
+                iroh_relay::server::AccessConfig::Restricted(Box::new(move |node_id| {
+                    if allow_list.contains(&node_id) {
+                        iroh_relay::server::Access::Allow
+                    } else {
+                        iroh_relay::server::Access::Deny
+                    }
+                }))
+            }
+            AccessConfig::Denylist(deny_list) => {
+                iroh_relay::server::AccessConfig::Restricted(Box::new(move |node_id| {
+                    if deny_list.contains(&node_id) {
+                        iroh_relay::server::Access::Deny
+                    } else {
+                        iroh_relay::server::Access::Allow
+                    }
+                }))
+            }
+        }
+    }
 }
 
 impl Config {
@@ -202,6 +244,7 @@ impl Default for Config {
             enable_metrics: cfg_defaults::enable_metrics(),
             metrics_bind_addr: None,
             key_cache_capacity: Default::default(),
+            access: AccessConfig::Everyone,
         }
     }
 }
@@ -574,7 +617,9 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
         tls: relay_tls.and_then(|tls| if dangerous_http_only { None } else { Some(tls) }),
         limits,
         key_cache_capacity: cfg.key_cache_capacity,
+        access: cfg.access.clone().into(),
     };
+
     let stun_config = relay::StunConfig {
         bind_addr: cfg.stun_bind_addr(),
     };
