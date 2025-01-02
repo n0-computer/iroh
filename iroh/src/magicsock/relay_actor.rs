@@ -14,10 +14,9 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    task::{self, Poll},
 };
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use backoff::exponential::{ExponentialBackoff, ExponentialBackoffBuilder};
 use bytes::{Bytes, BytesMut};
 use futures_buffered::FuturesUnorderedBounded;
@@ -27,7 +26,7 @@ use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::{
     self as relay,
-    client::{Client, ClientSink, ConnSendError, ReceivedMessage, SendMessage},
+    client::{Client, ReceivedMessage, SendMessage},
     MAX_PACKET_SIZE,
 };
 use tokio::{
@@ -54,6 +53,13 @@ const MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PublicKey::LENGTH;
 
 /// Maximum time for a relay server to respond to a relay protocol ping.
 const PING_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Number of datagrams which can be sent to the relay server in one batch.
+///
+/// This means while this batch is sending to the server no other relay protocol frames can
+/// be sent to the server, e.g. no Ping frames or so.  While the maximum packet size is
+/// rather large, each item can typically be expected to up to 1500 or the max GSO size.
+const SEND_DATAGRAM_BATCH_SIZE: usize = 20;
 
 /// Timeout for establishing the relay connection.
 ///
@@ -327,129 +333,58 @@ impl ActiveRelayActor {
     ) -> Result<()> {
         debug!("Actor loop: connected to relay");
 
-        let (mut client_stream, client_sink) = client.split();
+        let (mut client_stream, mut client_sink) = client.split();
 
-        // TODO: an alternative to consider is to create another `run_sending` loop to call
-        // when sending.  It would borrow the sink and be awaited in-place.  The benefit is
-        // that the send methods wouldn't have to be fallible, as they are bugs really.
-        enum SendState {
-            Sending(Pin<Box<dyn Future<Output = Result<ClientSink, ConnSendError>> + Send>>),
-            Ready(iroh_relay::client::ClientSink),
-        }
-        impl SendState {
-            fn is_sending(&self) -> bool {
-                matches!(self, SendState::Sending(_))
-            }
+        let mut state = ConnectedRelayState {
+            stop_token: cancel_token,
+            inactive_timeout,
+            ping_tracker: PingTracker::new(),
+            nodes_present: BTreeSet::new(),
+            pong_pending: None,
+        };
+        let mut send_datagrams_buf = Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE);
 
-            fn is_ready(&self) -> bool {
-                matches!(self, SendState::Ready(_))
-            }
-
-            fn send(self, msg: SendMessage) -> Result<Self> {
-                let SendState::Ready(mut client_sink) = self else {
-                    error!("SendState send when not ready!");
-                    bail!("SendState not ready");
-                };
-                let fut = async move {
-                    match client_sink.send(msg).await {
-                        Ok(_) => Ok(client_sink),
-                        Err(err) => {
-                            debug!("Send failed: {err:#}");
-                            inc!(MagicsockMetrics, send_relay_error);
-                            Err(err)
-                        }
-                    }
-                };
-                Ok(Self::Sending(Box::pin(fut)))
-            }
-
-            fn send_all(
-                self,
-                msg_iter: impl Iterator<Item = Result<SendMessage, ConnSendError>> + Send + 'static,
-            ) -> Result<Self> {
-                let SendState::Ready(mut client_sink) = self else {
-                    error!("SendState send_all when not ready!");
-                    bail!("SendState not ready");
-                };
-                let fut = async move {
-                    let msg_stream = futures_util::stream::iter(msg_iter);
-                    let mut stream = pin!(msg_stream);
-                    match client_sink.send_all(&mut stream).await {
-                        Ok(_) => Ok(client_sink),
-                        Err(err) => {
-                            debug!("Send all failed: {err:#}");
-                            inc!(MagicsockMetrics, send_relay_error);
-                            Err(err)
-                        }
-                    }
-                };
-                Ok(Self::Sending(Box::pin(fut)))
-            }
-        }
-        impl Future for SendState {
-            type Output = Result<ClientSink, ConnSendError>;
-
-            fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-                match *self {
-                    SendState::Sending(ref mut fut) => fut.as_mut().poll(cx),
-                    SendState::Ready(_) => Poll::Pending,
-                }
-            }
-        }
-
-        let mut send_state = SendState::Ready(client_sink);
         if self.is_home_relay {
-            send_state = send_state.send(SendMessage::NotePreferred(true))?;
+            let fut = client_sink.send(SendMessage::NotePreferred(true));
+            self.run_sending(fut, &mut state, &mut client_stream)
+                .await?;
         }
-
-        // A pong message which needs to be sent as soon as possible.
-        let mut pending_pong: Option<[u8; 8]> = None;
-
-        // Tracks pings we have sent, awaiting pong replies.
-        let mut ping_tracker = PingTracker::new();
-
-        // Tracks the iroh nodes we know are connected to the this relay server.  Used to
-        // save on a relay connection in case we want to send to this node but are not yet
-        // connected to its home relay.
-        let mut nodes_present: BTreeSet<NodeId> = BTreeSet::new();
 
         loop {
-            if pending_pong.is_some() && send_state.is_ready() {
-                if let Some(data) = pending_pong.take() {
-                    send_state = send_state.send(SendMessage::Pong(data))?;
-                    continue;
-                }
+            if let Some(data) = state.pong_pending.take() {
+                let fut = client_sink.send(SendMessage::Pong(data));
+                self.run_sending(fut, &mut state, &mut client_stream)
+                    .await?;
             }
             tokio::select! {
-                _ = cancel_token.cancelled() => {
+                biased;
+                _ = state.stop_token.cancelled() => {
                     debug!("Shutdown.");
                     break Ok(());
                 }
-                res = &mut send_state, if send_state.is_sending() => {
-                    let client = res?;
-                    send_state = SendState::Ready(client);
-                }
-                _ = ping_tracker.timeout() => {
+                _ = state.ping_tracker.timeout() => {
                     break Err(anyhow!("Ping timeout"));
                 }
-                msg = inbox.recv(), if send_state.is_ready() => {
+                msg = inbox.recv() => {
                     let Some(msg) = msg else {
                         warn!("Inbox closed, shutdown.");
                         break Ok(());
                     };
                     match msg {
                         ActiveRelayMessage::SetHomeRelay(is_preferred) => {
-                            send_state = send_state.send(SendMessage::NotePreferred(is_preferred))?;
+                            let fut = client_sink.send(SendMessage::NotePreferred(is_preferred));
+                            self.run_sending(fut, &mut state, &mut client_stream).await?;
                         }
                         ActiveRelayMessage::HasNodeRoute(peer, sender) => {
-                            let has_peer = nodes_present.contains(&peer);
+                            let has_peer = state.nodes_present.contains(&peer);
                             sender.send(has_peer).ok();
                         }
                         ActiveRelayMessage::CheckConnection(local_ips) => {
                             match client_stream.local_addr() {
                                 Some(addr) if local_ips.contains(&addr.ip()) => {
-                                    let data = ping_tracker.new_ping();
-                                    send_state = send_state.send(SendMessage::Ping(data))?;
+                                    let data = state.ping_tracker.new_ping();
+                                    let fut = client_sink.send(SendMessage::Ping(data));
+                                    self.run_sending(fut, &mut state, &mut client_stream).await?;
                                 }
                                 Some(_) => break Err(anyhow!("Local IP no longer valid")),
                                 None => break Err(anyhow!("No local addr, reconnecting")),
@@ -462,23 +397,35 @@ impl ActiveRelayActor {
                         }
                     }
                 }
-                item = self.relay_datagrams_send.recv(), if send_state.is_ready() => {
-                    // TODO: Read in bulk using recv_many, send in bulk.
-                    let Some(datagrams) = item else {
+                count = self.relay_datagrams_send.recv_many(
+                    &mut send_datagrams_buf,
+                    SEND_DATAGRAM_BATCH_SIZE,
+                ) => {
+                    if count == 0 {
                         warn!("Datagram inbox closed, shutdown");
                         break Ok(());
                     };
-                    inactive_timeout.reset();
-                    let packet_iter = PacketizeIter::<_, MAX_PAYLOAD_SIZE>::new(
-                        datagrams.remote_node,
-                        datagrams.datagrams,
-                    )
+                    state.inactive_timeout.reset();
+                    // TODO: This allocation is *very* unfortunate.  But so is the
+                    // allocation *inside* of PacketizeIter...
+                    let dgrams = std::mem::replace(
+                        &mut send_datagrams_buf,
+                        Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE),
+                    );
+                    let packet_iter = dgrams.into_iter().flat_map(|datagrams| {
+                        PacketizeIter::<_, MAX_PAYLOAD_SIZE>::new(
+                            datagrams.remote_node,
+                            datagrams.datagrams.clone(),
+                        )
                         .map(|p| {
                             inc_by!(MagicsockMetrics, send_relay, p.payload.len() as _);
                             SendMessage::SendPacket(p.node_id, p.payload)
                         })
-                        .map(Ok);
-                    send_state = send_state.send_all(packet_iter)?;
+                        .map(Ok)
+                    });
+                    let mut packet_stream = futures_util::stream::iter(packet_iter);
+                    let fut = client_sink.send_all(&mut packet_stream);
+                    self.run_sending(fut, &mut state, &mut client_stream).await?;
                 }
                 msg = client_stream.next() => {
                     let Some(msg) = msg else {
@@ -486,15 +433,18 @@ impl ActiveRelayActor {
                     };
                     match msg {
                         Ok(msg) => {
-                            if let Some(pong_msg) =
-                                self.handle_relay_msg(msg, &mut ping_tracker, &mut nodes_present) {
-                                pending_pong = Some(pong_msg);
+                            if let Some(pong_msg) = self.handle_relay_msg(
+                                msg,
+                                &mut state.ping_tracker,
+                                &mut state.nodes_present,
+                            ) {
+                                state.pong_pending = Some(pong_msg);
                             }
                         }
                         Err(err) => break Err(anyhow!("Client stream read error: {err:#}")),
                     }
                 }
-                _ = inactive_timeout.tick(), if !self.is_home_relay => {
+                _ = state.inactive_timeout.tick(), if !self.is_home_relay => {
                     debug!("Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting.");
                     break Ok(());
                 }
@@ -550,6 +500,80 @@ impl ActiveRelayActor {
         }
         None
     }
+
+    /// Run the actor main loop while sending to the relay server.
+    ///
+    /// While sending the actor should not read any inboxes which will give it more things
+    /// to send to the relay server.
+    ///
+    /// # Returns
+    ///
+    /// On `Err` the relay connection should be disconnected.  An `Ok` return means either
+    /// the actor should shut down, consult the [`CancellationToken`] for this, or the send
+    /// was successful.
+    async fn run_sending<T, E: Into<anyhow::Error>>(
+        &mut self,
+        sending_fut: impl Future<Output = Result<T, E>>,
+        state: &mut ConnectedRelayState<'_>,
+        client_stream: &mut iroh_relay::client::ClientStream,
+    ) -> Result<()> {
+        let mut sending_fut = pin!(sending_fut);
+        loop {
+            tokio::select! {
+                biased;
+                _ = state.stop_token.cancelled() => {
+                    break Ok(());
+                }
+                res = &mut sending_fut => {
+                    match res {
+                        Ok(_) => break Ok(()),
+                        Err(err) => break Err(err.into()),
+                    }
+                }
+                _ = state.ping_tracker.timeout() => {
+                    break Err(anyhow!("Ping timeout"));
+                }
+                // No need to read the inbox or datagrams to send.
+                msg = client_stream.next() => {
+                    let Some(msg) = msg else {
+                        break Err(anyhow!("Client stream finished"));
+                    };
+                    match msg {
+                        Ok(msg) => {
+                            if let Some(pong_msg) = self.handle_relay_msg(
+                                msg, &mut state.ping_tracker, &mut state.nodes_present) {
+                                    state.pong_pending = Some(pong_msg);
+                                }
+                        }
+                        Err(err) => break Err(anyhow!("Client stream read error: {err:#}")),
+                    }
+                }
+                _ = state.inactive_timeout.tick(), if !self.is_home_relay => {
+                    // TODO: this shutdown will not propagate
+                    debug!("Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting.");
+                    break Ok(());
+                }
+            }
+        }
+    }
+}
+
+/// Shared state when the [`ActiveRelayActor`] is connected to a relay server.
+///
+/// Common state between [`ActiveRelayActor::run_connected`] and
+/// [`ActiveRelayActor::run_sending`].
+#[derive(Debug)]
+struct ConnectedRelayState<'a> {
+    /// Token indicating the [`ActiveRelayActor`] should stop.
+    stop_token: &'a CancellationToken,
+    /// If this expires the actor has been inactive too long and should stop.
+    inactive_timeout: &'a mut tokio::time::Interval, // TODO: Make it a Sleep again?
+    /// Tracks pings we have sent, awaits pong replies.
+    ping_tracker: PingTracker,
+    /// Nodes which are reachable via this relay server.
+    nodes_present: BTreeSet<NodeId>,
+    /// A pong we need to send ASAP.
+    pong_pending: Option<[u8; 8]>,
 }
 
 pub(super) enum RelayActorMessage {
