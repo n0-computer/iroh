@@ -500,6 +500,7 @@ impl Decoder for DerpCodec {
     type Error = anyhow::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        tracing::warn!("decoding frame {}", src.len());
         // Need at least 5 bytes
         if src.len() < HEADER_LEN {
             return Ok(None);

@@ -109,12 +109,14 @@ impl AsyncRead for MaybeTlsStream {
         cx: &mut Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        match &mut *self {
+        let res = match &mut *self {
             MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_read(cx, buf),
             MaybeTlsStream::Tls(ref mut s) => Pin::new(s).poll_read(cx, buf),
             #[cfg(test)]
             MaybeTlsStream::Test(ref mut s) => Pin::new(s).poll_read(cx, buf),
-        }
+        };
+        tracing::warn!("poll_read: {:?}", res);
+        res
     }
 }
 
