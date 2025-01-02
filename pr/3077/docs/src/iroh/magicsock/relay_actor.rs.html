@@ -1503,22 +1503,7 @@
 <a href="#1502" id="1502">1502</a>
 <a href="#1503" id="1503">1503</a>
 <a href="#1504" id="1504">1504</a>
-<a href="#1505" id="1505">1505</a>
-<a href="#1506" id="1506">1506</a>
-<a href="#1507" id="1507">1507</a>
-<a href="#1508" id="1508">1508</a>
-<a href="#1509" id="1509">1509</a>
-<a href="#1510" id="1510">1510</a>
-<a href="#1511" id="1511">1511</a>
-<a href="#1512" id="1512">1512</a>
-<a href="#1513" id="1513">1513</a>
-<a href="#1514" id="1514">1514</a>
-<a href="#1515" id="1515">1515</a>
-<a href="#1516" id="1516">1516</a>
-<a href="#1517" id="1517">1517</a>
-<a href="#1518" id="1518">1518</a>
-<a href="#1519" id="1519">1519</a>
-<a href="#1520" id="1520">1520</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1505" id="1505">1505</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -2881,17 +2866,8 @@
             <span class="kw-2">&amp;</span>datagram_recv_queue,
         )
         .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="comment">// send_datagram_tx.send(hello_send_item.clone()).await?;
 
-        // // Check we get it back
-        // let RelayRecvDatagram {
-        //     url: _,
-        //     src: _,
-        //     buf,
-        // } = future::poll_fn(|cx| datagram_recv_queue.poll_recv(cx)).await?;
-        // assert_eq!(buf.as_ref(), b"hello");
-
-        // Now ask to check the connection, triggering a ping but no reconnect.
+        <span class="comment">// Now ask to check the connection, triggering a ping but no reconnect.
         </span><span class="kw">let </span>(tx, rx) = oneshot::channel();
         inbox_tx.send(ActiveRelayMessage::GetLocalAddr(tx)).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>local_addr = rx.<span class="kw">await</span><span class="question-mark">?</span>.context(<span class="string">"no local addr"</span>)<span class="question-mark">?</span>;
@@ -2914,11 +2890,8 @@
             <span class="kw-2">&amp;</span>datagram_recv_queue,
         )
         .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="comment">// send_datagram_tx.send(hello_send_item.clone()).await?;
-        // let recv = future::poll_fn(|cx| datagram_recv_queue.poll_recv(cx)).await?;
-        // assert_eq!(recv.buf.as_ref(), b"hello");
 
-        // Now ask to check the connection, this will reconnect without pinging because we
+        <span class="comment">// Now ask to check the connection, this will reconnect without pinging because we
         // do not supply any "valid" local IP addresses.
         </span><span class="macro">info!</span>(<span class="string">"check connection"</span>);
         inbox_tx
@@ -2936,11 +2909,8 @@
             <span class="kw-2">&amp;</span>datagram_recv_queue,
         )
         .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="comment">// send_datagram_tx.send(hello_send_item).await?;
-        // let recv = future::poll_fn(|cx| datagram_recv_queue.poll_recv(cx)).await?;
-        // assert_eq!(recv.buf.as_ref(), b"hello");
 
-        // Shut down the actor.
+        <span class="comment">// Shut down the actor.
         </span>cancel_token.cancel();
         task.<span class="kw">await</span><span class="question-mark">??</span>;
 
