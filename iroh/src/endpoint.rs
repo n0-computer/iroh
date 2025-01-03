@@ -1622,8 +1622,8 @@ mod tests {
                     let eps = ep.bound_sockets();
                     info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server listening on");
                     for i in 0..n_clients {
-                        let now = Instant::now();
-                        println!("[server] round {}", i + 1);
+                        let round_start = Instant::now();
+                        info!("[server] round {i}");
                         let incoming = ep.accept().await.unwrap();
                         let conn = incoming.await.unwrap();
                         let peer_id = get_remote_node_id(&conn).unwrap();
@@ -1638,7 +1638,7 @@ mod tests {
                         send.stopped().await.unwrap();
                         recv.read_to_end(0).await.unwrap();
                         info!(%i, peer = %peer_id.fmt_short(), "finished");
-                        println!("[server] round {} done in {:?}", i + 1, now.elapsed());
+                        info!("[server] round {i} done in {:?}", round_start.elapsed());
                     }
                 }
                 .instrument(error_span!("server")),
@@ -1650,8 +1650,8 @@ mod tests {
         });
 
         for i in 0..n_clients {
-            let now = Instant::now();
-            println!("[client] round {}", i + 1);
+            let round_start = Instant::now();
+            info!("[client] round {}", i);
             let relay_map = relay_map.clone();
             let client_secret_key = SecretKey::generate(&mut rng);
             let relay_url = relay_url.clone();
@@ -1688,7 +1688,7 @@ mod tests {
             }
             .instrument(error_span!("client", %i))
             .await;
-            println!("[client] round {} done in {:?}", i + 1, now.elapsed());
+            info!("[client] round {i} done in {:?}", round_start.elapsed());
         }
 
         server.await.unwrap();

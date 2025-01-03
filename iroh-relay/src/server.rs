@@ -774,12 +774,13 @@ mod tests {
     use std::{net::Ipv4Addr, time::Duration};
 
     use bytes::Bytes;
+    use futures_util::SinkExt;
     use http::header::UPGRADE;
     use iroh_base::{NodeId, SecretKey};
 
     use super::*;
     use crate::{
-        client::{conn::ReceivedMessage, ClientBuilder},
+        client::{conn::ReceivedMessage, ClientBuilder, SendMessage},
         http::{Protocol, HTTP_UPGRADE_PROTOCOL},
     };
 
@@ -806,12 +807,14 @@ mod tests {
     ) -> Result<ReceivedMessage> {
         // try resend 10 times
         for _ in 0..10 {
-            client_a.send(b_key, msg.clone()).await?;
-            let Ok(res) = tokio::time::timeout(Duration::from_millis(500), client_b.recv()).await
+            client_a
+                .send(SendMessage::SendPacket(b_key, msg.clone()))
+                .await?;
+            let Ok(res) = tokio::time::timeout(Duration::from_millis(500), client_b.next()).await
             else {
                 continue;
             };
-            return res?.unwrap();
+            return res.context("stream finished")?;
         }
         panic!("failed to send and recv message");
     }
@@ -914,16 +917,16 @@ mod tests {
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
-        let mut client_a =
-            ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver.clone());
-        client_a.connect().await.unwrap();
+        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
+            .connect()
+            .await?;
 
         // set up client b
         let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
-        let mut client_b =
-            ClientBuilder::new(relay_url.clone()).build(b_secret_key, resolver.clone());
-        client_b.connect().await.unwrap();
+        let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
+            .connect()
+            .await?;
 
         // send message from a to b
         let msg = Bytes::from("hello, b");
@@ -967,26 +970,20 @@ mod tests {
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
         let resolver = crate::dns::default_resolver();
-        info!("client a build");
-        let mut client_a = ClientBuilder::new(relay_url.clone())
+        info!("client a build & connect");
+        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
             .protocol(Protocol::Websocket)
-            .build(a_secret_key, resolver.clone());
-
-        // should already be connected after building the client
-        info!("client a connect");
-        client_a.connect().await?;
+            .connect()
+            .await?;
 
         // set up client b
         let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
-        info!("client b build");
-        let mut client_b = ClientBuilder::new(relay_url.clone())
+        info!("client b build & connect");
+        let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
             .protocol(Protocol::Websocket) // another websocket client
-            .build(b_secret_key, resolver.clone());
-
-        // should already be connected after building the client
-        info!("client b connect");
-        client_b.connect().await?;
+            .connect()
+            .await?;
 
         info!("sending a -> b");
 
@@ -1035,21 +1032,18 @@ mod tests {
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
-        let mut client_a = ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
-
-        // should already be connected after building the client
-        client_a.connect().await.unwrap();
+        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
+            .connect()
+            .await?;
 
         // set up client b
         let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
         let resolver = crate::dns::default_resolver().clone();
-        let mut client_b = ClientBuilder::new(relay_url.clone())
+        let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver)
             .protocol(Protocol::Websocket) // Use websockets
-            .build(b_secret_key, resolver);
-
-        // should already be connected after building the client
-        client_b.connect().await.unwrap();
+            .connect()
+            .await?;
 
         // send message from a to b
         let msg = Bytes::from("hello, b");

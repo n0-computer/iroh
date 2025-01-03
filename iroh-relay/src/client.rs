@@ -3,17 +3,22 @@
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
 use std::{
-    collections::HashMap,
-    future::{self, Future},
+    future::Future,
     net::{IpAddr, SocketAddr},
+    pin::Pin,
     sync::Arc,
-    time::Duration,
+    task::{self, Poll},
 };
 
+use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use bytes::Bytes;
 use conn::Conn;
-use futures_util::StreamExt;
+use futures_lite::Stream;
+use futures_util::{
+    stream::{SplitSink, SplitStream},
+    Sink, StreamExt,
+};
 use hickory_resolver::TokioResolver as DnsResolver;
 use http_body_util::Empty;
 use hyper::{
@@ -23,20 +28,19 @@ use hyper::{
     Request,
 };
 use hyper_util::rt::TokioIo;
-use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
-use rand::Rng;
+use iroh_base::{RelayUrl, SecretKey};
 use rustls::client::Resumption;
 use streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
-    sync::oneshot,
-    time::Instant,
 };
-use tracing::{debug, error, event, info_span, trace, warn, Instrument, Level};
+#[cfg(any(test, feature = "test-utils"))]
+use tracing::warn;
+use tracing::{debug, error, event, info_span, trace, Instrument, Level};
 use url::Url;
 
-pub use self::conn::ReceivedMessage;
+pub use self::conn::{ConnSendError, ReceivedMessage, SendMessage};
 use crate::{
     defaults::timeouts::*,
     http::{Protocol, RELAY_PATH},
@@ -47,108 +51,14 @@ pub(crate) mod conn;
 pub(crate) mod streams;
 mod util;
 
-/// Possible connection errors on the [`Client`]
-#[derive(Debug, thiserror::Error)]
-pub enum ClientError {
-    /// There was an error sending a packet
-    #[error("error sending a packet")]
-    Send,
-    /// There was a connection timeout error
-    #[error("connect timeout")]
-    ConnectTimeout,
-    /// There was an error dialing
-    #[error("dial error")]
-    DialIO(#[from] std::io::Error),
-    /// No local addresses exist
-    #[error("no local addr: {0}")]
-    NoLocalAddr(String),
-    /// There was http server [`hyper::Error`]
-    #[error("http connection error")]
-    Hyper(#[from] hyper::Error),
-    /// There was an http error [`http::Error`].
-    #[error("http error")]
-    Http(#[from] http::Error),
-    /// There was an unexpected status code
-    #[error("unexpected status code: expected {0}, got {1}")]
-    UnexpectedStatusCode(hyper::StatusCode, hyper::StatusCode),
-    /// The connection failed to upgrade
-    #[error("failed to upgrade connection: {0}")]
-    Upgrade(String),
-    /// The connection failed to proxy
-    #[error("failed to proxy connection: {0}")]
-    Proxy(String),
-    /// The relay [`super::client::Client`] failed to build
-    #[error("failed to build relay client: {0}")]
-    Build(String),
-    /// The ping request timed out
-    #[error("ping timeout")]
-    PingTimeout,
-    /// The ping request was aborted
-    #[error("ping aborted")]
-    PingAborted,
-    /// The given [`Url`] is invalid
-    #[error("invalid url: {0}")]
-    InvalidUrl(String),
-    /// There was an error with DNS resolution
-    #[error("dns: {0:?}")]
-    Dns(Option<anyhow::Error>),
-    /// An error related to websockets, either errors with parsing ws messages or the handshake
-    #[error("websocket error: {0}")]
-    WebsocketError(#[from] tokio_tungstenite_wasm::Error),
-}
-
-/// An HTTP Relay client.
-///
-/// Cheaply clonable.
-#[derive(derive_more::Debug)]
-pub struct Client {
-    secret_key: SecretKey,
-    is_preferred: bool,
-    relay_conn: Option<(Conn, Option<SocketAddr>)>,
-    #[debug("address family selector callback")]
-    address_family_selector: Option<Box<dyn Fn() -> bool + Send + Sync>>,
-    url: RelayUrl,
-    protocol: Protocol,
-    #[debug("TlsConnector")]
-    tls_connector: tokio_rustls::TlsConnector,
-    pings: PingTracker,
-    dns_resolver: DnsResolver,
-    proxy_url: Option<Url>,
-    key_cache: KeyCache,
-}
-
-#[derive(Default, Debug)]
-struct PingTracker(HashMap<[u8; 8], oneshot::Sender<()>>);
-
-impl PingTracker {
-    /// Note that we have sent a ping, and store the [`oneshot::Sender`] we
-    /// must notify when the pong returns
-    fn register(&mut self) -> ([u8; 8], oneshot::Receiver<()>) {
-        let data = rand::thread_rng().gen::<[u8; 8]>();
-        let (send, recv) = oneshot::channel();
-        self.0.insert(data, send);
-        (data, recv)
-    }
-
-    /// Remove the associated [`oneshot::Sender`] for `data` & return it.
-    ///
-    /// If there is no [`oneshot::Sender`] in the tracker, return `None`.
-    fn unregister(&mut self, data: &[u8; 8]) -> Option<oneshot::Sender<()>> {
-        trace!("removing ping {}", data_encoding::HEXLOWER.encode(data),);
-        self.0.remove(data)
-    }
-}
-
 /// Build a Client.
-#[derive(derive_more::Debug)]
+#[derive(derive_more::Debug, Clone)]
 pub struct ClientBuilder {
     /// Default is None
     #[debug("address family selector callback")]
-    address_family_selector: Option<Box<dyn Fn() -> bool + Send + Sync>>,
+    address_family_selector: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     /// Default is false
     is_prober: bool,
-    /// Expected PublicKey of the server
-    server_public_key: Option<PublicKey>,
     /// Server url.
     url: RelayUrl,
     /// Relay protocol
@@ -160,28 +70,27 @@ pub struct ClientBuilder {
     proxy_url: Option<Url>,
     /// Capacity of the key cache
     key_cache_capacity: usize,
+    /// The secret key of this client.
+    secret_key: SecretKey,
+    /// The DNS resolver to use.
+    dns_resolver: DnsResolver,
 }
 
 impl ClientBuilder {
     /// Create a new [`ClientBuilder`]
-    pub fn new(url: impl Into<RelayUrl>) -> Self {
+    pub fn new(url: impl Into<RelayUrl>, secret_key: SecretKey, dns_resolver: DnsResolver) -> Self {
         ClientBuilder {
             address_family_selector: None,
             is_prober: false,
-            server_public_key: None,
             url: url.into(),
             protocol: Protocol::Relay,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify: false,
             proxy_url: None,
             key_cache_capacity: 128,
+            secret_key,
+            dns_resolver,
         }
-    }
-
-    /// Sets the server url
-    pub fn server_url(mut self, url: impl Into<RelayUrl>) -> Self {
-        self.url = url.into();
-        self
     }
 
     /// Sets whether to connect to the relay via websockets or not.
@@ -201,7 +110,7 @@ impl ClientBuilder {
     where
         S: Fn() -> bool + Send + Sync + 'static,
     {
-        self.address_family_selector = Some(Box::new(selector));
+        self.address_family_selector = Some(Arc::new(selector));
         self
     }
 
@@ -232,9 +141,8 @@ impl ClientBuilder {
         self
     }
 
-    /// Build the [`Client`]
-    pub fn build(self, key: SecretKey, dns_resolver: DnsResolver) -> Client {
-        // TODO: review TLS config
+    /// Establishes a new connection to the relay server.
+    pub async fn connect(&self) -> Result<Client> {
         let roots = rustls::RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
         };
@@ -247,7 +155,7 @@ impl ClientBuilder {
         .with_no_client_auth();
         #[cfg(any(test, feature = "test-utils"))]
         if self.insecure_skip_cert_verify {
-            warn!("Insecure config: SSL certificates from relay servers will be trusted without verification");
+            warn!("Insecure config: SSL certificates from relay servers not verified");
             config
                 .dangerous()
                 .set_certificate_verifier(Arc::new(NoCertVerifier));
@@ -257,25 +165,134 @@ impl ClientBuilder {
 
         let tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
 
-        Client {
-            secret_key: key,
-            is_preferred: false,
-            relay_conn: None,
-            address_family_selector: self.address_family_selector,
-            pings: PingTracker::default(),
-            url: self.url,
+        let builder = ConnectionBuilder {
+            secret_key: self.secret_key.clone(),
+            address_family_selector: self.address_family_selector.clone(),
+            url: self.url.clone(),
             protocol: self.protocol,
             tls_connector,
-            dns_resolver,
-            proxy_url: self.proxy_url,
+            dns_resolver: self.dns_resolver.clone(),
+            proxy_url: self.proxy_url.clone(),
             key_cache: KeyCache::new(self.key_cache_capacity),
-        }
+        };
+        let (conn, local_addr) = builder.connect_0().await?;
+
+        Ok(Client { conn, local_addr })
+    }
+}
+
+/// A relay client.
+#[derive(Debug)]
+pub struct Client {
+    conn: Conn,
+    local_addr: Option<SocketAddr>,
+}
+
+impl Client {
+    /// Splits the client into a sink and a stream.
+    pub fn split(self) -> (ClientStream, ClientSink) {
+        let (sink, stream) = self.conn.split();
+        (
+            ClientStream {
+                stream,
+                local_addr: self.local_addr,
+            },
+            ClientSink { sink },
+        )
+    }
+}
+
+impl Stream for Client {
+    type Item = Result<ReceivedMessage>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.conn).poll_next(cx)
+    }
+}
+
+impl Sink<SendMessage> for Client {
+    type Error = ConnSendError;
+
+    fn poll_ready(
+        mut self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        <Conn as Sink<SendMessage>>::poll_ready(Pin::new(&mut self.conn), cx)
     }
 
-    /// The expected [`PublicKey`] of the relay server we are connecting to.
-    pub fn server_public_key(mut self, server_public_key: PublicKey) -> Self {
-        self.server_public_key = Some(server_public_key);
-        self
+    fn start_send(mut self: Pin<&mut Self>, item: SendMessage) -> Result<(), Self::Error> {
+        Pin::new(&mut self.conn).start_send(item)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        <Conn as Sink<SendMessage>>::poll_flush(Pin::new(&mut self.conn), cx)
+    }
+
+    fn poll_close(
+        mut self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        <Conn as Sink<SendMessage>>::poll_close(Pin::new(&mut self.conn), cx)
+    }
+}
+
+/// The send half of a relay client.
+#[derive(Debug)]
+pub struct ClientSink {
+    sink: SplitSink<Conn, SendMessage>,
+}
+
+impl Sink<SendMessage> for ClientSink {
+    type Error = ConnSendError;
+
+    fn poll_ready(
+        mut self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.sink).poll_ready(cx)
+    }
+
+    fn start_send(mut self: Pin<&mut Self>, item: SendMessage) -> Result<(), Self::Error> {
+        Pin::new(&mut self.sink).start_send(item)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.sink).poll_flush(cx)
+    }
+
+    fn poll_close(
+        mut self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.sink).poll_close(cx)
+    }
+}
+
+/// The receive half of a relay client.
+#[derive(Debug)]
+pub struct ClientStream {
+    stream: SplitStream<Conn>,
+    local_addr: Option<SocketAddr>,
+}
+
+impl ClientStream {
+    /// Returns the local address of the client.
+    pub fn local_addr(&self) -> Option<SocketAddr> {
+        self.local_addr
+    }
+}
+
+impl Stream for ClientStream {
+    type Item = Result<ReceivedMessage>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.stream).poll_next(cx)
     }
 }
 
@@ -297,73 +314,27 @@ pub fn make_dangerous_client_config() -> rustls::ClientConfig {
     .with_no_client_auth()
 }
 
-impl Client {
-    /// Reads a message from the server.
-    ///
-    /// Any [`ReceivedMessage::Pong`] messages which are in response to a pong we sent will
-    /// wake up the future returned by [`Client::send_ping`] and not be returned here.  Any
-    /// unknown ping messages are returned.
-    ///
-    /// # Cancel safety
-    ///
-    /// This method is cancel safe.  If the future is dropped before completion it is
-    /// guaranteed that no message is lost.
-    pub async fn recv(
-        &mut self,
-    ) -> Result<Option<anyhow::Result<ReceivedMessage>>, tokio::time::error::Elapsed> {
-        if let Some((conn, _)) = self.relay_conn.as_mut() {
-            loop {
-                let res = tokio::time::timeout(CLIENT_RECV_TIMEOUT, conn.next()).await;
-                if let Ok(Some(Ok(ReceivedMessage::Pong(ref data)))) = res {
-                    match self.pings.unregister(data) {
-                        Some(chan) => {
-                            chan.send(()).ok();
-                            continue;
-                        }
-                        None => {
-                            warn!(ping = ?data, "Unknown pong received.");
-                        }
-                    }
-                }
-                return res;
-            }
-        } else {
-            future::pending().await
-        }
-    }
+/// Some state to build a new connection.
+///
+/// Not because this necessarily the best way to structure this code, but because it was
+/// easy to migrate existing code.
+#[derive(derive_more::Debug)]
+struct ConnectionBuilder {
+    secret_key: SecretKey,
+    #[debug("address family selector callback")]
+    address_family_selector: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    url: RelayUrl,
+    protocol: Protocol,
+    #[debug("TlsConnector")]
+    tls_connector: tokio_rustls::TlsConnector,
+    dns_resolver: DnsResolver,
+    proxy_url: Option<Url>,
+    key_cache: KeyCache,
+}
 
-    /// Connects to a relay Server.
-    ///
-    /// If there already is a connection it is returned rather than re-establishing it.
-    pub async fn connect(&mut self) -> Result<(), ClientError> {
-        self.connect_inner("public api").await?;
-        Ok(())
-    }
-
-    async fn connect_inner(
-        &mut self,
-        why: &'static str,
-    ) -> Result<(&'_ mut Conn, Option<SocketAddr>), ClientError> {
-        debug!(url = %self.url, %why, "connecting");
-
-        if self.relay_conn.is_none() {
-            trace!("no connection, trying to connect");
-            let (conn, local_addr) = tokio::time::timeout(CONNECT_TIMEOUT, self.connect_0())
-                .await
-                .map_err(|_| ClientError::ConnectTimeout)??;
-
-            self.relay_conn = Some((conn, local_addr));
-        } else {
-            trace!("already had connection");
-        }
-
-        let (conn, addr) = self.relay_conn.as_mut().expect("just checked");
-
-        Ok((conn, *addr))
-    }
-
-    async fn connect_0(&self) -> Result<(Conn, Option<SocketAddr>), ClientError> {
-        let (mut conn, local_addr) = match self.protocol {
+impl ConnectionBuilder {
+    async fn connect_0(&self) -> Result<(Conn, Option<SocketAddr>)> {
+        let (conn, local_addr) = match self.protocol {
             Protocol::Websocket => {
                 let conn = self.connect_ws().await?;
                 let local_addr = None;
@@ -375,47 +346,40 @@ impl Client {
             }
         };
 
-        if self.is_preferred && conn.note_preferred(true).await.is_err() {
-            conn.close().await;
-            return Err(ClientError::Send);
-        }
-
         event!(
             target: "events.net.relay.connected",
             Level::DEBUG,
-            home = self.is_preferred,
             url = %self.url,
+            protocol = ?self.protocol,
         );
 
         trace!("connect_0 done");
         Ok((conn, local_addr))
     }
 
-    async fn connect_ws(&self) -> Result<Conn, ClientError> {
+    async fn connect_ws(&self) -> Result<Conn> {
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
         // We need to use the ws:// or wss:// schemes when connecting with websockets, though.
         dial_url
             .set_scheme(if self.use_tls() { "wss" } else { "ws" })
-            .map_err(|()| ClientError::InvalidUrl(self.url.to_string()))?;
+            .map_err(|()| anyhow!("Invalid URL"))?;
 
         debug!(%dial_url, "Dialing relay by websocket");
 
         let conn = tokio_tungstenite_wasm::connect(dial_url).await?;
-        let conn = Conn::new_ws(conn, self.key_cache.clone(), &self.secret_key)
-            .await
-            .map_err(|e| ClientError::Build(e.to_string()))?;
+        let conn = Conn::new_ws(conn, self.key_cache.clone(), &self.secret_key).await?;
         Ok(conn)
     }
 
-    async fn connect_relay(&self) -> Result<(Conn, SocketAddr), ClientError> {
+    async fn connect_relay(&self) -> Result<(Conn, SocketAddr)> {
         let url = self.url.clone();
         let tcp_stream = self.dial_url().await?;
 
         let local_addr = tcp_stream
             .local_addr()
-            .map_err(|e| ClientError::NoLocalAddr(e.to_string()))?;
+            .context("No local addr for TCP stream")?;
 
         debug!(server_addr = ?tcp_stream.peer_addr(), %local_addr, "TCP stream connected");
 
@@ -423,7 +387,7 @@ impl Client {
             debug!("Starting TLS handshake");
             let hostname = self
                 .tls_servername()
-                .ok_or_else(|| ClientError::InvalidUrl("No tls servername".into()))?;
+                .ok_or_else(|| anyhow!("No tls servername"))?;
             let hostname = hostname.to_owned();
             let tls_stream = self.tls_connector.connect(hostname, tcp_stream).await?;
             debug!("tls_connector connect success");
@@ -434,40 +398,28 @@ impl Client {
         };
 
         if response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
-            error!(
-                "expected status 101 SWITCHING_PROTOCOLS, got: {}",
-                response.status()
-            );
-            return Err(ClientError::UnexpectedStatusCode(
+            bail!(
+                "Unexpected status code: expected {}, actual: {}",
                 hyper::StatusCode::SWITCHING_PROTOCOLS,
                 response.status(),
-            ));
+            );
         }
 
         debug!("starting upgrade");
-        let upgraded = match hyper::upgrade::on(response).await {
-            Ok(upgraded) => upgraded,
-            Err(err) => {
-                warn!("upgrade failed: {:#}", err);
-                return Err(ClientError::Hyper(err));
-            }
-        };
+        let upgraded = hyper::upgrade::on(response)
+            .await
+            .context("Upgrade failed")?;
 
         debug!("connection upgraded");
-        let conn = downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))?;
+        let conn = downcast_upgrade(upgraded)?;
 
-        let conn = Conn::new_relay(conn, self.key_cache.clone(), &self.secret_key)
-            .await
-            .map_err(|e| ClientError::Build(e.to_string()))?;
+        let conn = Conn::new_relay(conn, self.key_cache.clone(), &self.secret_key).await?;
 
         Ok((conn, local_addr))
     }
 
     /// Sends the HTTP upgrade request to the relay server.
-    async fn start_upgrade<T>(
-        io: T,
-        relay_url: RelayUrl,
-    ) -> Result<hyper::Response<Incoming>, ClientError>
+    async fn start_upgrade<T>(io: T, relay_url: RelayUrl) -> Result<hyper::Response<Incoming>>
     where
         T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     {
@@ -500,119 +452,6 @@ impl Client {
         request_sender.send_request(req).await.map_err(From::from)
     }
 
-    /// Let the server know that this client is the preferred client
-    pub async fn note_preferred(&mut self, is_preferred: bool) {
-        let old = &mut self.is_preferred;
-        if *old == is_preferred {
-            return;
-        }
-        *old = is_preferred;
-
-        // only send the preference if we already have a connection
-        let res = {
-            if let Some((ref mut conn, _)) = self.relay_conn {
-                conn.note_preferred(is_preferred).await
-            } else {
-                return;
-            }
-        };
-        // need to do this outside the above closure because they rely on the same lock
-        // if there was an error sending, close the underlying relay connection
-        if res.is_err() {
-            self.close().await;
-        }
-    }
-
-    /// Returns the local addr of the connection.
-    ///
-    /// If there is no current underlying relay connection, `None` is returned.
-    pub fn local_addr(&self) -> Option<SocketAddr> {
-        self.relay_conn.as_ref().and_then(|(_, addr)| *addr)
-    }
-
-    /// Send a ping to the server.
-    ///
-    /// The returned future will complete once we get an expected pong.
-    ///
-    /// [`Client::recv`] must be called for any reads to occur and thus to process the pong
-    /// reply.
-    ///
-    /// This has a built-in timeout `crate::defaults::timeouts::PING_TIMEOUT`.
-    pub async fn send_ping(
-        &mut self,
-    ) -> Result<
-        impl Future<Output = Result<Duration, ClientError>> + Send + Sync + 'static,
-        ClientError,
-    > {
-        let (ping, recv) = self.pings.register();
-        let conn = self.connect_inner("ping").await.map(|(c, _)| c)?;
-        trace!("ping: {}", data_encoding::HEXLOWER.encode(&ping));
-
-        let start = Instant::now();
-        if let Err(err) = conn.send_ping(ping).await {
-            warn!("failed to send ping: {:?}", err);
-            Err(ClientError::Send)
-        } else {
-            Ok(async move {
-                match tokio::time::timeout(PING_TIMEOUT, recv).await {
-                    Ok(Ok(())) => Ok(start.elapsed()),
-                    Err(_) => Err(ClientError::PingTimeout),
-                    Ok(Err(_)) => Err(ClientError::PingAborted),
-                }
-            })
-        }
-    }
-
-    /// Sends a packet for a remote node to the server.
-    ///
-    /// If there is no underlying active relay connection, it creates one before attempting
-    /// to send the message.
-    ///
-    /// If there is an error sending the packet, it closes the underlying relay connection
-    /// before returning.
-    pub async fn send(&mut self, remote_node: NodeId, payload: Bytes) -> Result<(), ClientError> {
-        trace!(remote_node = %remote_node.fmt_short(), len = payload.len(), "send");
-        let (conn, _) = self.connect_inner("send").await?;
-        if conn.send(remote_node, payload).await.is_err() {
-            self.close().await;
-            return Err(ClientError::Send);
-        }
-        Ok(())
-    }
-
-    /// Send a pong back to the server.
-    ///
-    /// If there is no underlying active relay connection, it creates one before attempting to
-    /// send the pong message.
-    ///
-    /// If there is an error sending pong, it closes the underlying relay connection before
-    /// returning.
-    pub async fn send_pong(&mut self, data: [u8; 8]) -> Result<(), ClientError> {
-        debug!("send_pong");
-        let (conn, _) = self.connect_inner("send_pong").await?;
-        if conn.send_pong(data).await.is_err() {
-            self.close().await;
-            return Err(ClientError::Send);
-        }
-        Ok(())
-    }
-
-    /// Disconnects the http relay connection.
-    ///
-    /// Closes the underlying relay connection. The next time the client takes some action
-    /// that requires a connection, it will call [`Client::connect`].
-    pub async fn close(&mut self) {
-        if let Some((ref mut conn, _)) = self.relay_conn.take() {
-            debug!("Closing connection");
-            conn.close().await
-        }
-    }
-
-    /// Returns `true` if the underlying relay connection is established.
-    pub fn is_connected(&self) -> bool {
-        self.relay_conn.is_some()
-    }
-
     fn tls_servername(&self) -> Option<rustls::pki_types::ServerName> {
         self.url
             .host_str()
@@ -629,7 +468,7 @@ impl Client {
         }
     }
 
-    async fn dial_url(&self) -> Result<ProxyStream, ClientError> {
+    async fn dial_url(&self) -> Result<ProxyStream> {
         if let Some(ref proxy) = self.proxy_url {
             let stream = self.dial_url_proxy(proxy.clone()).await?;
             Ok(ProxyStream::Proxied(stream))
@@ -639,7 +478,7 @@ impl Client {
         }
     }
 
-    async fn dial_url_direct(&self) -> Result<TcpStream, ClientError> {
+    async fn dial_url_direct(&self) -> Result<TcpStream> {
         debug!(%self.url, "dial url");
         let prefer_ipv6 = self.prefer_ipv6();
         let dst_ip = self
@@ -647,8 +486,7 @@ impl Client {
             .resolve_host(&self.url, prefer_ipv6)
             .await?;
 
-        let port = url_port(&self.url)
-            .ok_or_else(|| ClientError::InvalidUrl("missing url port".into()))?;
+        let port = url_port(&self.url).ok_or_else(|| anyhow!("Missing URL port"))?;
         let addr = SocketAddr::new(dst_ip, port);
 
         debug!("connecting to {}", addr);
@@ -658,9 +496,8 @@ impl Client {
                 async move { TcpStream::connect(addr).await },
             )
             .await
-            .map_err(|_| ClientError::ConnectTimeout)?
-            .map_err(ClientError::DialIO)?;
-
+            .context("Timeout connecting")?
+            .context("Failed connecting")?;
         tcp_stream.set_nodelay(true)?;
 
         Ok(tcp_stream)
@@ -669,7 +506,7 @@ impl Client {
     async fn dial_url_proxy(
         &self,
         proxy_url: Url,
-    ) -> Result<util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream>, ClientError> {
+    ) -> Result<util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream>> {
         debug!(%self.url, %proxy_url, "dial url via proxy");
 
         // Resolve proxy DNS
@@ -679,8 +516,7 @@ impl Client {
             .resolve_host(&proxy_url, prefer_ipv6)
             .await?;
 
-        let proxy_port = url_port(&proxy_url)
-            .ok_or_else(|| ClientError::Proxy("missing proxy url port".into()))?;
+        let proxy_port = url_port(&proxy_url).ok_or_else(|| anyhow!("Missing proxy url port"))?;
         let proxy_addr = SocketAddr::new(proxy_ip, proxy_port);
 
         debug!(%proxy_addr, "connecting to proxy");
@@ -689,8 +525,8 @@ impl Client {
             TcpStream::connect(proxy_addr).await
         })
         .await
-        .map_err(|_| ClientError::ConnectTimeout)?
-        .map_err(ClientError::DialIO)?;
+        .context("Timeout connecting")?
+        .context("Error connecting")?;
 
         tcp_stream.set_nodelay(true)?;
 
@@ -698,10 +534,8 @@ impl Client {
         let io = if proxy_url.scheme() == "http" {
             MaybeTlsStream::Raw(tcp_stream)
         } else {
-            let hostname = proxy_url
-                .host_str()
-                .and_then(|s| rustls::pki_types::ServerName::try_from(s.to_string()).ok())
-                .ok_or_else(|| ClientError::InvalidUrl("No tls servername for proxy url".into()))?;
+            let hostname = proxy_url.host_str().context("No hostname in proxy URL")?;
+            let hostname = rustls::pki_types::ServerName::try_from(hostname.to_string())?;
             let tls_stream = self.tls_connector.connect(hostname, tcp_stream).await?;
             MaybeTlsStream::Tls(tls_stream)
         };
@@ -710,10 +544,9 @@ impl Client {
         let target_host = self
             .url
             .host_str()
-            .ok_or_else(|| ClientError::Proxy("missing proxy host".into()))?;
+            .ok_or_else(|| anyhow!("Missing proxy host"))?;
 
-        let port =
-            url_port(&self.url).ok_or_else(|| ClientError::Proxy("invalid target port".into()))?;
+        let port = url_port(&self.url).ok_or_else(|| anyhow!("invalid target port"))?;
 
         // Establish Proxy Tunnel
         let mut req_builder = Request::builder()
@@ -749,15 +582,12 @@ impl Client {
 
         let res = sender.send_request(req).await?;
         if !res.status().is_success() {
-            return Err(ClientError::Proxy(format!(
-                "failed to connect to proxy: {}",
-                res.status(),
-            )));
+            bail!("Failed to connect to proxy: {}", res.status());
         }
 
         let upgraded = hyper::upgrade::on(res).await?;
         let Ok(Parts { io, read_buf, .. }) = upgraded.downcast::<TokioIo<MaybeTlsStream>>() else {
-            return Err(ClientError::Proxy("invalid upgrade".to_string()));
+            bail!("Invalid upgrade");
         };
 
         let res = util::chain(std::io::Cursor::new(read_buf), io.into_inner());
@@ -778,11 +608,9 @@ impl Client {
     }
 }
 
-fn host_header_value(relay_url: RelayUrl) -> Result<String, ClientError> {
+fn host_header_value(relay_url: RelayUrl) -> Result<String> {
     // grab the host, turns e.g. https://example.com:8080/xyz -> example.com.
-    let relay_url_host = relay_url
-        .host_str()
-        .ok_or_else(|| ClientError::InvalidUrl(relay_url.to_string()))?;
+    let relay_url_host = relay_url.host_str().context("Invalid URL")?;
     // strip the trailing dot, if present: example.com. -> example.com
     let relay_url_host = relay_url_host.strip_suffix('.').unwrap_or(relay_url_host);
     // build the host header value (reserve up to 6 chars for the ":" and port digits):
@@ -799,56 +627,42 @@ trait DnsExt {
     fn lookup_ipv4<N: hickory_resolver::IntoName>(
         &self,
         host: N,
-    ) -> impl future::Future<Output = anyhow::Result<Option<IpAddr>>>;
+    ) -> impl Future<Output = Result<Option<IpAddr>>>;
 
     fn lookup_ipv6<N: hickory_resolver::IntoName>(
         &self,
         host: N,
-    ) -> impl future::Future<Output = anyhow::Result<Option<IpAddr>>>;
+    ) -> impl Future<Output = Result<Option<IpAddr>>>;
 
-    fn resolve_host(
-        &self,
-        url: &Url,
-        prefer_ipv6: bool,
-    ) -> impl future::Future<Output = Result<IpAddr, ClientError>>;
+    fn resolve_host(&self, url: &Url, prefer_ipv6: bool) -> impl Future<Output = Result<IpAddr>>;
 }
 
 impl DnsExt for DnsResolver {
-    async fn lookup_ipv4<N: hickory_resolver::IntoName>(
-        &self,
-        host: N,
-    ) -> anyhow::Result<Option<IpAddr>> {
+    async fn lookup_ipv4<N: hickory_resolver::IntoName>(&self, host: N) -> Result<Option<IpAddr>> {
         let addrs = tokio::time::timeout(DNS_TIMEOUT, self.ipv4_lookup(host)).await??;
         Ok(addrs.into_iter().next().map(|ip| IpAddr::V4(ip.0)))
     }
 
-    async fn lookup_ipv6<N: hickory_resolver::IntoName>(
-        &self,
-        host: N,
-    ) -> anyhow::Result<Option<IpAddr>> {
+    async fn lookup_ipv6<N: hickory_resolver::IntoName>(&self, host: N) -> Result<Option<IpAddr>> {
         let addrs = tokio::time::timeout(DNS_TIMEOUT, self.ipv6_lookup(host)).await??;
         Ok(addrs.into_iter().next().map(|ip| IpAddr::V6(ip.0)))
     }
 
-    async fn resolve_host(&self, url: &Url, prefer_ipv6: bool) -> Result<IpAddr, ClientError> {
-        let host = url
-            .host()
-            .ok_or_else(|| ClientError::InvalidUrl("missing host".into()))?;
+    async fn resolve_host(&self, url: &Url, prefer_ipv6: bool) -> Result<IpAddr> {
+        let host = url.host().context("Invalid URL")?;
         match host {
             url::Host::Domain(domain) => {
                 // Need to do a DNS lookup
                 let lookup = tokio::join!(self.lookup_ipv4(domain), self.lookup_ipv6(domain));
                 let (v4, v6) = match lookup {
                     (Err(ipv4_err), Err(ipv6_err)) => {
-                        let err = anyhow::anyhow!("Ipv4: {:?}, Ipv6: {:?}", ipv4_err, ipv6_err);
-                        return Err(ClientError::Dns(Some(err)));
+                        bail!("Ipv4: {ipv4_err:?}, Ipv6: {ipv6_err:?}");
                     }
                     (Err(_), Ok(v6)) => (None, v6),
                     (Ok(v4), Err(_)) => (v4, None),
                     (Ok(v4), Ok(v6)) => (v4, v6),
                 };
-                if prefer_ipv6 { v6.or(v4) } else { v4.or(v6) }
-                    .ok_or_else(|| ClientError::Dns(None))
+                if prefer_ipv6 { v6.or(v4) } else { v4.or(v6) }.context("No response")
             }
             url::Host::Ipv4(ip) => Ok(IpAddr::V4(ip)),
             url::Host::Ipv6(ip) => Ok(IpAddr::V6(ip)),

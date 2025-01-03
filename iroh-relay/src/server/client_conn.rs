@@ -517,7 +517,6 @@ mod tests {
 
     use super::*;
     use crate::{
-        client::conn,
         protos::relay::{recv_frame, FrameType, RelayCodec},
         server::streams::MaybeTlsStream,
     };
@@ -618,7 +617,12 @@ mod tests {
         // send packet
         println!("  send packet");
         let data = b"hello world!";
-        conn::send_packet(&mut io_rw, target, Bytes::from_static(data)).await?;
+        io_rw
+            .send(Frame::SendPacket {
+                dst_key: target,
+                packet: Bytes::from_static(data),
+            })
+            .await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             actor::Message::SendPacket {
@@ -641,7 +645,12 @@ mod tests {
         let mut disco_data = disco::MAGIC.as_bytes().to_vec();
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
-        conn::send_packet(&mut io_rw, target, disco_data.clone().into()).await?;
+        io_rw
+            .send(Frame::SendPacket {
+                dst_key: target,
+                packet: disco_data.clone().into(),
+            })
+            .await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             actor::Message::SendDiscoPacket {
@@ -700,7 +709,12 @@ mod tests {
         let data = b"hello world!";
         let target = SecretKey::generate(rand::thread_rng()).public();
 
-        conn::send_packet(&mut io_rw, target, Bytes::from_static(data)).await?;
+        io_rw
+            .send(Frame::SendPacket {
+                dst_key: target,
+                packet: Bytes::from_static(data),
+            })
+            .await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
             actor::Message::SendPacket {

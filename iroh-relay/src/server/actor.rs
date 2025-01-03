@@ -249,6 +249,7 @@ impl ClientCounter {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
+    use futures_util::SinkExt;
     use iroh_base::SecretKey;
     use tokio::io::DuplexStream;
     use tokio_util::codec::Framed;
@@ -316,7 +317,11 @@ mod tests {
 
         // write message from b to a
         let msg = b"hello world!";
-        crate::client::conn::send_packet(&mut b_io, node_id_a, Bytes::from_static(msg)).await?;
+        b_io.send(Frame::SendPacket {
+            dst_key: node_id_a,
+            packet: Bytes::from_static(msg),
+        })
+        .await?;
 
         // get message on a's reader
         let frame = recv_frame(FrameType::RecvPacket, &mut a_io).await?;

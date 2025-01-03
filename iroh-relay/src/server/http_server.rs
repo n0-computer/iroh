@@ -675,19 +675,20 @@ impl std::ops::DerefMut for Handlers {
 
 #[cfg(test)]
 mod tests {
-    use std::{pin::pin, sync::Arc};
+    use std::sync::Arc;
 
     use anyhow::Result;
     use bytes::Bytes;
     use futures_lite::StreamExt;
+    use futures_util::SinkExt;
     use iroh_base::{PublicKey, SecretKey};
     use reqwest::Url;
-    use tracing::{info, info_span};
+    use tracing::info;
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
     use crate::client::{
-        conn::{Conn, ReceivedMessage},
+        conn::{Conn, ReceivedMessage, SendMessage},
         streams::MaybeTlsStreamChained,
         Client, ClientBuilder,
     };
@@ -743,80 +744,67 @@ mod tests {
         let relay_addr: Url = format!("http://{addr}:{port}").parse().unwrap();
 
         // create clients
-        let (a_key, mut client_a) = {
-            let span = info_span!("client-a");
-            let _guard = span.enter();
-            create_test_client(a_key, relay_addr.clone())
-        };
+        let (a_key, mut client_a) = create_test_client(a_key, relay_addr.clone()).await?;
         info!("created client {a_key:?}");
-        let (b_key, mut client_b) = {
-            let span = info_span!("client-b");
-            let _guard = span.enter();
-            create_test_client(b_key, relay_addr)
-        };
+        let (b_key, mut client_b) = create_test_client(b_key, relay_addr).await?;
         info!("created client {b_key:?}");
 
         info!("ping a");
-        let mut ping_a = pin!(client_a.send_ping().await?);
-        tokio::select! {
-            _ = client_a.recv() => panic!("unexpected msg"),
-            _dur = &mut ping_a => (),
-        }
+        client_a.send(SendMessage::Ping([1u8; 8])).await?;
+        let pong = client_a.next().await.context("eos")??;
+        assert!(matches!(pong, ReceivedMessage::Pong(_)));
 
         info!("ping b");
-        let mut ping_b = pin!(client_b.send_ping().await?);
-        tokio::select! {
-            _ = client_b.recv() => panic!("unexpected msg"),
-            _dur = &mut ping_b => (),
-        }
+        client_b.send(SendMessage::Ping([2u8; 8])).await?;
+        let pong = client_b.next().await.context("eos")??;
+        assert!(matches!(pong, ReceivedMessage::Pong(_)));
 
         info!("sending message from a to b");
         let msg = Bytes::from_static(b"hi there, client b!");
-        client_a.send(b_key, msg.clone()).await?;
+        client_a
+            .send(SendMessage::SendPacket(b_key, msg.clone()))
+            .await?;
         info!("waiting for message from a on b");
         let (got_key, got_msg) =
-            process_msg(client_b.recv().await).expect("expected message from client_a");
+            process_msg(client_b.next().await).expect("expected message from client_a");
         assert_eq!(a_key, got_key);
         assert_eq!(msg, got_msg);
 
         info!("sending message from b to a");
         let msg = Bytes::from_static(b"right back at ya, client b!");
-        client_b.send(a_key, msg.clone()).await?;
+        client_b
+            .send(SendMessage::SendPacket(a_key, msg.clone()))
+            .await?;
         info!("waiting for message b on a");
         let (got_key, got_msg) =
-            process_msg(client_a.recv().await).expect("expected message from client_b");
+            process_msg(client_a.next().await).expect("expected message from client_b");
         assert_eq!(b_key, got_key);
         assert_eq!(msg, got_msg);
 
-        client_a.close().await;
-        client_b.close().await;
+        client_a.close().await?;
+        client_b.close().await?;
         server.shutdown();
 
         Ok(())
     }
 
-    fn create_test_client(key: SecretKey, server_url: Url) -> (PublicKey, Client) {
-        let client = ClientBuilder::new(server_url).insecure_skip_cert_verify(true);
-        let dns_resolver = crate::dns::default_resolver();
-        let client = client.build(key.clone(), dns_resolver.clone());
+    async fn create_test_client(key: SecretKey, server_url: Url) -> Result<(PublicKey, Client)> {
         let public_key = key.public();
+        let dns_resolver = crate::dns::default_resolver();
+        let client = ClientBuilder::new(server_url, key, dns_resolver.clone())
+            .insecure_skip_cert_verify(true);
+        let client = client.connect().await?;
 
-        (public_key, client)
+        Ok((public_key, client))
     }
 
-    fn process_msg(
-        msg: std::result::Result<Option<Result<ReceivedMessage>>, tokio::time::error::Elapsed>,
-    ) -> Option<(PublicKey, Bytes)> {
+    fn process_msg(msg: Option<Result<ReceivedMessage>>) -> Option<(PublicKey, Bytes)> {
         match msg {
-            Ok(None) => {
-                info!("client received nothing");
-                None
-            }
-            Ok(Some(Err(e))) => {
+            Some(Err(e)) => {
                 info!("client `recv` error {e}");
                 None
             }
-            Ok(Some(Ok(msg))) => {
+            Some(Ok(msg)) => {
                 info!("got message on: {msg:?}");
                 if let ReceivedMessage::ReceivedPacket {
                     remote_node_id: source,
@@ -828,8 +816,8 @@ mod tests {
                     None
                 }
             }
-            Err(_) => {
-                info!("client `recv` time out");
+            None => {
+                info!("client end of stream");
                 None
             }
         }
@@ -867,47 +855,47 @@ mod tests {
         let url: Url = format!("https://localhost:{port}").parse().unwrap();
 
         // create clients
-        let (a_key, mut client_a) = create_test_client(a_key, url.clone());
+        let (a_key, mut client_a) = create_test_client(a_key, url.clone()).await?;
         info!("created client {a_key:?}");
-        let (b_key, mut client_b) = create_test_client(b_key, url);
+        let (b_key, mut client_b) = create_test_client(b_key, url).await?;
         info!("created client {b_key:?}");
 
         info!("ping a");
-        let mut ping_a = pin!(client_a.send_ping().await?);
-        tokio::select! {
-            _msg = client_a.recv() => panic!("unexpected msg"),
-            _dur = &mut ping_a => (),
-        }
+        client_a.send(SendMessage::Ping([1u8; 8])).await?;
+        let pong = client_a.next().await.context("eos")??;
+        assert!(matches!(pong, ReceivedMessage::Pong(_)));
 
         info!("ping b");
-        let mut ping_b = pin!(client_b.send_ping().await?);
-        tokio::select! {
-            _msg = client_b.recv() => panic!("unexpected msg"),
-            _dur = &mut ping_b => (),
-        }
+        client_b.send(SendMessage::Ping([2u8; 8])).await?;
+        let pong = client_b.next().await.context("eos")??;
+        assert!(matches!(pong, ReceivedMessage::Pong(_)));
 
         info!("sending message from a to b");
         let msg = Bytes::from_static(b"hi there, client b!");
-        client_a.send(b_key, msg.clone()).await?;
+        client_a
+            .send(SendMessage::SendPacket(b_key, msg.clone()))
+            .await?;
         info!("waiting for message from a on b");
         let (got_key, got_msg) =
-            process_msg(client_b.recv().await).expect("expected message from client_a");
+            process_msg(client_b.next().await).expect("expected message from client_a");
         assert_eq!(a_key, got_key);
         assert_eq!(msg, got_msg);
 
         info!("sending message from b to a");
         let msg = Bytes::from_static(b"right back at ya, client b!");
-        client_b.send(a_key, msg.clone()).await?;
+        client_b
+            .send(SendMessage::SendPacket(a_key, msg.clone()))
+            .await?;
         info!("waiting for message b on a");
         let (got_key, got_msg) =
-            process_msg(client_a.recv().await).expect("expected message from client_b");
+            process_msg(client_a.next().await).expect("expected message from client_b");
         assert_eq!(b_key, got_key);
         assert_eq!(msg, got_msg);
 
         server.shutdown();
         server.task_handle().await?;
-        client_a.close().await;
-        client_b.close().await;
+        client_a.close().await?;
+        client_b.close().await?;
 
         Ok(())
     }
@@ -959,7 +947,9 @@ mod tests {
 
         info!("Send message from A to B.");
         let msg = Bytes::from_static(b"hello client b!!");
-        client_a.send(public_key_b, msg.clone()).await?;
+        client_a
+            .send(SendMessage::SendPacket(public_key_b, msg.clone()))
+            .await?;
         match client_b.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
@@ -975,7 +965,9 @@ mod tests {
 
         info!("Send message from B to A.");
         let msg = Bytes::from_static(b"nice to meet you client a!!");
-        client_b.send(public_key_a, msg.clone()).await?;
+        client_b
+            .send(SendMessage::SendPacket(public_key_a, msg.clone()))
+            .await?;
         match client_a.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
@@ -995,7 +987,10 @@ mod tests {
 
         info!("Fail to send message from A to B.");
         let _res = client_a
-            .send(public_key_b, Bytes::from_static(b"try to send"))
+            .send(SendMessage::SendPacket(
+                public_key_b,
+                Bytes::from_static(b"try to send"),
+            ))
             .await;
         // TODO: this send seems to succeed currently.
         // assert!(res.is_err());
@@ -1048,7 +1043,9 @@ mod tests {
 
         info!("Send message from A to B.");
         let msg = Bytes::from_static(b"hello client b!!");
-        client_a.send(public_key_b, msg.clone()).await?;
+        client_a
+            .send(SendMessage::SendPacket(public_key_b, msg.clone()))
+            .await?;
         match client_b.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
@@ -1064,7 +1061,9 @@ mod tests {
 
         info!("Send message from B to A.");
         let msg = Bytes::from_static(b"nice to meet you client a!!");
-        client_b.send(public_key_a, msg.clone()).await?;
+        client_b
+            .send(SendMessage::SendPacket(public_key_a, msg.clone()))
+            .await?;
         match client_a.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
@@ -1092,7 +1091,9 @@ mod tests {
 
         info!("Send message from A to B.");
         let msg = Bytes::from_static(b"are you still there, b?!");
-        client_a.send(public_key_b, msg.clone()).await?;
+        client_a
+            .send(SendMessage::SendPacket(public_key_b, msg.clone()))
+            .await?;
         match new_client_b.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
@@ -1108,7 +1109,9 @@ mod tests {
 
         info!("Send message from B to A.");
         let msg = Bytes::from_static(b"just had a spot of trouble but I'm back now,a!!");
-        new_client_b.send(public_key_a, msg.clone()).await?;
+        new_client_b
+            .send(SendMessage::SendPacket(public_key_a, msg.clone()))
+            .await?;
         match client_a.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
@@ -1127,7 +1130,10 @@ mod tests {
 
         info!("Sending message from A to B fails");
         let _res = client_a
-            .send(public_key_b, Bytes::from_static(b"try to send"))
+            .send(SendMessage::SendPacket(
+                public_key_b,
+                Bytes::from_static(b"try to send"),
+            ))
             .await;
         // TODO: This used to pass
         // assert!(res.is_err());
