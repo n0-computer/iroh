@@ -517,6 +517,7 @@ mod tests {
     use iroh_base::SecretKey;
     use testresult::TestResult;
     use tokio_util::codec::Framed;
+    use tracing::info;
 
     use super::*;
     use crate::{
