@@ -881,7 +881,8 @@
 <a href="#880" id="880">880</a>
 <a href="#881" id="881">881</a>
 <a href="#882" id="882">882</a>
-<a href="#883" id="883">883</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#883" id="883">883</a>
+<a href="#884" id="884">884</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -902,9 +903,10 @@
 <span class="kw">use super</span>::{
     metrics::Metrics <span class="kw">as </span>MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
 };
+<span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+</span><span class="kw">use </span><span class="kw">crate</span>::endpoint::PathSelection;
 <span class="kw">use crate</span>::{
     disco::{CallMeMaybe, Pong, SendAddr},
-    endpoint::PathSelection,
     watchable::Watcher,
 };
 
