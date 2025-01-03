@@ -1625,7 +1625,7 @@
 /// communication with it.
 ///
 /// The actor shuts down itself on inactivity: inactivity is determined when no more
-/// datagrams are being received to send.
+/// datagrams are being queued to send.
 ///
 /// This actor has 3 main states it can be in, each has it's dedicated run loop:
 ///
@@ -1654,9 +1654,9 @@
     </span>prio_inbox: mpsc::Receiver&lt;ActiveRelayPrioMessage&gt;,
     <span class="doccomment">/// Inbox for messages which involve sending to the relay server.
     </span>inbox: mpsc::Receiver&lt;ActiveRelayMessage&gt;,
-    <span class="doccomment">/// Queue to send received relay datagrams on.
+    <span class="doccomment">/// Queue for received relay datagrams.
     </span>relay_datagrams_recv: Arc&lt;RelayDatagramRecvQueue&gt;,
-    <span class="doccomment">/// Channel on which we receive packets to send to the relay.
+    <span class="doccomment">/// Channel on which we queue packets to send to the relay.
     </span>relay_datagrams_send: mpsc::Receiver&lt;RelaySendItem&gt;,
 
     <span class="comment">// Other actor state.
