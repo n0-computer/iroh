@@ -2,6 +2,27 @@
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
+//!
+//! - The [`RelayActor`] manages all connections to relay servers.
+//!   - It starts a new [`ActiveRelayActor`] for each relay server needed.
+//!   - The [`ActiveRelayActor`] will exit when unused.
+//!     - Unless it is for the home relay, this one never exits.
+//!   - Each [`ActiveRelayActor`] uses a relay [`Client`].
+//!     - The relay [`Client`] is a `Stream` and `Sink` directly connected to the
+//!       `TcpStream` connected to the relay server.
+//!   - Each [`ActiveRelayActor`] will try and maintain a connection with the relay server.
+//!     - If connections fail, exponential backoff is used for reconnections.
+//! - When `AsyncUdpSocket` needs to send datagrams:
+//!   - It puts them on a queue to the [`RelayActor`].
+//!   - The [`RelayActor`] ensures the correct [`ActiveRelayActor`] is running and
+//!     forwards datagrams to it.
+//!   - The ActiveRelayActor sends datagrams directly to the relay server.
+//! - The relay receive path is:
+//!   - Whenever [`ActiveRelayActor`] is connected it reads from the underlying `TcpStream`.
+//!   - Received datagrams are placed on an mpsc channel that now bypasses the
+//!     [`RelayActor`] and goes straight to the `AsyncUpdSocket` interface.
+//!
+//! [`Client`]: iroh_relay::client::Client
 
 #[cfg(test)]
 use std::net::SocketAddr;
