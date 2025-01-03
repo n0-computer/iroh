@@ -109,9 +109,9 @@ struct ActiveRelayActor {
     prio_inbox: mpsc::Receiver<ActiveRelayPrioMessage>,
     /// Inbox for messages which involve sending to the relay server.
     inbox: mpsc::Receiver<ActiveRelayMessage>,
-    /// Queue to send received relay datagrams on.
+    /// Queue for received relay datagrams.
     relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
-    /// Channel on which we receive packets to send to the relay.
+    /// Channel on which we queue packets to send to the relay.
     relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
 
     // Other actor state.
