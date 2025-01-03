@@ -218,10 +218,7 @@
 <a href="#217" id="217">217</a>
 <a href="#218" id="218">218</a>
 <a href="#219" id="219">219</a>
-<a href="#220" id="220">220</a>
-<a href="#221" id="221">221</a>
-<a href="#222" id="222">222</a>
-<a href="#223" id="223">223</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
+<a href="#220" id="220">220</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
 </span><span class="comment">// Based on tailscale/derp/derp_server.go
 
 </span><span class="kw">use </span>std::{collections::HashSet, sync::Arc};
@@ -232,7 +229,7 @@
 <span class="kw">use </span>iroh_base::NodeId;
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>tokio::sync::mpsc::error::TrySendError;
-<span class="kw">use </span>tracing::{debug, trace, warn};
+<span class="kw">use </span>tracing::{debug, trace};
 
 <span class="kw">use </span><span class="kw">super</span>::client::{Client, Config, Packet};
 <span class="kw">use </span><span class="kw">crate</span>::server::metrics::Metrics;
@@ -268,7 +265,7 @@
 
         <span class="kw">let </span>client = Client::new(client_config, <span class="self">self</span>);
         <span class="kw">if let </span><span class="prelude-val">Some</span>(old_client) = <span class="self">self</span>.<span class="number">0</span>.clients.insert(node_id, client) {
-            <span class="macro">warn!</span>(<span class="string">"multiple connections found for {node_id:?}, pruning old connection"</span>,);
+            <span class="macro">debug!</span>(<span class="string">"multiple connections found for {node_id:?}, pruning old connection"</span>,);
             old_client.shutdown().<span class="kw">await</span>;
         }
     }
@@ -285,7 +282,7 @@
                     <span class="kw">match </span>client.try_send_peer_gone(key) {
                         <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {}
                         <span class="prelude-val">Err</span>(TrySendError::Full(<span class="kw">_</span>)) =&gt; {
-                            <span class="macro">warn!</span>(
+                            <span class="macro">debug!</span>(
                                 dst = key.fmt_short(),
                                 <span class="string">"client too busy to receive packet, dropping packet"
                             </span>);
@@ -309,10 +306,7 @@
             <span class="kw">let </span>res = client.try_send_packet(src, data);
             <span class="kw">return </span><span class="self">self</span>.process_result(src, dst, res).<span class="kw">await</span>;
         }
-        <span class="macro">warn!</span>(
-            dst = dst.fmt_short(),
-            <span class="string">"could not find client, dropped packet"
-        </span>);
+        <span class="macro">debug!</span>(dst = dst.fmt_short(), <span class="string">"no connected client, dropped packet"</span>);
         <span class="macro">inc!</span>(Metrics, send_packets_dropped);
         <span class="prelude-val">Ok</span>(())
     }
@@ -327,9 +321,9 @@
             <span class="kw">let </span>res = client.try_send_disco_packet(src, data);
             <span class="kw">return </span><span class="self">self</span>.process_result(src, dst, res).<span class="kw">await</span>;
         }
-        <span class="macro">warn!</span>(
+        <span class="macro">debug!</span>(
             dst = dst.fmt_short(),
-            <span class="string">"could not find client, dropped disco packet"
+            <span class="string">"no connected client, dropped disco packet"
         </span>);
         <span class="macro">inc!</span>(Metrics, disco_packets_dropped);
         <span class="prelude-val">Ok</span>(())
@@ -348,7 +342,7 @@
                 <span class="prelude-val">Ok</span>(())
             }
             <span class="prelude-val">Err</span>(TrySendError::Full(<span class="kw">_</span>)) =&gt; {
-                <span class="macro">warn!</span>(
+                <span class="macro">debug!</span>(
                     dst = dst.fmt_short(),
                     <span class="string">"client too busy to receive packet, dropping packet"
                 </span>);
