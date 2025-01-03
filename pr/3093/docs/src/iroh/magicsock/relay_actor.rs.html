@@ -1529,7 +1529,15 @@
 <a href="#1528" id="1528">1528</a>
 <a href="#1529" id="1529">1529</a>
 <a href="#1530" id="1530">1530</a>
-<a href="#1531" id="1531">1531</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1531" id="1531">1531</a>
+<a href="#1532" id="1532">1532</a>
+<a href="#1533" id="1533">1533</a>
+<a href="#1534" id="1534">1534</a>
+<a href="#1535" id="1535">1535</a>
+<a href="#1536" id="1536">1536</a>
+<a href="#1537" id="1537">1537</a>
+<a href="#1538" id="1538">1538</a>
+<a href="#1539" id="1539">1539</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -2404,6 +2412,14 @@
             <span class="prelude-val">Some</span>(e) =&gt; e.clone(),
             <span class="prelude-val">None </span>=&gt; {
                 <span class="kw">let </span>handle = <span class="self">self</span>.start_active_relay(url.clone());
+                <span class="kw">if </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>url) == <span class="self">self</span>.msock.my_relay().as_ref() {
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = handle
+                        .inbox_addr
+                        .try_send(ActiveRelayMessage::SetHomeRelay(<span class="bool-val">true</span>))
+                    {
+                        <span class="macro">error!</span>(<span class="string">"Home relay not set, send to new actor failed: {err:#}."</span>);
+                    }
+                }
                 <span class="self">self</span>.active_relays.insert(url, handle.clone());
                 handle
             }
