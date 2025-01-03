@@ -410,7 +410,7 @@ impl ActiveRelayActor {
                 .await?;
         }
 
-        loop {
+        let res = loop {
             if let Some(data) = state.pong_pending.take() {
                 let fut = client_sink.send(SendMessage::Pong(data));
                 self.run_sending(fut, &mut state, &mut client_stream)
@@ -517,7 +517,11 @@ impl ActiveRelayActor {
                     break Ok(());
                 }
             }
+        };
+        if res.is_ok() {
+            client_sink.close().await?;
         }
+        res
     }
 
     fn handle_relay_msg(&mut self, msg: ReceivedMessage, state: &mut ConnectedRelayState) {
