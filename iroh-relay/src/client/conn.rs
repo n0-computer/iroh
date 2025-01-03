@@ -35,6 +35,16 @@ pub enum ConnSendError {
     Protocol(&'static str),
 }
 
+impl From<tokio_tungstenite_wasm::Error> for ConnSendError {
+    fn from(source: tokio_tungstenite_wasm::Error) -> Self {
+        let io_err = match source {
+            tokio_tungstenite_wasm::Error::Io(io_err) => io_err,
+            _ => std::io::Error::new(std::io::ErrorKind::Other, source.to_string()),
+        };
+        Self::Io(io_err)
+    }
+}
+
 /// A connection to a relay server.
 ///
 /// This holds a connection to a relay server.  It is:
@@ -104,13 +114,6 @@ async fn server_handshake(writer: &mut Conn, secret_key: &SecretKey) -> Result<(
     Ok(())
 }
 
-fn tung_wasm_to_io_err(e: tokio_tungstenite_wasm::Error) -> std::io::Error {
-    match e {
-        tokio_tungstenite_wasm::Error::Io(io_err) => io_err,
-        _ => std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
-    }
-}
-
 impl Stream for Conn {
     type Item = Result<ReceivedMessage>;
 
@@ -152,10 +155,7 @@ impl Sink<Frame> for Conn {
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             Self::Relay { ref mut conn } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
-            Self::Ws { ref mut conn, .. } => Pin::new(conn)
-                .poll_ready(cx)
-                .map_err(tung_wasm_to_io_err)
-                .map_err(Into::into),
+            Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
         }
     }
 
@@ -171,7 +171,6 @@ impl Sink<Frame> for Conn {
                 .start_send(tokio_tungstenite_wasm::Message::binary(
                     frame.encode_for_ws_msg(),
                 ))
-                .map_err(tung_wasm_to_io_err)
                 .map_err(Into::into),
         }
     }
@@ -179,20 +178,14 @@ impl Sink<Frame> for Conn {
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             Self::Relay { ref mut conn } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
-            Self::Ws { ref mut conn, .. } => Pin::new(conn)
-                .poll_flush(cx)
-                .map_err(tung_wasm_to_io_err)
-                .map_err(Into::into),
+            Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
         }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             Self::Relay { ref mut conn } => Pin::new(conn).poll_close(cx).map_err(Into::into),
-            Self::Ws { ref mut conn, .. } => Pin::new(conn)
-                .poll_close(cx)
-                .map_err(tung_wasm_to_io_err)
-                .map_err(Into::into),
+            Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_close(cx).map_err(Into::into),
         }
     }
 }
@@ -203,10 +196,7 @@ impl Sink<SendMessage> for Conn {
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             Self::Relay { ref mut conn } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
-            Self::Ws { ref mut conn, .. } => Pin::new(conn)
-                .poll_ready(cx)
-                .map_err(tung_wasm_to_io_err)
-                .map_err(Into::into),
+            Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
         }
     }
 
@@ -223,7 +213,6 @@ impl Sink<SendMessage> for Conn {
                 .start_send(tokio_tungstenite_wasm::Message::binary(
                     frame.encode_for_ws_msg(),
                 ))
-                .map_err(tung_wasm_to_io_err)
                 .map_err(Into::into),
         }
     }
@@ -231,20 +220,14 @@ impl Sink<SendMessage> for Conn {
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             Self::Relay { ref mut conn } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
-            Self::Ws { ref mut conn, .. } => Pin::new(conn)
-                .poll_flush(cx)
-                .map_err(tung_wasm_to_io_err)
-                .map_err(Into::into),
+            Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
         }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             Self::Relay { ref mut conn } => Pin::new(conn).poll_close(cx).map_err(Into::into),
-            Self::Ws { ref mut conn, .. } => Pin::new(conn)
-                .poll_close(cx)
-                .map_err(tung_wasm_to_io_err)
-                .map_err(Into::into),
+            Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_close(cx).map_err(Into::into),
         }
     }
 }
