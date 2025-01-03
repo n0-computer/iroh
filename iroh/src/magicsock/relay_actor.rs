@@ -106,7 +106,7 @@ const UNDELIVERABLE_DATAGRAM_TIMEOUT: Duration = Duration::from_millis(400);
 struct ActiveRelayActor {
     // The inboxes and channels this actor communicates over.
     /// Inbox for messages which should be handled without any blocking.
-    fast_inbox: mpsc::Receiver<ActiveRelayFastMessage>,
+    prio_inbox: mpsc::Receiver<ActiveRelayPrioMessage>,
     /// Inbox for messages which involve sending to the relay server.
     inbox: mpsc::Receiver<ActiveRelayMessage>,
     /// Queue to send received relay datagrams on.
@@ -159,7 +159,7 @@ enum ActiveRelayMessage {
 /// which can be blocking.  So the actor may not always be processing that inbox.  Messages
 /// here are processed immediately.
 #[derive(Debug)]
-enum ActiveRelayFastMessage {
+enum ActiveRelayPrioMessage {
     /// Returns whether or not this relay can reach the NodeId.
     HasNodeRoute(NodeId, oneshot::Sender<bool>),
 }
@@ -168,7 +168,7 @@ enum ActiveRelayFastMessage {
 #[derive(Debug)]
 struct ActiveRelayActorOptions {
     url: RelayUrl,
-    fast_inbox: mpsc::Receiver<ActiveRelayFastMessage>,
+    prio_inbox_: mpsc::Receiver<ActiveRelayPrioMessage>,
     inbox: mpsc::Receiver<ActiveRelayMessage>,
     relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
     relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
@@ -191,7 +191,7 @@ impl ActiveRelayActor {
     fn new(opts: ActiveRelayActorOptions) -> Self {
         let ActiveRelayActorOptions {
             url,
-            fast_inbox,
+            prio_inbox_: prio_inbox,
             inbox,
             relay_datagrams_send,
             relay_datagrams_recv,
@@ -200,7 +200,7 @@ impl ActiveRelayActor {
         } = opts;
         let relay_client_builder = Self::create_relay_builder(url.clone(), connection_opts);
         ActiveRelayActor {
-            fast_inbox,
+            prio_inbox,
             inbox,
             relay_datagrams_recv,
             relay_datagrams_send,
@@ -292,13 +292,13 @@ impl ActiveRelayActor {
                     debug!("Shutdown.");
                     break None;
                 }
-                msg = self.fast_inbox.recv() => {
+                msg = self.prio_inbox.recv() => {
                     let Some(msg) = msg else {
-                        warn!("Fast inbox closed, shutdown.");
+                        warn!("Priority inbox closed, shutdown.");
                         break None;
                     };
                     match msg {
-                        ActiveRelayFastMessage::HasNodeRoute(_peer, sender) => {
+                        ActiveRelayPrioMessage::HasNodeRoute(_peer, sender) => {
                             sender.send(false).ok();
                         }
                     }
@@ -422,13 +422,13 @@ impl ActiveRelayActor {
                     debug!("Shutdown.");
                     break Ok(());
                 }
-                msg = self.fast_inbox.recv() => {
+                msg = self.prio_inbox.recv() => {
                     let Some(msg) = msg else {
-                        warn!("Fast inbox closed, shutdown.");
+                        warn!("Priority inbox closed, shutdown.");
                         break Ok(());
                     };
                     match msg {
-                        ActiveRelayFastMessage::HasNodeRoute(peer, sender) => {
+                        ActiveRelayPrioMessage::HasNodeRoute(peer, sender) => {
                             let has_peer = state.nodes_present.contains(&peer);
                             sender.send(has_peer).ok();
                         }
@@ -599,13 +599,13 @@ impl ActiveRelayActor {
                 _ = self.stop_token.cancelled() => {
                     break Ok(());
                 }
-                msg = self.fast_inbox.recv() => {
+                msg = self.prio_inbox.recv() => {
                     let Some(msg) = msg else {
-                        warn!("Fast inbox closed, shutdown.");
+                        warn!("Priority inbox closed, shutdown.");
                         break Ok(());
                     };
                     match msg {
-                        ActiveRelayFastMessage::HasNodeRoute(peer, sender) => {
+                        ActiveRelayPrioMessage::HasNodeRoute(peer, sender) => {
                             let has_peer = state.nodes_present.contains(&peer);
                             sender.send(has_peer).ok();
                         }
@@ -847,16 +847,13 @@ impl RelayActor {
         // If we don't have an open connection to the remote node's home relay, see if
         // we have an open connection to a relay node where we'd heard from that peer
         // already.  E.g. maybe they dialed our home relay recently.
-        // TODO: LRU cache the NodeId -> relay mapping so this is much faster for repeat
-        // senders.
-
         {
             // Futures which return Some(RelayUrl) if the relay knows about the remote node.
             let check_futs = self.active_relays.iter().map(|(url, handle)| async move {
                 let (tx, rx) = oneshot::channel();
                 handle
-                    .fast_inbox_addr
-                    .send(ActiveRelayFastMessage::HasNodeRoute(*remote_node, tx))
+                    .prio_inbox_addr
+                    .send(ActiveRelayPrioMessage::HasNodeRoute(*remote_node, tx))
                     .await
                     .ok();
                 match rx.await {
@@ -910,12 +907,12 @@ impl RelayActor {
 
         // TODO: Replace 64 with PER_CLIENT_SEND_QUEUE_DEPTH once that's unused
         let (send_datagram_tx, send_datagram_rx) = mpsc::channel(64);
-        let (fast_inbox_tx, fast_inbox_rx) = mpsc::channel(32);
+        let (prio_inbox_tx, prio_inbox_rx) = mpsc::channel(32);
         let (inbox_tx, inbox_rx) = mpsc::channel(64);
         let span = info_span!("active-relay", %url);
         let opts = ActiveRelayActorOptions {
             url,
-            fast_inbox: fast_inbox_rx,
+            prio_inbox_: prio_inbox_rx,
             inbox: inbox_rx,
             relay_datagrams_send: send_datagram_rx,
             relay_datagrams_recv: self.relay_datagram_recv_queue.clone(),
@@ -933,7 +930,7 @@ impl RelayActor {
             .instrument(span),
         );
         let handle = ActiveRelayHandle {
-            fast_inbox_addr: fast_inbox_tx,
+            prio_inbox_addr: prio_inbox_tx,
             inbox_addr: inbox_tx,
             datagrams_send_queue: send_datagram_tx,
         };
@@ -1003,7 +1000,7 @@ impl RelayActor {
 /// Handle to one [`ActiveRelayActor`].
 #[derive(Debug, Clone)]
 struct ActiveRelayHandle {
-    fast_inbox_addr: mpsc::Sender<ActiveRelayFastMessage>,
+    prio_inbox_addr: mpsc::Sender<ActiveRelayPrioMessage>,
     inbox_addr: mpsc::Sender<ActiveRelayMessage>,
     datagrams_send_queue: mpsc::Sender<RelaySendItem>,
 }
@@ -1243,7 +1240,7 @@ mod tests {
         secret_key: SecretKey,
         stop_token: CancellationToken,
         url: RelayUrl,
-        fast_inbox_rx: mpsc::Receiver<ActiveRelayFastMessage>,
+        prio_inbox_rx: mpsc::Receiver<ActiveRelayPrioMessage>,
         inbox_rx: mpsc::Receiver<ActiveRelayMessage>,
         relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
         relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
@@ -1251,7 +1248,7 @@ mod tests {
     ) -> AbortOnDropHandle<anyhow::Result<()>> {
         let opts = ActiveRelayActorOptions {
             url,
-            fast_inbox: fast_inbox_rx,
+            prio_inbox_: prio_inbox_rx,
             inbox: inbox_rx,
             relay_datagrams_send,
             relay_datagrams_recv,
@@ -1277,14 +1274,14 @@ mod tests {
         let secret_key = SecretKey::from_bytes(&[8u8; 32]);
         let recv_datagram_queue = Arc::new(RelayDatagramRecvQueue::new());
         let (send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
-        let (fast_inbox_tx, fast_inbox_rx) = mpsc::channel(8);
+        let (prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
         let cancel_token = CancellationToken::new();
         let actor_task = start_active_relay_actor(
             secret_key.clone(),
             cancel_token.clone(),
             relay_url.clone(),
-            fast_inbox_rx,
+            prio_inbox_rx,
             inbox_rx,
             send_datagram_rx,
             recv_datagram_queue.clone(),
@@ -1313,7 +1310,7 @@ mod tests {
         let supervisor_task = tokio::spawn(async move {
             let _guard = cancel_token.drop_guard();
             // move the inboxes here so it is not dropped, as this stops the actor.
-            let _fast_inbox_tx = fast_inbox_tx;
+            let _prio_inbox_tx = prio_inbox_tx;
             let _inbox_tx = inbox_tx;
             tokio::select! {
                 biased;
@@ -1370,14 +1367,14 @@ mod tests {
         let secret_key = SecretKey::from_bytes(&[1u8; 32]);
         let datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
         let (send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
-        let (_fast_inbox_tx, fast_inbox_rx) = mpsc::channel(8);
+        let (_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
         let cancel_token = CancellationToken::new();
         let task = start_active_relay_actor(
             secret_key,
             cancel_token.clone(),
             relay_url.clone(),
-            fast_inbox_rx,
+            prio_inbox_rx,
             inbox_rx,
             send_datagram_rx,
             datagram_recv_queue.clone(),
@@ -1456,14 +1453,14 @@ mod tests {
         let secret_key = SecretKey::from_bytes(&[1u8; 32]);
         let datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
         let (_send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
-        let (_fast_inbox_tx, fast_inbox_rx) = mpsc::channel(8);
+        let (_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
         let cancel_token = CancellationToken::new();
         let mut task = start_active_relay_actor(
             secret_key,
             cancel_token.clone(),
             relay_url,
-            fast_inbox_rx,
+            prio_inbox_rx,
             inbox_rx,
             send_datagram_rx,
             datagram_recv_queue.clone(),

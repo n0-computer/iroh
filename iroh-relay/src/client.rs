@@ -526,7 +526,7 @@ impl ConnectionBuilder {
         })
         .await
         .context("Timeout connecting")?
-        .context("Error connecting")?;
+        .context("Connecting")?;
 
         tcp_stream.set_nodelay(true)?;
 

@@ -1818,7 +1818,7 @@ struct RelayDatagramRecvQueue {
 }
 
 impl RelayDatagramRecvQueue {
-    /// Creates a new, empty queue with a fixed size bound of 128 items.
+    /// Creates a new, empty queue with a fixed size bound of 512 items.
     fn new() -> Self {
         Self {
             queue: ConcurrentQueue::bounded(512),
