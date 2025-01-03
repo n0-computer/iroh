@@ -839,7 +839,10 @@
 <a href="#838" id="838">838</a>
 <a href="#839" id="839">839</a>
 <a href="#840" id="840">840</a>
-<a href="#841" id="841">841</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
+<a href="#841" id="841">841</a>
+<a href="#842" id="842">842</a>
+<a href="#843" id="843">843</a>
+<a href="#844" id="844">844</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
 //!
 //! Protocol flow:
 //!
@@ -853,6 +856,7 @@
 //!  * clients sends `FrameType::SendPacket`
 //!  * server then sends `FrameType::RecvPacket` to recipient
 
+</span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
 </span><span class="kw">use </span>std::time::Duration;
 
 <span class="kw">use </span>anyhow::{bail, ensure};
@@ -866,7 +870,7 @@
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio_util::codec::{Decoder, Encoder};
 
-<span class="kw">use </span><span class="kw">crate</span>::KeyCache;
+<span class="kw">use crate</span>::{client::conn::ConnSendError, KeyCache};
 
 <span class="doccomment">/// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
@@ -887,10 +891,10 @@
 </span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>SERVER_CHANNEL_SIZE: usize = <span class="number">1024 </span>* <span class="number">100</span>;
 <span class="doccomment">/// The number of packets buffered for sending per client
+</span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>PER_CLIENT_SEND_QUEUE_DEPTH: usize = <span class="number">512</span>; <span class="comment">//32;
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>PER_CLIENT_READ_QUEUE_DEPTH: usize = <span class="number">512</span>;
 
-<span class="doccomment">/// ProtocolVersion is bumped whenever there's a wire-incompatible change.
+</span><span class="doccomment">/// ProtocolVersion is bumped whenever there's a wire-incompatible change.
 ///  - version 1 (zero on wire): consistent box headers, in use by employee dev nodes a bit
 ///  - version 2: received packets have src addrs in FrameType::RecvPacket at beginning.
 ///
@@ -971,6 +975,7 @@
 /// Ignores the timeout if `None`
 ///
 /// Does not flush.
+</span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>write_frame&lt;S: Sink&lt;Frame, Error = std::io::Error&gt; + Unpin&gt;(
     <span class="kw-2">mut </span>writer: S,
     frame: Frame,
@@ -989,7 +994,7 @@
 /// and the client's [`ClientInfo`], sealed using the server's [`PublicKey`].
 ///
 /// Flushes after writing.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>send_client_key&lt;S: Sink&lt;Frame, Error = std::io::Error&gt; + Unpin&gt;(
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>send_client_key&lt;S: Sink&lt;Frame, Error = ConnSendError&gt; + Unpin&gt;(
     <span class="kw-2">mut </span>writer: S,
     client_secret_key: <span class="kw-2">&amp;</span>SecretKey,
     client_info: <span class="kw-2">&amp;</span>ClientInfo,
@@ -1455,7 +1460,8 @@
     </span><span class="kw">async fn </span>test_send_recv_client_key() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>(reader, writer) = tokio::io::duplex(<span class="number">1024</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>reader = FramedRead::new(reader, RelayCodec::test());
-        <span class="kw">let </span><span class="kw-2">mut </span>writer = FramedWrite::new(writer, RelayCodec::test());
+        <span class="kw">let </span><span class="kw-2">mut </span>writer =
+            FramedWrite::new(writer, RelayCodec::test()).sink_map_err(ConnSendError::from);
 
         <span class="kw">let </span>client_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>client_info = ClientInfo {

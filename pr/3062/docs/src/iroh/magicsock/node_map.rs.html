@@ -1555,7 +1555,7 @@
             .into_iter()
             .filter_map(|info| {
                 <span class="kw">let </span>addr: NodeAddr = info.into();
-                <span class="kw">if </span>addr.direct_addresses.is_empty() &amp;&amp; addr.relay_url.is_none() {
+                <span class="kw">if </span>addr.is_empty() {
                     <span class="kw">return </span><span class="prelude-val">None</span>;
                 }
                 <span class="prelude-val">Some</span>(addr)
@@ -1568,7 +1568,7 @@
             .into_iter()
             .filter_map(|info| {
                 <span class="kw">let </span>addr: NodeAddr = info.into();
-                <span class="kw">if </span>addr.direct_addresses.is_empty() &amp;&amp; addr.relay_url.is_none() {
+                <span class="kw">if </span>addr.is_empty() {
                     <span class="kw">return </span><span class="prelude-val">None</span>;
                 }
                 <span class="prelude-val">Some</span>(addr)
