@@ -80,7 +80,7 @@ const UNDELIVERABLE_DATAGRAM_TIMEOUT: Duration = Duration::from_millis(400);
 /// communication with it.
 ///
 /// The actor shuts down itself on inactivity: inactivity is determined when no more
-/// datagrams are being received to send.
+/// datagrams are being queued to send.
 ///
 /// This actor has 3 main states it can be in, each has it's dedicated run loop:
 ///
