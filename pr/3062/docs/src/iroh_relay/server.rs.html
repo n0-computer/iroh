@@ -1108,7 +1108,8 @@
 <a href="#1107" id="1107">1107</a>
 <a href="#1108" id="1108">1108</a>
 <a href="#1109" id="1109">1109</a>
-<a href="#1110" id="1110">1110</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
+<a href="#1110" id="1110">1110</a>
+<a href="#1111" id="1111">1111</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
 //! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
@@ -1887,6 +1888,7 @@
     <span class="kw">use </span>futures_util::SinkExt;
     <span class="kw">use </span>http::header::UPGRADE;
     <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
+    <span class="kw">use </span>testresult::TestResult;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{
@@ -2017,7 +2019,7 @@
     }
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_relay_clients_both_relay() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_relay_clients_both_relay() -&gt; TestResult&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
         <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
@@ -2069,7 +2071,7 @@
     }
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_relay_clients_both_websockets() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_relay_clients_both_websockets() -&gt; TestResult&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -2131,7 +2133,7 @@
     }
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_relay_clients_websocket_and_relay() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_relay_clients_websocket_and_relay() -&gt; TestResult&lt;()&gt; {
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
 
