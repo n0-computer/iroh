@@ -19,9 +19,10 @@ use self::{
 use super::{
     metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
 };
+#[cfg(any(test, feature = "test-utils"))]
+use crate::endpoint::PathSelection;
 use crate::{
     disco::{CallMeMaybe, Pong, SendAddr},
-    endpoint::PathSelection,
     watchable::Watcher,
 };
 

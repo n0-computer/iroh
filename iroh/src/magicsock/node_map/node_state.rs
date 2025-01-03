@@ -20,9 +20,10 @@ use super::{
     udp_paths::{NodeUdpPaths, UdpSendAddr},
     IpPort, Source,
 };
+#[cfg(any(test, feature = "test-utils"))]
+use crate::endpoint::PathSelection;
 use crate::{
     disco::{self, SendAddr},
-    endpoint::PathSelection,
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
     watchable::{Watchable, Watcher},
 };

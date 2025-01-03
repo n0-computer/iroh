@@ -61,12 +61,13 @@ use self::{
     relay_actor::{RelayActor, RelayActorMessage, RelayRecvDatagram},
     udp_conn::UdpConn,
 };
+#[cfg(any(test, feature = "test-utils"))]
+use crate::endpoint::PathSelection;
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
-    endpoint::PathSelection,
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     watchable::{Watchable, Watcher},
 };
