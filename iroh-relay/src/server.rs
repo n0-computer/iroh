@@ -777,6 +777,7 @@ mod tests {
     use futures_util::SinkExt;
     use http::header::UPGRADE;
     use iroh_base::{NodeId, SecretKey};
+    use testresult::TestResult;
 
     use super::*;
     use crate::{
@@ -907,7 +908,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_relay_clients_both_relay() -> Result<()> {
+    async fn test_relay_clients_both_relay() -> TestResult<()> {
         let _guard = iroh_test::logging::setup();
         let server = spawn_local_relay().await.unwrap();
         let relay_url = format!("http://{}", server.http_addr().unwrap());
@@ -959,7 +960,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_relay_clients_both_websockets() -> Result<()> {
+    async fn test_relay_clients_both_websockets() -> TestResult<()> {
         let _guard = iroh_test::logging::setup();
         let server = spawn_local_relay().await?;
 
@@ -1021,7 +1022,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_relay_clients_websocket_and_relay() -> Result<()> {
+    async fn test_relay_clients_websocket_and_relay() -> TestResult<()> {
         let _guard = iroh_test::logging::setup();
         let server = spawn_local_relay().await.unwrap();
 
