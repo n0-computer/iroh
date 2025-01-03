@@ -1542,7 +1542,11 @@
 <a href="#1541" id="1541">1541</a>
 <a href="#1542" id="1542">1542</a>
 <a href="#1543" id="1543">1543</a>
-<a href="#1544" id="1544">1544</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1544" id="1544">1544</a>
+<a href="#1545" id="1545">1545</a>
+<a href="#1546" id="1546">1546</a>
+<a href="#1547" id="1547">1547</a>
+<a href="#1548" id="1548">1548</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1954,7 +1958,7 @@
                 .<span class="kw">await</span><span class="question-mark">?</span>;
         }
 
-        <span class="kw">loop </span>{
+        <span class="kw">let </span>res = <span class="kw">loop </span>{
             <span class="kw">if let </span><span class="prelude-val">Some</span>(data) = state.pong_pending.take() {
                 <span class="kw">let </span>fut = client_sink.send(SendMessage::Pong(data));
                 <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream)
@@ -2061,7 +2065,11 @@
                     <span class="kw">break </span><span class="prelude-val">Ok</span>(());
                 }
             }
+        };
+        <span class="kw">if </span>res.is_ok() {
+            client_sink.close().<span class="kw">await</span><span class="question-mark">?</span>;
         }
+        res
     }
 
     <span class="kw">fn </span>handle_relay_msg(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: ReceivedMessage, state: <span class="kw-2">&amp;mut </span>ConnectedRelayState) {
