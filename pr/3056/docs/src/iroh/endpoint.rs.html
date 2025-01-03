@@ -1908,7 +1908,18 @@
 <a href="#1907" id="1907">1907</a>
 <a href="#1908" id="1908">1908</a>
 <a href="#1909" id="1909">1909</a>
-<a href="#1910" id="1910">1910</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#1910" id="1910">1910</a>
+<a href="#1911" id="1911">1911</a>
+<a href="#1912" id="1912">1912</a>
+<a href="#1913" id="1913">1913</a>
+<a href="#1914" id="1914">1914</a>
+<a href="#1915" id="1915">1915</a>
+<a href="#1916" id="1916">1916</a>
+<a href="#1917" id="1917">1917</a>
+<a href="#1918" id="1918">1918</a>
+<a href="#1919" id="1919">1919</a>
+<a href="#1920" id="1920">1920</a>
+<a href="#1921" id="1921">1921</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -1984,6 +1995,17 @@
 
 <span class="kw">type </span>DiscoveryBuilder = Box&lt;<span class="kw">dyn </span>FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; + Send + Sync&gt;;
 
+<span class="doccomment">/// Defines the mode of path selection for all traffic flowing through
+/// the endpoint.
+</span><span class="attr">#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+</span><span class="kw">pub enum </span>PathSelection {
+    <span class="doccomment">/// Uses all available paths
+    </span><span class="attr">#[default]
+    </span>All,
+    <span class="doccomment">/// Forces all traffic to go exclusively through relays
+    </span>RelayOnly,
+}
+
 <span class="doccomment">/// Builder for [`Endpoint`].
 ///
 /// By default the endpoint will generate a new random [`SecretKey`], which will result in a
@@ -2008,7 +2030,7 @@
     addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;,
     addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-    </span>relay_only: bool,
+    </span>path_selection: PathSelection,
 }
 
 <span class="kw">impl </span>Default <span class="kw">for </span>Builder {
@@ -2028,7 +2050,7 @@
             addr_v4: <span class="prelude-val">None</span>,
             addr_v6: <span class="prelude-val">None</span>,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-            </span>relay_only: <span class="bool-val">false</span>,
+            </span>path_selection: PathSelection::default(),
         }
     }
 }
@@ -2075,7 +2097,7 @@
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="self">self</span>.insecure_skip_relay_cert_verify,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-            </span>relay_only: <span class="self">self</span>.relay_only,
+            </span>path_selection: <span class="self">self</span>.path_selection,
         };
         Endpoint::bind(static_config, msock_opts, <span class="self">self</span>.alpn_protocols).<span class="kw">await
     </span>}
@@ -2337,8 +2359,8 @@
     <span class="doccomment">/// This implies we only use the relay to communicate
     /// and do not attempt to do any hole punching.
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-    </span><span class="kw">pub fn </span>relay_only(<span class="kw-2">mut </span><span class="self">self</span>, relay_only: bool) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.relay_only = relay_only;
+    </span><span class="kw">pub fn </span>path_selection(<span class="kw-2">mut </span><span class="self">self</span>, path_selection: PathSelection) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.path_selection = path_selection;
         <span class="self">self
     </span>}
 }

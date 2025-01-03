@@ -1760,6 +1760,7 @@
 };
 <span class="kw">use crate</span>::{
     disco::{<span class="self">self</span>, SendAddr},
+    endpoint::PathSelection,
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
     watchable::{Watchable, Watcher},
 };
@@ -1873,10 +1874,9 @@
     ///
     /// Used for metric reporting.
     </span>has_been_direct: bool,
-    <span class="doccomment">/// This implies we only use the relay to communicate
-    /// and do not attempt to do any hole punching.
+    <span class="doccomment">/// Configuration for what path selection to use
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-    </span>relay_only: bool,
+    </span>path_selection: PathSelection,
 }
 
 <span class="doccomment">/// Options for creating a new [`NodeState`].
@@ -1888,7 +1888,7 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) active: bool,
     <span class="kw">pub</span>(<span class="kw">super</span>) source: <span class="kw">super</span>::Source,
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) relay_only: bool,
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) path_selection: PathSelection,
 }
 
 <span class="kw">impl </span>NodeState {
@@ -1920,7 +1920,7 @@
             conn_type: Watchable::new(ConnectionType::None),
             has_been_direct: <span class="bool-val">false</span>,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-            </span>relay_only: options.relay_only,
+            </span>path_selection: options.path_selection,
         }
     }
 
@@ -2017,8 +2017,8 @@
         have_ipv6: bool,
     ) -&gt; (<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;, <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;) {
         <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-        </span><span class="kw">if </span><span class="self">self</span>.relay_only {
-            <span class="macro">debug!</span>(<span class="string">"in `relay_only` mode, giving the relay address as the only viable address for this endpoint"</span>);
+        </span><span class="kw">if </span><span class="self">self</span>.path_selection == PathSelection::RelayOnly {
+            <span class="macro">debug!</span>(<span class="string">"in `RelayOnly` mode, giving the relay address as the only viable address for this endpoint"</span>);
             <span class="kw">return </span>(<span class="prelude-val">None</span>, <span class="self">self</span>.relay_url());
         }
         <span class="kw">let </span>(best_addr, relay_url) = <span class="kw">match </span><span class="self">self</span>.udp_paths.send_addr(<span class="kw-2">*</span>now, have_ipv6) {
@@ -2203,9 +2203,9 @@
     <span class="attr">#[must_use = <span class="string">"pings must be handled"</span>]
     </span><span class="kw">fn </span>start_ping(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: SendAddr, purpose: DiscoPingPurpose) -&gt; <span class="prelude-ty">Option</span>&lt;SendPing&gt; {
         <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-        </span><span class="kw">if </span><span class="self">self</span>.relay_only &amp;&amp; !dst.is_relay() {
+        </span><span class="kw">if </span><span class="self">self</span>.path_selection == PathSelection::RelayOnly &amp;&amp; !dst.is_relay() {
             <span class="comment">// don't attempt any hole punching in relay only mode
-            </span><span class="macro">warn!</span>(<span class="string">"in `relay_only` mode, ignoring request to start a hole punching attempt."</span>);
+            </span><span class="macro">warn!</span>(<span class="string">"in `RealyOnly` mode, ignoring request to start a hole punching attempt."</span>);
             <span class="kw">return </span><span class="prelude-val">None</span>;
         }
         <span class="kw">let </span>tx_id = stun::TransactionId::default();
@@ -2350,8 +2350,8 @@
         }
 
         <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-        </span><span class="kw">if </span><span class="self">self</span>.relay_only {
-            <span class="macro">warn!</span>(<span class="string">"in `relay_only` mode, ignoring request to respond to a hole punching attempt."</span>);
+        </span><span class="kw">if </span><span class="self">self</span>.path_selection == PathSelection::RelayOnly {
+            <span class="macro">warn!</span>(<span class="string">"in `RelayOnly` mode, ignoring request to respond to a hole punching attempt."</span>);
             <span class="kw">return </span>ping_msgs;
         }
         <span class="self">self</span>.prune_direct_addresses();
@@ -3243,7 +3243,7 @@
                     conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
                     has_been_direct: <span class="bool-val">true</span>,
                     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-                    </span>relay_only: <span class="bool-val">false</span>,
+                    </span>path_selection: PathSelection::default(),
                 },
                 ip_port.into(),
             )
@@ -3265,7 +3265,7 @@
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
                 has_been_direct: <span class="bool-val">false</span>,
                 <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-                </span>relay_only: <span class="bool-val">false</span>,
+                </span>path_selection: PathSelection::default(),
             }
         };
 
@@ -3294,7 +3294,7 @@
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
                 has_been_direct: <span class="bool-val">false</span>,
                 <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-                </span>relay_only: <span class="bool-val">false</span>,
+                </span>path_selection: PathSelection::default(),
             }
         };
 
@@ -3336,7 +3336,7 @@
                     )),
                     has_been_direct: <span class="bool-val">false</span>,
                     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-                    </span>relay_only: <span class="bool-val">false</span>,
+                    </span>path_selection: PathSelection::default(),
                 },
                 socket_addr,
             )
@@ -3427,7 +3427,7 @@
                 (d_endpoint.id, d_endpoint),
             ]),
             next_id: <span class="number">5</span>,
-            relay_only: <span class="bool-val">false</span>,
+            path_selection: PathSelection::default(),
         });
         <span class="kw">let </span><span class="kw-2">mut </span>got = node_map.list_remote_infos(later);
         got.sort_by_key(|p| p.node_id);
@@ -3457,7 +3457,7 @@
             source: <span class="kw">crate</span>::magicsock::Source::NamedApp {
                 name: <span class="string">"test"</span>.into(),
             },
-            relay_only: <span class="bool-val">false</span>,
+            path_selection: PathSelection::default(),
         };
         <span class="kw">let </span><span class="kw-2">mut </span>ep = NodeState::new(<span class="number">0</span>, opts);
 

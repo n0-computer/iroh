@@ -4200,6 +4200,7 @@
     disco::{<span class="self">self</span>, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
+    endpoint::PathSelection,
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     watchable::{Watchable, Watcher},
 };
@@ -4263,10 +4264,9 @@
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) insecure_skip_relay_cert_verify: bool,
 
-    <span class="doccomment">/// This implies we only use the relay to communicate
-    /// and do not attempt to do any hole punching.
+    <span class="doccomment">/// Configuration for what path selection to use
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) relay_only: bool,
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) path_selection: PathSelection,
 }
 
 <span class="kw">impl </span>Default <span class="kw">for </span>Options {
@@ -4283,7 +4283,7 @@
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-            </span>relay_only: <span class="bool-val">false</span>,
+            </span>path_selection: PathSelection::default(),
         }
     }
 }
@@ -5660,7 +5660,7 @@
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-            </span>relay_only,
+            </span>path_selection,
         } = opts;
 
         <span class="kw">let </span>relay_datagrams_queue = Arc::new(RelayDatagramsQueue::new());
@@ -5691,7 +5691,7 @@
         <span class="comment">// load the node data
         </span><span class="kw">let </span>node_map = node_map.unwrap_or_default();
         <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-        </span><span class="kw">let </span>node_map = NodeMap::load_from_vec(node_map, relay_only);
+        </span><span class="kw">let </span>node_map = NodeMap::load_from_vec(node_map, path_selection);
         <span class="attr">#[cfg(not(any(test, feature = <span class="string">"test-utils"</span>)))]
         </span><span class="kw">let </span>node_map = NodeMap::load_from_vec(node_map);
 
@@ -7894,7 +7894,7 @@
             dns_resolver: <span class="kw">crate</span>::dns::default_resolver().clone(),
             proxy_url: <span class="prelude-val">None</span>,
             insecure_skip_relay_cert_verify: <span class="bool-val">true</span>,
-            relay_only: <span class="bool-val">false</span>,
+            path_selection: PathSelection::default(),
         };
         <span class="kw">let </span>msock = MagicSock::spawn(opts).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>server_config = <span class="kw">crate</span>::endpoint::make_server_config(

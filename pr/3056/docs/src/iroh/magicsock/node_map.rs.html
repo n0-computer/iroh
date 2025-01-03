@@ -880,7 +880,8 @@
 <a href="#879" id="879">879</a>
 <a href="#880" id="880">880</a>
 <a href="#881" id="881">881</a>
-<a href="#882" id="882">882</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#882" id="882">882</a>
+<a href="#883" id="883">883</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -903,6 +904,7 @@
 };
 <span class="kw">use crate</span>::{
     disco::{CallMeMaybe, Pong, SendAddr},
+    endpoint::PathSelection,
     watchable::Watcher,
 };
 
@@ -948,7 +950,7 @@
     by_id: HashMap&lt;usize, NodeState&gt;,
     next_id: usize,
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-    </span>relay_only: bool,
+    </span>path_selection: PathSelection,
 }
 
 <span class="doccomment">/// Identifier to look up a [`NodeState`] in the [`NodeMap`].
@@ -1015,8 +1017,8 @@
 
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
     </span><span class="doccomment">/// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>load_from_vec(nodes: Vec&lt;NodeAddr&gt;, relay_only: bool) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::from_inner(NodeMapInner::load_from_vec(nodes, relay_only))
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>load_from_vec(nodes: Vec&lt;NodeAddr&gt;, path_selection: PathSelection) -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>::from_inner(NodeMapInner::load_from_vec(nodes, path_selection))
     }
 
     <span class="kw">fn </span>from_inner(inner: NodeMapInner) -&gt; <span class="self">Self </span>{
@@ -1217,9 +1219,9 @@
 
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
     </span><span class="doccomment">/// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    </span><span class="kw">fn </span>load_from_vec(nodes: Vec&lt;NodeAddr&gt;, relay_only: bool) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">fn </span>load_from_vec(nodes: Vec&lt;NodeAddr&gt;, path_selection: PathSelection) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>me = <span class="self">Self </span>{
-            relay_only,
+            path_selection,
             ..Default::default()
         };
         <span class="kw">for </span>node_addr <span class="kw">in </span>nodes {
@@ -1235,14 +1237,14 @@
         <span class="kw">let </span>node_id = node_addr.node_id;
         <span class="kw">let </span>relay_url = node_addr.relay_url.clone();
         <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-        </span><span class="kw">let </span>relay_only = <span class="self">self</span>.relay_only;
+        </span><span class="kw">let </span>path_selection = <span class="self">self</span>.path_selection;
         <span class="kw">let </span>node_state = <span class="self">self</span>.get_or_insert_with(NodeStateKey::NodeId(node_id), || Options {
             node_id,
             relay_url,
             active: <span class="bool-val">false</span>,
             source,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-            </span>relay_only,
+            </span>path_selection,
         });
         node_state.update_from_node_addr(
             node_addr.relay_url.as_ref(),
@@ -1328,7 +1330,7 @@
     <span class="attr">#[instrument(skip_all, fields(src = %src.fmt_short()))]
     </span><span class="kw">fn </span>receive_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, relay_url: <span class="kw-2">&amp;</span>RelayUrl, src: NodeId) -&gt; QuicMappedAddr {
         <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-        </span><span class="kw">let </span>relay_only = <span class="self">self</span>.relay_only;
+        </span><span class="kw">let </span>path_selection = <span class="self">self</span>.path_selection;
         <span class="kw">let </span>node_state = <span class="self">self</span>.get_or_insert_with(NodeStateKey::NodeId(src), || {
             <span class="macro">trace!</span>(<span class="string">"packets from unknown node, insert into node map"</span>);
             Options {
@@ -1337,7 +1339,7 @@
                 active: <span class="bool-val">true</span>,
                 source: Source::Relay,
                 <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-                </span>relay_only,
+                </span>path_selection,
             }
         });
         node_state.receive_relay(relay_url, src, Instant::now());
@@ -1416,7 +1418,7 @@
 
     <span class="kw">fn </span>handle_ping(<span class="kw-2">&amp;mut </span><span class="self">self</span>, sender: NodeId, src: SendAddr, tx_id: TransactionId) -&gt; PingHandled {
         <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-        </span><span class="kw">let </span>relay_only = <span class="self">self</span>.relay_only;
+        </span><span class="kw">let </span>path_selection = <span class="self">self</span>.path_selection;
         <span class="kw">let </span>node_state = <span class="self">self</span>.get_or_insert_with(NodeStateKey::NodeId(sender), || {
             <span class="macro">debug!</span>(<span class="string">"received ping: node unknown, add to node map"</span>);
             <span class="kw">let </span>source = <span class="kw">if </span>src.is_relay() {
@@ -1430,7 +1432,7 @@
                 active: <span class="bool-val">true</span>,
                 source,
                 <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-                </span>relay_only,
+                </span>path_selection,
             }
         });
 
@@ -1632,7 +1634,7 @@
                 <span class="prelude-val">Some</span>(addr)
             })
             .collect();
-        <span class="kw">let </span>loaded_node_map = NodeMap::load_from_vec(addrs.clone(), <span class="bool-val">false</span>);
+        <span class="kw">let </span>loaded_node_map = NodeMap::load_from_vec(addrs.clone(), PathSelection::default());
 
         <span class="kw">let </span><span class="kw-2">mut </span>loaded: Vec&lt;NodeAddr&gt; = loaded_node_map
             .list_remote_infos(Instant::now())
@@ -1674,7 +1676,7 @@
                 source: Source::NamedApp {
                     name: <span class="string">"test"</span>.into(),
                 },
-                relay_only: <span class="bool-val">false</span>,
+                path_selection: PathSelection::default(),
             })
             .id();
 
