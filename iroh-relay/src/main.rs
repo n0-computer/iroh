@@ -16,7 +16,7 @@ use iroh_relay::{
         DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_RELAY_QUIC_PORT,
         DEFAULT_STUN_PORT,
     },
-    server::{self as relay, ClientConnRateLimit, QuicConfig},
+    server::{self as relay, ClientRateLimit, QuicConfig},
 };
 use serde::{Deserialize, Serialize};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
@@ -543,7 +543,7 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
                         bail!("bytes_per_seconds must be specified to enable the rate-limiter");
                     }
                     match rx.bytes_per_second {
-                        Some(bps) => Some(ClientConnRateLimit {
+                        Some(bps) => Some(ClientRateLimit {
                             bytes_per_second: bps
                                 .try_into()
                                 .context("bytes_per_second must be non-zero u32")?,

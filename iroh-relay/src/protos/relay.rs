@@ -43,9 +43,6 @@ const MAGIC: &str = "RELAY🔑";
 
 #[cfg(feature = "server")]
 pub(crate) const KEEP_ALIVE: Duration = Duration::from_secs(60);
-// TODO: what should this be?
-#[cfg(feature = "server")]
-pub(crate) const SERVER_CHANNEL_SIZE: usize = 1024 * 100;
 /// The number of packets buffered for sending per client
 #[cfg(feature = "server")]
 pub(crate) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512; //32;
@@ -181,7 +178,7 @@ pub(crate) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
 
     // TODO: variable recv size: 256 * 1024
     let buf = tokio::time::timeout(
-        Duration::from_secs(10),
+        std::time::Duration::from_secs(10),
         recv_frame(FrameType::ClientInfo, stream),
     )
     .await
@@ -593,6 +590,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[cfg(feature = "server")]
     async fn test_basic_read_write() -> anyhow::Result<()> {
         let (reader, writer) = tokio::io::duplex(1024);
         let mut reader = FramedRead::new(reader, RelayCodec::test());

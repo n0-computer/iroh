@@ -425,12 +425,6 @@ impl ActiveRelayActor {
         };
         let mut send_datagrams_buf = Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE);
 
-        if self.is_home_relay {
-            let fut = client_sink.send(SendMessage::NotePreferred(true));
-            self.run_sending(fut, &mut state, &mut client_stream)
-                .await?;
-        }
-
         let res = loop {
             if let Some(data) = state.pong_pending.take() {
                 let fut = client_sink.send(SendMessage::Pong(data));
@@ -466,8 +460,6 @@ impl ActiveRelayActor {
                     match msg {
                         ActiveRelayMessage::SetHomeRelay(is_preferred) => {
                             self.is_home_relay = is_preferred;
-                            let fut = client_sink.send(SendMessage::NotePreferred(is_preferred));
-                            self.run_sending(fut, &mut state, &mut client_stream).await?;
                         }
                         ActiveRelayMessage::CheckConnection(local_ips) => {
                             match client_stream.local_addr() {
@@ -845,7 +837,6 @@ impl RelayActor {
                 .ok()
         }))
         .await;
-
         // Ensure we have an ActiveRelayActor for the current home relay.
         self.active_relay_handle(home_url);
     }
