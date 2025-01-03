@@ -218,7 +218,10 @@
 <a href="#217" id="217">217</a>
 <a href="#218" id="218">218</a>
 <a href="#219" id="219">219</a>
-<a href="#220" id="220">220</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
+<a href="#220" id="220">220</a>
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a>
+<a href="#223" id="223">223</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
 </span><span class="comment">// Based on tailscale/derp/derp_server.go
 
 </span><span class="kw">use </span>std::{collections::HashSet, sync::Arc};
@@ -265,7 +268,10 @@
 
         <span class="kw">let </span>client = Client::new(client_config, <span class="self">self</span>);
         <span class="kw">if let </span><span class="prelude-val">Some</span>(old_client) = <span class="self">self</span>.<span class="number">0</span>.clients.insert(node_id, client) {
-            <span class="macro">debug!</span>(<span class="string">"multiple connections found for {node_id:?}, pruning old connection"</span>,);
+            <span class="macro">debug!</span>(
+                remote_node = node_id.fmt_short(),
+                <span class="string">"multiple connections found, pruning old connection"</span>,
+            );
             old_client.shutdown().<span class="kw">await</span>;
         }
     }
