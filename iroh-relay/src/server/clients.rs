@@ -41,7 +41,7 @@ impl Clients {
     /// Builds the client handler and starts the read & write loops for the connection.
     pub async fn register(&self, client_config: Config) {
         let node_id = client_config.node_id;
-        trace!(node_id = node_id.fmt_short(), "registering client");
+        trace!(remote_node = node_id.fmt_short(), "registering client");
 
         let client = Client::new(client_config, self);
         if let Some(old_client) = self.0.clients.insert(node_id, client) {
@@ -62,10 +62,16 @@ impl Clients {
                     match client.try_send_peer_gone(key) {
                         Ok(_) => {}
                         Err(TrySendError::Full(_)) => {
-                            warn!("client {key:?} too busy to receive packet, dropping packet");
+                            warn!(
+                                dst = key.fmt_short(),
+                                "client too busy to receive packet, dropping packet"
+                            );
                         }
                         Err(TrySendError::Closed(_)) => {
-                            debug!("can no longer write to client {key:?}, dropping packet");
+                            debug!(
+                                dst = key.fmt_short(),
+                                "can no longer write to client, dropping packet"
+                            );
                         }
                     }
                 }
@@ -80,7 +86,10 @@ impl Clients {
             let res = client.try_send_packet(src, data);
             return self.process_result(src, dst, res).await;
         }
-        warn!("could not find client for {dst:?}, dropped packet");
+        warn!(
+            dst = dst.fmt_short(),
+            "could not find client, dropped packet"
+        );
         inc!(Metrics, send_packets_dropped);
         Ok(())
     }
@@ -95,7 +104,10 @@ impl Clients {
             let res = client.try_send_disco_packet(src, data);
             return self.process_result(src, dst, res).await;
         }
-        warn!("could not find client for {dst:?}, dropped disco packet");
+        warn!(
+            dst = dst.fmt_short(),
+            "could not find client, dropped disco packet"
+        );
         inc!(Metrics, disco_packets_dropped);
         Ok(())
     }
@@ -113,11 +125,17 @@ impl Clients {
                 Ok(())
             }
             Err(TrySendError::Full(_)) => {
-                warn!("client {dst:?} too busy to receive packet, dropping packet");
+                warn!(
+                    dst = dst.fmt_short(),
+                    "client too busy to receive packet, dropping packet"
+                );
                 bail!("failed to send message");
             }
             Err(TrySendError::Closed(_)) => {
-                debug!("can no longer write to client {dst:?}, dropping message and pruning connection");
+                debug!(
+                    dst = dst.fmt_short(),
+                    "can no longer write to client, dropping message and pruning connection"
+                );
                 self.unregister(dst).await;
                 bail!("failed to send message");
             }
