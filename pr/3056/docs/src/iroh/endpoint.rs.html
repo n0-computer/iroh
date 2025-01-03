@@ -1919,7 +1919,8 @@
 <a href="#1918" id="1918">1918</a>
 <a href="#1919" id="1919">1919</a>
 <a href="#1920" id="1920">1920</a>
-<a href="#1921" id="1921">1921</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#1921" id="1921">1921</a>
+<a href="#1922" id="1922">1922</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -1997,7 +1998,8 @@
 
 <span class="doccomment">/// Defines the mode of path selection for all traffic flowing through
 /// the endpoint.
-</span><span class="attr">#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+</span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 </span><span class="kw">pub enum </span>PathSelection {
     <span class="doccomment">/// Uses all available paths
     </span><span class="attr">#[default]
