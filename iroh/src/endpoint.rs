@@ -34,7 +34,7 @@ use crate::{
         dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
     },
     dns::{default_resolver, DnsResolver},
-    magicsock::{self, Handle, QuicMappedAddr},
+    magicsock::{self, Handle, NodeIdMappedAddr},
     tls,
     watchable::Watcher,
 };
@@ -543,7 +543,6 @@ impl Endpoint {
     async fn bind(static_config: StaticConfig, msock_opts: magicsock::Options) -> Result<Self> {
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
         trace!("created magicsock");
-        trace!("created quinn endpoint");
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
         let ep = Self {
             msock: msock.clone(),
@@ -660,7 +659,7 @@ impl Endpoint {
         &self,
         node_id: NodeId,
         alpn: &[u8],
-        addr: QuicMappedAddr,
+        addr: NodeIdMappedAddr,
         transport_config: Arc<TransportConfig>,
     ) -> Result<Connection> {
         debug!("Attempting connection...");
@@ -1005,10 +1004,6 @@ impl Endpoint {
             return;
         }
 
-        tracing::debug!("Closing connections");
-        self.endpoint.close(0u16.into(), b"");
-        self.endpoint.wait_idle().await;
-
         tracing::debug!("Connections closed");
         self.msock.close().await;
     }
@@ -1036,7 +1031,7 @@ impl Endpoint {
     async fn get_mapping_addr_and_maybe_start_discovery(
         &self,
         node_addr: NodeAddr,
-    ) -> Result<(QuicMappedAddr, Option<DiscoveryTask>)> {
+    ) -> Result<(NodeIdMappedAddr, Option<DiscoveryTask>)> {
         let node_id = node_addr.node_id;
 
         // Only return a mapped addr if we have some way of dialing this node, in other
