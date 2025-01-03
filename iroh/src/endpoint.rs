@@ -76,6 +76,7 @@ type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>>
 
 /// Defines the mode of path selection for all traffic flowing through
 /// the endpoint.
+#[cfg(any(test, feature = "test-utils"))]
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
 pub enum PathSelection {
     /// Uses all available paths
