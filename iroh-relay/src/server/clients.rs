@@ -45,7 +45,10 @@ impl Clients {
 
         let client = Client::new(client_config, self);
         if let Some(old_client) = self.0.clients.insert(node_id, client) {
-            debug!("multiple connections found for {node_id:?}, pruning old connection",);
+            debug!(
+                remote_node = node_id.fmt_short(),
+                "multiple connections found, pruning old connection",
+            );
             old_client.shutdown().await;
         }
     }
