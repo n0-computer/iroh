@@ -891,6 +891,14 @@ impl RelayActor {
             Some(e) => e.clone(),
             None => {
                 let handle = self.start_active_relay(url.clone());
+                if Some(&url) == self.msock.my_relay().as_ref() {
+                    if let Err(err) = handle
+                        .inbox_addr
+                        .try_send(ActiveRelayMessage::SetHomeRelay(true))
+                    {
+                        error!("Home relay not set, send to new actor failed: {err:#}.");
+                    }
+                }
                 self.active_relays.insert(url, handle.clone());
                 handle
             }
