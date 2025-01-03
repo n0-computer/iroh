@@ -53,11 +53,18 @@ impl<T> MaybeFuture<T> {
 impl<T: Future> Future for MaybeFuture<T> {
     type Output = T::Output;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        match this {
-            MaybeFutureProj::Some(t) => t.poll(cx),
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut this = self.as_mut().project();
+        let poll_res = match this {
+            MaybeFutureProj::Some(ref mut t) => t.as_mut().poll(cx),
             MaybeFutureProj::None => Poll::Pending,
+        };
+        match poll_res {
+            Poll::Ready(val) => {
+                self.as_mut().project_replace(Self::None);
+                Poll::Ready(val)
+            }
+            Poll::Pending => Poll::Pending,
         }
     }
 }
@@ -69,4 +76,26 @@ impl<T: Future> Future for MaybeFuture<T> {
 /// and do not attempt to do any hole punching.
 pub(crate) fn relay_only_mode() -> bool {
     std::option_env!("DEV_RELAY_ONLY").is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::pin::pin;
+
+    use tokio::time::Duration;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_maybefuture_poll_after_use() {
+        let fut = async move { "hello" };
+        let mut maybe_fut = pin!(MaybeFuture::Some(fut));
+        let res = (&mut maybe_fut).await;
+
+        assert_eq!(res, "hello");
+
+        // Now poll again
+        let res = tokio::time::timeout(Duration::from_millis(10), maybe_fut).await;
+        assert!(res.is_err());
+    }
 }
