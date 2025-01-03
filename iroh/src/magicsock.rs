@@ -2,8 +2,8 @@
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
-//! ### `relay_only` config option:
-//! When present this will force all packets to be sent over
+//! ### `RelayOnly` path selection:
+//! When set this will force all packets to be sent over
 //! the relay connection, regardless of whether or
 //! not we have a direct UDP address for the given node.
 //!
