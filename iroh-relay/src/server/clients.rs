@@ -8,9 +8,10 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use iroh_base::NodeId;
 use iroh_metrics::inc;
+use tokio::sync::mpsc::error::TrySendError;
 use tracing::{debug, trace, warn};
 
-use super::client::{Client, Config, SendError};
+use super::client::{Client, Config, Packet};
 use crate::server::metrics::Metrics;
 
 /// Manages the connections to all currently connected clients.
@@ -58,12 +59,12 @@ impl Clients {
         if let Some((_, client)) = self.0.clients.remove(&node_id) {
             if let Some((_, sent_to)) = self.0.sent_to.remove(&node_id) {
                 for key in sent_to {
-                    match client.send_peer_gone(key) {
+                    match client.try_send_peer_gone(key) {
                         Ok(_) => {}
-                        Err(SendError::PacketDropped) => {
+                        Err(TrySendError::Full(_)) => {
                             warn!("client {key:?} too busy to receive packet, dropping packet");
                         }
-                        Err(SendError::SenderClosed) => {
+                        Err(TrySendError::Closed(_)) => {
                             debug!("can no longer write to client {key:?}, dropping packet");
                         }
                     }
@@ -76,7 +77,7 @@ impl Clients {
     /// Attempt to send a packet to client with [`NodeId`] `dst`
     pub(super) async fn send_packet(&self, dst: NodeId, data: Bytes, src: NodeId) -> Result<()> {
         if let Some(client) = self.0.clients.get(&dst) {
-            let res = client.send_packet(src, data);
+            let res = client.try_send_packet(src, data);
             return self.process_result(src, dst, res).await;
         }
         warn!("could not find client for {dst:?}, dropped packet");
@@ -91,7 +92,7 @@ impl Clients {
         src: NodeId,
     ) -> Result<()> {
         if let Some(client) = self.0.clients.get(&dst) {
-            let res = client.send_disco_packet(src, data);
+            let res = client.try_send_disco_packet(src, data);
             return self.process_result(src, dst, res).await;
         }
         warn!("could not find client for {dst:?}, dropped disco packet");
@@ -103,7 +104,7 @@ impl Clients {
         &self,
         src: NodeId,
         dst: NodeId,
-        res: Result<(), SendError>,
+        res: Result<(), TrySendError<Packet>>,
     ) -> Result<()> {
         match res {
             Ok(_) => {
@@ -111,11 +112,11 @@ impl Clients {
                 self.0.sent_to.entry(src).or_default().insert(dst);
                 Ok(())
             }
-            Err(SendError::PacketDropped) => {
+            Err(TrySendError::Full(_)) => {
                 warn!("client {dst:?} too busy to receive packet, dropping packet");
                 bail!("failed to send message");
             }
-            Err(SendError::SenderClosed) => {
+            Err(TrySendError::Closed(_)) => {
                 debug!("can no longer write to client {dst:?}, dropping message and pruning connection");
                 self.unregister(dst).await;
                 bail!("failed to send message");

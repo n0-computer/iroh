@@ -9,9 +9,9 @@ use futures_sink::Sink;
 use futures_util::{SinkExt, Stream, StreamExt};
 use iroh_base::NodeId;
 use iroh_metrics::{inc, inc_by};
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::{error, info, instrument, trace, warn, Instrument};
+use tracing::{debug, error, instrument, trace, warn, Instrument};
 
 use crate::{
     protos::{
@@ -23,15 +23,12 @@ use crate::{
 
 /// A request to write a dataframe to a Client
 #[derive(Debug, Clone)]
-struct Packet {
+pub(super) struct Packet {
     /// The sender of the packet
     src: NodeId,
     /// The data packet bytes.
     data: Bytes,
 }
-
-/// Number of times we try to send to a client connection before dropping the data;
-const RETRIES: usize = 3;
 
 /// Configuration for a [`Client`].
 #[derive(Debug)]
@@ -106,20 +103,20 @@ impl Client {
 
         // start io loop
         let io_done = done.clone();
-        let io_client_id = node_id;
         let handle = tokio::task::spawn(
             async move {
-                let key = io_client_id;
                 match actor.run(io_done).await {
                     Err(e) => {
-                        warn!("connection manager for {key:?}: writer closed in error {e:?}");
+                        warn!("writer closed in error {e:#?}");
                     }
                     Ok(()) => {
-                        info!("connection manager for {key:?}: writer closed");
+                        debug!("writer closed");
                     }
                 }
             }
-            .instrument(tracing::info_span!("client_conn_actor")),
+            .instrument(
+                tracing::info_span!("client connection actor", remote_node = %node_id.fmt_short()),
+            ),
         );
 
         Client {
@@ -139,49 +136,31 @@ impl Client {
         self.done.cancel();
         if let Err(e) = self.handle.await {
             warn!(
-                "error closing actor loop for client connection {:?}: {e:?}",
-                self.node_id,
+                remote_node = %self.node_id.fmt_short(),
+                "error closing actor loop: {e:#?}",
             );
         };
     }
 
-    pub(super) fn send_packet(&self, src: NodeId, data: Bytes) -> Result<(), SendError> {
-        try_send(&self.send_queue, Packet { src, data })
+    pub(super) fn try_send_packet(
+        &self,
+        src: NodeId,
+        data: Bytes,
+    ) -> Result<(), TrySendError<Packet>> {
+        self.send_queue.try_send(Packet { src, data })
     }
 
-    pub(super) fn send_disco_packet(&self, src: NodeId, data: Bytes) -> Result<(), SendError> {
-        try_send(&self.disco_send_queue, Packet { src, data })
+    pub(super) fn try_send_disco_packet(
+        &self,
+        src: NodeId,
+        data: Bytes,
+    ) -> Result<(), TrySendError<Packet>> {
+        self.disco_send_queue.try_send(Packet { src, data })
     }
 
-    pub(super) fn send_peer_gone(&self, key: NodeId) -> Result<(), SendError> {
-        try_send(&self.peer_gone, key)
+    pub(super) fn try_send_peer_gone(&self, key: NodeId) -> Result<(), TrySendError<NodeId>> {
+        self.peer_gone.try_send(key)
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub(super) enum SendError {
-    #[error("packet dropped")]
-    PacketDropped,
-    #[error("sender closed")]
-    SenderClosed,
-}
-
-/// Tries up to `3` times to send a message into the given channel, retrying iff it is full.
-fn try_send<T>(sender: &mpsc::Sender<T>, msg: T) -> Result<(), SendError> {
-    let mut msg = msg;
-    for _ in 0..RETRIES {
-        match sender.try_send(msg) {
-            Ok(_) => {
-                return Ok(());
-            }
-            // if the queue is full, try again (max 3 times)
-            Err(mpsc::error::TrySendError::Full(m)) => msg = m,
-            // only other option is `TrySendError::Closed`, report the
-            // closed error
-            Err(_) => return Err(SendError::SenderClosed),
-        }
-    }
-    Err(SendError::PacketDropped)
 }
 
 /// Manages all the reads and writes to this client. It periodically sends a `KEEP_ALIVE`
