@@ -52,7 +52,7 @@ pub(super) struct Packet {
 /// Will forcefully abort the server actor loop when dropped.
 /// For stopping gracefully, use [`ServerActorTask::close`].
 ///
-/// Responsible for managing connections to relay [`Conn`](crate::RelayConn)s, sending packets from one client to another.
+/// Responsible for managing connections to a relay, sending packets from one client to another.
 #[derive(Debug)]
 pub(super) struct ServerActorTask {
     /// Specifies how long to wait before failing when writing to a client.
@@ -249,6 +249,7 @@ impl ClientCounter {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
+    use futures_util::SinkExt;
     use iroh_base::SecretKey;
     use tokio::io::DuplexStream;
     use tokio_util::codec::Framed;
@@ -270,7 +271,7 @@ mod tests {
         (
             ClientConnConfig {
                 node_id,
-                stream: RelayedStream::Derp(Framed::new(
+                stream: RelayedStream::Relay(Framed::new(
                     MaybeTlsStream::Test(io),
                     RelayCodec::test(),
                 )),
@@ -316,7 +317,11 @@ mod tests {
 
         // write message from b to a
         let msg = b"hello world!";
-        crate::client::conn::send_packet(&mut b_io, node_id_a, Bytes::from_static(msg)).await?;
+        b_io.send(Frame::SendPacket {
+            dst_key: node_id_a,
+            packet: Bytes::from_static(msg),
+        })
+        .await?;
 
         // get message on a's reader
         let frame = recv_frame(FrameType::RecvPacket, &mut a_io).await?;
