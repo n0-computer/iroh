@@ -1178,30 +1178,14 @@ mod tests {
 
         // set up client a
         let resolver = crate::dns::default_resolver().clone();
-        let (client_a, mut client_a_receiver) =
-            ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
-        let connect_client = client_a.clone();
+        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
+            .connect()
+            .await
+            .unwrap();
 
-        // give the relay server some time to accept connections
-        if let Err(err) = tokio::time::timeout(Duration::from_secs(10), async move {
-            loop {
-                match connect_client.connect().await {
-                    Ok(_) => break,
-                    Err(err) => {
-                        warn!("client unable to connect to relay server: {err:#}");
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    }
-                }
-            }
-        })
-        .await
-        {
-            panic!("timeout connecting to relay server: {err:#}");
-        }
-
-        // wait for a moment, until the connection is shutdown
+        // the next message should be the rejection of the connection
         tokio::time::timeout(Duration::from_millis(500), async move {
-            match client_a_receiver.recv().await.unwrap().unwrap() {
+            match client_a.next().await.unwrap().unwrap() {
                 ReceivedMessage::Health { problem } => {
                     assert_eq!(problem, Some("not authenticated".to_string()));
                 }

@@ -26,7 +26,6 @@ use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
 use super::{clients::Clients, AccessConfig};
-
 use crate::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
