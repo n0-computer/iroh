@@ -9,7 +9,7 @@ use dashmap::DashMap;
 use iroh_base::NodeId;
 use iroh_metrics::inc;
 use tokio::sync::mpsc::error::TrySendError;
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 use super::client::{Client, Config, Packet};
 use crate::server::metrics::Metrics;
@@ -45,7 +45,7 @@ impl Clients {
 
         let client = Client::new(client_config, self);
         if let Some(old_client) = self.0.clients.insert(node_id, client) {
-            warn!("multiple connections found for {node_id:?}, pruning old connection",);
+            debug!("multiple connections found for {node_id:?}, pruning old connection",);
             old_client.shutdown().await;
         }
     }
@@ -62,7 +62,7 @@ impl Clients {
                     match client.try_send_peer_gone(key) {
                         Ok(_) => {}
                         Err(TrySendError::Full(_)) => {
-                            warn!(
+                            debug!(
                                 dst = key.fmt_short(),
                                 "client too busy to receive packet, dropping packet"
                             );
@@ -86,10 +86,7 @@ impl Clients {
             let res = client.try_send_packet(src, data);
             return self.process_result(src, dst, res).await;
         }
-        warn!(
-            dst = dst.fmt_short(),
-            "could not find client, dropped packet"
-        );
+        debug!(dst = dst.fmt_short(), "no connected client, dropped packet");
         inc!(Metrics, send_packets_dropped);
         Ok(())
     }
@@ -104,9 +101,9 @@ impl Clients {
             let res = client.try_send_disco_packet(src, data);
             return self.process_result(src, dst, res).await;
         }
-        warn!(
+        debug!(
             dst = dst.fmt_short(),
-            "could not find client, dropped disco packet"
+            "no connected client, dropped disco packet"
         );
         inc!(Metrics, disco_packets_dropped);
         Ok(())
@@ -125,7 +122,7 @@ impl Clients {
                 Ok(())
             }
             Err(TrySendError::Full(_)) => {
-                warn!(
+                debug!(
                     dst = dst.fmt_short(),
                     "client too busy to receive packet, dropping packet"
                 );
