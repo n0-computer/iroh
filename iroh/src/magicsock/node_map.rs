@@ -17,7 +17,7 @@ use self::{
     node_state::{NodeState, Options, PingHandled},
 };
 use super::{
-    metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
+    metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, NodeIdMappedAddr,
 };
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
@@ -45,7 +45,7 @@ const MAX_INACTIVE_NODES: usize = 30;
 /// - The node's ID in this map, only useful if you know the ID from an insert or lookup.
 ///   This is static and never changes.
 ///
-/// - The [`QuicMappedAddr`] which internally identifies the node to the QUIC stack.  This
+/// - The [`NodeIdMappedAddr`] which internally identifies the node to the QUIC stack.  This
 ///   is static and never changes.
 ///
 /// - The nodes's public key, aka `PublicKey` or "node_key".  This is static and never changes,
@@ -54,7 +54,7 @@ const MAX_INACTIVE_NODES: usize = 30;
 /// - A public socket address on which they are reachable on the internet, known as ip-port.
 ///   These come and go as the node moves around on the internet
 ///
-/// An index of nodeInfos by node key, QuicMappedAddr, and discovered ip:port endpoints.
+/// An index of nodeInfos by node key, NodeIdMappedAddr, and discovered ip:port endpoints.
 #[derive(Default, Debug)]
 pub(super) struct NodeMap {
     inner: Mutex<NodeMapInner>,
@@ -64,13 +64,11 @@ pub(super) struct NodeMap {
 pub(super) struct NodeMapInner {
     by_node_key: HashMap<NodeId, usize>,
     by_ip_port: HashMap<IpPort, usize>,
-    by_quic_mapped_addr: HashMap<QuicMappedAddr, usize>,
+    by_quic_mapped_addr: HashMap<NodeIdMappedAddr, usize>,
     by_id: HashMap<usize, NodeState>,
     next_id: usize,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
-    // special set of relay socket addresses that we use to do quic address discovery
-    qad_addrs: BTreeSet<SocketAddr>,
 }
 
 /// Identifier to look up a [`NodeState`] in the [`NodeMap`].
@@ -81,7 +79,7 @@ pub(super) struct NodeMapInner {
 enum NodeStateKey {
     Idx(usize),
     NodeId(NodeId),
-    QuicMappedAddr(QuicMappedAddr),
+    NodeIdMappedAddr(NodeIdMappedAddr),
     IpPort(IpPort),
 }
 
@@ -155,71 +153,19 @@ impl NodeMap {
             .add_node_addr(node_addr, source)
     }
 
-    /// Add a the SocketAddr used to perform QUIC Address Discovery to the nodemap
-    pub(super) fn add_qad_addr(&self, udp_addr: SocketAddr) {
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .qad_addrs
-            .insert(udp_addr);
-    }
-
-    /// Return a correctly canonicalized SocketAddr if this address is one
-    /// used to perform QUIC Address Discovery
-    pub(super) fn qad_addr_for_send(&self, addr: &SocketAddr) -> Option<SocketAddr> {
-        // all addresses given to the endpoint are Ipv6 addresses, so we need to
-        // canonicalize before we check for the actual addr we are trying to send to
-        let canonicalized_addr = SocketAddr::new(addr.ip().to_canonical(), addr.port());
-        if self
-            .inner
-            .lock()
-            .expect("poisoned")
-            .qad_addrs
-            .contains(&canonicalized_addr)
-        {
-            Some(canonicalized_addr)
-        } else {
-            None
-        }
-    }
-
-    /// Return a correctly formed SocketAddr if this address is one used to
-    /// perform QUIC Address Discovery
-    pub(super) fn qad_addr_for_recv(&self, addr: &SocketAddr) -> Option<SocketAddr> {
-        if self
-            .inner
-            .lock()
-            .expect("poisoned")
-            .qad_addrs
-            .contains(addr)
-        {
-            match addr.ip() {
-                IpAddr::V4(ipv4_addr) => {
-                    // if this is an ipv4 addr, we need to map it back to
-                    // an ipv6 addr, since all addresses we use to dial on
-                    // the underlying quinn endpoint are mapped ipv6 addrs
-                    Some(SocketAddr::new(
-                        ipv4_addr.to_ipv6_mapped().into(),
-                        addr.port(),
-                    ))
-                }
-                IpAddr::V6(_) => Some(*addr),
-            }
-        } else {
-            None
-        }
-    }
-
     /// Number of nodes currently listed.
     pub(super) fn node_count(&self) -> usize {
         self.inner.lock().expect("poisoned").node_count()
     }
 
-    pub(super) fn receive_udp(&self, udp_addr: SocketAddr) -> Option<(PublicKey, QuicMappedAddr)> {
+    pub(super) fn receive_udp(
+        &self,
+        udp_addr: SocketAddr,
+    ) -> Option<(PublicKey, NodeIdMappedAddr)> {
         self.inner.lock().expect("poisoned").receive_udp(udp_addr)
     }
 
-    pub(super) fn receive_relay(&self, relay_url: &RelayUrl, src: NodeId) -> QuicMappedAddr {
+    pub(super) fn receive_relay(&self, relay_url: &RelayUrl, src: NodeId) -> NodeIdMappedAddr {
         self.inner
             .lock()
             .expect("poisoned")
@@ -258,7 +204,7 @@ impl NodeMap {
     pub(super) fn get_quic_mapped_addr_for_node_key(
         &self,
         node_key: NodeId,
-    ) -> Option<QuicMappedAddr> {
+    ) -> Option<NodeIdMappedAddr> {
         self.inner
             .lock()
             .expect("poisoned")
@@ -302,7 +248,7 @@ impl NodeMap {
     #[allow(clippy::type_complexity)]
     pub(super) fn get_send_addrs(
         &self,
-        addr: QuicMappedAddr,
+        addr: NodeIdMappedAddr,
         have_ipv6: bool,
     ) -> Option<(
         PublicKey,
@@ -311,7 +257,7 @@ impl NodeMap {
         Vec<PingAction>,
     )> {
         let mut inner = self.inner.lock().expect("poisoned");
-        let ep = inner.get_mut(NodeStateKey::QuicMappedAddr(addr))?;
+        let ep = inner.get_mut(NodeStateKey::NodeIdMappedAddr(addr))?;
         let public_key = *ep.public_key();
         trace!(dest = %addr, node_id = %public_key.fmt_short(), "dst mapped to NodeId");
         let (udp_addr, relay_url, msgs) = ep.get_send_addrs(have_ipv6);
@@ -461,7 +407,7 @@ impl NodeMapInner {
         match id {
             NodeStateKey::Idx(id) => Some(id),
             NodeStateKey::NodeId(node_key) => self.by_node_key.get(&node_key).copied(),
-            NodeStateKey::QuicMappedAddr(addr) => self.by_quic_mapped_addr.get(&addr).copied(),
+            NodeStateKey::NodeIdMappedAddr(addr) => self.by_quic_mapped_addr.get(&addr).copied(),
             NodeStateKey::IpPort(ipp) => self.by_ip_port.get(&ipp).copied(),
         }
     }
@@ -492,7 +438,7 @@ impl NodeMapInner {
     }
 
     /// Marks the node we believe to be at `ipp` as recently used.
-    fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(NodeId, QuicMappedAddr)> {
+    fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(NodeId, NodeIdMappedAddr)> {
         let ip_port: IpPort = udp_addr.into();
         let Some(node_state) = self.get_mut(NodeStateKey::IpPort(ip_port)) else {
             info!(src=%udp_addr, "receive_udp: no node_state found for addr, ignore");
@@ -503,7 +449,7 @@ impl NodeMapInner {
     }
 
     #[instrument(skip_all, fields(src = %src.fmt_short()))]
-    fn receive_relay(&mut self, relay_url: &RelayUrl, src: NodeId) -> QuicMappedAddr {
+    fn receive_relay(&mut self, relay_url: &RelayUrl, src: NodeId) -> NodeIdMappedAddr {
         #[cfg(any(test, feature = "test-utils"))]
         let path_selection = self.path_selection;
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(src), || {
