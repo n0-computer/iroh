@@ -754,7 +754,9 @@ impl RelayActor {
                     }
                 }
                 // Only poll this future if it is in use.
-                _ = &mut datagram_send_fut, if datagram_send_fut.is_some() => {}
+                _ = &mut datagram_send_fut, if datagram_send_fut.is_some() => {
+                    datagram_send_fut.as_mut().set_none();
+                }
             }
         }
 
