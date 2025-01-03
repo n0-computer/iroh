@@ -1525,7 +1525,11 @@
 <a href="#1524" id="1524">1524</a>
 <a href="#1525" id="1525">1525</a>
 <a href="#1526" id="1526">1526</a>
-<a href="#1527" id="1527">1527</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1527" id="1527">1527</a>
+<a href="#1528" id="1528">1528</a>
+<a href="#1529" id="1529">1529</a>
+<a href="#1530" id="1530">1530</a>
+<a href="#1531" id="1531">1531</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1931,7 +1935,7 @@
         };
         <span class="kw">let </span><span class="kw-2">mut </span>send_datagrams_buf = Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE);
 
-        <span class="kw">loop </span>{
+        <span class="kw">let </span>res = <span class="kw">loop </span>{
             <span class="kw">if let </span><span class="prelude-val">Some</span>(data) = state.pong_pending.take() {
                 <span class="kw">let </span>fut = client_sink.send(SendMessage::Pong(data));
                 <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream)
@@ -2036,7 +2040,11 @@
                     <span class="kw">break </span><span class="prelude-val">Ok</span>(());
                 }
             }
+        };
+        <span class="kw">if </span>res.is_ok() {
+            client_sink.close().<span class="kw">await</span><span class="question-mark">?</span>;
         }
+        res
     }
 
     <span class="kw">fn </span>handle_relay_msg(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: ReceivedMessage, state: <span class="kw-2">&amp;mut </span>ConnectedRelayState) {
