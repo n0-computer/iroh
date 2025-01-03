@@ -65,7 +65,12 @@
 <a href="#64" id="64">64</a>
 <a href="#65" id="65">65</a>
 <a href="#66" id="66">66</a>
-<a href="#67" id="67">67</a></pre></div><pre class="rust"><code><span class="doccomment">//! Utilities used in [`iroh`][`crate`]
+<a href="#67" id="67">67</a>
+<a href="#68" id="68">68</a>
+<a href="#69" id="69">69</a>
+<a href="#70" id="70">70</a>
+<a href="#71" id="71">71</a>
+<a href="#72" id="72">72</a></pre></div><pre class="rust"><code><span class="doccomment">//! Utilities used in [`iroh`][`crate`]
 
 </span><span class="kw">use </span>std::{
     future::Future,
@@ -94,6 +99,11 @@
     <span class="doccomment">/// Creates a [`MaybeFuture`] without an inner future.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>none() -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::default()
+    }
+
+    <span class="doccomment">/// Sets the future to None again.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>set_none(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;) {
+        <span class="self">self</span>.as_mut().project_replace(<span class="self">Self</span>::None);
     }
 
     <span class="doccomment">/// Sets a new future.

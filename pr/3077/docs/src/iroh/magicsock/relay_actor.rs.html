@@ -1539,7 +1539,9 @@
 <a href="#1538" id="1538">1538</a>
 <a href="#1539" id="1539">1539</a>
 <a href="#1540" id="1540">1540</a>
-<a href="#1541" id="1541">1541</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1541" id="1541">1541</a>
+<a href="#1542" id="1542">1542</a>
+<a href="#1543" id="1543">1543</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -2295,7 +2297,9 @@
                     }
                 }
                 <span class="comment">// Only poll this future if it is in use.
-                </span><span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>datagram_send_fut, <span class="kw">if </span>datagram_send_fut.is_some() =&gt; {}
+                </span><span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>datagram_send_fut, <span class="kw">if </span>datagram_send_fut.is_some() =&gt; {
+                    datagram_send_fut.as_mut().set_none();
+                }
             }
         }
 
