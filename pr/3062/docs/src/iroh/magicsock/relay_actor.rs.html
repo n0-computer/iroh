@@ -1543,10 +1543,7 @@
 <a href="#1542" id="1542">1542</a>
 <a href="#1543" id="1543">1543</a>
 <a href="#1544" id="1544">1544</a>
-<a href="#1545" id="1545">1545</a>
-<a href="#1546" id="1546">1546</a>
-<a href="#1547" id="1547">1547</a>
-<a href="#1548" id="1548">1548</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1545" id="1545">1545</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1654,7 +1651,7 @@
 </span><span class="kw">struct </span>ActiveRelayActor {
     <span class="comment">// The inboxes and channels this actor communicates over.
     </span><span class="doccomment">/// Inbox for messages which should be handled without any blocking.
-    </span>fast_inbox: mpsc::Receiver&lt;ActiveRelayFastMessage&gt;,
+    </span>prio_inbox: mpsc::Receiver&lt;ActiveRelayPrioMessage&gt;,
     <span class="doccomment">/// Inbox for messages which involve sending to the relay server.
     </span>inbox: mpsc::Receiver&lt;ActiveRelayMessage&gt;,
     <span class="doccomment">/// Queue to send received relay datagrams on.
@@ -1707,7 +1704,7 @@
 /// which can be blocking.  So the actor may not always be processing that inbox.  Messages
 /// here are processed immediately.
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">enum </span>ActiveRelayFastMessage {
+</span><span class="kw">enum </span>ActiveRelayPrioMessage {
     <span class="doccomment">/// Returns whether or not this relay can reach the NodeId.
     </span>HasNodeRoute(NodeId, oneshot::Sender&lt;bool&gt;),
 }
@@ -1716,7 +1713,7 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>ActiveRelayActorOptions {
     url: RelayUrl,
-    fast_inbox: mpsc::Receiver&lt;ActiveRelayFastMessage&gt;,
+    prio_inbox_: mpsc::Receiver&lt;ActiveRelayPrioMessage&gt;,
     inbox: mpsc::Receiver&lt;ActiveRelayMessage&gt;,
     relay_datagrams_send: mpsc::Receiver&lt;RelaySendItem&gt;,
     relay_datagrams_recv: Arc&lt;RelayDatagramRecvQueue&gt;,
@@ -1739,7 +1736,7 @@
     <span class="kw">fn </span>new(opts: ActiveRelayActorOptions) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>ActiveRelayActorOptions {
             url,
-            fast_inbox,
+            prio_inbox_: prio_inbox,
             inbox,
             relay_datagrams_send,
             relay_datagrams_recv,
@@ -1748,7 +1745,7 @@
         } = opts;
         <span class="kw">let </span>relay_client_builder = <span class="self">Self</span>::create_relay_builder(url.clone(), connection_opts);
         ActiveRelayActor {
-            fast_inbox,
+            prio_inbox,
             inbox,
             relay_datagrams_recv,
             relay_datagrams_send,
@@ -1840,13 +1837,13 @@
                     <span class="macro">debug!</span>(<span class="string">"Shutdown."</span>);
                     <span class="kw">break </span><span class="prelude-val">None</span>;
                 }
-                msg = <span class="self">self</span>.fast_inbox.recv() =&gt; {
+                msg = <span class="self">self</span>.prio_inbox.recv() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
-                        <span class="macro">warn!</span>(<span class="string">"Fast inbox closed, shutdown."</span>);
+                        <span class="macro">warn!</span>(<span class="string">"Priority inbox closed, shutdown."</span>);
                         <span class="kw">break </span><span class="prelude-val">None</span>;
                     };
                     <span class="kw">match </span>msg {
-                        ActiveRelayFastMessage::HasNodeRoute(_peer, sender) =&gt; {
+                        ActiveRelayPrioMessage::HasNodeRoute(_peer, sender) =&gt; {
                             sender.send(<span class="bool-val">false</span>).ok();
                         }
                     }
@@ -1970,13 +1967,13 @@
                     <span class="macro">debug!</span>(<span class="string">"Shutdown."</span>);
                     <span class="kw">break </span><span class="prelude-val">Ok</span>(());
                 }
-                msg = <span class="self">self</span>.fast_inbox.recv() =&gt; {
+                msg = <span class="self">self</span>.prio_inbox.recv() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
-                        <span class="macro">warn!</span>(<span class="string">"Fast inbox closed, shutdown."</span>);
+                        <span class="macro">warn!</span>(<span class="string">"Priority inbox closed, shutdown."</span>);
                         <span class="kw">break </span><span class="prelude-val">Ok</span>(());
                     };
                     <span class="kw">match </span>msg {
-                        ActiveRelayFastMessage::HasNodeRoute(peer, sender) =&gt; {
+                        ActiveRelayPrioMessage::HasNodeRoute(peer, sender) =&gt; {
                             <span class="kw">let </span>has_peer = state.nodes_present.contains(<span class="kw-2">&amp;</span>peer);
                             sender.send(has_peer).ok();
                         }
@@ -2147,13 +2144,13 @@
                 <span class="kw">_ </span>= <span class="self">self</span>.stop_token.cancelled() =&gt; {
                     <span class="kw">break </span><span class="prelude-val">Ok</span>(());
                 }
-                msg = <span class="self">self</span>.fast_inbox.recv() =&gt; {
+                msg = <span class="self">self</span>.prio_inbox.recv() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
-                        <span class="macro">warn!</span>(<span class="string">"Fast inbox closed, shutdown."</span>);
+                        <span class="macro">warn!</span>(<span class="string">"Priority inbox closed, shutdown."</span>);
                         <span class="kw">break </span><span class="prelude-val">Ok</span>(());
                     };
                     <span class="kw">match </span>msg {
-                        ActiveRelayFastMessage::HasNodeRoute(peer, sender) =&gt; {
+                        ActiveRelayPrioMessage::HasNodeRoute(peer, sender) =&gt; {
                             <span class="kw">let </span>has_peer = state.nodes_present.contains(<span class="kw-2">&amp;</span>peer);
                             sender.send(has_peer).ok();
                         }
@@ -2395,16 +2392,13 @@
         <span class="comment">// If we don't have an open connection to the remote node's home relay, see if
         // we have an open connection to a relay node where we'd heard from that peer
         // already.  E.g. maybe they dialed our home relay recently.
-        // TODO: LRU cache the NodeId -&gt; relay mapping so this is much faster for repeat
-        // senders.
-
         </span>{
             <span class="comment">// Futures which return Some(RelayUrl) if the relay knows about the remote node.
             </span><span class="kw">let </span>check_futs = <span class="self">self</span>.active_relays.iter().map(|(url, handle)| <span class="kw">async move </span>{
                 <span class="kw">let </span>(tx, rx) = oneshot::channel();
                 handle
-                    .fast_inbox_addr
-                    .send(ActiveRelayFastMessage::HasNodeRoute(<span class="kw-2">*</span>remote_node, tx))
+                    .prio_inbox_addr
+                    .send(ActiveRelayPrioMessage::HasNodeRoute(<span class="kw-2">*</span>remote_node, tx))
                     .<span class="kw">await
                     </span>.ok();
                 <span class="kw">match </span>rx.<span class="kw">await </span>{
@@ -2458,12 +2452,12 @@
 
         <span class="comment">// TODO: Replace 64 with PER_CLIENT_SEND_QUEUE_DEPTH once that's unused
         </span><span class="kw">let </span>(send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">64</span>);
-        <span class="kw">let </span>(fast_inbox_tx, fast_inbox_rx) = mpsc::channel(<span class="number">32</span>);
+        <span class="kw">let </span>(prio_inbox_tx, prio_inbox_rx) = mpsc::channel(<span class="number">32</span>);
         <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">64</span>);
         <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">"active-relay"</span>, %url);
         <span class="kw">let </span>opts = ActiveRelayActorOptions {
             url,
-            fast_inbox: fast_inbox_rx,
+            prio_inbox_: prio_inbox_rx,
             inbox: inbox_rx,
             relay_datagrams_send: send_datagram_rx,
             relay_datagrams_recv: <span class="self">self</span>.relay_datagram_recv_queue.clone(),
@@ -2481,7 +2475,7 @@
             .instrument(span),
         );
         <span class="kw">let </span>handle = ActiveRelayHandle {
-            fast_inbox_addr: fast_inbox_tx,
+            prio_inbox_addr: prio_inbox_tx,
             inbox_addr: inbox_tx,
             datagrams_send_queue: send_datagram_tx,
         };
@@ -2551,7 +2545,7 @@
 <span class="doccomment">/// Handle to one [`ActiveRelayActor`].
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">struct </span>ActiveRelayHandle {
-    fast_inbox_addr: mpsc::Sender&lt;ActiveRelayFastMessage&gt;,
+    prio_inbox_addr: mpsc::Sender&lt;ActiveRelayPrioMessage&gt;,
     inbox_addr: mpsc::Sender&lt;ActiveRelayMessage&gt;,
     datagrams_send_queue: mpsc::Sender&lt;RelaySendItem&gt;,
 }
@@ -2791,7 +2785,7 @@
         secret_key: SecretKey,
         stop_token: CancellationToken,
         url: RelayUrl,
-        fast_inbox_rx: mpsc::Receiver&lt;ActiveRelayFastMessage&gt;,
+        prio_inbox_rx: mpsc::Receiver&lt;ActiveRelayPrioMessage&gt;,
         inbox_rx: mpsc::Receiver&lt;ActiveRelayMessage&gt;,
         relay_datagrams_send: mpsc::Receiver&lt;RelaySendItem&gt;,
         relay_datagrams_recv: Arc&lt;RelayDatagramRecvQueue&gt;,
@@ -2799,7 +2793,7 @@
     ) -&gt; AbortOnDropHandle&lt;anyhow::Result&lt;()&gt;&gt; {
         <span class="kw">let </span>opts = ActiveRelayActorOptions {
             url,
-            fast_inbox: fast_inbox_rx,
+            prio_inbox_: prio_inbox_rx,
             inbox: inbox_rx,
             relay_datagrams_send,
             relay_datagrams_recv,
@@ -2825,14 +2819,14 @@
         <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">8u8</span>; <span class="number">32</span>]);
         <span class="kw">let </span>recv_datagram_queue = Arc::new(RelayDatagramRecvQueue::new());
         <span class="kw">let </span>(send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
-        <span class="kw">let </span>(fast_inbox_tx, fast_inbox_rx) = mpsc::channel(<span class="number">8</span>);
+        <span class="kw">let </span>(prio_inbox_tx, prio_inbox_rx) = mpsc::channel(<span class="number">8</span>);
         <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
         <span class="kw">let </span>cancel_token = CancellationToken::new();
         <span class="kw">let </span>actor_task = start_active_relay_actor(
             secret_key.clone(),
             cancel_token.clone(),
             relay_url.clone(),
-            fast_inbox_rx,
+            prio_inbox_rx,
             inbox_rx,
             send_datagram_rx,
             recv_datagram_queue.clone(),
@@ -2861,7 +2855,7 @@
         <span class="kw">let </span>supervisor_task = tokio::spawn(<span class="kw">async move </span>{
             <span class="kw">let </span>_guard = cancel_token.drop_guard();
             <span class="comment">// move the inboxes here so it is not dropped, as this stops the actor.
-            </span><span class="kw">let </span>_fast_inbox_tx = fast_inbox_tx;
+            </span><span class="kw">let </span>_prio_inbox_tx = prio_inbox_tx;
             <span class="kw">let </span>_inbox_tx = inbox_tx;
             <span class="macro">tokio::select!</span> {
                 biased;
@@ -2918,14 +2912,14 @@
         <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
         <span class="kw">let </span>datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
         <span class="kw">let </span>(send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
-        <span class="kw">let </span>(_fast_inbox_tx, fast_inbox_rx) = mpsc::channel(<span class="number">8</span>);
+        <span class="kw">let </span>(_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(<span class="number">8</span>);
         <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
         <span class="kw">let </span>cancel_token = CancellationToken::new();
         <span class="kw">let </span>task = start_active_relay_actor(
             secret_key,
             cancel_token.clone(),
             relay_url.clone(),
-            fast_inbox_rx,
+            prio_inbox_rx,
             inbox_rx,
             send_datagram_rx,
             datagram_recv_queue.clone(),
@@ -3004,14 +2998,14 @@
         <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
         <span class="kw">let </span>datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
         <span class="kw">let </span>(_send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
-        <span class="kw">let </span>(_fast_inbox_tx, fast_inbox_rx) = mpsc::channel(<span class="number">8</span>);
+        <span class="kw">let </span>(_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(<span class="number">8</span>);
         <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
         <span class="kw">let </span>cancel_token = CancellationToken::new();
         <span class="kw">let </span><span class="kw-2">mut </span>task = start_active_relay_actor(
             secret_key,
             cancel_token.clone(),
             relay_url,
-            fast_inbox_rx,
+            prio_inbox_rx,
             inbox_rx,
             send_datagram_rx,
             datagram_recv_queue.clone(),

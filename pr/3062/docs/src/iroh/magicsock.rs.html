@@ -6008,7 +6008,7 @@
 }
 
 <span class="kw">impl </span>RelayDatagramRecvQueue {
-    <span class="doccomment">/// Creates a new, empty queue with a fixed size bound of 128 items.
+    <span class="doccomment">/// Creates a new, empty queue with a fixed size bound of 512 items.
     </span><span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             queue: ConcurrentQueue::bounded(<span class="number">512</span>),
