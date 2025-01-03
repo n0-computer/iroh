@@ -728,32 +728,7 @@
 <a href="#727" id="727">727</a>
 <a href="#728" id="728">728</a>
 <a href="#729" id="729">729</a>
-<a href="#730" id="730">730</a>
-<a href="#731" id="731">731</a>
-<a href="#732" id="732">732</a>
-<a href="#733" id="733">733</a>
-<a href="#734" id="734">734</a>
-<a href="#735" id="735">735</a>
-<a href="#736" id="736">736</a>
-<a href="#737" id="737">737</a>
-<a href="#738" id="738">738</a>
-<a href="#739" id="739">739</a>
-<a href="#740" id="740">740</a>
-<a href="#741" id="741">741</a>
-<a href="#742" id="742">742</a>
-<a href="#743" id="743">743</a>
-<a href="#744" id="744">744</a>
-<a href="#745" id="745">745</a>
-<a href="#746" id="746">746</a>
-<a href="#747" id="747">747</a>
-<a href="#748" id="748">748</a>
-<a href="#749" id="749">749</a>
-<a href="#750" id="750">750</a>
-<a href="#751" id="751">751</a>
-<a href="#752" id="752">752</a>
-<a href="#753" id="753">753</a>
-<a href="#754" id="754">754</a>
-<a href="#755" id="755">755</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#730" id="730">730</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -823,12 +798,12 @@
     </span>insecure_skip_cert_verify: bool,
     <span class="doccomment">/// HTTP Proxy
     </span>proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
-    <span class="doccomment">/// Capacity of the key cache
-    </span>key_cache_capacity: usize,
     <span class="doccomment">/// The secret key of this client.
     </span>secret_key: SecretKey,
     <span class="doccomment">/// The DNS resolver to use.
     </span>dns_resolver: DnsResolver,
+    <span class="doccomment">/// Cache for public keys of remote nodes.
+    </span>key_cache: KeyCache,
 }
 
 <span class="kw">impl </span>ClientBuilder {
@@ -842,9 +817,9 @@
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_cert_verify: <span class="bool-val">false</span>,
             proxy_url: <span class="prelude-val">None</span>,
-            key_cache_capacity: <span class="number">128</span>,
             secret_key,
             dns_resolver,
+            key_cache: KeyCache::new(<span class="number">128</span>),
         }
     }
 
@@ -892,7 +867,7 @@
 
     <span class="doccomment">/// Set the capacity of the cache for public keys.
     </span><span class="kw">pub fn </span>key_cache_capacity(<span class="kw-2">mut </span><span class="self">self</span>, capacity: usize) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.key_cache_capacity = capacity;
+        <span class="self">self</span>.key_cache = KeyCache::new(capacity);
         <span class="self">self
     </span>}
 
@@ -915,24 +890,293 @@
                 .dangerous()
                 .set_certificate_verifier(Arc::new(NoCertVerifier));
         }
-
         config.resumption = Resumption::default();
-
         <span class="kw">let </span>tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
 
-        <span class="kw">let </span>builder = ConnectionBuilder {
-            secret_key: <span class="self">self</span>.secret_key.clone(),
-            address_family_selector: <span class="self">self</span>.address_family_selector.clone(),
-            url: <span class="self">self</span>.url.clone(),
-            protocol: <span class="self">self</span>.protocol,
-            tls_connector,
-            dns_resolver: <span class="self">self</span>.dns_resolver.clone(),
-            proxy_url: <span class="self">self</span>.proxy_url.clone(),
-            key_cache: KeyCache::new(<span class="self">self</span>.key_cache_capacity),
-        };
-        <span class="kw">let </span>(conn, local_addr) = builder.connect_0().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(conn, local_addr) = <span class="self">self</span>.connect_0(tls_connector).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(Client { conn, local_addr })
+    }
+
+    <span class="kw">async fn </span>connect_0(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        tls_connector: tokio_rustls::TlsConnector,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Conn, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;)&gt; {
+        <span class="kw">let </span>(conn, local_addr) = <span class="kw">match </span><span class="self">self</span>.protocol {
+            Protocol::Websocket =&gt; {
+                <span class="kw">let </span>conn = <span class="self">self</span>.connect_ws().<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="kw">let </span>local_addr = <span class="prelude-val">None</span>;
+                (conn, local_addr)
+            }
+            Protocol::Relay =&gt; {
+                <span class="kw">let </span>(conn, local_addr) = <span class="self">self</span>.connect_relay(tls_connector).<span class="kw">await</span><span class="question-mark">?</span>;
+                (conn, <span class="prelude-val">Some</span>(local_addr))
+            }
+        };
+
+        <span class="macro">event!</span>(
+            target: <span class="string">"events.net.relay.connected"</span>,
+            Level::DEBUG,
+            url = %<span class="self">self</span>.url,
+            protocol = <span class="question-mark">?</span><span class="self">self</span>.protocol,
+        );
+
+        <span class="macro">trace!</span>(<span class="string">"connect_0 done"</span>);
+        <span class="prelude-val">Ok</span>((conn, local_addr))
+    }
+
+    <span class="kw">async fn </span>connect_ws(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Conn&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>dial_url = (<span class="kw-2">*</span><span class="self">self</span>.url).clone();
+        dial_url.set_path(RELAY_PATH);
+        <span class="comment">// The relay URL is exchanged with the http(s) scheme in tickets and similar.
+        // We need to use the ws:// or wss:// schemes when connecting with websockets, though.
+        </span>dial_url
+            .set_scheme(<span class="kw">if </span><span class="self">self</span>.use_tls() { <span class="string">"wss" </span>} <span class="kw">else </span>{ <span class="string">"ws" </span>})
+            .map_err(|()| <span class="macro">anyhow!</span>(<span class="string">"Invalid URL"</span>))<span class="question-mark">?</span>;
+
+        <span class="macro">debug!</span>(%dial_url, <span class="string">"Dialing relay by websocket"</span>);
+
+        <span class="kw">let </span>conn = tokio_tungstenite_wasm::connect(dial_url).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>conn = Conn::new_ws(conn, <span class="self">self</span>.key_cache.clone(), <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(conn)
+    }
+
+    <span class="kw">async fn </span>connect_relay(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        tls_connector: tokio_rustls::TlsConnector,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Conn, SocketAddr)&gt; {
+        <span class="kw">let </span>url = <span class="self">self</span>.url.clone();
+        <span class="kw">let </span>tcp_stream = <span class="self">self</span>.dial_url(<span class="kw-2">&amp;</span>tls_connector).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>local_addr = tcp_stream
+            .local_addr()
+            .context(<span class="string">"No local addr for TCP stream"</span>)<span class="question-mark">?</span>;
+
+        <span class="macro">debug!</span>(server_addr = <span class="question-mark">?</span>tcp_stream.peer_addr(), %local_addr, <span class="string">"TCP stream connected"</span>);
+
+        <span class="kw">let </span>response = <span class="kw">if </span><span class="self">self</span>.use_tls() {
+            <span class="macro">debug!</span>(<span class="string">"Starting TLS handshake"</span>);
+            <span class="kw">let </span>hostname = <span class="self">self
+                </span>.tls_servername()
+                .ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"No tls servername"</span>))<span class="question-mark">?</span>;
+            <span class="kw">let </span>hostname = hostname.to_owned();
+            <span class="kw">let </span>tls_stream = tls_connector.connect(hostname, tcp_stream).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="macro">debug!</span>(<span class="string">"tls_connector connect success"</span>);
+            <span class="self">Self</span>::start_upgrade(tls_stream, url).<span class="kw">await</span><span class="question-mark">?
+        </span>} <span class="kw">else </span>{
+            <span class="macro">debug!</span>(<span class="string">"Starting handshake"</span>);
+            <span class="self">Self</span>::start_upgrade(tcp_stream, url).<span class="kw">await</span><span class="question-mark">?
+        </span>};
+
+        <span class="kw">if </span>response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
+            <span class="macro">bail!</span>(
+                <span class="string">"Unexpected status code: expected {}, actual: {}"</span>,
+                hyper::StatusCode::SWITCHING_PROTOCOLS,
+                response.status(),
+            );
+        }
+
+        <span class="macro">debug!</span>(<span class="string">"starting upgrade"</span>);
+        <span class="kw">let </span>upgraded = hyper::upgrade::on(response)
+            .<span class="kw">await
+            </span>.context(<span class="string">"Upgrade failed"</span>)<span class="question-mark">?</span>;
+
+        <span class="macro">debug!</span>(<span class="string">"connection upgraded"</span>);
+        <span class="kw">let </span>conn = downcast_upgrade(upgraded)<span class="question-mark">?</span>;
+
+        <span class="kw">let </span>conn = Conn::new_relay(conn, <span class="self">self</span>.key_cache.clone(), <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="prelude-val">Ok</span>((conn, local_addr))
+    }
+
+    <span class="doccomment">/// Sends the HTTP upgrade request to the relay server.
+    </span><span class="kw">async fn </span>start_upgrade&lt;T&gt;(io: T, relay_url: RelayUrl) -&gt; <span class="prelude-ty">Result</span>&lt;hyper::Response&lt;Incoming&gt;&gt;
+    <span class="kw">where
+        </span>T: AsyncRead + AsyncWrite + Send + Unpin + <span class="lifetime">'static</span>,
+    {
+        <span class="kw">let </span>host_header_value = host_header_value(relay_url)<span class="question-mark">?</span>;
+
+        <span class="kw">let </span>io = hyper_util::rt::TokioIo::new(io);
+        <span class="kw">let </span>(<span class="kw-2">mut </span>request_sender, connection) = hyper::client::conn::http1::Builder::new()
+            .handshake(io)
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        tokio::spawn(
+            <span class="comment">// This task drives the HTTP exchange, completes once connection is upgraded.
+            </span><span class="kw">async move </span>{
+                <span class="macro">debug!</span>(<span class="string">"HTTP upgrade driver started"</span>);
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = connection.with_upgrades().<span class="kw">await </span>{
+                    <span class="macro">error!</span>(<span class="string">"HTTP upgrade error: {err:#}"</span>);
+                }
+                <span class="macro">debug!</span>(<span class="string">"HTTP upgrade driver finished"</span>);
+            }
+            .instrument(<span class="macro">info_span!</span>(<span class="string">"http-driver"</span>)),
+        );
+        <span class="macro">debug!</span>(<span class="string">"Sending upgrade request"</span>);
+        <span class="kw">let </span>req = Request::builder()
+            .uri(RELAY_PATH)
+            .header(UPGRADE, Protocol::Relay.upgrade_header())
+            <span class="comment">// https://datatracker.ietf.org/doc/html/rfc2616#section-14.23
+            // &gt; A client MUST include a Host header field in all HTTP/1.1 request messages.
+            // This header value helps reverse proxies identify how to forward requests.
+            </span>.header(HOST, host_header_value)
+            .body(http_body_util::Empty::&lt;hyper::body::Bytes&gt;::new())<span class="question-mark">?</span>;
+        request_sender.send_request(req).<span class="kw">await</span>.map_err(From::from)
+    }
+
+    <span class="kw">fn </span>tls_servername(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;rustls::pki_types::ServerName&gt; {
+        <span class="self">self</span>.url
+            .host_str()
+            .and_then(|s| rustls::pki_types::ServerName::try_from(s).ok())
+    }
+
+    <span class="kw">fn </span>use_tls(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="comment">// only disable tls if we are explicitly dialing a http url
+        </span><span class="attr">#[allow(clippy::match_like_matches_macro)]
+        </span><span class="kw">match </span><span class="self">self</span>.url.scheme() {
+            <span class="string">"http" </span>=&gt; <span class="bool-val">false</span>,
+            <span class="string">"ws" </span>=&gt; <span class="bool-val">false</span>,
+            <span class="kw">_ </span>=&gt; <span class="bool-val">true</span>,
+        }
+    }
+
+    <span class="kw">async fn </span>dial_url(<span class="kw-2">&amp;</span><span class="self">self</span>, tls_connector: <span class="kw-2">&amp;</span>tokio_rustls::TlsConnector) -&gt; <span class="prelude-ty">Result</span>&lt;ProxyStream&gt; {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>proxy) = <span class="self">self</span>.proxy_url {
+            <span class="kw">let </span>stream = <span class="self">self</span>.dial_url_proxy(proxy.clone(), tls_connector).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="prelude-val">Ok</span>(ProxyStream::Proxied(stream))
+        } <span class="kw">else </span>{
+            <span class="kw">let </span>stream = <span class="self">self</span>.dial_url_direct().<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="prelude-val">Ok</span>(ProxyStream::Raw(stream))
+        }
+    }
+
+    <span class="kw">async fn </span>dial_url_direct(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;TcpStream&gt; {
+        <span class="macro">debug!</span>(%<span class="self">self</span>.url, <span class="string">"dial url"</span>);
+        <span class="kw">let </span>prefer_ipv6 = <span class="self">self</span>.prefer_ipv6();
+        <span class="kw">let </span>dst_ip = <span class="self">self
+            </span>.dns_resolver
+            .resolve_host(<span class="kw-2">&amp;</span><span class="self">self</span>.url, prefer_ipv6)
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>port = url_port(<span class="kw-2">&amp;</span><span class="self">self</span>.url).ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"Missing URL port"</span>))<span class="question-mark">?</span>;
+        <span class="kw">let </span>addr = SocketAddr::new(dst_ip, port);
+
+        <span class="macro">debug!</span>(<span class="string">"connecting to {}"</span>, addr);
+        <span class="kw">let </span>tcp_stream =
+            tokio::time::timeout(
+                DIAL_NODE_TIMEOUT,
+                <span class="kw">async move </span>{ TcpStream::connect(addr).<span class="kw">await </span>},
+            )
+            .<span class="kw">await
+            </span>.context(<span class="string">"Timeout connecting"</span>)<span class="question-mark">?
+            </span>.context(<span class="string">"Failed connecting"</span>)<span class="question-mark">?</span>;
+        tcp_stream.set_nodelay(<span class="bool-val">true</span>)<span class="question-mark">?</span>;
+
+        <span class="prelude-val">Ok</span>(tcp_stream)
+    }
+
+    <span class="kw">async fn </span>dial_url_proxy(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        proxy_url: Url,
+        tls_connector: <span class="kw-2">&amp;</span>tokio_rustls::TlsConnector,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;util::Chain&lt;std::io::Cursor&lt;Bytes&gt;, MaybeTlsStream&gt;&gt; {
+        <span class="macro">debug!</span>(%<span class="self">self</span>.url, %proxy_url, <span class="string">"dial url via proxy"</span>);
+
+        <span class="comment">// Resolve proxy DNS
+        </span><span class="kw">let </span>prefer_ipv6 = <span class="self">self</span>.prefer_ipv6();
+        <span class="kw">let </span>proxy_ip = <span class="self">self
+            </span>.dns_resolver
+            .resolve_host(<span class="kw-2">&amp;</span>proxy_url, prefer_ipv6)
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>proxy_port = url_port(<span class="kw-2">&amp;</span>proxy_url).ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"Missing proxy url port"</span>))<span class="question-mark">?</span>;
+        <span class="kw">let </span>proxy_addr = SocketAddr::new(proxy_ip, proxy_port);
+
+        <span class="macro">debug!</span>(%proxy_addr, <span class="string">"connecting to proxy"</span>);
+
+        <span class="kw">let </span>tcp_stream = tokio::time::timeout(DIAL_NODE_TIMEOUT, <span class="kw">async move </span>{
+            TcpStream::connect(proxy_addr).<span class="kw">await
+        </span>})
+        .<span class="kw">await
+        </span>.context(<span class="string">"Timeout connecting"</span>)<span class="question-mark">?
+        </span>.context(<span class="string">"Connecting"</span>)<span class="question-mark">?</span>;
+
+        tcp_stream.set_nodelay(<span class="bool-val">true</span>)<span class="question-mark">?</span>;
+
+        <span class="comment">// Setup TLS if necessary
+        </span><span class="kw">let </span>io = <span class="kw">if </span>proxy_url.scheme() == <span class="string">"http" </span>{
+            MaybeTlsStream::Raw(tcp_stream)
+        } <span class="kw">else </span>{
+            <span class="kw">let </span>hostname = proxy_url.host_str().context(<span class="string">"No hostname in proxy URL"</span>)<span class="question-mark">?</span>;
+            <span class="kw">let </span>hostname = rustls::pki_types::ServerName::try_from(hostname.to_string())<span class="question-mark">?</span>;
+            <span class="kw">let </span>tls_stream = tls_connector.connect(hostname, tcp_stream).<span class="kw">await</span><span class="question-mark">?</span>;
+            MaybeTlsStream::Tls(tls_stream)
+        };
+        <span class="kw">let </span>io = TokioIo::new(io);
+
+        <span class="kw">let </span>target_host = <span class="self">self
+            </span>.url
+            .host_str()
+            .ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"Missing proxy host"</span>))<span class="question-mark">?</span>;
+
+        <span class="kw">let </span>port = url_port(<span class="kw-2">&amp;</span><span class="self">self</span>.url).ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"invalid target port"</span>))<span class="question-mark">?</span>;
+
+        <span class="comment">// Establish Proxy Tunnel
+        </span><span class="kw">let </span><span class="kw-2">mut </span>req_builder = Request::builder()
+            .uri(<span class="macro">format!</span>(<span class="string">"{}:{}"</span>, target_host, port))
+            .method(<span class="string">"CONNECT"</span>)
+            .header(<span class="string">"Host"</span>, target_host)
+            .header(<span class="string">"Proxy-Connection"</span>, <span class="string">"Keep-Alive"</span>);
+        <span class="kw">if </span>!proxy_url.username().is_empty() {
+            <span class="comment">// Passthrough authorization
+            // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Proxy-Authorization
+            </span><span class="macro">debug!</span>(
+                <span class="string">"setting proxy-authorization: username={}"</span>,
+                proxy_url.username()
+            );
+            <span class="kw">let </span>to_encode = <span class="macro">format!</span>(
+                <span class="string">"{}:{}"</span>,
+                proxy_url.username(),
+                proxy_url.password().unwrap_or_default()
+            );
+            <span class="kw">let </span>encoded = BASE64URL.encode(to_encode.as_bytes());
+            req_builder = req_builder.header(<span class="string">"Proxy-Authorization"</span>, <span class="macro">format!</span>(<span class="string">"Basic {}"</span>, encoded));
+        }
+        <span class="kw">let </span>req = req_builder.body(Empty::&lt;Bytes&gt;::new())<span class="question-mark">?</span>;
+
+        <span class="macro">debug!</span>(<span class="string">"Sending proxy request: {:?}"</span>, req);
+
+        <span class="kw">let </span>(<span class="kw-2">mut </span>sender, conn) = hyper::client::conn::http1::handshake(io).<span class="kw">await</span><span class="question-mark">?</span>;
+        tokio::task::spawn(<span class="kw">async move </span>{
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = conn.with_upgrades().<span class="kw">await </span>{
+                <span class="macro">error!</span>(<span class="string">"Proxy connection failed: {:?}"</span>, err);
+            }
+        });
+
+        <span class="kw">let </span>res = sender.send_request(req).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">if </span>!res.status().is_success() {
+            <span class="macro">bail!</span>(<span class="string">"Failed to connect to proxy: {}"</span>, res.status());
+        }
+
+        <span class="kw">let </span>upgraded = hyper::upgrade::on(res).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="prelude-val">Ok</span>(Parts { io, read_buf, .. }) = upgraded.downcast::&lt;TokioIo&lt;MaybeTlsStream&gt;&gt;() <span class="kw">else </span>{
+            <span class="macro">bail!</span>(<span class="string">"Invalid upgrade"</span>);
+        };
+
+        <span class="kw">let </span>res = util::chain(std::io::Cursor::new(read_buf), io.into_inner());
+
+        <span class="prelude-val">Ok</span>(res)
+    }
+
+    <span class="doccomment">/// Reports whether IPv4 dials should be slightly
+    /// delayed to give IPv6 a better chance of winning dial races.
+    /// Implementations should only return true if IPv6 is expected
+    /// to succeed. (otherwise delaying IPv4 will delay the connection
+    /// overall)
+    </span><span class="kw">fn </span>prefer_ipv6(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="kw">match </span><span class="self">self</span>.address_family_selector {
+            <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>selector) =&gt; selector(),
+            <span class="prelude-val">None </span>=&gt; <span class="bool-val">false</span>,
+        }
     }
 }
 
@@ -1067,300 +1311,6 @@
     .dangerous()
     .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
     .with_no_client_auth()
-}
-
-<span class="doccomment">/// Some state to build a new connection.
-///
-/// Not because this necessarily the best way to structure this code, but because it was
-/// easy to migrate existing code.
-</span><span class="attr">#[derive(derive_more::Debug)]
-</span><span class="kw">struct </span>ConnectionBuilder {
-    secret_key: SecretKey,
-    <span class="attr">#[debug(<span class="string">"address family selector callback"</span>)]
-    </span>address_family_selector: <span class="prelude-ty">Option</span>&lt;Arc&lt;<span class="kw">dyn </span>Fn() -&gt; bool + Send + Sync&gt;&gt;,
-    url: RelayUrl,
-    protocol: Protocol,
-    <span class="attr">#[debug(<span class="string">"TlsConnector"</span>)]
-    </span>tls_connector: tokio_rustls::TlsConnector,
-    dns_resolver: DnsResolver,
-    proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
-    key_cache: KeyCache,
-}
-
-<span class="kw">impl </span>ConnectionBuilder {
-    <span class="kw">async fn </span>connect_0(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(Conn, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;)&gt; {
-        <span class="kw">let </span>(conn, local_addr) = <span class="kw">match </span><span class="self">self</span>.protocol {
-            Protocol::Websocket =&gt; {
-                <span class="kw">let </span>conn = <span class="self">self</span>.connect_ws().<span class="kw">await</span><span class="question-mark">?</span>;
-                <span class="kw">let </span>local_addr = <span class="prelude-val">None</span>;
-                (conn, local_addr)
-            }
-            Protocol::Relay =&gt; {
-                <span class="kw">let </span>(conn, local_addr) = <span class="self">self</span>.connect_relay().<span class="kw">await</span><span class="question-mark">?</span>;
-                (conn, <span class="prelude-val">Some</span>(local_addr))
-            }
-        };
-
-        <span class="macro">event!</span>(
-            target: <span class="string">"events.net.relay.connected"</span>,
-            Level::DEBUG,
-            url = %<span class="self">self</span>.url,
-            protocol = <span class="question-mark">?</span><span class="self">self</span>.protocol,
-        );
-
-        <span class="macro">trace!</span>(<span class="string">"connect_0 done"</span>);
-        <span class="prelude-val">Ok</span>((conn, local_addr))
-    }
-
-    <span class="kw">async fn </span>connect_ws(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Conn&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>dial_url = (<span class="kw-2">*</span><span class="self">self</span>.url).clone();
-        dial_url.set_path(RELAY_PATH);
-        <span class="comment">// The relay URL is exchanged with the http(s) scheme in tickets and similar.
-        // We need to use the ws:// or wss:// schemes when connecting with websockets, though.
-        </span>dial_url
-            .set_scheme(<span class="kw">if </span><span class="self">self</span>.use_tls() { <span class="string">"wss" </span>} <span class="kw">else </span>{ <span class="string">"ws" </span>})
-            .map_err(|()| <span class="macro">anyhow!</span>(<span class="string">"Invalid URL"</span>))<span class="question-mark">?</span>;
-
-        <span class="macro">debug!</span>(%dial_url, <span class="string">"Dialing relay by websocket"</span>);
-
-        <span class="kw">let </span>conn = tokio_tungstenite_wasm::connect(dial_url).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>conn = Conn::new_ws(conn, <span class="self">self</span>.key_cache.clone(), <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(conn)
-    }
-
-    <span class="kw">async fn </span>connect_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(Conn, SocketAddr)&gt; {
-        <span class="kw">let </span>url = <span class="self">self</span>.url.clone();
-        <span class="kw">let </span>tcp_stream = <span class="self">self</span>.dial_url().<span class="kw">await</span><span class="question-mark">?</span>;
-
-        <span class="kw">let </span>local_addr = tcp_stream
-            .local_addr()
-            .context(<span class="string">"No local addr for TCP stream"</span>)<span class="question-mark">?</span>;
-
-        <span class="macro">debug!</span>(server_addr = <span class="question-mark">?</span>tcp_stream.peer_addr(), %local_addr, <span class="string">"TCP stream connected"</span>);
-
-        <span class="kw">let </span>response = <span class="kw">if </span><span class="self">self</span>.use_tls() {
-            <span class="macro">debug!</span>(<span class="string">"Starting TLS handshake"</span>);
-            <span class="kw">let </span>hostname = <span class="self">self
-                </span>.tls_servername()
-                .ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"No tls servername"</span>))<span class="question-mark">?</span>;
-            <span class="kw">let </span>hostname = hostname.to_owned();
-            <span class="kw">let </span>tls_stream = <span class="self">self</span>.tls_connector.connect(hostname, tcp_stream).<span class="kw">await</span><span class="question-mark">?</span>;
-            <span class="macro">debug!</span>(<span class="string">"tls_connector connect success"</span>);
-            <span class="self">Self</span>::start_upgrade(tls_stream, url).<span class="kw">await</span><span class="question-mark">?
-        </span>} <span class="kw">else </span>{
-            <span class="macro">debug!</span>(<span class="string">"Starting handshake"</span>);
-            <span class="self">Self</span>::start_upgrade(tcp_stream, url).<span class="kw">await</span><span class="question-mark">?
-        </span>};
-
-        <span class="kw">if </span>response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
-            <span class="macro">bail!</span>(
-                <span class="string">"Unexpected status code: expected {}, actual: {}"</span>,
-                hyper::StatusCode::SWITCHING_PROTOCOLS,
-                response.status(),
-            );
-        }
-
-        <span class="macro">debug!</span>(<span class="string">"starting upgrade"</span>);
-        <span class="kw">let </span>upgraded = hyper::upgrade::on(response)
-            .<span class="kw">await
-            </span>.context(<span class="string">"Upgrade failed"</span>)<span class="question-mark">?</span>;
-
-        <span class="macro">debug!</span>(<span class="string">"connection upgraded"</span>);
-        <span class="kw">let </span>conn = downcast_upgrade(upgraded)<span class="question-mark">?</span>;
-
-        <span class="kw">let </span>conn = Conn::new_relay(conn, <span class="self">self</span>.key_cache.clone(), <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key).<span class="kw">await</span><span class="question-mark">?</span>;
-
-        <span class="prelude-val">Ok</span>((conn, local_addr))
-    }
-
-    <span class="doccomment">/// Sends the HTTP upgrade request to the relay server.
-    </span><span class="kw">async fn </span>start_upgrade&lt;T&gt;(io: T, relay_url: RelayUrl) -&gt; <span class="prelude-ty">Result</span>&lt;hyper::Response&lt;Incoming&gt;&gt;
-    <span class="kw">where
-        </span>T: AsyncRead + AsyncWrite + Send + Unpin + <span class="lifetime">'static</span>,
-    {
-        <span class="kw">let </span>host_header_value = host_header_value(relay_url)<span class="question-mark">?</span>;
-
-        <span class="kw">let </span>io = hyper_util::rt::TokioIo::new(io);
-        <span class="kw">let </span>(<span class="kw-2">mut </span>request_sender, connection) = hyper::client::conn::http1::Builder::new()
-            .handshake(io)
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-        tokio::spawn(
-            <span class="comment">// This task drives the HTTP exchange, completes once connection is upgraded.
-            </span><span class="kw">async move </span>{
-                <span class="macro">debug!</span>(<span class="string">"HTTP upgrade driver started"</span>);
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = connection.with_upgrades().<span class="kw">await </span>{
-                    <span class="macro">error!</span>(<span class="string">"HTTP upgrade error: {err:#}"</span>);
-                }
-                <span class="macro">debug!</span>(<span class="string">"HTTP upgrade driver finished"</span>);
-            }
-            .instrument(<span class="macro">info_span!</span>(<span class="string">"http-driver"</span>)),
-        );
-        <span class="macro">debug!</span>(<span class="string">"Sending upgrade request"</span>);
-        <span class="kw">let </span>req = Request::builder()
-            .uri(RELAY_PATH)
-            .header(UPGRADE, Protocol::Relay.upgrade_header())
-            <span class="comment">// https://datatracker.ietf.org/doc/html/rfc2616#section-14.23
-            // &gt; A client MUST include a Host header field in all HTTP/1.1 request messages.
-            // This header value helps reverse proxies identify how to forward requests.
-            </span>.header(HOST, host_header_value)
-            .body(http_body_util::Empty::&lt;hyper::body::Bytes&gt;::new())<span class="question-mark">?</span>;
-        request_sender.send_request(req).<span class="kw">await</span>.map_err(From::from)
-    }
-
-    <span class="kw">fn </span>tls_servername(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;rustls::pki_types::ServerName&gt; {
-        <span class="self">self</span>.url
-            .host_str()
-            .and_then(|s| rustls::pki_types::ServerName::try_from(s).ok())
-    }
-
-    <span class="kw">fn </span>use_tls(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="comment">// only disable tls if we are explicitly dialing a http url
-        </span><span class="attr">#[allow(clippy::match_like_matches_macro)]
-        </span><span class="kw">match </span><span class="self">self</span>.url.scheme() {
-            <span class="string">"http" </span>=&gt; <span class="bool-val">false</span>,
-            <span class="string">"ws" </span>=&gt; <span class="bool-val">false</span>,
-            <span class="kw">_ </span>=&gt; <span class="bool-val">true</span>,
-        }
-    }
-
-    <span class="kw">async fn </span>dial_url(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;ProxyStream&gt; {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>proxy) = <span class="self">self</span>.proxy_url {
-            <span class="kw">let </span>stream = <span class="self">self</span>.dial_url_proxy(proxy.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-            <span class="prelude-val">Ok</span>(ProxyStream::Proxied(stream))
-        } <span class="kw">else </span>{
-            <span class="kw">let </span>stream = <span class="self">self</span>.dial_url_direct().<span class="kw">await</span><span class="question-mark">?</span>;
-            <span class="prelude-val">Ok</span>(ProxyStream::Raw(stream))
-        }
-    }
-
-    <span class="kw">async fn </span>dial_url_direct(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;TcpStream&gt; {
-        <span class="macro">debug!</span>(%<span class="self">self</span>.url, <span class="string">"dial url"</span>);
-        <span class="kw">let </span>prefer_ipv6 = <span class="self">self</span>.prefer_ipv6();
-        <span class="kw">let </span>dst_ip = <span class="self">self
-            </span>.dns_resolver
-            .resolve_host(<span class="kw-2">&amp;</span><span class="self">self</span>.url, prefer_ipv6)
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-
-        <span class="kw">let </span>port = url_port(<span class="kw-2">&amp;</span><span class="self">self</span>.url).ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"Missing URL port"</span>))<span class="question-mark">?</span>;
-        <span class="kw">let </span>addr = SocketAddr::new(dst_ip, port);
-
-        <span class="macro">debug!</span>(<span class="string">"connecting to {}"</span>, addr);
-        <span class="kw">let </span>tcp_stream =
-            tokio::time::timeout(
-                DIAL_NODE_TIMEOUT,
-                <span class="kw">async move </span>{ TcpStream::connect(addr).<span class="kw">await </span>},
-            )
-            .<span class="kw">await
-            </span>.context(<span class="string">"Timeout connecting"</span>)<span class="question-mark">?
-            </span>.context(<span class="string">"Failed connecting"</span>)<span class="question-mark">?</span>;
-        tcp_stream.set_nodelay(<span class="bool-val">true</span>)<span class="question-mark">?</span>;
-
-        <span class="prelude-val">Ok</span>(tcp_stream)
-    }
-
-    <span class="kw">async fn </span>dial_url_proxy(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        proxy_url: Url,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;util::Chain&lt;std::io::Cursor&lt;Bytes&gt;, MaybeTlsStream&gt;&gt; {
-        <span class="macro">debug!</span>(%<span class="self">self</span>.url, %proxy_url, <span class="string">"dial url via proxy"</span>);
-
-        <span class="comment">// Resolve proxy DNS
-        </span><span class="kw">let </span>prefer_ipv6 = <span class="self">self</span>.prefer_ipv6();
-        <span class="kw">let </span>proxy_ip = <span class="self">self
-            </span>.dns_resolver
-            .resolve_host(<span class="kw-2">&amp;</span>proxy_url, prefer_ipv6)
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-
-        <span class="kw">let </span>proxy_port = url_port(<span class="kw-2">&amp;</span>proxy_url).ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"Missing proxy url port"</span>))<span class="question-mark">?</span>;
-        <span class="kw">let </span>proxy_addr = SocketAddr::new(proxy_ip, proxy_port);
-
-        <span class="macro">debug!</span>(%proxy_addr, <span class="string">"connecting to proxy"</span>);
-
-        <span class="kw">let </span>tcp_stream = tokio::time::timeout(DIAL_NODE_TIMEOUT, <span class="kw">async move </span>{
-            TcpStream::connect(proxy_addr).<span class="kw">await
-        </span>})
-        .<span class="kw">await
-        </span>.context(<span class="string">"Timeout connecting"</span>)<span class="question-mark">?
-        </span>.context(<span class="string">"Connecting"</span>)<span class="question-mark">?</span>;
-
-        tcp_stream.set_nodelay(<span class="bool-val">true</span>)<span class="question-mark">?</span>;
-
-        <span class="comment">// Setup TLS if necessary
-        </span><span class="kw">let </span>io = <span class="kw">if </span>proxy_url.scheme() == <span class="string">"http" </span>{
-            MaybeTlsStream::Raw(tcp_stream)
-        } <span class="kw">else </span>{
-            <span class="kw">let </span>hostname = proxy_url.host_str().context(<span class="string">"No hostname in proxy URL"</span>)<span class="question-mark">?</span>;
-            <span class="kw">let </span>hostname = rustls::pki_types::ServerName::try_from(hostname.to_string())<span class="question-mark">?</span>;
-            <span class="kw">let </span>tls_stream = <span class="self">self</span>.tls_connector.connect(hostname, tcp_stream).<span class="kw">await</span><span class="question-mark">?</span>;
-            MaybeTlsStream::Tls(tls_stream)
-        };
-        <span class="kw">let </span>io = TokioIo::new(io);
-
-        <span class="kw">let </span>target_host = <span class="self">self
-            </span>.url
-            .host_str()
-            .ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"Missing proxy host"</span>))<span class="question-mark">?</span>;
-
-        <span class="kw">let </span>port = url_port(<span class="kw-2">&amp;</span><span class="self">self</span>.url).ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"invalid target port"</span>))<span class="question-mark">?</span>;
-
-        <span class="comment">// Establish Proxy Tunnel
-        </span><span class="kw">let </span><span class="kw-2">mut </span>req_builder = Request::builder()
-            .uri(<span class="macro">format!</span>(<span class="string">"{}:{}"</span>, target_host, port))
-            .method(<span class="string">"CONNECT"</span>)
-            .header(<span class="string">"Host"</span>, target_host)
-            .header(<span class="string">"Proxy-Connection"</span>, <span class="string">"Keep-Alive"</span>);
-        <span class="kw">if </span>!proxy_url.username().is_empty() {
-            <span class="comment">// Passthrough authorization
-            // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Proxy-Authorization
-            </span><span class="macro">debug!</span>(
-                <span class="string">"setting proxy-authorization: username={}"</span>,
-                proxy_url.username()
-            );
-            <span class="kw">let </span>to_encode = <span class="macro">format!</span>(
-                <span class="string">"{}:{}"</span>,
-                proxy_url.username(),
-                proxy_url.password().unwrap_or_default()
-            );
-            <span class="kw">let </span>encoded = BASE64URL.encode(to_encode.as_bytes());
-            req_builder = req_builder.header(<span class="string">"Proxy-Authorization"</span>, <span class="macro">format!</span>(<span class="string">"Basic {}"</span>, encoded));
-        }
-        <span class="kw">let </span>req = req_builder.body(Empty::&lt;Bytes&gt;::new())<span class="question-mark">?</span>;
-
-        <span class="macro">debug!</span>(<span class="string">"Sending proxy request: {:?}"</span>, req);
-
-        <span class="kw">let </span>(<span class="kw-2">mut </span>sender, conn) = hyper::client::conn::http1::handshake(io).<span class="kw">await</span><span class="question-mark">?</span>;
-        tokio::task::spawn(<span class="kw">async move </span>{
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = conn.with_upgrades().<span class="kw">await </span>{
-                <span class="macro">error!</span>(<span class="string">"Proxy connection failed: {:?}"</span>, err);
-            }
-        });
-
-        <span class="kw">let </span>res = sender.send_request(req).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">if </span>!res.status().is_success() {
-            <span class="macro">bail!</span>(<span class="string">"Failed to connect to proxy: {}"</span>, res.status());
-        }
-
-        <span class="kw">let </span>upgraded = hyper::upgrade::on(res).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span><span class="prelude-val">Ok</span>(Parts { io, read_buf, .. }) = upgraded.downcast::&lt;TokioIo&lt;MaybeTlsStream&gt;&gt;() <span class="kw">else </span>{
-            <span class="macro">bail!</span>(<span class="string">"Invalid upgrade"</span>);
-        };
-
-        <span class="kw">let </span>res = util::chain(std::io::Cursor::new(read_buf), io.into_inner());
-
-        <span class="prelude-val">Ok</span>(res)
-    }
-
-    <span class="doccomment">/// Reports whether IPv4 dials should be slightly
-    /// delayed to give IPv6 a better chance of winning dial races.
-    /// Implementations should only return true if IPv6 is expected
-    /// to succeed. (otherwise delaying IPv4 will delay the connection
-    /// overall)
-    </span><span class="kw">fn </span>prefer_ipv6(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="kw">match </span><span class="self">self</span>.address_family_selector {
-            <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>selector) =&gt; selector(),
-            <span class="prelude-val">None </span>=&gt; <span class="bool-val">false</span>,
-        }
-    }
 }
 
 <span class="kw">fn </span>host_header_value(relay_url: RelayUrl) -&gt; <span class="prelude-ty">Result</span>&lt;String&gt; {

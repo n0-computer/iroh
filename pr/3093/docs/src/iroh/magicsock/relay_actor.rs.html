@@ -1534,10 +1534,52 @@
 <a href="#1533" id="1533">1533</a>
 <a href="#1534" id="1534">1534</a>
 <a href="#1535" id="1535">1535</a>
-<a href="#1536" id="1536">1536</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1536" id="1536">1536</a>
+<a href="#1537" id="1537">1537</a>
+<a href="#1538" id="1538">1538</a>
+<a href="#1539" id="1539">1539</a>
+<a href="#1540" id="1540">1540</a>
+<a href="#1541" id="1541">1541</a>
+<a href="#1542" id="1542">1542</a>
+<a href="#1543" id="1543">1543</a>
+<a href="#1544" id="1544">1544</a>
+<a href="#1545" id="1545">1545</a>
+<a href="#1546" id="1546">1546</a>
+<a href="#1547" id="1547">1547</a>
+<a href="#1548" id="1548">1548</a>
+<a href="#1549" id="1549">1549</a>
+<a href="#1550" id="1550">1550</a>
+<a href="#1551" id="1551">1551</a>
+<a href="#1552" id="1552">1552</a>
+<a href="#1553" id="1553">1553</a>
+<a href="#1554" id="1554">1554</a>
+<a href="#1555" id="1555">1555</a>
+<a href="#1556" id="1556">1556</a>
+<a href="#1557" id="1557">1557</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
+//!
+//! - The [`RelayActor`] manages all connections to relay servers.
+//!   - It starts a new [`ActiveRelayActor`] for each relay server needed.
+//!   - The [`ActiveRelayActor`] will exit when unused.
+//!     - Unless it is for the home relay, this one never exits.
+//!   - Each [`ActiveRelayActor`] uses a relay [`Client`].
+//!     - The relay [`Client`] is a `Stream` and `Sink` directly connected to the
+//!       `TcpStream` connected to the relay server.
+//!   - Each [`ActiveRelayActor`] will try and maintain a connection with the relay server.
+//!     - If connections fail, exponential backoff is used for reconnections.
+//! - When `AsyncUdpSocket` needs to send datagrams:
+//!   - It puts them on a queue to the [`RelayActor`].
+//!   - The [`RelayActor`] ensures the correct [`ActiveRelayActor`] is running and
+//!     forwards datagrams to it.
+//!   - The ActiveRelayActor sends datagrams directly to the relay server.
+//! - The relay receive path is:
+//!   - Whenever [`ActiveRelayActor`] is connected it reads from the underlying `TcpStream`.
+//!   - Received datagrams are placed on an mpsc channel that now bypasses the
+//!     [`RelayActor`] and goes straight to the `AsyncUpdSocket` interface.
+//!
+//! [`Client`]: iroh_relay::client::Client
 
 </span><span class="attr">#[cfg(test)]
 </span><span class="kw">use </span>std::net::SocketAddr;
@@ -1616,7 +1658,7 @@
 /// communication with it.
 ///
 /// The actor shuts down itself on inactivity: inactivity is determined when no more
-/// datagrams are being received to send.
+/// datagrams are being queued to send.
 ///
 /// This actor has 3 main states it can be in, each has it's dedicated run loop:
 ///
@@ -1645,9 +1687,9 @@
     </span>prio_inbox: mpsc::Receiver&lt;ActiveRelayPrioMessage&gt;,
     <span class="doccomment">/// Inbox for messages which involve sending to the relay server.
     </span>inbox: mpsc::Receiver&lt;ActiveRelayMessage&gt;,
-    <span class="doccomment">/// Queue to send received relay datagrams on.
+    <span class="doccomment">/// Queue for received relay datagrams.
     </span>relay_datagrams_recv: Arc&lt;RelayDatagramRecvQueue&gt;,
-    <span class="doccomment">/// Channel on which we receive packets to send to the relay.
+    <span class="doccomment">/// Channel on which we queue packets to send to the relay.
     </span>relay_datagrams_send: mpsc::Receiver&lt;RelaySendItem&gt;,
 
     <span class="comment">// Other actor state.

@@ -342,24 +342,7 @@
 <a href="#341" id="341">341</a>
 <a href="#342" id="342">342</a>
 <a href="#343" id="343">343</a>
-<a href="#344" id="344">344</a>
-<a href="#345" id="345">345</a>
-<a href="#346" id="346">346</a>
-<a href="#347" id="347">347</a>
-<a href="#348" id="348">348</a>
-<a href="#349" id="349">349</a>
-<a href="#350" id="350">350</a>
-<a href="#351" id="351">351</a>
-<a href="#352" id="352">352</a>
-<a href="#353" id="353">353</a>
-<a href="#354" id="354">354</a>
-<a href="#355" id="355">355</a>
-<a href="#356" id="356">356</a>
-<a href="#357" id="357">357</a>
-<a href="#358" id="358">358</a>
-<a href="#359" id="359">359</a>
-<a href="#360" id="360">360</a>
-<a href="#361" id="361">361</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
+<a href="#344" id="344">344</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
 //!
 //! based on tailscale/derp/derp_client.go
 
@@ -394,6 +377,16 @@
     <span class="doccomment">/// A protocol error.
     </span><span class="attr">#[error(<span class="string">"Protocol error"</span>)]
     </span>Protocol(<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str),
+}
+
+<span class="kw">impl </span>From&lt;tokio_tungstenite_wasm::Error&gt; <span class="kw">for </span>ConnSendError {
+    <span class="kw">fn </span>from(source: tokio_tungstenite_wasm::Error) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>io_err = <span class="kw">match </span>source {
+            tokio_tungstenite_wasm::Error::Io(io_err) =&gt; io_err,
+            <span class="kw">_ </span>=&gt; std::io::Error::new(std::io::ErrorKind::Other, source.to_string()),
+        };
+        <span class="self">Self</span>::Io(io_err)
+    }
 }
 
 <span class="doccomment">/// A connection to a relay server.
@@ -465,13 +458,6 @@
     <span class="prelude-val">Ok</span>(())
 }
 
-<span class="kw">fn </span>tung_wasm_to_io_err(e: tokio_tungstenite_wasm::Error) -&gt; std::io::Error {
-    <span class="kw">match </span>e {
-        tokio_tungstenite_wasm::Error::Io(io_err) =&gt; io_err,
-        <span class="kw">_ </span>=&gt; std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
-    }
-}
-
 <span class="kw">impl </span>Stream <span class="kw">for </span>Conn {
     <span class="kw">type </span>Item = <span class="prelude-ty">Result</span>&lt;ReceivedMessage&gt;;
 
@@ -513,10 +499,7 @@
     <span class="kw">fn </span>poll_ready(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
             <span class="self">Self</span>::Relay { <span class="kw-2">ref mut </span>conn } =&gt; Pin::new(conn).poll_ready(cx).map_err(Into::into),
-            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn)
-                .poll_ready(cx)
-                .map_err(tung_wasm_to_io_err)
-                .map_err(Into::into),
+            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn).poll_ready(cx).map_err(Into::into),
         }
     }
 
@@ -532,7 +515,6 @@
                 .start_send(tokio_tungstenite_wasm::Message::binary(
                     frame.encode_for_ws_msg(),
                 ))
-                .map_err(tung_wasm_to_io_err)
                 .map_err(Into::into),
         }
     }
@@ -540,20 +522,14 @@
     <span class="kw">fn </span>poll_flush(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
             <span class="self">Self</span>::Relay { <span class="kw-2">ref mut </span>conn } =&gt; Pin::new(conn).poll_flush(cx).map_err(Into::into),
-            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn)
-                .poll_flush(cx)
-                .map_err(tung_wasm_to_io_err)
-                .map_err(Into::into),
+            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn).poll_flush(cx).map_err(Into::into),
         }
     }
 
     <span class="kw">fn </span>poll_close(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
             <span class="self">Self</span>::Relay { <span class="kw-2">ref mut </span>conn } =&gt; Pin::new(conn).poll_close(cx).map_err(Into::into),
-            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn)
-                .poll_close(cx)
-                .map_err(tung_wasm_to_io_err)
-                .map_err(Into::into),
+            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn).poll_close(cx).map_err(Into::into),
         }
     }
 }
@@ -564,10 +540,7 @@
     <span class="kw">fn </span>poll_ready(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
             <span class="self">Self</span>::Relay { <span class="kw-2">ref mut </span>conn } =&gt; Pin::new(conn).poll_ready(cx).map_err(Into::into),
-            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn)
-                .poll_ready(cx)
-                .map_err(tung_wasm_to_io_err)
-                .map_err(Into::into),
+            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn).poll_ready(cx).map_err(Into::into),
         }
     }
 
@@ -584,7 +557,6 @@
                 .start_send(tokio_tungstenite_wasm::Message::binary(
                     frame.encode_for_ws_msg(),
                 ))
-                .map_err(tung_wasm_to_io_err)
                 .map_err(Into::into),
         }
     }
@@ -592,20 +564,14 @@
     <span class="kw">fn </span>poll_flush(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
             <span class="self">Self</span>::Relay { <span class="kw-2">ref mut </span>conn } =&gt; Pin::new(conn).poll_flush(cx).map_err(Into::into),
-            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn)
-                .poll_flush(cx)
-                .map_err(tung_wasm_to_io_err)
-                .map_err(Into::into),
+            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn).poll_flush(cx).map_err(Into::into),
         }
     }
 
     <span class="kw">fn </span>poll_close(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
             <span class="self">Self</span>::Relay { <span class="kw-2">ref mut </span>conn } =&gt; Pin::new(conn).poll_close(cx).map_err(Into::into),
-            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn)
-                .poll_close(cx)
-                .map_err(tung_wasm_to_io_err)
-                .map_err(Into::into),
+            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn).poll_close(cx).map_err(Into::into),
         }
     }
 }
