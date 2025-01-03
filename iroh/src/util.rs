@@ -69,15 +69,6 @@ impl<T: Future> Future for MaybeFuture<T> {
     }
 }
 
-/// Check if we are running in "relay only" mode, as informed
-/// by the compile time env var `DEV_RELAY_ONLY`.
-///
-/// "relay only" mode implies we only use the relay to communicate
-/// and do not attempt to do any hole punching.
-pub(crate) fn relay_only_mode() -> bool {
-    std::option_env!("DEV_RELAY_ONLY").is_some()
-}
-
 #[cfg(test)]
 mod tests {
     use std::pin::pin;

@@ -74,6 +74,18 @@ const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
 type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync>;
 
+/// Defines the mode of path selection for all traffic flowing through
+/// the endpoint.
+#[cfg(any(test, feature = "test-utils"))]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+pub enum PathSelection {
+    /// Uses all available paths
+    #[default]
+    All,
+    /// Forces all traffic to go exclusively through relays
+    RelayOnly,
+}
+
 /// Builder for [`Endpoint`].
 ///
 /// By default the endpoint will generate a new random [`SecretKey`], which will result in a
@@ -97,6 +109,8 @@ pub struct Builder {
     insecure_skip_relay_cert_verify: bool,
     addr_v4: Option<SocketAddrV4>,
     addr_v6: Option<SocketAddrV6>,
+    #[cfg(any(test, feature = "test-utils"))]
+    path_selection: PathSelection,
 }
 
 impl Default for Builder {
@@ -115,6 +129,8 @@ impl Default for Builder {
             insecure_skip_relay_cert_verify: false,
             addr_v4: None,
             addr_v6: None,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection: PathSelection::default(),
         }
     }
 }
@@ -160,6 +176,8 @@ impl Builder {
             dns_resolver,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection: self.path_selection,
         };
         Endpoint::bind(static_config, msock_opts, self.alpn_protocols).await
     }
@@ -415,6 +433,14 @@ impl Builder {
     #[cfg(any(test, feature = "test-utils"))]
     pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
         self.insecure_skip_relay_cert_verify = skip_verify;
+        self
+    }
+
+    /// This implies we only use the relay to communicate
+    /// and do not attempt to do any hole punching.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn path_selection(mut self, path_selection: PathSelection) -> Self {
+        self.path_selection = path_selection;
         self
     }
 }

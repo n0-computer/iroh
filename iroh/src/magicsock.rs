@@ -2,9 +2,9 @@
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
-//! ### `DEV_RELAY_ONLY` env var:
-//! When present at *compile time*, this env var will force all packets
-//! to be sent over the relay connection, regardless of whether or
+//! ### `RelayOnly` path selection:
+//! When set this will force all packets to be sent over
+//! the relay connection, regardless of whether or
 //! not we have a direct UDP address for the given node.
 //!
 //! The intended use is for testing the relay protocol inside the MagicSock
@@ -61,6 +61,8 @@ use self::{
     relay_actor::{RelayActor, RelayActorMessage, RelayRecvDatagram},
     udp_conn::UdpConn,
 };
+#[cfg(any(test, feature = "test-utils"))]
+use crate::endpoint::PathSelection;
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, CallMeMaybe, SendAddr},
@@ -128,6 +130,10 @@ pub(crate) struct Options {
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
     pub(crate) insecure_skip_relay_cert_verify: bool,
+
+    /// Configuration for what path selection to use
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) path_selection: PathSelection,
 }
 
 impl Default for Options {
@@ -143,6 +149,8 @@ impl Default for Options {
             dns_resolver: crate::dns::default_resolver().clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection: PathSelection::default(),
         }
     }
 }
@@ -1493,11 +1501,6 @@ impl Handle {
     /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
     async fn new(opts: Options) -> Result<Self> {
         let me = opts.secret_key.public().fmt_short();
-        if crate::util::relay_only_mode() {
-            warn!(
-                "creating a MagicSock that will only send packets over a relay relay connection."
-            );
-        }
 
         Self::with_name(me, opts)
             .instrument(error_span!("magicsock"))
@@ -1518,6 +1521,8 @@ impl Handle {
             proxy_url,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection,
         } = opts;
 
         let relay_datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
@@ -1548,6 +1553,9 @@ impl Handle {
 
         // load the node data
         let node_map = node_map.unwrap_or_default();
+        #[cfg(any(test, feature = "test-utils"))]
+        let node_map = NodeMap::load_from_vec(node_map, path_selection);
+        #[cfg(not(any(test, feature = "test-utils")))]
         let node_map = NodeMap::load_from_vec(node_map);
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
@@ -3815,6 +3823,7 @@ mod tests {
             dns_resolver: crate::dns::default_resolver().clone(),
             proxy_url: None,
             insecure_skip_relay_cert_verify: true,
+            path_selection: PathSelection::default(),
         };
         let msock = MagicSock::spawn(opts).await?;
         let server_config = crate::endpoint::make_server_config(
