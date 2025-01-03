@@ -444,6 +444,7 @@ impl ActiveRelayActor {
                     };
                     match msg {
                         ActiveRelayMessage::SetHomeRelay(is_preferred) => {
+                            self.is_home_relay = is_preferred;
                             let fut = client_sink.send(SendMessage::NotePreferred(is_preferred));
                             self.run_sending(fut, &mut state, &mut client_stream).await?;
                         }
