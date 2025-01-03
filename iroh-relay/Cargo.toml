@@ -15,7 +15,6 @@ workspace = true
 
 [dependencies]
 anyhow = { version = "1" }
-base64 = "0.22.1"
 bytes = "1.7"
 clap = { version = "4", features = ["derive"], optional = true }
 derive_more = { version = "1.0.0", features = [
@@ -32,16 +31,13 @@ futures-util = "0.3"
 governor = "0.7.0"
 hickory-proto = { version = "=0.25.0-alpha.4" }
 hickory-resolver = "=0.25.0-alpha.4"
-hostname = "0.4"
 http = "1"
 http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
 iroh-base = { version = "0.30.0", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
 iroh-metrics = { version = "0.30.0", default-features = false }
-libc = "0.2.139"
 num_enum = "0.7"
-once_cell = "1.18.0"
 pin-project = "1"
 postcard = { version = "1", default-features = false, features = [
     "alloc",
@@ -57,14 +53,11 @@ reloadable-state = { version = "0.1", optional = true }
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
 ] }
-ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 rustls-cert-reloadable-resolver = { version = "0.7.1", optional = true }
 rustls-cert-file-reader = { version = "0.4.1", optional = true }
 rustls-pemfile = { version = "2.1", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
-smallvec = "1.11.1"
-socket2 = "0.5.3"
 stun-rs = "0.1.5"
 thiserror = "2"
 time = "0.3.20"

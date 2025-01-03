@@ -21,7 +21,6 @@ anyhow = { version = "1" }
 concurrent-queue = "2.5"
 axum = { version = "0.7", optional = true }
 backoff = { version = "0.4.0", features = ["futures", "tokio"]}
-base64 = "0.22.1"
 bytes = "1.7"
 crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
 data-encoding = "2.2"
@@ -36,13 +35,11 @@ derive_more = { version = "1.0.0", features = [
 ] }
 ed25519-dalek = "2.0"
 futures-buffered = "0.2.8"
-futures-concurrency = "7.6"
 futures-lite = "2.5"
 futures-sink = "0.3"
 futures-util = "0.3"
 governor = "0.7.0"
 hickory-resolver = { version = "=0.25.0-alpha.4" }
-hostname = "0.4"
 http = "1"
 http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
@@ -50,28 +47,19 @@ hyper-util = "0.1.1"
 igd-next = { version = "0.15.1", features = ["aio_tokio"] }
 iroh-base = { version = "0.30.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 iroh-relay = { version = "0.30", path = "../iroh-relay", default-features = false }
-libc = "0.2.139"
 netdev = "0.31.0"
 netwatch = { version = "0.2.0" }
-num_enum = "0.7"
-once_cell = "1.18.0"
 pin-project = "1"
 pkarr = { version = "2", default-features = false, features = [
     "async",
     "relay",
 ] }
 portmapper = { version = "0.3.0", default-features = false }
-postcard = { version = "1", default-features = false, features = [
-    "alloc",
-    "use-std",
-    "experimental-derive",
-] }
 quinn = { package = "iroh-quinn", version = "0.12.0" }
 quinn-proto = { package = "iroh-quinn-proto", version = "0.12.0" }
 quinn-udp = { package = "iroh-quinn-udp", version = "0.5.5" }
 rand = "0.8"
 rcgen = "0.13"
-regex = { version = "1.7.1", optional = true }
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
 ] }
@@ -80,11 +68,8 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1", features = ["derive", "rc"] }
 smallvec = "1.11.1"
 strum = { version = "0.26", features = ["derive"] }
-socket2 = "0.5.3"
 stun-rs = "0.1.5"
-surge-ping = "0.8.0"
 thiserror = "2"
-time = "0.3.20"
 tokio = { version = "1", features = [
     "io-util",
     "macros",
@@ -125,27 +110,6 @@ tracing-subscriber = { version = "0.3", features = [
 ], optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 parse-size = { version = "=1.0.0", optional = true } # pinned version to avoid bumping msrv to 1.81
-
-[target.'cfg(all(target_os = "linux", not(target_os = "android")))'.dependencies]
-netlink-packet-core = "0.7.0"
-netlink-packet-route = "0.21"
-netlink-sys = "0.8.6"
-rtnetlink = "=0.14.1" # pinned because of https://github.com/rust-netlink/rtnetlink/issues/83
-
-[target.'cfg(target_os = "android")'.dependencies]
-netlink-packet-core = "0.7.0"
-netlink-packet-route = "0.19" # 0.20/21 is blocked on rtnetlink bumping its dependency
-netlink-sys = "0.8.6"
-rtnetlink = "=0.13.1" # pinned because of https://github.com/rust-netlink/rtnetlink/issues/83
-
-[target.'cfg(target_os = "windows")'.dependencies]
-wmi = "0.14"
-windows = { version = "0.58", features = [
-    "Win32_NetworkManagement_IpHelper",
-    "Win32_Foundation",
-    "Win32_NetworkManagement_Ndis",
-    "Win32_Networking_WinSock",
-] }
 
 [dev-dependencies]
 axum = { version = "0.7" }

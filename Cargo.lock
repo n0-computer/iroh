@@ -1135,15 +1135,6 @@ checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
 
 [[package]]
 name = "fastrand"
-version = "1.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e51093e27b0797c359783294ca4f0a911c270184cb10f85783b118614a1501be"
-dependencies = [
- "instant",
-]
-
-[[package]]
-name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
@@ -1153,12 +1144,6 @@ name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
-
-[[package]]
-name = "fixedbitset"
-version = "0.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "flume"
@@ -1241,21 +1226,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "futures-concurrency"
-version = "7.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9b724496da7c26fcce66458526ce68fc2ecf4aaaa994281cf322ded5755520c"
-dependencies = [
- "fixedbitset",
- "futures-buffered",
- "futures-core",
- "futures-lite 1.13.0",
- "pin-project",
- "slab",
- "smallvec",
-]
-
-[[package]]
 name = "futures-core"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1280,26 +1250,11 @@ checksum = "9e5c1b78ca4aae1ac06c48a526a655760685149f0d465d21f37abfe57ce075c6"
 
 [[package]]
 name = "futures-lite"
-version = "1.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49a9d51ce47660b1e808d3c990b4709f2f415d928835a17dfd16991515c46bce"
-dependencies = [
- "fastrand 1.9.0",
- "futures-core",
- "futures-io",
- "memchr",
- "parking",
- "pin-project-lite",
- "waker-fn",
-]
-
-[[package]]
-name = "futures-lite"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cef40d21ae2c515b51041df9ed313ed21e572df340ea58a922a0aefe7e8891a1"
 dependencies = [
- "fastrand 2.3.0",
+ "fastrand",
  "futures-core",
  "futures-io",
  "parking",
@@ -1657,17 +1612,6 @@ dependencies = [
  "libc",
  "match_cfg",
  "winapi",
-]
-
-[[package]]
-name = "hostname"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9c7c7c8ac16c798734b8a24560c1362120597c40d5e1459f09498f8f6c8f2ba"
-dependencies = [
- "cfg-if",
- "libc",
- "windows 0.52.0",
 ]
 
 [[package]]
@@ -2061,7 +2005,6 @@ dependencies = [
  "anyhow",
  "axum",
  "backoff",
- "base64",
  "bytes",
  "clap",
  "concurrent-queue",
@@ -2071,13 +2014,11 @@ dependencies = [
  "derive_more",
  "ed25519-dalek",
  "futures-buffered",
- "futures-concurrency",
- "futures-lite 2.5.0",
+ "futures-lite",
  "futures-sink",
  "futures-util",
  "governor 0.7.0",
  "hickory-resolver",
- "hostname 0.4.0",
  "http 1.2.0",
  "http-body-util",
  "hyper",
@@ -2092,42 +2033,28 @@ dependencies = [
  "iroh-quinn-udp",
  "iroh-relay",
  "iroh-test 0.30.0",
- "libc",
  "netdev",
- "netlink-packet-core",
- "netlink-packet-route 0.19.0",
- "netlink-packet-route 0.21.0",
- "netlink-sys",
  "netwatch",
- "num_enum",
- "once_cell",
  "parse-size",
  "pin-project",
  "pkarr",
  "portmapper",
- "postcard",
  "pretty_assertions",
  "rand",
  "rand_chacha",
  "rcgen",
- "regex",
  "reqwest",
  "ring",
- "rtnetlink 0.13.1",
- "rtnetlink 0.14.1",
  "rustls",
  "rustls-webpki",
  "serde",
  "serde_json",
  "smallvec",
- "socket2",
  "strum",
  "stun-rs",
- "surge-ping",
  "swarm-discovery",
  "testresult",
  "thiserror 2.0.7",
- "time",
  "tokio",
  "tokio-rustls",
  "tokio-stream",
@@ -2138,8 +2065,6 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "webpki-roots",
- "windows 0.58.0",
- "wmi",
  "x509-parser",
  "z32",
 ]
@@ -2172,14 +2097,13 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
- "futures-lite 2.5.0",
+ "futures-lite",
  "hdrhistogram",
  "iroh",
  "iroh-metrics",
  "iroh-quinn",
  "rcgen",
  "rustls",
- "socket2",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2199,7 +2123,7 @@ dependencies = [
  "criterion",
  "derive_more",
  "dirs-next",
- "futures-lite 2.5.0",
+ "futures-lite",
  "governor 0.6.3",
  "hickory-resolver",
  "hickory-server",
@@ -2264,7 +2188,7 @@ dependencies = [
  "bytes",
  "derive_more",
  "futures-buffered",
- "futures-lite 2.5.0",
+ "futures-lite",
  "hickory-resolver",
  "iroh-base",
  "iroh-metrics",
@@ -2272,7 +2196,6 @@ dependencies = [
  "iroh-relay",
  "iroh-test 0.30.0",
  "netwatch",
- "once_cell",
  "portmapper",
  "pretty_assertions",
  "rand",
@@ -2280,7 +2203,7 @@ dependencies = [
  "rustls",
  "surge-ping",
  "testresult",
- "thiserror 1.0.69",
+ "thiserror 2.0.7",
  "tokio",
  "tokio-util",
  "tracing",
@@ -2341,20 +2264,18 @@ name = "iroh-relay"
 version = "0.30.0"
 dependencies = [
  "anyhow",
- "base64",
  "bytes",
  "clap",
  "crypto_box",
  "data-encoding",
  "derive_more",
  "futures-buffered",
- "futures-lite 2.5.0",
+ "futures-lite",
  "futures-sink",
  "futures-util",
  "governor 0.7.0",
  "hickory-proto",
  "hickory-resolver",
- "hostname 0.4.0",
  "http 1.2.0",
  "http-body-util",
  "hyper",
@@ -2364,10 +2285,8 @@ dependencies = [
  "iroh-quinn",
  "iroh-quinn-proto",
  "iroh-test 0.30.0",
- "libc",
  "lru",
  "num_enum",
- "once_cell",
  "pin-project",
  "postcard",
  "proptest",
@@ -2377,7 +2296,6 @@ dependencies = [
  "regex",
  "reloadable-state",
  "reqwest",
- "ring",
  "rustls",
  "rustls-cert-file-reader",
  "rustls-cert-reloadable-resolver",
@@ -2385,8 +2303,6 @@ dependencies = [
  "rustls-webpki",
  "serde",
  "serde_json",
- "smallvec",
- "socket2",
  "stun-rs",
  "testresult",
  "thiserror 2.0.7",
@@ -2743,21 +2659,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "netlink-packet-route"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "483325d4bfef65699214858f097d504eb812c38ce7077d165f301ec406c3066e"
-dependencies = [
- "anyhow",
- "bitflags 2.6.0",
- "byteorder",
- "libc",
- "log",
- "netlink-packet-core",
- "netlink-packet-utils",
-]
-
-[[package]]
 name = "netlink-packet-utils"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2807,7 +2708,7 @@ dependencies = [
  "atomic-waker",
  "bytes",
  "derive_more",
- "futures-lite 2.5.0",
+ "futures-lite",
  "futures-sink",
  "futures-util",
  "iroh-quinn-udp",
@@ -3282,7 +3183,7 @@ dependencies = [
  "base64",
  "bytes",
  "derive_more",
- "futures-lite 2.5.0",
+ "futures-lite",
  "futures-util",
  "igd-next",
  "iroh-metrics",
@@ -3773,7 +3674,7 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52e44394d2086d010551b14b53b1f24e31647570cd1deb0379e2c21b329aba00"
 dependencies = [
- "hostname 0.3.1",
+ "hostname",
  "quick-error",
 ]
 
@@ -4519,7 +4420,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28cce251fcbc87fac86a866eeb0d6c2d536fc16d06f184bb61aeae11aa4cee0c"
 dependencies = [
  "cfg-if",
- "fastrand 2.3.0",
+ "fastrand",
  "once_cell",
  "rustix",
  "windows-sys 0.59.0",
@@ -5137,12 +5038,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "waker-fn"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "317211a0dc0ceedd78fb2ca9a44aed3d7b9b26f81870d485c07122b4350673b7"
-
-[[package]]
 name = "walkdir"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5307,16 +5202,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e686886bc078bc1b0b600cac0147aadb815089b6e4da64016cbd754b6342700f"
 dependencies = [
  "windows-targets 0.48.5",
-]
-
-[[package]]
-name = "windows"
-version = "0.52.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e48a53791691ab099e5e2ad123536d0fff50652600abaf43bbf952894110d0be"
-dependencies = [
- "windows-core 0.52.0",
- "windows-targets 0.52.6",
 ]
 
 [[package]]

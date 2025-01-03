@@ -1,21 +1,22 @@
-use std::net::{IpAddr, Ipv6Addr};
+use std::{
+    net::{IpAddr, Ipv6Addr},
+    sync::OnceLock,
+};
 
 use anyhow::Result;
 use hickory_resolver::{Resolver, TokioResolver};
-use once_cell::sync::Lazy;
 
 /// The DNS resolver type used throughout `iroh`.
 pub(crate) type DnsResolver = TokioResolver;
 
-static DNS_RESOLVER: Lazy<TokioResolver> =
-    Lazy::new(|| create_default_resolver().expect("unable to create DNS resolver"));
+static DNS_RESOLVER: OnceLock<TokioResolver> = OnceLock::new();
 
 /// Get a reference to the default DNS resolver.
 ///
 /// The default resolver can be cheaply cloned and is shared throughout the running process.
 /// It is configured to use the system's DNS configuration.
 pub fn default_resolver() -> &'static DnsResolver {
-    &DNS_RESOLVER
+    DNS_RESOLVER.get_or_init(|| create_default_resolver().expect("unable to create DNS resolver"))
 }
 
 /// Deprecated IPv6 site-local anycast addresses still configured by windows.
