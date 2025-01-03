@@ -319,35 +319,97 @@
 <a href="#318" id="318">318</a>
 <a href="#319" id="319">319</a>
 <a href="#320" id="320">320</a>
-<a href="#321" id="321">321</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
+<a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
+<a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
+<a href="#347" id="347">347</a>
+<a href="#348" id="348">348</a>
+<a href="#349" id="349">349</a>
+<a href="#350" id="350">350</a>
+<a href="#351" id="351">351</a>
+<a href="#352" id="352">352</a>
+<a href="#353" id="353">353</a>
+<a href="#354" id="354">354</a>
+<a href="#355" id="355">355</a>
+<a href="#356" id="356">356</a>
+<a href="#357" id="357">357</a>
+<a href="#358" id="358">358</a>
+<a href="#359" id="359">359</a>
+<a href="#360" id="360">360</a>
+<a href="#361" id="361">361</a>
+<a href="#362" id="362">362</a>
+<a href="#363" id="363">363</a>
+<a href="#364" id="364">364</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
 //!
 //! based on tailscale/derp/derp_client.go
 
 </span><span class="kw">use </span>std::{
+    io,
     pin::Pin,
     task::{Context, Poll},
     time::Duration,
 };
 
-<span class="kw">use </span>anyhow::{bail, ensure, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>anyhow::{bail, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>futures_lite::Stream;
-<span class="kw">use </span>futures_sink::Sink;
-<span class="kw">use </span>futures_util::SinkExt;
+<span class="kw">use </span>futures_util::Sink;
 <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
 <span class="kw">use </span>tokio_tungstenite_wasm::WebSocketStream;
 <span class="kw">use </span>tokio_util::codec::Framed;
-<span class="kw">use </span>tracing::{debug, trace};
+<span class="kw">use </span>tracing::debug;
 
 <span class="kw">use </span><span class="kw">super</span>::KeyCache;
 <span class="kw">use crate</span>::{
     client::streams::MaybeTlsStreamChained,
-    protos::relay::{
-        write_frame, ClientInfo, Frame, RelayCodec, MAX_PACKET_SIZE, PROTOCOL_VERSION,
-    },
+    protos::relay::{ClientInfo, Frame, RelayCodec, MAX_PACKET_SIZE, PROTOCOL_VERSION},
 };
 
+<span class="doccomment">/// Error for sending messages to the relay server.
+</span><span class="attr">#[derive(Debug, thiserror::Error)]
+</span><span class="kw">pub enum </span>ConnSendError {
+    <span class="doccomment">/// An IO error.
+    </span><span class="attr">#[error(<span class="string">"IO error"</span>)]
+    </span>Io(<span class="attr">#[from] </span>io::Error),
+    <span class="doccomment">/// A protocol error.
+    </span><span class="attr">#[error(<span class="string">"Protocol error"</span>)]
+    </span>Protocol(<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str),
+}
+
 <span class="doccomment">/// A connection to a relay server.
+///
+/// This holds a connection to a relay server.  It is:
+///
+/// - A [`Stream`] for [`ReceivedMessage`] to receive from the server.
+/// - A [`Sink`] for [`SendMessage`] to send to the server.
+/// - A [`Sink`] for [`Frame`] to send to the server.
+///
+/// The [`Frame`] sink is a more internal interface, it allows performing the handshake.
+/// The [`SendMessage`] and [`ReceivedMessage`] are safer wrappers enforcing some protocol
+/// invariants.
 </span><span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>Conn {
     Relay {
@@ -391,50 +453,10 @@
 
         <span class="prelude-val">Ok</span>(conn)
     }
-
-    <span class="doccomment">/// Sends a packet to the node identified by `dstkey`
-    ///
-    /// Errors if the packet is larger than [`MAX_PACKET_SIZE`]
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>send(<span class="kw-2">&amp;mut </span><span class="self">self</span>, dst: NodeId, packet: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="macro">trace!</span>(dst = dst.fmt_short(), len = packet.len(), <span class="string">"[RELAY] send"</span>);
-        send_packet(<span class="kw-2">&amp;mut *</span><span class="self">self</span>, dst, packet).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="doccomment">/// Send a ping with 8 bytes of random data.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>send_ping(<span class="kw-2">&amp;mut </span><span class="self">self</span>, data: [u8; <span class="number">8</span>]) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        write_frame(<span class="kw-2">&amp;mut *</span><span class="self">self</span>, Frame::Ping { data }, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="self">self</span>.flush().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="doccomment">/// Respond to a ping request. The `data` field should be filled
-    /// by the 8 bytes of random data send by the ping.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>send_pong(<span class="kw-2">&amp;mut </span><span class="self">self</span>, data: [u8; <span class="number">8</span>]) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        write_frame(<span class="kw-2">&amp;mut *</span><span class="self">self</span>, Frame::Pong { data }, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="self">self</span>.flush().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="doccomment">/// Sends a packet that tells the server whether this
-    /// connection is to the user's preferred server. This is only
-    /// used in the server for stats.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>note_preferred(<span class="kw-2">&amp;mut </span><span class="self">self</span>, preferred: bool) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        write_frame(<span class="kw-2">&amp;mut *</span><span class="self">self</span>, Frame::NotePreferred { preferred }, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="self">self</span>.flush().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="doccomment">/// Close the connection
-    ///
-    /// Shuts down the write loop directly and marks the connection as closed. The [`Conn`] will
-    /// check if the it is closed before attempting to read from it.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>close(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        SinkExt::close(<span class="self">self</span>).<span class="kw">await</span>.ok();
-    }
 }
 
-<span class="kw">async fn </span>server_handshake(writer: <span class="kw-2">&amp;mut </span>Conn, secret_key: <span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<span class="doccomment">/// Sends the server handshake message.
+</span><span class="kw">async fn </span>server_handshake(writer: <span class="kw-2">&amp;mut </span>Conn, secret_key: <span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
     <span class="macro">debug!</span>(<span class="string">"server_handshake: started"</span>);
     <span class="kw">let </span>client_info = ClientInfo {
         version: PROTOCOL_VERSION,
@@ -489,43 +511,104 @@
 }
 
 <span class="kw">impl </span>Sink&lt;Frame&gt; <span class="kw">for </span>Conn {
-    <span class="kw">type </span>Error = std::io::Error;
+    <span class="kw">type </span>Error = ConnSendError;
 
     <span class="kw">fn </span>poll_ready(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
-            <span class="self">Self</span>::Relay { <span class="kw-2">ref mut </span>conn } =&gt; Pin::new(conn).poll_ready(cx),
-            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; {
-                Pin::new(conn).poll_ready(cx).map_err(tung_wasm_to_io_err)
-            }
+            <span class="self">Self</span>::Relay { <span class="kw-2">ref mut </span>conn } =&gt; Pin::new(conn).poll_ready(cx).map_err(Into::into),
+            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn)
+                .poll_ready(cx)
+                .map_err(tung_wasm_to_io_err)
+                .map_err(Into::into),
         }
     }
 
-    <span class="kw">fn </span>start_send(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, item: Frame) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
+    <span class="kw">fn </span>start_send(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, frame: Frame) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
+        <span class="kw">if let </span>Frame::SendPacket { dst_key: <span class="kw">_</span>, packet } = <span class="kw-2">&amp;</span>frame {
+            <span class="kw">if </span>packet.len() &gt; MAX_PACKET_SIZE {
+                <span class="kw">return </span><span class="prelude-val">Err</span>(ConnSendError::Protocol(<span class="string">"Packet exceeds MAX_PACKET_SIZE"</span>));
+            }
+        }
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
-            <span class="self">Self</span>::Relay { <span class="kw-2">ref mut </span>conn } =&gt; Pin::new(conn).start_send(item),
+            <span class="self">Self</span>::Relay { <span class="kw-2">ref mut </span>conn } =&gt; Pin::new(conn).start_send(frame).map_err(Into::into),
             <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn)
                 .start_send(tokio_tungstenite_wasm::Message::binary(
-                    item.encode_for_ws_msg(),
+                    frame.encode_for_ws_msg(),
                 ))
-                .map_err(tung_wasm_to_io_err),
+                .map_err(tung_wasm_to_io_err)
+                .map_err(Into::into),
         }
     }
 
     <span class="kw">fn </span>poll_flush(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
-            <span class="self">Self</span>::Relay { <span class="kw-2">ref mut </span>conn } =&gt; Pin::new(conn).poll_flush(cx),
-            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; {
-                Pin::new(conn).poll_flush(cx).map_err(tung_wasm_to_io_err)
-            }
+            <span class="self">Self</span>::Relay { <span class="kw-2">ref mut </span>conn } =&gt; Pin::new(conn).poll_flush(cx).map_err(Into::into),
+            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn)
+                .poll_flush(cx)
+                .map_err(tung_wasm_to_io_err)
+                .map_err(Into::into),
         }
     }
 
     <span class="kw">fn </span>poll_close(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
-            <span class="self">Self</span>::Relay { <span class="kw-2">ref mut </span>conn } =&gt; Pin::new(conn).poll_close(cx),
-            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; {
-                Pin::new(conn).poll_close(cx).map_err(tung_wasm_to_io_err)
+            <span class="self">Self</span>::Relay { <span class="kw-2">ref mut </span>conn } =&gt; Pin::new(conn).poll_close(cx).map_err(Into::into),
+            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn)
+                .poll_close(cx)
+                .map_err(tung_wasm_to_io_err)
+                .map_err(Into::into),
+        }
+    }
+}
+
+<span class="kw">impl </span>Sink&lt;SendMessage&gt; <span class="kw">for </span>Conn {
+    <span class="kw">type </span>Error = ConnSendError;
+
+    <span class="kw">fn </span>poll_ready(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
+        <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
+            <span class="self">Self</span>::Relay { <span class="kw-2">ref mut </span>conn } =&gt; Pin::new(conn).poll_ready(cx).map_err(Into::into),
+            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn)
+                .poll_ready(cx)
+                .map_err(tung_wasm_to_io_err)
+                .map_err(Into::into),
+        }
+    }
+
+    <span class="kw">fn </span>start_send(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, item: SendMessage) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
+        <span class="kw">if let </span>SendMessage::SendPacket(<span class="kw">_</span>, bytes) = <span class="kw-2">&amp;</span>item {
+            <span class="kw">if </span>bytes.len() &gt; MAX_PACKET_SIZE {
+                <span class="kw">return </span><span class="prelude-val">Err</span>(ConnSendError::Protocol(<span class="string">"Packet exceeds MAX_PACKET_SIZE"</span>));
             }
+        }
+        <span class="kw">let </span>frame = Frame::from(item);
+        <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
+            <span class="self">Self</span>::Relay { <span class="kw-2">ref mut </span>conn } =&gt; Pin::new(conn).start_send(frame).map_err(Into::into),
+            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn)
+                .start_send(tokio_tungstenite_wasm::Message::binary(
+                    frame.encode_for_ws_msg(),
+                ))
+                .map_err(tung_wasm_to_io_err)
+                .map_err(Into::into),
+        }
+    }
+
+    <span class="kw">fn </span>poll_flush(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
+        <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
+            <span class="self">Self</span>::Relay { <span class="kw-2">ref mut </span>conn } =&gt; Pin::new(conn).poll_flush(cx).map_err(Into::into),
+            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn)
+                .poll_flush(cx)
+                .map_err(tung_wasm_to_io_err)
+                .map_err(Into::into),
+        }
+    }
+
+    <span class="kw">fn </span>poll_close(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
+        <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
+            <span class="self">Self</span>::Relay { <span class="kw-2">ref mut </span>conn } =&gt; Pin::new(conn).poll_close(cx).map_err(Into::into),
+            <span class="self">Self</span>::Ws { <span class="kw-2">ref mut </span>conn, .. } =&gt; Pin::new(conn)
+                .poll_close(cx)
+                .map_err(tung_wasm_to_io_err)
+                .map_err(Into::into),
         }
     }
 }
@@ -620,24 +703,27 @@
     }
 }
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>send_packet&lt;S: Sink&lt;Frame, Error = std::io::Error&gt; + Unpin&gt;(
-    <span class="kw-2">mut </span>writer: S,
-    dst: NodeId,
-    packet: Bytes,
-) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-    <span class="macro">ensure!</span>(
-        packet.len() &lt;= MAX_PACKET_SIZE,
-        <span class="string">"packet too big: {}"</span>,
-        packet.len()
-    );
+<span class="doccomment">/// Messages we can send to a relay server.
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">pub enum </span>SendMessage {
+    <span class="doccomment">/// Send a packet of data to the [`NodeId`].
+    </span>SendPacket(NodeId, Bytes),
+    <span class="doccomment">/// Mark or unmark the connected relay as the home relay.
+    </span>NotePreferred(bool),
+    <span class="doccomment">/// Sends a ping message to the connected relay server.
+    </span>Ping([u8; <span class="number">8</span>]),
+    <span class="doccomment">/// Sends a pong message to the connected relay server.
+    </span>Pong([u8; <span class="number">8</span>]),
+}
 
-    <span class="kw">let </span>frame = Frame::SendPacket {
-        dst_key: dst,
-        packet,
-    };
-    writer.send(frame).<span class="kw">await</span><span class="question-mark">?</span>;
-    writer.flush().<span class="kw">await</span><span class="question-mark">?</span>;
-
-    <span class="prelude-val">Ok</span>(())
+<span class="kw">impl </span>From&lt;SendMessage&gt; <span class="kw">for </span>Frame {
+    <span class="kw">fn </span>from(source: SendMessage) -&gt; <span class="self">Self </span>{
+        <span class="kw">match </span>source {
+            SendMessage::SendPacket(dst_key, packet) =&gt; Frame::SendPacket { dst_key, packet },
+            SendMessage::NotePreferred(preferred) =&gt; Frame::NotePreferred { preferred },
+            SendMessage::Ping(data) =&gt; Frame::Ping { data },
+            SendMessage::Pong(data) =&gt; Frame::Pong { data },
+        }
+    }
 }
 </code></pre></div></section></main></body></html>

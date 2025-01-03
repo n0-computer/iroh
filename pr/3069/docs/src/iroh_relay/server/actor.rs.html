@@ -348,7 +348,12 @@
 <a href="#347" id="347">347</a>
 <a href="#348" id="348">348</a>
 <a href="#349" id="349">349</a>
-<a href="#350" id="350">350</a></pre></div><pre class="rust"><code><span class="doccomment">//! The main event loop for the relay server.
+<a href="#350" id="350">350</a>
+<a href="#351" id="351">351</a>
+<a href="#352" id="352">352</a>
+<a href="#353" id="353">353</a>
+<a href="#354" id="354">354</a>
+<a href="#355" id="355">355</a></pre></div><pre class="rust"><code><span class="doccomment">//! The main event loop for the relay server.
 //!
 //! based on tailscale/derp/derp_server.go
 
@@ -599,6 +604,7 @@
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>bytes::Bytes;
+    <span class="kw">use </span>futures_util::SinkExt;
     <span class="kw">use </span>iroh_base::SecretKey;
     <span class="kw">use </span>tokio::io::DuplexStream;
     <span class="kw">use </span>tokio_util::codec::Framed;
@@ -666,7 +672,11 @@
 
         <span class="comment">// write message from b to a
         </span><span class="kw">let </span>msg = <span class="string">b"hello world!"</span>;
-        <span class="kw">crate</span>::client::conn::send_packet(<span class="kw-2">&amp;mut </span>b_io, node_id_a, Bytes::from_static(msg)).<span class="kw">await</span><span class="question-mark">?</span>;
+        b_io.send(Frame::SendPacket {
+            dst_key: node_id_a,
+            packet: Bytes::from_static(msg),
+        })
+        .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// get message on a's reader
         </span><span class="kw">let </span>frame = recv_frame(FrameType::RecvPacket, <span class="kw-2">&amp;mut </span>a_io).<span class="kw">await</span><span class="question-mark">?</span>;

@@ -803,7 +803,21 @@
 <a href="#802" id="802">802</a>
 <a href="#803" id="803">803</a>
 <a href="#804" id="804">804</a>
-<a href="#805" id="805">805</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#805" id="805">805</a>
+<a href="#806" id="806">806</a>
+<a href="#807" id="807">807</a>
+<a href="#808" id="808">808</a>
+<a href="#809" id="809">809</a>
+<a href="#810" id="810">810</a>
+<a href="#811" id="811">811</a>
+<a href="#812" id="812">812</a>
+<a href="#813" id="813">813</a>
+<a href="#814" id="814">814</a>
+<a href="#815" id="815">815</a>
+<a href="#816" id="816">816</a>
+<a href="#817" id="817">817</a>
+<a href="#818" id="818">818</a>
+<a href="#819" id="819">819</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
@@ -1322,7 +1336,6 @@
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{
-        client::conn,
         protos::relay::{recv_frame, FrameType, RelayCodec},
         server::streams::MaybeTlsStream,
     };
@@ -1423,7 +1436,12 @@
         <span class="comment">// send packet
         </span><span class="macro">println!</span>(<span class="string">"  send packet"</span>);
         <span class="kw">let </span>data = <span class="string">b"hello world!"</span>;
-        conn::send_packet(<span class="kw-2">&amp;mut </span>io_rw, target, Bytes::from_static(data)).<span class="kw">await</span><span class="question-mark">?</span>;
+        io_rw
+            .send(Frame::SendPacket {
+                dst_key: target,
+                packet: Bytes::from_static(data),
+            })
+            .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>msg = server_channel_r.recv().<span class="kw">await</span>.unwrap();
         <span class="kw">match </span>msg {
             actor::Message::SendPacket {
@@ -1446,7 +1464,12 @@
         </span><span class="kw">let </span><span class="kw-2">mut </span>disco_data = disco::MAGIC.as_bytes().to_vec();
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
-        conn::send_packet(<span class="kw-2">&amp;mut </span>io_rw, target, disco_data.clone().into()).<span class="kw">await</span><span class="question-mark">?</span>;
+        io_rw
+            .send(Frame::SendPacket {
+                dst_key: target,
+                packet: disco_data.clone().into(),
+            })
+            .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>msg = server_channel_r.recv().<span class="kw">await</span>.unwrap();
         <span class="kw">match </span>msg {
             actor::Message::SendDiscoPacket {
@@ -1505,7 +1528,12 @@
         <span class="kw">let </span>data = <span class="string">b"hello world!"</span>;
         <span class="kw">let </span>target = SecretKey::generate(rand::thread_rng()).public();
 
-        conn::send_packet(<span class="kw-2">&amp;mut </span>io_rw, target, Bytes::from_static(data)).<span class="kw">await</span><span class="question-mark">?</span>;
+        io_rw
+            .send(Frame::SendPacket {
+                dst_key: target,
+                packet: Bytes::from_static(data),
+            })
+            .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>msg = server_channel_r.recv().<span class="kw">await</span>.unwrap();
         <span class="kw">match </span>msg {
             actor::Message::SendPacket {
