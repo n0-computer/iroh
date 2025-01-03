@@ -69,7 +69,6 @@ impl<T: Future> Future for MaybeFuture<T> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::pin::pin;
