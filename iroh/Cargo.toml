@@ -20,7 +20,7 @@ aead = { version = "0.5.2", features = ["bytes"] }
 anyhow = { version = "1" }
 concurrent-queue = "2.5"
 axum = { version = "0.7", optional = true }
-backoff = "0.4.0"
+backoff = { version = "0.4.0", features = ["futures", "tokio"]}
 bytes = "1.7"
 crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
 data-encoding = "2.2"
