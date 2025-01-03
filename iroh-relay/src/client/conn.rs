@@ -327,8 +327,6 @@ impl TryFrom<Frame> for ReceivedMessage {
 pub enum SendMessage {
     /// Send a packet of data to the [`NodeId`].
     SendPacket(NodeId, Bytes),
-    /// Mark or unmark the connected relay as the home relay.
-    NotePreferred(bool),
     /// Sends a ping message to the connected relay server.
     Ping([u8; 8]),
     /// Sends a pong message to the connected relay server.
@@ -339,7 +337,6 @@ impl From<SendMessage> for Frame {
     fn from(source: SendMessage) -> Self {
         match source {
             SendMessage::SendPacket(dst_key, packet) => Frame::SendPacket { dst_key, packet },
-            SendMessage::NotePreferred(preferred) => Frame::NotePreferred { preferred },
             SendMessage::Ping(data) => Frame::Ping { data },
             SendMessage::Pong(data) => Frame::Pong { data },
         }

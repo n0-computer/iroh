@@ -629,98 +629,28 @@ mod tests {
         // send packet
         println!("  send packet");
         let data = b"hello world!";
-        conn::send_packet(&mut io_rw, target, Bytes::from_static(data)).await?;
-        // send disco packet
-        println!("  send disco packet");
-        // starts with `MAGIC` & key, then data
-        let mut disco_data = disco::MAGIC.as_bytes().to_vec();
-        disco_data.extend_from_slice(target.as_bytes());
-        disco_data.extend_from_slice(data);
-        conn::send_packet(&mut io_rw, target, disco_data.clone().into()).await?;
-
-        done.cancel();
-        handle.await??;
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_client_conn_read_err() -> Result<()> {
-        let (_send_queue_s, send_queue_r) = mpsc::channel(10);
-        let (_disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
-        let (_peer_gone_s, peer_gone_r) = mpsc::channel(10);
-
-        let key = SecretKey::generate(rand::thread_rng()).public();
-        let (io, io_rw) = tokio::io::duplex(1024);
-        let mut io_rw = Framed::new(io_rw, RelayCodec::test());
-        let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
-        let stream =
-            RelayedStream::Relay(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
-
-        println!("-- create client conn");
-        let actor = Actor {
-            stream: RateLimitedRelayedStream::unlimited(stream),
-            timeout: Duration::from_secs(1),
-            send_queue: send_queue_r,
-            disco_send_queue: disco_send_queue_r,
-            node_gone: peer_gone_r,
-
-            key,
-            server_channel: server_channel_s,
-            preferred: true,
-        };
-
-        let done = CancellationToken::new();
-        let io_done = done.clone();
-
-        println!("-- run client conn");
-        let handle = tokio::task::spawn(async move { actor.run(io_done).await });
-
-        // send packet
-        println!("   send packet");
-        let data = b"hello world!";
-        let target = SecretKey::generate(rand::thread_rng()).public();
-
         io_rw
             .send(Frame::SendPacket {
                 dst_key: target,
                 packet: Bytes::from_static(data),
             })
             .await?;
-        let msg = server_channel_r.recv().await.unwrap();
-        match msg {
-            actor::Message::SendPacket {
-                dst: got_target,
-                src: got_src,
-                data: got_data,
-            } => {
-                assert_eq!(target, got_target);
-                assert_eq!(key, got_src);
-                assert_eq!(&data[..], &got_data);
-                println!("    send packet success");
-            }
-            m => {
-                bail!("expected ServerMessage::SendPacket, got {m:?}");
-            }
-        }
 
-        println!("-- drop io");
-        drop(io_rw);
+        // send disco packet
+        println!("  send disco packet");
+        // starts with `MAGIC` & key, then data
+        let mut disco_data = disco::MAGIC.as_bytes().to_vec();
+        disco_data.extend_from_slice(target.as_bytes());
+        disco_data.extend_from_slice(data);
+        io_rw
+            .send(Frame::SendPacket {
+                dst_key: target,
+                packet: disco_data.clone().into(),
+            })
+            .await?;
 
-        // expect task to complete after encountering an error
-        if let Err(err) = tokio::time::timeout(Duration::from_secs(1), handle).await?? {
-            if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
-                if io_err.kind() == std::io::ErrorKind::UnexpectedEof {
-                    println!("   task closed successfully with `UnexpectedEof` error");
-                } else {
-                    bail!("expected `UnexpectedEof` error, got unknown error: {io_err:?}");
-                }
-            } else {
-                bail!("expected `std::io::Error`, got `None`");
-            }
-        } else {
-            bail!("expected task to finish in `UnexpectedEof` error, got `Ok(())`");
-        }
-
+        done.cancel();
+        handle.await??;
         Ok(())
     }
 

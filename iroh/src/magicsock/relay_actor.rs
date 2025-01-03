@@ -166,6 +166,8 @@ enum ActiveRelayMessage {
     /// connection uses a local socket with an IP address not in this list the server will
     /// always re-connect.
     CheckConnection(Vec<IpAddr>),
+    /// Sets this relay as the home relay, or not.
+    SetHomeRelay(bool),
     #[cfg(test)]
     GetLocalAddr(oneshot::Sender<Option<SocketAddr>>),
     #[cfg(test)]
@@ -423,12 +425,6 @@ impl ActiveRelayActor {
         };
         let mut send_datagrams_buf = Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE);
 
-        if self.is_home_relay {
-            let fut = client_sink.send(SendMessage::NotePreferred(true));
-            self.run_sending(fut, &mut state, &mut client_stream)
-                .await?;
-        }
-
         let res = loop {
             if let Some(data) = state.pong_pending.take() {
                 let fut = client_sink.send(SendMessage::Pong(data));
@@ -464,8 +460,6 @@ impl ActiveRelayActor {
                     match msg {
                         ActiveRelayMessage::SetHomeRelay(is_preferred) => {
                             self.is_home_relay = is_preferred;
-                            let fut = client_sink.send(SendMessage::NotePreferred(is_preferred));
-                            self.run_sending(fut, &mut state, &mut client_stream).await?;
                         }
                         ActiveRelayMessage::CheckConnection(local_ips) => {
                             match client_stream.local_addr() {
@@ -796,7 +790,7 @@ impl RelayActor {
     async fn handle_msg(&mut self, msg: RelayActorMessage) {
         match msg {
             RelayActorMessage::SetHome { url } => {
-                self.set_home_relay(url);
+                self.set_home_relay(url).await;
             }
             RelayActorMessage::MaybeCloseRelaysOnRebind(ifs) => {
                 self.maybe_close_relays_on_rebind(&ifs).await;
@@ -832,7 +826,17 @@ impl RelayActor {
         }
     }
 
-    fn set_home_relay(&mut self, home_url: RelayUrl) {
+    async fn set_home_relay(&mut self, home_url: RelayUrl) {
+        let home_url_ref = &home_url;
+        futures_buffered::join_all(self.active_relays.iter().map(|(url, handle)| async move {
+            let is_preferred = url == home_url_ref;
+            handle
+                .inbox_addr
+                .send(ActiveRelayMessage::SetHomeRelay(is_preferred))
+                .await
+                .ok()
+        }))
+        .await;
         // Ensure we have an ActiveRelayActor for the current home relay.
         self.active_relay_handle(home_url);
     }
