@@ -8,7 +8,8 @@ use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use indicatif::HumanBytes;
 use iroh::{
-    endpoint::ConnectionError, Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl, SecretKey,
+    endpoint::{ConnectionError, PathSelection},
+    Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
 use iroh_base::ticket::NodeTicket;
 use tracing::info;
@@ -73,11 +74,15 @@ async fn provide(size: u64, relay_url: Option<String>, relay_only: bool) -> anyh
         }
         None => RelayMode::Default,
     };
+    let path_selection = match relay_only {
+        true => PathSelection::RelayOnly,
+        false => PathSelection::default(),
+    };
     let endpoint = Endpoint::builder()
         .secret_key(secret_key)
         .alpns(vec![TRANSFER_ALPN.to_vec()])
         .relay_mode(relay_mode)
-        .relay_only(relay_only)
+        .path_selection(path_selection)
         .bind()
         .await?;
 
@@ -166,11 +171,15 @@ async fn fetch(ticket: &str, relay_url: Option<String>, relay_only: bool) -> any
         }
         None => RelayMode::Default,
     };
+    let path_selection = match relay_only {
+        true => PathSelection::RelayOnly,
+        false => PathSelection::default(),
+    };
     let endpoint = Endpoint::builder()
         .secret_key(secret_key)
         .alpns(vec![TRANSFER_ALPN.to_vec()])
         .relay_mode(relay_mode)
-        .relay_only(relay_only)
+        .path_selection(path_selection)
         .bind()
         .await?;
 

@@ -22,6 +22,7 @@ use super::{
 };
 use crate::{
     disco::{self, SendAddr},
+    endpoint::PathSelection,
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
     watchable::{Watchable, Watcher},
 };
@@ -135,10 +136,9 @@ pub(super) struct NodeState {
     ///
     /// Used for metric reporting.
     has_been_direct: bool,
-    /// This implies we only use the relay to communicate
-    /// and do not attempt to do any hole punching.
+    /// Configuration for what path selection to use
     #[cfg(any(test, feature = "test-utils"))]
-    relay_only: bool,
+    path_selection: PathSelection,
 }
 
 /// Options for creating a new [`NodeState`].
@@ -150,7 +150,7 @@ pub(super) struct Options {
     pub(super) active: bool,
     pub(super) source: super::Source,
     #[cfg(any(test, feature = "test-utils"))]
-    pub(super) relay_only: bool,
+    pub(super) path_selection: PathSelection,
 }
 
 impl NodeState {
@@ -182,7 +182,7 @@ impl NodeState {
             conn_type: Watchable::new(ConnectionType::None),
             has_been_direct: false,
             #[cfg(any(test, feature = "test-utils"))]
-            relay_only: options.relay_only,
+            path_selection: options.path_selection,
         }
     }
 
@@ -279,8 +279,8 @@ impl NodeState {
         have_ipv6: bool,
     ) -> (Option<SocketAddr>, Option<RelayUrl>) {
         #[cfg(any(test, feature = "test-utils"))]
-        if self.relay_only {
-            debug!("in `relay_only` mode, giving the relay address as the only viable address for this endpoint");
+        if self.path_selection == PathSelection::RelayOnly {
+            debug!("in `RelayOnly` mode, giving the relay address as the only viable address for this endpoint");
             return (None, self.relay_url());
         }
         let (best_addr, relay_url) = match self.udp_paths.send_addr(*now, have_ipv6) {
@@ -465,9 +465,9 @@ impl NodeState {
     #[must_use = "pings must be handled"]
     fn start_ping(&self, dst: SendAddr, purpose: DiscoPingPurpose) -> Option<SendPing> {
         #[cfg(any(test, feature = "test-utils"))]
-        if self.relay_only && !dst.is_relay() {
+        if self.path_selection == PathSelection::RelayOnly && !dst.is_relay() {
             // don't attempt any hole punching in relay only mode
-            warn!("in `relay_only` mode, ignoring request to start a hole punching attempt.");
+            warn!("in `RealyOnly` mode, ignoring request to start a hole punching attempt.");
             return None;
         }
         let tx_id = stun::TransactionId::default();
@@ -612,8 +612,8 @@ impl NodeState {
         }
 
         #[cfg(any(test, feature = "test-utils"))]
-        if self.relay_only {
-            warn!("in `relay_only` mode, ignoring request to respond to a hole punching attempt.");
+        if self.path_selection == PathSelection::RelayOnly {
+            warn!("in `RelayOnly` mode, ignoring request to respond to a hole punching attempt.");
             return ping_msgs;
         }
         self.prune_direct_addresses();
@@ -1505,7 +1505,7 @@ mod tests {
                     conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
                     has_been_direct: true,
                     #[cfg(any(test, feature = "test-utils"))]
-                    relay_only: false,
+                    path_selection: PathSelection::default(),
                 },
                 ip_port.into(),
             )
@@ -1527,7 +1527,7 @@ mod tests {
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
                 has_been_direct: false,
                 #[cfg(any(test, feature = "test-utils"))]
-                relay_only: false,
+                path_selection: PathSelection::default(),
             }
         };
 
@@ -1556,7 +1556,7 @@ mod tests {
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
                 has_been_direct: false,
                 #[cfg(any(test, feature = "test-utils"))]
-                relay_only: false,
+                path_selection: PathSelection::default(),
             }
         };
 
@@ -1598,7 +1598,7 @@ mod tests {
                     )),
                     has_been_direct: false,
                     #[cfg(any(test, feature = "test-utils"))]
-                    relay_only: false,
+                    path_selection: PathSelection::default(),
                 },
                 socket_addr,
             )
@@ -1689,7 +1689,7 @@ mod tests {
                 (d_endpoint.id, d_endpoint),
             ]),
             next_id: 5,
-            relay_only: false,
+            path_selection: PathSelection::default(),
         });
         let mut got = node_map.list_remote_infos(later);
         got.sort_by_key(|p| p.node_id);
@@ -1719,7 +1719,7 @@ mod tests {
             source: crate::magicsock::Source::NamedApp {
                 name: "test".into(),
             },
-            relay_only: false,
+            path_selection: PathSelection::default(),
         };
         let mut ep = NodeState::new(0, opts);
 

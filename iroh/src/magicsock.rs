@@ -66,6 +66,7 @@ use crate::{
     disco::{self, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},
     dns::DnsResolver,
+    endpoint::PathSelection,
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     watchable::{Watchable, Watcher},
 };
@@ -129,10 +130,9 @@ pub(crate) struct Options {
     #[cfg(any(test, feature = "test-utils"))]
     pub(crate) insecure_skip_relay_cert_verify: bool,
 
-    /// This implies we only use the relay to communicate
-    /// and do not attempt to do any hole punching.
+    /// Configuration for what path selection to use
     #[cfg(any(test, feature = "test-utils"))]
-    pub(crate) relay_only: bool,
+    pub(crate) path_selection: PathSelection,
 }
 
 impl Default for Options {
@@ -149,7 +149,7 @@ impl Default for Options {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             #[cfg(any(test, feature = "test-utils"))]
-            relay_only: false,
+            path_selection: PathSelection::default(),
         }
     }
 }
@@ -1521,7 +1521,7 @@ impl Handle {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
             #[cfg(any(test, feature = "test-utils"))]
-            relay_only,
+            path_selection,
         } = opts;
 
         let relay_datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
@@ -1553,7 +1553,7 @@ impl Handle {
         // load the node data
         let node_map = node_map.unwrap_or_default();
         #[cfg(any(test, feature = "test-utils"))]
-        let node_map = NodeMap::load_from_vec(node_map, relay_only);
+        let node_map = NodeMap::load_from_vec(node_map, path_selection);
         #[cfg(not(any(test, feature = "test-utils")))]
         let node_map = NodeMap::load_from_vec(node_map);
 
@@ -3822,7 +3822,7 @@ mod tests {
             dns_resolver: crate::dns::default_resolver().clone(),
             proxy_url: None,
             insecure_skip_relay_cert_verify: true,
-            relay_only: false,
+            path_selection: PathSelection::default(),
         };
         let msock = MagicSock::spawn(opts).await?;
         let server_config = crate::endpoint::make_server_config(
