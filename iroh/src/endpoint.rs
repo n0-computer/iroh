@@ -1008,7 +1008,7 @@ impl Endpoint {
     // # Remaining private methods
 
     /// Expose the internal [`CancellationToken`] to link shutdowns.
-    pub(crate) fn cancel_token(&self) -> &CancellationToken {
+    pub fn cancel_token(&self) -> &CancellationToken {
         &self.cancel_token
     }
 
