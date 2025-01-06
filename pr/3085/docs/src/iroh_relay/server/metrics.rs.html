@@ -230,7 +230,7 @@
     <span class="doccomment">/// Number of accepted websocket connections
     </span><span class="kw">pub </span>websocket_accepts: Counter,
     <span class="doccomment">/// Number of accepted 'iroh derp http' connection upgrades
-    </span><span class="kw">pub </span>derp_accepts: Counter,
+    </span><span class="kw">pub </span>relay_accepts: Counter,
     <span class="comment">// TODO: enable when we can have multiple connections for one node id
     // pub duplicate_client_keys: Counter,
     // pub duplicate_client_conns: Counter,
@@ -281,7 +281,7 @@
             unique_client_keys: Counter::new(<span class="string">"Number of unique client keys per day."</span>),
 
             websocket_accepts: Counter::new(<span class="string">"Number of accepted websocket connections"</span>),
-            derp_accepts: Counter::new(<span class="string">"Number of accepted 'iroh derp http' connection upgrades"</span>),
+            relay_accepts: Counter::new(<span class="string">"Number of accepted 'iroh derp http' connection upgrades"</span>),
             <span class="comment">// TODO: enable when we can have multiple connections for one node id
             // pub duplicate_client_keys: Counter::new("Number of duplicate client keys."),
             // pub duplicate_client_conns: Counter::new("Number of duplicate client connections."),
@@ -297,7 +297,7 @@
     </span>}
 }
 
-<span class="doccomment">/// StunMetrics tracked for the DERPER
+<span class="doccomment">/// StunMetrics tracked for the relay server
 </span><span class="attr">#[derive(Debug, Clone, Iterable)]
 </span><span class="kw">pub struct </span>StunMetrics {
     <span class="comment">/*
