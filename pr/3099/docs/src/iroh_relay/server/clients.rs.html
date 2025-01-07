@@ -234,7 +234,15 @@
 <a href="#233" id="233">233</a>
 <a href="#234" id="234">234</a>
 <a href="#235" id="235">235</a>
-<a href="#236" id="236">236</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
 </span><span class="comment">// Based on tailscale/derp/derp_server.go
 
 </span><span class="kw">use </span>std::{collections::HashSet, sync::Arc};
@@ -292,8 +300,15 @@
     <span class="doccomment">/// Removes the client from the map of clients, &amp; sends a notification
     /// to each client that peers has sent data to, to let them know that
     /// peer is gone from the network.
-    </span><span class="kw">async fn </span>unregister(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) {
-        <span class="macro">trace!</span>(node_id = node_id.fmt_short(), <span class="string">"unregistering client"</span>);
+    ///
+    /// Explicitly drops the reference to the client to avoid deadlock.
+    </span><span class="kw">async fn </span>unregister&lt;<span class="lifetime">'a</span>&gt;(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        client: dashmap::mapref::one::Ref&lt;<span class="lifetime">'a</span>, iroh_base::PublicKey, Client&gt;,
+        node_id: NodeId,
+    ) {
+        drop(client); <span class="comment">// avoid deadlock
+        </span><span class="macro">trace!</span>(node_id = node_id.fmt_short(), <span class="string">"unregistering client"</span>);
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, client)) = <span class="self">self</span>.<span class="number">0</span>.clients.remove(<span class="kw-2">&amp;</span>node_id) {
             <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, sent_to)) = <span class="self">self</span>.<span class="number">0</span>.sent_to.remove(<span class="kw-2">&amp;</span>node_id) {
@@ -344,8 +359,7 @@
                     dst = dst.fmt_short(),
                     <span class="string">"can no longer write to client, dropping message and pruning connection"
                 </span>);
-                drop(client); <span class="comment">// avoid deadlock
-                </span><span class="self">self</span>.unregister(dst).<span class="kw">await</span>;
+                <span class="self">self</span>.unregister(client, dst).<span class="kw">await</span>;
                 <span class="macro">bail!</span>(<span class="string">"failed to send message: gone"</span>);
             }
         }
@@ -384,8 +398,7 @@
                     dst = dst.fmt_short(),
                     <span class="string">"can no longer write to client, dropping disco message and pruning connection"
                 </span>);
-                drop(client); <span class="comment">// avoid deadlock
-                </span><span class="self">self</span>.unregister(dst).<span class="kw">await</span>;
+                <span class="self">self</span>.unregister(client, dst).<span class="kw">await</span>;
                 <span class="macro">bail!</span>(<span class="string">"failed to send message: gone"</span>);
             }
         }
@@ -461,8 +474,11 @@
             }
         );
 
-        <span class="comment">// send peer_gone
-        </span>clients.unregister(a_key).<span class="kw">await</span>;
+        <span class="kw">let </span>client = clients.<span class="number">0</span>.clients.get(<span class="kw-2">&amp;</span>a_key).unwrap();
+
+        <span class="comment">// send peer_gone. Also, tests that we do not get a deadlock
+        // when unregistering.
+        </span>clients.unregister(client, a_key).<span class="kw">await</span>;
 
         <span class="macro">assert!</span>(!clients.<span class="number">0</span>.clients.contains_key(<span class="kw-2">&amp;</span>a_key));
         clients.shutdown().<span class="kw">await</span>;
