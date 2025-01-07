@@ -231,7 +231,10 @@
 <a href="#230" id="230">230</a>
 <a href="#231" id="231">231</a>
 <a href="#232" id="232">232</a>
-<a href="#233" id="233">233</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
 </span><span class="comment">// Based on tailscale/derp/derp_server.go
 
 </span><span class="kw">use </span>std::{collections::HashSet, sync::Arc};
@@ -244,7 +247,7 @@
 <span class="kw">use </span>tokio::sync::mpsc::error::TrySendError;
 <span class="kw">use </span>tracing::{debug, trace};
 
-<span class="kw">use </span><span class="kw">super</span>::client::{Client, Config, Packet};
+<span class="kw">use </span><span class="kw">super</span>::client::{Client, Config};
 <span class="kw">use </span><span class="kw">crate</span>::server::metrics::Metrics;
 
 <span class="doccomment">/// Manages the connections to all currently connected clients.
@@ -316,52 +319,14 @@
         }
     }
 
-    <span class="doccomment">/// Attempt to send a packet to client with [`NodeId`] `dst`
+    <span class="doccomment">/// Attempt to send a packet to client with [`NodeId`] `dst`.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>send_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId, data: Bytes, src: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>res = <span class="prelude-val">None</span>;
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.<span class="number">0</span>.clients.get(<span class="kw-2">&amp;</span>dst) {
-            res = <span class="prelude-val">Some</span>(client.try_send_packet(src, data));
-        }
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(res) = res {
-            <span class="comment">// `process_result` may call `unregister`, which itself calls `self.0.clients`
-            // so we can't nest this under the above call to `self.0.clients`
-            </span><span class="kw">return </span><span class="self">self</span>.process_result(src, dst, res).<span class="kw">await</span>;
-        }
-        <span class="macro">debug!</span>(dst = dst.fmt_short(), <span class="string">"no connected client, dropped packet"</span>);
-        <span class="macro">inc!</span>(Metrics, send_packets_dropped);
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>send_disco_packet(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        dst: NodeId,
-        data: Bytes,
-        src: NodeId,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>res = <span class="prelude-val">None</span>;
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.<span class="number">0</span>.clients.get(<span class="kw-2">&amp;</span>dst) {
-            res = <span class="prelude-val">Some</span>(client.try_send_disco_packet(src, data));
-        }
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(res) = res {
-            <span class="comment">// `process_result` may call `unregister`, which itself calls `self.0.clients`
-            // so we can't nest this under the above call to `self.0.clients`
-            </span><span class="kw">return </span><span class="self">self</span>.process_result(src, dst, res).<span class="kw">await</span>;
-        }
-        <span class="macro">debug!</span>(
-            dst = dst.fmt_short(),
-            <span class="string">"no connected client, dropped disco packet"
-        </span>);
-        <span class="macro">inc!</span>(Metrics, disco_packets_dropped);
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="kw">async fn </span>process_result(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        src: NodeId,
-        dst: NodeId,
-        res: <span class="prelude-ty">Result</span>&lt;(), TrySendError&lt;Packet&gt;&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">match </span>res {
+        <span class="kw">let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.<span class="number">0</span>.clients.get(<span class="kw-2">&amp;</span>dst) <span class="kw">else </span>{
+            <span class="macro">debug!</span>(dst = dst.fmt_short(), <span class="string">"no connected client, dropped packet"</span>);
+            <span class="macro">inc!</span>(Metrics, send_packets_dropped);
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+        };
+        <span class="kw">match </span>client.try_send_packet(src, data) {
             <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
                 <span class="comment">// Record sent_to relationship
                 </span><span class="self">self</span>.<span class="number">0</span>.sent_to.entry(src).or_default().insert(dst);
@@ -372,15 +337,56 @@
                     dst = dst.fmt_short(),
                     <span class="string">"client too busy to receive packet, dropping packet"
                 </span>);
-                <span class="macro">bail!</span>(<span class="string">"failed to send message"</span>);
+                <span class="macro">bail!</span>(<span class="string">"failed to send message: full"</span>);
             }
             <span class="prelude-val">Err</span>(TrySendError::Closed(<span class="kw">_</span>)) =&gt; {
                 <span class="macro">debug!</span>(
                     dst = dst.fmt_short(),
                     <span class="string">"can no longer write to client, dropping message and pruning connection"
                 </span>);
-                <span class="self">self</span>.unregister(dst).<span class="kw">await</span>;
-                <span class="macro">bail!</span>(<span class="string">"failed to send message"</span>);
+                drop(client); <span class="comment">// avoid deadlock
+                </span><span class="self">self</span>.unregister(dst).<span class="kw">await</span>;
+                <span class="macro">bail!</span>(<span class="string">"failed to send message: gone"</span>);
+            }
+        }
+    }
+
+    <span class="doccomment">/// Attempt to send a disco packet to client with [`NodeId`] `dst`.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>send_disco_packet(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        dst: NodeId,
+        data: Bytes,
+        src: NodeId,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.<span class="number">0</span>.clients.get(<span class="kw-2">&amp;</span>dst) <span class="kw">else </span>{
+            <span class="macro">debug!</span>(
+                dst = dst.fmt_short(),
+                <span class="string">"no connected client, dropped disco packet"
+            </span>);
+            <span class="macro">inc!</span>(Metrics, disco_packets_dropped);
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+        };
+        <span class="kw">match </span>client.try_send_disco_packet(src, data) {
+            <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
+                <span class="comment">// Record sent_to relationship
+                </span><span class="self">self</span>.<span class="number">0</span>.sent_to.entry(src).or_default().insert(dst);
+                <span class="prelude-val">Ok</span>(())
+            }
+            <span class="prelude-val">Err</span>(TrySendError::Full(<span class="kw">_</span>)) =&gt; {
+                <span class="macro">debug!</span>(
+                    dst = dst.fmt_short(),
+                    <span class="string">"client too busy to receive disco packet, dropping packet"
+                </span>);
+                <span class="macro">bail!</span>(<span class="string">"failed to send message: full"</span>);
+            }
+            <span class="prelude-val">Err</span>(TrySendError::Closed(<span class="kw">_</span>)) =&gt; {
+                <span class="macro">debug!</span>(
+                    dst = dst.fmt_short(),
+                    <span class="string">"can no longer write to client, dropping disco message and pruning connection"
+                </span>);
+                drop(client); <span class="comment">// avoid deadlock
+                </span><span class="self">self</span>.unregister(dst).<span class="kw">await</span>;
+                <span class="macro">bail!</span>(<span class="string">"failed to send message: gone"</span>);
             }
         }
     }
