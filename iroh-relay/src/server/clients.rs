@@ -85,8 +85,11 @@ impl Clients {
 
     /// Attempt to send a packet to client with [`NodeId`] `dst`
     pub(super) async fn send_packet(&self, dst: NodeId, data: Bytes, src: NodeId) -> Result<()> {
+        let mut res = None;
         if let Some(client) = self.0.clients.get(&dst) {
-            let res = client.try_send_packet(src, data);
+            res = Some(client.try_send_packet(src, data));
+        }
+        if let Some(res) = res {
             return self.process_result(src, dst, res).await;
         }
         debug!(dst = dst.fmt_short(), "no connected client, dropped packet");
@@ -100,8 +103,11 @@ impl Clients {
         data: Bytes,
         src: NodeId,
     ) -> Result<()> {
+        let mut res = None;
         if let Some(client) = self.0.clients.get(&dst) {
-            let res = client.try_send_disco_packet(src, data);
+            res = Some(client.try_send_disco_packet(src, data));
+        }
+        if let Some(res) = res {
             return self.process_result(src, dst, res).await;
         }
         debug!(
