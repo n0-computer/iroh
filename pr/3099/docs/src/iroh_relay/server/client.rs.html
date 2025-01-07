@@ -700,8 +700,7 @@
 <a href="#699" id="699">699</a>
 <a href="#700" id="700">700</a>
 <a href="#701" id="701">701</a>
-<a href="#702" id="702">702</a>
-<a href="#703" id="703">703</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#702" id="702">702</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
@@ -1003,8 +1002,7 @@
         <span class="kw">let </span>frame = <span class="kw">match </span>maybe_frame {
             <span class="prelude-val">Some</span>(frame) =&gt; frame<span class="question-mark">?</span>,
             <span class="prelude-val">None </span>=&gt; {
-                <span class="macro">tracing::trace!</span>(<span class="string">"stream terminated"</span>);
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                <span class="macro">anyhow::bail!</span>(<span class="string">"stream terminated"</span>);
             }
         };
         <span class="kw">match </span>frame {
