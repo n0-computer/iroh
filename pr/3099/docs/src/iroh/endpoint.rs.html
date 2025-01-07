@@ -1920,8 +1920,7 @@
 <a href="#1919" id="1919">1919</a>
 <a href="#1920" id="1920">1920</a>
 <a href="#1921" id="1921">1921</a>
-<a href="#1922" id="1922">1922</a>
-<a href="#1923" id="1923">1923</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#1922" id="1922">1922</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3586,7 +3585,6 @@
                         send.finish().unwrap();
                         send.stopped().<span class="kw">await</span>.unwrap();
                         recv.read_to_end(<span class="number">0</span>).<span class="kw">await</span>.unwrap();
-                        conn.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
                         <span class="macro">info!</span>(%i, peer = %peer_id.fmt_short(), <span class="string">"finished"</span>);
                         <span class="macro">info!</span>(<span class="string">"[server] round {i} done in {:?}"</span>, round_start.elapsed());
                     }
