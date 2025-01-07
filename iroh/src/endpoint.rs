@@ -1663,7 +1663,6 @@ mod tests {
                         send.finish().unwrap();
                         send.stopped().await.unwrap();
                         recv.read_to_end(0).await.unwrap();
-                        conn.close(0u16.into(), b"");
                         info!(%i, peer = %peer_id.fmt_short(), "finished");
                         info!("[server] round {i} done in {:?}", round_start.elapsed());
                     }
