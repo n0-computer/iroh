@@ -299,9 +299,7 @@ impl Actor {
         trace!(?maybe_frame, "handle incoming frame");
         let frame = match maybe_frame {
             Some(frame) => frame?,
-            None => {
-                anyhow::bail!("stream terminated");
-            }
+            None => anyhow::bail!("stream terminated"),
         };
         match frame {
             Frame::SendPacket { dst_key, packet } => {
