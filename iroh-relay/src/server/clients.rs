@@ -56,7 +56,14 @@ impl Clients {
     /// Removes the client from the map of clients, & sends a notification
     /// to each client that peers has sent data to, to let them know that
     /// peer is gone from the network.
-    async fn unregister(&self, node_id: NodeId) {
+    ///
+    /// Explicitly drops the reference to the client to avoid deadlock.
+    async fn unregister<'a>(
+        &self,
+        client: dashmap::mapref::one::Ref<'a, iroh_base::PublicKey, Client>,
+        node_id: NodeId,
+    ) {
+        drop(client); // avoid deadlock
         trace!(node_id = node_id.fmt_short(), "unregistering client");
 
         if let Some((_, client)) = self.0.clients.remove(&node_id) {
@@ -108,8 +115,7 @@ impl Clients {
                     dst = dst.fmt_short(),
                     "can no longer write to client, dropping message and pruning connection"
                 );
-                drop(client); // avoid deadlock
-                self.unregister(dst).await;
+                self.unregister(client, dst).await;
                 bail!("failed to send message: gone");
             }
         }
@@ -148,8 +154,7 @@ impl Clients {
                     dst = dst.fmt_short(),
                     "can no longer write to client, dropping disco message and pruning connection"
                 );
-                drop(client); // avoid deadlock
-                self.unregister(dst).await;
+                self.unregister(client, dst).await;
                 bail!("failed to send message: gone");
             }
         }
@@ -225,8 +230,11 @@ mod tests {
             }
         );
 
-        // send peer_gone
-        clients.unregister(a_key).await;
+        let client = clients.0.clients.get(&a_key).unwrap();
+
+        // send peer_gone. Also, tests that we do not get a deadlock
+        // when unregistering.
+        clients.unregister(client, a_key).await;
 
         assert!(!clients.0.clients.contains_key(&a_key));
         clients.shutdown().await;
