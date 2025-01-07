@@ -11,7 +11,7 @@ use iroh_metrics::inc;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::{debug, trace};
 
-use super::client::{Client, Config, Packet};
+use super::client::{Client, Config};
 use crate::server::metrics::Metrics;
 
 /// Manages the connections to all currently connected clients.
@@ -83,52 +83,14 @@ impl Clients {
         }
     }
 
-    /// Attempt to send a packet to client with [`NodeId`] `dst`
+    /// Attempt to send a packet to client with [`NodeId`] `dst`.
     pub(super) async fn send_packet(&self, dst: NodeId, data: Bytes, src: NodeId) -> Result<()> {
-        let mut res = None;
-        if let Some(client) = self.0.clients.get(&dst) {
-            res = Some(client.try_send_packet(src, data));
-        }
-        if let Some(res) = res {
-            // `process_result` may call `unregister`, which itself calls `self.0.clients`
-            // so we can't nest this under the above call to `self.0.clients`
-            return self.process_result(src, dst, res).await;
-        }
-        debug!(dst = dst.fmt_short(), "no connected client, dropped packet");
-        inc!(Metrics, send_packets_dropped);
-        Ok(())
-    }
-
-    pub(super) async fn send_disco_packet(
-        &self,
-        dst: NodeId,
-        data: Bytes,
-        src: NodeId,
-    ) -> Result<()> {
-        let mut res = None;
-        if let Some(client) = self.0.clients.get(&dst) {
-            res = Some(client.try_send_disco_packet(src, data));
-        }
-        if let Some(res) = res {
-            // `process_result` may call `unregister`, which itself calls `self.0.clients`
-            // so we can't nest this under the above call to `self.0.clients`
-            return self.process_result(src, dst, res).await;
-        }
-        debug!(
-            dst = dst.fmt_short(),
-            "no connected client, dropped disco packet"
-        );
-        inc!(Metrics, disco_packets_dropped);
-        Ok(())
-    }
-
-    async fn process_result(
-        &self,
-        src: NodeId,
-        dst: NodeId,
-        res: Result<(), TrySendError<Packet>>,
-    ) -> Result<()> {
-        match res {
+        let Some(client) = self.0.clients.get(&dst) else {
+            debug!(dst = dst.fmt_short(), "no connected client, dropped packet");
+            inc!(Metrics, send_packets_dropped);
+            return Ok(());
+        };
+        match client.try_send_packet(src, data) {
             Ok(_) => {
                 // Record sent_to relationship
                 self.0.sent_to.entry(src).or_default().insert(dst);
@@ -139,15 +101,56 @@ impl Clients {
                     dst = dst.fmt_short(),
                     "client too busy to receive packet, dropping packet"
                 );
-                bail!("failed to send message");
+                bail!("failed to send message: full");
             }
             Err(TrySendError::Closed(_)) => {
                 debug!(
                     dst = dst.fmt_short(),
                     "can no longer write to client, dropping message and pruning connection"
                 );
+                drop(client); // avoid deadlock
                 self.unregister(dst).await;
-                bail!("failed to send message");
+                bail!("failed to send message: gone");
+            }
+        }
+    }
+
+    /// Attempt to send a disco packet to client with [`NodeId`] `dst`.
+    pub(super) async fn send_disco_packet(
+        &self,
+        dst: NodeId,
+        data: Bytes,
+        src: NodeId,
+    ) -> Result<()> {
+        let Some(client) = self.0.clients.get(&dst) else {
+            debug!(
+                dst = dst.fmt_short(),
+                "no connected client, dropped disco packet"
+            );
+            inc!(Metrics, disco_packets_dropped);
+            return Ok(());
+        };
+        match client.try_send_disco_packet(src, data) {
+            Ok(_) => {
+                // Record sent_to relationship
+                self.0.sent_to.entry(src).or_default().insert(dst);
+                Ok(())
+            }
+            Err(TrySendError::Full(_)) => {
+                debug!(
+                    dst = dst.fmt_short(),
+                    "client too busy to receive disco packet, dropping packet"
+                );
+                bail!("failed to send message: full");
+            }
+            Err(TrySendError::Closed(_)) => {
+                debug!(
+                    dst = dst.fmt_short(),
+                    "can no longer write to client, dropping disco message and pruning connection"
+                );
+                drop(client); // avoid deadlock
+                self.unregister(dst).await;
+                bail!("failed to send message: gone");
             }
         }
     }
