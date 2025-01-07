@@ -74,6 +74,18 @@ const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
 type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync>;
 
+/// Defines the mode of path selection for all traffic flowing through
+/// the endpoint.
+#[cfg(any(test, feature = "test-utils"))]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+pub enum PathSelection {
+    /// Uses all available paths
+    #[default]
+    All,
+    /// Forces all traffic to go exclusively through relays
+    RelayOnly,
+}
+
 /// Builder for [`Endpoint`].
 ///
 /// By default the endpoint will generate a new random [`SecretKey`], which will result in a
@@ -97,6 +109,8 @@ pub struct Builder {
     insecure_skip_relay_cert_verify: bool,
     addr_v4: Option<SocketAddrV4>,
     addr_v6: Option<SocketAddrV6>,
+    #[cfg(any(test, feature = "test-utils"))]
+    path_selection: PathSelection,
 }
 
 impl Default for Builder {
@@ -115,6 +129,8 @@ impl Default for Builder {
             insecure_skip_relay_cert_verify: false,
             addr_v4: None,
             addr_v6: None,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection: PathSelection::default(),
         }
     }
 }
@@ -160,6 +176,8 @@ impl Builder {
             dns_resolver,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection: self.path_selection,
         };
         Endpoint::bind(static_config, msock_opts, self.alpn_protocols).await
     }
@@ -415,6 +433,14 @@ impl Builder {
     #[cfg(any(test, feature = "test-utils"))]
     pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
         self.insecure_skip_relay_cert_verify = skip_verify;
+        self
+    }
+
+    /// This implies we only use the relay to communicate
+    /// and do not attempt to do any hole punching.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn path_selection(mut self, path_selection: PathSelection) -> Self {
+        self.path_selection = path_selection;
         self
     }
 }
@@ -1622,8 +1648,8 @@ mod tests {
                     let eps = ep.bound_sockets();
                     info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server listening on");
                     for i in 0..n_clients {
-                        let now = Instant::now();
-                        println!("[server] round {}", i + 1);
+                        let round_start = Instant::now();
+                        info!("[server] round {i}");
                         let incoming = ep.accept().await.unwrap();
                         let conn = incoming.await.unwrap();
                         let peer_id = get_remote_node_id(&conn).unwrap();
@@ -1638,7 +1664,7 @@ mod tests {
                         send.stopped().await.unwrap();
                         recv.read_to_end(0).await.unwrap();
                         info!(%i, peer = %peer_id.fmt_short(), "finished");
-                        println!("[server] round {} done in {:?}", i + 1, now.elapsed());
+                        info!("[server] round {i} done in {:?}", round_start.elapsed());
                     }
                 }
                 .instrument(error_span!("server")),
@@ -1650,8 +1676,8 @@ mod tests {
         });
 
         for i in 0..n_clients {
-            let now = Instant::now();
-            println!("[client] round {}", i + 1);
+            let round_start = Instant::now();
+            info!("[client] round {}", i);
             let relay_map = relay_map.clone();
             let client_secret_key = SecretKey::generate(&mut rng);
             let relay_url = relay_url.clone();
@@ -1688,7 +1714,7 @@ mod tests {
             }
             .instrument(error_span!("client", %i))
             .await;
-            println!("[client] round {} done in {:?}", i + 1, now.elapsed());
+            info!("[client] round {i} done in {:?}", round_start.elapsed());
         }
 
         server.await.unwrap();

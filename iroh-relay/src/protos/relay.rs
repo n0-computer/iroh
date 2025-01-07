@@ -12,6 +12,7 @@
 //!  * clients sends `FrameType::SendPacket`
 //!  * server then sends `FrameType::RecvPacket` to recipient
 
+#[cfg(feature = "server")]
 use std::time::Duration;
 
 use anyhow::{bail, ensure};
@@ -25,7 +26,7 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::KeyCache;
+use crate::{client::conn::ConnSendError, KeyCache};
 
 /// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
@@ -42,12 +43,9 @@ const MAGIC: &str = "RELAY🔑";
 
 #[cfg(feature = "server")]
 pub(crate) const KEEP_ALIVE: Duration = Duration::from_secs(60);
-// TODO: what should this be?
-#[cfg(feature = "server")]
-pub(crate) const SERVER_CHANNEL_SIZE: usize = 1024 * 100;
 /// The number of packets buffered for sending per client
+#[cfg(feature = "server")]
 pub(crate) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512; //32;
-pub(crate) const PER_CLIENT_READ_QUEUE_DEPTH: usize = 512;
 
 /// ProtocolVersion is bumped whenever there's a wire-incompatible change.
 ///  - version 1 (zero on wire): consistent box headers, in use by employee dev nodes a bit
@@ -130,6 +128,7 @@ pub(crate) struct ClientInfo {
 /// Ignores the timeout if `None`
 ///
 /// Does not flush.
+#[cfg(feature = "server")]
 pub(crate) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
     mut writer: S,
     frame: Frame,
@@ -148,7 +147,7 @@ pub(crate) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
 /// and the client's [`ClientInfo`], sealed using the server's [`PublicKey`].
 ///
 /// Flushes after writing.
-pub(crate) async fn send_client_key<S: Sink<Frame, Error = std::io::Error> + Unpin>(
+pub(crate) async fn send_client_key<S: Sink<Frame, Error = ConnSendError> + Unpin>(
     mut writer: S,
     client_secret_key: &SecretKey,
     client_info: &ClientInfo,
@@ -179,7 +178,7 @@ pub(crate) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
 
     // TODO: variable recv size: 256 * 1024
     let buf = tokio::time::timeout(
-        Duration::from_secs(10),
+        std::time::Duration::from_secs(10),
         recv_frame(FrameType::ClientInfo, stream),
     )
     .await
@@ -591,6 +590,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[cfg(feature = "server")]
     async fn test_basic_read_write() -> anyhow::Result<()> {
         let (reader, writer) = tokio::io::duplex(1024);
         let mut reader = FramedRead::new(reader, RelayCodec::test());
@@ -614,7 +614,8 @@ mod tests {
     async fn test_send_recv_client_key() -> anyhow::Result<()> {
         let (reader, writer) = tokio::io::duplex(1024);
         let mut reader = FramedRead::new(reader, RelayCodec::test());
-        let mut writer = FramedWrite::new(writer, RelayCodec::test());
+        let mut writer =
+            FramedWrite::new(writer, RelayCodec::test()).sink_map_err(ConnSendError::from);
 
         let client_key = SecretKey::generate(rand::thread_rng());
         let client_info = ClientInfo {

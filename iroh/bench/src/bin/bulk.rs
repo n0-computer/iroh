@@ -39,24 +39,17 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
             metrics.insert(::iroh::metrics::NetReportMetrics::new(reg));
             metrics.insert(::iroh::metrics::PortmapMetrics::new(reg));
             #[cfg(feature = "local-relay")]
-            if opt.with_relay {
+            if opt.only_relay {
                 metrics.insert(::iroh::metrics::RelayMetrics::new(reg));
             }
         })?;
-    }
-
-    #[cfg(not(feature = "local-relay"))]
-    if opt.with_relay {
-        anyhow::bail!(
-            "Must compile the benchmark with the `local-relay` feature flag to use this option"
-        );
     }
 
     let server_span = tracing::error_span!("server");
     let runtime = rt();
 
     #[cfg(feature = "local-relay")]
-    let (relay_url, _guard) = if opt.with_relay {
+    let (relay_url, _guard) = if opt.only_relay {
         let (_, relay_url, _guard) = runtime.block_on(::iroh::test_utils::run_relay_server())?;
 
         (Some(relay_url), Some(_guard))
@@ -120,7 +113,7 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
             "PortmapMetrics",
             core.get_collector::<::iroh::metrics::PortmapMetrics>(),
         );
-        // if None, (this is the case if opt.with_relay is false), then this is skipped internally:
+        // if None, (this is the case if opt.only_relay is false), then this is skipped internally:
         #[cfg(feature = "local-relay")]
         collect_and_print(
             "RelayMetrics",
