@@ -35,9 +35,10 @@ use anyhow::Result;
 use clap::Parser;
 use futures_lite::future::Boxed as BoxedFuture;
 use iroh::{
+    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
     endpoint::{get_remote_node_id, Connecting},
     protocol::{ProtocolHandler, Router},
-    Endpoint, NodeId,
+    Endpoint, NodeId, SecretKey,
 };
 use tokio::sync::Mutex;
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -75,8 +76,22 @@ async fn main() -> Result<()> {
     setup_logging();
     let args = Cli::parse();
 
-    // Build an endpoint
-    let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+    let pkarr_relay_url = "https://10.0.0.71:8443/pkarr"
+        .parse()
+        .expect("url is valid");
+
+    let pkarr_discovery_closure = move |secret_key: &SecretKey| {
+        let pkarr_d = PkarrPublisher::new(secret_key.clone(), pkarr_relay_url);
+        Some(pkarr_d)
+    };
+
+    let dns_discovery_closure =
+        move |_: &SecretKey| Some(DnsDiscovery::new("10.0.0.71:5300".to_string()));
+    let endpoint = Endpoint::builder()
+        .add_discovery(pkarr_discovery_closure)
+        .add_discovery(dns_discovery_closure)
+        .bind()
+        .await?;
 
     // Build our protocol handler. The `builder` exposes access to various subsystems in the
     // iroh node. In our case, we need a blobs client and the endpoint.
