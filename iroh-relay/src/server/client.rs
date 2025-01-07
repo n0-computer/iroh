@@ -300,8 +300,7 @@ impl Actor {
         let frame = match maybe_frame {
             Some(frame) => frame?,
             None => {
-                tracing::trace!("stream terminated");
-                return Ok(());
+                anyhow::bail!("stream terminated");
             }
         };
         match frame {
