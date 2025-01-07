@@ -90,6 +90,8 @@ impl Clients {
             res = Some(client.try_send_packet(src, data));
         }
         if let Some(res) = res {
+            // `process_result` may call `unregister`, which itself calls `self.0.clients`
+            // so we can't nest this under the above call to `self.0.clients`
             return self.process_result(src, dst, res).await;
         }
         debug!(dst = dst.fmt_short(), "no connected client, dropped packet");
@@ -108,6 +110,8 @@ impl Clients {
             res = Some(client.try_send_disco_packet(src, data));
         }
         if let Some(res) = res {
+            // `process_result` may call `unregister`, which itself calls `self.0.clients`
+            // so we can't nest this under the above call to `self.0.clients`
             return self.process_result(src, dst, res).await;
         }
         debug!(
