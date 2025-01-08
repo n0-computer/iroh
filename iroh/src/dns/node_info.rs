@@ -405,9 +405,14 @@ fn node_domain(node_id: &NodeId, origin: &str) -> Result<Name> {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use std::{collections::BTreeSet, str::FromStr};
 
-    use iroh_base::SecretKey;
+    use hickory_resolver::{
+        proto::rr::{rdata::TXT, RData, Record},
+        Name,
+    };
+    use iroh_base::{NodeId, SecretKey};
+    use testresult::TestResult;
 
     use super::NodeInfo;
 
@@ -437,5 +442,83 @@ mod tests {
         let packet = expected.to_pkarr_signed_packet(&secret_key, 30).unwrap();
         let actual = NodeInfo::from_pkarr_signed_packet(&packet).unwrap();
         assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn regression_record_parse_multiple_txt_entries() -> TestResult {
+        let name = Name::from_utf8(
+            "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.",
+        )?;
+        let test_records = [
+            Record::from_rdata(
+                name.clone(),
+                30,
+                RData::TXT(TXT::new(vec!["addr=192.168.96.145:60165".to_string()])),
+            ),
+            Record::from_rdata(
+                name.clone(),
+                30,
+                RData::TXT(TXT::new(vec!["addr=213.208.157.87:60165".to_string()])),
+            ),
+            Record::from_rdata(
+                name.clone(),
+                30,
+                RData::TXT(TXT::new(vec![
+                    "relay=https://euw1-1.relay.iroh.network./".to_string()
+                ])),
+            ),
+        ];
+
+        let node_info = NodeInfo::from_hickory_records(&test_records)?;
+
+        assert_eq!(
+            node_info,
+            NodeInfo {
+                node_id: NodeId::from_str(
+                    "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18"
+                )?,
+                relay_url: Some("https://euw1-1.relay.iroh.network./".parse()?),
+                direct_addresses: BTreeSet::from([
+                    "192.168.96.145:60165".parse()?,
+                    "213.208.157.87:60165".parse()?,
+                ])
+            }
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn regression_record_parse_bigger_txt_record() -> TestResult {
+        let name = Name::from_utf8(
+            "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.",
+        )?;
+        let test_records = [Record::from_rdata(
+            name,
+            30,
+            RData::TXT(TXT::new(vec![
+                "addr=192.168.96.145:60165".to_string(),
+                "addr=213.208.157.87:60165".to_string(),
+                "relay=https://euw1-1.relay.iroh.network./".to_string(),
+            ])),
+        )];
+
+        let node_info = NodeInfo::from_hickory_records(&test_records)?;
+
+        assert_eq!(
+            node_info,
+            NodeInfo {
+                node_id: NodeId::from_str(
+                    "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18"
+                )?,
+                relay_url: Some("https://euw1-1.relay.iroh.network./".parse()?),
+                direct_addresses: BTreeSet::from([
+                    "192.168.96.145:60165".parse()?,
+                    "213.208.157.87:60165".parse()?,
+                ])
+            }
+        );
+
+        Ok(())
     }
 }
