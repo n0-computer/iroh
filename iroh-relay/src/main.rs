@@ -11,6 +11,7 @@ use std::{
 
 use anyhow::{bail, Context as _, Result};
 use clap::Parser;
+use futures_lite::FutureExt;
 use iroh_base::NodeId;
 use iroh_relay::{
     defaults::{
@@ -176,17 +177,15 @@ struct Config {
     access: AccessConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
 enum AccessConfig {
     /// Allows everyone
-    #[serde(rename = "everyone")]
     #[default]
     Everyone,
     /// Allows only these nodes.
-    #[serde(rename = "allowlist")]
     Allowlist(Vec<NodeId>),
     /// Allows everyone, except these nodes.
-    #[serde(rename = "denylist")]
     Denylist(Vec<NodeId>),
 }
 
@@ -195,21 +194,31 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
         match cfg {
             AccessConfig::Everyone => iroh_relay::server::AccessConfig::Everyone,
             AccessConfig::Allowlist(allow_list) => {
+                let allow_list = Arc::new(allow_list);
                 iroh_relay::server::AccessConfig::Restricted(Box::new(move |node_id| {
-                    if allow_list.contains(&node_id) {
-                        iroh_relay::server::Access::Allow
-                    } else {
-                        iroh_relay::server::Access::Deny
+                    let allow_list = allow_list.clone();
+                    async move {
+                        if allow_list.contains(&node_id) {
+                            iroh_relay::server::Access::Allow
+                        } else {
+                            iroh_relay::server::Access::Deny
+                        }
                     }
+                    .boxed()
                 }))
             }
             AccessConfig::Denylist(deny_list) => {
+                let deny_list = Arc::new(deny_list);
                 iroh_relay::server::AccessConfig::Restricted(Box::new(move |node_id| {
-                    if deny_list.contains(&node_id) {
-                        iroh_relay::server::Access::Deny
-                    } else {
-                        iroh_relay::server::Access::Allow
+                    let deny_list = deny_list.clone();
+                    async move {
+                        if deny_list.contains(&node_id) {
+                            iroh_relay::server::Access::Deny
+                        } else {
+                            iroh_relay::server::Access::Allow
+                        }
                     }
+                    .boxed()
                 }))
             }
         }
@@ -686,6 +695,9 @@ mod metrics {
 mod tests {
     use std::num::NonZeroU32;
 
+    use iroh_base::SecretKey;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
     use testresult::TestResult;
 
     use super::*;
@@ -720,6 +732,30 @@ mod tests {
 
         let relay = relay_config.relay.expect("no relay config");
         assert!(relay.limits.client_rx.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_access_config() -> TestResult {
+        let config = "
+            access = \"everyone\"
+        ";
+        let config = Config::from_str(config)?;
+        assert_eq!(config.access, AccessConfig::Everyone);
+
+        let mut rng = ChaCha8Rng::seed_from_u64(0);
+        let node_id = SecretKey::generate(&mut rng).public();
+
+        let config = format!(
+            "
+            access.allowlist = [
+              \"{node_id}\",
+            ]
+        "
+        );
+        let config = Config::from_str(dbg!(&config))?;
+        assert_eq!(config.access, AccessConfig::Allowlist(vec![node_id]));
 
         Ok(())
     }

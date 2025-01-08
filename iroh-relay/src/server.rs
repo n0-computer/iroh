@@ -20,7 +20,7 @@ use std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync:
 
 use anyhow::{anyhow, bail, Context, Result};
 use derive_more::Debug;
-use futures_lite::StreamExt;
+use futures_lite::{future::Boxed, StreamExt};
 use http::{
     response::Builder as ResponseBuilder, HeaderMap, Method, Request, Response, StatusCode,
 };
@@ -132,16 +132,17 @@ pub enum AccessConfig {
     Everyone,
     /// Only nodes for which the function returns `Access::Allow`.
     #[debug("restricted")]
-    Restricted(Box<dyn Fn(NodeId) -> Access + Send + Sync + 'static>),
+    Restricted(Box<dyn Fn(NodeId) -> Boxed<Access> + Send + Sync + 'static>),
 }
 
 impl AccessConfig {
     /// Is this node allowed?
-    pub fn is_allowed(&self, node: NodeId) -> bool {
+    pub async fn is_allowed(&self, node: NodeId) -> bool {
         match self {
             Self::Everyone => true,
             Self::Restricted(check) => {
-                matches!(check(node), Access::Allow)
+                let res = check(node).await;
+                matches!(res, Access::Allow)
             }
         }
     }
@@ -807,6 +808,7 @@ mod tests {
     use std::{net::Ipv4Addr, time::Duration};
 
     use bytes::Bytes;
+    use futures_lite::FutureExt;
     use futures_util::SinkExt;
     use http::header::UPGRADE;
     use iroh_base::{NodeId, SecretKey};
@@ -1145,7 +1147,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_relay_access_reject() {
+    async fn test_relay_access_control() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
         let a_secret_key = SecretKey::generate(rand::thread_rng());
@@ -1158,13 +1160,16 @@ mod tests {
                 limits: Default::default(),
                 key_cache_capacity: Some(1024),
                 access: AccessConfig::Restricted(Box::new(move |node_id| {
-                    info!("checking {}", node_id);
-                    // reject node a
-                    if node_id == a_key {
-                        Access::Deny
-                    } else {
-                        Access::Allow
+                    async move {
+                        info!("checking {}", node_id);
+                        // reject node a
+                        if node_id == a_key {
+                            Access::Deny
+                        } else {
+                            Access::Allow
+                        }
                     }
+                    .boxed()
                 })),
             }),
             quic: None,
@@ -1174,14 +1179,13 @@ mod tests {
         .await
         .unwrap();
         let relay_url = format!("http://{}", server.http_addr().unwrap());
-        let relay_url: RelayUrl = relay_url.parse().unwrap();
+        let relay_url: RelayUrl = relay_url.parse()?;
 
         // set up client a
         let resolver = crate::dns::default_resolver().clone();
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
             .connect()
-            .await
-            .unwrap();
+            .await?;
 
         // the next message should be the rejection of the connection
         tokio::time::timeout(Duration::from_millis(500), async move {
@@ -1194,7 +1198,43 @@ mod tests {
                 }
             }
         })
-        .await
-        .unwrap();
+        .await?;
+
+        // test that another client has access
+
+        // set up client b
+        let b_secret_key = SecretKey::generate(rand::thread_rng());
+        let b_key = b_secret_key.public();
+
+        let resolver = crate::dns::default_resolver().clone();
+        let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver)
+            .connect()
+            .await?;
+
+        // set up client c
+        let c_secret_key = SecretKey::generate(rand::thread_rng());
+        let c_key = c_secret_key.public();
+
+        let resolver = crate::dns::default_resolver().clone();
+        let mut client_c = ClientBuilder::new(relay_url.clone(), c_secret_key, resolver)
+            .connect()
+            .await?;
+
+        // send message from b to c
+        let msg = Bytes::from("hello, c");
+        let res = try_send_recv(&mut client_b, &mut client_c, c_key, msg.clone()).await?;
+
+        if let ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            assert_eq!(b_key, remote_node_id);
+            assert_eq!(msg, data);
+        } else {
+            panic!("client_c received unexpected message {res:?}");
+        }
+
+        Ok(())
     }
 }

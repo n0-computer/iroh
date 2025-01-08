@@ -525,7 +525,7 @@ impl Inner {
             .context("unable to receive client information")?;
 
         trace!("accept: checking access: {:?}", self.access);
-        if !self.access.is_allowed(client_key) {
+        if !self.access.is_allowed(client_key).await {
             io.send(Frame::Health {
                 problem: Bytes::from_static(b"not authenticated"),
             })
