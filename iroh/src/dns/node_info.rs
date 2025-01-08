@@ -40,7 +40,7 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, Result};
 use hickory_resolver::{proto::ProtoError, Name, TokioResolver};
 use iroh_base::{NodeAddr, NodeId, SecretKey};
 use url::Url;
@@ -240,9 +240,13 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Creates [`TxtAttrs`] from a node id and an iterator of "{key}={value}" strings.
-    pub fn from_strings(node_id: NodeId, strings: impl Iterator<Item = String>) -> Result<Self> {
+    pub fn from_strings(
+        node_id: NodeId,
+        strings: impl Iterator<Item = Result<String>>,
+    ) -> Result<Self> {
         let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
         for s in strings {
+            let s = s?;
             let mut parts = s.split('=');
             let (Some(key), Some(value)) = (parts.next(), parts.next()) else {
                 continue;
@@ -307,7 +311,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
             _ => None,
         });
 
-        let txt_strs = txt_data.filter_map(|s| String::try_from(s.clone()).ok());
+        let txt_strs = txt_data.filter_map(|s| String::try_from(s.clone()).ok().map(Ok));
         Self::from_strings(node_id, txt_strs)
     }
 
@@ -323,12 +327,13 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         let (node_id, first) = records.next().ok_or_else(|| {
             anyhow!("invalid DNS answer: no TXT record with name _iroh.z32encodedpubkey found")
         })?;
-        ensure!(
-            &records.all(|(n, _)| n == node_id),
-            "invalid DNS answer: all _iroh txt records must belong to the same node domain"
-        );
-        let records = records.map(|(_, txt)| txt).chain(Some(first));
-        let strings = records.map(ToString::to_string);
+        let strings = records.map(|(n, txt)| {
+            if n == node_id {
+                Ok(txt.to_string())
+            } else {
+                Err(anyhow!("invalid DNS answer: all _iroh txt records must belong to the same node domain"))
+            }
+        }).chain(Some(Ok(first.to_string())));
         Self::from_strings(node_id, strings)
     }
 
