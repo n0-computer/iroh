@@ -116,7 +116,8 @@ use std::{collections::BTreeSet, net::SocketAddr, time::Duration};
 use anyhow::{anyhow, ensure, Result};
 use futures_lite::stream::{Boxed as BoxStream, StreamExt};
 use iroh_base::{NodeAddr, NodeId, RelayUrl};
-use tokio::{sync::oneshot, task::JoinHandle};
+use tokio::sync::oneshot;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error_span, warn, Instrument};
 
 use crate::Endpoint;
@@ -285,7 +286,7 @@ const MAX_AGE: Duration = Duration::from_secs(10);
 /// A wrapper around a tokio task which runs a node discovery.
 pub(super) struct DiscoveryTask {
     on_first_rx: oneshot::Receiver<Result<()>>,
-    task: JoinHandle<()>,
+    task: AbortOnDropHandle<()>,
 }
 
 impl DiscoveryTask {
@@ -299,7 +300,10 @@ impl DiscoveryTask {
                 error_span!("discovery", me = %me.fmt_short(), node = %node_id.fmt_short()),
             ),
         );
-        Ok(Self { task, on_first_rx })
+        Ok(Self {
+            task: AbortOnDropHandle::new(task),
+            on_first_rx,
+        })
     }
 
     /// Starts a discovery task after a delay and only if no path to the node was recently active.
@@ -340,7 +344,10 @@ impl DiscoveryTask {
                 error_span!("discovery", me = %me.fmt_short(), node = %node_id.fmt_short()),
             ),
         );
-        Ok(Some(Self { task, on_first_rx }))
+        Ok(Some(Self {
+            task: AbortOnDropHandle::new(task),
+            on_first_rx,
+        }))
     }
 
     /// Waits until the discovery task produced at least one result.
@@ -348,11 +355,6 @@ impl DiscoveryTask {
         let fut = &mut self.on_first_rx;
         fut.await??;
         Ok(())
-    }
-
-    /// Cancels the discovery task.
-    pub(super) fn cancel(&self) {
-        self.task.abort();
     }
 
     fn create_stream(ep: &Endpoint, node_id: NodeId) -> Result<BoxStream<Result<DiscoveryItem>>> {
@@ -400,11 +402,7 @@ impl DiscoveryTask {
         let mut on_first_tx = Some(on_first_tx);
         debug!("discovery: start");
         loop {
-            let next = tokio::select! {
-                _ = ep.cancel_token().cancelled() => break,
-                next = stream.next() => next
-            };
-            match next {
+            match stream.next().await {
                 Some(Ok(r)) => {
                     if r.node_addr.is_empty() {
                         debug!(provenance = %r.provenance, "discovery: empty address found");

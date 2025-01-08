@@ -23,11 +23,9 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use derive_more::Debug;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use pin_project::pin_project;
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
@@ -92,7 +90,7 @@ pub enum PathSelection {
 /// new [`NodeId`].
 ///
 /// To create the [`Endpoint`] call [`Builder::bind`].
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct Builder {
     secret_key: Option<SecretKey>,
     relay_mode: RelayMode,
@@ -510,7 +508,6 @@ pub struct Endpoint {
     msock: Handle,
     endpoint: quinn::Endpoint,
     rtt_actor: Arc<rtt_actor::RttHandle>,
-    cancel_token: CancellationToken,
     static_config: Arc<StaticConfig>,
 }
 
@@ -561,7 +558,6 @@ impl Endpoint {
             msock,
             endpoint,
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
-            cancel_token: CancellationToken::new(),
             static_config: Arc::new(static_config),
         })
     }
@@ -618,10 +614,11 @@ impl Endpoint {
         let node_id = node_addr.node_id;
         let direct_addresses = node_addr.direct_addresses.clone();
 
-        // Get the mapped IPv6 address from the magic socket. Quinn will connect to this address.
-        // Start discovery for this node if it's enabled and we have no valid or verified
-        // address information for this node.
-        let (addr, discovery) = self
+        // Get the mapped IPv6 address from the magic socket. Quinn will connect to this
+        // address.  Start discovery for this node if it's enabled and we have no valid or
+        // verified address information for this node.  Dropping the discovery cancels any
+        // still running task.
+        let (addr, _discovery_drop_guard) = self
             .get_mapping_addr_and_maybe_start_discovery(node_addr)
             .await
             .with_context(|| {
@@ -636,16 +633,9 @@ impl Endpoint {
             node_id, addr, direct_addresses
         );
 
-        // Start connecting via quinn. This will time out after 10 seconds if no reachable address
-        // is available.
-        let conn = self.connect_quinn(node_id, alpn, addr).await;
-
-        // Cancel the node discovery task (if still running).
-        if let Some(discovery) = discovery {
-            discovery.cancel();
-        }
-
-        conn
+        // Start connecting via quinn. This will time out after 10 seconds if no reachable
+        // address is available.
+        self.connect_quinn(node_id, alpn, addr).await
     }
 
     #[instrument(
@@ -990,7 +980,6 @@ impl Endpoint {
             return Ok(());
         }
 
-        self.cancel_token.cancel();
         tracing::debug!("Closing connections");
         self.endpoint.close(0u16.into(), b"");
         self.endpoint.wait_idle().await;
@@ -1002,15 +991,10 @@ impl Endpoint {
 
     /// Check if this endpoint is still alive, or already closed.
     pub fn is_closed(&self) -> bool {
-        self.cancel_token.is_cancelled() && self.msock.is_closed()
+        self.msock.is_closed()
     }
 
     // # Remaining private methods
-
-    /// Expose the internal [`CancellationToken`] to link shutdowns.
-    pub(crate) fn cancel_token(&self) -> &CancellationToken {
-        &self.cancel_token
-    }
 
     /// Return the quic mapped address for this `node_id` and possibly start discovery
     /// services if discovery is enabled on this magic endpoint.
@@ -1085,7 +1069,7 @@ impl Endpoint {
 }
 
 /// Future produced by [`Endpoint::accept`].
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 #[pin_project]
 pub struct Accept<'a> {
     #[pin]
