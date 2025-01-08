@@ -162,9 +162,9 @@ impl NodeInfo {
         self.into()
     }
 
-    /// Parses a [`NodeInfo`] from a set of DNS records.
-    pub fn from_hickory_records(records: &[hickory_resolver::proto::rr::Record]) -> Result<Self> {
-        let attrs = TxtAttrs::from_hickory_records(records)?;
+    /// Parses a [`NodeInfo`] from a TXT records lookup.
+    pub fn from_hickory_lookup(lookup: hickory_resolver::lookup::TxtLookup) -> Result<Self> {
+        let attrs = TxtAttrs::from_hickory_lookup(lookup)?;
         Ok(attrs.into())
     }
 
@@ -240,13 +240,9 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Creates [`TxtAttrs`] from a node id and an iterator of "{key}={value}" strings.
-    pub fn from_strings(
-        node_id: NodeId,
-        strings: impl Iterator<Item = Result<String>>,
-    ) -> Result<Self> {
+    pub fn from_strings(node_id: NodeId, strings: impl Iterator<Item = String>) -> Result<Self> {
         let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
         for s in strings {
-            let s = s?;
             let mut parts = s.split('=');
             let (Some(key), Some(value)) = (parts.next(), parts.next()) else {
                 continue;
@@ -262,7 +258,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     async fn lookup(resolver: &TokioResolver, name: Name) -> Result<Self> {
         let name = ensure_iroh_txt_label(name)?;
         let lookup = resolver.txt_lookup(name).await?;
-        let attrs = Self::from_hickory_records(lookup.as_lookup().records())?;
+        let attrs = Self::from_hickory_lookup(lookup)?;
         Ok(attrs)
     }
 
@@ -311,29 +307,23 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
             _ => None,
         });
 
-        let txt_strs = txt_data.filter_map(|s| String::try_from(s.clone()).ok().map(Ok));
+        let txt_strs = txt_data.filter_map(|s| String::try_from(s.clone()).ok());
         Self::from_strings(node_id, txt_strs)
     }
 
-    /// Parses a set of DNS resource records.
-    pub fn from_hickory_records(records: &[hickory_resolver::proto::rr::Record]) -> Result<Self> {
-        use hickory_resolver::proto::rr;
-        let mut records = records.iter().filter_map(|rr| match rr.data() {
-            rr::RData::TXT(txt) => {
-                node_id_from_hickory_name(rr.name()).map(|node_id| (node_id, txt))
+    /// Parses a TXT records lookup.
+    pub fn from_hickory_lookup(lookup: hickory_resolver::lookup::TxtLookup) -> Result<Self> {
+        let node_id = node_id_from_hickory_name(lookup.query().name())
+            .ok_or_else(|| anyhow!("invalid DNS answer: not a query for _iroh.z32encodedpubkey"))?;
+
+        let strings = lookup.as_lookup().record_iter().filter_map(|record| {
+            match node_id_from_hickory_name(record.name()) {
+                // Filter out only TXT record answers that match the node_id we searched for.
+                Some(n) if n == node_id => record.data().as_txt().map(|txt| txt.to_string()),
+                _ => None,
             }
-            _ => None,
         });
-        let (node_id, first) = records.next().ok_or_else(|| {
-            anyhow!("invalid DNS answer: no TXT record with name _iroh.z32encodedpubkey found")
-        })?;
-        let strings = records.map(|(n, txt)| {
-            if n == node_id {
-                Ok(txt.to_string())
-            } else {
-                Err(anyhow!("invalid DNS answer: all _iroh txt records must belong to the same node domain"))
-            }
-        }).chain(Some(Ok(first.to_string())));
+
         Self::from_strings(node_id, strings)
     }
 
@@ -410,10 +400,14 @@ fn node_domain(node_id: &NodeId, origin: &str) -> Result<Name> {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, str::FromStr};
+    use std::{collections::BTreeSet, str::FromStr, sync::Arc};
 
     use hickory_resolver::{
-        proto::rr::{rdata::TXT, RData, Record},
+        lookup::Lookup,
+        proto::{
+            op::Query,
+            rr::{rdata::TXT, RData, Record, RecordType},
+        },
         Name,
     };
     use iroh_base::{NodeId, SecretKey};
@@ -460,7 +454,8 @@ mod tests {
         let name = Name::from_utf8(
             "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.",
         )?;
-        let test_records = [
+        let query = Query::query(name.clone(), RecordType::TXT);
+        let records = [
             Record::from_rdata(
                 name.clone(),
                 30,
@@ -479,9 +474,9 @@ mod tests {
                 ])),
             ),
         ];
+        let lookup = Lookup::new_with_max_ttl(query, Arc::new(records));
 
-        let node_info = NodeInfo::from_hickory_records(&test_records)?;
-
+        let node_info = NodeInfo::from_hickory_lookup(lookup.into())?;
         assert_eq!(
             node_info,
             NodeInfo {
