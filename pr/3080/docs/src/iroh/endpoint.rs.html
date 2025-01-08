@@ -1894,7 +1894,17 @@
 <a href="#1893" id="1893">1893</a>
 <a href="#1894" id="1894">1894</a>
 <a href="#1895" id="1895">1895</a>
-<a href="#1896" id="1896">1896</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#1896" id="1896">1896</a>
+<a href="#1897" id="1897">1897</a>
+<a href="#1898" id="1898">1898</a>
+<a href="#1899" id="1899">1899</a>
+<a href="#1900" id="1900">1900</a>
+<a href="#1901" id="1901">1901</a>
+<a href="#1902" id="1902">1902</a>
+<a href="#1903" id="1903">1903</a>
+<a href="#1904" id="1904">1904</a>
+<a href="#1905" id="1905">1905</a>
+<a href="#1906" id="1906">1906</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -1919,11 +1929,9 @@
 };
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>derive_more::Debug;
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_relay::RelayMap;
 <span class="kw">use </span>pin_project::pin_project;
-<span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{debug, instrument, trace, warn};
 <span class="kw">use </span>url::Url;
 
@@ -1970,13 +1978,25 @@
 
 <span class="kw">type </span>DiscoveryBuilder = Box&lt;<span class="kw">dyn </span>FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; + Send + Sync&gt;;
 
+<span class="doccomment">/// Defines the mode of path selection for all traffic flowing through
+/// the endpoint.
+</span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+</span><span class="kw">pub enum </span>PathSelection {
+    <span class="doccomment">/// Uses all available paths
+    </span><span class="attr">#[default]
+    </span>All,
+    <span class="doccomment">/// Forces all traffic to go exclusively through relays
+    </span>RelayOnly,
+}
+
 <span class="doccomment">/// Builder for [`Endpoint`].
 ///
 /// By default the endpoint will generate a new random [`SecretKey`], which will result in a
 /// new [`NodeId`].
 ///
 /// To create the [`Endpoint`] call [`Builder::bind`].
-</span><span class="attr">#[derive(Debug)]
+</span><span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">pub struct </span>Builder {
     secret_key: <span class="prelude-ty">Option</span>&lt;SecretKey&gt;,
     relay_mode: RelayMode,
@@ -1993,6 +2013,8 @@
     </span>insecure_skip_relay_cert_verify: bool,
     addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;,
     addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
+    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+    </span>path_selection: PathSelection,
 }
 
 <span class="kw">impl </span>Default <span class="kw">for </span>Builder {
@@ -2011,6 +2033,8 @@
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
             addr_v4: <span class="prelude-val">None</span>,
             addr_v6: <span class="prelude-val">None</span>,
+            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+            </span>path_selection: PathSelection::default(),
         }
     }
 }
@@ -2056,6 +2080,8 @@
             dns_resolver,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="self">self</span>.insecure_skip_relay_cert_verify,
+            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+            </span>path_selection: <span class="self">self</span>.path_selection,
         };
         Endpoint::bind(static_config, msock_opts, <span class="self">self</span>.alpn_protocols).<span class="kw">await
     </span>}
@@ -2313,6 +2339,14 @@
         <span class="self">self</span>.insecure_skip_relay_cert_verify = skip_verify;
         <span class="self">self
     </span>}
+
+    <span class="doccomment">/// This implies we only use the relay to communicate
+    /// and do not attempt to do any hole punching.
+    </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+    </span><span class="kw">pub fn </span>path_selection(<span class="kw-2">mut </span><span class="self">self</span>, path_selection: PathSelection) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.path_selection = path_selection;
+        <span class="self">self
+    </span>}
 }
 
 <span class="doccomment">/// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
@@ -2380,7 +2414,6 @@
     msock: Handle,
     endpoint: quinn::Endpoint,
     rtt_actor: Arc&lt;rtt_actor::RttHandle&gt;,
-    cancel_token: CancellationToken,
     static_config: Arc&lt;StaticConfig&gt;,
 }
 
@@ -2431,7 +2464,6 @@
             msock,
             endpoint,
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
-            cancel_token: CancellationToken::new(),
             static_config: Arc::new(static_config),
         })
     }
@@ -2488,10 +2520,11 @@
         <span class="kw">let </span>node_id = node_addr.node_id;
         <span class="kw">let </span>direct_addresses = node_addr.direct_addresses.clone();
 
-        <span class="comment">// Get the mapped IPv6 address from the magic socket. Quinn will connect to this address.
-        // Start discovery for this node if it's enabled and we have no valid or verified
-        // address information for this node.
-        </span><span class="kw">let </span>(addr, discovery) = <span class="self">self
+        <span class="comment">// Get the mapped IPv6 address from the magic socket. Quinn will connect to this
+        // address.  Start discovery for this node if it's enabled and we have no valid or
+        // verified address information for this node.  Dropping the discovery cancels any
+        // still running task.
+        </span><span class="kw">let </span>(addr, _discovery_drop_guard) = <span class="self">self
             </span>.get_mapping_addr_and_maybe_start_discovery(node_addr)
             .<span class="kw">await
             </span>.with_context(|| {
@@ -2506,17 +2539,10 @@
             node_id, addr, direct_addresses
         );
 
-        <span class="comment">// Start connecting via quinn. This will time out after 10 seconds if no reachable address
-        // is available.
-        </span><span class="kw">let </span>conn = <span class="self">self</span>.connect_quinn(node_id, alpn, addr).<span class="kw">await</span>;
-
-        <span class="comment">// Cancel the node discovery task (if still running).
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(discovery) = discovery {
-            discovery.cancel();
-        }
-
-        conn
-    }
+        <span class="comment">// Start connecting via quinn. This will time out after 10 seconds if no reachable
+        // address is available.
+        </span><span class="self">self</span>.connect_quinn(node_id, alpn, addr).<span class="kw">await
+    </span>}
 
     <span class="attr">#[instrument(
         skip_all,
@@ -2860,7 +2886,6 @@
             <span class="kw">return </span><span class="prelude-val">Ok</span>(());
         }
 
-        <span class="self">self</span>.cancel_token.cancel();
         <span class="macro">tracing::debug!</span>(<span class="string">"Closing connections"</span>);
         <span class="self">self</span>.endpoint.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
         <span class="self">self</span>.endpoint.wait_idle().<span class="kw">await</span>;
@@ -2872,17 +2897,12 @@
 
     <span class="doccomment">/// Check if this endpoint is still alive, or already closed.
     </span><span class="kw">pub fn </span>is_closed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.cancel_token.is_cancelled() &amp;&amp; <span class="self">self</span>.msock.is_closed()
+        <span class="self">self</span>.msock.is_closed()
     }
 
     <span class="comment">// # Remaining private methods
 
-    </span><span class="doccomment">/// Expose the internal [`CancellationToken`] to link shutdowns.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>cancel_token(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>CancellationToken {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.cancel_token
-    }
-
-    <span class="doccomment">/// Return the quic mapped address for this `node_id` and possibly start discovery
+    </span><span class="doccomment">/// Return the quic mapped address for this `node_id` and possibly start discovery
     /// services if discovery is enabled on this magic endpoint.
     ///
     /// This will launch discovery in all cases except if:
@@ -2955,7 +2975,7 @@
 }
 
 <span class="doccomment">/// Future produced by [`Endpoint::accept`].
-</span><span class="attr">#[derive(Debug)]
+</span><span class="attr">#[derive(derive_more::Debug)]
 #[pin_project]
 </span><span class="kw">pub struct </span>Accept&lt;<span class="lifetime">'a</span>&gt; {
     <span class="attr">#[pin]
@@ -3518,8 +3538,8 @@
                     <span class="kw">let </span>eps = ep.bound_sockets();
                     <span class="macro">info!</span>(me = %ep.node_id().fmt_short(), ipv4=%eps.<span class="number">0</span>, ipv6=<span class="question-mark">?</span>eps.<span class="number">1</span>, <span class="string">"server listening on"</span>);
                     <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..n_clients {
-                        <span class="kw">let </span>now = Instant::now();
-                        <span class="macro">println!</span>(<span class="string">"[server] round {}"</span>, i + <span class="number">1</span>);
+                        <span class="kw">let </span>round_start = Instant::now();
+                        <span class="macro">info!</span>(<span class="string">"[server] round {i}"</span>);
                         <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.unwrap();
                         <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.unwrap();
                         <span class="kw">let </span>peer_id = get_remote_node_id(<span class="kw-2">&amp;</span>conn).unwrap();
@@ -3534,7 +3554,7 @@
                         send.stopped().<span class="kw">await</span>.unwrap();
                         recv.read_to_end(<span class="number">0</span>).<span class="kw">await</span>.unwrap();
                         <span class="macro">info!</span>(%i, peer = %peer_id.fmt_short(), <span class="string">"finished"</span>);
-                        <span class="macro">println!</span>(<span class="string">"[server] round {} done in {:?}"</span>, i + <span class="number">1</span>, now.elapsed());
+                        <span class="macro">info!</span>(<span class="string">"[server] round {i} done in {:?}"</span>, round_start.elapsed());
                     }
                 }
                 .instrument(<span class="macro">error_span!</span>(<span class="string">"server"</span>)),
@@ -3546,8 +3566,8 @@
         });
 
         <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..n_clients {
-            <span class="kw">let </span>now = Instant::now();
-            <span class="macro">println!</span>(<span class="string">"[client] round {}"</span>, i + <span class="number">1</span>);
+            <span class="kw">let </span>round_start = Instant::now();
+            <span class="macro">info!</span>(<span class="string">"[client] round {}"</span>, i);
             <span class="kw">let </span>relay_map = relay_map.clone();
             <span class="kw">let </span>client_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
             <span class="kw">let </span>relay_url = relay_url.clone();
@@ -3584,7 +3604,7 @@
             }
             .instrument(<span class="macro">error_span!</span>(<span class="string">"client"</span>, %i))
             .<span class="kw">await</span>;
-            <span class="macro">println!</span>(<span class="string">"[client] round {} done in {:?}"</span>, i + <span class="number">1</span>, now.elapsed());
+            <span class="macro">info!</span>(<span class="string">"[client] round {i} done in {:?}"</span>, round_start.elapsed());
         }
 
         server.<span class="kw">await</span>.unwrap();

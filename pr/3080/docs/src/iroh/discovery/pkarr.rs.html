@@ -413,7 +413,14 @@
 <a href="#412" id="412">412</a>
 <a href="#413" id="413">413</a>
 <a href="#414" id="414">414</a>
-<a href="#415" id="415">415</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
+<a href="#415" id="415">415</a>
+<a href="#416" id="416">416</a>
+<a href="#417" id="417">417</a>
+<a href="#418" id="418">418</a>
+<a href="#419" id="419">419</a>
+<a href="#420" id="420">420</a>
+<a href="#421" id="421">421</a>
+<a href="#422" id="422">422</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
 //! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
@@ -609,7 +616,14 @@
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
     </span><span class="kw">pub fn </span>update_addr_info(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {
-        <span class="kw">let </span>info = NodeInfo::new(<span class="self">self</span>.node_id, url.cloned().map(Into::into), addrs.clone());
+        <span class="kw">let </span>(relay_url, direct_addresses) = <span class="kw">if let </span><span class="prelude-val">Some</span>(relay_url) = url {
+            <span class="comment">// Only publish relay url, and no direct addrs
+            </span><span class="kw">let </span>url = relay_url.clone();
+            (<span class="prelude-val">Some</span>(url.into()), Default::default())
+        } <span class="kw">else </span>{
+            (<span class="prelude-val">None</span>, addrs.clone())
+        };
+        <span class="kw">let </span>info = NodeInfo::new(<span class="self">self</span>.node_id, relay_url, direct_addresses);
         <span class="self">self</span>.watchable.set(<span class="prelude-val">Some</span>(info)).ok();
     }
 }

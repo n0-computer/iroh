@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh-relay/src/server/client_conn.rs`."><title>client_conn.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="iroh_relay" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../../../static.files/src-script-56102188.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh_relay/server/</div>client_conn.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh-relay/src/server/client.rs`."><title>client.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="iroh_relay" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../../../static.files/src-script-56102188.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh_relay/server/</div>client.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
 <a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
@@ -717,91 +717,7 @@
 <a href="#716" id="716">716</a>
 <a href="#717" id="717">717</a>
 <a href="#718" id="718">718</a>
-<a href="#719" id="719">719</a>
-<a href="#720" id="720">720</a>
-<a href="#721" id="721">721</a>
-<a href="#722" id="722">722</a>
-<a href="#723" id="723">723</a>
-<a href="#724" id="724">724</a>
-<a href="#725" id="725">725</a>
-<a href="#726" id="726">726</a>
-<a href="#727" id="727">727</a>
-<a href="#728" id="728">728</a>
-<a href="#729" id="729">729</a>
-<a href="#730" id="730">730</a>
-<a href="#731" id="731">731</a>
-<a href="#732" id="732">732</a>
-<a href="#733" id="733">733</a>
-<a href="#734" id="734">734</a>
-<a href="#735" id="735">735</a>
-<a href="#736" id="736">736</a>
-<a href="#737" id="737">737</a>
-<a href="#738" id="738">738</a>
-<a href="#739" id="739">739</a>
-<a href="#740" id="740">740</a>
-<a href="#741" id="741">741</a>
-<a href="#742" id="742">742</a>
-<a href="#743" id="743">743</a>
-<a href="#744" id="744">744</a>
-<a href="#745" id="745">745</a>
-<a href="#746" id="746">746</a>
-<a href="#747" id="747">747</a>
-<a href="#748" id="748">748</a>
-<a href="#749" id="749">749</a>
-<a href="#750" id="750">750</a>
-<a href="#751" id="751">751</a>
-<a href="#752" id="752">752</a>
-<a href="#753" id="753">753</a>
-<a href="#754" id="754">754</a>
-<a href="#755" id="755">755</a>
-<a href="#756" id="756">756</a>
-<a href="#757" id="757">757</a>
-<a href="#758" id="758">758</a>
-<a href="#759" id="759">759</a>
-<a href="#760" id="760">760</a>
-<a href="#761" id="761">761</a>
-<a href="#762" id="762">762</a>
-<a href="#763" id="763">763</a>
-<a href="#764" id="764">764</a>
-<a href="#765" id="765">765</a>
-<a href="#766" id="766">766</a>
-<a href="#767" id="767">767</a>
-<a href="#768" id="768">768</a>
-<a href="#769" id="769">769</a>
-<a href="#770" id="770">770</a>
-<a href="#771" id="771">771</a>
-<a href="#772" id="772">772</a>
-<a href="#773" id="773">773</a>
-<a href="#774" id="774">774</a>
-<a href="#775" id="775">775</a>
-<a href="#776" id="776">776</a>
-<a href="#777" id="777">777</a>
-<a href="#778" id="778">778</a>
-<a href="#779" id="779">779</a>
-<a href="#780" id="780">780</a>
-<a href="#781" id="781">781</a>
-<a href="#782" id="782">782</a>
-<a href="#783" id="783">783</a>
-<a href="#784" id="784">784</a>
-<a href="#785" id="785">785</a>
-<a href="#786" id="786">786</a>
-<a href="#787" id="787">787</a>
-<a href="#788" id="788">788</a>
-<a href="#789" id="789">789</a>
-<a href="#790" id="790">790</a>
-<a href="#791" id="791">791</a>
-<a href="#792" id="792">792</a>
-<a href="#793" id="793">793</a>
-<a href="#794" id="794">794</a>
-<a href="#795" id="795">795</a>
-<a href="#796" id="796">796</a>
-<a href="#797" id="797">797</a>
-<a href="#798" id="798">798</a>
-<a href="#799" id="799">799</a>
-<a href="#800" id="800">800</a>
-<a href="#801" id="801">801</a>
-<a href="#802" id="802">802</a>
-<a href="#803" id="803">803</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#719" id="719">719</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
@@ -812,32 +728,35 @@
 <span class="kw">use </span>futures_util::{SinkExt, Stream, StreamExt};
 <span class="kw">use </span>iroh_base::NodeId;
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
-<span class="kw">use </span>tokio::sync::mpsc;
+<span class="kw">use </span>tokio::sync::mpsc::{<span class="self">self</span>, error::TrySendError};
 <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-<span class="kw">use </span>tracing::{error, info, instrument, trace, warn, Instrument};
+<span class="kw">use </span>tracing::{debug, error, instrument, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{
     protos::{
         disco,
         relay::{write_frame, Frame, KEEP_ALIVE},
     },
-    server::{
-        actor::{<span class="self">self</span>, Packet},
-        metrics::Metrics,
-        streams::RelayedStream,
-        ClientConnRateLimit,
-    },
+    server::{clients::Clients, metrics::Metrics, streams::RelayedStream, ClientRateLimit},
 };
 
-<span class="doccomment">/// Configuration for a [`ClientConn`].
+<span class="doccomment">/// A request to write a dataframe to a Client
+</span><span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Packet {
+    <span class="doccomment">/// The sender of the packet
+    </span>src: NodeId,
+    <span class="doccomment">/// The data packet bytes.
+    </span>data: Bytes,
+}
+
+<span class="doccomment">/// Configuration for a [`Client`].
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ClientConnConfig {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Config {
     <span class="kw">pub</span>(<span class="kw">super</span>) node_id: NodeId,
     <span class="kw">pub</span>(<span class="kw">super</span>) stream: RelayedStream,
     <span class="kw">pub</span>(<span class="kw">super</span>) write_timeout: Duration,
     <span class="kw">pub</span>(<span class="kw">super</span>) channel_capacity: usize,
-    <span class="kw">pub</span>(<span class="kw">super</span>) rate_limit: <span class="prelude-ty">Option</span>&lt;ClientConnRateLimit&gt;,
-    <span class="kw">pub</span>(<span class="kw">super</span>) server_channel: mpsc::Sender&lt;actor::Message&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) rate_limit: <span class="prelude-ty">Option</span>&lt;ClientRateLimit&gt;,
 }
 
 <span class="doccomment">/// The [`Server`] side representation of a [`Client`]'s connection.
@@ -845,35 +764,34 @@
 /// [`Server`]: crate::server::Server
 /// [`Client`]: crate::client::Client
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ClientConn {
-    <span class="doccomment">/// Unique counter, incremented each time we accept a new connection.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) conn_num: usize,
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Client {
     <span class="doccomment">/// Identity of the connected peer.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) key: NodeId,
+    </span>node_id: NodeId,
+    <span class="doccomment">/// Connection identifier.
+    </span>connection_id: u64,
     <span class="doccomment">/// Used to close the connection loop.
     </span>done: CancellationToken,
     <span class="doccomment">/// Actor handle.
     </span>handle: AbortOnDropHandle&lt;()&gt;,
     <span class="doccomment">/// Queue of packets intended for the client.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) send_queue: mpsc::Sender&lt;Packet&gt;,
+    </span>send_queue: mpsc::Sender&lt;Packet&gt;,
     <span class="doccomment">/// Queue of disco packets intended for the client.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) disco_send_queue: mpsc::Sender&lt;Packet&gt;,
+    </span>disco_send_queue: mpsc::Sender&lt;Packet&gt;,
     <span class="doccomment">/// Channel to notify the client that a previous sender has disconnected.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) peer_gone: mpsc::Sender&lt;NodeId&gt;,
+    </span>peer_gone: mpsc::Sender&lt;NodeId&gt;,
 }
 
-<span class="kw">impl </span>ClientConn {
+<span class="kw">impl </span>Client {
     <span class="doccomment">/// Creates a client from a connection &amp; starts a read and write loop to handle io to and from
     /// the client
-    /// Call [`ClientConn::shutdown`] to close the read and write loops before dropping the [`ClientConn`]
-    </span><span class="kw">pub fn </span>new(config: ClientConnConfig, conn_num: usize) -&gt; ClientConn {
-        <span class="kw">let </span>ClientConnConfig {
-            node_id: key,
+    /// Call [`Client::shutdown`] to close the read and write loops before dropping the [`Client`]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(config: Config, connection_id: u64, clients: <span class="kw-2">&amp;</span>Clients) -&gt; Client {
+        <span class="kw">let </span>Config {
+            node_id,
             stream: io,
             write_timeout,
             channel_capacity,
             rate_limit,
-            server_channel,
         } = config;
 
         <span class="kw">let </span>stream = <span class="kw">match </span>rate_limit {
@@ -889,7 +807,6 @@
         };
 
         <span class="kw">let </span>done = CancellationToken::new();
-        <span class="kw">let </span>client_id = (key, conn_num);
         <span class="kw">let </span>(send_queue_s, send_queue_r) = mpsc::channel(channel_capacity);
 
         <span class="kw">let </span>(disco_send_queue_s, disco_send_queue_r) = mpsc::channel(channel_capacity);
@@ -901,43 +818,22 @@
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
             node_gone: peer_gone_r,
-            key,
-            preferred: <span class="bool-val">false</span>,
-            server_channel: server_channel.clone(),
+            node_id,
+            connection_id,
+            clients: clients.clone(),
         };
 
         <span class="comment">// start io loop
         </span><span class="kw">let </span>io_done = done.clone();
-        <span class="kw">let </span>io_client_id = client_id;
-        <span class="kw">let </span>handle = tokio::task::spawn(
-            <span class="kw">async move </span>{
-                <span class="kw">let </span>(key, conn_num) = io_client_id;
-                <span class="kw">let </span>res = actor.run(io_done).<span class="kw">await</span>;
+        <span class="kw">let </span>handle = tokio::task::spawn(actor.run(io_done).instrument(<span class="macro">tracing::info_span!</span>(
+            <span class="string">"client connection actor"</span>,
+            remote_node = %node_id.fmt_short(),
+            connection_id = connection_id
+        )));
 
-                <span class="comment">// remove the client when the actor terminates, no matter how it exits
-                </span><span class="kw">let _ </span>= server_channel
-                    .send(actor::Message::RemoveClient {
-                        node_id: key,
-                        conn_num,
-                    })
-                    .<span class="kw">await</span>;
-                <span class="kw">match </span>res {
-                    <span class="prelude-val">Err</span>(e) =&gt; {
-                        <span class="macro">warn!</span>(
-                            <span class="string">"connection manager for {key:?} {conn_num}: writer closed in error {e}"
-                        </span>);
-                    }
-                    <span class="prelude-val">Ok</span>(()) =&gt; {
-                        <span class="macro">info!</span>(<span class="string">"connection manager for {key:?} {conn_num}: writer closed"</span>);
-                    }
-                }
-            }
-            .instrument(<span class="macro">tracing::info_span!</span>(<span class="string">"client_conn_actor"</span>)),
-        );
-
-        ClientConn {
-            conn_num,
-            key,
+        Client {
+            node_id,
+            connection_id,
             handle: AbortOnDropHandle::new(handle),
             done,
             send_queue: send_queue_s,
@@ -946,17 +842,46 @@
         }
     }
 
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>connection_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
+        <span class="self">self</span>.connection_id
+    }
+
     <span class="doccomment">/// Shutdown the reader and writer loops and closes the connection.
     ///
     /// Any shutdown errors will be logged as warnings.
-    </span><span class="kw">pub async fn </span>shutdown(<span class="self">self</span>) {
-        <span class="self">self</span>.done.cancel();
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>shutdown(<span class="self">self</span>) {
+        <span class="self">self</span>.start_shutdown();
         <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.handle.<span class="kw">await </span>{
             <span class="macro">warn!</span>(
-                <span class="string">"error closing actor loop for client connection {:?} {}: {e:?}"</span>,
-                <span class="self">self</span>.key, <span class="self">self</span>.conn_num
+                remote_node = %<span class="self">self</span>.node_id.fmt_short(),
+                <span class="string">"error closing actor loop: {e:#?}"</span>,
             );
         };
+    }
+
+    <span class="doccomment">/// Starts the process of shutdown.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>start_shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+        <span class="self">self</span>.done.cancel();
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>try_send_packet(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        src: NodeId,
+        data: Bytes,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TrySendError&lt;Packet&gt;&gt; {
+        <span class="self">self</span>.send_queue.try_send(Packet { src, data })
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>try_send_disco_packet(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        src: NodeId,
+        data: Bytes,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TrySendError&lt;Packet&gt;&gt; {
+        <span class="self">self</span>.disco_send_queue.try_send(Packet { src, data })
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>try_send_peer_gone(<span class="kw-2">&amp;</span><span class="self">self</span>, key: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;(), TrySendError&lt;NodeId&gt;&gt; {
+        <span class="self">self</span>.peer_gone.try_send(key)
     }
 }
 
@@ -976,7 +901,6 @@
 ///
 /// On the "read" side, it can:
 ///     - receive a ping and write a pong back
-///     - note whether the client is `preferred`, aka this client is the preferred way
 ///     to speak to the node ID associated with that client.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>Actor {
@@ -991,17 +915,30 @@
     <span class="doccomment">/// Notify the client that a previous sender has disconnected
     </span>node_gone: mpsc::Receiver&lt;NodeId&gt;,
     <span class="doccomment">/// [`NodeId`] of this client
-    </span>key: NodeId,
-    <span class="doccomment">/// Channel used to communicate with the server about actions
-    /// it needs to take on behalf of the client
-    </span>server_channel: mpsc::Sender&lt;actor::Message&gt;,
-    <span class="doccomment">/// Notes that the client considers this the preferred connection (important in cases
-    /// where the client moves to a different network, but has the same NodeId)
-    </span>preferred: bool,
+    </span>node_id: NodeId,
+    <span class="doccomment">/// Connection identifier.
+    </span>connection_id: u64,
+    <span class="doccomment">/// Reference to the other connected clients.
+    </span>clients: Clients,
 }
 
 <span class="kw">impl </span>Actor {
-    <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>, done: CancellationToken) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>, done: CancellationToken) {
+        <span class="kw">match </span><span class="self">self</span>.run_inner(done).<span class="kw">await </span>{
+            <span class="prelude-val">Err</span>(e) =&gt; {
+                <span class="macro">warn!</span>(<span class="string">"actor errored {e:#?}, exiting"</span>);
+            }
+            <span class="prelude-val">Ok</span>(()) =&gt; {
+                <span class="macro">debug!</span>(<span class="string">"actor finished, exiting"</span>);
+            }
+        }
+
+        <span class="self">self</span>.clients
+            .unregister(<span class="self">self</span>.connection_id, <span class="self">self</span>.node_id)
+            .<span class="kw">await</span>;
+    }
+
+    <span class="kw">async fn </span>run_inner(<span class="kw-2">&amp;mut </span><span class="self">self</span>, done: CancellationToken) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>jitter = Duration::from_secs(<span class="number">5</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>keep_alive = tokio::time::interval(KEEP_ALIVE + jitter);
         <span class="comment">// ticks immediately
@@ -1017,35 +954,24 @@
                     </span><span class="self">self</span>.stream.flush().<span class="kw">await</span>.context(<span class="string">"flush"</span>)<span class="question-mark">?</span>;
                     <span class="kw">break</span>;
                 }
-                read_res = <span class="self">self</span>.stream.next() =&gt; {
-                    <span class="macro">trace!</span>(<span class="string">"handle frame"</span>);
-                    <span class="kw">match </span>read_res {
-                        <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(frame)) =&gt; {
-                            <span class="self">self</span>.handle_frame(frame).<span class="kw">await</span>.context(<span class="string">"handle_read"</span>)<span class="question-mark">?</span>;
-                        }
-                        <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
-                            <span class="kw">return </span><span class="prelude-val">Err</span>(err);
-                        }
-                        <span class="prelude-val">None </span>=&gt; {
-                            <span class="comment">// Unexpected EOF
-                            </span><span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, <span class="string">"read stream ended"</span>).into());
-                        }
-                    }
+                maybe_frame = <span class="self">self</span>.stream.next() =&gt; {
+                    <span class="self">self</span>.handle_frame(maybe_frame).<span class="kw">await</span>.context(<span class="string">"handle read"</span>)<span class="question-mark">?</span>;
                 }
-                node_id = <span class="self">self</span>.node_gone.recv() =&gt; {
+                <span class="comment">// First priority, disco packets
+                </span>packet = <span class="self">self</span>.disco_send_queue.recv() =&gt; {
+                    <span class="kw">let </span>packet = packet.context(<span class="string">"Server.disco_send_queue dropped"</span>)<span class="question-mark">?</span>;
+                    <span class="self">self</span>.send_disco_packet(packet).<span class="kw">await</span>.context(<span class="string">"send packet"</span>)<span class="question-mark">?</span>;
+                }
+                <span class="comment">// Second priority, sending regular packets
+                </span>packet = <span class="self">self</span>.send_queue.recv() =&gt; {
+                    <span class="kw">let </span>packet = packet.context(<span class="string">"Server.send_queue dropped"</span>)<span class="question-mark">?</span>;
+                    <span class="self">self</span>.send_packet(packet).<span class="kw">await</span>.context(<span class="string">"send packet"</span>)<span class="question-mark">?</span>;
+                }
+                <span class="comment">// Last priority, sending left nodes
+                </span>node_id = <span class="self">self</span>.node_gone.recv() =&gt; {
                     <span class="kw">let </span>node_id = node_id.context(<span class="string">"Server.node_gone dropped"</span>)<span class="question-mark">?</span>;
                     <span class="macro">trace!</span>(<span class="string">"node_id gone: {:?}"</span>, node_id);
                     <span class="self">self</span>.write_frame(Frame::NodeGone { node_id }).<span class="kw">await</span><span class="question-mark">?</span>;
-                }
-                packet = <span class="self">self</span>.send_queue.recv() =&gt; {
-                    <span class="kw">let </span>packet = packet.context(<span class="string">"Server.send_queue dropped"</span>)<span class="question-mark">?</span>;
-                    <span class="macro">trace!</span>(<span class="string">"send packet"</span>);
-                    <span class="self">self</span>.send_packet(packet).<span class="kw">await</span>.context(<span class="string">"send packet"</span>)<span class="question-mark">?</span>;
-                }
-                packet = <span class="self">self</span>.disco_send_queue.recv() =&gt; {
-                    <span class="kw">let </span>packet = packet.context(<span class="string">"Server.disco_send_queue dropped"</span>)<span class="question-mark">?</span>;
-                    <span class="macro">trace!</span>(<span class="string">"send disco packet"</span>);
-                    <span class="self">self</span>.send_packet(packet).<span class="kw">await</span>.context(<span class="string">"send packet"</span>)<span class="question-mark">?</span>;
                 }
                 <span class="kw">_ </span>= keep_alive.tick() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"keep alive"</span>);
@@ -1068,7 +994,7 @@
     ///
     /// Errors if the send does not happen within the `timeout` duration
     /// Does not flush.
-    </span><span class="kw">async fn </span>send_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>send_raw(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>src_key = packet.src;
         <span class="kw">let </span>content = packet.data;
 
@@ -1079,20 +1005,45 @@
             .<span class="kw">await
     </span>}
 
-    <span class="doccomment">/// Handles frame read results.
-    </span><span class="kw">async fn </span>handle_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: Frame) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="comment">// TODO: "note client activity", meaning we update the server that the client with this
-        // public key was the last one to receive data
-        // it will be relevant when we add the ability to hold onto multiple clients
-        // for the same public key
-        </span><span class="kw">match </span>frame {
-            Frame::NotePreferred { preferred } =&gt; {
-                <span class="self">self</span>.preferred = preferred;
-                <span class="macro">inc!</span>(Metrics, other_packets_recv);
+    <span class="kw">async fn </span>send_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="macro">trace!</span>(<span class="string">"send packet"</span>);
+        <span class="kw">match </span><span class="self">self</span>.send_raw(packet).<span class="kw">await </span>{
+            <span class="prelude-val">Ok</span>(()) =&gt; {
+                <span class="macro">inc!</span>(Metrics, send_packets_sent);
+                <span class="prelude-val">Ok</span>(())
             }
+            <span class="prelude-val">Err</span>(err) =&gt; {
+                <span class="macro">inc!</span>(Metrics, send_packets_dropped);
+                <span class="prelude-val">Err</span>(err)
+            }
+        }
+    }
+
+    <span class="kw">async fn </span>send_disco_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="macro">trace!</span>(<span class="string">"send disco packet"</span>);
+        <span class="kw">match </span><span class="self">self</span>.send_raw(packet).<span class="kw">await </span>{
+            <span class="prelude-val">Ok</span>(()) =&gt; {
+                <span class="macro">inc!</span>(Metrics, disco_packets_sent);
+                <span class="prelude-val">Ok</span>(())
+            }
+            <span class="prelude-val">Err</span>(err) =&gt; {
+                <span class="macro">inc!</span>(Metrics, disco_packets_dropped);
+                <span class="prelude-val">Err</span>(err)
+            }
+        }
+    }
+
+    <span class="doccomment">/// Handles frame read results.
+    </span><span class="kw">async fn </span>handle_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>, maybe_frame: <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;Frame&gt;&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="macro">trace!</span>(<span class="question-mark">?</span>maybe_frame, <span class="string">"handle incoming frame"</span>);
+        <span class="kw">let </span>frame = <span class="kw">match </span>maybe_frame {
+            <span class="prelude-val">Some</span>(frame) =&gt; frame<span class="question-mark">?</span>,
+            <span class="prelude-val">None </span>=&gt; <span class="macro">anyhow::bail!</span>(<span class="string">"stream terminated"</span>),
+        };
+        <span class="kw">match </span>frame {
             Frame::SendPacket { dst_key, packet } =&gt; {
                 <span class="kw">let </span>packet_len = packet.len();
-                <span class="self">self</span>.handle_frame_send_packet(dst_key, packet).<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="self">self</span>.handle_frame_send_packet(dst_key, packet)<span class="question-mark">?</span>;
                 <span class="macro">inc_by!</span>(Metrics, bytes_recv, packet_len <span class="kw">as </span>u64);
             }
             Frame::Ping { data } =&gt; {
@@ -1111,27 +1062,14 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">async fn </span>handle_frame_send_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, dst_key: NodeId, data: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>message = <span class="kw">if </span>disco::looks_like_disco_wrapper(<span class="kw-2">&amp;</span>data) {
+    <span class="kw">fn </span>handle_frame_send_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId, data: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">if </span>disco::looks_like_disco_wrapper(<span class="kw-2">&amp;</span>data) {
             <span class="macro">inc!</span>(Metrics, disco_packets_recv);
-            actor::Message::SendDiscoPacket {
-                dst: dst_key,
-                src: <span class="self">self</span>.key,
-                data,
-            }
+            <span class="self">self</span>.clients.send_disco_packet(dst, data, <span class="self">self</span>.node_id)<span class="question-mark">?</span>;
         } <span class="kw">else </span>{
             <span class="macro">inc!</span>(Metrics, send_packets_recv);
-            actor::Message::SendPacket {
-                dst: dst_key,
-                src: <span class="self">self</span>.key,
-                data,
-            }
-        };
-
-        <span class="self">self</span>.server_channel
-            .send(message)
-            .<span class="kw">await
-            </span>.map_err(|<span class="kw">_</span>| <span class="macro">anyhow::anyhow!</span>(<span class="string">"server gone"</span>))<span class="question-mark">?</span>;
+            <span class="self">self</span>.clients.send_packet(dst, data, <span class="self">self</span>.node_id)<span class="question-mark">?</span>;
+        }
         <span class="prelude-val">Ok</span>(())
     }
 }
@@ -1312,41 +1250,42 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>anyhow::bail;
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>iroh_base::SecretKey;
     <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tokio_util::codec::Framed;
+    <span class="kw">use </span>tracing::info;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{
-        client::conn,
         protos::relay::{recv_frame, FrameType, RelayCodec},
         server::streams::MaybeTlsStream,
     };
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_client_actor_basic() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">let </span>_logging = iroh_test::logging::setup();
+
         <span class="kw">let </span>(send_queue_s, send_queue_r) = mpsc::channel(<span class="number">10</span>);
         <span class="kw">let </span>(disco_send_queue_s, disco_send_queue_r) = mpsc::channel(<span class="number">10</span>);
         <span class="kw">let </span>(peer_gone_s, peer_gone_r) = mpsc::channel(<span class="number">10</span>);
 
-        <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng()).public();
+        <span class="kw">let </span>node_id = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>(io, io_rw) = tokio::io::duplex(<span class="number">1024</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>io_rw = Framed::new(io_rw, RelayCodec::test());
-        <span class="kw">let </span>(server_channel_s, <span class="kw-2">mut </span>server_channel_r) = mpsc::channel(<span class="number">10</span>);
-        <span class="kw">let </span>stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
+        <span class="kw">let </span>stream =
+            RelayedStream::Relay(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
 
+        <span class="kw">let </span>clients = Clients::default();
         <span class="kw">let </span>actor = Actor {
             stream: RateLimitedRelayedStream::unlimited(stream),
             timeout: Duration::from_secs(<span class="number">1</span>),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
             node_gone: peer_gone_r,
-
-            key,
-            server_channel: server_channel_s,
-            preferred: <span class="bool-val">true</span>,
+            connection_id: <span class="number">0</span>,
+            node_id,
+            clients: clients.clone(),
         };
 
         <span class="kw">let </span>done = CancellationToken::new();
@@ -1360,7 +1299,7 @@
         <span class="comment">// send packet
         </span><span class="macro">println!</span>(<span class="string">"  send packet"</span>);
         <span class="kw">let </span>packet = Packet {
-            src: key,
+            src: node_id,
             data: Bytes::from(<span class="kw-2">&amp;</span>data[..]),
         };
         send_queue_s.send(packet.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1368,7 +1307,7 @@
         <span class="macro">assert_eq!</span>(
             frame,
             Frame::RecvPacket {
-                src_key: key,
+                src_key: node_id,
                 content: data.to_vec().into()
             }
         );
@@ -1380,16 +1319,16 @@
         <span class="macro">assert_eq!</span>(
             frame,
             Frame::RecvPacket {
-                src_key: key,
+                src_key: node_id,
                 content: data.to_vec().into()
             }
         );
 
         <span class="comment">// send peer_gone
         </span><span class="macro">println!</span>(<span class="string">"send peer gone"</span>);
-        peer_gone_s.send(key).<span class="kw">await</span><span class="question-mark">?</span>;
+        peer_gone_s.send(node_id).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>frame = recv_frame(FrameType::PeerGone, <span class="kw-2">&amp;mut </span>io_rw).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="macro">assert_eq!</span>(frame, Frame::NodeGone { node_id: key });
+        <span class="macro">assert_eq!</span>(frame, Frame::NodeGone { node_id });
 
         <span class="comment">// Read tests
         </span><span class="macro">println!</span>(<span class="string">"--read"</span>);
@@ -1403,39 +1342,17 @@
         <span class="kw">let </span>frame = recv_frame(FrameType::Pong, <span class="kw-2">&amp;mut </span>io_rw).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(frame, Frame::Pong { data: <span class="kw-2">*</span>data });
 
-        <span class="comment">// change preferred to false
-        </span><span class="macro">println!</span>(<span class="string">"  preferred: false"</span>);
-        write_frame(<span class="kw-2">&amp;mut </span>io_rw, Frame::NotePreferred { preferred: <span class="bool-val">false </span>}, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="comment">// tokio::time::sleep(Duration::from_millis(100)).await;
-        // assert!(!preferred.load(Ordering::Relaxed));
-
-        // change preferred to true
-        </span><span class="macro">println!</span>(<span class="string">"  preferred: true"</span>);
-        write_frame(<span class="kw-2">&amp;mut </span>io_rw, Frame::NotePreferred { preferred: <span class="bool-val">true </span>}, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="comment">// tokio::time::sleep(Duration::from_millis(100)).await;
-        // assert!(preferred.fetch_and(true, Ordering::Relaxed));
-
-        </span><span class="kw">let </span>target = SecretKey::generate(rand::thread_rng()).public();
+        <span class="kw">let </span>target = SecretKey::generate(rand::thread_rng()).public();
 
         <span class="comment">// send packet
         </span><span class="macro">println!</span>(<span class="string">"  send packet"</span>);
         <span class="kw">let </span>data = <span class="string">b"hello world!"</span>;
-        conn::send_packet(<span class="kw-2">&amp;mut </span>io_rw, target, Bytes::from_static(data)).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>msg = server_channel_r.recv().<span class="kw">await</span>.unwrap();
-        <span class="kw">match </span>msg {
-            actor::Message::SendPacket {
-                dst: got_target,
-                data: got_data,
-                src: got_src,
-            } =&gt; {
-                <span class="macro">assert_eq!</span>(target, got_target);
-                <span class="macro">assert_eq!</span>(key, got_src);
-                <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>data[..], <span class="kw-2">&amp;</span>got_data);
-            }
-            m =&gt; {
-                <span class="macro">bail!</span>(<span class="string">"expected ServerMessage::SendPacket, got {m:?}"</span>);
-            }
-        }
+        io_rw
+            .send(Frame::SendPacket {
+                dst_key: target,
+                packet: Bytes::from_static(data),
+            })
+            .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// send disco packet
         </span><span class="macro">println!</span>(<span class="string">"  send disco packet"</span>);
@@ -1443,100 +1360,15 @@
         </span><span class="kw">let </span><span class="kw-2">mut </span>disco_data = disco::MAGIC.as_bytes().to_vec();
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
-        conn::send_packet(<span class="kw-2">&amp;mut </span>io_rw, target, disco_data.clone().into()).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>msg = server_channel_r.recv().<span class="kw">await</span>.unwrap();
-        <span class="kw">match </span>msg {
-            actor::Message::SendDiscoPacket {
-                dst: got_target,
-                src: got_src,
-                data: got_data,
-            } =&gt; {
-                <span class="macro">assert_eq!</span>(target, got_target);
-                <span class="macro">assert_eq!</span>(key, got_src);
-                <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>disco_data[..], <span class="kw-2">&amp;</span>got_data);
-            }
-            m =&gt; {
-                <span class="macro">bail!</span>(<span class="string">"expected ServerMessage::SendDiscoPacket, got {m:?}"</span>);
-            }
-        }
+        io_rw
+            .send(Frame::SendPacket {
+                dst_key: target,
+                packet: disco_data.clone().into(),
+            })
+            .<span class="kw">await</span><span class="question-mark">?</span>;
 
         done.cancel();
-        handle.<span class="kw">await</span><span class="question-mark">??</span>;
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_client_conn_read_err() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>(_send_queue_s, send_queue_r) = mpsc::channel(<span class="number">10</span>);
-        <span class="kw">let </span>(_disco_send_queue_s, disco_send_queue_r) = mpsc::channel(<span class="number">10</span>);
-        <span class="kw">let </span>(_peer_gone_s, peer_gone_r) = mpsc::channel(<span class="number">10</span>);
-
-        <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng()).public();
-        <span class="kw">let </span>(io, io_rw) = tokio::io::duplex(<span class="number">1024</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>io_rw = Framed::new(io_rw, RelayCodec::test());
-        <span class="kw">let </span>(server_channel_s, <span class="kw-2">mut </span>server_channel_r) = mpsc::channel(<span class="number">10</span>);
-        <span class="kw">let </span>stream = RelayedStream::Derp(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
-
-        <span class="macro">println!</span>(<span class="string">"-- create client conn"</span>);
-        <span class="kw">let </span>actor = Actor {
-            stream: RateLimitedRelayedStream::unlimited(stream),
-            timeout: Duration::from_secs(<span class="number">1</span>),
-            send_queue: send_queue_r,
-            disco_send_queue: disco_send_queue_r,
-            node_gone: peer_gone_r,
-
-            key,
-            server_channel: server_channel_s,
-            preferred: <span class="bool-val">true</span>,
-        };
-
-        <span class="kw">let </span>done = CancellationToken::new();
-        <span class="kw">let </span>io_done = done.clone();
-
-        <span class="macro">println!</span>(<span class="string">"-- run client conn"</span>);
-        <span class="kw">let </span>handle = tokio::task::spawn(<span class="kw">async move </span>{ actor.run(io_done).<span class="kw">await </span>});
-
-        <span class="comment">// send packet
-        </span><span class="macro">println!</span>(<span class="string">"   send packet"</span>);
-        <span class="kw">let </span>data = <span class="string">b"hello world!"</span>;
-        <span class="kw">let </span>target = SecretKey::generate(rand::thread_rng()).public();
-
-        conn::send_packet(<span class="kw-2">&amp;mut </span>io_rw, target, Bytes::from_static(data)).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>msg = server_channel_r.recv().<span class="kw">await</span>.unwrap();
-        <span class="kw">match </span>msg {
-            actor::Message::SendPacket {
-                dst: got_target,
-                src: got_src,
-                data: got_data,
-            } =&gt; {
-                <span class="macro">assert_eq!</span>(target, got_target);
-                <span class="macro">assert_eq!</span>(key, got_src);
-                <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>data[..], <span class="kw-2">&amp;</span>got_data);
-                <span class="macro">println!</span>(<span class="string">"    send packet success"</span>);
-            }
-            m =&gt; {
-                <span class="macro">bail!</span>(<span class="string">"expected ServerMessage::SendPacket, got {m:?}"</span>);
-            }
-        }
-
-        <span class="macro">println!</span>(<span class="string">"-- drop io"</span>);
-        drop(io_rw);
-
-        <span class="comment">// expect task to complete after encountering an error
-        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = tokio::time::timeout(Duration::from_secs(<span class="number">1</span>), handle).<span class="kw">await</span><span class="question-mark">?? </span>{
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(io_err) = err.downcast_ref::&lt;std::io::Error&gt;() {
-                <span class="kw">if </span>io_err.kind() == std::io::ErrorKind::UnexpectedEof {
-                    <span class="macro">println!</span>(<span class="string">"   task closed successfully with `UnexpectedEof` error"</span>);
-                } <span class="kw">else </span>{
-                    <span class="macro">bail!</span>(<span class="string">"expected `UnexpectedEof` error, got unknown error: {io_err:?}"</span>);
-                }
-            } <span class="kw">else </span>{
-                <span class="macro">bail!</span>(<span class="string">"expected `std::io::Error`, got `None`"</span>);
-            }
-        } <span class="kw">else </span>{
-            <span class="macro">bail!</span>(<span class="string">"expected task to finish in `UnexpectedEof` error, got `Ok(())`"</span>);
-        }
-
+        handle.<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 
@@ -1554,7 +1386,7 @@
         <span class="comment">// Build the rate limited stream.
         </span><span class="kw">let </span>(io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) <span class="kw">as _</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>frame_writer = Framed::new(io_write, RelayCodec::test());
-        <span class="kw">let </span>stream = RelayedStream::Derp(Framed::new(
+        <span class="kw">let </span>stream = RelayedStream::Relay(Framed::new(
             MaybeTlsStream::Test(io_read),
             RelayCodec::test(),
         ));

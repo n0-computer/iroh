@@ -285,7 +285,17 @@
 <a href="#284" id="284">284</a>
 <a href="#285" id="285">285</a>
 <a href="#286" id="286">286</a>
-<a href="#287" id="287">287</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::SocketAddr,
     time::{Duration, Instant},
 };
@@ -320,7 +330,12 @@
         </span><span class="kw">let </span><span class="kw-2">mut </span>builder = Endpoint::builder();
         <span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
         </span>{
-            builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some())
+            builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some());
+            <span class="kw">let </span>path_selection = <span class="kw">match </span>opt.only_relay {
+                <span class="bool-val">true </span>=&gt; iroh::endpoint::PathSelection::RelayOnly,
+                <span class="bool-val">false </span>=&gt; iroh::endpoint::PathSelection::default(),
+            };
+            builder = builder.path_selection(path_selection);
         }
         <span class="kw">let </span>ep = builder
             .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
@@ -376,7 +391,12 @@
     </span><span class="kw">let </span><span class="kw-2">mut </span>builder = Endpoint::builder();
     <span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
     </span>{
-        builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some())
+        builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some());
+        <span class="kw">let </span>path_selection = <span class="kw">match </span>opt.only_relay {
+            <span class="bool-val">true </span>=&gt; iroh::endpoint::PathSelection::RelayOnly,
+            <span class="bool-val">false </span>=&gt; iroh::endpoint::PathSelection::default(),
+        };
+        builder = builder.path_selection(path_selection);
     }
     <span class="kw">let </span>endpoint = builder
         .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])

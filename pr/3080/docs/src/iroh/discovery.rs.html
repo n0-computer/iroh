@@ -863,9 +863,7 @@
 <a href="#862" id="862">862</a>
 <a href="#863" id="863">863</a>
 <a href="#864" id="864">864</a>
-<a href="#865" id="865">865</a>
-<a href="#866" id="866">866</a>
-<a href="#867" id="867">867</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#865" id="865">865</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -983,7 +981,8 @@
 <span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::stream::{Boxed <span class="kw">as </span>BoxStream, StreamExt};
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl};
-<span class="kw">use </span>tokio::{sync::oneshot, task::JoinHandle};
+<span class="kw">use </span>tokio::sync::oneshot;
+<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
 
 <span class="kw">use </span><span class="kw">crate</span>::Endpoint;
@@ -1152,7 +1151,7 @@
 <span class="doccomment">/// A wrapper around a tokio task which runs a node discovery.
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>DiscoveryTask {
     on_first_rx: oneshot::Receiver&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
-    task: JoinHandle&lt;()&gt;,
+    task: AbortOnDropHandle&lt;()&gt;,
 }
 
 <span class="kw">impl </span>DiscoveryTask {
@@ -1166,7 +1165,10 @@
                 <span class="macro">error_span!</span>(<span class="string">"discovery"</span>, me = %me.fmt_short(), node = %node_id.fmt_short()),
             ),
         );
-        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{ task, on_first_rx })
+        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+            task: AbortOnDropHandle::new(task),
+            on_first_rx,
+        })
     }
 
     <span class="doccomment">/// Starts a discovery task after a delay and only if no path to the node was recently active.
@@ -1207,7 +1209,10 @@
                 <span class="macro">error_span!</span>(<span class="string">"discovery"</span>, me = %me.fmt_short(), node = %node_id.fmt_short()),
             ),
         );
-        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="self">Self </span>{ task, on_first_rx }))
+        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="self">Self </span>{
+            task: AbortOnDropHandle::new(task),
+            on_first_rx,
+        }))
     }
 
     <span class="doccomment">/// Waits until the discovery task produced at least one result.
@@ -1215,11 +1220,6 @@
         <span class="kw">let </span>fut = <span class="kw-2">&amp;mut </span><span class="self">self</span>.on_first_rx;
         fut.<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="doccomment">/// Cancels the discovery task.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>cancel(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="self">self</span>.task.abort();
     }
 
     <span class="kw">fn </span>create_stream(ep: <span class="kw-2">&amp;</span>Endpoint, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
@@ -1267,11 +1267,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>on_first_tx = <span class="prelude-val">Some</span>(on_first_tx);
         <span class="macro">debug!</span>(<span class="string">"discovery: start"</span>);
         <span class="kw">loop </span>{
-            <span class="kw">let </span>next = <span class="macro">tokio::select!</span> {
-                <span class="kw">_ </span>= ep.cancel_token().cancelled() =&gt; <span class="kw">break</span>,
-                next = stream.next() =&gt; next
-            };
-            <span class="kw">match </span>next {
+            <span class="kw">match </span>stream.next().<span class="kw">await </span>{
                 <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(r)) =&gt; {
                     <span class="kw">if </span>r.node_addr.is_empty() {
                         <span class="macro">debug!</span>(provenance = %r.provenance, <span class="string">"discovery: empty address found"</span>);
