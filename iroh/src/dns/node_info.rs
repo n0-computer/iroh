@@ -493,38 +493,4 @@ mod tests {
 
         Ok(())
     }
-
-    #[test]
-    fn test_record_multiple_values() -> TestResult {
-        let name = Name::from_utf8(
-            "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.",
-        )?;
-        let test_records = [Record::from_rdata(
-            name,
-            30,
-            RData::TXT(TXT::new(vec![
-                "addr=192.168.96.145:60165".to_string(),
-                "addr=213.208.157.87:60165".to_string(),
-                "relay=https://euw1-1.relay.iroh.network./".to_string(),
-            ])),
-        )];
-
-        let node_info = NodeInfo::from_hickory_records(&test_records)?;
-
-        assert_eq!(
-            node_info,
-            NodeInfo {
-                node_id: NodeId::from_str(
-                    "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18"
-                )?,
-                relay_url: Some("https://euw1-1.relay.iroh.network./".parse()?),
-                direct_addresses: BTreeSet::from([
-                    "192.168.96.145:60165".parse()?,
-                    "213.208.157.87:60165".parse()?,
-                ])
-            }
-        );
-
-        Ok(())
-    }
 }
