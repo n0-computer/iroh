@@ -172,7 +172,9 @@ struct Config {
     metrics_bind_addr: Option<SocketAddr>,
     /// The capacity of the key cache.
     key_cache_capacity: Option<usize>,
-    /// Access control
+    /// Access control for relaying connections.
+    ///
+    /// This controls which nodes are allowed to relay connections, other endpoints, like STUN are not controlled by this.
     #[serde(default)]
     access: AccessConfig,
 }
