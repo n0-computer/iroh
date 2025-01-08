@@ -4096,26 +4096,20 @@ mod tests {
         tasks.spawn({
             let queue = queue.clone();
             async move {
-                let mut expected_msgs = vec![false; capacity];
-
-                while let Ok(datagram) = tokio::time::timeout(
-                    Duration::from_millis(100),
-                    futures_lite::future::poll_fn(|cx| {
+                let mut expected_msgs: BTreeSet<usize> = (0..capacity).into_iter().collect();
+                while !expected_msgs.is_empty() {
+                    let datagram = futures_lite::future::poll_fn(|cx| {
                         queue.poll_recv(cx).map(|result| result.unwrap())
-                    }),
-                )
-                .await
-                {
+                    })
+                    .await;
+
                     let msg_num = usize::from_le_bytes(datagram.buf.as_ref().try_into().unwrap());
+                    debug!("Received {msg_num}");
 
-                    if expected_msgs[msg_num] {
-                        panic!("Received message number {msg_num} more than once (duplicated)");
+                    if !expected_msgs.remove(&msg_num) {
+                        panic!("Received message number {msg_num} twice or more, but expected it only exactly once.");
                     }
-
-                    expected_msgs[msg_num] = true;
                 }
-
-                assert!(expected_msgs.into_iter().all(|is_set| is_set));
             }
         });
 
@@ -4124,6 +4118,7 @@ mod tests {
                 let queue = queue.clone();
                 let url = url.clone();
                 async move {
+                    debug!("Sending {i}");
                     queue
                         .try_send(RelayRecvDatagram {
                             url,
@@ -4135,7 +4130,10 @@ mod tests {
             });
         }
 
-        tasks.join_all().await;
+        // We expect all of this work to be done in 10 seconds max.
+        if let Err(_) = tokio::time::timeout(Duration::from_secs(10), tasks.join_all()).await {
+            panic!("Timeout - not all messages between 0 and {capacity} received.");
+        }
     }
 
     #[tokio::test]
