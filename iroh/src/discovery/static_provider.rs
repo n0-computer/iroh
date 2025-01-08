@@ -6,7 +6,7 @@
 //! be able to be removed again once know it is no longer useful.
 //!
 //! This is where the [`StaticProvider`] is useful: it allows applications to add and
-//! retract node adressing information that is otherwise out-of-band to iroh.
+//! retract node addressing information that is otherwise out-of-band to iroh.
 //!
 //! [`NodeTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.NodeTicket
 
@@ -30,7 +30,7 @@ use super::{Discovery, DiscoveryItem};
 /// be able to be removed again once know it is no longer useful.
 ///
 /// This is where the [`StaticProvider`] is useful: it allows applications to add and
-/// retract node adressing information that is otherwise out-of-band to iroh.
+/// retract node addressing information that is otherwise out-of-band to iroh.
 ///
 /// # Examples
 ///

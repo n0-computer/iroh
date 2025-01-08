@@ -719,7 +719,7 @@ impl Endpoint {
     /// # Using node discovery instead
     ///
     /// It is strongly advised to use node discovery using the [`StaticProvider`] instead.
-    /// This provides more flexiblity and future proofing.
+    /// This provides more flexibility and future proofing.
     ///
     /// # Errors
     ///
@@ -742,7 +742,7 @@ impl Endpoint {
     /// # Using node discovery instead
     ///
     /// It is strongly advised to use node discovery using the [`StaticProvider`] instead.
-    /// This provides more flexiblity and future proofing.
+    /// This provides more flexibility and future proofing.
     ///
     /// # Errors
     ///
