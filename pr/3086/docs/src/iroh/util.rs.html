@@ -90,16 +90,7 @@
 <a href="#89" id="89">89</a>
 <a href="#90" id="90">90</a>
 <a href="#91" id="91">91</a>
-<a href="#92" id="92">92</a>
-<a href="#93" id="93">93</a>
-<a href="#94" id="94">94</a>
-<a href="#95" id="95">95</a>
-<a href="#96" id="96">96</a>
-<a href="#97" id="97">97</a>
-<a href="#98" id="98">98</a>
-<a href="#99" id="99">99</a>
-<a href="#100" id="100">100</a>
-<a href="#101" id="101">101</a></pre></div><pre class="rust"><code><span class="doccomment">//! Utilities used in [`iroh`][`crate`]
+<a href="#92" id="92">92</a></pre></div><pre class="rust"><code><span class="doccomment">//! Utilities used in [`iroh`][`crate`]
 
 </span><span class="kw">use </span>std::{
     future::Future,
@@ -168,15 +159,6 @@
             Poll::Pending =&gt; Poll::Pending,
         }
     }
-}
-
-<span class="doccomment">/// Check if we are running in "relay only" mode, as informed
-/// by the compile time env var `DEV_RELAY_ONLY`.
-///
-/// "relay only" mode implies we only use the relay to communicate
-/// and do not attempt to do any hole punching.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>relay_only_mode() -&gt; bool {
-    <span class="macro">std::option_env!</span>(<span class="string">"DEV_RELAY_ONLY"</span>).is_some()
 }
 
 <span class="attr">#[cfg(test)]

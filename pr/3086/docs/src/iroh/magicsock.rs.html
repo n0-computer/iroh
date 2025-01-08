@@ -4188,13 +4188,22 @@
 <a href="#4187" id="4187">4187</a>
 <a href="#4188" id="4188">4188</a>
 <a href="#4189" id="4189">4189</a>
-<a href="#4190" id="4190">4190</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4190" id="4190">4190</a>
+<a href="#4191" id="4191">4191</a>
+<a href="#4192" id="4192">4192</a>
+<a href="#4193" id="4193">4193</a>
+<a href="#4194" id="4194">4194</a>
+<a href="#4195" id="4195">4195</a>
+<a href="#4196" id="4196">4196</a>
+<a href="#4197" id="4197">4197</a>
+<a href="#4198" id="4198">4198</a>
+<a href="#4199" id="4199">4199</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
-//! ### `DEV_RELAY_ONLY` env var:
-//! When present at *compile time*, this env var will force all packets
-//! to be sent over the relay connection, regardless of whether or
+//! ### `RelayOnly` path selection:
+//! When set this will force all packets to be sent over
+//! the relay connection, regardless of whether or
 //! not we have a direct UDP address for the given node.
 //!
 //! The intended use is for testing the relay protocol inside the MagicSock
@@ -4251,6 +4260,8 @@
     relay_actor::{RelayActor, RelayActorMessage, RelayRecvDatagram},
     udp_conn::UdpConn,
 };
+<span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+</span><span class="kw">use </span><span class="kw">crate</span>::endpoint::PathSelection;
 <span class="kw">use crate</span>::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{<span class="self">self</span>, CallMeMaybe, SendAddr},
@@ -4318,6 +4329,10 @@
     /// May only be used in tests.
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) insecure_skip_relay_cert_verify: bool,
+
+    <span class="doccomment">/// Configuration for what path selection to use
+    </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) path_selection: PathSelection,
 }
 
 <span class="kw">impl </span>Default <span class="kw">for </span>Options {
@@ -4333,6 +4348,8 @@
             dns_resolver: <span class="kw">crate</span>::dns::default_resolver().clone(),
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
+            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+            </span>path_selection: PathSelection::default(),
         }
     }
 }
@@ -5683,11 +5700,6 @@
     <span class="doccomment">/// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
     </span><span class="kw">async fn </span>new(opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>me = opts.secret_key.public().fmt_short();
-        <span class="kw">if </span><span class="kw">crate</span>::util::relay_only_mode() {
-            <span class="macro">warn!</span>(
-                <span class="string">"creating a MagicSock that will only send packets over a relay relay connection."
-            </span>);
-        }
 
         <span class="self">Self</span>::with_name(me, opts)
             .instrument(<span class="macro">error_span!</span>(<span class="string">"magicsock"</span>))
@@ -5708,6 +5720,8 @@
             proxy_url,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify,
+            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+            </span>path_selection,
         } = opts;
 
         <span class="kw">let </span>relay_datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
@@ -5738,7 +5752,10 @@
 
         <span class="comment">// load the node data
         </span><span class="kw">let </span>node_map = node_map.unwrap_or_default();
-        <span class="kw">let </span>node_map = NodeMap::load_from_vec(node_map);
+        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+        </span><span class="kw">let </span>node_map = NodeMap::load_from_vec(node_map, path_selection);
+        <span class="attr">#[cfg(not(any(test, feature = <span class="string">"test-utils"</span>)))]
+        </span><span class="kw">let </span>node_map = NodeMap::load_from_vec(node_map);
 
         <span class="kw">let </span>secret_encryption_key = secret_ed_box(secret_key.secret());
 
@@ -8005,6 +8022,7 @@
             dns_resolver: <span class="kw">crate</span>::dns::default_resolver().clone(),
             proxy_url: <span class="prelude-val">None</span>,
             insecure_skip_relay_cert_verify: <span class="bool-val">true</span>,
+            path_selection: PathSelection::default(),
         };
         <span class="kw">let </span>msock = MagicSock::spawn(opts).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>server_config = <span class="kw">crate</span>::endpoint::make_server_config(
