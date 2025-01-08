@@ -255,7 +255,11 @@
 <a href="#254" id="254">254</a>
 <a href="#255" id="255">255</a>
 <a href="#256" id="256">256</a>
-<a href="#257" id="257">257</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
 </span><span class="comment">// Based on tailscale/derp/derp_server.go
 
 </span><span class="kw">use </span>std::{
@@ -327,9 +331,13 @@
     /// to each client that peers has sent data to, to let them know that
     /// peer is gone from the network.
     ///
-    /// Explicitly drops the reference to the client to avoid deadlock.
+    /// Must be passed a matching connection_id.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>unregister&lt;<span class="lifetime">'a</span>&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, connection_id: u64, node_id: NodeId) {
-        <span class="macro">trace!</span>(node_id = node_id.fmt_short(), <span class="string">"unregistering client"</span>);
+        <span class="macro">trace!</span>(
+            node_id = node_id.fmt_short(),
+            connection_id,
+            <span class="string">"unregistering client"
+        </span>);
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, client)) = <span class="self">self
             </span>.<span class="number">0
