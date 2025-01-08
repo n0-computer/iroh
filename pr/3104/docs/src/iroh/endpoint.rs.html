@@ -1904,23 +1904,7 @@
 <a href="#1903" id="1903">1903</a>
 <a href="#1904" id="1904">1904</a>
 <a href="#1905" id="1905">1905</a>
-<a href="#1906" id="1906">1906</a>
-<a href="#1907" id="1907">1907</a>
-<a href="#1908" id="1908">1908</a>
-<a href="#1909" id="1909">1909</a>
-<a href="#1910" id="1910">1910</a>
-<a href="#1911" id="1911">1911</a>
-<a href="#1912" id="1912">1912</a>
-<a href="#1913" id="1913">1913</a>
-<a href="#1914" id="1914">1914</a>
-<a href="#1915" id="1915">1915</a>
-<a href="#1916" id="1916">1916</a>
-<a href="#1917" id="1917">1917</a>
-<a href="#1918" id="1918">1918</a>
-<a href="#1919" id="1919">1919</a>
-<a href="#1920" id="1920">1920</a>
-<a href="#1921" id="1921">1921</a>
-<a href="#1922" id="1922">1922</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#1906" id="1906">1906</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -1945,11 +1929,9 @@
 };
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>derive_more::Debug;
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_relay::RelayMap;
 <span class="kw">use </span>pin_project::pin_project;
-<span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{debug, instrument, trace, warn};
 <span class="kw">use </span>url::Url;
 
@@ -2014,7 +1996,7 @@
 /// new [`NodeId`].
 ///
 /// To create the [`Endpoint`] call [`Builder::bind`].
-</span><span class="attr">#[derive(Debug)]
+</span><span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">pub struct </span>Builder {
     secret_key: <span class="prelude-ty">Option</span>&lt;SecretKey&gt;,
     relay_mode: RelayMode,
@@ -2432,7 +2414,6 @@
     msock: Handle,
     endpoint: quinn::Endpoint,
     rtt_actor: Arc&lt;rtt_actor::RttHandle&gt;,
-    cancel_token: CancellationToken,
     static_config: Arc&lt;StaticConfig&gt;,
 }
 
@@ -2483,7 +2464,6 @@
             msock,
             endpoint,
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
-            cancel_token: CancellationToken::new(),
             static_config: Arc::new(static_config),
         })
     }
@@ -2540,10 +2520,11 @@
         <span class="kw">let </span>node_id = node_addr.node_id;
         <span class="kw">let </span>direct_addresses = node_addr.direct_addresses.clone();
 
-        <span class="comment">// Get the mapped IPv6 address from the magic socket. Quinn will connect to this address.
-        // Start discovery for this node if it's enabled and we have no valid or verified
-        // address information for this node.
-        </span><span class="kw">let </span>(addr, discovery) = <span class="self">self
+        <span class="comment">// Get the mapped IPv6 address from the magic socket. Quinn will connect to this
+        // address.  Start discovery for this node if it's enabled and we have no valid or
+        // verified address information for this node.  Dropping the discovery cancels any
+        // still running task.
+        </span><span class="kw">let </span>(addr, _discovery_drop_guard) = <span class="self">self
             </span>.get_mapping_addr_and_maybe_start_discovery(node_addr)
             .<span class="kw">await
             </span>.with_context(|| {
@@ -2558,17 +2539,10 @@
             node_id, addr, direct_addresses
         );
 
-        <span class="comment">// Start connecting via quinn. This will time out after 10 seconds if no reachable address
-        // is available.
-        </span><span class="kw">let </span>conn = <span class="self">self</span>.connect_quinn(node_id, alpn, addr).<span class="kw">await</span>;
-
-        <span class="comment">// Cancel the node discovery task (if still running).
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(discovery) = discovery {
-            discovery.cancel();
-        }
-
-        conn
-    }
+        <span class="comment">// Start connecting via quinn. This will time out after 10 seconds if no reachable
+        // address is available.
+        </span><span class="self">self</span>.connect_quinn(node_id, alpn, addr).<span class="kw">await
+    </span>}
 
     <span class="attr">#[instrument(
         skip_all,
@@ -2912,7 +2886,6 @@
             <span class="kw">return </span><span class="prelude-val">Ok</span>(());
         }
 
-        <span class="self">self</span>.cancel_token.cancel();
         <span class="macro">tracing::debug!</span>(<span class="string">"Closing connections"</span>);
         <span class="self">self</span>.endpoint.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
         <span class="self">self</span>.endpoint.wait_idle().<span class="kw">await</span>;
@@ -2924,17 +2897,12 @@
 
     <span class="doccomment">/// Check if this endpoint is still alive, or already closed.
     </span><span class="kw">pub fn </span>is_closed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.cancel_token.is_cancelled() &amp;&amp; <span class="self">self</span>.msock.is_closed()
+        <span class="self">self</span>.msock.is_closed()
     }
 
     <span class="comment">// # Remaining private methods
 
-    </span><span class="doccomment">/// Expose the internal [`CancellationToken`] to link shutdowns.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>cancel_token(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>CancellationToken {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.cancel_token
-    }
-
-    <span class="doccomment">/// Return the quic mapped address for this `node_id` and possibly start discovery
+    </span><span class="doccomment">/// Return the quic mapped address for this `node_id` and possibly start discovery
     /// services if discovery is enabled on this magic endpoint.
     ///
     /// This will launch discovery in all cases except if:
@@ -3007,7 +2975,7 @@
 }
 
 <span class="doccomment">/// Future produced by [`Endpoint::accept`].
-</span><span class="attr">#[derive(Debug)]
+</span><span class="attr">#[derive(derive_more::Debug)]
 #[pin_project]
 </span><span class="kw">pub struct </span>Accept&lt;<span class="lifetime">'a</span>&gt; {
     <span class="attr">#[pin]
