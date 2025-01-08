@@ -11,6 +11,8 @@ use std::{
 
 use anyhow::{bail, Context as _, Result};
 use clap::Parser;
+use futures_lite::FutureExt;
+use iroh_base::NodeId;
 use iroh_relay::{
     defaults::{
         DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_RELAY_QUIC_PORT,
@@ -170,6 +172,59 @@ struct Config {
     metrics_bind_addr: Option<SocketAddr>,
     /// The capacity of the key cache.
     key_cache_capacity: Option<usize>,
+    /// Access control for relaying connections.
+    ///
+    /// This controls which nodes are allowed to relay connections, other endpoints, like STUN are not controlled by this.
+    #[serde(default)]
+    access: AccessConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum AccessConfig {
+    /// Allows everyone
+    #[default]
+    Everyone,
+    /// Allows only these nodes.
+    Allowlist(Vec<NodeId>),
+    /// Allows everyone, except these nodes.
+    Denylist(Vec<NodeId>),
+}
+
+impl From<AccessConfig> for iroh_relay::server::AccessConfig {
+    fn from(cfg: AccessConfig) -> Self {
+        match cfg {
+            AccessConfig::Everyone => iroh_relay::server::AccessConfig::Everyone,
+            AccessConfig::Allowlist(allow_list) => {
+                let allow_list = Arc::new(allow_list);
+                iroh_relay::server::AccessConfig::Restricted(Box::new(move |node_id| {
+                    let allow_list = allow_list.clone();
+                    async move {
+                        if allow_list.contains(&node_id) {
+                            iroh_relay::server::Access::Allow
+                        } else {
+                            iroh_relay::server::Access::Deny
+                        }
+                    }
+                    .boxed()
+                }))
+            }
+            AccessConfig::Denylist(deny_list) => {
+                let deny_list = Arc::new(deny_list);
+                iroh_relay::server::AccessConfig::Restricted(Box::new(move |node_id| {
+                    let deny_list = deny_list.clone();
+                    async move {
+                        if deny_list.contains(&node_id) {
+                            iroh_relay::server::Access::Deny
+                        } else {
+                            iroh_relay::server::Access::Allow
+                        }
+                    }
+                    .boxed()
+                }))
+            }
+        }
+    }
 }
 
 impl Config {
@@ -202,6 +257,7 @@ impl Default for Config {
             enable_metrics: cfg_defaults::enable_metrics(),
             metrics_bind_addr: None,
             key_cache_capacity: Default::default(),
+            access: AccessConfig::Everyone,
         }
     }
 }
@@ -574,7 +630,9 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
         tls: relay_tls.and_then(|tls| if dangerous_http_only { None } else { Some(tls) }),
         limits,
         key_cache_capacity: cfg.key_cache_capacity,
+        access: cfg.access.clone().into(),
     };
+
     let stun_config = relay::StunConfig {
         bind_addr: cfg.stun_bind_addr(),
     };
@@ -639,6 +697,9 @@ mod metrics {
 mod tests {
     use std::num::NonZeroU32;
 
+    use iroh_base::SecretKey;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
     use testresult::TestResult;
 
     use super::*;
@@ -673,6 +734,30 @@ mod tests {
 
         let relay = relay_config.relay.expect("no relay config");
         assert!(relay.limits.client_rx.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_access_config() -> TestResult {
+        let config = "
+            access = \"everyone\"
+        ";
+        let config = Config::from_str(config)?;
+        assert_eq!(config.access, AccessConfig::Everyone);
+
+        let mut rng = ChaCha8Rng::seed_from_u64(0);
+        let node_id = SecretKey::generate(&mut rng).public();
+
+        let config = format!(
+            "
+            access.allowlist = [
+              \"{node_id}\",
+            ]
+        "
+        );
+        let config = Config::from_str(dbg!(&config))?;
+        assert_eq!(config.access, AccessConfig::Allowlist(vec![node_id]));
 
         Ok(())
     }

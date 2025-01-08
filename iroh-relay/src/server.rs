@@ -20,11 +20,12 @@ use std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync:
 
 use anyhow::{anyhow, bail, Context, Result};
 use derive_more::Debug;
-use futures_lite::StreamExt;
+use futures_lite::{future::Boxed, StreamExt};
 use http::{
     response::Builder as ResponseBuilder, HeaderMap, Method, Request, Response, StatusCode,
 };
 use hyper::body::Incoming;
+use iroh_base::NodeId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
 use iroh_metrics::inc;
@@ -120,6 +121,40 @@ pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     pub limits: Limits,
     /// Key cache capacity.
     pub key_cache_capacity: Option<usize>,
+    /// Access configuration.
+    pub access: AccessConfig,
+}
+
+/// Controls which nodes are allowed to use the relay.
+#[derive(derive_more::Debug)]
+pub enum AccessConfig {
+    /// Everyone
+    Everyone,
+    /// Only nodes for which the function returns `Access::Allow`.
+    #[debug("restricted")]
+    Restricted(Box<dyn Fn(NodeId) -> Boxed<Access> + Send + Sync + 'static>),
+}
+
+impl AccessConfig {
+    /// Is this node allowed?
+    pub async fn is_allowed(&self, node: NodeId) -> bool {
+        match self {
+            Self::Everyone => true,
+            Self::Restricted(check) => {
+                let res = check(node).await;
+                matches!(res, Access::Allow)
+            }
+        }
+    }
+}
+
+/// Access restriction for a node.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Access {
+    /// Access is allowed.
+    Allow,
+    /// Access is denied.
+    Deny,
 }
 
 /// Configuration for the STUN server.
@@ -318,6 +353,7 @@ impl Server {
                 let mut builder = http_server::ServerBuilder::new(relay_bind_addr)
                     .headers(headers)
                     .key_cache_capacity(key_cache_capacity)
+                    .access(relay_config.access)
                     .request_handler(Method::GET, "/", Box::new(root_handler))
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
                     .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
@@ -772,6 +808,7 @@ mod tests {
     use std::{net::Ipv4Addr, time::Duration};
 
     use bytes::Bytes;
+    use futures_lite::FutureExt;
     use futures_util::SinkExt;
     use http::header::UPGRADE;
     use iroh_base::{NodeId, SecretKey};
@@ -790,6 +827,7 @@ mod tests {
                 tls: None,
                 limits: Default::default(),
                 key_cache_capacity: Some(1024),
+                access: AccessConfig::Everyone,
             }),
             quic: None,
             stun: None,
@@ -840,6 +878,7 @@ mod tests {
                 tls: None,
                 limits: Default::default(),
                 key_cache_capacity: Some(1024),
+                access: AccessConfig::Everyone,
             }),
             stun: None,
             quic: None,
@@ -1105,5 +1144,97 @@ mod tests {
         let (txid_back, response_addr) = protos::stun::parse_response(&buf).unwrap();
         assert_eq!(txid, txid_back);
         assert_eq!(response_addr, socket.local_addr().unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_relay_access_control() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let a_secret_key = SecretKey::generate(rand::thread_rng());
+        let a_key = a_secret_key.public();
+
+        let server = Server::spawn(ServerConfig::<(), ()> {
+            relay: Some(RelayConfig::<(), ()> {
+                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                tls: None,
+                limits: Default::default(),
+                key_cache_capacity: Some(1024),
+                access: AccessConfig::Restricted(Box::new(move |node_id| {
+                    async move {
+                        info!("checking {}", node_id);
+                        // reject node a
+                        if node_id == a_key {
+                            Access::Deny
+                        } else {
+                            Access::Allow
+                        }
+                    }
+                    .boxed()
+                })),
+            }),
+            quic: None,
+            stun: None,
+            metrics_addr: None,
+        })
+        .await
+        .unwrap();
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
+        let relay_url: RelayUrl = relay_url.parse()?;
+
+        // set up client a
+        let resolver = crate::dns::default_resolver().clone();
+        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
+            .connect()
+            .await?;
+
+        // the next message should be the rejection of the connection
+        tokio::time::timeout(Duration::from_millis(500), async move {
+            match client_a.next().await.unwrap().unwrap() {
+                ReceivedMessage::Health { problem } => {
+                    assert_eq!(problem, Some("not authenticated".to_string()));
+                }
+                msg => {
+                    panic!("other msg: {:?}", msg);
+                }
+            }
+        })
+        .await?;
+
+        // test that another client has access
+
+        // set up client b
+        let b_secret_key = SecretKey::generate(rand::thread_rng());
+        let b_key = b_secret_key.public();
+
+        let resolver = crate::dns::default_resolver().clone();
+        let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver)
+            .connect()
+            .await?;
+
+        // set up client c
+        let c_secret_key = SecretKey::generate(rand::thread_rng());
+        let c_key = c_secret_key.public();
+
+        let resolver = crate::dns::default_resolver().clone();
+        let mut client_c = ClientBuilder::new(relay_url.clone(), c_secret_key, resolver)
+            .connect()
+            .await?;
+
+        // send message from b to c
+        let msg = Bytes::from("hello, c");
+        let res = try_send_recv(&mut client_b, &mut client_c, c_key, msg.clone()).await?;
+
+        if let ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            assert_eq!(b_key, remote_node_id);
+            assert_eq!(msg, data);
+        } else {
+            panic!("client_c received unexpected message {res:?}");
+        }
+
+        Ok(())
     }
 }
