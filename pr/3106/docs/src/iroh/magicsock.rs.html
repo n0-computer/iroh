@@ -4195,7 +4195,10 @@
 <a href="#4194" id="4194">4194</a>
 <a href="#4195" id="4195">4195</a>
 <a href="#4196" id="4196">4196</a>
-<a href="#4197" id="4197">4197</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4197" id="4197">4197</a>
+<a href="#4198" id="4198">4198</a>
+<a href="#4199" id="4199">4199</a>
+<a href="#4200" id="4200">4200</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -8293,7 +8296,7 @@
         tasks.spawn({
             <span class="kw">let </span>queue = queue.clone();
             <span class="kw">async move </span>{
-                <span class="kw">let </span><span class="kw-2">mut </span>expected_msgs: BTreeSet&lt;usize&gt; = (<span class="number">0</span>..capacity).into_iter().collect();
+                <span class="kw">let </span><span class="kw-2">mut </span>expected_msgs: BTreeSet&lt;usize&gt; = (<span class="number">0</span>..capacity).collect();
                 <span class="kw">while </span>!expected_msgs.is_empty() {
                     <span class="kw">let </span>datagram = futures_lite::future::poll_fn(|cx| {
                         queue.poll_recv(cx).map(|result| result.unwrap())
@@ -8328,7 +8331,10 @@
         }
 
         <span class="comment">// We expect all of this work to be done in 10 seconds max.
-        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(<span class="kw">_</span>) = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tasks.join_all()).<span class="kw">await </span>{
+        </span><span class="kw">if </span>tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tasks.join_all())
+            .<span class="kw">await
+            </span>.is_err()
+        {
             <span class="macro">panic!</span>(<span class="string">"Timeout - not all messages between 0 and {capacity} received."</span>);
         }
     }
