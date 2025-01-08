@@ -242,10 +242,33 @@
 <a href="#241" id="241">241</a>
 <a href="#242" id="242">242</a>
 <a href="#243" id="243">243</a>
-<a href="#244" id="244">244</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
 </span><span class="comment">// Based on tailscale/derp/derp_server.go
 
-</span><span class="kw">use </span>std::{collections::HashSet, sync::Arc};
+</span><span class="kw">use </span>std::{
+    collections::HashSet,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 
 <span class="kw">use </span>anyhow::{bail, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
@@ -268,6 +291,8 @@
     </span>clients: DashMap&lt;NodeId, Client&gt;,
     <span class="doccomment">/// Map of which client has sent where
     </span>sent_to: DashMap&lt;NodeId, HashSet&lt;NodeId&gt;&gt;,
+    <span class="doccomment">/// Connection ID Counter
+    </span>next_connection_id: AtomicU64,
 }
 
 <span class="kw">impl </span>Clients {
@@ -285,9 +310,10 @@
     <span class="doccomment">/// Builds the client handler and starts the read &amp; write loops for the connection.
     </span><span class="kw">pub async fn </span>register(<span class="kw-2">&amp;</span><span class="self">self</span>, client_config: Config) {
         <span class="kw">let </span>node_id = client_config.node_id;
+        <span class="kw">let </span>connection_id = <span class="self">self</span>.get_connection_id();
         <span class="macro">trace!</span>(remote_node = node_id.fmt_short(), <span class="string">"registering client"</span>);
 
-        <span class="kw">let </span>client = Client::new(client_config, <span class="self">self</span>);
+        <span class="kw">let </span>client = Client::new(client_config, connection_id, <span class="self">self</span>);
         <span class="kw">if let </span><span class="prelude-val">Some</span>(old_client) = <span class="self">self</span>.<span class="number">0</span>.clients.insert(node_id, client) {
             <span class="macro">debug!</span>(
                 remote_node = node_id.fmt_short(),
@@ -297,20 +323,27 @@
         }
     }
 
+    <span class="kw">fn </span>get_connection_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
+        <span class="self">self</span>.<span class="number">0</span>.next_connection_id.fetch_add(<span class="number">1</span>, Ordering::Relaxed)
+    }
+
     <span class="doccomment">/// Removes the client from the map of clients, &amp; sends a notification
     /// to each client that peers has sent data to, to let them know that
     /// peer is gone from the network.
     ///
-    /// Explicitly drops the reference to the client to avoid deadlock.
-    </span><span class="kw">async fn </span>unregister&lt;<span class="lifetime">'a</span>&gt;(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        client: dashmap::mapref::one::Ref&lt;<span class="lifetime">'a</span>, iroh_base::PublicKey, Client&gt;,
-        node_id: NodeId,
-    ) {
-        drop(client); <span class="comment">// avoid deadlock
-        </span><span class="macro">trace!</span>(node_id = node_id.fmt_short(), <span class="string">"unregistering client"</span>);
+    /// Must be passed a matching connection_id.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>unregister&lt;<span class="lifetime">'a</span>&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, connection_id: u64, node_id: NodeId) {
+        <span class="macro">trace!</span>(
+            node_id = node_id.fmt_short(),
+            connection_id,
+            <span class="string">"unregistering client"
+        </span>);
 
-        <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, client)) = <span class="self">self</span>.<span class="number">0</span>.clients.remove(<span class="kw-2">&amp;</span>node_id) {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, client)) = <span class="self">self
+            </span>.<span class="number">0
+            </span>.clients
+            .remove_if(<span class="kw-2">&amp;</span>node_id, |<span class="kw">_</span>, c| c.connection_id() == connection_id)
+        {
             <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, sent_to)) = <span class="self">self</span>.<span class="number">0</span>.sent_to.remove(<span class="kw-2">&amp;</span>node_id) {
                 <span class="kw">for </span>key <span class="kw">in </span>sent_to {
                     <span class="kw">match </span>client.try_send_peer_gone(key) {
@@ -335,7 +368,7 @@
     }
 
     <span class="doccomment">/// Attempt to send a packet to client with [`NodeId`] `dst`.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>send_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId, data: Bytes, src: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>send_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId, data: Bytes, src: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.<span class="number">0</span>.clients.get(<span class="kw-2">&amp;</span>dst) <span class="kw">else </span>{
             <span class="macro">debug!</span>(dst = dst.fmt_short(), <span class="string">"no connected client, dropped packet"</span>);
             <span class="macro">inc!</span>(Metrics, send_packets_dropped);
@@ -359,19 +392,14 @@
                     dst = dst.fmt_short(),
                     <span class="string">"can no longer write to client, dropping message and pruning connection"
                 </span>);
-                <span class="self">self</span>.unregister(client, dst).<span class="kw">await</span>;
+                client.start_shutdown();
                 <span class="macro">bail!</span>(<span class="string">"failed to send message: gone"</span>);
             }
         }
     }
 
     <span class="doccomment">/// Attempt to send a disco packet to client with [`NodeId`] `dst`.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>send_disco_packet(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        dst: NodeId,
-        data: Bytes,
-        src: NodeId,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>send_disco_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId, data: Bytes, src: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.<span class="number">0</span>.clients.get(<span class="kw-2">&amp;</span>dst) <span class="kw">else </span>{
             <span class="macro">debug!</span>(
                 dst = dst.fmt_short(),
@@ -398,7 +426,7 @@
                     dst = dst.fmt_short(),
                     <span class="string">"can no longer write to client, dropping disco message and pruning connection"
                 </span>);
-                <span class="self">self</span>.unregister(client, dst).<span class="kw">await</span>;
+                client.start_shutdown();
                 <span class="macro">bail!</span>(<span class="string">"failed to send message: gone"</span>);
             }
         }
@@ -449,9 +477,7 @@
 
         <span class="comment">// send packet
         </span><span class="kw">let </span>data = <span class="string">b"hello world!"</span>;
-        clients
-            .send_packet(a_key, Bytes::from(<span class="kw-2">&amp;</span>data[..]), b_key)
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+        clients.send_packet(a_key, Bytes::from(<span class="kw-2">&amp;</span>data[..]), b_key)<span class="question-mark">?</span>;
         <span class="kw">let </span>frame = recv_frame(FrameType::RecvPacket, <span class="kw-2">&amp;mut </span>a_rw).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(
             frame,
@@ -462,9 +488,7 @@
         );
 
         <span class="comment">// send disco packet
-        </span>clients
-            .send_disco_packet(a_key, Bytes::from(<span class="kw-2">&amp;</span>data[..]), b_key)
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+        </span>clients.send_disco_packet(a_key, Bytes::from(<span class="kw-2">&amp;</span>data[..]), b_key)<span class="question-mark">?</span>;
         <span class="kw">let </span>frame = recv_frame(FrameType::RecvPacket, <span class="kw-2">&amp;mut </span>a_rw).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(
             frame,
@@ -474,13 +498,23 @@
             }
         );
 
-        <span class="kw">let </span>client = clients.<span class="number">0</span>.clients.get(<span class="kw-2">&amp;</span>a_key).unwrap();
+        {
+            <span class="kw">let </span>client = clients.<span class="number">0</span>.clients.get(<span class="kw-2">&amp;</span>a_key).unwrap();
+            <span class="comment">// shutdown client a, this should trigger the removal from the clients list
+            </span>client.start_shutdown();
+        }
 
-        <span class="comment">// send peer_gone. Also, tests that we do not get a deadlock
-        // when unregistering.
-        </span>clients.unregister(client, a_key).<span class="kw">await</span>;
-
-        <span class="macro">assert!</span>(!clients.<span class="number">0</span>.clients.contains_key(<span class="kw-2">&amp;</span>a_key));
+        <span class="comment">// need to wait a moment for the removal to be processed
+        </span><span class="kw">let </span>c = clients.clone();
+        tokio::time::timeout(Duration::from_secs(<span class="number">1</span>), <span class="kw">async move </span>{
+            <span class="kw">loop </span>{
+                <span class="kw">if </span>!c.<span class="number">0</span>.clients.contains_key(<span class="kw-2">&amp;</span>a_key) {
+                    <span class="kw">break</span>;
+                }
+                tokio::time::sleep(Duration::from_millis(<span class="number">100</span>)).<span class="kw">await</span>;
+            }
+        })
+        .<span class="kw">await</span><span class="question-mark">?</span>;
         clients.shutdown().<span class="kw">await</span>;
 
         <span class="prelude-val">Ok</span>(())

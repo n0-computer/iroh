@@ -548,8 +548,7 @@
 <a href="#547" id="547">547</a>
 <a href="#548" id="548">548</a>
 <a href="#549" id="549">549</a>
-<a href="#550" id="550">550</a>
-<a href="#551" id="551">551</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#550" id="550">550</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -993,9 +992,8 @@
     <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
     <span class="kw">use </span>testresult::TestResult;
 
-    <span class="kw">use </span><span class="kw">crate</span>::dns::node_info::to_z32;
-
     <span class="kw">use </span><span class="kw">super</span>::NodeInfo;
+    <span class="kw">use </span><span class="kw">crate</span>::dns::node_info::to_z32;
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>txt_attr_roundtrip() {
@@ -1052,7 +1050,7 @@
             </span>Record::from_rdata(name.clone(), <span class="number">30</span>, RData::A(A::new(<span class="number">127</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">1</span>))),
             <span class="comment">// Test a record with a mismatching name
             </span>Record::from_rdata(
-                Name::from_utf8(<span class="kw-2">&amp;</span><span class="macro">format!</span>(
+                Name::from_utf8(<span class="macro">format!</span>(
                     <span class="string">"_iroh.{}.dns.iroh.link."</span>,
                     to_z32(<span class="kw-2">&amp;</span>NodeId::from_str(
                         <span class="comment">// Another NodeId
