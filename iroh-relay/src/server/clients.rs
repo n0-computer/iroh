@@ -1,7 +1,13 @@
 //! The "Server" side of the client. Uses the `ClientConnManager`.
 // Based on tailscale/derp/derp_server.go
 
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::HashSet,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 
 use anyhow::{bail, Result};
 use bytes::Bytes;
@@ -24,6 +30,8 @@ struct Inner {
     clients: DashMap<NodeId, Client>,
     /// Map of which client has sent where
     sent_to: DashMap<NodeId, HashSet<NodeId>>,
+    /// Connection ID Counter
+    next_connection_id: AtomicU64,
 }
 
 impl Clients {
@@ -41,9 +49,10 @@ impl Clients {
     /// Builds the client handler and starts the read & write loops for the connection.
     pub async fn register(&self, client_config: Config) {
         let node_id = client_config.node_id;
+        let connection_id = self.get_connection_id();
         trace!(remote_node = node_id.fmt_short(), "registering client");
 
-        let client = Client::new(client_config, self);
+        let client = Client::new(client_config, connection_id, self);
         if let Some(old_client) = self.0.clients.insert(node_id, client) {
             debug!(
                 remote_node = node_id.fmt_short(),
@@ -53,20 +62,27 @@ impl Clients {
         }
     }
 
+    fn get_connection_id(&self) -> u64 {
+        self.0.next_connection_id.fetch_add(1, Ordering::Relaxed)
+    }
+
     /// Removes the client from the map of clients, & sends a notification
     /// to each client that peers has sent data to, to let them know that
     /// peer is gone from the network.
     ///
-    /// Explicitly drops the reference to the client to avoid deadlock.
-    async fn unregister<'a>(
-        &self,
-        client: dashmap::mapref::one::Ref<'a, iroh_base::PublicKey, Client>,
-        node_id: NodeId,
-    ) {
-        drop(client); // avoid deadlock
-        trace!(node_id = node_id.fmt_short(), "unregistering client");
+    /// Must be passed a matching connection_id.
+    pub(super) async fn unregister<'a>(&self, connection_id: u64, node_id: NodeId) {
+        trace!(
+            node_id = node_id.fmt_short(),
+            connection_id,
+            "unregistering client"
+        );
 
-        if let Some((_, client)) = self.0.clients.remove(&node_id) {
+        if let Some((_, client)) = self
+            .0
+            .clients
+            .remove_if(&node_id, |_, c| c.connection_id() == connection_id)
+        {
             if let Some((_, sent_to)) = self.0.sent_to.remove(&node_id) {
                 for key in sent_to {
                     match client.try_send_peer_gone(key) {
@@ -91,7 +107,7 @@ impl Clients {
     }
 
     /// Attempt to send a packet to client with [`NodeId`] `dst`.
-    pub(super) async fn send_packet(&self, dst: NodeId, data: Bytes, src: NodeId) -> Result<()> {
+    pub(super) fn send_packet(&self, dst: NodeId, data: Bytes, src: NodeId) -> Result<()> {
         let Some(client) = self.0.clients.get(&dst) else {
             debug!(dst = dst.fmt_short(), "no connected client, dropped packet");
             inc!(Metrics, send_packets_dropped);
@@ -115,19 +131,14 @@ impl Clients {
                     dst = dst.fmt_short(),
                     "can no longer write to client, dropping message and pruning connection"
                 );
-                self.unregister(client, dst).await;
+                client.start_shutdown();
                 bail!("failed to send message: gone");
             }
         }
     }
 
     /// Attempt to send a disco packet to client with [`NodeId`] `dst`.
-    pub(super) async fn send_disco_packet(
-        &self,
-        dst: NodeId,
-        data: Bytes,
-        src: NodeId,
-    ) -> Result<()> {
+    pub(super) fn send_disco_packet(&self, dst: NodeId, data: Bytes, src: NodeId) -> Result<()> {
         let Some(client) = self.0.clients.get(&dst) else {
             debug!(
                 dst = dst.fmt_short(),
@@ -154,7 +165,7 @@ impl Clients {
                     dst = dst.fmt_short(),
                     "can no longer write to client, dropping disco message and pruning connection"
                 );
-                self.unregister(client, dst).await;
+                client.start_shutdown();
                 bail!("failed to send message: gone");
             }
         }
@@ -205,9 +216,7 @@ mod tests {
 
         // send packet
         let data = b"hello world!";
-        clients
-            .send_packet(a_key, Bytes::from(&data[..]), b_key)
-            .await?;
+        clients.send_packet(a_key, Bytes::from(&data[..]), b_key)?;
         let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
         assert_eq!(
             frame,
@@ -218,9 +227,7 @@ mod tests {
         );
 
         // send disco packet
-        clients
-            .send_disco_packet(a_key, Bytes::from(&data[..]), b_key)
-            .await?;
+        clients.send_disco_packet(a_key, Bytes::from(&data[..]), b_key)?;
         let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
         assert_eq!(
             frame,
@@ -230,13 +237,23 @@ mod tests {
             }
         );
 
-        let client = clients.0.clients.get(&a_key).unwrap();
+        {
+            let client = clients.0.clients.get(&a_key).unwrap();
+            // shutdown client a, this should trigger the removal from the clients list
+            client.start_shutdown();
+        }
 
-        // send peer_gone. Also, tests that we do not get a deadlock
-        // when unregistering.
-        clients.unregister(client, a_key).await;
-
-        assert!(!clients.0.clients.contains_key(&a_key));
+        // need to wait a moment for the removal to be processed
+        let c = clients.clone();
+        tokio::time::timeout(Duration::from_secs(1), async move {
+            loop {
+                if !c.0.clients.contains_key(&a_key) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await?;
         clients.shutdown().await;
 
         Ok(())

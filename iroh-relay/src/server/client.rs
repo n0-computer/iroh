@@ -48,6 +48,8 @@ pub(super) struct Config {
 pub(super) struct Client {
     /// Identity of the connected peer.
     node_id: NodeId,
+    /// Connection identifier.
+    connection_id: u64,
     /// Used to close the connection loop.
     done: CancellationToken,
     /// Actor handle.
@@ -64,7 +66,7 @@ impl Client {
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
     /// Call [`Client::shutdown`] to close the read and write loops before dropping the [`Client`]
-    pub(super) fn new(config: Config, clients: &Clients) -> Client {
+    pub(super) fn new(config: Config, connection_id: u64, clients: &Clients) -> Client {
         let Config {
             node_id,
             stream: io,
@@ -98,29 +100,21 @@ impl Client {
             disco_send_queue: disco_send_queue_r,
             node_gone: peer_gone_r,
             node_id,
+            connection_id,
             clients: clients.clone(),
         };
 
         // start io loop
         let io_done = done.clone();
-        let handle = tokio::task::spawn(
-            async move {
-                match actor.run(io_done).await {
-                    Err(e) => {
-                        warn!("writer closed in error {e:#?}");
-                    }
-                    Ok(()) => {
-                        debug!("writer closed");
-                    }
-                }
-            }
-            .instrument(
-                tracing::info_span!("client connection actor", remote_node = %node_id.fmt_short()),
-            ),
-        );
+        let handle = tokio::task::spawn(actor.run(io_done).instrument(tracing::info_span!(
+            "client connection actor",
+            remote_node = %node_id.fmt_short(),
+            connection_id = connection_id
+        )));
 
         Client {
             node_id,
+            connection_id,
             handle: AbortOnDropHandle::new(handle),
             done,
             send_queue: send_queue_s,
@@ -129,17 +123,26 @@ impl Client {
         }
     }
 
+    pub(super) fn connection_id(&self) -> u64 {
+        self.connection_id
+    }
+
     /// Shutdown the reader and writer loops and closes the connection.
     ///
     /// Any shutdown errors will be logged as warnings.
     pub(super) async fn shutdown(self) {
-        self.done.cancel();
+        self.start_shutdown();
         if let Err(e) = self.handle.await {
             warn!(
                 remote_node = %self.node_id.fmt_short(),
                 "error closing actor loop: {e:#?}",
             );
         };
+    }
+
+    /// Starts the process of shutdown.
+    pub(super) fn start_shutdown(&self) {
+        self.done.cancel();
     }
 
     pub(super) fn try_send_packet(
@@ -194,12 +197,29 @@ struct Actor {
     node_gone: mpsc::Receiver<NodeId>,
     /// [`NodeId`] of this client
     node_id: NodeId,
+    /// Connection identifier.
+    connection_id: u64,
     /// Reference to the other connected clients.
     clients: Clients,
 }
 
 impl Actor {
-    async fn run(mut self, done: CancellationToken) -> Result<()> {
+    async fn run(mut self, done: CancellationToken) {
+        match self.run_inner(done).await {
+            Err(e) => {
+                warn!("actor errored {e:#?}, exiting");
+            }
+            Ok(()) => {
+                debug!("actor finished, exiting");
+            }
+        }
+
+        self.clients
+            .unregister(self.connection_id, self.node_id)
+            .await;
+    }
+
+    async fn run_inner(&mut self, done: CancellationToken) -> Result<()> {
         let jitter = Duration::from_secs(5);
         let mut keep_alive = tokio::time::interval(KEEP_ALIVE + jitter);
         // ticks immediately
@@ -304,7 +324,7 @@ impl Actor {
         match frame {
             Frame::SendPacket { dst_key, packet } => {
                 let packet_len = packet.len();
-                self.handle_frame_send_packet(dst_key, packet).await?;
+                self.handle_frame_send_packet(dst_key, packet)?;
                 inc_by!(Metrics, bytes_recv, packet_len as u64);
             }
             Frame::Ping { data } => {
@@ -323,15 +343,13 @@ impl Actor {
         Ok(())
     }
 
-    async fn handle_frame_send_packet(&self, dst: NodeId, data: Bytes) -> Result<()> {
+    fn handle_frame_send_packet(&self, dst: NodeId, data: Bytes) -> Result<()> {
         if disco::looks_like_disco_wrapper(&data) {
             inc!(Metrics, disco_packets_recv);
-            self.clients
-                .send_disco_packet(dst, data, self.node_id)
-                .await?;
+            self.clients.send_disco_packet(dst, data, self.node_id)?;
         } else {
             inc!(Metrics, send_packets_recv);
-            self.clients.send_packet(dst, data, self.node_id).await?;
+            self.clients.send_packet(dst, data, self.node_id)?;
         }
         Ok(())
     }
@@ -546,6 +564,7 @@ mod tests {
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
             node_gone: peer_gone_r,
+            connection_id: 0,
             node_id,
             clients: clients.clone(),
         };
@@ -630,7 +649,7 @@ mod tests {
             .await?;
 
         done.cancel();
-        handle.await??;
+        handle.await?;
         Ok(())
     }
 
