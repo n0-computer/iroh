@@ -494,12 +494,7 @@
 <a href="#493" id="493">493</a>
 <a href="#494" id="494">494</a>
 <a href="#495" id="495">495</a>
-<a href="#496" id="496">496</a>
-<a href="#497" id="497">497</a>
-<a href="#498" id="498">498</a>
-<a href="#499" id="499">499</a>
-<a href="#500" id="500">500</a>
-<a href="#501" id="501">501</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#496" id="496">496</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -663,9 +658,9 @@
         <span class="self">self</span>.into()
     }
 
-    <span class="doccomment">/// Parses a [`NodeInfo`] from a set of DNS records.
-    </span><span class="kw">pub fn </span>from_hickory_records(records: <span class="kw-2">&amp;</span>[hickory_resolver::proto::rr::Record]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>attrs = TxtAttrs::from_hickory_records(records)<span class="question-mark">?</span>;
+    <span class="doccomment">/// Parses a [`NodeInfo`] from a TXT records lookup.
+    </span><span class="kw">pub fn </span>from_hickory_lookup(lookup: hickory_resolver::lookup::TxtLookup) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">let </span>attrs = TxtAttrs::from_hickory_lookup(lookup)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(attrs.into())
     }
 
@@ -741,13 +736,9 @@
     }
 
     <span class="doccomment">/// Creates [`TxtAttrs`] from a node id and an iterator of "{key}={value}" strings.
-    </span><span class="kw">pub fn </span>from_strings(
-        node_id: NodeId,
-        strings: <span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;String&gt;&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub fn </span>from_strings(node_id: NodeId, strings: <span class="kw">impl </span>Iterator&lt;Item = String&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>attrs: BTreeMap&lt;T, Vec&lt;String&gt;&gt; = BTreeMap::new();
         <span class="kw">for </span>s <span class="kw">in </span>strings {
-            <span class="kw">let </span>s = s<span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>parts = s.split(<span class="string">'='</span>);
             <span class="kw">let </span>(<span class="prelude-val">Some</span>(key), <span class="prelude-val">Some</span>(value)) = (parts.next(), parts.next()) <span class="kw">else </span>{
                 <span class="kw">continue</span>;
@@ -763,7 +754,7 @@
     <span class="kw">async fn </span>lookup(resolver: <span class="kw-2">&amp;</span>TokioResolver, name: Name) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>name = ensure_iroh_txt_label(name)<span class="question-mark">?</span>;
         <span class="kw">let </span>lookup = resolver.txt_lookup(name).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>attrs = <span class="self">Self</span>::from_hickory_records(lookup.as_lookup().records())<span class="question-mark">?</span>;
+        <span class="kw">let </span>attrs = <span class="self">Self</span>::from_hickory_lookup(lookup)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(attrs)
     }
 
@@ -812,29 +803,23 @@
             <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
         });
 
-        <span class="kw">let </span>txt_strs = txt_data.filter_map(|s| String::try_from(s.clone()).ok().map(<span class="prelude-val">Ok</span>));
+        <span class="kw">let </span>txt_strs = txt_data.filter_map(|s| String::try_from(s.clone()).ok());
         <span class="self">Self</span>::from_strings(node_id, txt_strs)
     }
 
-    <span class="doccomment">/// Parses a set of DNS resource records.
-    </span><span class="kw">pub fn </span>from_hickory_records(records: <span class="kw-2">&amp;</span>[hickory_resolver::proto::rr::Record]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">use </span>hickory_resolver::proto::rr;
-        <span class="kw">let </span><span class="kw-2">mut </span>records = records.iter().filter_map(|rr| <span class="kw">match </span>rr.data() {
-            rr::RData::TXT(txt) =&gt; {
-                node_id_from_hickory_name(rr.name()).map(|node_id| (node_id, txt))
+    <span class="doccomment">/// Parses a TXT records lookup.
+    </span><span class="kw">pub fn </span>from_hickory_lookup(lookup: hickory_resolver::lookup::TxtLookup) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">let </span>node_id = node_id_from_hickory_name(lookup.query().name())
+            .ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"invalid DNS answer: not a query for _iroh.z32encodedpubkey"</span>))<span class="question-mark">?</span>;
+
+        <span class="kw">let </span>strings = lookup.as_lookup().record_iter().filter_map(|record| {
+            <span class="kw">match </span>node_id_from_hickory_name(record.name()) {
+                <span class="comment">// Filter out only TXT record answers that match the node_id we searched for.
+                </span><span class="prelude-val">Some</span>(n) <span class="kw">if </span>n == node_id =&gt; record.data().as_txt().map(|txt| txt.to_string()),
+                <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
             }
-            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
         });
-        <span class="kw">let </span>(node_id, first) = records.next().ok_or_else(|| {
-            <span class="macro">anyhow!</span>(<span class="string">"invalid DNS answer: no TXT record with name _iroh.z32encodedpubkey found"</span>)
-        })<span class="question-mark">?</span>;
-        <span class="kw">let </span>strings = records.map(|(n, txt)| {
-            <span class="kw">if </span>n == node_id {
-                <span class="prelude-val">Ok</span>(txt.to_string())
-            } <span class="kw">else </span>{
-                <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"invalid DNS answer: all _iroh txt records must belong to the same node domain"</span>))
-            }
-        }).chain(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(first.to_string())));
+
         <span class="self">Self</span>::from_strings(node_id, strings)
     }
 
@@ -911,10 +896,14 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>std::{collections::BTreeSet, str::FromStr};
+    <span class="kw">use </span>std::{collections::BTreeSet, str::FromStr, sync::Arc};
 
     <span class="kw">use </span>hickory_resolver::{
-        proto::rr::{rdata::TXT, RData, Record},
+        lookup::Lookup,
+        proto::{
+            op::Query,
+            rr::{rdata::TXT, RData, Record, RecordType},
+        },
         Name,
     };
     <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
@@ -961,7 +950,8 @@
         <span class="kw">let </span>name = Name::from_utf8(
             <span class="string">"_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link."</span>,
         )<span class="question-mark">?</span>;
-        <span class="kw">let </span>test_records = [
+        <span class="kw">let </span>query = Query::query(name.clone(), RecordType::TXT);
+        <span class="kw">let </span>records = [
             Record::from_rdata(
                 name.clone(),
                 <span class="number">30</span>,
@@ -980,9 +970,9 @@
                 ])),
             ),
         ];
+        <span class="kw">let </span>lookup = Lookup::new_with_max_ttl(query, Arc::new(records));
 
-        <span class="kw">let </span>node_info = NodeInfo::from_hickory_records(<span class="kw-2">&amp;</span>test_records)<span class="question-mark">?</span>;
-
+        <span class="kw">let </span>node_info = NodeInfo::from_hickory_lookup(lookup.into())<span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(
             node_info,
             NodeInfo {
