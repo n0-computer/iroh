@@ -43,6 +43,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use hickory_resolver::{proto::ProtoError, Name, TokioResolver};
 use iroh_base::{NodeAddr, NodeId, SecretKey};
+use tracing::warn;
 use url::Url;
 
 /// The DNS name for the iroh TXT record.
@@ -313,18 +314,43 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
 
     /// Parses a TXT records lookup.
     pub fn from_hickory_lookup(lookup: hickory_resolver::lookup::TxtLookup) -> Result<Self> {
-        let node_id = node_id_from_hickory_name(lookup.query().name())
+        let queried_node_id = node_id_from_hickory_name(lookup.query().name())
             .ok_or_else(|| anyhow!("invalid DNS answer: not a query for _iroh.z32encodedpubkey"))?;
 
         let strings = lookup.as_lookup().record_iter().filter_map(|record| {
             match node_id_from_hickory_name(record.name()) {
                 // Filter out only TXT record answers that match the node_id we searched for.
-                Some(n) if n == node_id => record.data().as_txt().map(|txt| txt.to_string()),
-                _ => None,
+                Some(n) if n == queried_node_id => match record.data().as_txt() {
+                    Some(txt) => Some(txt.to_string()),
+                    None => {
+                        warn!(
+                            ?queried_node_id,
+                            data = ?record.data(),
+                            "unexpected record type for DNS discovery query"
+                        );
+                        None
+                    }
+                },
+                Some(answered_node_id) => {
+                    warn!(
+                        ?queried_node_id,
+                        ?answered_node_id,
+                        "unexpected node ID answered for DNS query"
+                    );
+                    None
+                }
+                None => {
+                    warn!(
+                        ?queried_node_id,
+                        name = ?record.name(),
+                        "unexpected answer record name for DNS query"
+                    );
+                    None
+                }
             }
         });
 
-        Self::from_strings(node_id, strings)
+        Self::from_strings(queried_node_id, strings)
     }
 
     fn to_txt_strings(&self) -> impl Iterator<Item = String> + '_ {
@@ -406,12 +432,17 @@ mod tests {
         lookup::Lookup,
         proto::{
             op::Query,
-            rr::{rdata::TXT, RData, Record, RecordType},
+            rr::{
+                rdata::{A, TXT},
+                RData, Record, RecordType,
+            },
         },
         Name,
     };
     use iroh_base::{NodeId, SecretKey};
     use testresult::TestResult;
+
+    use crate::dns::node_info::to_z32;
 
     use super::NodeInfo;
 
@@ -450,7 +481,7 @@ mod tests {
     /// The reason was that only the first address was parsed (e.g. 192.168.96.145 in
     /// this example), which could be a local, unreachable address.
     #[test]
-    fn test_dns_answer_multiple_txt_records() -> TestResult {
+    fn test_from_hickory_lookup() -> TestResult {
         let name = Name::from_utf8(
             "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.",
         )?;
@@ -465,6 +496,30 @@ mod tests {
                 name.clone(),
                 30,
                 RData::TXT(TXT::new(vec!["addr=213.208.157.87:60165".to_string()])),
+            ),
+            // Test a record with mismatching record type (A instead of TXT). It should be filtered out.
+            Record::from_rdata(name.clone(), 30, RData::A(A::new(127, 0, 0, 1))),
+            // Test a record with a mismatching name
+            Record::from_rdata(
+                Name::from_utf8(&format!(
+                    "_iroh.{}.dns.iroh.link.",
+                    to_z32(&NodeId::from_str(
+                        // Another NodeId
+                        "a55f26132e5e43de834d534332f66a20d480c3e50a13a312a071adea6569981e"
+                    )?)
+                ))?,
+                30,
+                RData::TXT(TXT::new(vec![
+                    "relay=https://euw1-1.relay.iroh.network./".to_string()
+                ])),
+            ),
+            // Test a record with a completely different name
+            Record::from_rdata(
+                Name::from_utf8("dns.iroh.link.")?,
+                30,
+                RData::TXT(TXT::new(vec![
+                    "relay=https://euw1-1.relay.iroh.network./".to_string()
+                ])),
             ),
             Record::from_rdata(
                 name.clone(),
