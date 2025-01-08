@@ -20,10 +20,11 @@ use super::{
     udp_paths::{NodeUdpPaths, UdpSendAddr},
     IpPort, Source,
 };
+#[cfg(any(test, feature = "test-utils"))]
+use crate::endpoint::PathSelection;
 use crate::{
     disco::{self, SendAddr},
     magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
-    util::relay_only_mode,
     watchable::{Watchable, Watcher},
 };
 
@@ -136,6 +137,9 @@ pub(super) struct NodeState {
     ///
     /// Used for metric reporting.
     has_been_direct: bool,
+    /// Configuration for what path selection to use
+    #[cfg(any(test, feature = "test-utils"))]
+    path_selection: PathSelection,
 }
 
 /// Options for creating a new [`NodeState`].
@@ -146,6 +150,8 @@ pub(super) struct Options {
     /// Is this endpoint currently active (sending data)?
     pub(super) active: bool,
     pub(super) source: super::Source,
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(super) path_selection: PathSelection,
 }
 
 impl NodeState {
@@ -176,6 +182,8 @@ impl NodeState {
             last_call_me_maybe: None,
             conn_type: Watchable::new(ConnectionType::None),
             has_been_direct: false,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection: options.path_selection,
         }
     }
 
@@ -271,8 +279,9 @@ impl NodeState {
         now: &Instant,
         have_ipv6: bool,
     ) -> (Option<SocketAddr>, Option<RelayUrl>) {
-        if relay_only_mode() {
-            debug!("in `DEV_relay_ONLY` mode, giving the relay address as the only viable address for this endpoint");
+        #[cfg(any(test, feature = "test-utils"))]
+        if self.path_selection == PathSelection::RelayOnly {
+            debug!("in `RelayOnly` mode, giving the relay address as the only viable address for this endpoint");
             return (None, self.relay_url());
         }
         let (best_addr, relay_url) = match self.udp_paths.send_addr(*now, have_ipv6) {
@@ -456,9 +465,10 @@ impl NodeState {
 
     #[must_use = "pings must be handled"]
     fn start_ping(&self, dst: SendAddr, purpose: DiscoPingPurpose) -> Option<SendPing> {
-        if relay_only_mode() && !dst.is_relay() {
+        #[cfg(any(test, feature = "test-utils"))]
+        if self.path_selection == PathSelection::RelayOnly && !dst.is_relay() {
             // don't attempt any hole punching in relay only mode
-            warn!("in `DEV_relay_ONLY` mode, ignoring request to start a hole punching attempt.");
+            warn!("in `RealyOnly` mode, ignoring request to start a hole punching attempt.");
             return None;
         }
         let tx_id = stun::TransactionId::default();
@@ -601,10 +611,10 @@ impl NodeState {
                 }
             }
         }
-        if relay_only_mode() {
-            warn!(
-                "in `DEV_relay_ONLY` mode, ignoring request to respond to a hole punching attempt."
-            );
+
+        #[cfg(any(test, feature = "test-utils"))]
+        if self.path_selection == PathSelection::RelayOnly {
+            warn!("in `RelayOnly` mode, ignoring request to respond to a hole punching attempt.");
             return ping_msgs;
         }
         self.prune_direct_addresses();
@@ -634,17 +644,17 @@ impl NodeState {
 
     pub(super) fn update_from_node_addr(
         &mut self,
-        relay_url: Option<&RelayUrl>,
-        addrs: &BTreeSet<SocketAddr>,
+        new_relay_url: Option<&RelayUrl>,
+        new_addrs: &BTreeSet<SocketAddr>,
         source: super::Source,
     ) {
         if self.udp_paths.best_addr.is_empty() {
             // we do not have a direct connection, so changing the relay information may
             // have an effect on our connection status
-            if self.relay_url.is_none() && relay_url.is_some() {
+            if self.relay_url.is_none() && new_relay_url.is_some() {
                 // we did not have a relay connection before, but now we do
                 inc!(MagicsockMetrics, num_relay_conns_added)
-            } else if self.relay_url.is_some() && relay_url.is_none() {
+            } else if self.relay_url.is_some() && new_relay_url.is_none() {
                 // we had a relay connection before but do not have one now
                 inc!(MagicsockMetrics, num_relay_conns_removed)
             }
@@ -652,12 +662,12 @@ impl NodeState {
 
         let now = Instant::now();
 
-        if relay_url.is_some() && relay_url != self.relay_url().as_ref() {
+        if new_relay_url.is_some() && new_relay_url != self.relay_url().as_ref() {
             debug!(
                 "Changing relay node from {:?} to {:?}",
-                self.relay_url, relay_url
+                self.relay_url, new_relay_url
             );
-            self.relay_url = relay_url.map(|url| {
+            self.relay_url = new_relay_url.map(|url| {
                 (
                     url.clone(),
                     PathState::new(self.node_id, url.clone().into(), source.clone(), now),
@@ -665,7 +675,7 @@ impl NodeState {
             });
         }
 
-        for &addr in addrs.iter() {
+        for &addr in new_addrs.iter() {
             self.udp_paths
                 .paths
                 .entry(addr.into())
@@ -677,7 +687,7 @@ impl NodeState {
                 });
         }
         let paths = summarize_node_paths(&self.udp_paths.paths);
-        debug!(new = ?addrs , %paths, "added new direct paths for endpoint");
+        debug!(new = ?new_addrs , %paths, "added new direct paths for endpoint");
     }
 
     /// Clears all the endpoint's p2p state, reverting it to a relay-only endpoint.
@@ -1495,6 +1505,8 @@ mod tests {
                     last_call_me_maybe: None,
                     conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
                     has_been_direct: true,
+                    #[cfg(any(test, feature = "test-utils"))]
+                    path_selection: PathSelection::default(),
                 },
                 ip_port.into(),
             )
@@ -1515,6 +1527,8 @@ mod tests {
                 last_call_me_maybe: None,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
                 has_been_direct: false,
+                #[cfg(any(test, feature = "test-utils"))]
+                path_selection: PathSelection::default(),
             }
         };
 
@@ -1542,6 +1556,8 @@ mod tests {
                 last_call_me_maybe: None,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
                 has_been_direct: false,
+                #[cfg(any(test, feature = "test-utils"))]
+                path_selection: PathSelection::default(),
             }
         };
 
@@ -1582,6 +1598,8 @@ mod tests {
                         send_addr.clone(),
                     )),
                     has_been_direct: false,
+                    #[cfg(any(test, feature = "test-utils"))]
+                    path_selection: PathSelection::default(),
                 },
                 socket_addr,
             )
@@ -1672,6 +1690,7 @@ mod tests {
                 (d_endpoint.id, d_endpoint),
             ]),
             next_id: 5,
+            path_selection: PathSelection::default(),
         });
         let mut got = node_map.list_remote_infos(later);
         got.sort_by_key(|p| p.node_id);
@@ -1701,6 +1720,7 @@ mod tests {
             source: crate::magicsock::Source::NamedApp {
                 name: "test".into(),
             },
+            path_selection: PathSelection::default(),
         };
         let mut ep = NodeState::new(0, opts);
 

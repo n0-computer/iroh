@@ -23,11 +23,9 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use derive_more::Debug;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use pin_project::pin_project;
-use tokio_util::sync::CancellationToken;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
@@ -74,13 +72,25 @@ const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
 type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync>;
 
+/// Defines the mode of path selection for all traffic flowing through
+/// the endpoint.
+#[cfg(any(test, feature = "test-utils"))]
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+pub enum PathSelection {
+    /// Uses all available paths
+    #[default]
+    All,
+    /// Forces all traffic to go exclusively through relays
+    RelayOnly,
+}
+
 /// Builder for [`Endpoint`].
 ///
 /// By default the endpoint will generate a new random [`SecretKey`], which will result in a
 /// new [`NodeId`].
 ///
 /// To create the [`Endpoint`] call [`Builder::bind`].
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct Builder {
     secret_key: Option<SecretKey>,
     relay_mode: RelayMode,
@@ -97,6 +107,8 @@ pub struct Builder {
     insecure_skip_relay_cert_verify: bool,
     addr_v4: Option<SocketAddrV4>,
     addr_v6: Option<SocketAddrV6>,
+    #[cfg(any(test, feature = "test-utils"))]
+    path_selection: PathSelection,
 }
 
 impl Default for Builder {
@@ -115,6 +127,8 @@ impl Default for Builder {
             insecure_skip_relay_cert_verify: false,
             addr_v4: None,
             addr_v6: None,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection: PathSelection::default(),
         }
     }
 }
@@ -160,6 +174,8 @@ impl Builder {
             dns_resolver,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection: self.path_selection,
         };
         Endpoint::bind(static_config, msock_opts, self.alpn_protocols).await
     }
@@ -417,6 +433,14 @@ impl Builder {
         self.insecure_skip_relay_cert_verify = skip_verify;
         self
     }
+
+    /// This implies we only use the relay to communicate
+    /// and do not attempt to do any hole punching.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn path_selection(mut self, path_selection: PathSelection) -> Self {
+        self.path_selection = path_selection;
+        self
+    }
 }
 
 /// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
@@ -484,7 +508,6 @@ pub struct Endpoint {
     msock: Handle,
     endpoint: quinn::Endpoint,
     rtt_actor: Arc<rtt_actor::RttHandle>,
-    cancel_token: CancellationToken,
     static_config: Arc<StaticConfig>,
 }
 
@@ -535,7 +558,6 @@ impl Endpoint {
             msock,
             endpoint,
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
-            cancel_token: CancellationToken::new(),
             static_config: Arc::new(static_config),
         })
     }
@@ -592,10 +614,11 @@ impl Endpoint {
         let node_id = node_addr.node_id;
         let direct_addresses = node_addr.direct_addresses.clone();
 
-        // Get the mapped IPv6 address from the magic socket. Quinn will connect to this address.
-        // Start discovery for this node if it's enabled and we have no valid or verified
-        // address information for this node.
-        let (addr, discovery) = self
+        // Get the mapped IPv6 address from the magic socket. Quinn will connect to this
+        // address.  Start discovery for this node if it's enabled and we have no valid or
+        // verified address information for this node.  Dropping the discovery cancels any
+        // still running task.
+        let (addr, _discovery_drop_guard) = self
             .get_mapping_addr_and_maybe_start_discovery(node_addr)
             .await
             .with_context(|| {
@@ -610,16 +633,9 @@ impl Endpoint {
             node_id, addr, direct_addresses
         );
 
-        // Start connecting via quinn. This will time out after 10 seconds if no reachable address
-        // is available.
-        let conn = self.connect_quinn(node_id, alpn, addr).await;
-
-        // Cancel the node discovery task (if still running).
-        if let Some(discovery) = discovery {
-            discovery.cancel();
-        }
-
-        conn
+        // Start connecting via quinn. This will time out after 10 seconds if no reachable
+        // address is available.
+        self.connect_quinn(node_id, alpn, addr).await
     }
 
     #[instrument(
@@ -964,7 +980,6 @@ impl Endpoint {
             return Ok(());
         }
 
-        self.cancel_token.cancel();
         tracing::debug!("Closing connections");
         self.endpoint.close(0u16.into(), b"");
         self.endpoint.wait_idle().await;
@@ -976,15 +991,10 @@ impl Endpoint {
 
     /// Check if this endpoint is still alive, or already closed.
     pub fn is_closed(&self) -> bool {
-        self.cancel_token.is_cancelled() && self.msock.is_closed()
+        self.msock.is_closed()
     }
 
     // # Remaining private methods
-
-    /// Expose the internal [`CancellationToken`] to link shutdowns.
-    pub(crate) fn cancel_token(&self) -> &CancellationToken {
-        &self.cancel_token
-    }
 
     /// Return the quic mapped address for this `node_id` and possibly start discovery
     /// services if discovery is enabled on this magic endpoint.
@@ -1059,7 +1069,7 @@ impl Endpoint {
 }
 
 /// Future produced by [`Endpoint::accept`].
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 #[pin_project]
 pub struct Accept<'a> {
     #[pin]
@@ -1622,8 +1632,8 @@ mod tests {
                     let eps = ep.bound_sockets();
                     info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server listening on");
                     for i in 0..n_clients {
-                        let now = Instant::now();
-                        println!("[server] round {}", i + 1);
+                        let round_start = Instant::now();
+                        info!("[server] round {i}");
                         let incoming = ep.accept().await.unwrap();
                         let conn = incoming.await.unwrap();
                         let peer_id = get_remote_node_id(&conn).unwrap();
@@ -1638,7 +1648,7 @@ mod tests {
                         send.stopped().await.unwrap();
                         recv.read_to_end(0).await.unwrap();
                         info!(%i, peer = %peer_id.fmt_short(), "finished");
-                        println!("[server] round {} done in {:?}", i + 1, now.elapsed());
+                        info!("[server] round {i} done in {:?}", round_start.elapsed());
                     }
                 }
                 .instrument(error_span!("server")),
@@ -1650,8 +1660,8 @@ mod tests {
         });
 
         for i in 0..n_clients {
-            let now = Instant::now();
-            println!("[client] round {}", i + 1);
+            let round_start = Instant::now();
+            info!("[client] round {}", i);
             let relay_map = relay_map.clone();
             let client_secret_key = SecretKey::generate(&mut rng);
             let relay_url = relay_url.clone();
@@ -1688,7 +1698,7 @@ mod tests {
             }
             .instrument(error_span!("client", %i))
             .await;
-            println!("[client] round {} done in {:?}", i + 1, now.elapsed());
+            info!("[client] round {i} done in {:?}", round_start.elapsed());
         }
 
         server.await.unwrap();

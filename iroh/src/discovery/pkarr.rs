@@ -194,7 +194,14 @@ impl PkarrPublisher {
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
     pub fn update_addr_info(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
-        let info = NodeInfo::new(self.node_id, url.cloned().map(Into::into), addrs.clone());
+        let (relay_url, direct_addresses) = if let Some(relay_url) = url {
+            // Only publish relay url, and no direct addrs
+            let url = relay_url.clone();
+            (Some(url.into()), Default::default())
+        } else {
+            (None, addrs.clone())
+        };
+        let info = NodeInfo::new(self.node_id, relay_url, direct_addresses);
         self.watchable.set(Some(info)).ok();
     }
 }

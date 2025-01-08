@@ -248,9 +248,8 @@ impl RouterBuilder {
         let mut join_set = JoinSet::new();
         let endpoint = self.endpoint.clone();
 
-        // We use a child token of the endpoint, to ensure that this is shutdown
-        // when the endpoint is shutdown, but that we can shutdown ourselves independently.
-        let cancel = endpoint.cancel_token().child_token();
+        // Our own shutdown works with a cancellation token.
+        let cancel = CancellationToken::new();
         let cancel_token = cancel.clone();
 
         let run_loop_fut = async move {
@@ -289,7 +288,7 @@ impl RouterBuilder {
                     // handle incoming p2p connections.
                     incoming = endpoint.accept() => {
                         let Some(incoming) = incoming else {
-                            break;
+                            break; // Endpoint is closed.
                         };
 
                         let protocols = protocols.clone();

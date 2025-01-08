@@ -15,10 +15,7 @@ use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
 };
 use iroh_metrics::inc;
-use tokio::{
-    net::{TcpListener, TcpStream},
-    sync::mpsc,
-};
+use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_tungstenite::{
     tungstenite::{handshake::derive_accept_key, protocol::Role},
@@ -27,16 +24,16 @@ use tokio_tungstenite::{
 use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
+use super::clients::Clients;
 use crate::{
-    defaults::DEFAULT_KEY_CACHE_CAPACITY,
+    defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
     protos::relay::{recv_client_key, RelayCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION},
     server::{
-        actor::{Message, ServerActorTask},
-        client_conn::ClientConnConfig,
+        client::Config,
         metrics::Metrics,
         streams::{MaybeTlsStream, RelayedStream},
-        ClientConnRateLimit,
+        ClientRateLimit,
     },
     KeyCache,
 };
@@ -162,7 +159,7 @@ pub(super) struct ServerBuilder {
     ///
     /// Rate-limiting is enforced on received traffic from individual clients.  This
     /// configuration applies to a single client connection.
-    client_rx_ratelimit: Option<ClientConnRateLimit>,
+    client_rx_ratelimit: Option<ClientRateLimit>,
     /// The capacity of the key cache.
     key_cache_capacity: usize,
 }
@@ -190,7 +187,7 @@ impl ServerBuilder {
     ///
     /// On each client connection the incoming data is rate-limited.  By default
     /// no rate limit is enforced.
-    pub(super) fn client_rx_ratelimit(mut self, config: ClientConnRateLimit) -> Self {
+    pub(super) fn client_rx_ratelimit(mut self, config: ClientRateLimit) -> Self {
         self.client_rx_ratelimit = Some(config);
         self
     }
@@ -222,12 +219,11 @@ impl ServerBuilder {
 
     /// Builds and spawns an HTTP(S) Relay Server.
     pub(super) async fn spawn(self) -> Result<Server> {
-        let server_task = ServerActorTask::spawn();
+        let cancel_token = CancellationToken::new();
+
         let service = RelayService::new(
             self.handlers,
             self.headers,
-            server_task.server_channel.clone(),
-            server_task.write_timeout,
             self.client_rx_ratelimit,
             KeyCache::new(self.key_cache_capacity),
         );
@@ -241,14 +237,11 @@ impl ServerBuilder {
             .await
             .with_context(|| format!("failed to bind server socket to {addr}"))?;
 
-        // we will use this cancel token to stop the infinite loop in the `listener.accept() task`
-        let cancel_server_loop = CancellationToken::new();
-
         let addr = listener.local_addr()?;
         let http_str = tls_config.as_ref().map_or("HTTP/WS", |_| "HTTPS/WSS");
         info!("[{http_str}] relay: serving on {addr}");
 
-        let cancel = cancel_server_loop.clone();
+        let cancel = cancel_token.clone();
         let task = tokio::task::spawn(
             async move {
                 // create a join set to track all our connection tasks
@@ -284,9 +277,7 @@ impl ServerBuilder {
                         }
                     }
                 }
-                // TODO: if the task this is running in is aborted this server is not shut
-                // down.
-                server_task.close().await;
+                service.shutdown().await;
                 set.shutdown().await;
                 debug!("server has been shutdown.");
             }
@@ -296,7 +287,7 @@ impl ServerBuilder {
         Ok(Server {
             addr,
             http_server_task: AbortOnDropHandle::new(task),
-            cancel_server_loop,
+            cancel_server_loop: cancel_token,
         })
     }
 }
@@ -309,9 +300,9 @@ struct RelayService(Arc<Inner>);
 struct Inner {
     handlers: Handlers,
     headers: HeaderMap,
-    server_channel: mpsc::Sender<Message>,
+    clients: Clients,
     write_timeout: Duration,
-    rate_limit: Option<ClientConnRateLimit>,
+    rate_limit: Option<ClientRateLimit>,
     key_cache: KeyCache,
 }
 
@@ -503,8 +494,8 @@ impl Inner {
         trace!(?protocol, "accept: start");
         let mut io = match protocol {
             Protocol::Relay => {
-                inc!(Metrics, derp_accepts);
-                RelayedStream::Derp(Framed::new(io, RelayCodec::new(self.key_cache.clone())))
+                inc!(Metrics, relay_accepts);
+                RelayedStream::Relay(Framed::new(io, RelayCodec::new(self.key_cache.clone())))
             }
             Protocol::Websocket => {
                 inc!(Metrics, websocket_accepts);
@@ -528,21 +519,21 @@ impl Inner {
         }
 
         trace!("accept: build client conn");
-        let client_conn_builder = ClientConnConfig {
+        let client_conn_builder = Config {
             node_id: client_key,
             stream: io,
             write_timeout: self.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
             rate_limit: self.rate_limit,
-            server_channel: self.server_channel.clone(),
         };
         trace!("accept: create client");
-        self.server_channel
-            .send(Message::CreateClient(client_conn_builder))
-            .await
-            .map_err(|_| {
-                anyhow::anyhow!("server channel closed, the server is probably shutdown")
-            })?;
+        inc!(Metrics, accepts);
+        let node_id = client_conn_builder.node_id;
+        trace!(node_id = node_id.fmt_short(), "create client");
+
+        // build and register client, starting up read & write loops for the client
+        // connection
+        self.clients.register(client_conn_builder).await;
         Ok(())
     }
 }
@@ -561,19 +552,21 @@ impl RelayService {
     fn new(
         handlers: Handlers,
         headers: HeaderMap,
-        server_channel: mpsc::Sender<Message>,
-        write_timeout: Duration,
-        rate_limit: Option<ClientConnRateLimit>,
+        rate_limit: Option<ClientRateLimit>,
         key_cache: KeyCache,
     ) -> Self {
         Self(Arc::new(Inner {
             handlers,
             headers,
-            server_channel,
-            write_timeout,
+            clients: Clients::default(),
+            write_timeout: SERVER_WRITE_TIMEOUT,
             rate_limit,
             key_cache,
         }))
+    }
+
+    async fn shutdown(&self) {
+        self.0.clients.shutdown().await;
     }
 
     /// Handle the incoming connection.
@@ -679,17 +672,17 @@ mod tests {
 
     use anyhow::Result;
     use bytes::Bytes;
+    use futures_lite::StreamExt;
+    use futures_util::SinkExt;
     use iroh_base::{PublicKey, SecretKey};
     use reqwest::Url;
-    use tokio::{sync::mpsc, task::JoinHandle};
-    use tokio_util::codec::{FramedRead, FramedWrite};
-    use tracing::{info, info_span, Instrument};
+    use tracing::info;
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
     use crate::client::{
-        conn::{ConnBuilder, ConnReader, ConnWriter, ReceivedMessage},
-        streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
+        conn::{Conn, ReceivedMessage, SendMessage},
+        streams::MaybeTlsStreamChained,
         Client, ClientBuilder,
     };
 
@@ -744,111 +737,88 @@ mod tests {
         let relay_addr: Url = format!("http://{addr}:{port}").parse().unwrap();
 
         // create clients
-        let (a_key, mut a_recv, client_a_task, client_a) = {
-            let span = info_span!("client-a");
-            let _guard = span.enter();
-            create_test_client(a_key, relay_addr.clone())
-        };
+        let (a_key, mut client_a) = create_test_client(a_key, relay_addr.clone()).await?;
         info!("created client {a_key:?}");
-        let (b_key, mut b_recv, client_b_task, client_b) = {
-            let span = info_span!("client-b");
-            let _guard = span.enter();
-            create_test_client(b_key, relay_addr)
-        };
+        let (b_key, mut client_b) = create_test_client(b_key, relay_addr).await?;
         info!("created client {b_key:?}");
 
         info!("ping a");
-        client_a.ping().await?;
+        client_a.send(SendMessage::Ping([1u8; 8])).await?;
+        let pong = client_a.next().await.context("eos")??;
+        assert!(matches!(pong, ReceivedMessage::Pong(_)));
 
         info!("ping b");
-        client_b.ping().await?;
+        client_b.send(SendMessage::Ping([2u8; 8])).await?;
+        let pong = client_b.next().await.context("eos")??;
+        assert!(matches!(pong, ReceivedMessage::Pong(_)));
 
         info!("sending message from a to b");
         let msg = Bytes::from_static(b"hi there, client b!");
-        client_a.send(b_key, msg.clone()).await?;
+        client_a
+            .send(SendMessage::SendPacket(b_key, msg.clone()))
+            .await?;
         info!("waiting for message from a on b");
-        let (got_key, got_msg) = b_recv.recv().await.expect("expected message from client_a");
+        let (got_key, got_msg) =
+            process_msg(client_b.next().await).expect("expected message from client_a");
         assert_eq!(a_key, got_key);
         assert_eq!(msg, got_msg);
 
         info!("sending message from b to a");
         let msg = Bytes::from_static(b"right back at ya, client b!");
-        client_b.send(a_key, msg.clone()).await?;
+        client_b
+            .send(SendMessage::SendPacket(a_key, msg.clone()))
+            .await?;
         info!("waiting for message b on a");
-        let (got_key, got_msg) = a_recv.recv().await.expect("expected message from client_b");
+        let (got_key, got_msg) =
+            process_msg(client_a.next().await).expect("expected message from client_b");
         assert_eq!(b_key, got_key);
         assert_eq!(msg, got_msg);
 
         client_a.close().await?;
-        client_a_task.abort();
         client_b.close().await?;
-        client_b_task.abort();
         server.shutdown();
 
         Ok(())
     }
 
-    fn create_test_client(
-        key: SecretKey,
-        server_url: Url,
-    ) -> (
-        PublicKey,
-        mpsc::Receiver<(PublicKey, Bytes)>,
-        JoinHandle<()>,
-        Client,
-    ) {
-        let client = ClientBuilder::new(server_url).insecure_skip_cert_verify(true);
-        let dns_resolver = crate::dns::default_resolver();
-        let (client, mut client_reader) = client.build(key.clone(), dns_resolver.clone());
+    async fn create_test_client(key: SecretKey, server_url: Url) -> Result<(PublicKey, Client)> {
         let public_key = key.public();
-        let (received_msg_s, received_msg_r) = tokio::sync::mpsc::channel(10);
-        let client_reader_task = tokio::spawn(
-            async move {
-                loop {
-                    info!("waiting for message on {:?}", key.public());
-                    match client_reader.recv().await {
-                        None => {
-                            info!("client received nothing");
-                            return;
-                        }
-                        Some(Err(e)) => {
-                            info!("client {:?} `recv` error {e}", key.public());
-                            return;
-                        }
-                        Some(Ok(msg)) => {
-                            info!("got message on {:?}: {msg:?}", key.public());
-                            if let ReceivedMessage::ReceivedPacket {
-                                remote_node_id: source,
-                                data,
-                            } = msg
-                            {
-                                received_msg_s
-                                    .send((source, data))
-                                    .await
-                                    .unwrap_or_else(|err| {
-                                        panic!(
-                                            "client {:?}, error sending message over channel: {:?}",
-                                            key.public(),
-                                            err
-                                        )
-                                    });
-                            }
-                        }
-                    }
+        let dns_resolver = crate::dns::default_resolver();
+        let client = ClientBuilder::new(server_url, key, dns_resolver.clone())
+            .insecure_skip_cert_verify(true);
+        let client = client.connect().await?;
+
+        Ok((public_key, client))
+    }
+
+    fn process_msg(msg: Option<Result<ReceivedMessage>>) -> Option<(PublicKey, Bytes)> {
+        match msg {
+            Some(Err(e)) => {
+                info!("client `recv` error {e}");
+                None
+            }
+            Some(Ok(msg)) => {
+                info!("got message on: {msg:?}");
+                if let ReceivedMessage::ReceivedPacket {
+                    remote_node_id: source,
+                    data,
+                } = msg
+                {
+                    Some((source, data))
+                } else {
+                    None
                 }
             }
-            .instrument(info_span!("test-client-reader")),
-        );
-        (public_key, received_msg_r, client_reader_task, client)
+            None => {
+                info!("client end of stream");
+                None
+            }
+        }
     }
 
     #[tokio::test]
     async fn test_https_clients_and_server() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        let _logging = iroh_test::logging::setup();
 
         let a_key = SecretKey::generate(rand::thread_rng());
         let b_key = SecretKey::generate(rand::thread_rng());
@@ -878,98 +848,99 @@ mod tests {
         let url: Url = format!("https://localhost:{port}").parse().unwrap();
 
         // create clients
-        let (a_key, mut a_recv, client_a_task, client_a) = create_test_client(a_key, url.clone());
+        let (a_key, mut client_a) = create_test_client(a_key, url.clone()).await?;
         info!("created client {a_key:?}");
-        let (b_key, mut b_recv, client_b_task, client_b) = create_test_client(b_key, url);
+        let (b_key, mut client_b) = create_test_client(b_key, url).await?;
         info!("created client {b_key:?}");
 
-        client_a.ping().await?;
-        client_b.ping().await?;
+        info!("ping a");
+        client_a.send(SendMessage::Ping([1u8; 8])).await?;
+        let pong = client_a.next().await.context("eos")??;
+        assert!(matches!(pong, ReceivedMessage::Pong(_)));
+
+        info!("ping b");
+        client_b.send(SendMessage::Ping([2u8; 8])).await?;
+        let pong = client_b.next().await.context("eos")??;
+        assert!(matches!(pong, ReceivedMessage::Pong(_)));
 
         info!("sending message from a to b");
         let msg = Bytes::from_static(b"hi there, client b!");
-        client_a.send(b_key, msg.clone()).await?;
+        client_a
+            .send(SendMessage::SendPacket(b_key, msg.clone()))
+            .await?;
         info!("waiting for message from a on b");
-        let (got_key, got_msg) = b_recv.recv().await.expect("expected message from client_a");
+        let (got_key, got_msg) =
+            process_msg(client_b.next().await).expect("expected message from client_a");
         assert_eq!(a_key, got_key);
         assert_eq!(msg, got_msg);
 
         info!("sending message from b to a");
         let msg = Bytes::from_static(b"right back at ya, client b!");
-        client_b.send(a_key, msg.clone()).await?;
+        client_b
+            .send(SendMessage::SendPacket(a_key, msg.clone()))
+            .await?;
         info!("waiting for message b on a");
-        let (got_key, got_msg) = a_recv.recv().await.expect("expected message from client_b");
+        let (got_key, got_msg) =
+            process_msg(client_a.next().await).expect("expected message from client_b");
         assert_eq!(b_key, got_key);
         assert_eq!(msg, got_msg);
 
         server.shutdown();
         server.task_handle().await?;
         client_a.close().await?;
-        client_a_task.abort();
         client_b.close().await?;
-        client_b_task.abort();
+
         Ok(())
     }
 
-    fn make_test_client(secret_key: SecretKey) -> (tokio::io::DuplexStream, ConnBuilder) {
-        let (client, server) = tokio::io::duplex(10);
-        let (client_reader, client_writer) = tokio::io::split(client);
-
-        let client_reader = MaybeTlsStreamReader::Mem(client_reader);
-        let client_writer = MaybeTlsStreamWriter::Mem(client_writer);
-
-        let client_reader = ConnReader::Derp(FramedRead::new(client_reader, RelayCodec::test()));
-        let client_writer = ConnWriter::Derp(FramedWrite::new(client_writer, RelayCodec::test()));
-
-        (
-            server,
-            ConnBuilder::new(secret_key, None, client_reader, client_writer),
-        )
+    async fn make_test_client(client: tokio::io::DuplexStream, key: &SecretKey) -> Result<Conn> {
+        let client = MaybeTlsStreamChained::Mem(client);
+        let client = Conn::new_relay(client, KeyCache::test(), key).await?;
+        Ok(client)
     }
 
     #[tokio::test]
     async fn test_server_basic() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        // create the server!
-        let server_task: ServerActorTask = ServerActorTask::spawn();
+        info!("Create the server.");
         let service = RelayService::new(
             Default::default(),
             Default::default(),
-            server_task.server_channel.clone(),
-            server_task.write_timeout,
             None,
             KeyCache::test(),
         );
 
-        // create client a and connect it to the server
+        info!("Create client A and connect it to the server.");
         let key_a = SecretKey::generate(rand::thread_rng());
         let public_key_a = key_a.public();
-        let (rw_a, client_a_builder) = make_test_client(key_a);
+        let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
                 .await
         });
-        let (client_a, mut client_receiver_a) = client_a_builder.build().await?;
+        let mut client_a = make_test_client(client_a, &key_a).await?;
         handler_task.await??;
 
-        // create client b and connect it to the server
+        info!("Create client B and connect it to the server.");
         let key_b = SecretKey::generate(rand::thread_rng());
         let public_key_b = key_b.public();
-        let (rw_b, client_b_builder) = make_test_client(key_b);
+        let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
                 .await
         });
-        let (client_b, mut client_receiver_b) = client_b_builder.build().await?;
+        let mut client_b = make_test_client(client_b, &key_b).await?;
         handler_task.await??;
 
-        // send message from a to b!
+        info!("Send message from A to B.");
         let msg = Bytes::from_static(b"hello client b!!");
-        client_a.send(public_key_b, msg.clone()).await?;
-        match client_receiver_b.recv().await? {
+        client_a
+            .send(SendMessage::SendPacket(public_key_b, msg.clone()))
+            .await?;
+        match client_b.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -982,10 +953,12 @@ mod tests {
             }
         }
 
-        // send message from b to a!
+        info!("Send message from B to A.");
         let msg = Bytes::from_static(b"nice to meet you client a!!");
-        client_b.send(public_key_a, msg.clone()).await?;
-        match client_receiver_a.recv().await? {
+        client_b
+            .send(SendMessage::SendPacket(public_key_a, msg.clone()))
+            .await?;
+        match client_a.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -998,15 +971,19 @@ mod tests {
             }
         }
 
-        // close the server and clients
-        server_task.close().await;
+        info!("Close the server and clients");
+        service.shutdown().await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
 
-        // client connections have been shutdown
+        info!("Fail to send message from A to B.");
         let res = client_a
-            .send(public_key_b, Bytes::from_static(b"try to send"))
+            .send(SendMessage::SendPacket(
+                public_key_b,
+                Bytes::from_static(b"try to send"),
+            ))
             .await;
         assert!(res.is_err());
-        assert!(client_receiver_b.recv().await.is_err());
+        assert!(client_b.next().await.is_none());
         Ok(())
     }
 
@@ -1018,45 +995,44 @@ mod tests {
             .try_init()
             .ok();
 
-        // create the server!
-        let server_task: ServerActorTask = ServerActorTask::spawn();
+        info!("Create the server.");
         let service = RelayService::new(
             Default::default(),
             Default::default(),
-            server_task.server_channel.clone(),
-            server_task.write_timeout,
             None,
             KeyCache::test(),
         );
 
-        // create client a and connect it to the server
+        info!("Create client A and connect it to the server.");
         let key_a = SecretKey::generate(rand::thread_rng());
         let public_key_a = key_a.public();
-        let (rw_a, client_a_builder) = make_test_client(key_a);
+        let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
                 .await
         });
-        let (client_a, mut client_receiver_a) = client_a_builder.build().await?;
+        let mut client_a = make_test_client(client_a, &key_a).await?;
         handler_task.await??;
 
-        // create client b and connect it to the server
+        info!("Create client B and connect it to the server.");
         let key_b = SecretKey::generate(rand::thread_rng());
         let public_key_b = key_b.public();
-        let (rw_b, client_b_builder) = make_test_client(key_b.clone());
+        let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
                 .await
         });
-        let (client_b, mut client_receiver_b) = client_b_builder.build().await?;
+        let mut client_b = make_test_client(client_b, &key_b).await?;
         handler_task.await??;
 
-        // send message from a to b!
+        info!("Send message from A to B.");
         let msg = Bytes::from_static(b"hello client b!!");
-        client_a.send(public_key_b, msg.clone()).await?;
-        match client_receiver_b.recv().await? {
+        client_a
+            .send(SendMessage::SendPacket(public_key_b, msg.clone()))
+            .await?;
+        match client_b.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1069,10 +1045,12 @@ mod tests {
             }
         }
 
-        // send message from b to a!
+        info!("Send message from B to A.");
         let msg = Bytes::from_static(b"nice to meet you client a!!");
-        client_b.send(public_key_a, msg.clone()).await?;
-        match client_receiver_a.recv().await? {
+        client_b
+            .send(SendMessage::SendPacket(public_key_a, msg.clone()))
+            .await?;
+        match client_a.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1085,22 +1063,24 @@ mod tests {
             }
         }
 
-        // create client b and connect it to the server
-        let (new_rw_b, new_client_b_builder) = make_test_client(key_b);
+        info!("Create client B and connect it to the server");
+        let (new_client_b, new_rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
             s.0.accept(Protocol::Relay, MaybeTlsStream::Test(new_rw_b))
                 .await
         });
-        let (new_client_b, mut new_client_receiver_b) = new_client_b_builder.build().await?;
+        let mut new_client_b = make_test_client(new_client_b, &key_b).await?;
         handler_task.await??;
 
         // assert!(client_b.recv().await.is_err());
 
-        // send message from a to b!
+        info!("Send message from A to B.");
         let msg = Bytes::from_static(b"are you still there, b?!");
-        client_a.send(public_key_b, msg.clone()).await?;
-        match new_client_receiver_b.recv().await? {
+        client_a
+            .send(SendMessage::SendPacket(public_key_b, msg.clone()))
+            .await?;
+        match new_client_b.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1113,10 +1093,12 @@ mod tests {
             }
         }
 
-        // send message from b to a!
+        info!("Send message from B to A.");
         let msg = Bytes::from_static(b"just had a spot of trouble but I'm back now,a!!");
-        new_client_b.send(public_key_a, msg.clone()).await?;
-        match client_receiver_a.recv().await? {
+        new_client_b
+            .send(SendMessage::SendPacket(public_key_a, msg.clone()))
+            .await?;
+        match client_a.next().await.context("eos")?? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1129,15 +1111,18 @@ mod tests {
             }
         }
 
-        // close the server and clients
-        server_task.close().await;
+        info!("Close the server and clients");
+        service.shutdown().await;
 
-        // client connections have been shutdown
+        info!("Sending message from A to B fails");
         let res = client_a
-            .send(public_key_b, Bytes::from_static(b"try to send"))
+            .send(SendMessage::SendPacket(
+                public_key_b,
+                Bytes::from_static(b"try to send"),
+            ))
             .await;
         assert!(res.is_err());
-        assert!(new_client_receiver_b.recv().await.is_err());
+        assert!(new_client_b.next().await.is_none());
         Ok(())
     }
 }

@@ -1,226 +1,175 @@
 //! The "Server" side of the client. Uses the `ClientConnManager`.
 // Based on tailscale/derp/derp_server.go
 
-use std::collections::{HashMap, HashSet};
-
-use anyhow::{bail, Result};
-use iroh_base::NodeId;
-use iroh_metrics::inc;
-use tokio::sync::mpsc;
-use tracing::{trace, warn};
-
-use super::{
-    actor::Packet,
-    client_conn::{ClientConn, ClientConnConfig},
-    metrics::Metrics,
+use std::{
+    collections::HashSet,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 
-/// Number of times we try to send to a client connection before dropping the data;
-const RETRIES: usize = 3;
+use anyhow::{bail, Result};
+use bytes::Bytes;
+use dashmap::DashMap;
+use iroh_base::NodeId;
+use iroh_metrics::inc;
+use tokio::sync::mpsc::error::TrySendError;
+use tracing::{debug, trace};
+
+use super::client::{Client, Config};
+use crate::server::metrics::Metrics;
 
 /// Manages the connections to all currently connected clients.
+#[derive(Debug, Default, Clone)]
+pub(super) struct Clients(Arc<Inner>);
+
 #[derive(Debug, Default)]
-pub(super) struct Clients {
+struct Inner {
     /// The list of all currently connected clients.
-    inner: HashMap<NodeId, Client>,
-    /// The next connection number to use.
-    conn_num: usize,
+    clients: DashMap<NodeId, Client>,
+    /// Map of which client has sent where
+    sent_to: DashMap<NodeId, HashSet<NodeId>>,
+    /// Connection ID Counter
+    next_connection_id: AtomicU64,
 }
 
 impl Clients {
-    pub async fn shutdown(&mut self) {
-        trace!("shutting down {} clients", self.inner.len());
+    pub async fn shutdown(&self) {
+        let keys: Vec<_> = self.0.clients.iter().map(|x| *x.key()).collect();
+        trace!("shutting down {} clients", keys.len());
+        let clients = keys.into_iter().filter_map(|k| self.0.clients.remove(&k));
 
         futures_buffered::join_all(
-            self.inner
-                .drain()
-                .map(|(_, client)| async move { client.shutdown().await }),
+            clients.map(|(_, client)| async move { client.shutdown().await }),
         )
         .await;
     }
 
-    /// Record that `src` sent or forwarded a packet to `dst`
-    pub fn record_send(&mut self, src: &NodeId, dst: NodeId) {
-        if let Some(client) = self.inner.get_mut(src) {
-            client.record_send(dst);
-        }
-    }
-
-    pub fn contains_key(&self, key: &NodeId) -> bool {
-        self.inner.contains_key(key)
-    }
-
-    pub fn has_client(&self, key: &NodeId, conn_num: usize) -> bool {
-        if let Some(client) = self.inner.get(key) {
-            return client.conn.conn_num == conn_num;
-        }
-        false
-    }
-
-    fn next_conn_num(&mut self) -> usize {
-        let conn_num = self.conn_num;
-        self.conn_num = self.conn_num.wrapping_add(1);
-        conn_num
-    }
-
     /// Builds the client handler and starts the read & write loops for the connection.
-    pub async fn register(&mut self, client_config: ClientConnConfig) {
-        let key = client_config.node_id;
-        trace!("registering client: {:?}", key);
-        let conn_num = self.next_conn_num();
-        let client = ClientConn::new(client_config, conn_num);
-        // TODO: in future, do not remove clients that share a NodeId, instead,
-        // expand the `Client` struct to handle multiple connections & a policy for
-        // how to handle who we write to when multiple connections exist.
-        let client = Client::new(client);
-        if let Some(old_client) = self.inner.insert(key, client) {
-            warn!("multiple connections found for {key:?}, pruning old connection",);
+    pub async fn register(&self, client_config: Config) {
+        let node_id = client_config.node_id;
+        let connection_id = self.get_connection_id();
+        trace!(remote_node = node_id.fmt_short(), "registering client");
+
+        let client = Client::new(client_config, connection_id, self);
+        if let Some(old_client) = self.0.clients.insert(node_id, client) {
+            debug!(
+                remote_node = node_id.fmt_short(),
+                "multiple connections found, pruning old connection",
+            );
             old_client.shutdown().await;
         }
+    }
+
+    fn get_connection_id(&self) -> u64 {
+        self.0.next_connection_id.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Removes the client from the map of clients, & sends a notification
     /// to each client that peers has sent data to, to let them know that
     /// peer is gone from the network.
-    pub async fn unregister(&mut self, peer: &NodeId) {
-        trace!("unregistering client: {:?}", peer);
-        if let Some(client) = self.inner.remove(peer) {
-            for key in client.sent_to.iter() {
-                self.send_peer_gone(key, *peer);
+    ///
+    /// Must be passed a matching connection_id.
+    pub(super) async fn unregister<'a>(&self, connection_id: u64, node_id: NodeId) {
+        trace!(
+            node_id = node_id.fmt_short(),
+            connection_id,
+            "unregistering client"
+        );
+
+        if let Some((_, client)) = self
+            .0
+            .clients
+            .remove_if(&node_id, |_, c| c.connection_id() == connection_id)
+        {
+            if let Some((_, sent_to)) = self.0.sent_to.remove(&node_id) {
+                for key in sent_to {
+                    match client.try_send_peer_gone(key) {
+                        Ok(_) => {}
+                        Err(TrySendError::Full(_)) => {
+                            debug!(
+                                dst = key.fmt_short(),
+                                "client too busy to receive packet, dropping packet"
+                            );
+                        }
+                        Err(TrySendError::Closed(_)) => {
+                            debug!(
+                                dst = key.fmt_short(),
+                                "can no longer write to client, dropping packet"
+                            );
+                        }
+                    }
+                }
             }
-            warn!("pruning connection {peer:?}");
             client.shutdown().await;
         }
     }
 
-    /// Attempt to send a packet to client with [`NodeId`] `key`
-    pub async fn send_packet(&mut self, key: &NodeId, packet: Packet) -> Result<()> {
-        if let Some(client) = self.inner.get(key) {
-            let res = client.send_packet(packet);
-            return self.process_result(key, res).await;
-        }
-        bail!("Could not find client for {key:?}, dropped packet");
-    }
-
-    pub async fn send_disco_packet(&mut self, key: &NodeId, packet: Packet) -> Result<()> {
-        if let Some(client) = self.inner.get(key) {
-            let res = client.send_disco_packet(packet);
-            return self.process_result(key, res).await;
-        }
-        bail!("Could not find client for {key:?}, dropped packet");
-    }
-
-    fn send_peer_gone(&mut self, key: &NodeId, peer: NodeId) {
-        if let Some(client) = self.inner.get(key) {
-            let res = client.send_peer_gone(peer);
-            let _ = self.process_result_no_fallback(key, res);
-            return;
-        }
-        warn!("Could not find client for {key:?}, dropping peer gone packet");
-    }
-
-    async fn process_result(&mut self, key: &NodeId, res: Result<(), SendError>) -> Result<()> {
-        match res {
-            Ok(_) => return Ok(()),
-            Err(SendError::PacketDropped) => {
-                warn!("client {key:?} too busy to receive packet, dropping packet");
-            }
-            Err(SendError::SenderClosed) => {
-                warn!("Can no longer write to client {key:?}, dropping message and pruning connection");
-                self.unregister(key).await;
-            }
-        }
-        bail!("unable to send msg");
-    }
-
-    fn process_result_no_fallback(
-        &mut self,
-        key: &NodeId,
-        res: Result<(), SendError>,
-    ) -> Result<()> {
-        match res {
-            Ok(_) => return Ok(()),
-            Err(SendError::PacketDropped) => {
-                warn!("client {key:?} too busy to receive packet, dropping packet");
-            }
-            Err(SendError::SenderClosed) => {
-                warn!("Can no longer write to client {key:?}");
-            }
-        }
-        bail!("unable to send msg");
-    }
-}
-
-/// Represents a connection to a client.
-// TODO: expand to allow for _multiple connections_ associated with a single NodeId. This
-// introduces some questions around which connection should be prioritized when forwarding packets
-#[derive(Debug)]
-pub(super) struct Client {
-    /// The client connection associated with the [`NodeId`]
-    conn: ClientConn,
-    /// list of peers we have sent messages to
-    sent_to: HashSet<NodeId>,
-}
-
-impl Client {
-    fn new(conn: ClientConn) -> Self {
-        Self {
-            conn,
-            sent_to: HashSet::default(),
-        }
-    }
-
-    /// Record that this client sent a packet to the `dst` client
-    fn record_send(&mut self, dst: NodeId) {
-        self.sent_to.insert(dst);
-    }
-
-    async fn shutdown(self) {
-        self.conn.shutdown().await;
-    }
-
-    fn send_packet(&self, packet: Packet) -> Result<(), SendError> {
-        try_send(&self.conn.send_queue, packet)
-    }
-
-    fn send_disco_packet(&self, packet: Packet) -> Result<(), SendError> {
-        try_send(&self.conn.disco_send_queue, packet)
-    }
-
-    fn send_peer_gone(&self, key: NodeId) -> Result<(), SendError> {
-        let res = try_send(&self.conn.peer_gone, key);
-        match res {
+    /// Attempt to send a packet to client with [`NodeId`] `dst`.
+    pub(super) fn send_packet(&self, dst: NodeId, data: Bytes, src: NodeId) -> Result<()> {
+        let Some(client) = self.0.clients.get(&dst) else {
+            debug!(dst = dst.fmt_short(), "no connected client, dropped packet");
+            inc!(Metrics, send_packets_dropped);
+            return Ok(());
+        };
+        match client.try_send_packet(src, data) {
             Ok(_) => {
-                inc!(Metrics, other_packets_sent);
+                // Record sent_to relationship
+                self.0.sent_to.entry(src).or_default().insert(dst);
+                Ok(())
             }
-            Err(_) => {
-                inc!(Metrics, other_packets_dropped);
+            Err(TrySendError::Full(_)) => {
+                debug!(
+                    dst = dst.fmt_short(),
+                    "client too busy to receive packet, dropping packet"
+                );
+                bail!("failed to send message: full");
+            }
+            Err(TrySendError::Closed(_)) => {
+                debug!(
+                    dst = dst.fmt_short(),
+                    "can no longer write to client, dropping message and pruning connection"
+                );
+                client.start_shutdown();
+                bail!("failed to send message: gone");
             }
         }
-        res
     }
-}
 
-/// Tries up to `3` times to send a message into the given channel, retrying iff it is full.
-fn try_send<T>(sender: &mpsc::Sender<T>, msg: T) -> Result<(), SendError> {
-    let mut msg = msg;
-    for _ in 0..RETRIES {
-        match sender.try_send(msg) {
-            Ok(_) => return Ok(()),
-            // if the queue is full, try again (max 3 times)
-            Err(mpsc::error::TrySendError::Full(m)) => msg = m,
-            // only other option is `TrySendError::Closed`, report the
-            // closed error
-            Err(_) => return Err(SendError::SenderClosed),
+    /// Attempt to send a disco packet to client with [`NodeId`] `dst`.
+    pub(super) fn send_disco_packet(&self, dst: NodeId, data: Bytes, src: NodeId) -> Result<()> {
+        let Some(client) = self.0.clients.get(&dst) else {
+            debug!(
+                dst = dst.fmt_short(),
+                "no connected client, dropped disco packet"
+            );
+            inc!(Metrics, disco_packets_dropped);
+            return Ok(());
+        };
+        match client.try_send_disco_packet(src, data) {
+            Ok(_) => {
+                // Record sent_to relationship
+                self.0.sent_to.entry(src).or_default().insert(dst);
+                Ok(())
+            }
+            Err(TrySendError::Full(_)) => {
+                debug!(
+                    dst = dst.fmt_short(),
+                    "client too busy to receive disco packet, dropping packet"
+                );
+                bail!("failed to send message: full");
+            }
+            Err(TrySendError::Closed(_)) => {
+                debug!(
+                    dst = dst.fmt_short(),
+                    "can no longer write to client, dropping disco message and pruning connection"
+                );
+                client.start_shutdown();
+                bail!("failed to send message: gone");
+            }
         }
     }
-    Err(SendError::PacketDropped)
-}
-
-#[derive(Debug)]
-enum SendError {
-    PacketDropped,
-    SenderClosed,
 }
 
 #[cfg(test)]
@@ -238,22 +187,18 @@ mod tests {
         server::streams::{MaybeTlsStream, RelayedStream},
     };
 
-    fn test_client_builder(
-        key: NodeId,
-    ) -> (ClientConnConfig, FramedRead<DuplexStream, RelayCodec>) {
+    fn test_client_builder(key: NodeId) -> (Config, FramedRead<DuplexStream, RelayCodec>) {
         let (test_io, io) = tokio::io::duplex(1024);
-        let (server_channel, _) = mpsc::channel(10);
         (
-            ClientConnConfig {
+            Config {
                 node_id: key,
-                stream: RelayedStream::Derp(Framed::new(
+                stream: RelayedStream::Relay(Framed::new(
                     MaybeTlsStream::Test(io),
                     RelayCodec::test(),
                 )),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
                 rate_limit: None,
-                server_channel,
             },
             FramedRead::new(test_io, RelayCodec::test()),
         )
@@ -266,18 +211,12 @@ mod tests {
 
         let (builder_a, mut a_rw) = test_client_builder(a_key);
 
-        let mut clients = Clients::default();
+        let clients = Clients::default();
         clients.register(builder_a).await;
 
         // send packet
         let data = b"hello world!";
-        let expect_packet = Packet {
-            src: b_key,
-            data: Bytes::from(&data[..]),
-        };
-        clients
-            .send_packet(&a_key.clone(), expect_packet.clone())
-            .await?;
+        clients.send_packet(a_key, Bytes::from(&data[..]), b_key)?;
         let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
         assert_eq!(
             frame,
@@ -288,9 +227,7 @@ mod tests {
         );
 
         // send disco packet
-        clients
-            .send_disco_packet(&a_key.clone(), expect_packet)
-            .await?;
+        clients.send_disco_packet(a_key, Bytes::from(&data[..]), b_key)?;
         let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
         assert_eq!(
             frame,
@@ -300,16 +237,25 @@ mod tests {
             }
         );
 
-        // send peer_gone
-        clients.send_peer_gone(&a_key, b_key);
-        let frame = recv_frame(FrameType::PeerGone, &mut a_rw).await?;
-        assert_eq!(frame, Frame::NodeGone { node_id: b_key });
+        {
+            let client = clients.0.clients.get(&a_key).unwrap();
+            // shutdown client a, this should trigger the removal from the clients list
+            client.start_shutdown();
+        }
 
-        clients.unregister(&a_key.clone()).await;
-
-        assert!(!clients.inner.contains_key(&a_key));
-
+        // need to wait a moment for the removal to be processed
+        let c = clients.clone();
+        tokio::time::timeout(Duration::from_secs(1), async move {
+            loop {
+                if !c.0.clients.contains_key(&a_key) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await?;
         clients.shutdown().await;
+
         Ok(())
     }
 }
