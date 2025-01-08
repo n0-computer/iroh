@@ -499,30 +499,7 @@
 <a href="#498" id="498">498</a>
 <a href="#499" id="499">499</a>
 <a href="#500" id="500">500</a>
-<a href="#501" id="501">501</a>
-<a href="#502" id="502">502</a>
-<a href="#503" id="503">503</a>
-<a href="#504" id="504">504</a>
-<a href="#505" id="505">505</a>
-<a href="#506" id="506">506</a>
-<a href="#507" id="507">507</a>
-<a href="#508" id="508">508</a>
-<a href="#509" id="509">509</a>
-<a href="#510" id="510">510</a>
-<a href="#511" id="511">511</a>
-<a href="#512" id="512">512</a>
-<a href="#513" id="513">513</a>
-<a href="#514" id="514">514</a>
-<a href="#515" id="515">515</a>
-<a href="#516" id="516">516</a>
-<a href="#517" id="517">517</a>
-<a href="#518" id="518">518</a>
-<a href="#519" id="519">519</a>
-<a href="#520" id="520">520</a>
-<a href="#521" id="521">521</a>
-<a href="#522" id="522">522</a>
-<a href="#523" id="523">523</a>
-<a href="#524" id="524">524</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#501" id="501">501</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -564,7 +541,7 @@
     str::FromStr,
 };
 
-<span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>hickory_resolver::{proto::ProtoError, Name, TokioResolver};
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, SecretKey};
 <span class="kw">use </span>url::Url;
@@ -764,9 +741,13 @@
     }
 
     <span class="doccomment">/// Creates [`TxtAttrs`] from a node id and an iterator of "{key}={value}" strings.
-    </span><span class="kw">pub fn </span>from_strings(node_id: NodeId, strings: <span class="kw">impl </span>Iterator&lt;Item = String&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub fn </span>from_strings(
+        node_id: NodeId,
+        strings: <span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;String&gt;&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>attrs: BTreeMap&lt;T, Vec&lt;String&gt;&gt; = BTreeMap::new();
         <span class="kw">for </span>s <span class="kw">in </span>strings {
+            <span class="kw">let </span>s = s<span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>parts = s.split(<span class="string">'='</span>);
             <span class="kw">let </span>(<span class="prelude-val">Some</span>(key), <span class="prelude-val">Some</span>(value)) = (parts.next(), parts.next()) <span class="kw">else </span>{
                 <span class="kw">continue</span>;
@@ -831,7 +812,7 @@
             <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
         });
 
-        <span class="kw">let </span>txt_strs = txt_data.filter_map(|s| String::try_from(s.clone()).ok());
+        <span class="kw">let </span>txt_strs = txt_data.filter_map(|s| String::try_from(s.clone()).ok().map(<span class="prelude-val">Ok</span>));
         <span class="self">Self</span>::from_strings(node_id, txt_strs)
     }
 
@@ -847,12 +828,13 @@
         <span class="kw">let </span>(node_id, first) = records.next().ok_or_else(|| {
             <span class="macro">anyhow!</span>(<span class="string">"invalid DNS answer: no TXT record with name _iroh.z32encodedpubkey found"</span>)
         })<span class="question-mark">?</span>;
-        <span class="macro">ensure!</span>(
-            <span class="kw-2">&amp;</span>records.all(|(n, <span class="kw">_</span>)| n == node_id),
-            <span class="string">"invalid DNS answer: all _iroh txt records must belong to the same node domain"
-        </span>);
-        <span class="kw">let </span>records = records.map(|(<span class="kw">_</span>, txt)| txt).chain(<span class="prelude-val">Some</span>(first));
-        <span class="kw">let </span>strings = records.map(ToString::to_string);
+        <span class="kw">let </span>strings = records.map(|(n, txt)| {
+            <span class="kw">if </span>n == node_id {
+                <span class="prelude-val">Ok</span>(txt.to_string())
+            } <span class="kw">else </span>{
+                <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"invalid DNS answer: all _iroh txt records must belong to the same node domain"</span>))
+            }
+        }).chain(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(first.to_string())));
         <span class="self">Self</span>::from_strings(node_id, strings)
     }
 
@@ -968,8 +950,14 @@
         <span class="macro">assert_eq!</span>(expected, actual);
     }
 
-    <span class="attr">#[test]
-    </span><span class="kw">fn </span>regression_record_parse_multiple_txt_entries() -&gt; TestResult {
+    <span class="doccomment">/// There used to be a bug where uploading a NodeAddr with more than only exactly
+    /// one relay URL or one publicly reachable IP addr would prevent connection
+    /// establishment.
+    ///
+    /// The reason was that only the first address was parsed (e.g. 192.168.96.145 in
+    /// this example), which could be a local, unreachable address.
+    </span><span class="attr">#[test]
+    </span><span class="kw">fn </span>test_dns_answer_multiple_txt_records() -&gt; TestResult {
         <span class="kw">let </span>name = Name::from_utf8(
             <span class="string">"_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link."</span>,
         )<span class="question-mark">?</span>;
@@ -992,40 +980,6 @@
                 ])),
             ),
         ];
-
-        <span class="kw">let </span>node_info = NodeInfo::from_hickory_records(<span class="kw-2">&amp;</span>test_records)<span class="question-mark">?</span>;
-
-        <span class="macro">assert_eq!</span>(
-            node_info,
-            NodeInfo {
-                node_id: NodeId::from_str(
-                    <span class="string">"1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18"
-                </span>)<span class="question-mark">?</span>,
-                relay_url: <span class="prelude-val">Some</span>(<span class="string">"https://euw1-1.relay.iroh.network./"</span>.parse()<span class="question-mark">?</span>),
-                direct_addresses: BTreeSet::from([
-                    <span class="string">"192.168.96.145:60165"</span>.parse()<span class="question-mark">?</span>,
-                    <span class="string">"213.208.157.87:60165"</span>.parse()<span class="question-mark">?</span>,
-                ])
-            }
-        );
-
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="attr">#[test]
-    </span><span class="kw">fn </span>regression_record_parse_bigger_txt_record() -&gt; TestResult {
-        <span class="kw">let </span>name = Name::from_utf8(
-            <span class="string">"_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link."</span>,
-        )<span class="question-mark">?</span>;
-        <span class="kw">let </span>test_records = [Record::from_rdata(
-            name,
-            <span class="number">30</span>,
-            RData::TXT(TXT::new(<span class="macro">vec!</span>[
-                <span class="string">"addr=192.168.96.145:60165"</span>.to_string(),
-                <span class="string">"addr=213.208.157.87:60165"</span>.to_string(),
-                <span class="string">"relay=https://euw1-1.relay.iroh.network./"</span>.to_string(),
-            ])),
-        )];
 
         <span class="kw">let </span>node_info = NodeInfo::from_hickory_records(<span class="kw-2">&amp;</span>test_records)<span class="question-mark">?</span>;
 
