@@ -1682,7 +1682,7 @@
             </span>.context(<span class="string">"unable to receive client information"</span>)<span class="question-mark">?</span>;
 
         <span class="macro">trace!</span>(<span class="string">"accept: checking access: {:?}"</span>, <span class="self">self</span>.access);
-        <span class="kw">if </span>!<span class="self">self</span>.access.is_allowed(client_key) {
+        <span class="kw">if </span>!<span class="self">self</span>.access.is_allowed(client_key).<span class="kw">await </span>{
             io.send(Frame::Health {
                 problem: Bytes::from_static(<span class="string">b"not authenticated"</span>),
             })
