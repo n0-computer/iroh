@@ -86,6 +86,7 @@ tracing-subscriber = { version = "0.3", features = [
     "env-filter",
 ], optional = true }
 url = { version = "2.5", features = ["serde"] }
+uuid = { version = "1.11", features = ["v4"] }
 webpki = { package = "rustls-webpki", version = "0.102" }
 webpki-roots = "0.26"
 data-encoding = "2.6.0"

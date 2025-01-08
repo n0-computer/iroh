@@ -10,9 +10,12 @@ use iroh_base::NodeId;
 use iroh_metrics::inc;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::{debug, trace};
+use uuid::Uuid;
 
 use super::client::{Client, Config};
 use crate::server::metrics::Metrics;
+
+pub(super) type ConnectionId = Uuid;
 
 /// Manages the connections to all currently connected clients.
 #[derive(Debug, Default, Clone)]
@@ -51,6 +54,12 @@ impl Clients {
             );
             old_client.shutdown().await;
         }
+    }
+
+    pub(super) fn unregister_connection(&self, node_id: NodeId, connection_id: ConnectionId) {
+        self.0
+            .clients
+            .remove_if(&node_id, |_, v| v.connection_id == connection_id);
     }
 
     /// Removes the client from the map of clients, & sends a notification
@@ -122,6 +131,7 @@ impl Clients {
     }
 
     /// Attempt to send a disco packet to client with [`NodeId`] `dst`.
+    #[allow(clippy::unused_async)]
     pub(super) async fn send_disco_packet(
         &self,
         dst: NodeId,
@@ -154,7 +164,6 @@ impl Clients {
                     dst = dst.fmt_short(),
                     "can no longer write to client, dropping disco message and pruning connection"
                 );
-                self.unregister(client, dst).await;
                 bail!("failed to send message: gone");
             }
         }

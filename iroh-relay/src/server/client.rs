@@ -12,6 +12,7 @@ use iroh_metrics::{inc, inc_by};
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, instrument, trace, warn, Instrument};
+use uuid::Uuid;
 
 use crate::{
     protos::{
@@ -20,6 +21,8 @@ use crate::{
     },
     server::{clients::Clients, metrics::Metrics, streams::RelayedStream, ClientRateLimit},
 };
+
+use super::clients::ConnectionId;
 
 /// A request to write a dataframe to a Client
 #[derive(Debug, Clone)]
@@ -48,6 +51,8 @@ pub(super) struct Config {
 pub(super) struct Client {
     /// Identity of the connected peer.
     node_id: NodeId,
+    /// Connection id for handling duplicate connections
+    pub(super) connection_id: ConnectionId,
     /// Used to close the connection loop.
     done: CancellationToken,
     /// Actor handle.
@@ -72,6 +77,8 @@ impl Client {
             channel_capacity,
             rate_limit,
         } = config;
+
+        let connection_id = Uuid::new_v4();
 
         let stream = match rate_limit {
             Some(cfg) => {
@@ -98,29 +105,19 @@ impl Client {
             disco_send_queue: disco_send_queue_r,
             node_gone: peer_gone_r,
             node_id,
+            connection_id,
             clients: clients.clone(),
         };
 
         // start io loop
         let io_done = done.clone();
-        let handle = tokio::task::spawn(
-            async move {
-                match actor.run(io_done).await {
-                    Err(e) => {
-                        warn!("writer closed in error {e:#?}");
-                    }
-                    Ok(()) => {
-                        debug!("writer closed");
-                    }
-                }
-            }
-            .instrument(
-                tracing::info_span!("client connection actor", remote_node = %node_id.fmt_short()),
-            ),
-        );
+        let handle = tokio::task::spawn(actor.run(io_done).instrument(
+            tracing::info_span!("client connection actor", remote_node = %node_id.fmt_short()),
+        ));
 
         Client {
             node_id,
+            connection_id,
             handle: AbortOnDropHandle::new(handle),
             done,
             send_queue: send_queue_s,
@@ -194,12 +191,26 @@ struct Actor {
     node_gone: mpsc::Receiver<NodeId>,
     /// [`NodeId`] of this client
     node_id: NodeId,
+    connection_id: ConnectionId,
     /// Reference to the other connected clients.
     clients: Clients,
 }
 
 impl Actor {
-    async fn run(mut self, done: CancellationToken) -> Result<()> {
+    async fn run(mut self, done: CancellationToken) {
+        match self.run_inner(done).await {
+            Ok(_) => debug!("client actor exiting"),
+            Err(error) => {
+                warn!("client actor closed with error {error:#?}");
+            }
+        }
+
+        self.clients
+            .unregister_connection(self.node_id, self.connection_id);
+    }
+
+    async fn run_inner(&mut self, done: CancellationToken) -> Result<()> {
+        // TODO: There's no actual jitter here
         let jitter = Duration::from_secs(5);
         let mut keep_alive = tokio::time::interval(KEEP_ALIVE + jitter);
         // ticks immediately
@@ -211,10 +222,13 @@ impl Actor {
 
                 _ = done.cancelled() => {
                     trace!("actor loop cancelled, exiting");
+
                     // final flush
-                    self.stream.flush().await.context("flush")?;
-                    break;
+                    self.stream.flush().await?;
+                    return Ok(());
                 }
+
+
                 maybe_frame = self.stream.next() => {
                     self.handle_frame(maybe_frame).await.context("handle read")?;
                 }
@@ -241,7 +255,6 @@ impl Actor {
             }
             self.stream.flush().await.context("tick flush")?;
         }
-        Ok(())
     }
 
     /// Writes the given frame to the connection.
@@ -539,6 +552,7 @@ mod tests {
         let stream =
             RelayedStream::Relay(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
 
+        let connection_id = Uuid::new_v4();
         let clients = Clients::default();
         let actor = Actor {
             stream: RateLimitedRelayedStream::unlimited(stream),
@@ -547,6 +561,7 @@ mod tests {
             disco_send_queue: disco_send_queue_r,
             node_gone: peer_gone_r,
             node_id,
+            connection_id,
             clients: clients.clone(),
         };
 
@@ -630,7 +645,7 @@ mod tests {
             .await?;
 
         done.cancel();
-        handle.await??;
+        handle.await?;
         Ok(())
     }
 
