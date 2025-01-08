@@ -70,9 +70,13 @@ impl Clients {
     /// to each client that peers has sent data to, to let them know that
     /// peer is gone from the network.
     ///
-    /// Explicitly drops the reference to the client to avoid deadlock.
+    /// Must be passed a matching connection_id.
     pub(super) async fn unregister<'a>(&self, connection_id: u64, node_id: NodeId) {
-        trace!(node_id = node_id.fmt_short(), "unregistering client");
+        trace!(
+            node_id = node_id.fmt_short(),
+            connection_id,
+            "unregistering client"
+        );
 
         if let Some((_, client)) = self
             .0
