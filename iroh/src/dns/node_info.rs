@@ -40,9 +40,10 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, Result};
 use hickory_resolver::{proto::ProtoError, Name, TokioResolver};
 use iroh_base::{NodeAddr, NodeId, SecretKey};
+use tracing::warn;
 use url::Url;
 
 /// The DNS name for the iroh TXT record.
@@ -162,9 +163,9 @@ impl NodeInfo {
         self.into()
     }
 
-    /// Parses a [`NodeInfo`] from a set of DNS records.
-    pub fn from_hickory_records(records: &[hickory_resolver::proto::rr::Record]) -> Result<Self> {
-        let attrs = TxtAttrs::from_hickory_records(records)?;
+    /// Parses a [`NodeInfo`] from a TXT records lookup.
+    pub fn from_hickory_lookup(lookup: hickory_resolver::lookup::TxtLookup) -> Result<Self> {
+        let attrs = TxtAttrs::from_hickory_lookup(lookup)?;
         Ok(attrs.into())
     }
 
@@ -258,7 +259,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     async fn lookup(resolver: &TokioResolver, name: Name) -> Result<Self> {
         let name = ensure_iroh_txt_label(name)?;
         let lookup = resolver.txt_lookup(name).await?;
-        let attrs = Self::from_hickory_records(lookup.as_lookup().records())?;
+        let attrs = Self::from_hickory_lookup(lookup)?;
         Ok(attrs)
     }
 
@@ -311,25 +312,45 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         Self::from_strings(node_id, txt_strs)
     }
 
-    /// Parses a set of DNS resource records.
-    pub fn from_hickory_records(records: &[hickory_resolver::proto::rr::Record]) -> Result<Self> {
-        use hickory_resolver::proto::rr;
-        let mut records = records.iter().filter_map(|rr| match rr.data() {
-            rr::RData::TXT(txt) => {
-                node_id_from_hickory_name(rr.name()).map(|node_id| (node_id, txt))
+    /// Parses a TXT records lookup.
+    pub fn from_hickory_lookup(lookup: hickory_resolver::lookup::TxtLookup) -> Result<Self> {
+        let queried_node_id = node_id_from_hickory_name(lookup.query().name())
+            .ok_or_else(|| anyhow!("invalid DNS answer: not a query for _iroh.z32encodedpubkey"))?;
+
+        let strings = lookup.as_lookup().record_iter().filter_map(|record| {
+            match node_id_from_hickory_name(record.name()) {
+                // Filter out only TXT record answers that match the node_id we searched for.
+                Some(n) if n == queried_node_id => match record.data().as_txt() {
+                    Some(txt) => Some(txt.to_string()),
+                    None => {
+                        warn!(
+                            ?queried_node_id,
+                            data = ?record.data(),
+                            "unexpected record type for DNS discovery query"
+                        );
+                        None
+                    }
+                },
+                Some(answered_node_id) => {
+                    warn!(
+                        ?queried_node_id,
+                        ?answered_node_id,
+                        "unexpected node ID answered for DNS query"
+                    );
+                    None
+                }
+                None => {
+                    warn!(
+                        ?queried_node_id,
+                        name = ?record.name(),
+                        "unexpected answer record name for DNS query"
+                    );
+                    None
+                }
             }
-            _ => None,
         });
-        let (node_id, first) = records.next().ok_or_else(|| {
-            anyhow!("invalid DNS answer: no TXT record with name _iroh.z32encodedpubkey found")
-        })?;
-        ensure!(
-            &records.all(|(n, _)| n == node_id),
-            "invalid DNS answer: all _iroh txt records must belong to the same node domain"
-        );
-        let records = records.map(|(_, txt)| txt).chain(Some(first));
-        let strings = records.map(ToString::to_string);
-        Self::from_strings(node_id, strings)
+
+        Self::from_strings(queried_node_id, strings)
     }
 
     fn to_txt_strings(&self) -> impl Iterator<Item = String> + '_ {
@@ -405,11 +426,24 @@ fn node_domain(node_id: &NodeId, origin: &str) -> Result<Name> {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use std::{collections::BTreeSet, str::FromStr, sync::Arc};
 
-    use iroh_base::SecretKey;
+    use hickory_resolver::{
+        lookup::Lookup,
+        proto::{
+            op::Query,
+            rr::{
+                rdata::{A, TXT},
+                RData, Record, RecordType,
+            },
+        },
+        Name,
+    };
+    use iroh_base::{NodeId, SecretKey};
+    use testresult::TestResult;
 
     use super::NodeInfo;
+    use crate::dns::node_info::to_z32;
 
     #[test]
     fn txt_attr_roundtrip() {
@@ -437,5 +471,80 @@ mod tests {
         let packet = expected.to_pkarr_signed_packet(&secret_key, 30).unwrap();
         let actual = NodeInfo::from_pkarr_signed_packet(&packet).unwrap();
         assert_eq!(expected, actual);
+    }
+
+    /// There used to be a bug where uploading a NodeAddr with more than only exactly
+    /// one relay URL or one publicly reachable IP addr would prevent connection
+    /// establishment.
+    ///
+    /// The reason was that only the first address was parsed (e.g. 192.168.96.145 in
+    /// this example), which could be a local, unreachable address.
+    #[test]
+    fn test_from_hickory_lookup() -> TestResult {
+        let name = Name::from_utf8(
+            "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.",
+        )?;
+        let query = Query::query(name.clone(), RecordType::TXT);
+        let records = [
+            Record::from_rdata(
+                name.clone(),
+                30,
+                RData::TXT(TXT::new(vec!["addr=192.168.96.145:60165".to_string()])),
+            ),
+            Record::from_rdata(
+                name.clone(),
+                30,
+                RData::TXT(TXT::new(vec!["addr=213.208.157.87:60165".to_string()])),
+            ),
+            // Test a record with mismatching record type (A instead of TXT). It should be filtered out.
+            Record::from_rdata(name.clone(), 30, RData::A(A::new(127, 0, 0, 1))),
+            // Test a record with a mismatching name
+            Record::from_rdata(
+                Name::from_utf8(format!(
+                    "_iroh.{}.dns.iroh.link.",
+                    to_z32(&NodeId::from_str(
+                        // Another NodeId
+                        "a55f26132e5e43de834d534332f66a20d480c3e50a13a312a071adea6569981e"
+                    )?)
+                ))?,
+                30,
+                RData::TXT(TXT::new(vec![
+                    "relay=https://euw1-1.relay.iroh.network./".to_string()
+                ])),
+            ),
+            // Test a record with a completely different name
+            Record::from_rdata(
+                Name::from_utf8("dns.iroh.link.")?,
+                30,
+                RData::TXT(TXT::new(vec![
+                    "relay=https://euw1-1.relay.iroh.network./".to_string()
+                ])),
+            ),
+            Record::from_rdata(
+                name.clone(),
+                30,
+                RData::TXT(TXT::new(vec![
+                    "relay=https://euw1-1.relay.iroh.network./".to_string()
+                ])),
+            ),
+        ];
+        let lookup = Lookup::new_with_max_ttl(query, Arc::new(records));
+
+        let node_info = NodeInfo::from_hickory_lookup(lookup.into())?;
+        assert_eq!(
+            node_info,
+            NodeInfo {
+                node_id: NodeId::from_str(
+                    "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18"
+                )?,
+                relay_url: Some("https://euw1-1.relay.iroh.network./".parse()?),
+                direct_addresses: BTreeSet::from([
+                    "192.168.96.145:60165".parse()?,
+                    "213.208.157.87:60165".parse()?,
+                ])
+            }
+        );
+
+        Ok(())
     }
 }
