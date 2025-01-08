@@ -442,9 +442,8 @@ mod tests {
     use iroh_base::{NodeId, SecretKey};
     use testresult::TestResult;
 
-    use crate::dns::node_info::to_z32;
-
     use super::NodeInfo;
+    use crate::dns::node_info::to_z32;
 
     #[test]
     fn txt_attr_roundtrip() {
@@ -501,7 +500,7 @@ mod tests {
             Record::from_rdata(name.clone(), 30, RData::A(A::new(127, 0, 0, 1))),
             // Test a record with a mismatching name
             Record::from_rdata(
-                Name::from_utf8(&format!(
+                Name::from_utf8(format!(
                     "_iroh.{}.dns.iroh.link.",
                     to_z32(&NodeId::from_str(
                         // Another NodeId
