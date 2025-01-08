@@ -4096,7 +4096,7 @@ mod tests {
         tasks.spawn({
             let queue = queue.clone();
             async move {
-                let mut expected_msgs: BTreeSet<usize> = (0..capacity).into_iter().collect();
+                let mut expected_msgs: BTreeSet<usize> = (0..capacity).collect();
                 while !expected_msgs.is_empty() {
                     let datagram = futures_lite::future::poll_fn(|cx| {
                         queue.poll_recv(cx).map(|result| result.unwrap())
@@ -4131,7 +4131,10 @@ mod tests {
         }
 
         // We expect all of this work to be done in 10 seconds max.
-        if let Err(_) = tokio::time::timeout(Duration::from_secs(10), tasks.join_all()).await {
+        if tokio::time::timeout(Duration::from_secs(10), tasks.join_all())
+            .await
+            .is_err()
+        {
             panic!("Timeout - not all messages between 0 and {capacity} received.");
         }
     }
