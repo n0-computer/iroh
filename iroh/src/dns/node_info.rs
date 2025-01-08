@@ -444,8 +444,14 @@ mod tests {
         assert_eq!(expected, actual);
     }
 
+    /// There used to be a bug where uploading a NodeAddr with more than only exactly
+    /// one relay URL or one publicly reachable IP addr would prevent connection
+    /// establishment.
+    ///
+    /// The reason was that only the first address was parsed (e.g. 192.168.96.145 in
+    /// this example), which could be a local, unreachable address.
     #[test]
-    fn regression_record_parse_multiple_txt_entries() -> TestResult {
+    fn test_dns_answer_multiple_txt_records() -> TestResult {
         let name = Name::from_utf8(
             "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.",
         )?;
@@ -489,7 +495,7 @@ mod tests {
     }
 
     #[test]
-    fn regression_record_parse_bigger_txt_record() -> TestResult {
+    fn test_record_multiple_values() -> TestResult {
         let name = Name::from_utf8(
             "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.",
         )?;
