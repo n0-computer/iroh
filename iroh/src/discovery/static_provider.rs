@@ -173,6 +173,7 @@ impl Discovery for StaticProvider {
 
 #[cfg(test)]
 mod tests {
+    use anyhow::Context;
     use iroh_base::SecretKey;
     use testresult::TestResult;
 
@@ -192,11 +193,23 @@ mod tests {
             .await?;
 
         let key = SecretKey::from_bytes(&[0u8; 32]);
-        discovery.add_node_addr(NodeAddr {
+        let addr = NodeAddr {
             node_id: key.public(),
             relay_url: Some("https://example.com".parse()?),
             direct_addresses: Default::default(),
-        });
+        };
+        discovery.add_node_addr(addr.clone());
+
+        let back = discovery.get_node_addr(key.public()).context("no addr")?;
+
+        assert_eq!(back, addr);
+
+        let removed = discovery
+            .remove_node_addr(key.public())
+            .context("nothing removed")?;
+        assert_eq!(removed, addr);
+        let res = discovery.get_node_addr(key.public());
+        assert!(res.is_none());
 
         Ok(())
     }
