@@ -2,17 +2,22 @@
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
+#[cfg(not(wasm_browser))]
+use std::{future::Future, net::IpAddr};
 use std::{
-    future::Future,
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::{self, Poll},
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+#[cfg(not(wasm_browser))]
+use anyhow::Context;
+use anyhow::{anyhow, bail, Result};
+#[cfg(not(wasm_browser))]
 use bytes::Bytes;
 use conn::Conn;
+#[cfg(not(wasm_browser))]
 use data_encoding::BASE64URL;
 use futures_lite::Stream;
 use futures_util::{
@@ -21,7 +26,9 @@ use futures_util::{
 };
 #[cfg(not(wasm_browser))]
 use hickory_resolver::TokioResolver as DnsResolver;
+#[cfg(not(wasm_browser))]
 use http_body_util::Empty;
+#[cfg(not(wasm_browser))]
 use hyper::{
     body::Incoming,
     header::{HOST, UPGRADE},
@@ -29,18 +36,23 @@ use hyper::{
     Request,
 };
 use iroh_base::{RelayUrl, SecretKey};
+#[cfg(not(wasm_browser))]
 use rustls::client::Resumption;
 #[cfg(not(wasm_browser))]
 use streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
+#[cfg(not(wasm_browser))]
 use tokio::io::{AsyncRead, AsyncWrite};
 #[cfg(any(test, feature = "test-utils"))]
 use tracing::warn;
-use tracing::{debug, error, event, info_span, trace, Instrument, Level};
+use tracing::{debug, event, trace, Level};
+#[cfg(not(wasm_browser))]
+use tracing::{error, info_span, Instrument};
 use url::Url;
 
 pub use self::conn::{ConnSendError, ReceivedMessage, SendMessage};
+#[cfg(not(wasm_browser))]
+use crate::defaults::timeouts::*;
 use crate::{
-    defaults::timeouts::*,
     http::{Protocol, RELAY_PATH},
     KeyCache,
 };
@@ -48,6 +60,7 @@ use crate::{
 pub(crate) mod conn;
 #[cfg(not(wasm_browser))]
 pub(crate) mod streams;
+#[cfg(not(wasm_browser))]
 mod util;
 
 #[cfg(wasm_browser)]
@@ -73,6 +86,7 @@ pub struct ClientBuilder {
     /// The secret key of this client.
     secret_key: SecretKey,
     /// The DNS resolver to use.
+    #[cfg_attr(wasm_browser, allow(unused))]
     dns_resolver: DnsResolver,
     /// Cache for public keys of remote nodes.
     key_cache: KeyCache,
@@ -152,35 +166,6 @@ impl ClientBuilder {
 
     /// Establishes a new connection to the relay server.
     pub async fn connect(&self) -> Result<Client> {
-        let roots = rustls::RootCertStore {
-            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-        };
-        let mut config = rustls::client::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()
-        .expect("protocols supported by ring")
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-        #[cfg(any(test, feature = "test-utils"))]
-        if self.insecure_skip_cert_verify {
-            warn!("Insecure config: SSL certificates from relay servers not verified");
-            config
-                .dangerous()
-                .set_certificate_verifier(Arc::new(NoCertVerifier));
-        }
-        config.resumption = Resumption::default();
-        let tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
-
-        let (conn, local_addr) = self.connect_0(tls_connector).await?;
-
-        Ok(Client { conn, local_addr })
-    }
-
-    async fn connect_0(
-        &self,
-        tls_connector: tokio_rustls::TlsConnector,
-    ) -> Result<(Conn, Option<SocketAddr>)> {
         let (conn, local_addr) = match self.protocol {
             Protocol::Websocket => {
                 let conn = self.connect_ws().await?;
@@ -189,7 +174,7 @@ impl ClientBuilder {
             }
             #[cfg(not(wasm_browser))]
             Protocol::Relay => {
-                let (conn, local_addr) = self.connect_relay(tls_connector).await?;
+                let (conn, local_addr) = self.connect_relay().await?;
                 (conn, Some(local_addr))
             }
             #[cfg(wasm_browser)]
@@ -205,8 +190,8 @@ impl ClientBuilder {
             protocol = ?self.protocol,
         );
 
-        trace!("connect_0 done");
-        Ok((conn, local_addr))
+        trace!("connect done");
+        Ok(Client { conn, local_addr })
     }
 
     async fn connect_ws(&self) -> Result<Conn> {
@@ -239,10 +224,27 @@ impl ClientBuilder {
 // Non-browser code
 #[cfg(not(wasm_browser))]
 impl ClientBuilder {
-    async fn connect_relay(
-        &self,
-        tls_connector: tokio_rustls::TlsConnector,
-    ) -> Result<(Conn, SocketAddr)> {
+    async fn connect_relay(&self) -> Result<(Conn, SocketAddr)> {
+        let roots = rustls::RootCertStore {
+            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+        };
+        let mut config = rustls::client::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("protocols supported by ring")
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+        #[cfg(any(test, feature = "test-utils"))]
+        if self.insecure_skip_cert_verify {
+            warn!("Insecure config: SSL certificates from relay servers not verified");
+            config
+                .dangerous()
+                .set_certificate_verifier(Arc::new(NoCertVerifier));
+        }
+        config.resumption = Resumption::default();
+        let tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
+
         let url = self.url.clone();
         let tcp_stream = self.dial_url(&tls_connector).await?;
 
@@ -605,6 +607,7 @@ pub fn make_dangerous_client_config() -> rustls::ClientConfig {
     .with_no_client_auth()
 }
 
+#[cfg(not(wasm_browser))]
 fn host_header_value(relay_url: RelayUrl) -> Result<String> {
     // grab the host, turns e.g. https://example.com:8080/xyz -> example.com.
     let relay_url_host = relay_url.host_str().context("Invalid URL")?;
@@ -711,6 +714,7 @@ impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
     }
 }
 
+#[cfg(not(wasm_browser))]
 fn url_port(url: &Url) -> Option<u16> {
     if let Some(port) = url.port() {
         return Some(port);

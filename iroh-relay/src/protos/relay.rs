@@ -16,7 +16,7 @@
 use std::time::Duration;
 
 use anyhow::{bail, ensure};
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{BufMut, Bytes};
 #[cfg(any(test, feature = "server"))]
 use futures_lite::{Stream, StreamExt};
 use futures_sink::Sink;
@@ -24,7 +24,6 @@ use futures_util::SinkExt;
 use iroh_base::{PublicKey, SecretKey, Signature};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
-use tokio_util::codec::{Decoder, Encoder};
 
 use crate::{client::conn::ConnSendError, KeyCache};
 
@@ -36,6 +35,7 @@ pub const MAX_PACKET_SIZE: usize = 64 * 1024;
 /// The maximum frame size.
 ///
 /// This is also the minimum burst size that a rate-limiter has to accept.
+#[cfg(not(wasm_browser))]
 const MAX_FRAME_SIZE: usize = 1024 * 1024;
 
 /// The Relay magic number, sent in the FrameType::ClientInfo frame upon initial connection.
@@ -209,11 +209,13 @@ pub(crate) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
 ///
 /// This is a framed protocol, using [`tokio_util::codec`] to turn the streams of bytes into
 /// [`Frame`]s.
+#[cfg(not(wasm_browser))]
 #[derive(Debug, Clone)]
 pub(crate) struct RelayCodec {
     cache: KeyCache,
 }
 
+#[cfg(not(wasm_browser))]
 impl RelayCodec {
     #[cfg(test)]
     pub fn test() -> Self {
@@ -282,6 +284,7 @@ impl Frame {
     }
 
     /// Serialized length (without the frame header)
+    #[cfg(not(wasm_browser))] // Not needed with websocket framing - thus not needed in browsers
     pub(crate) fn len(&self) -> usize {
         match self {
             Frame::ClientInfo {
@@ -496,72 +499,84 @@ impl Frame {
     }
 }
 
-const HEADER_LEN: usize = 5;
+// No need for framing when using websockets, thus this is cfg-ed out for browsers:
+#[cfg(not(wasm_browser))]
+use framing::*;
 
-impl Decoder for RelayCodec {
-    type Item = Frame;
-    type Error = anyhow::Error;
+#[cfg(not(wasm_browser))]
+mod framing {
+    use bytes::{Buf, BytesMut};
+    use tokio_util::codec::{Decoder, Encoder};
 
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        // Need at least 5 bytes
-        if src.len() < HEADER_LEN {
-            return Ok(None);
+    use super::*;
+
+    pub(super) const HEADER_LEN: usize = 5;
+
+    impl Decoder for RelayCodec {
+        type Item = Frame;
+        type Error = anyhow::Error;
+
+        fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+            // Need at least 5 bytes
+            if src.len() < HEADER_LEN {
+                return Ok(None);
+            }
+
+            // Can't use the `Buf::get_*` APIs, as that advances the buffer.
+            let Some(frame_type) = src.first().map(|b| FrameType::from(*b)) else {
+                return Ok(None); // Not enough bytes
+            };
+            let Some(frame_len) = src
+                .get(1..5)
+                .and_then(|s| TryInto::<[u8; 4]>::try_into(s).ok())
+                .map(u32::from_be_bytes)
+                .map(|l| l as usize)
+            else {
+                return Ok(None); // Not enough bytes
+            };
+
+            if frame_len > MAX_FRAME_SIZE {
+                anyhow::bail!("Frame of length {} is too large.", frame_len);
+            }
+
+            if src.len() < HEADER_LEN + frame_len {
+                // Optimization: prereserve the buffer space
+                src.reserve(HEADER_LEN + frame_len - src.len());
+
+                return Ok(None);
+            }
+
+            // advance the header
+            src.advance(HEADER_LEN);
+
+            let content = src.split_to(frame_len).freeze();
+            let frame = Frame::from_bytes(frame_type, content, &self.cache)?;
+
+            Ok(Some(frame))
         }
-
-        // Can't use the `Buf::get_*` APIs, as that advances the buffer.
-        let Some(frame_type) = src.first().map(|b| FrameType::from(*b)) else {
-            return Ok(None); // Not enough bytes
-        };
-        let Some(frame_len) = src
-            .get(1..5)
-            .and_then(|s| TryInto::<[u8; 4]>::try_into(s).ok())
-            .map(u32::from_be_bytes)
-            .map(|l| l as usize)
-        else {
-            return Ok(None); // Not enough bytes
-        };
-
-        if frame_len > MAX_FRAME_SIZE {
-            anyhow::bail!("Frame of length {} is too large.", frame_len);
-        }
-
-        if src.len() < HEADER_LEN + frame_len {
-            // Optimization: prereserve the buffer space
-            src.reserve(HEADER_LEN + frame_len - src.len());
-
-            return Ok(None);
-        }
-
-        // advance the header
-        src.advance(HEADER_LEN);
-
-        let content = src.split_to(frame_len).freeze();
-        let frame = Frame::from_bytes(frame_type, content, &self.cache)?;
-
-        Ok(Some(frame))
     }
-}
 
-impl Encoder<Frame> for RelayCodec {
-    type Error = std::io::Error;
+    impl Encoder<Frame> for RelayCodec {
+        type Error = std::io::Error;
 
-    fn encode(&mut self, frame: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let frame_len: usize = frame.len();
-        if frame_len > MAX_FRAME_SIZE {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Frame of length {} is too large.", frame_len),
-            ));
+        fn encode(&mut self, frame: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
+            let frame_len: usize = frame.len();
+            if frame_len > MAX_FRAME_SIZE {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Frame of length {} is too large.", frame_len),
+                ));
+            }
+
+            let frame_len_u32 = u32::try_from(frame_len).expect("just checked");
+
+            dst.reserve(HEADER_LEN + frame_len);
+            dst.put_u8(frame.typ().into());
+            dst.put_u32(frame_len_u32);
+            frame.write_to(dst);
+
+            Ok(())
         }
-
-        let frame_len_u32 = u32::try_from(frame_len).expect("just checked");
-
-        dst.reserve(HEADER_LEN + frame_len);
-        dst.put_u8(frame.typ().into());
-        dst.put_u32(frame_len_u32);
-        frame.write_to(dst);
-
-        Ok(())
     }
 }
 
@@ -724,7 +739,9 @@ mod tests {
 
 #[cfg(test)]
 mod proptests {
+    use bytes::BytesMut;
     use proptest::prelude::*;
+    use tokio_util::codec::{Decoder, Encoder};
 
     use super::*;
 

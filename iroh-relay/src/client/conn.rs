@@ -15,13 +15,14 @@ use futures_lite::Stream;
 use futures_util::Sink;
 use iroh_base::{NodeId, SecretKey};
 use tokio_tungstenite_wasm::WebSocketStream;
+#[cfg(not(wasm_browser))]
 use tokio_util::codec::Framed;
 use tracing::debug;
 
 use super::KeyCache;
+use crate::protos::relay::{ClientInfo, Frame, MAX_PACKET_SIZE, PROTOCOL_VERSION};
 #[cfg(not(wasm_browser))]
-use crate::client::streams::MaybeTlsStreamChained;
-use crate::protos::relay::{ClientInfo, Frame, RelayCodec, MAX_PACKET_SIZE, PROTOCOL_VERSION};
+use crate::{client::streams::MaybeTlsStreamChained, protos::relay::RelayCodec};
 
 /// Error for sending messages to the relay server.
 #[derive(Debug, thiserror::Error)]
