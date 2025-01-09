@@ -20,6 +20,7 @@ use crate::{
         relay::{write_frame, Frame, KEEP_ALIVE},
     },
     server::{clients::Clients, metrics::Metrics, streams::RelayedStream, ClientRateLimit},
+    PingTracker,
 };
 
 /// A request to write a dataframe to a Client
@@ -103,6 +104,7 @@ impl Client {
             node_id,
             connection_id,
             clients: clients.clone(),
+            ping_tracker: PingTracker::new(Duration::from_secs(5)),
         };
 
         // start io loop
@@ -202,6 +204,7 @@ struct Actor {
     connection_id: u64,
     /// Reference to the other connected clients.
     clients: Clients,
+    ping_tracker: PingTracker,
 }
 
 impl Actor {
@@ -231,13 +234,6 @@ impl Actor {
         // ticks immediately
         keep_alive.tick().await;
 
-        const PING_TIMEOUT: Duration = Duration::from_secs(10);
-        let mut ping_timeout = tokio::time::interval(PING_TIMEOUT);
-        // ticks immediately
-        ping_timeout.tick().await;
-        let mut last_ping_data = [0u8; 8];
-        let mut waiting_for_ping = false;
-
         loop {
             tokio::select! {
                 biased;
@@ -249,22 +245,7 @@ impl Actor {
                     break;
                 }
                 maybe_frame = self.stream.next() => {
-                    trace!(?maybe_frame, "handle incoming frame");
-                    let frame = match maybe_frame {
-                        Some(frame) => frame?,
-                        None => anyhow::bail!("stream terminated"),
-                    };
-                    match frame {
-                        Frame::Pong { data } => {
-                            if waiting_for_ping && data == last_ping_data {
-                                // clear outstanding ping
-                                waiting_for_ping = false;
-                            } else {
-                                warn!("unexpected pong data: {:?}", data);
-                            }
-                        },
-                        _ => self.handle_frame(frame).await.context("handle read")?,
-                    }
+                    self.handle_frame(maybe_frame).await.context("handle read")?;
                 }
                 // First priority, disco packets
                 packet = self.disco_send_queue.recv() => {
@@ -282,7 +263,7 @@ impl Actor {
                     trace!("node_id gone: {:?}", node_id);
                     self.write_frame(Frame::NodeGone { node_id }).await?;
                 }
-                _ = ping_timeout.tick(), if waiting_for_ping => {
+                _ = self.ping_tracker.timeout() => {
                     trace!("pong timed out");
                     break;
                 }
@@ -290,11 +271,8 @@ impl Actor {
                     trace!("keep alive ping");
                     // new interval
                     keep_alive.reset_after(next_interval());
-                    rand::rngs::OsRng.fill(&mut last_ping_data);
-                    self.write_frame(Frame::Ping { data: last_ping_data }).await?;
-
-                    ping_timeout.reset();
-                    waiting_for_ping = true;
+                    let data = self.ping_tracker.new_ping();
+                    self.write_frame(Frame::Ping { data }).await?;
                 }
             }
 
@@ -354,7 +332,13 @@ impl Actor {
     }
 
     /// Handles frame read results.
-    async fn handle_frame(&mut self, frame: Frame) -> Result<()> {
+    async fn handle_frame(&mut self, maybe_frame: Option<Result<Frame>>) -> Result<()> {
+        trace!(?maybe_frame, "handle incoming frame");
+        let frame = match maybe_frame {
+            Some(frame) => frame?,
+            None => anyhow::bail!("stream terminated"),
+        };
+
         match frame {
             Frame::SendPacket { dst_key, packet } => {
                 let packet_len = packet.len();
@@ -366,6 +350,9 @@ impl Actor {
                 // TODO: add rate limiter
                 self.write_frame(Frame::Pong { data }).await?;
                 inc!(Metrics, sent_pong);
+            }
+            Frame::Pong { data } => {
+                self.ping_tracker.pong_received(data);
             }
             Frame::Health { problem } => {
                 bail!("server issue: {:?}", problem);
@@ -601,6 +588,7 @@ mod tests {
             connection_id: 0,
             node_id,
             clients: clients.clone(),
+            ping_tracker: PingTracker::new(Duration::from_secs(5)),
         };
 
         let done = CancellationToken::new();

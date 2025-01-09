@@ -42,13 +42,13 @@ use backoff::exponential::{ExponentialBackoff, ExponentialBackoffBuilder};
 use bytes::{Bytes, BytesMut};
 use futures_buffered::FuturesUnorderedBounded;
 use futures_lite::StreamExt;
-use futures_util::{future, SinkExt};
+use futures_util::SinkExt;
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::{
     self as relay,
     client::{Client, ReceivedMessage, SendMessage},
-    MAX_PACKET_SIZE,
+    PingTracker, MAX_PACKET_SIZE,
 };
 use tokio::{
     sync::{mpsc, oneshot},
@@ -440,7 +440,7 @@ impl ActiveRelayActor {
         let (mut client_stream, mut client_sink) = client.split();
 
         let mut state = ConnectedRelayState {
-            ping_tracker: PingTracker::new(),
+            ping_tracker: PingTracker::new(PING_TIMEOUT),
             nodes_present: BTreeSet::new(),
             last_packet_src: None,
             pong_pending: None,
@@ -1185,62 +1185,6 @@ impl Iterator for PacketSplitIter {
     }
 }
 
-/// Tracks pings on a single relay connection.
-///
-/// Only the last ping needs is useful, any previously sent ping is forgotten and ignored.
-#[derive(Debug)]
-struct PingTracker {
-    inner: Option<PingInner>,
-}
-
-#[derive(Debug)]
-struct PingInner {
-    data: [u8; 8],
-    deadline: Instant,
-}
-
-impl PingTracker {
-    fn new() -> Self {
-        Self { inner: None }
-    }
-
-    /// Starts a new ping.
-    fn new_ping(&mut self) -> [u8; 8] {
-        let ping_data = rand::random();
-        debug!(data = ?ping_data, "Sending ping to relay server.");
-        self.inner = Some(PingInner {
-            data: ping_data,
-            deadline: Instant::now() + PING_TIMEOUT,
-        });
-        ping_data
-    }
-
-    /// Updates the ping tracker with a received pong.
-    ///
-    /// Only the pong of the most recent ping will do anything.  There is no harm feeding
-    /// any pong however.
-    fn pong_received(&mut self, data: [u8; 8]) {
-        if self.inner.as_ref().map(|inner| inner.data) == Some(data) {
-            debug!(?data, "Pong received from relay server");
-            self.inner = None;
-        }
-    }
-
-    /// Cancel-safe waiting for a ping timeout.
-    ///
-    /// Unless the most recent sent ping times out, this will never return.
-    async fn timeout(&mut self) {
-        match self.inner {
-            Some(PingInner { deadline, data }) => {
-                tokio::time::sleep_until(deadline).await;
-                debug!(?data, "Ping timeout.");
-                self.inner = None;
-            }
-            None => future::pending().await,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
@@ -1568,7 +1512,7 @@ mod tests {
     #[tokio::test]
     async fn test_ping_tracker() {
         tokio::time::pause();
-        let mut tracker = PingTracker::new();
+        let mut tracker = PingTracker::new(PING_TIMEOUT);
 
         let ping0 = tracker.new_ping();
 
