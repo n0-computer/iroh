@@ -739,19 +739,7 @@
 <a href="#738" id="738">738</a>
 <a href="#739" id="739">739</a>
 <a href="#740" id="740">740</a>
-<a href="#741" id="741">741</a>
-<a href="#742" id="742">742</a>
-<a href="#743" id="743">743</a>
-<a href="#744" id="744">744</a>
-<a href="#745" id="745">745</a>
-<a href="#746" id="746">746</a>
-<a href="#747" id="747">747</a>
-<a href="#748" id="748">748</a>
-<a href="#749" id="749">749</a>
-<a href="#750" id="750">750</a>
-<a href="#751" id="751">751</a>
-<a href="#752" id="752">752</a>
-<a href="#753" id="753">753</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#741" id="741">741</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
@@ -773,6 +761,7 @@
         relay::{write_frame, Frame, KEEP_ALIVE},
     },
     server::{clients::Clients, metrics::Metrics, streams::RelayedStream, ClientRateLimit},
+    PingTracker,
 };
 
 <span class="doccomment">/// A request to write a dataframe to a Client
@@ -856,6 +845,7 @@
             node_id,
             connection_id,
             clients: clients.clone(),
+            ping_tracker: PingTracker::new(Duration::from_secs(<span class="number">5</span>)),
         };
 
         <span class="comment">// start io loop
@@ -955,6 +945,7 @@
     </span>connection_id: u64,
     <span class="doccomment">/// Reference to the other connected clients.
     </span>clients: Clients,
+    ping_tracker: PingTracker,
 }
 
 <span class="kw">impl </span>Actor {
@@ -984,13 +975,6 @@
         <span class="comment">// ticks immediately
         </span>keep_alive.tick().<span class="kw">await</span>;
 
-        <span class="kw">const </span>PING_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>ping_timeout = tokio::time::interval(PING_TIMEOUT);
-        <span class="comment">// ticks immediately
-        </span>ping_timeout.tick().<span class="kw">await</span>;
-        <span class="kw">let </span><span class="kw-2">mut </span>last_ping_data = [<span class="number">0u8</span>; <span class="number">8</span>];
-        <span class="kw">let </span><span class="kw-2">mut </span>waiting_for_ping = <span class="bool-val">false</span>;
-
         <span class="kw">loop </span>{
             <span class="macro">tokio::select!</span> {
                 biased;
@@ -1002,22 +986,7 @@
                     <span class="kw">break</span>;
                 }
                 maybe_frame = <span class="self">self</span>.stream.next() =&gt; {
-                    <span class="macro">trace!</span>(<span class="question-mark">?</span>maybe_frame, <span class="string">"handle incoming frame"</span>);
-                    <span class="kw">let </span>frame = <span class="kw">match </span>maybe_frame {
-                        <span class="prelude-val">Some</span>(frame) =&gt; frame<span class="question-mark">?</span>,
-                        <span class="prelude-val">None </span>=&gt; <span class="macro">anyhow::bail!</span>(<span class="string">"stream terminated"</span>),
-                    };
-                    <span class="kw">match </span>frame {
-                        Frame::Pong { data } =&gt; {
-                            <span class="kw">if </span>waiting_for_ping &amp;&amp; data == last_ping_data {
-                                <span class="comment">// clear outstanding ping
-                                </span>waiting_for_ping = <span class="bool-val">false</span>;
-                            } <span class="kw">else </span>{
-                                <span class="macro">warn!</span>(<span class="string">"unexpected pong data: {:?}"</span>, data);
-                            }
-                        },
-                        <span class="kw">_ </span>=&gt; <span class="self">self</span>.handle_frame(frame).<span class="kw">await</span>.context(<span class="string">"handle read"</span>)<span class="question-mark">?</span>,
-                    }
+                    <span class="self">self</span>.handle_frame(maybe_frame).<span class="kw">await</span>.context(<span class="string">"handle read"</span>)<span class="question-mark">?</span>;
                 }
                 <span class="comment">// First priority, disco packets
                 </span>packet = <span class="self">self</span>.disco_send_queue.recv() =&gt; {
@@ -1035,7 +1004,7 @@
                     <span class="macro">trace!</span>(<span class="string">"node_id gone: {:?}"</span>, node_id);
                     <span class="self">self</span>.write_frame(Frame::NodeGone { node_id }).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
-                <span class="kw">_ </span>= ping_timeout.tick(), <span class="kw">if </span>waiting_for_ping =&gt; {
+                <span class="kw">_ </span>= <span class="self">self</span>.ping_tracker.timeout() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"pong timed out"</span>);
                     <span class="kw">break</span>;
                 }
@@ -1043,11 +1012,8 @@
                     <span class="macro">trace!</span>(<span class="string">"keep alive ping"</span>);
                     <span class="comment">// new interval
                     </span>keep_alive.reset_after(next_interval());
-                    rand::rngs::OsRng.fill(<span class="kw-2">&amp;mut </span>last_ping_data);
-                    <span class="self">self</span>.write_frame(Frame::Ping { data: last_ping_data }).<span class="kw">await</span><span class="question-mark">?</span>;
-
-                    ping_timeout.reset();
-                    waiting_for_ping = <span class="bool-val">true</span>;
+                    <span class="kw">let </span>data = <span class="self">self</span>.ping_tracker.new_ping();
+                    <span class="self">self</span>.write_frame(Frame::Ping { data }).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
             }
 
@@ -1107,7 +1073,13 @@
     }
 
     <span class="doccomment">/// Handles frame read results.
-    </span><span class="kw">async fn </span>handle_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: Frame) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>handle_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>, maybe_frame: <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;Frame&gt;&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="macro">trace!</span>(<span class="question-mark">?</span>maybe_frame, <span class="string">"handle incoming frame"</span>);
+        <span class="kw">let </span>frame = <span class="kw">match </span>maybe_frame {
+            <span class="prelude-val">Some</span>(frame) =&gt; frame<span class="question-mark">?</span>,
+            <span class="prelude-val">None </span>=&gt; <span class="macro">anyhow::bail!</span>(<span class="string">"stream terminated"</span>),
+        };
+
         <span class="kw">match </span>frame {
             Frame::SendPacket { dst_key, packet } =&gt; {
                 <span class="kw">let </span>packet_len = packet.len();
@@ -1119,6 +1091,9 @@
                 <span class="comment">// TODO: add rate limiter
                 </span><span class="self">self</span>.write_frame(Frame::Pong { data }).<span class="kw">await</span><span class="question-mark">?</span>;
                 <span class="macro">inc!</span>(Metrics, sent_pong);
+            }
+            Frame::Pong { data } =&gt; {
+                <span class="self">self</span>.ping_tracker.pong_received(data);
             }
             Frame::Health { problem } =&gt; {
                 <span class="macro">bail!</span>(<span class="string">"server issue: {:?}"</span>, problem);
@@ -1354,6 +1329,7 @@
             connection_id: <span class="number">0</span>,
             node_id,
             clients: clients.clone(),
+            ping_tracker: PingTracker::new(Duration::from_secs(<span class="number">5</span>)),
         };
 
         <span class="kw">let </span>done = CancellationToken::new();
