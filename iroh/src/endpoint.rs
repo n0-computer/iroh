@@ -380,6 +380,9 @@ impl Builder {
     /// internet applications. Applications protocols which forbid remotely-initiated
     /// streams should set `max_concurrent_bidi_streams` and `max_concurrent_uni_streams` to
     /// zero.
+    ///
+    /// Please be aware that changing some settings may have adverse effects on establishing
+    /// and maintaining direct connections.
     pub fn transport_config(mut self, transport_config: quinn::TransportConfig) -> Self {
         self.transport_config = transport_config;
         self
@@ -608,9 +611,9 @@ impl Endpoint {
     /// Like [`Endpoint::connect`], but allows providing a custom for the connection.  See
     /// the docs of [`Endpoint::connect`] for details.
     ///
-    /// Please be aware that changing these settings may have adverse effects on
-    /// establishing and maintaining direct connections.  Carefully test settings you use
-    /// and consider this currently as still rather experimental.
+    /// Please be aware that changing some settings may have adverse effects on establishing
+    /// and maintaining direct connections.  Carefully test settings you use and consider
+    /// this currently as still rather experimental.
     pub async fn connect_with(
         &self,
         node_addr: impl Into<NodeAddr>,
