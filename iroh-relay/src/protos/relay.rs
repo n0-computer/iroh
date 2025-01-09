@@ -41,8 +41,17 @@ const MAX_FRAME_SIZE: usize = 1024 * 1024;
 /// The Relay magic number, sent in the FrameType::ClientInfo frame upon initial connection.
 const MAGIC: &str = "RELAY🔑";
 
+/// Maximum time for a relay server to respond to a relay protocol ping.
 #[cfg(feature = "server")]
-pub(crate) const KEEP_ALIVE: Duration = Duration::from_secs(60);
+pub(crate) const PING_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Interval in which we ping the relay server to ensure the connection is alive.
+///
+/// The default QUIC max_idle_timeout is 30s, so setting that to half this time gives some
+/// chance of recovering.
+#[cfg(feature = "server")]
+pub(crate) const PING_INTERVAL: Duration = Duration::from_secs(15);
+
 /// The number of packets buffered for sending per client
 #[cfg(feature = "server")]
 pub(crate) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512; //32;

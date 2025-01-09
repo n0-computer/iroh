@@ -10,14 +10,17 @@ use futures_util::{SinkExt, Stream, StreamExt};
 use iroh_base::NodeId;
 use iroh_metrics::{inc, inc_by};
 use rand::Rng;
-use tokio::sync::mpsc::{self, error::TrySendError};
+use tokio::{
+    sync::mpsc::{self, error::TrySendError},
+    time::MissedTickBehavior,
+};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, instrument, trace, warn, Instrument};
 
 use crate::{
     protos::{
         disco,
-        relay::{write_frame, Frame, KEEP_ALIVE},
+        relay::{write_frame, Frame, PING_INTERVAL, PING_TIMEOUT},
     },
     server::{clients::Clients, metrics::Metrics, streams::RelayedStream, ClientRateLimit},
     PingTracker,
@@ -104,7 +107,7 @@ impl Client {
             node_id,
             connection_id,
             clients: clients.clone(),
-            ping_tracker: PingTracker::new(Duration::from_secs(5)),
+            ping_tracker: PingTracker::new(PING_TIMEOUT),
         };
 
         // start io loop
@@ -227,12 +230,13 @@ impl Actor {
         // Add some jitter to ping pong interactions, to avoid all pings being sent at the same time
         let next_interval = || {
             let random_secs = rand::rngs::OsRng.gen_range(1..=5);
-            Duration::from_secs(random_secs) + KEEP_ALIVE
+            Duration::from_secs(random_secs) + PING_INTERVAL
         };
 
-        let mut keep_alive = tokio::time::interval(next_interval());
+        let mut ping_interval = tokio::time::interval(next_interval());
         // ticks immediately
-        keep_alive.tick().await;
+        ping_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        ping_interval.tick().await;
 
         loop {
             tokio::select! {
@@ -267,10 +271,10 @@ impl Actor {
                     trace!("pong timed out");
                     break;
                 }
-                _ = keep_alive.tick() => {
+                _ = ping_interval.tick() => {
                     trace!("keep alive ping");
                     // new interval
-                    keep_alive.reset_after(next_interval());
+                    ping_interval.reset_after(next_interval());
                     let data = self.ping_tracker.new_ping();
                     self.write_frame(Frame::Ping { data }).await?;
                 }
