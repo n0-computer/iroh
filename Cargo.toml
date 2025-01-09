@@ -42,3 +42,10 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 
 [workspace.lints.clippy]
 unused-async = "warn"
+
+[patch.crates-io]
+iroh-quinn = { git = "https://github.com/n0-computer/quinn.git", branch = "matheus23/browser" }
+iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn.git", branch = "matheus23/browser" }
+iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn.git", branch = "matheus23/browser" }
+
+iroh-metrics = { git = "https://github.com/n0-computer/iroh-metrics.git", branch = "matheus23/optional-deps" }

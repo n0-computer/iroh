@@ -19,6 +19,7 @@ use futures_util::{
     stream::{SplitSink, SplitStream},
     Sink, StreamExt,
 };
+#[cfg(not(wasm_browser))]
 use hickory_resolver::TokioResolver as DnsResolver;
 use http_body_util::Empty;
 use hyper::{
@@ -27,14 +28,11 @@ use hyper::{
     upgrade::Parts,
     Request,
 };
-use hyper_util::rt::TokioIo;
 use iroh_base::{RelayUrl, SecretKey};
 use rustls::client::Resumption;
+#[cfg(not(wasm_browser))]
 use streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    net::TcpStream,
-};
+use tokio::io::{AsyncRead, AsyncWrite};
 #[cfg(any(test, feature = "test-utils"))]
 use tracing::warn;
 use tracing::{debug, error, event, info_span, trace, Instrument, Level};
@@ -48,8 +46,12 @@ use crate::{
 };
 
 pub(crate) mod conn;
+#[cfg(not(wasm_browser))]
 pub(crate) mod streams;
 mod util;
+
+#[cfg(wasm_browser)]
+type DnsResolver = ();
 
 /// Build a Client.
 #[derive(derive_more::Debug, Clone)]
@@ -83,9 +85,16 @@ impl ClientBuilder {
             address_family_selector: None,
             is_prober: false,
             url: url.into(),
+
+            // always prefer websockets in browser contexts
+            #[cfg(wasm_browser)]
+            protocol: Protocol::Websocket,
+            #[cfg(not(wasm_browser))]
             protocol: Protocol::Relay,
+
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify: false,
+
             proxy_url: None,
             secret_key,
             dns_resolver,
@@ -178,9 +187,14 @@ impl ClientBuilder {
                 let local_addr = None;
                 (conn, local_addr)
             }
+            #[cfg(not(wasm_browser))]
             Protocol::Relay => {
                 let (conn, local_addr) = self.connect_relay(tls_connector).await?;
                 (conn, Some(local_addr))
+            }
+            #[cfg(wasm_browser)]
+            Protocol::Relay => {
+                bail!("Can only connect to relay using websockets in browsers.");
             }
         };
 
@@ -211,6 +225,20 @@ impl ClientBuilder {
         Ok(conn)
     }
 
+    fn use_tls(&self) -> bool {
+        // only disable tls if we are explicitly dialing a http url
+        #[allow(clippy::match_like_matches_macro)]
+        match self.url.scheme() {
+            "http" => false,
+            "ws" => false,
+            _ => true,
+        }
+    }
+}
+
+// Non-browser code
+#[cfg(not(wasm_browser))]
+impl ClientBuilder {
     async fn connect_relay(
         &self,
         tls_connector: tokio_rustls::TlsConnector,
@@ -264,9 +292,10 @@ impl ClientBuilder {
     where
         T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     {
+        use hyper_util::rt::TokioIo;
         let host_header_value = host_header_value(relay_url)?;
 
-        let io = hyper_util::rt::TokioIo::new(io);
+        let io = TokioIo::new(io);
         let (mut request_sender, connection) = hyper::client::conn::http1::Builder::new()
             .handshake(io)
             .await?;
@@ -299,16 +328,6 @@ impl ClientBuilder {
             .and_then(|s| rustls::pki_types::ServerName::try_from(s).ok())
     }
 
-    fn use_tls(&self) -> bool {
-        // only disable tls if we are explicitly dialing a http url
-        #[allow(clippy::match_like_matches_macro)]
-        match self.url.scheme() {
-            "http" => false,
-            "ws" => false,
-            _ => true,
-        }
-    }
-
     async fn dial_url(&self, tls_connector: &tokio_rustls::TlsConnector) -> Result<ProxyStream> {
         if let Some(ref proxy) = self.proxy_url {
             let stream = self.dial_url_proxy(proxy.clone(), tls_connector).await?;
@@ -319,7 +338,8 @@ impl ClientBuilder {
         }
     }
 
-    async fn dial_url_direct(&self) -> Result<TcpStream> {
+    async fn dial_url_direct(&self) -> Result<tokio::net::TcpStream> {
+        use tokio::net::TcpStream;
         debug!(%self.url, "dial url");
         let prefer_ipv6 = self.prefer_ipv6();
         let dst_ip = self
@@ -349,6 +369,8 @@ impl ClientBuilder {
         proxy_url: Url,
         tls_connector: &tokio_rustls::TlsConnector,
     ) -> Result<util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream>> {
+        use hyper_util::rt::TokioIo;
+        use tokio::net::TcpStream;
         debug!(%self.url, %proxy_url, "dial url via proxy");
 
         // Resolve proxy DNS
@@ -598,6 +620,7 @@ fn host_header_value(relay_url: RelayUrl) -> Result<String> {
     Ok(host_header_value)
 }
 
+#[cfg(not(wasm_browser))]
 trait DnsExt {
     fn lookup_ipv4<N: hickory_resolver::IntoName>(
         &self,
@@ -612,6 +635,7 @@ trait DnsExt {
     fn resolve_host(&self, url: &Url, prefer_ipv6: bool) -> impl Future<Output = Result<IpAddr>>;
 }
 
+#[cfg(not(wasm_browser))]
 impl DnsExt for DnsResolver {
     async fn lookup_ipv4<N: hickory_resolver::IntoName>(&self, host: N) -> Result<Option<IpAddr>> {
         let addrs = tokio::time::timeout(DNS_TIMEOUT, self.ipv4_lookup(host)).await??;
