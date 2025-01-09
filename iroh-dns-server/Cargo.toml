@@ -31,7 +31,12 @@ http = "1.0.0"
 humantime-serde = "1.1.1"
 iroh-metrics = { version = "0.30.0" }
 lru = "0.12.3"
-pkarr = { version = "2.2.0", features = [ "async", "relay", "dht"], default-features = false }
+# pkarr = { version = "2.2.0", features = [ "async", "relay", "dht"], default-features = false }
+pkarr = { path = "../../pkarr/pkarr", default-features = false, features = [
+    "async",
+    "relay",
+    "dht",
+] }
 rcgen = "0.13"
 redb = "2.0.0"
 regex = "1.10.3"
@@ -62,7 +67,10 @@ criterion = "0.5.1"
 hickory-resolver = "=0.25.0-alpha.4"
 iroh = { path = "../iroh" }
 iroh-test = { path = "../iroh-test" }
-pkarr = { version = "2.2.0", features = ["rand"] }
+# pkarr = { version = "2.2.0", features = ["rand"] }
+pkarr = { path = "../../pkarr/pkarr", default-features = false, features = [
+    "rand",
+] }
 rand = "0.8"
 rand_chacha = "0.3.1"
 testresult = "0.4.1"

@@ -50,7 +50,11 @@ iroh-relay = { version = "0.30", path = "../iroh-relay", default-features = fals
 netdev = "0.31.0"
 netwatch = { version = "0.2.0" }
 pin-project = "1"
-pkarr = { version = "2", default-features = false, features = [
+# pkarr = { version = "2", default-features = false, features = [
+#     "async",
+#     "relay",
+# ] }
+pkarr = { path = "../../pkarr/pkarr", default-features = false, features = [
     "async",
     "relay",
 ] }
