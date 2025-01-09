@@ -641,14 +641,18 @@ impl ActiveRelayActor {
         state: &mut ConnectedRelayState,
         client_stream: &mut iroh_relay::client::ClientStream,
     ) -> Result<()> {
-        // TODO
-        // let mut timeout = pin!(tokio::time::sleep())
+        const SEND_TIMEOUT: Duration = Duration::from_secs(10); // TODO: what should this be?
+
+        let mut timeout = pin!(tokio::time::sleep(SEND_TIMEOUT));
         let mut sending_fut = pin!(sending_fut);
         loop {
             tokio::select! {
                 biased;
                 _ = self.stop_token.cancelled() => {
                     break Ok(());
+                }
+                _ = &mut timeout => {
+                    break Err(anyhow!("Send timeout"));
                 }
                 msg = self.prio_inbox.recv() => {
                     let Some(msg) = msg else {
