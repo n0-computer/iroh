@@ -839,7 +839,16 @@
 <a href="#838" id="838">838</a>
 <a href="#839" id="839">839</a>
 <a href="#840" id="840">840</a>
-<a href="#841" id="841">841</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
+<a href="#841" id="841">841</a>
+<a href="#842" id="842">842</a>
+<a href="#843" id="843">843</a>
+<a href="#844" id="844">844</a>
+<a href="#845" id="845">845</a>
+<a href="#846" id="846">846</a>
+<a href="#847" id="847">847</a>
+<a href="#848" id="848">848</a>
+<a href="#849" id="849">849</a>
+<a href="#850" id="850">850</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
 //!
 //! Protocol flow:
 //!
@@ -882,8 +891,17 @@
 <span class="doccomment">/// The Relay magic number, sent in the FrameType::ClientInfo frame upon initial connection.
 </span><span class="kw">const </span>MAGIC: <span class="kw-2">&amp;</span>str = <span class="string">"RELAY🔑"</span>;
 
-<span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>KEEP_ALIVE: Duration = Duration::from_secs(<span class="number">60</span>);
+<span class="doccomment">/// Maximum time for a relay server to respond to a relay protocol ping.
+</span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>PING_TIMEOUT: Duration = Duration::from_secs(<span class="number">5</span>);
+
+<span class="doccomment">/// Interval in which we ping the relay server to ensure the connection is alive.
+///
+/// The default QUIC max_idle_timeout is 30s, so setting that to half this time gives some
+/// chance of recovering.
+</span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>PING_INTERVAL: Duration = Duration::from_secs(<span class="number">15</span>);
+
 <span class="doccomment">/// The number of packets buffered for sending per client
 </span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>PER_CLIENT_SEND_QUEUE_DEPTH: usize = <span class="number">512</span>; <span class="comment">//32;
