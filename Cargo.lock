@@ -536,9 +536,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.24"
+version = "4.5.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9560b07a799281c7e0958b9296854d6fafd4c5f31444a7e5bb1ad6dde5ccf1bd"
+checksum = "a8eb5e908ef3a6efbe1ed62520fb7287959888c88485abe072543190ecc66783"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -546,9 +546,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.24"
+version = "4.5.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "874e0dd3eb68bf99058751ac9712f622e61e6f393a94f7128fa26e3f02f5c7cd"
+checksum = "96b01801b5fc6a0a232407abc821660c9c6d25a1cafc0d4f85f29fb8d9afc121"
 dependencies = [
  "anstream",
  "anstyle",
@@ -1510,6 +1510,30 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hickory-proto"
+version = "0.24.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "447afdcdb8afb9d0a852af6dc65d9b285ce720ed7a59e42a8bf2e931c67bc1b5"
+dependencies = [
+ "async-trait",
+ "cfg-if",
+ "data-encoding",
+ "enum-as-inner",
+ "futures-channel",
+ "futures-io",
+ "futures-util",
+ "idna",
+ "ipnet",
+ "once_cell",
+ "rand",
+ "thiserror 1.0.69",
+ "tinyvec",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "hickory-proto"
 version = "0.25.0-alpha.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d063c0692ee669aa6d261988aa19ca5510f1cc40e4f211024f50c888499a35d7"
@@ -1547,7 +1571,7 @@ checksum = "42bc352e4412fb657e795f79b4efcf2bd60b59ee5ca0187f3554194cd1107a27"
 dependencies = [
  "cfg-if",
  "futures-util",
- "hickory-proto",
+ "hickory-proto 0.25.0-alpha.4",
  "ipconfig",
  "moka",
  "once_cell",
@@ -1576,7 +1600,7 @@ dependencies = [
  "enum-as-inner",
  "futures-util",
  "h2",
- "hickory-proto",
+ "hickory-proto 0.25.0-alpha.4",
  "hickory-resolver",
  "http 1.2.0",
  "ipnet",
@@ -2031,6 +2055,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "governor 0.7.0",
+ "hickory-proto 0.24.2",
  "hickory-resolver",
  "http 1.2.0",
  "http-body-util",
@@ -2288,7 +2313,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "governor 0.7.0",
- "hickory-proto",
+ "hickory-proto 0.25.0-alpha.4",
  "hickory-resolver",
  "http 1.2.0",
  "http-body-util",
@@ -3077,7 +3102,7 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pkarr"
-version = "2.2.1"
+version = "2.3.0"
 dependencies = [
  "bytes",
  "document-features",
@@ -3085,13 +3110,13 @@ dependencies = [
  "ed25519-dalek",
  "flume",
  "futures",
+ "hickory-proto 0.24.2",
  "js-sys",
  "lru",
  "mainline",
  "rand",
  "self_cell",
- "simple-dns",
- "thiserror 1.0.69",
+ "thiserror 2.0.10",
  "tracing",
  "ureq",
  "wasm-bindgen",
@@ -4178,15 +4203,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "simple-dns"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8f1740a36513fc97c5309eb1b8e8f108b0e95899c66c23fd7259625d4fdb686"
-dependencies = [
- "bitflags 2.6.0",
-]
-
-[[package]]
 name = "slab"
 version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4362,7 +4378,7 @@ checksum = "58b529764e2f746ef954505dd7cb3c03331bd678c52a387e4a86540577f41e45"
 dependencies = [
  "acto",
  "anyhow",
- "hickory-proto",
+ "hickory-proto 0.25.0-alpha.4",
  "rand",
  "socket2",
  "tokio",

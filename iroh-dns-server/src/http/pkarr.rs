@@ -15,15 +15,28 @@ pub async fn put(
     Path(key): Path<String>,
     body: Bytes,
 ) -> Result<impl IntoResponse, AppError> {
+    tracing::debug!("pkarr put");
     let key = pkarr::PublicKey::try_from(key.as_str())
         .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, Some(format!("invalid key: {e}"))))?;
+    tracing::debug!("pkarr put 1");
     let label = &key.to_z32()[..10];
-    let signed_packet = pkarr::SignedPacket::from_relay_payload(&key, &body).map_err(|e| {
+    tracing::debug!("pkarr put 2");
+    // let empty = Bytes::new();
+    tracing::debug!("Received key: {:?}", key);
+    let y = &body;
+    println!("Reference body: {:?}", y);
+    tracing::debug!("pkarr put 2.5");
+    // let signed_packet_r = pkarr::SignedPacket::from_relay_payload(&key, &empty); // this works
+    let signed_packet_r = pkarr::SignedPacket::from_relay_payload(key, &body); // this segfaults
+
+    tracing::debug!("pkarr put 3");
+    let signed_packet = signed_packet_r.map_err(|e| {
         AppError::new(
             StatusCode::BAD_REQUEST,
             Some(format!("invalid body payload: {e}")),
         )
     })?;
+    tracing::debug!("pkarr put 4");
 
     let updated = state
         .store

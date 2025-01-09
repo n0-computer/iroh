@@ -76,9 +76,7 @@ async fn main() -> Result<()> {
     setup_logging();
     let args = Cli::parse();
 
-    let pkarr_relay_url = "https://10.0.0.71:8443/pkarr"
-        .parse()
-        .expect("url is valid");
+    let pkarr_relay_url = "http://10.0.0.71:8080/pkarr".parse().expect("url is valid");
 
     let pkarr_discovery_closure = move |secret_key: &SecretKey| {
         let pkarr_d = PkarrPublisher::new(secret_key.clone(), pkarr_relay_url);

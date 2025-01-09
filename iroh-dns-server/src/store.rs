@@ -118,7 +118,7 @@ impl ZoneStore {
             debug!("DHT resolve {}", key.to_z32());
             let packet_opt = pkarr.as_ref().clone().as_async().resolve(&key).await?;
             if let Some(packet) = packet_opt {
-                debug!("DHT resolve successful {:?}", packet.packet());
+                debug!("DHT resolve successful {:?}", packet.message());
                 return self
                     .cache
                     .lock()

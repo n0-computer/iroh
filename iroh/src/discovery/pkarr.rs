@@ -393,7 +393,7 @@ impl PkarrRelayClient {
         }
 
         let payload = response.bytes().await?;
-        Ok(SignedPacket::from_relay_payload(&public_key, &payload)?)
+        Ok(SignedPacket::from_relay_payload(public_key, &payload)?)
     }
 
     /// Publishes a [`SignedPacket`].

@@ -152,8 +152,8 @@ impl Actor {
                                 } else {
                                     false
                                 };
-                                let value = packet.as_bytes();
-                                tables.signed_packets.insert(key.as_bytes(), &value[..])?;
+                                // let value = packet.as_bytes();
+                                tables.signed_packets.insert(key.as_bytes(), &packet.to_vec()[..])?;
                                 tables.update_time.insert(&packet.timestamp().to_be_bytes(), key.as_bytes())?;
                                 if replaced {
                                     inc!(Metrics, store_packets_updated);
@@ -316,7 +316,7 @@ fn get_packet(
     let Some(row) = table.get(key.as_ref())? else {
         return Ok(None);
     };
-    let packet = SignedPacket::from_bytes(&row.value().to_vec().into())?;
+    let packet = SignedPacket::from_bytes(&row.value().to_vec()[..])?;
     Ok(Some(packet))
 }
 

@@ -88,7 +88,7 @@ impl AsRef<[u8; 32]> for PublicKeyBytes {
 }
 
 pub fn signed_packet_to_hickory_message(signed_packet: &SignedPacket) -> Result<Message> {
-    let encoded = signed_packet.encoded_packet();
+    let encoded = signed_packet.encoded_message();
     let message = Message::from_bytes(&encoded)?;
     Ok(message)
 }

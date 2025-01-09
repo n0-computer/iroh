@@ -37,10 +37,11 @@ use std::{
     fmt::Display,
     hash::Hash,
     net::SocketAddr,
-    str::FromStr,
+    str::FromStr, vec,
 };
 
 use anyhow::{anyhow, ensure, Result};
+use hickory_proto::op::Message;
 use hickory_resolver::{proto::ProtoError, Name, TokioResolver};
 use iroh_base::{NodeAddr, NodeId, SecretKey};
 use url::Url;
@@ -290,24 +291,31 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
 
     /// Parses a [`pkarr::SignedPacket`].
     pub fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
-        use pkarr::dns::{
-            rdata::RData,
-            {self},
-        };
         let pubkey = packet.public_key();
-        let pubkey_z32 = pubkey.to_z32();
+        // let pubkey_z32 = pubkey.to_z32();
         let node_id = NodeId::from(*pubkey.verifying_key());
-        let zone = dns::Name::new(&pubkey_z32)?;
-        let inner = packet.packet();
-        let txt_data = inner.answers.iter().filter_map(|rr| match &rr.rdata {
-            RData::TXT(txt) => match rr.name.without(&zone) {
-                Some(name) if name.to_string() == IROH_TXT_NAME => Some(txt),
-                Some(_) | None => None,
-            },
-            _ => None,
-        });
+        // let zone = Name::from_utf8(&pubkey_z32)?;
+        let mut inner = packet.message().clone();
+        let txt_data = inner
+            .answers_mut()
+            .iter()
+            .filter_map(|rr| match &rr.record_type() {
+                hickory_proto::rr::RecordType::TXT => {
+                    if rr.name().base_name().to_utf8() == IROH_TXT_NAME {
+                        let rdata = match rr.data() {
+                            Some(y) => y,
+                            None => return None,
+                        };
+                        let txt = rdata.as_txt().unwrap();
+                        Some(txt)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            });
 
-        let txt_strs = txt_data.filter_map(|s| String::try_from(s.clone()).ok());
+        let txt_strs = txt_data.filter_map(|s| Some(s.to_string()));
         Self::from_strings(node_id, txt_strs)
     }
 
@@ -369,22 +377,19 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         Ok(signed_packet)
     }
 
-    fn to_pkarr_dns_packet(&self, ttl: u32) -> Result<pkarr::dns::Packet<'static>> {
-        use pkarr::dns::{self, rdata};
-        let name = dns::Name::new(IROH_TXT_NAME)?.into_owned();
+    fn to_pkarr_dns_packet(&self, ttl: u32) -> Result<Message> {
 
-        let mut packet = dns::Packet::new_reply(0);
+        let mut packet = Message::new();
+        packet.set_message_type(hickory_proto::op::MessageType::Response);
+        
         for s in self.to_txt_strings() {
-            let mut txt = rdata::TXT::new();
-            txt.add_string(&s)?;
-            let rdata = rdata::RData::TXT(txt.into_owned());
-            packet.answers.push(dns::ResourceRecord::new(
-                name.clone(),
-                dns::CLASS::IN,
-                ttl,
-                rdata,
-            ));
+            let mut record = hickory_proto::rr::Record::with(hickory_proto::rr::Name::from_ascii(IROH_TXT_NAME).unwrap(), hickory_proto::rr::RecordType::TXT, ttl);
+            record.set_dns_class(hickory_proto::rr::DNSClass::IN);
+            let txt = hickory_proto::rr::rdata::TXT::new(vec![s]);
+            record.set_data(Some(hickory_proto::rr::RData::TXT(txt)));
+            packet.add_answer(record);
         }
+        
         Ok(packet)
     }
 }
