@@ -56,7 +56,7 @@ use tokio::{
     time::{Duration, Instant, MissedTickBehavior},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
+use tracing::{debug, error, event, info_span, instrument, trace, warn, Instrument, Level};
 use url::Url;
 
 use super::RelayDatagramSendChannelReceiver;
@@ -288,6 +288,18 @@ impl ActiveRelayActor {
             .reset(Instant::now() + RELAY_INACTIVE_CLEANUP_TIME);
     }
 
+    fn set_home_relay(&mut self, is_home: bool) {
+        let prev = std::mem::replace(&mut self.is_home_relay, is_home);
+        if self.is_home_relay != prev {
+            event!(
+                target: "iroh::_events::relay::home_changed",
+                Level::DEBUG,
+                url = %self.url,
+                home_relay = self.is_home_relay,
+            );
+        }
+    }
+
     /// Actor loop when connecting to the relay server.
     ///
     /// Returns `None` if the actor needs to shut down.  Returns `Some(client)` when the
@@ -341,8 +353,8 @@ impl ActiveRelayActor {
                         break None;
                     };
                     match msg {
-                        ActiveRelayMessage::SetHomeRelay(is_preferred) => {
-                            self.is_home_relay = is_preferred;
+                        ActiveRelayMessage::SetHomeRelay(is_home) => {
+                            self.set_home_relay(is_home);
                         }
                         ActiveRelayMessage::CheckConnection(_local_ips) => {}
                         #[cfg(test)]
@@ -412,6 +424,12 @@ impl ActiveRelayActor {
     /// to the relay server is lost.
     async fn run_connected(&mut self, client: iroh_relay::client::Client) -> Result<()> {
         debug!("Actor loop: connected to relay");
+        event!(
+            target: "iroh::_events::relay::connected",
+            Level::DEBUG,
+            url = %self.url,
+            home_relay = self.is_home_relay,
+        );
 
         let (mut client_stream, mut client_sink) = client.split();
 
@@ -458,8 +476,8 @@ impl ActiveRelayActor {
                         break Ok(());
                     };
                     match msg {
-                        ActiveRelayMessage::SetHomeRelay(is_preferred) => {
-                            self.is_home_relay = is_preferred;
+                        ActiveRelayMessage::SetHomeRelay(is_home) => {
+                            self.set_home_relay(is_home);
                         }
                         ActiveRelayMessage::CheckConnection(local_ips) => {
                             match client_stream.local_addr() {
@@ -906,7 +924,7 @@ impl RelayActor {
     }
 
     fn start_active_relay(&mut self, url: RelayUrl) -> ActiveRelayHandle {
-        info!(?url, "Adding relay connection");
+        debug!(?url, "Adding relay connection");
 
         let connection_opts = RelayConnectionOptions {
             secret_key: self.msock.secret_key.clone(),
@@ -1211,6 +1229,7 @@ mod tests {
     use smallvec::smallvec;
     use testresult::TestResult;
     use tokio_util::task::AbortOnDropHandle;
+    use tracing::info;
 
     use super::*;
     use crate::test_utils;
