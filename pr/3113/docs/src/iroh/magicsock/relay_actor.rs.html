@@ -1574,7 +1574,27 @@
 <a href="#1573" id="1573">1573</a>
 <a href="#1574" id="1574">1574</a>
 <a href="#1575" id="1575">1575</a>
-<a href="#1576" id="1576">1576</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1576" id="1576">1576</a>
+<a href="#1577" id="1577">1577</a>
+<a href="#1578" id="1578">1578</a>
+<a href="#1579" id="1579">1579</a>
+<a href="#1580" id="1580">1580</a>
+<a href="#1581" id="1581">1581</a>
+<a href="#1582" id="1582">1582</a>
+<a href="#1583" id="1583">1583</a>
+<a href="#1584" id="1584">1584</a>
+<a href="#1585" id="1585">1585</a>
+<a href="#1586" id="1586">1586</a>
+<a href="#1587" id="1587">1587</a>
+<a href="#1588" id="1588">1588</a>
+<a href="#1589" id="1589">1589</a>
+<a href="#1590" id="1590">1590</a>
+<a href="#1591" id="1591">1591</a>
+<a href="#1592" id="1592">1592</a>
+<a href="#1593" id="1593">1593</a>
+<a href="#1594" id="1594">1594</a>
+<a href="#1595" id="1595">1595</a>
+<a href="#1596" id="1596">1596</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1650,6 +1670,12 @@
 
 <span class="doccomment">/// Maximum time for a relay server to respond to a relay protocol ping.
 </span><span class="kw">const </span>PING_TIMEOUT: Duration = Duration::from_secs(<span class="number">5</span>);
+
+<span class="doccomment">/// Interval in which we ping the relay server to ensure the connection is alive.
+///
+/// The default QUIC max_idle_timeout is 30s, so setting that to half this time gives some
+/// chance of recovering.
+</span><span class="kw">const </span>PING_INTERVAL: Duration = Duration::from_secs(<span class="number">15</span>);
 
 <span class="doccomment">/// Number of datagrams which can be sent to the relay server in one batch.
 ///
@@ -2017,9 +2043,16 @@
             <span class="attr">#[cfg(test)]
             </span>test_pong: <span class="prelude-val">None</span>,
         };
-        <span class="kw">let </span><span class="kw-2">mut </span>send_datagrams_buf = Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE);
 
-        <span class="kw">let </span>res = <span class="kw">loop </span>{
+        <span class="comment">// A buffer to pass through multiple datagrams at once as an optimisation.
+        </span><span class="kw">let </span><span class="kw-2">mut </span>send_datagrams_buf = Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE);
+
+        <span class="comment">// Regularly send pings so we know the connection is healthy.
+        </span><span class="kw">let </span><span class="kw-2">mut </span>ping_interval = tokio::time::interval(PING_INTERVAL);
+        ping_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        ping_interval.reset(); <span class="comment">// skip the ping at current time.
+
+        </span><span class="kw">let </span>res = <span class="kw">loop </span>{
             <span class="kw">if let </span><span class="prelude-val">Some</span>(data) = state.pong_pending.take() {
                 <span class="kw">let </span>fut = client_sink.send(SendMessage::Pong(data));
                 <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream)
@@ -2045,6 +2078,11 @@
                 }
                 <span class="kw">_ </span>= state.ping_tracker.timeout() =&gt; {
                     <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Ping timeout"</span>));
+                }
+                <span class="kw">_ </span>= ping_interval.tick() =&gt; {
+                    <span class="kw">let </span>data = state.ping_tracker.new_ping();
+                    <span class="kw">let </span>fut = client_sink.send(SendMessage::Ping(data));
+                    <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
                 msg = <span class="self">self</span>.inbox.recv() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
@@ -2199,7 +2237,9 @@
         state: <span class="kw-2">&amp;mut </span>ConnectedRelayState,
         client_stream: <span class="kw-2">&amp;mut </span>iroh_relay::client::ClientStream,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>sending_fut = <span class="macro">pin!</span>(sending_fut);
+        <span class="comment">// TODO
+        // let mut timeout = pin!(tokio::time::sleep())
+        </span><span class="kw">let </span><span class="kw-2">mut </span>sending_fut = <span class="macro">pin!</span>(sending_fut);
         <span class="kw">loop </span>{
             <span class="macro">tokio::select!</span> {
                 biased;
