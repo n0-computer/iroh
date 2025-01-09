@@ -1928,7 +1928,10 @@
 <a href="#1927" id="1927">1927</a>
 <a href="#1928" id="1928">1928</a>
 <a href="#1929" id="1929">1929</a>
-<a href="#1930" id="1930">1930</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#1930" id="1930">1930</a>
+<a href="#1931" id="1931">1931</a>
+<a href="#1932" id="1932">1932</a>
+<a href="#1933" id="1933">1933</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2310,6 +2313,9 @@
     /// internet applications. Applications protocols which forbid remotely-initiated
     /// streams should set `max_concurrent_bidi_streams` and `max_concurrent_uni_streams` to
     /// zero.
+    ///
+    /// Please be aware that changing some settings may have adverse effects on establishing
+    /// and maintaining direct connections.
     </span><span class="kw">pub fn </span>transport_config(<span class="kw-2">mut </span><span class="self">self</span>, transport_config: quinn::TransportConfig) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.transport_config = transport_config;
         <span class="self">self
@@ -2538,9 +2544,9 @@
     /// Like [`Endpoint::connect`], but allows providing a custom for the connection.  See
     /// the docs of [`Endpoint::connect`] for details.
     ///
-    /// Please be aware that changing these settings may have adverse effects on
-    /// establishing and maintaining direct connections.  Carefully test settings you use
-    /// and consider this currently as still rather experimental.
+    /// Please be aware that changing some settings may have adverse effects on establishing
+    /// and maintaining direct connections.  Carefully test settings you use and consider
+    /// this currently as still rather experimental.
     </span><span class="kw">pub async fn </span>connect_with(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_addr: <span class="kw">impl </span>Into&lt;NodeAddr&gt;,
