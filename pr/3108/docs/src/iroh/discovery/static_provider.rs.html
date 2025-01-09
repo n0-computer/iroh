@@ -201,7 +201,20 @@
 <a href="#200" id="200">200</a>
 <a href="#201" id="201">201</a>
 <a href="#202" id="202">202</a>
-<a href="#203" id="203">203</a></pre></div><pre class="rust"><code><span class="doccomment">//! A static discovery implementation that allows adding info for nodes manually.
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
+<a href="#210" id="210">210</a>
+<a href="#211" id="211">211</a>
+<a href="#212" id="212">212</a>
+<a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a></pre></div><pre class="rust"><code><span class="doccomment">//! A static discovery implementation that allows adding info for nodes manually.
 </span><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeMap, BTreeSet},
     net::SocketAddr,
@@ -376,6 +389,7 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
+    <span class="kw">use </span>anyhow::Context;
     <span class="kw">use </span>iroh_base::SecretKey;
     <span class="kw">use </span>testresult::TestResult;
 
@@ -395,11 +409,23 @@
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]);
-        discovery.add_node_addr(NodeAddr {
+        <span class="kw">let </span>addr = NodeAddr {
             node_id: key.public(),
             relay_url: <span class="prelude-val">Some</span>(<span class="string">"https://example.com"</span>.parse()<span class="question-mark">?</span>),
             direct_addresses: Default::default(),
-        });
+        };
+        discovery.add_node_addr(addr.clone());
+
+        <span class="kw">let </span>back = discovery.get_node_addr(key.public()).context(<span class="string">"no addr"</span>)<span class="question-mark">?</span>;
+
+        <span class="macro">assert_eq!</span>(back, addr);
+
+        <span class="kw">let </span>removed = discovery
+            .remove_node_addr(key.public())
+            .context(<span class="string">"nothing removed"</span>)<span class="question-mark">?</span>;
+        <span class="macro">assert_eq!</span>(removed, addr);
+        <span class="kw">let </span>res = discovery.get_node_addr(key.public());
+        <span class="macro">assert!</span>(res.is_none());
 
         <span class="prelude-val">Ok</span>(())
     }
