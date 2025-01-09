@@ -1538,7 +1538,11 @@
 <a href="#1537" id="1537">1537</a>
 <a href="#1538" id="1538">1538</a>
 <a href="#1539" id="1539">1539</a>
-<a href="#1540" id="1540">1540</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1540" id="1540">1540</a>
+<a href="#1541" id="1541">1541</a>
+<a href="#1542" id="1542">1542</a>
+<a href="#1543" id="1543">1543</a>
+<a href="#1544" id="1544">1544</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -2181,14 +2185,18 @@
         state: <span class="kw-2">&amp;mut </span>ConnectedRelayState,
         client_stream: <span class="kw-2">&amp;mut </span>iroh_relay::client::ClientStream,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="comment">// TODO
-        // let mut timeout = pin!(tokio::time::sleep())
-        </span><span class="kw">let </span><span class="kw-2">mut </span>sending_fut = <span class="macro">pin!</span>(sending_fut);
+        <span class="kw">const </span>SEND_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>); <span class="comment">// TODO: what should this be?
+
+        </span><span class="kw">let </span><span class="kw-2">mut </span>timeout = <span class="macro">pin!</span>(tokio::time::sleep(SEND_TIMEOUT));
+        <span class="kw">let </span><span class="kw-2">mut </span>sending_fut = <span class="macro">pin!</span>(sending_fut);
         <span class="kw">loop </span>{
             <span class="macro">tokio::select!</span> {
                 biased;
                 <span class="kw">_ </span>= <span class="self">self</span>.stop_token.cancelled() =&gt; {
                     <span class="kw">break </span><span class="prelude-val">Ok</span>(());
+                }
+                <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>timeout =&gt; {
+                    <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Send timeout"</span>));
                 }
                 msg = <span class="self">self</span>.prio_inbox.recv() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
