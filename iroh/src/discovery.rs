@@ -443,6 +443,7 @@ mod tests {
         time::SystemTime,
     };
 
+    use anyhow::Context;
     use iroh_base::SecretKey;
     use rand::Rng;
     use tokio_util::task::AbortOnDropHandle;
@@ -604,8 +605,11 @@ mod tests {
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
         // wait for out address to be updated and thus published at least once
-        ep1.node_addr().await?;
-        let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
+        ep1.node_addr().await.context("waiting for NodeAddr")?;
+        let _conn = ep2
+            .connect(ep1_addr, TEST_ALPN)
+            .await
+            .context("connecting")?;
         Ok(())
     }
 
@@ -706,10 +710,13 @@ mod tests {
         let handle = tokio::spawn({
             let ep = ep.clone();
             async move {
+                // Keep connections alive until the task is dropped.
+                let mut connections = Vec::new();
                 // we skip accept() errors, they can be caused by retransmits
                 while let Some(connecting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
-                    let _conn = connecting.await?;
                     // Just accept incoming connections, but don't do anything with them.
+                    let conn = connecting.await?;
+                    connections.push(conn);
                 }
 
                 anyhow::Ok(())
