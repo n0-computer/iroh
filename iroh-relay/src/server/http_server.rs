@@ -644,7 +644,11 @@ impl RelayService {
             },
             TlsAcceptor::Manual(a) => {
                 debug!("TLS[manual]: accept");
-                let tls_stream = a.accept(stream).await.context("TLS[manual] accept")?;
+                let tls_stream = tokio::time::timeout(Duration::from_secs(30), a.accept(stream))
+                    .await
+                    .context("TLS[manual] timeout")?
+                    .context("TLS[manual] accept")?;
+
                 self.serve_connection(MaybeTlsStream::Tls(tls_stream))
                     .await
                     .context("TLS[manual] serve connection")?;
