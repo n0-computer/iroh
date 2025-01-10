@@ -17,16 +17,16 @@ pub struct IpMappedAddrError(String);
 
 /// A mirror for the `NodeIdMappedAddr`, mapping a fake Ipv6 address with an actual IP address.
 ///
-/// You can consider this as nothing more than a lookup key for an IP the [`MagicSock`] knows
+/// You can consider this as nothing more than a lookup key for an IP that iroh's  magicsocket knows
 /// about.
 ///
-/// And in our QUIC-facing socket APIs like [`AsyncUdpSocket`] it
+/// And in our QUIC-facing socket APIs like iroh's `AsyncUdpSocket` it
 /// comes in as the inner [`SocketAddr`], in those interfaces we have to be careful to do
 /// the conversion to this type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct IpMappedAddr(pub(crate) SocketAddr);
 
-/// Counter to always generate unique addresses for [`NodeIdMappedAddr`].
+/// Counter to always generate unique addresses for `NodeIdMappedAddr`.
 static IP_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 impl IpMappedAddr {
@@ -90,7 +90,7 @@ impl std::fmt::Display for IpMappedAddr {
 }
 
 #[derive(Debug, Clone)]
-/// A Map of [`IpMappedAddrs`] to [`SocketAddrs`]
+/// A Map of [`IpMappedAddrs`] to [`SocketAddr`]
 pub struct IpMappedAddrs(Arc<std::sync::Mutex<BTreeMap<IpMappedAddr, SocketAddr>>>);
 
 impl IpMappedAddrs {
