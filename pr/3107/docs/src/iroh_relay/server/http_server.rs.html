@@ -1126,7 +1126,36 @@
 <a href="#1125" id="1125">1125</a>
 <a href="#1126" id="1126">1126</a>
 <a href="#1127" id="1127">1127</a>
-<a href="#1128" id="1128">1128</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1128" id="1128">1128</a>
+<a href="#1129" id="1129">1129</a>
+<a href="#1130" id="1130">1130</a>
+<a href="#1131" id="1131">1131</a>
+<a href="#1132" id="1132">1132</a>
+<a href="#1133" id="1133">1133</a>
+<a href="#1134" id="1134">1134</a>
+<a href="#1135" id="1135">1135</a>
+<a href="#1136" id="1136">1136</a>
+<a href="#1137" id="1137">1137</a>
+<a href="#1138" id="1138">1138</a>
+<a href="#1139" id="1139">1139</a>
+<a href="#1140" id="1140">1140</a>
+<a href="#1141" id="1141">1141</a>
+<a href="#1142" id="1142">1142</a>
+<a href="#1143" id="1143">1143</a>
+<a href="#1144" id="1144">1144</a>
+<a href="#1145" id="1145">1145</a>
+<a href="#1146" id="1146">1146</a>
+<a href="#1147" id="1147">1147</a>
+<a href="#1148" id="1148">1148</a>
+<a href="#1149" id="1149">1149</a>
+<a href="#1150" id="1150">1150</a>
+<a href="#1151" id="1151">1151</a>
+<a href="#1152" id="1152">1152</a>
+<a href="#1153" id="1153">1153</a>
+<a href="#1154" id="1154">1154</a>
+<a href="#1155" id="1155">1155</a>
+<a href="#1156" id="1156">1156</a>
+<a href="#1157" id="1157">1157</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -1134,6 +1163,7 @@
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>derive_more::Debug;
 <span class="kw">use </span>futures_lite::FutureExt;
+<span class="kw">use </span>futures_util::SinkExt;
 <span class="kw">use </span>http::{header::CONNECTION, response::Builder <span class="kw">as </span>ResponseBuilder};
 <span class="kw">use </span>hyper::{
     body::Incoming,
@@ -1152,11 +1182,13 @@
 <span class="kw">use </span>tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
-<span class="kw">use </span><span class="kw">super</span>::clients::Clients;
+<span class="kw">use super</span>::{clients::Clients, AccessConfig};
 <span class="kw">use crate</span>::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
-    protos::relay::{recv_client_key, RelayCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION},
+    protos::relay::{
+        recv_client_key, Frame, RelayCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+    },
     server::{
         client::Config,
         metrics::Metrics,
@@ -1290,6 +1322,8 @@
     </span>client_rx_ratelimit: <span class="prelude-ty">Option</span>&lt;ClientRateLimit&gt;,
     <span class="doccomment">/// The capacity of the key cache.
     </span>key_cache_capacity: usize,
+    <span class="doccomment">/// Access config for nodes.
+    </span>access: AccessConfig,
 }
 
 <span class="kw">impl </span>ServerBuilder {
@@ -1302,8 +1336,15 @@
             headers: HeaderMap::new(),
             client_rx_ratelimit: <span class="prelude-val">None</span>,
             key_cache_capacity: DEFAULT_KEY_CACHE_CAPACITY,
+            access: AccessConfig::Everyone,
         }
     }
+
+    <span class="doccomment">/// Set the access configuration.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>access(<span class="kw-2">mut </span><span class="self">self</span>, access: AccessConfig) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.access = access;
+        <span class="self">self
+    </span>}
 
     <span class="doccomment">/// Serves all requests content using TLS.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>tls_config(<span class="kw-2">mut </span><span class="self">self</span>, config: <span class="prelude-ty">Option</span>&lt;TlsConfig&gt;) -&gt; <span class="self">Self </span>{
@@ -1354,6 +1395,7 @@
             <span class="self">self</span>.headers,
             <span class="self">self</span>.client_rx_ratelimit,
             KeyCache::new(<span class="self">self</span>.key_cache_capacity),
+            <span class="self">self</span>.access,
         );
 
         <span class="kw">let </span>addr = <span class="self">self</span>.addr;
@@ -1432,6 +1474,7 @@
     write_timeout: Duration,
     rate_limit: <span class="prelude-ty">Option</span>&lt;ClientRateLimit&gt;,
     key_cache: KeyCache,
+    access: AccessConfig,
 }
 
 <span class="kw">impl </span>RelayService {
@@ -1638,6 +1681,17 @@
             .<span class="kw">await
             </span>.context(<span class="string">"unable to receive client information"</span>)<span class="question-mark">?</span>;
 
+        <span class="macro">trace!</span>(<span class="string">"accept: checking access: {:?}"</span>, <span class="self">self</span>.access);
+        <span class="kw">if </span>!<span class="self">self</span>.access.is_allowed(client_key).<span class="kw">await </span>{
+            io.send(Frame::Health {
+                problem: Bytes::from_static(<span class="string">b"not authenticated"</span>),
+            })
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+            io.flush().<span class="kw">await</span><span class="question-mark">?</span>;
+
+            <span class="macro">bail!</span>(<span class="string">"client is not authenticated: {}"</span>, client_key);
+        }
+
         <span class="kw">if </span>info.version != PROTOCOL_VERSION {
             <span class="macro">bail!</span>(
                 <span class="string">"unexpected client version {}, expected {}"</span>,
@@ -1682,6 +1736,7 @@
         headers: HeaderMap,
         rate_limit: <span class="prelude-ty">Option</span>&lt;ClientRateLimit&gt;,
         key_cache: KeyCache,
+        access: AccessConfig,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>(Arc::new(Inner {
             handlers,
@@ -1690,6 +1745,7 @@
             write_timeout: SERVER_WRITE_TIMEOUT,
             rate_limit,
             key_cache,
+            access,
         }))
     }
 
@@ -2037,6 +2093,7 @@
             Default::default(),
             <span class="prelude-val">None</span>,
             KeyCache::test(),
+            AccessConfig::Everyone,
         );
 
         <span class="macro">info!</span>(<span class="string">"Create client A and connect it to the server."</span>);
@@ -2129,6 +2186,7 @@
             Default::default(),
             <span class="prelude-val">None</span>,
             KeyCache::test(),
+            AccessConfig::Everyone,
         );
 
         <span class="macro">info!</span>(<span class="string">"Create client A and connect it to the server."</span>);

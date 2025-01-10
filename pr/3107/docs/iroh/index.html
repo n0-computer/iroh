@@ -132,7 +132,7 @@ connecting using only the <a href="type.NodeId.html" title="type iroh::NodeId"><
 
     <span class="comment">// Gracefully close the connection and endpoint.
     </span>conn.close(<span class="number">1u8</span>.into(), <span class="string">b"done"</span>);
-    ep.close().<span class="kw">await</span><span class="question-mark">?</span>;
+    ep.close().<span class="kw">await</span>;
     <span class="macro">println!</span>(<span class="string">"Client closed"</span>);
     <span class="prelude-val">Ok</span>(())
 }</code></pre></div>
@@ -158,7 +158,7 @@ connecting using only the <a href="type.NodeId.html" title="type iroh::NodeId"><
 
     <span class="comment">// Wait for the client to close the connection and gracefully close the endpoint.
     </span>conn.closed().<span class="kw">await</span>;
-    ep.close().<span class="kw">await</span><span class="question-mark">?</span>;
+    ep.close().<span class="kw">await</span>;
     <span class="prelude-val">Ok</span>(())
 }</code></pre></div>
 <p>Please see the examples directory for more nuanced examples.</p>

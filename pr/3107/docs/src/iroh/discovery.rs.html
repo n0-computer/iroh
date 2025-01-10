@@ -873,15 +873,7 @@
 <a href="#872" id="872">872</a>
 <a href="#873" id="873">873</a>
 <a href="#874" id="874">874</a>
-<a href="#875" id="875">875</a>
-<a href="#876" id="876">876</a>
-<a href="#877" id="877">877</a>
-<a href="#878" id="878">878</a>
-<a href="#879" id="879">879</a>
-<a href="#880" id="880">880</a>
-<a href="#881" id="881">881</a>
-<a href="#882" id="882">882</a>
-<a href="#883" id="883">883</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#875" id="875">875</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1328,6 +1320,7 @@
         time::SystemTime,
     };
 
+    <span class="kw">use </span>anyhow::Context;
     <span class="kw">use </span>iroh_base::SecretKey;
     <span class="kw">use </span>rand::Rng;
     <span class="kw">use </span>testresult::TestResult;
@@ -1490,8 +1483,11 @@
         </span>};
         <span class="kw">let </span>ep1_addr = NodeAddr::new(ep1.node_id());
         <span class="comment">// wait for out address to be updated and thus published at least once
-        </span>ep1.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>_conn = ep2.connect(ep1_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+        </span>ep1.node_addr().<span class="kw">await</span>.context(<span class="string">"waiting for NodeAddr"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>_conn = ep2
+            .connect(ep1_addr, TEST_ALPN)
+            .<span class="kw">await
+            </span>.context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 
@@ -1592,11 +1588,14 @@
         <span class="kw">let </span>handle = tokio::spawn({
             <span class="kw">let </span>ep = ep.clone();
             <span class="kw">async move </span>{
+                <span class="comment">// Keep connections alive until the task is dropped.
+                </span><span class="kw">let </span><span class="kw-2">mut </span>connections = Vec::new();
                 <span class="comment">// we skip accept() errors, they can be caused by retransmits
                 </span><span class="kw">while let </span><span class="prelude-val">Some</span>(connecting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
-                    <span class="kw">let </span>_conn = connecting.<span class="kw">await</span><span class="question-mark">?</span>;
                     <span class="comment">// Just accept incoming connections, but don't do anything with them.
-                </span>}
+                    </span><span class="kw">let </span>conn = connecting.<span class="kw">await</span><span class="question-mark">?</span>;
+                    connections.push(conn);
+                }
 
                 anyhow::Ok(())
             }
@@ -1610,21 +1609,6 @@
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect(<span class="string">"time drift"</span>)
             .as_micros() <span class="kw">as </span>u64
-    }
-
-    <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_arc_discovery() -&gt; TestResult {
-        <span class="kw">let </span>discovery = Arc::new(EmptyDiscovery);
-
-        <span class="kw">let </span>_ep = Endpoint::builder()
-            .add_discovery({
-                <span class="kw">let </span>discovery = discovery.clone();
-                <span class="kw">move </span>|<span class="kw">_</span>| <span class="prelude-val">Some</span>(discovery)
-            })
-            .bind()
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-
-        <span class="prelude-val">Ok</span>(())
     }
 }
 
