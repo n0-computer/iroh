@@ -5989,7 +5989,7 @@
                 }
                 drop(wakers);
                 <span class="kw">if </span><span class="self">self</span>.sender.capacity() != <span class="number">0 </span>{
-                    <span class="comment">// We "risk" a suprious wake-up in this case, but rather that
+                    <span class="comment">// We "risk" a spurious wake-up in this case, but rather that
                     // than potentially skipping a receive.
                     </span>Poll::Ready(<span class="prelude-val">Ok</span>(()))
                 } <span class="kw">else </span>{
