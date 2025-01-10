@@ -1449,7 +1449,33 @@
 <a href="#1448" id="1448">1448</a>
 <a href="#1449" id="1449">1449</a>
 <a href="#1450" id="1450">1450</a>
-<a href="#1451" id="1451">1451</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1451" id="1451">1451</a>
+<a href="#1452" id="1452">1452</a>
+<a href="#1453" id="1453">1453</a>
+<a href="#1454" id="1454">1454</a>
+<a href="#1455" id="1455">1455</a>
+<a href="#1456" id="1456">1456</a>
+<a href="#1457" id="1457">1457</a>
+<a href="#1458" id="1458">1458</a>
+<a href="#1459" id="1459">1459</a>
+<a href="#1460" id="1460">1460</a>
+<a href="#1461" id="1461">1461</a>
+<a href="#1462" id="1462">1462</a>
+<a href="#1463" id="1463">1463</a>
+<a href="#1464" id="1464">1464</a>
+<a href="#1465" id="1465">1465</a>
+<a href="#1466" id="1466">1466</a>
+<a href="#1467" id="1467">1467</a>
+<a href="#1468" id="1468">1468</a>
+<a href="#1469" id="1469">1469</a>
+<a href="#1470" id="1470">1470</a>
+<a href="#1471" id="1471">1471</a>
+<a href="#1472" id="1472">1472</a>
+<a href="#1473" id="1473">1473</a>
+<a href="#1474" id="1474">1474</a>
+<a href="#1475" id="1475">1475</a>
+<a href="#1476" id="1476">1476</a>
+<a href="#1477" id="1477">1477</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -1467,19 +1493,19 @@
     sync::Arc,
 };
 
-<span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>hickory_resolver::TokioResolver <span class="kw">as </span>DnsResolver;
-<span class="kw">use </span>iroh_base::RelayUrl;
+<span class="kw">use </span>iroh_base::{IpMappedAddrs, RelayUrl};
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
-<span class="kw">use </span>netwatch::{IpFamily, UdpSocket};
+<span class="kw">use </span>netwatch::UdpSocket;
 <span class="kw">use </span>tokio::{
     sync::{<span class="self">self</span>, mpsc, oneshot},
     time::{Duration, Instant},
 };
-<span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 
 <span class="kw">mod </span>defaults;
@@ -1491,6 +1517,8 @@
 <span class="kw">pub use </span>metrics::Metrics;
 <span class="kw">use </span>reportgen::ProbeProto;
 <span class="kw">pub use </span>reportgen::QuicConfig;
+<span class="attr">#[cfg(feature = <span class="string">"stun-utils"</span>)]
+</span><span class="kw">pub use </span>stun_utils::bind_local_stun_socket;
 
 <span class="kw">const </span>FULL_REPORT_INTERVAL: Duration = Duration::from_secs(<span class="number">5 </span>* <span class="number">60</span>);
 
@@ -1714,8 +1742,8 @@
 }
 
 <span class="kw">impl </span>Options {
-    <span class="doccomment">/// Create an empty Options that enables no probes
-    </span><span class="kw">pub fn </span>empty() -&gt; <span class="self">Self </span>{
+    <span class="doccomment">/// Create an [`Options`] that disables all probes
+    </span><span class="kw">pub fn </span>disabled() -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             stun_sock_v4: <span class="prelude-val">None</span>,
             stun_sock_v6: <span class="prelude-val">None</span>,
@@ -1744,21 +1772,21 @@
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Enable icmp_v4 probe
-    </span><span class="kw">pub fn </span>enable_icmp_v4(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.icmp_v4 = <span class="bool-val">true</span>;
+    <span class="doccomment">/// Enable or disable icmp_v4 probe
+    </span><span class="kw">pub fn </span>icmp_v4(<span class="kw-2">mut </span><span class="self">self</span>, enable: bool) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.icmp_v4 = enable;
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Enable icmp_v6 probe
-    </span><span class="kw">pub fn </span>enable_icmp_v6(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.icmp_v6 = <span class="bool-val">true</span>;
+    <span class="doccomment">/// Enable or disable icmp_v6 probe
+    </span><span class="kw">pub fn </span>icmp_v6(<span class="kw-2">mut </span><span class="self">self</span>, enable: bool) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.icmp_v6 = enable;
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Enable https probe
-    </span><span class="kw">pub fn </span>enable_https(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.https = <span class="bool-val">true</span>;
+    <span class="doccomment">/// Enable or disable https probe
+    </span><span class="kw">pub fn </span>https(<span class="kw-2">mut </span><span class="self">self</span>, enable: bool) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.https = enable;
         <span class="self">self
     </span>}
 
@@ -1797,8 +1825,12 @@
     ///
     /// This starts a connected actor in the background.  Once the client is dropped it will
     /// stop running.
-    </span><span class="kw">pub fn </span>new(port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;, dns_resolver: DnsResolver) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>actor = Actor::new(port_mapper, dns_resolver)<span class="question-mark">?</span>;
+    </span><span class="kw">pub fn </span>new(
+        port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;,
+        dns_resolver: DnsResolver,
+        ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddrs&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>actor = Actor::new(port_mapper, dns_resolver, ip_mapped_addrs)<span class="question-mark">?</span>;
         <span class="kw">let </span>addr = actor.addr();
         <span class="kw">let </span>task = tokio::spawn(
             <span class="kw">async move </span>{ actor.run().<span class="kw">await </span>}.instrument(<span class="macro">info_span!</span>(<span class="string">"net_report.actor"</span>)),
@@ -2015,6 +2047,9 @@
 
     <span class="doccomment">/// The DNS resolver to use for probes that need to perform DNS lookups
     </span>dns_resolver: DnsResolver,
+
+    <span class="doccomment">/// The [`IpMappedAddrs`] that allows you to do QAD in iroh
+    </span>ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddrs&gt;,
 }
 
 <span class="kw">impl </span>Actor {
@@ -2022,7 +2057,11 @@
     ///
     /// This does not start the actor, see [`Actor::run`] for this.  You should not
     /// normally create this directly but rather create a [`Client`].
-    </span><span class="kw">fn </span>new(port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;, dns_resolver: DnsResolver) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">fn </span>new(
+        port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;,
+        dns_resolver: DnsResolver,
+        ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddrs&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="comment">// TODO: consider an instrumented flume channel so we have metrics.
         </span><span class="kw">let </span>(sender, receiver) = mpsc::channel(<span class="number">32</span>);
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
@@ -2033,6 +2072,7 @@
             in_flight_stun_requests: Default::default(),
             current_report_run: <span class="prelude-val">None</span>,
             dns_resolver,
+            ip_mapped_addrs,
         })
     }
 
@@ -2060,7 +2100,7 @@
                     <span class="self">self</span>.handle_run_check(relay_map, opts, response_tx);
                 }
                 Message::ReportReady { report } =&gt; {
-                    <span class="self">self</span>.handle_report_ready(report);
+                    <span class="self">self</span>.handle_report_ready(<span class="kw-2">*</span>report);
                 }
                 Message::ReportAborted { err } =&gt; {
                     <span class="self">self</span>.handle_report_aborted(err);
@@ -2136,6 +2176,7 @@
             quic_config,
             <span class="self">self</span>.dns_resolver.clone(),
             protocols,
+            <span class="self">self</span>.ip_mapped_addrs.clone(),
         );
 
         <span class="self">self</span>.current_report_run = <span class="prelude-val">Some</span>(ReportRun {
@@ -2144,8 +2185,8 @@
         });
     }
 
-    <span class="kw">fn </span>handle_report_ready(<span class="kw-2">&amp;mut </span><span class="self">self</span>, report: Box&lt;Report&gt;) {
-        <span class="kw">let </span>report = <span class="self">self</span>.finish_and_store_report(<span class="kw-2">*</span>report);
+    <span class="kw">fn </span>handle_report_ready(<span class="kw-2">&amp;mut </span><span class="self">self</span>, report: Report) {
+        <span class="kw">let </span>report = <span class="self">self</span>.finish_and_store_report(report);
         <span class="self">self</span>.in_flight_stun_requests.clear();
         <span class="kw">if let </span><span class="prelude-val">Some</span>(ReportRun { report_tx, .. }) = <span class="self">self</span>.current_report_run.take() {
             report_tx.send(<span class="prelude-val">Ok</span>(report)).ok();
@@ -2310,75 +2351,84 @@
     </span>report_tx: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt;&gt;,
 }
 
-<span class="doccomment">/// Attempts to bind a local socket to send STUN packets from.
-///
-/// If successful this returns the bound socket and will forward STUN responses to the
-/// provided *actor_addr*.  The *cancel_token* serves to stop the packet forwarding when the
-/// socket is no longer needed.
-</span><span class="kw">pub fn </span>bind_local_stun_socket(
-    network: IpFamily,
-    actor_addr: Addr,
-    cancel_token: CancellationToken,
-) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt; {
-    <span class="kw">let </span>sock = <span class="kw">match </span>UdpSocket::bind(network, <span class="number">0</span>) {
-        <span class="prelude-val">Ok</span>(sock) =&gt; Arc::new(sock),
-        <span class="prelude-val">Err</span>(err) =&gt; {
-            <span class="macro">debug!</span>(<span class="string">"failed to bind STUN socket: {}"</span>, err);
-            <span class="kw">return </span><span class="prelude-val">None</span>;
-        }
-    };
-    <span class="kw">let </span>span = <span class="macro">info_span!</span>(
-        <span class="string">"stun_udp_listener"</span>,
-        local_addr = sock
-            .local_addr()
-            .map(|a| a.to_string())
-            .unwrap_or(String::from(<span class="string">"-"</span>)),
-    );
-    {
-        <span class="kw">let </span>sock = sock.clone();
-        tokio::spawn(
-            <span class="kw">async move </span>{
-                <span class="macro">debug!</span>(<span class="string">"udp stun socket listener started"</span>);
-                <span class="comment">// TODO: Can we do better for buffers here?  Probably doesn't matter much.
-                </span><span class="kw">let </span><span class="kw-2">mut </span>buf = <span class="macro">vec!</span>[<span class="number">0u8</span>; <span class="number">64 </span>&lt;&lt; <span class="number">10</span>];
-                <span class="kw">loop </span>{
-                    <span class="macro">tokio::select!</span> {
-                        biased;
-                        <span class="kw">_ </span>= cancel_token.cancelled() =&gt; <span class="kw">break</span>,
-                        res = recv_stun_once(<span class="kw-2">&amp;</span>sock, <span class="kw-2">&amp;mut </span>buf, <span class="kw-2">&amp;</span>actor_addr) =&gt; {
-                            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
-                                <span class="macro">warn!</span>(%err, <span class="string">"stun recv failed"</span>);
-                                <span class="kw">break</span>;
-                            }
-                        }
-                    }
-                }
-                <span class="macro">debug!</span>(<span class="string">"udp stun socket listener stopped"</span>);
-            }
-            .instrument(span),
-        );
-    }
-    <span class="prelude-val">Some</span>(sock)
-}
-
-<span class="doccomment">/// Receive STUN response from a UDP socket, pass it to the actor.
-</span><span class="kw">async fn </span>recv_stun_once(sock: <span class="kw-2">&amp;</span>UdpSocket, buf: <span class="kw-2">&amp;mut </span>[u8], actor_addr: <span class="kw-2">&amp;</span>Addr) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-    <span class="kw">let </span>(count, <span class="kw-2">mut </span>from_addr) = sock
-        .recv_from(buf)
-        .<span class="kw">await
-        </span>.context(<span class="string">"Error reading from stun socket"</span>)<span class="question-mark">?</span>;
-    <span class="kw">let </span>payload = <span class="kw-2">&amp;</span>buf[..count];
-    from_addr.set_ip(from_addr.ip().to_canonical());
-    <span class="kw">let </span>msg = Message::StunPacket {
-        payload: Bytes::from(payload.to_vec()),
-        from_addr,
-    };
-    actor_addr.send(msg).<span class="kw">await</span>.context(<span class="string">"actor stopped"</span>)
-}
-
 <span class="doccomment">/// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
 </span><span class="kw">pub fn </span>os_has_ipv6() -&gt; bool {
     UdpSocket::bind_local_v6(<span class="number">0</span>).is_ok()
+}
+
+<span class="attr">#[cfg(any(test, feature = <span class="string">"stun-utils"</span>))]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>stun_utils {
+    <span class="kw">use </span>anyhow::Context <span class="kw">as _</span>;
+    <span class="kw">use </span>netwatch::IpFamily;
+    <span class="kw">use </span>tokio_util::sync::CancellationToken;
+
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+
+    <span class="doccomment">/// Attempts to bind a local socket to send STUN packets from.
+    ///
+    /// If successful this returns the bound socket and will forward STUN responses to the
+    /// provided *actor_addr*.  The *cancel_token* serves to stop the packet forwarding when the
+    /// socket is no longer needed.
+    </span><span class="kw">pub fn </span>bind_local_stun_socket(
+        network: IpFamily,
+        actor_addr: Addr,
+        cancel_token: CancellationToken,
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt; {
+        <span class="kw">let </span>sock = <span class="kw">match </span>UdpSocket::bind(network, <span class="number">0</span>) {
+            <span class="prelude-val">Ok</span>(sock) =&gt; Arc::new(sock),
+            <span class="prelude-val">Err</span>(err) =&gt; {
+                <span class="macro">debug!</span>(<span class="string">"failed to bind STUN socket: {}"</span>, err);
+                <span class="kw">return </span><span class="prelude-val">None</span>;
+            }
+        };
+        <span class="kw">let </span>span = <span class="macro">info_span!</span>(
+            <span class="string">"stun_udp_listener"</span>,
+            local_addr = sock
+                .local_addr()
+                .map(|a| a.to_string())
+                .unwrap_or(String::from(<span class="string">"-"</span>)),
+        );
+        {
+            <span class="kw">let </span>sock = sock.clone();
+            tokio::spawn(
+                <span class="kw">async move </span>{
+                    <span class="macro">debug!</span>(<span class="string">"udp stun socket listener started"</span>);
+                    <span class="comment">// TODO: Can we do better for buffers here?  Probably doesn't matter much.
+                    </span><span class="kw">let </span><span class="kw-2">mut </span>buf = <span class="macro">vec!</span>[<span class="number">0u8</span>; <span class="number">64 </span>&lt;&lt; <span class="number">10</span>];
+                    <span class="kw">loop </span>{
+                        <span class="macro">tokio::select!</span> {
+                            biased;
+                            <span class="kw">_ </span>= cancel_token.cancelled() =&gt; <span class="kw">break</span>,
+                            res = recv_stun_once(<span class="kw-2">&amp;</span>sock, <span class="kw-2">&amp;mut </span>buf, <span class="kw-2">&amp;</span>actor_addr) =&gt; {
+                                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
+                                    <span class="macro">warn!</span>(%err, <span class="string">"stun recv failed"</span>);
+                                    <span class="kw">break</span>;
+                                }
+                            }
+                        }
+                    }
+                    <span class="macro">debug!</span>(<span class="string">"udp stun socket listener stopped"</span>);
+                }
+                .instrument(span),
+            );
+        }
+        <span class="prelude-val">Some</span>(sock)
+    }
+
+    <span class="doccomment">/// Receive STUN response from a UDP socket, pass it to the actor.
+    </span><span class="kw">async fn </span>recv_stun_once(sock: <span class="kw-2">&amp;</span>UdpSocket, buf: <span class="kw-2">&amp;mut </span>[u8], actor_addr: <span class="kw-2">&amp;</span>Addr) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">let </span>(count, <span class="kw-2">mut </span>from_addr) = sock
+            .recv_from(buf)
+            .<span class="kw">await
+            </span>.context(<span class="string">"Error reading from stun socket"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>payload = <span class="kw-2">&amp;</span>buf[..count];
+        from_addr.set_ip(from_addr.ip().to_canonical());
+        <span class="kw">let </span>msg = Message::StunPacket {
+            payload: Bytes::from(payload.to_vec()),
+            from_addr,
+        };
+        actor_addr.send(msg).<span class="kw">await</span>.context(<span class="string">"actor stopped"</span>)
+    }
 }
 
 <span class="attr">#[cfg(test)]
@@ -2428,11 +2478,13 @@
     <span class="kw">use </span>std::net::Ipv4Addr;
 
     <span class="kw">use </span>bytes::BytesMut;
+    <span class="kw">use </span>netwatch::IpFamily;
     <span class="kw">use </span>tokio::time;
+    <span class="kw">use </span>tokio_util::sync::CancellationToken;
     <span class="kw">use </span>tracing::info;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::ping::Pinger;
+    <span class="kw">use crate</span>::{ping::Pinger, stun_utils::bind_local_stun_socket};
 
     <span class="kw">mod </span>stun_utils {
         <span class="doccomment">//! Utils for testing that expose a simple stun server.
@@ -2573,7 +2625,7 @@
             stun_utils::serve(<span class="string">"127.0.0.1"</span>.parse().unwrap()).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::tests::resolver();
-        <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(<span class="prelude-val">None</span>, resolver.clone())<span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(<span class="prelude-val">None</span>, resolver.clone(), <span class="prelude-val">None</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>dm = stun_utils::relay_map_of([stun_addr].into_iter());
 
         <span class="comment">// Note that the ProbePlan will change with each iteration.
@@ -2621,7 +2673,7 @@
 
         <span class="comment">// Now create a client and generate a report.
         </span><span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::tests::resolver();
-        <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(<span class="prelude-val">None</span>, resolver.clone())<span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(<span class="prelude-val">None</span>, resolver.clone(), <span class="prelude-val">None</span>)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>r = client.get_report(dm, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>r: Report = (<span class="kw-2">*</span>r).clone();
@@ -2824,7 +2876,7 @@
         <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::tests::resolver();
         <span class="kw">for </span><span class="kw-2">mut </span>tt <span class="kw">in </span>tests {
             <span class="macro">println!</span>(<span class="string">"test: {}"</span>, tt.name);
-            <span class="kw">let </span><span class="kw-2">mut </span>actor = Actor::new(<span class="prelude-val">None</span>, resolver.clone()).unwrap();
+            <span class="kw">let </span><span class="kw-2">mut </span>actor = Actor::new(<span class="prelude-val">None</span>, resolver.clone(), <span class="prelude-val">None</span>).unwrap();
             <span class="kw">for </span>s <span class="kw">in </span><span class="kw-2">&amp;mut </span>tt.steps {
                 <span class="comment">// trigger the timer
                 </span>time::advance(Duration::from_secs(s.after)).<span class="kw">await</span>;
@@ -2859,7 +2911,7 @@
         <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>dm);
 
         <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::tests::resolver().clone();
-        <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(<span class="prelude-val">None</span>, resolver)<span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(<span class="prelude-val">None</span>, resolver, <span class="prelude-val">None</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// Set up an external socket to send STUN requests from, this will be discovered as
         // our public socket address by STUN.  We send back any packets received on this
@@ -2868,7 +2920,7 @@
         // it to this socket, which is forwarnding it back to our net_report client, because
         // this dumb implementation just forwards anything even if it would be garbage.
         // Thus hairpinning detection will declare hairpinning to work.
-        </span><span class="kw">let </span>sock = UdpSocket::bind_local(IpFamily::V4, <span class="number">0</span>)<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>sock = UdpSocket::bind_local(netwatch::IpFamily::V4, <span class="number">0</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>sock = Arc::new(sock);
         <span class="macro">info!</span>(addr=<span class="question-mark">?</span>sock.local_addr().unwrap(), <span class="string">"Using local addr"</span>);
         <span class="kw">let </span>task = {

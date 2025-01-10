@@ -1717,13 +1717,34 @@
 <a href="#1716" id="1716">1716</a>
 <a href="#1717" id="1717">1717</a>
 <a href="#1718" id="1718">1718</a>
-<a href="#1719" id="1719">1719</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1719" id="1719">1719</a>
+<a href="#1720" id="1720">1720</a>
+<a href="#1721" id="1721">1721</a>
+<a href="#1722" id="1722">1722</a>
+<a href="#1723" id="1723">1723</a>
+<a href="#1724" id="1724">1724</a>
+<a href="#1725" id="1725">1725</a>
+<a href="#1726" id="1726">1726</a>
+<a href="#1727" id="1727">1727</a>
+<a href="#1728" id="1728">1728</a>
+<a href="#1729" id="1729">1729</a>
+<a href="#1730" id="1730">1730</a>
+<a href="#1731" id="1731">1731</a>
+<a href="#1732" id="1732">1732</a>
+<a href="#1733" id="1733">1733</a>
+<a href="#1734" id="1734">1734</a>
+<a href="#1735" id="1735">1735</a>
+<a href="#1736" id="1736">1736</a>
+<a href="#1737" id="1737">1737</a>
+<a href="#1738" id="1738">1738</a>
+<a href="#1739" id="1739">1739</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     time::{Duration, Instant},
 };
 
+<span class="kw">use </span>data_encoding::HEXLOWER;
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>iroh_relay::protos::stun;
@@ -1738,10 +1759,11 @@
     udp_paths::{NodeUdpPaths, UdpSendAddr},
     IpPort, Source,
 };
+<span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+</span><span class="kw">use </span><span class="kw">crate</span>::endpoint::PathSelection;
 <span class="kw">use crate</span>::{
     disco::{<span class="self">self</span>, SendAddr},
-    magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
-    util::relay_only_mode,
+    magicsock::{ActorMessage, MagicsockMetrics, NodeIdMappedAddr, Timer, HEARTBEAT_INTERVAL},
     watchable::{Watchable, Watcher},
 };
 
@@ -1820,7 +1842,7 @@
     /// [`NodeMap`]: super::NodeMap
     </span>id: usize,
     <span class="doccomment">/// The UDP address used on the QUIC-layer to address this node.
-    </span>quic_mapped_addr: QuicMappedAddr,
+    </span>quic_mapped_addr: NodeIdMappedAddr,
     <span class="doccomment">/// The global identifier for this endpoint.
     </span>node_id: NodeId,
     <span class="doccomment">/// The last time we pinged all endpoints.
@@ -1854,6 +1876,9 @@
     ///
     /// Used for metric reporting.
     </span>has_been_direct: bool,
+    <span class="doccomment">/// Configuration for what path selection to use
+    </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+    </span>path_selection: PathSelection,
 }
 
 <span class="doccomment">/// Options for creating a new [`NodeState`].
@@ -1864,11 +1889,13 @@
     <span class="doccomment">/// Is this endpoint currently active (sending data)?
     </span><span class="kw">pub</span>(<span class="kw">super</span>) active: bool,
     <span class="kw">pub</span>(<span class="kw">super</span>) source: <span class="kw">super</span>::Source,
+    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) path_selection: PathSelection,
 }
 
 <span class="kw">impl </span>NodeState {
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(id: usize, options: Options) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>quic_mapped_addr = QuicMappedAddr::generate();
+        <span class="kw">let </span>quic_mapped_addr = NodeIdMappedAddr::generate();
 
         <span class="kw">if </span>options.relay_url.is_some() {
             <span class="comment">// we potentially have a relay connection to the node
@@ -1894,6 +1921,8 @@
             last_call_me_maybe: <span class="prelude-val">None</span>,
             conn_type: Watchable::new(ConnectionType::None),
             has_been_direct: <span class="bool-val">false</span>,
+            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+            </span>path_selection: options.path_selection,
         }
     }
 
@@ -1901,7 +1930,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>.node_id
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>quic_mapped_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>QuicMappedAddr {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>quic_mapped_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>NodeIdMappedAddr {
         <span class="kw-2">&amp;</span><span class="self">self</span>.quic_mapped_addr
     }
 
@@ -1989,8 +2018,9 @@
         now: <span class="kw-2">&amp;</span>Instant,
         have_ipv6: bool,
     ) -&gt; (<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;, <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;) {
-        <span class="kw">if </span>relay_only_mode() {
-            <span class="macro">debug!</span>(<span class="string">"in `DEV_relay_ONLY` mode, giving the relay address as the only viable address for this endpoint"</span>);
+        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+        </span><span class="kw">if </span><span class="self">self</span>.path_selection == PathSelection::RelayOnly {
+            <span class="macro">debug!</span>(<span class="string">"in `RelayOnly` mode, giving the relay address as the only viable address for this endpoint"</span>);
             <span class="kw">return </span>(<span class="prelude-val">None</span>, <span class="self">self</span>.relay_url());
         }
         <span class="kw">let </span>(best_addr, relay_url) = <span class="kw">match </span><span class="self">self</span>.udp_paths.send_addr(<span class="kw-2">*</span>now, have_ipv6) {
@@ -2129,7 +2159,7 @@
     </span><span class="attr">#[instrument(<span class="string">"disco"</span>, skip_all, fields(node = %<span class="self">self</span>.node_id.fmt_short()))]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>ping_timeout(<span class="kw-2">&amp;mut </span><span class="self">self</span>, txid: stun::TransactionId) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(sp) = <span class="self">self</span>.sent_pings.remove(<span class="kw-2">&amp;</span>txid) {
-            <span class="macro">debug!</span>(tx = %hex::encode(txid), addr = %sp.to, <span class="string">"pong not received in timeout"</span>);
+            <span class="macro">debug!</span>(tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>txid), addr = %sp.to, <span class="string">"pong not received in timeout"</span>);
             <span class="kw">match </span>sp.to {
                 SendAddr::Udp(addr) =&gt; {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(path_state) = <span class="self">self</span>.udp_paths.paths.get_mut(<span class="kw-2">&amp;</span>addr.into()) {
@@ -2174,13 +2204,14 @@
 
     <span class="attr">#[must_use = <span class="string">"pings must be handled"</span>]
     </span><span class="kw">fn </span>start_ping(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: SendAddr, purpose: DiscoPingPurpose) -&gt; <span class="prelude-ty">Option</span>&lt;SendPing&gt; {
-        <span class="kw">if </span>relay_only_mode() &amp;&amp; !dst.is_relay() {
+        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+        </span><span class="kw">if </span><span class="self">self</span>.path_selection == PathSelection::RelayOnly &amp;&amp; !dst.is_relay() {
             <span class="comment">// don't attempt any hole punching in relay only mode
-            </span><span class="macro">warn!</span>(<span class="string">"in `DEV_relay_ONLY` mode, ignoring request to start a hole punching attempt."</span>);
+            </span><span class="macro">warn!</span>(<span class="string">"in `RealyOnly` mode, ignoring request to start a hole punching attempt."</span>);
             <span class="kw">return </span><span class="prelude-val">None</span>;
         }
         <span class="kw">let </span>tx_id = stun::TransactionId::default();
-        <span class="macro">trace!</span>(tx = %hex::encode(tx_id), %dst, <span class="question-mark">?</span>purpose,
+        <span class="macro">trace!</span>(tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>tx_id), %dst, <span class="question-mark">?</span>purpose,
                dst = %<span class="self">self</span>.node_id.fmt_short(), <span class="string">"start ping"</span>);
         <span class="macro">event!</span>(
             target: <span class="string">"iroh::_events::ping::sent"</span>,
@@ -2207,7 +2238,7 @@
         purpose: DiscoPingPurpose,
         sender: mpsc::Sender&lt;ActorMessage&gt;,
     ) {
-        <span class="macro">trace!</span>(%to, tx = %hex::encode(tx_id), <span class="question-mark">?</span>purpose, <span class="string">"record ping sent"</span>);
+        <span class="macro">trace!</span>(%to, tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>tx_id), <span class="question-mark">?</span>purpose, <span class="string">"record ping sent"</span>);
 
         <span class="kw">let </span>now = Instant::now();
         <span class="kw">let </span><span class="kw-2">mut </span>path_found = <span class="bool-val">false</span>;
@@ -2319,10 +2350,10 @@
                 }
             }
         }
-        <span class="kw">if </span>relay_only_mode() {
-            <span class="macro">warn!</span>(
-                <span class="string">"in `DEV_relay_ONLY` mode, ignoring request to respond to a hole punching attempt."
-            </span>);
+
+        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+        </span><span class="kw">if </span><span class="self">self</span>.path_selection == PathSelection::RelayOnly {
+            <span class="macro">warn!</span>(<span class="string">"in `RelayOnly` mode, ignoring request to respond to a hole punching attempt."</span>);
             <span class="kw">return </span>ping_msgs;
         }
         <span class="self">self</span>.prune_direct_addresses();
@@ -2352,17 +2383,17 @@
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>update_from_node_addr(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        relay_url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;,
-        addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;,
+        new_relay_url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;,
+        new_addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;,
         source: <span class="kw">super</span>::Source,
     ) {
         <span class="kw">if </span><span class="self">self</span>.udp_paths.best_addr.is_empty() {
             <span class="comment">// we do not have a direct connection, so changing the relay information may
             // have an effect on our connection status
-            </span><span class="kw">if </span><span class="self">self</span>.relay_url.is_none() &amp;&amp; relay_url.is_some() {
+            </span><span class="kw">if </span><span class="self">self</span>.relay_url.is_none() &amp;&amp; new_relay_url.is_some() {
                 <span class="comment">// we did not have a relay connection before, but now we do
                 </span><span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added)
-            } <span class="kw">else if </span><span class="self">self</span>.relay_url.is_some() &amp;&amp; relay_url.is_none() {
+            } <span class="kw">else if </span><span class="self">self</span>.relay_url.is_some() &amp;&amp; new_relay_url.is_none() {
                 <span class="comment">// we had a relay connection before but do not have one now
                 </span><span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_removed)
             }
@@ -2370,12 +2401,12 @@
 
         <span class="kw">let </span>now = Instant::now();
 
-        <span class="kw">if </span>relay_url.is_some() &amp;&amp; relay_url != <span class="self">self</span>.relay_url().as_ref() {
+        <span class="kw">if </span>new_relay_url.is_some() &amp;&amp; new_relay_url != <span class="self">self</span>.relay_url().as_ref() {
             <span class="macro">debug!</span>(
                 <span class="string">"Changing relay node from {:?} to {:?}"</span>,
-                <span class="self">self</span>.relay_url, relay_url
+                <span class="self">self</span>.relay_url, new_relay_url
             );
-            <span class="self">self</span>.relay_url = relay_url.map(|url| {
+            <span class="self">self</span>.relay_url = new_relay_url.map(|url| {
                 (
                     url.clone(),
                     PathState::new(<span class="self">self</span>.node_id, url.clone().into(), source.clone(), now),
@@ -2383,7 +2414,7 @@
             });
         }
 
-        <span class="kw">for </span><span class="kw-2">&amp;</span>addr <span class="kw">in </span>addrs.iter() {
+        <span class="kw">for </span><span class="kw-2">&amp;</span>addr <span class="kw">in </span>new_addrs.iter() {
             <span class="self">self</span>.udp_paths
                 .paths
                 .entry(addr.into())
@@ -2395,7 +2426,7 @@
                 });
         }
         <span class="kw">let </span>paths = summarize_node_paths(<span class="kw-2">&amp;</span><span class="self">self</span>.udp_paths.paths);
-        <span class="macro">debug!</span>(new = <span class="question-mark">?</span>addrs , %paths, <span class="string">"added new direct paths for endpoint"</span>);
+        <span class="macro">debug!</span>(new = <span class="question-mark">?</span>new_addrs , %paths, <span class="string">"added new direct paths for endpoint"</span>);
     }
 
     <span class="doccomment">/// Clears all the endpoint's p2p state, reverting it to a relay-only endpoint.
@@ -2591,7 +2622,7 @@
         <span class="kw">match </span><span class="self">self</span>.sent_pings.remove(<span class="kw-2">&amp;</span>m.tx_id) {
             <span class="prelude-val">None </span>=&gt; {
                 <span class="comment">// This is not a pong for a ping we sent.
-                </span><span class="macro">warn!</span>(tx = %hex::encode(m.tx_id), <span class="string">"received pong with unknown transaction id"</span>);
+                </span><span class="macro">warn!</span>(tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>m.tx_id), <span class="string">"received pong with unknown transaction id"</span>);
                 <span class="prelude-val">None
             </span>}
             <span class="prelude-val">Some</span>(sp) =&gt; {
@@ -2603,7 +2634,7 @@
                 <span class="kw">let </span>latency = now - sp.at;
 
                 <span class="macro">debug!</span>(
-                    tx = %hex::encode(m.tx_id),
+                    tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>m.tx_id),
                     src = %src,
                     reported_ping_src = %m.ping_observed_addr,
                     ping_dst = %sp.to,
@@ -3174,7 +3205,7 @@
 
         <span class="comment">// endpoint with a `best_addr` that has a latency but no relay
         </span><span class="kw">let </span>(a_endpoint, a_socket_addr) = {
-            <span class="kw">let </span>key = SecretKey::generate();
+            <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
             <span class="kw">let </span>node_id = key.public();
             <span class="kw">let </span>ip_port = IpPort {
                 ip: Ipv4Addr::UNSPECIFIED.into(),
@@ -3195,7 +3226,7 @@
             (
                 NodeState {
                     id: <span class="number">0</span>,
-                    quic_mapped_addr: QuicMappedAddr::generate(),
+                    quic_mapped_addr: NodeIdMappedAddr::generate(),
                     node_id: key.public(),
                     last_full_ping: <span class="prelude-val">None</span>,
                     relay_url: <span class="prelude-val">None</span>,
@@ -3213,6 +3244,8 @@
                     last_call_me_maybe: <span class="prelude-val">None</span>,
                     conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
                     has_been_direct: <span class="bool-val">true</span>,
+                    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+                    </span>path_selection: PathSelection::default(),
                 },
                 ip_port.into(),
             )
@@ -3220,10 +3253,10 @@
         <span class="comment">// endpoint w/ no best addr but a relay w/ latency
         </span><span class="kw">let </span>b_endpoint = {
             <span class="comment">// let socket_addr = "0.0.0.0:9".parse().unwrap();
-            </span><span class="kw">let </span>key = SecretKey::generate();
+            </span><span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
             NodeState {
                 id: <span class="number">1</span>,
-                quic_mapped_addr: QuicMappedAddr::generate(),
+                quic_mapped_addr: NodeIdMappedAddr::generate(),
                 node_id: key.public(),
                 last_full_ping: <span class="prelude-val">None</span>,
                 relay_url: relay_and_state(key.public(), send_addr.clone()),
@@ -3233,16 +3266,18 @@
                 last_call_me_maybe: <span class="prelude-val">None</span>,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
                 has_been_direct: <span class="bool-val">false</span>,
+                <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+                </span>path_selection: PathSelection::default(),
             }
         };
 
         <span class="comment">// endpoint w/ no best addr but a relay w/ no latency
         </span><span class="kw">let </span>c_endpoint = {
             <span class="comment">// let socket_addr = "0.0.0.0:8".parse().unwrap();
-            </span><span class="kw">let </span>key = SecretKey::generate();
+            </span><span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
             NodeState {
                 id: <span class="number">2</span>,
-                quic_mapped_addr: QuicMappedAddr::generate(),
+                quic_mapped_addr: NodeIdMappedAddr::generate(),
                 node_id: key.public(),
                 last_full_ping: <span class="prelude-val">None</span>,
                 relay_url: <span class="prelude-val">Some</span>((
@@ -3260,6 +3295,8 @@
                 last_call_me_maybe: <span class="prelude-val">None</span>,
                 conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
                 has_been_direct: <span class="bool-val">false</span>,
+                <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+                </span>path_selection: PathSelection::default(),
             }
         };
 
@@ -3267,7 +3304,7 @@
         </span><span class="kw">let </span>(d_endpoint, d_socket_addr) = {
             <span class="kw">let </span>socket_addr: SocketAddr = <span class="string">"0.0.0.0:7"</span>.parse().unwrap();
             <span class="kw">let </span>expired = now.checked_sub(Duration::from_secs(<span class="number">100</span>)).unwrap();
-            <span class="kw">let </span>key = SecretKey::generate();
+            <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
             <span class="kw">let </span>node_id = key.public();
             <span class="kw">let </span>endpoint_state = BTreeMap::from([(
                 IpPort::from(socket_addr),
@@ -3284,7 +3321,7 @@
             (
                 NodeState {
                     id: <span class="number">3</span>,
-                    quic_mapped_addr: QuicMappedAddr::generate(),
+                    quic_mapped_addr: NodeIdMappedAddr::generate(),
                     node_id: key.public(),
                     last_full_ping: <span class="prelude-val">None</span>,
                     relay_url: relay_and_state(key.public(), send_addr.clone()),
@@ -3300,6 +3337,8 @@
                         send_addr.clone(),
                     )),
                     has_been_direct: <span class="bool-val">false</span>,
+                    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+                    </span>path_selection: PathSelection::default(),
                 },
                 socket_addr,
             )
@@ -3390,7 +3429,7 @@
                 (d_endpoint.id, d_endpoint),
             ]),
             next_id: <span class="number">5</span>,
-            qad_addrs: BTreeSet::new(),
+            path_selection: PathSelection::default(),
         });
         <span class="kw">let </span><span class="kw-2">mut </span>got = node_map.list_remote_infos(later);
         got.sort_by_key(|p| p.node_id);
@@ -3412,7 +3451,7 @@
         <span class="comment">// When we handle a call-me-maybe with more than MAX_INACTIVE_DIRECT_ADDRESSES we do
         // not want to prune them right away but send pings to all of them.
 
-        </span><span class="kw">let </span>key = SecretKey::generate();
+        </span><span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>opts = Options {
             node_id: key.public(),
             relay_url: <span class="prelude-val">None</span>,
@@ -3420,6 +3459,7 @@
             source: <span class="kw">crate</span>::magicsock::Source::NamedApp {
                 name: <span class="string">"test"</span>.into(),
             },
+            path_selection: PathSelection::default(),
         };
         <span class="kw">let </span><span class="kw-2">mut </span>ep = NodeState::new(<span class="number">0</span>, opts);
 

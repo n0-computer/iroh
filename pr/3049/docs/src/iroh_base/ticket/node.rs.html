@@ -343,7 +343,7 @@
     <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
 
     <span class="kw">fn </span>make_ticket() -&gt; NodeTicket {
-        <span class="kw">let </span>peer = SecretKey::generate().public();
+        <span class="kw">let </span>peer = SecretKey::generate(<span class="kw-2">&amp;mut </span>rand::thread_rng()).public();
         <span class="kw">let </span>addr = SocketAddr::from((Ipv4Addr::LOCALHOST, <span class="number">1234</span>));
         <span class="kw">let </span>relay_url = <span class="prelude-val">None</span>;
         NodeTicket {

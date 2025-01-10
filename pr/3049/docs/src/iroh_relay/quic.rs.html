@@ -410,7 +410,7 @@
                             <span class="kw">_ </span>= cancel_accept_loop.cancelled() =&gt; {
                                 <span class="kw">break</span>;
                             }
-                            <span class="prelude-val">Some</span>(res) = set.join_next(), <span class="kw">if </span>!set.is_empty() =&gt; {
+                            <span class="prelude-val">Some</span>(res) = set.join_next() =&gt; {
                                 <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
                                     <span class="kw">if </span>err.is_panic() {
                                         <span class="macro">panic!</span>(<span class="string">"task panicked: {err:#?}"</span>);

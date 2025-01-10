@@ -265,9 +265,7 @@
 <a href="#264" id="264">264</a>
 <a href="#265" id="265">265</a>
 <a href="#266" id="266">266</a>
-<a href="#267" id="267">267</a>
-<a href="#268" id="268">268</a>
-<a href="#269" id="269">269</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#267" id="267">267</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     num::ParseIntError,
     str::FromStr,
     sync::{Arc, Mutex},
@@ -338,12 +336,11 @@
     </span><span class="attr">#[clap(long, default_value = <span class="string">"1200"</span>)]
     </span><span class="kw">pub </span>initial_mtu: u16,
     <span class="doccomment">/// Whether to run a local relay and have the server and clients connect to that.
-    ///
-    /// Can be combined with the `DEV_RELAY_ONLY` environment variable (at compile time)
-    /// to test throughput for relay-only traffic locally.
-    /// (e.g. `DEV_RELAY_ONLY=true cargo run --release -- iroh --with-relay`)
-    </span><span class="attr">#[clap(long, default_value_t = <span class="bool-val">false</span>)]
-    </span><span class="kw">pub </span>with_relay: bool,
+    /// This will force all traffic over the relay and can be used to test
+    /// throughput for relay-only traffic.
+    </span><span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
+    #[clap(long, default_value_t = <span class="bool-val">false</span>)]
+    </span><span class="kw">pub </span>only_relay: bool,
 }
 
 <span class="kw">pub enum </span>EndpointSelector {
@@ -353,17 +350,16 @@
 }
 
 <span class="kw">impl </span>EndpointSelector {
-    <span class="kw">pub async fn </span>close(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">pub async fn </span>close(<span class="self">self</span>) {
         <span class="kw">match </span><span class="self">self </span>{
             EndpointSelector::Iroh(endpoint) =&gt; {
-                endpoint.close().<span class="kw">await</span><span class="question-mark">?</span>;
+                endpoint.close().<span class="kw">await</span>;
             }
             <span class="attr">#[cfg(not(any(target_os = <span class="string">"freebsd"</span>, target_os = <span class="string">"openbsd"</span>, target_os = <span class="string">"netbsd"</span>)))]
             </span>EndpointSelector::Quinn(endpoint) =&gt; {
                 endpoint.close(<span class="number">0u32</span>.into(), <span class="string">b""</span>);
             }
         }
-        <span class="prelude-val">Ok</span>(())
     }
 }
 
@@ -525,7 +521,7 @@
     // to `Arc`ing them
     </span>connection.close(<span class="number">0u32</span>, <span class="string">b"Benchmark done"</span>);
 
-    endpoint.close().<span class="kw">await</span><span class="question-mark">?</span>;
+    endpoint.close().<span class="kw">await</span>;
 
     <span class="kw">if </span>opt.stats {
         <span class="macro">println!</span>(<span class="string">"\nClient connection stats:\n{:#?}"</span>, connection.stats());

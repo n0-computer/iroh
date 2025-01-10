@@ -885,22 +885,7 @@
 <a href="#884" id="884">884</a>
 <a href="#885" id="885">885</a>
 <a href="#886" id="886">886</a>
-<a href="#887" id="887">887</a>
-<a href="#888" id="888">888</a>
-<a href="#889" id="889">889</a>
-<a href="#890" id="890">890</a>
-<a href="#891" id="891">891</a>
-<a href="#892" id="892">892</a>
-<a href="#893" id="893">893</a>
-<a href="#894" id="894">894</a>
-<a href="#895" id="895">895</a>
-<a href="#896" id="896">896</a>
-<a href="#897" id="897">897</a>
-<a href="#898" id="898">898</a>
-<a href="#899" id="899">899</a>
-<a href="#900" id="900">900</a>
-<a href="#901" id="901">901</a>
-<a href="#902" id="902">902</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#887" id="887">887</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -919,8 +904,10 @@
     node_state::{NodeState, Options, PingHandled},
 };
 <span class="kw">use super</span>::{
-    metrics::Metrics <span class="kw">as </span>MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
+    metrics::Metrics <span class="kw">as </span>MagicsockMetrics, ActorMessage, DiscoMessageSource, NodeIdMappedAddr,
 };
+<span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+</span><span class="kw">use </span><span class="kw">crate</span>::endpoint::PathSelection;
 <span class="kw">use crate</span>::{
     disco::{CallMeMaybe, Pong, SendAddr},
     watchable::Watcher,
@@ -945,7 +932,7 @@
 /// - The node's ID in this map, only useful if you know the ID from an insert or lookup.
 ///   This is static and never changes.
 ///
-/// - The [`QuicMappedAddr`] which internally identifies the node to the QUIC stack.  This
+/// - The [`NodeIdMappedAddr`] which internally identifies the node to the QUIC stack.  This
 ///   is static and never changes.
 ///
 /// - The nodes's public key, aka `PublicKey` or "node_key".  This is static and never changes,
@@ -954,7 +941,7 @@
 /// - A public socket address on which they are reachable on the internet, known as ip-port.
 ///   These come and go as the node moves around on the internet
 ///
-/// An index of nodeInfos by node key, QuicMappedAddr, and discovered ip:port endpoints.
+/// An index of nodeInfos by node key, NodeIdMappedAddr, and discovered ip:port endpoints.
 </span><span class="attr">#[derive(Default, Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>NodeMap {
     inner: Mutex&lt;NodeMapInner&gt;,
@@ -964,11 +951,11 @@
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>NodeMapInner {
     by_node_key: HashMap&lt;NodeId, usize&gt;,
     by_ip_port: HashMap&lt;IpPort, usize&gt;,
-    by_quic_mapped_addr: HashMap&lt;QuicMappedAddr, usize&gt;,
+    by_quic_mapped_addr: HashMap&lt;NodeIdMappedAddr, usize&gt;,
     by_id: HashMap&lt;usize, NodeState&gt;,
     next_id: usize,
-    <span class="comment">// special set of relay socket addresses that we use to do quic address discovery
-    </span>qad_addrs: BTreeSet&lt;SocketAddr&gt;,
+    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+    </span>path_selection: PathSelection,
 }
 
 <span class="doccomment">/// Identifier to look up a [`NodeState`] in the [`NodeMap`].
@@ -979,7 +966,7 @@
 </span><span class="kw">enum </span>NodeStateKey {
     Idx(usize),
     NodeId(NodeId),
-    QuicMappedAddr(QuicMappedAddr),
+    NodeIdMappedAddr(NodeIdMappedAddr),
     IpPort(IpPort),
 }
 
@@ -1027,9 +1014,16 @@
 }
 
 <span class="kw">impl </span>NodeMap {
-    <span class="doccomment">/// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
+    <span class="attr">#[cfg(not(any(test, feature = <span class="string">"test-utils"</span>)))]
+    </span><span class="doccomment">/// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>load_from_vec(nodes: Vec&lt;NodeAddr&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::from_inner(NodeMapInner::load_from_vec(nodes))
+    }
+
+    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+    </span><span class="doccomment">/// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>load_from_vec(nodes: Vec&lt;NodeAddr&gt;, path_selection: PathSelection) -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>::from_inner(NodeMapInner::load_from_vec(nodes, path_selection))
     }
 
     <span class="kw">fn </span>from_inner(inner: NodeMapInner) -&gt; <span class="self">Self </span>{
@@ -1046,71 +1040,19 @@
             .add_node_addr(node_addr, source)
     }
 
-    <span class="doccomment">/// Add a the SocketAddr used to perform QUIC Address Discovery to the nodemap
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>add_qad_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, udp_addr: SocketAddr) {
-        <span class="self">self</span>.inner
-            .lock()
-            .expect(<span class="string">"poisoned"</span>)
-            .qad_addrs
-            .insert(udp_addr);
-    }
-
-    <span class="doccomment">/// Return a correctly canonicalized SocketAddr if this address is one
-    /// used to perform QUIC Address Discovery
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>qad_addr_for_send(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: <span class="kw-2">&amp;</span>SocketAddr) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
-        <span class="comment">// all addresses given to the endpoint are Ipv6 addresses, so we need to
-        // canonicalize before we check for the actual addr we are trying to send to
-        </span><span class="kw">let </span>canonicalized_addr = SocketAddr::new(addr.ip().to_canonical(), addr.port());
-        <span class="kw">if </span><span class="self">self
-            </span>.inner
-            .lock()
-            .expect(<span class="string">"poisoned"</span>)
-            .qad_addrs
-            .contains(<span class="kw-2">&amp;</span>canonicalized_addr)
-        {
-            <span class="prelude-val">Some</span>(canonicalized_addr)
-        } <span class="kw">else </span>{
-            <span class="prelude-val">None
-        </span>}
-    }
-
-    <span class="doccomment">/// Return a correctly formed SocketAddr if this address is one used to
-    /// perform QUIC Address Discovery
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>qad_addr_for_recv(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: <span class="kw-2">&amp;</span>SocketAddr) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
-        <span class="kw">if </span><span class="self">self
-            </span>.inner
-            .lock()
-            .expect(<span class="string">"poisoned"</span>)
-            .qad_addrs
-            .contains(addr)
-        {
-            <span class="kw">match </span>addr.ip() {
-                IpAddr::V4(ipv4_addr) =&gt; {
-                    <span class="comment">// if this is an ipv4 addr, we need to map it back to
-                    // an ipv6 addr, since all addresses we use to dial on
-                    // the underlying quinn endpoint are mapped ipv6 addrs
-                    </span><span class="prelude-val">Some</span>(SocketAddr::new(
-                        ipv4_addr.to_ipv6_mapped().into(),
-                        addr.port(),
-                    ))
-                }
-                IpAddr::V6(<span class="kw">_</span>) =&gt; <span class="prelude-val">Some</span>(<span class="kw-2">*</span>addr),
-            }
-        } <span class="kw">else </span>{
-            <span class="prelude-val">None
-        </span>}
-    }
-
     <span class="doccomment">/// Number of nodes currently listed.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>node_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).node_count()
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>receive_udp(<span class="kw-2">&amp;</span><span class="self">self</span>, udp_addr: SocketAddr) -&gt; <span class="prelude-ty">Option</span>&lt;(PublicKey, QuicMappedAddr)&gt; {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>receive_udp(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        udp_addr: SocketAddr,
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;(PublicKey, NodeIdMappedAddr)&gt; {
         <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).receive_udp(udp_addr)
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>receive_relay(<span class="kw-2">&amp;</span><span class="self">self</span>, relay_url: <span class="kw-2">&amp;</span>RelayUrl, src: NodeId) -&gt; QuicMappedAddr {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>receive_relay(<span class="kw-2">&amp;</span><span class="self">self</span>, relay_url: <span class="kw-2">&amp;</span>RelayUrl, src: NodeId) -&gt; NodeIdMappedAddr {
         <span class="self">self</span>.inner
             .lock()
             .expect(<span class="string">"poisoned"</span>)
@@ -1149,7 +1091,7 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>get_quic_mapped_addr_for_node_key(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_key: NodeId,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;QuicMappedAddr&gt; {
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;NodeIdMappedAddr&gt; {
         <span class="self">self</span>.inner
             .lock()
             .expect(<span class="string">"poisoned"</span>)
@@ -1193,7 +1135,7 @@
     <span class="attr">#[allow(clippy::type_complexity)]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>get_send_addrs(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        addr: QuicMappedAddr,
+        addr: NodeIdMappedAddr,
         have_ipv6: bool,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;(
         PublicKey,
@@ -1202,7 +1144,7 @@
         Vec&lt;PingAction&gt;,
     )&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>);
-        <span class="kw">let </span>ep = inner.get_mut(NodeStateKey::QuicMappedAddr(addr))<span class="question-mark">?</span>;
+        <span class="kw">let </span>ep = inner.get_mut(NodeStateKey::NodeIdMappedAddr(addr))<span class="question-mark">?</span>;
         <span class="kw">let </span>public_key = <span class="kw-2">*</span>ep.public_key();
         <span class="macro">trace!</span>(dest = %addr, node_id = %public_key.fmt_short(), <span class="string">"dst mapped to NodeId"</span>);
         <span class="kw">let </span>(udp_addr, relay_url, msgs) = ep.get_send_addrs(have_ipv6);
@@ -1273,9 +1215,23 @@
 }
 
 <span class="kw">impl </span>NodeMapInner {
-    <span class="doccomment">/// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
+    <span class="attr">#[cfg(not(any(test, feature = <span class="string">"test-utils"</span>)))]
+    </span><span class="doccomment">/// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
     </span><span class="kw">fn </span>load_from_vec(nodes: Vec&lt;NodeAddr&gt;) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>me = <span class="self">Self</span>::default();
+        <span class="kw">for </span>node_addr <span class="kw">in </span>nodes {
+            me.add_node_addr(node_addr, Source::Saved);
+        }
+        me
+    }
+
+    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+    </span><span class="doccomment">/// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
+    </span><span class="kw">fn </span>load_from_vec(nodes: Vec&lt;NodeAddr&gt;, path_selection: PathSelection) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span><span class="kw-2">mut </span>me = <span class="self">Self </span>{
+            path_selection,
+            ..Default::default()
+        };
         <span class="kw">for </span>node_addr <span class="kw">in </span>nodes {
             me.add_node_addr(node_addr, Source::Saved);
         }
@@ -1288,11 +1244,15 @@
         <span class="kw">let </span>source0 = source.clone();
         <span class="kw">let </span>node_id = node_addr.node_id;
         <span class="kw">let </span>relay_url = node_addr.relay_url.clone();
+        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+        </span><span class="kw">let </span>path_selection = <span class="self">self</span>.path_selection;
         <span class="kw">let </span>node_state = <span class="self">self</span>.get_or_insert_with(NodeStateKey::NodeId(node_id), || Options {
             node_id,
             relay_url,
             active: <span class="bool-val">false</span>,
             source,
+            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+            </span>path_selection,
         });
         node_state.update_from_node_addr(
             node_addr.relay_url.as_ref(),
@@ -1334,7 +1294,7 @@
         <span class="kw">match </span>id {
             NodeStateKey::Idx(id) =&gt; <span class="prelude-val">Some</span>(id),
             NodeStateKey::NodeId(node_key) =&gt; <span class="self">self</span>.by_node_key.get(<span class="kw-2">&amp;</span>node_key).copied(),
-            NodeStateKey::QuicMappedAddr(addr) =&gt; <span class="self">self</span>.by_quic_mapped_addr.get(<span class="kw-2">&amp;</span>addr).copied(),
+            NodeStateKey::NodeIdMappedAddr(addr) =&gt; <span class="self">self</span>.by_quic_mapped_addr.get(<span class="kw-2">&amp;</span>addr).copied(),
             NodeStateKey::IpPort(ipp) =&gt; <span class="self">self</span>.by_ip_port.get(<span class="kw-2">&amp;</span>ipp).copied(),
         }
     }
@@ -1365,7 +1325,7 @@
     }
 
     <span class="doccomment">/// Marks the node we believe to be at `ipp` as recently used.
-    </span><span class="kw">fn </span>receive_udp(<span class="kw-2">&amp;mut </span><span class="self">self</span>, udp_addr: SocketAddr) -&gt; <span class="prelude-ty">Option</span>&lt;(NodeId, QuicMappedAddr)&gt; {
+    </span><span class="kw">fn </span>receive_udp(<span class="kw-2">&amp;mut </span><span class="self">self</span>, udp_addr: SocketAddr) -&gt; <span class="prelude-ty">Option</span>&lt;(NodeId, NodeIdMappedAddr)&gt; {
         <span class="kw">let </span>ip_port: IpPort = udp_addr.into();
         <span class="kw">let </span><span class="prelude-val">Some</span>(node_state) = <span class="self">self</span>.get_mut(NodeStateKey::IpPort(ip_port)) <span class="kw">else </span>{
             <span class="macro">info!</span>(src=%udp_addr, <span class="string">"receive_udp: no node_state found for addr, ignore"</span>);
@@ -1376,7 +1336,9 @@
     }
 
     <span class="attr">#[instrument(skip_all, fields(src = %src.fmt_short()))]
-    </span><span class="kw">fn </span>receive_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, relay_url: <span class="kw-2">&amp;</span>RelayUrl, src: NodeId) -&gt; QuicMappedAddr {
+    </span><span class="kw">fn </span>receive_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, relay_url: <span class="kw-2">&amp;</span>RelayUrl, src: NodeId) -&gt; NodeIdMappedAddr {
+        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+        </span><span class="kw">let </span>path_selection = <span class="self">self</span>.path_selection;
         <span class="kw">let </span>node_state = <span class="self">self</span>.get_or_insert_with(NodeStateKey::NodeId(src), || {
             <span class="macro">trace!</span>(<span class="string">"packets from unknown node, insert into node map"</span>);
             Options {
@@ -1384,6 +1346,8 @@
                 relay_url: <span class="prelude-val">Some</span>(relay_url.clone()),
                 active: <span class="bool-val">true</span>,
                 source: Source::Relay,
+                <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+                </span>path_selection,
             }
         });
         node_state.receive_relay(relay_url, src, Instant::now());
@@ -1461,6 +1425,8 @@
     }
 
     <span class="kw">fn </span>handle_ping(<span class="kw-2">&amp;mut </span><span class="self">self</span>, sender: NodeId, src: SendAddr, tx_id: TransactionId) -&gt; PingHandled {
+        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+        </span><span class="kw">let </span>path_selection = <span class="self">self</span>.path_selection;
         <span class="kw">let </span>node_state = <span class="self">self</span>.get_or_insert_with(NodeStateKey::NodeId(sender), || {
             <span class="macro">debug!</span>(<span class="string">"received ping: node unknown, add to node map"</span>);
             <span class="kw">let </span>source = <span class="kw">if </span>src.is_relay() {
@@ -1473,6 +1439,8 @@
                 relay_url: src.relay_url(),
                 active: <span class="bool-val">true</span>,
                 source,
+                <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+                </span>path_selection,
             }
         });
 
@@ -1639,10 +1607,11 @@
 
         <span class="kw">let </span>node_map = NodeMap::default();
 
-        <span class="kw">let </span>node_a = SecretKey::generate().public();
-        <span class="kw">let </span>node_b = SecretKey::generate().public();
-        <span class="kw">let </span>node_c = SecretKey::generate().public();
-        <span class="kw">let </span>node_d = SecretKey::generate().public();
+        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand::thread_rng();
+        <span class="kw">let </span>node_a = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+        <span class="kw">let </span>node_b = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+        <span class="kw">let </span>node_c = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+        <span class="kw">let </span>node_d = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
 
         <span class="kw">let </span>relay_x: RelayUrl = <span class="string">"https://my-relay-1.com"</span>.parse().unwrap();
         <span class="kw">let </span>relay_y: RelayUrl = <span class="string">"https://my-relay-2.com"</span>.parse().unwrap();
@@ -1667,20 +1636,20 @@
             .into_iter()
             .filter_map(|info| {
                 <span class="kw">let </span>addr: NodeAddr = info.into();
-                <span class="kw">if </span>addr.direct_addresses.is_empty() &amp;&amp; addr.relay_url.is_none() {
+                <span class="kw">if </span>addr.is_empty() {
                     <span class="kw">return </span><span class="prelude-val">None</span>;
                 }
                 <span class="prelude-val">Some</span>(addr)
             })
             .collect();
-        <span class="kw">let </span>loaded_node_map = NodeMap::load_from_vec(addrs.clone());
+        <span class="kw">let </span>loaded_node_map = NodeMap::load_from_vec(addrs.clone(), PathSelection::default());
 
         <span class="kw">let </span><span class="kw-2">mut </span>loaded: Vec&lt;NodeAddr&gt; = loaded_node_map
             .list_remote_infos(Instant::now())
             .into_iter()
             .filter_map(|info| {
                 <span class="kw">let </span>addr: NodeAddr = info.into();
-                <span class="kw">if </span>addr.direct_addresses.is_empty() &amp;&amp; addr.relay_url.is_none() {
+                <span class="kw">if </span>addr.is_empty() {
                     <span class="kw">return </span><span class="prelude-val">None</span>;
                 }
                 <span class="prelude-val">Some</span>(addr)
@@ -1703,7 +1672,7 @@
         <span class="kw">let </span>_guard = iroh_test::logging::setup();
 
         <span class="kw">let </span>node_map = NodeMap::default();
-        <span class="kw">let </span>public_key = SecretKey::generate().public();
+        <span class="kw">let </span>public_key = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>id = node_map
             .inner
             .lock()
@@ -1715,6 +1684,7 @@
                 source: Source::NamedApp {
                     name: <span class="string">"test"</span>.into(),
                 },
+                path_selection: PathSelection::default(),
             })
             .id();
 
@@ -1776,7 +1746,7 @@
     </span><span class="kw">fn </span>test_prune_inactive() {
         <span class="kw">let </span>node_map = NodeMap::default();
         <span class="comment">// add one active node and more than MAX_INACTIVE_NODES inactive nodes
-        </span><span class="kw">let </span>active_node = SecretKey::generate().public();
+        </span><span class="kw">let </span>active_node = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), <span class="number">167</span>);
         node_map.add_test_addr(NodeAddr::new(active_node).with_direct_addresses([addr]));
         node_map
@@ -1787,7 +1757,7 @@
             .expect(<span class="string">"registered"</span>);
 
         <span class="kw">for _ in </span><span class="number">0</span>..MAX_INACTIVE_NODES + <span class="number">1 </span>{
-            <span class="kw">let </span>node = SecretKey::generate().public();
+            <span class="kw">let </span>node = SecretKey::generate(rand::thread_rng()).public();
             node_map.add_test_addr(NodeAddr::new(node));
         }
 

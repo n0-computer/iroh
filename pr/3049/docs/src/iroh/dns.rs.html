@@ -417,8 +417,7 @@
 <a href="#416" id="416">416</a>
 <a href="#417" id="417">417</a>
 <a href="#418" id="418">418</a>
-<a href="#419" id="419">419</a>
-<a href="#420" id="420">420</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module exports a DNS resolver, which is also the default resolver used in the
+<a href="#419" id="419">419</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module exports a DNS resolver, which is also the default resolver used in the
 //! [`crate::Endpoint`] if no custom resolver is configured.
 //!
 //! It also exports [`ResolverExt`]: A extension trait over [`DnsResolver`] to perform DNS queries
@@ -428,6 +427,7 @@
 </span><span class="kw">use </span>std::{
     fmt::Write,
     net::{IpAddr, Ipv6Addr},
+    sync::OnceLock,
     time::Duration,
 };
 
@@ -435,27 +435,25 @@
 <span class="kw">use </span>futures_lite::{Future, StreamExt};
 <span class="kw">use </span>hickory_resolver::{IntoName, Resolver, TokioResolver};
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId};
-<span class="kw">use </span>once_cell::sync::Lazy;
 
 <span class="kw">pub mod </span>node_info;
 
 <span class="doccomment">/// The DNS resolver type used throughout `iroh`.
 </span><span class="kw">pub type </span>DnsResolver = TokioResolver;
 
-<span class="kw">static </span>DNS_RESOLVER: Lazy&lt;TokioResolver&gt; =
-    Lazy::new(|| create_default_resolver().expect(<span class="string">"unable to create DNS resolver"</span>));
+<span class="kw">static </span>DNS_RESOLVER: OnceLock&lt;TokioResolver&gt; = OnceLock::new();
 
 <span class="doccomment">/// Get a reference to the default DNS resolver.
 ///
 /// The default resolver can be cheaply cloned and is shared throughout the running process.
 /// It is configured to use the system's DNS configuration.
 </span><span class="kw">pub fn </span>default_resolver() -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>DnsResolver {
-    <span class="kw-2">&amp;</span>DNS_RESOLVER
+    resolver()
 }
 
 <span class="doccomment">/// Get the DNS resolver used within iroh.
 </span><span class="kw">pub fn </span>resolver() -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>TokioResolver {
-    Lazy::force(<span class="kw-2">&amp;</span>DNS_RESOLVER)
+    DNS_RESOLVER.get_or_init(|| create_default_resolver().expect(<span class="string">"unable to create DNS resolver"</span>))
 }
 
 <span class="doccomment">/// Deprecated IPv6 site-local anycast addresses still configured by windows.

@@ -820,7 +820,26 @@
 <a href="#819" id="819">819</a>
 <a href="#820" id="820">820</a>
 <a href="#821" id="821">821</a>
-<a href="#822" id="822">822</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
+<a href="#822" id="822">822</a>
+<a href="#823" id="823">823</a>
+<a href="#824" id="824">824</a>
+<a href="#825" id="825">825</a>
+<a href="#826" id="826">826</a>
+<a href="#827" id="827">827</a>
+<a href="#828" id="828">828</a>
+<a href="#829" id="829">829</a>
+<a href="#830" id="830">830</a>
+<a href="#831" id="831">831</a>
+<a href="#832" id="832">832</a>
+<a href="#833" id="833">833</a>
+<a href="#834" id="834">834</a>
+<a href="#835" id="835">835</a>
+<a href="#836" id="836">836</a>
+<a href="#837" id="837">837</a>
+<a href="#838" id="838">838</a>
+<a href="#839" id="839">839</a>
+<a href="#840" id="840">840</a>
+<a href="#841" id="841">841</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
 //!
 //! Protocol flow:
 //!
@@ -834,6 +853,7 @@
 //!  * clients sends `FrameType::SendPacket`
 //!  * server then sends `FrameType::RecvPacket` to recipient
 
+</span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
 </span><span class="kw">use </span>std::time::Duration;
 
 <span class="kw">use </span>anyhow::{bail, ensure};
@@ -846,6 +866,8 @@
 <span class="kw">use </span>postcard::experimental::max_size::MaxSize;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio_util::codec::{Decoder, Encoder};
+
+<span class="kw">use crate</span>::{client::conn::ConnSendError, KeyCache};
 
 <span class="doccomment">/// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
@@ -862,14 +884,11 @@
 
 <span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>KEEP_ALIVE: Duration = Duration::from_secs(<span class="number">60</span>);
-<span class="comment">// TODO: what should this be?
-</span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>SERVER_CHANNEL_SIZE: usize = <span class="number">1024 </span>* <span class="number">100</span>;
 <span class="doccomment">/// The number of packets buffered for sending per client
+</span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>PER_CLIENT_SEND_QUEUE_DEPTH: usize = <span class="number">512</span>; <span class="comment">//32;
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>PER_CLIENT_READ_QUEUE_DEPTH: usize = <span class="number">512</span>;
 
-<span class="doccomment">/// ProtocolVersion is bumped whenever there's a wire-incompatible change.
+</span><span class="doccomment">/// ProtocolVersion is bumped whenever there's a wire-incompatible change.
 ///  - version 1 (zero on wire): consistent box headers, in use by employee dev nodes a bit
 ///  - version 2: received packets have src addrs in FrameType::RecvPacket at beginning.
 ///
@@ -918,10 +937,9 @@
     <span class="doccomment">/// 8 byte payload, the contents of ping being replied to
     </span>Pong = <span class="number">13</span>,
     <span class="doccomment">/// Sent from server to client to tell the client if their connection is
-    /// unhealthy somehow. Currently the only unhealthy state is whether the
-    /// connection is detected as a duplicate.
-    /// The entire frame body is the text of the error message. An empty message
-    /// clears the error state.
+    /// unhealthy somehow.
+    ///
+    /// Currently this is used to indicate that the connection was closed because of authentication issues.
     </span>Health = <span class="number">14</span>,
 
     <span class="doccomment">/// Sent from server to client for the server to declare that it's restarting.
@@ -950,6 +968,7 @@
 /// Ignores the timeout if `None`
 ///
 /// Does not flush.
+</span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>write_frame&lt;S: Sink&lt;Frame, Error = std::io::Error&gt; + Unpin&gt;(
     <span class="kw-2">mut </span>writer: S,
     frame: Frame,
@@ -968,7 +987,7 @@
 /// and the client's [`ClientInfo`], sealed using the server's [`PublicKey`].
 ///
 /// Flushes after writing.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>send_client_key&lt;S: Sink&lt;Frame, Error = std::io::Error&gt; + Unpin&gt;(
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>send_client_key&lt;S: Sink&lt;Frame, Error = ConnSendError&gt; + Unpin&gt;(
     <span class="kw-2">mut </span>writer: S,
     client_secret_key: <span class="kw-2">&amp;</span>SecretKey,
     client_info: <span class="kw-2">&amp;</span>ClientInfo,
@@ -999,7 +1018,7 @@
 
     // TODO: variable recv size: 256 * 1024
     </span><span class="kw">let </span>buf = tokio::time::timeout(
-        Duration::from_secs(<span class="number">10</span>),
+        std::time::Duration::from_secs(<span class="number">10</span>),
         recv_frame(FrameType::ClientInfo, stream),
     )
     .<span class="kw">await
@@ -1026,10 +1045,25 @@
 ///
 /// This is a framed protocol, using [`tokio_util::codec`] to turn the streams of bytes into
 /// [`Frame`]s.
-</span><span class="attr">#[derive(Debug, Default, Clone)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>DerpCodec;
+</span><span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>RelayCodec {
+    cache: KeyCache,
+}
 
-<span class="doccomment">/// The frames in the [`DerpCodec`].
+<span class="kw">impl </span>RelayCodec {
+    <span class="attr">#[cfg(test)]
+    </span><span class="kw">pub fn </span>test() -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            cache: KeyCache::test(),
+        }
+    }
+
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(cache: KeyCache) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{ cache }
+    }
+}
+
+<span class="doccomment">/// The frames in the [`RelayCodec`].
 </span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>Frame {
     ClientInfo {
@@ -1115,13 +1149,13 @@
     <span class="doccomment">/// Tries to decode a frame received over websockets.
     ///
     /// Specifically, bytes received from a binary websocket message frame.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>decode_from_ws_msg(vec: Vec&lt;u8&gt;) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>decode_from_ws_msg(vec: Vec&lt;u8&gt;, cache: <span class="kw-2">&amp;</span>KeyCache) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
         <span class="kw">if </span>vec.is_empty() {
             <span class="macro">bail!</span>(<span class="string">"error parsing relay::codec::Frame: too few bytes (0)"</span>);
         }
         <span class="kw">let </span>bytes = Bytes::from(vec);
         <span class="kw">let </span>typ = FrameType::from(bytes[<span class="number">0</span>]);
-        <span class="kw">let </span>frame = <span class="self">Self</span>::from_bytes(typ, bytes.slice(<span class="number">1</span>..))<span class="question-mark">?</span>;
+        <span class="kw">let </span>frame = <span class="self">Self</span>::from_bytes(typ, bytes.slice(<span class="number">1</span>..), cache)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(frame)
     }
 
@@ -1186,7 +1220,7 @@
         }
     }
 
-    <span class="kw">fn </span>from_bytes(frame_type: FrameType, content: Bytes) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
+    <span class="kw">fn </span>from_bytes(frame_type: FrameType, content: Bytes, cache: <span class="kw-2">&amp;</span>KeyCache) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>res = <span class="kw">match </span>frame_type {
             FrameType::ClientInfo =&gt; {
                 <span class="macro">ensure!</span>(
@@ -1201,7 +1235,7 @@
 
                 <span class="kw">let </span>start = MAGIC.len();
                 <span class="kw">let </span>client_public_key =
-                    PublicKey::try_from(<span class="kw-2">&amp;</span>content[start..start + PublicKey::LENGTH])<span class="question-mark">?</span>;
+                    cache.key_from_slice(<span class="kw-2">&amp;</span>content[start..start + PublicKey::LENGTH])<span class="question-mark">?</span>;
                 <span class="kw">let </span>start = start + PublicKey::LENGTH;
                 <span class="kw">let </span>signature =
                     Signature::from_slice(<span class="kw-2">&amp;</span>content[start..start + Signature::BYTE_SIZE])<span class="question-mark">?</span>;
@@ -1224,7 +1258,7 @@
                     packet_len &lt;= MAX_PACKET_SIZE,
                     <span class="string">"data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
                 </span>);
-                <span class="kw">let </span>dst_key = PublicKey::try_from(<span class="kw-2">&amp;</span>content[..PublicKey::LENGTH])<span class="question-mark">?</span>;
+                <span class="kw">let </span>dst_key = cache.key_from_slice(<span class="kw-2">&amp;</span>content[..PublicKey::LENGTH])<span class="question-mark">?</span>;
                 <span class="kw">let </span>packet = content.slice(PublicKey::LENGTH..);
                 <span class="self">Self</span>::SendPacket { dst_key, packet }
             }
@@ -1239,7 +1273,7 @@
                     packet_len &lt;= MAX_PACKET_SIZE,
                     <span class="string">"data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
                 </span>);
-                <span class="kw">let </span>src_key = PublicKey::try_from(<span class="kw-2">&amp;</span>content[..PublicKey::LENGTH])<span class="question-mark">?</span>;
+                <span class="kw">let </span>src_key = cache.key_from_slice(<span class="kw-2">&amp;</span>content[..PublicKey::LENGTH])<span class="question-mark">?</span>;
                 <span class="kw">let </span>content = content.slice(PublicKey::LENGTH..);
                 <span class="self">Self</span>::RecvPacket { src_key, content }
             }
@@ -1261,7 +1295,7 @@
                     content.len() == PublicKey::LENGTH,
                     <span class="string">"invalid peer gone frame length"
                 </span>);
-                <span class="kw">let </span>peer = PublicKey::try_from(<span class="kw-2">&amp;</span>content[..<span class="number">32</span>])<span class="question-mark">?</span>;
+                <span class="kw">let </span>peer = cache.key_from_slice(<span class="kw-2">&amp;</span>content[..<span class="number">32</span>])<span class="question-mark">?</span>;
                 <span class="self">Self</span>::NodeGone { node_id: peer }
             }
             FrameType::Ping =&gt; {
@@ -1300,7 +1334,7 @@
 
 <span class="kw">const </span>HEADER_LEN: usize = <span class="number">5</span>;
 
-<span class="kw">impl </span>Decoder <span class="kw">for </span>DerpCodec {
+<span class="kw">impl </span>Decoder <span class="kw">for </span>RelayCodec {
     <span class="kw">type </span>Item = Frame;
     <span class="kw">type </span>Error = anyhow::Error;
 
@@ -1338,13 +1372,13 @@
         </span>src.advance(HEADER_LEN);
 
         <span class="kw">let </span>content = src.split_to(frame_len).freeze();
-        <span class="kw">let </span>frame = Frame::from_bytes(frame_type, content)<span class="question-mark">?</span>;
+        <span class="kw">let </span>frame = Frame::from_bytes(frame_type, content, <span class="kw-2">&amp;</span><span class="self">self</span>.cache)<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(frame))
     }
 }
 
-<span class="kw">impl </span>Encoder&lt;Frame&gt; <span class="kw">for </span>DerpCodec {
+<span class="kw">impl </span>Encoder&lt;Frame&gt; <span class="kw">for </span>RelayCodec {
     <span class="kw">type </span>Error = std::io::Error;
 
     <span class="kw">fn </span>encode(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: Frame, dst: <span class="kw-2">&amp;mut </span>BytesMut) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
@@ -1396,10 +1430,11 @@
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="attr">#[tokio::test]
+    #[cfg(feature = <span class="string">"server"</span>)]
     </span><span class="kw">async fn </span>test_basic_read_write() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>(reader, writer) = tokio::io::duplex(<span class="number">1024</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>reader = FramedRead::new(reader, DerpCodec);
-        <span class="kw">let </span><span class="kw-2">mut </span>writer = FramedWrite::new(writer, DerpCodec);
+        <span class="kw">let </span><span class="kw-2">mut </span>reader = FramedRead::new(reader, RelayCodec::test());
+        <span class="kw">let </span><span class="kw-2">mut </span>writer = FramedWrite::new(writer, RelayCodec::test());
 
         <span class="kw">let </span>expect_buf = <span class="string">b"hello world!"</span>;
         <span class="kw">let </span>expected_frame = Frame::Health {
@@ -1418,10 +1453,11 @@
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_send_recv_client_key() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>(reader, writer) = tokio::io::duplex(<span class="number">1024</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>reader = FramedRead::new(reader, DerpCodec);
-        <span class="kw">let </span><span class="kw-2">mut </span>writer = FramedWrite::new(writer, DerpCodec);
+        <span class="kw">let </span><span class="kw-2">mut </span>reader = FramedRead::new(reader, RelayCodec::test());
+        <span class="kw">let </span><span class="kw-2">mut </span>writer =
+            FramedWrite::new(writer, RelayCodec::test()).sink_map_err(ConnSendError::from);
 
-        <span class="kw">let </span>client_key = SecretKey::generate();
+        <span class="kw">let </span>client_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>client_info = ClientInfo {
             version: PROTOCOL_VERSION,
         };
@@ -1619,15 +1655,16 @@
         </span><span class="attr">#[test]
         </span><span class="kw">fn </span>frame_roundtrip(frame <span class="kw">in </span>frame()) {
             <span class="kw">let </span><span class="kw-2">mut </span>buf = BytesMut::new();
-            DerpCodec.encode(frame.clone(), <span class="kw-2">&amp;mut </span>buf).unwrap();
-            <span class="kw">let </span>decoded = DerpCodec.decode(<span class="kw-2">&amp;mut </span>buf).unwrap().unwrap();
+            <span class="kw">let </span><span class="kw-2">mut </span>codec = RelayCodec::test();
+            codec.encode(frame.clone(), <span class="kw-2">&amp;mut </span>buf).unwrap();
+            <span class="kw">let </span>decoded = codec.decode(<span class="kw-2">&amp;mut </span>buf).unwrap().unwrap();
             <span class="macro">prop_assert_eq!</span>(frame, decoded);
         }
 
         <span class="attr">#[test]
         </span><span class="kw">fn </span>frame_ws_roundtrip(frame <span class="kw">in </span>frame()) {
             <span class="kw">let </span>encoded = frame.clone().encode_for_ws_msg();
-            <span class="kw">let </span>decoded = Frame::decode_from_ws_msg(encoded).unwrap();
+            <span class="kw">let </span>decoded = Frame::decode_from_ws_msg(encoded, <span class="kw-2">&amp;</span>KeyCache::test()).unwrap();
             <span class="macro">prop_assert_eq!</span>(frame, decoded);
         }
 
@@ -1635,9 +1672,10 @@
         </span><span class="attr">#[test]
         </span><span class="kw">fn </span>broken_frame_handling(frame <span class="kw">in </span>frame()) {
             <span class="kw">let </span><span class="kw-2">mut </span>buf = BytesMut::new();
-            DerpCodec.encode(frame.clone(), <span class="kw-2">&amp;mut </span>buf).unwrap();
+            <span class="kw">let </span><span class="kw-2">mut </span>codec = RelayCodec::test();
+            codec.encode(frame.clone(), <span class="kw-2">&amp;mut </span>buf).unwrap();
             inject_error(<span class="kw-2">&amp;mut </span>buf);
-            <span class="kw">let </span>decoded = DerpCodec.decode(<span class="kw-2">&amp;mut </span>buf);
+            <span class="kw">let </span>decoded = codec.decode(<span class="kw-2">&amp;mut </span>buf);
             <span class="macro">prop_assert!</span>(decoded.is_err());
         }
     }
