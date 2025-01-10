@@ -1071,65 +1071,80 @@ async fn get_relay_addr(
 
     match proto {
         ProbeProto::StunIpv4 | ProbeProto::IcmpV4 | ProbeProto::QuicIpv4 => {
-            match relay_node.url.host() {
-                Some(url::Host::Domain(hostname)) => {
-                    debug!(?proto, %hostname, "Performing DNS A lookup for relay addr");
-                    match dns_resolver.lookup_ipv4_staggered(hostname).await {
-                        Ok(mut addrs) => addrs
-                            .next()
-                            .map(|ip| ip.to_canonical())
-                            .map(|addr| SocketAddr::new(addr, port))
-                            .map(|addr| maybe_to_mapped_addr(ip_mapped_addrs, proto, addr))
-                            .ok_or(anyhow!("No suitable relay addr found")),
-                        Err(err) => Err(err.context("No suitable relay addr found")),
-                    }
-                }
-                Some(url::Host::Ipv4(addr)) => Ok(maybe_to_mapped_addr(
-                    ip_mapped_addrs,
-                    proto,
-                    SocketAddr::new(addr.into(), port),
-                )),
-                Some(url::Host::Ipv6(_addr)) => Err(anyhow!("No suitable relay addr found")),
-                None => Err(anyhow!("No valid hostname in RelayUrl")),
-            }
+            relay_lookup_ipv4_staggered(dns_resolver, ip_mapped_addrs, relay_node, port).await
         }
 
         ProbeProto::StunIpv6 | ProbeProto::IcmpV6 | ProbeProto::QuicIpv6 => {
-            match relay_node.url.host() {
-                Some(url::Host::Domain(hostname)) => {
-                    debug!(?proto, %hostname, "Performing DNS AAAA lookup for relay addr");
-                    match dns_resolver.lookup_ipv6_staggered(hostname).await {
-                        Ok(mut addrs) => addrs
-                            .next()
-                            .map(|ip| ip.to_canonical())
-                            .map(|addr| SocketAddr::new(addr, port))
-                            .map(|addr| maybe_to_mapped_addr(ip_mapped_addrs, proto, addr))
-                            .ok_or(anyhow!("No suitable relay addr found")),
-                        Err(err) => Err(err.context("No suitable relay addr found")),
-                    }
-                }
-                Some(url::Host::Ipv4(_addr)) => Err(anyhow!("No suitable relay addr found")),
-                Some(url::Host::Ipv6(addr)) => Ok(maybe_to_mapped_addr(
-                    ip_mapped_addrs,
-                    proto,
-                    SocketAddr::new(addr.into(), port),
-                )),
-                None => Err(anyhow!("No valid hostname in RelayUrl")),
-            }
+            relay_lookup_ipv6_staggered(dns_resolver, ip_mapped_addrs, relay_node, port).await
         }
 
         ProbeProto::Https => Err(anyhow!("Not implemented")),
     }
 }
 
-fn maybe_to_mapped_addr(
+/// Do a staggared ipv4 DNS lookup based on [`RelayNode`]
+///
+/// `port` is combined with the resolved [`Ipv4Addr`] to return a [`SocketAddr`]
+async fn relay_lookup_ipv4_staggered(
+    dns_resolver: &DnsResolver,
     ip_mapped_addrs: Option<IpMappedAddrs>,
-    proto: ProbeProto,
-    addr: SocketAddr,
-) -> SocketAddr {
-    if !matches!(proto, ProbeProto::QuicIpv4 | ProbeProto::QuicIpv6) {
-        return addr;
+    relay: &RelayNode,
+    port: u16,
+) -> Result<SocketAddr> {
+    match relay.url.host() {
+        Some(url::Host::Domain(hostname)) => {
+            debug!(%hostname, "Performing DNS A lookup for relay addr");
+            match dns_resolver.lookup_ipv4_staggered(hostname).await {
+                Ok(mut addrs) => addrs
+                    .next()
+                    .map(|ip| ip.to_canonical())
+                    .map(|addr| SocketAddr::new(addr, port))
+                    .map(|addr| maybe_to_mapped_addr(ip_mapped_addrs, addr))
+                    .ok_or(anyhow!("No suitable relay addr found")),
+                Err(err) => Err(err.context("No suitable relay addr found")),
+            }
+        }
+        Some(url::Host::Ipv4(addr)) => Ok(maybe_to_mapped_addr(
+            ip_mapped_addrs,
+            SocketAddr::new(addr.into(), port),
+        )),
+        Some(url::Host::Ipv6(_addr)) => Err(anyhow!("No suitable relay addr found")),
+        None => Err(anyhow!("No valid hostname in RelayUrl")),
     }
+}
+
+/// Do a staggared ipv6 DNS lookup based on [`RelayNode`]
+///
+/// `port` is combined with the resolved [`Ipv6Addr`] to return a [`SocketAddr`]
+async fn relay_lookup_ipv6_staggered(
+    dns_resolver: &DnsResolver,
+    ip_mapped_addrs: Option<IpMappedAddrs>,
+    relay: &RelayNode,
+    port: u16,
+) -> Result<SocketAddr> {
+    match relay.url.host() {
+        Some(url::Host::Domain(hostname)) => {
+            debug!(%hostname, "Performing DNS AAAA lookup for relay addr");
+            match dns_resolver.lookup_ipv6_staggered(hostname).await {
+                Ok(mut addrs) => addrs
+                    .next()
+                    .map(|ip| ip.to_canonical())
+                    .map(|addr| SocketAddr::new(addr, port))
+                    .map(|addr| maybe_to_mapped_addr(ip_mapped_addrs, addr))
+                    .ok_or(anyhow!("No suitable relay addr found")),
+                Err(err) => Err(err.context("No suitable relay addr found")),
+            }
+        }
+        Some(url::Host::Ipv4(_addr)) => Err(anyhow!("No suitable relay addr found")),
+        Some(url::Host::Ipv6(addr)) => Ok(maybe_to_mapped_addr(
+            ip_mapped_addrs,
+            SocketAddr::new(addr.into(), port),
+        )),
+        None => Err(anyhow!("No valid hostname in RelayUrl")),
+    }
+}
+
+fn maybe_to_mapped_addr(ip_mapped_addrs: Option<IpMappedAddrs>, addr: SocketAddr) -> SocketAddr {
     if let Some(ip_mapped_addrs) = ip_mapped_addrs.as_ref() {
         return ip_mapped_addrs.add(addr).addr();
     }
