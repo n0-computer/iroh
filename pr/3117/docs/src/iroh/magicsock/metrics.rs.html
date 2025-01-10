@@ -158,7 +158,9 @@
 <a href="#157" id="157">157</a>
 <a href="#158" id="158">158</a>
 <a href="#159" id="159">159</a>
-<a href="#160" id="160">160</a></pre></div><pre class="rust"><code><span class="kw">use </span>iroh_metrics::{
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a></pre></div><pre class="rust"><code><span class="kw">use </span>iroh_metrics::{
     core::{Counter, Metric},
     struct_iterable::Iterable,
 };
@@ -180,6 +182,7 @@
     <span class="comment">// Data packets (non-disco)
     </span><span class="kw">pub </span>send_data: Counter,
     <span class="kw">pub </span>send_data_network_down: Counter,
+    <span class="kw">pub </span>send_pending: Counter,
     <span class="kw">pub </span>recv_data_relay: Counter,
     <span class="kw">pub </span>recv_data_ipv4: Counter,
     <span class="kw">pub </span>recv_data_ipv6: Counter,
@@ -259,6 +262,7 @@
             <span class="comment">// Data packets (non-disco)
             </span>send_data: Counter::new(<span class="string">"send_data"</span>),
             send_data_network_down: Counter::new(<span class="string">"send_data_network_down"</span>),
+            send_pending: Counter::new(<span class="string">"send_data"</span>),
             recv_data_relay: Counter::new(<span class="string">"recv_data_relay"</span>),
             recv_data_ipv4: Counter::new(<span class="string">"recv_data_ipv4"</span>),
             recv_data_ipv6: Counter::new(<span class="string">"recv_data_ipv6"</span>),

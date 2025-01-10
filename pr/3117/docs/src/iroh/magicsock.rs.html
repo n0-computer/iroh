@@ -4208,7 +4208,8 @@
 <a href="#4207" id="4207">4207</a>
 <a href="#4208" id="4208">4208</a>
 <a href="#4209" id="4209">4209</a>
-<a href="#4210" id="4210">4210</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4210" id="4210">4210</a>
+<a href="#4211" id="4211">4211</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4761,7 +4762,8 @@
 
                 <span class="kw">if </span>udp_pending &amp;&amp; relay_pending &amp;&amp; has_path {
                     <span class="comment">// Handle backpressure.
-                    </span><span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::WouldBlock, <span class="string">"pending"</span>))
+                    </span><span class="macro">inc!</span>(MagicsockMetrics, send_pending);
+                    <span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::WouldBlock, <span class="string">"pending"</span>))
                 } <span class="kw">else </span>{
                     <span class="kw">if </span>relay_sent || udp_sent {
                         <span class="macro">trace!</span>(
