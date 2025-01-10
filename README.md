@@ -77,7 +77,7 @@ let response = recv.read_to_end(1000).await?;
 assert_eq!(&response, b"Hello, world!");
 
 // Close the endpoint and all its connections
-endpoint.close().await?;
+endpoint.close().await;
 ```
 
 And on the accepting side:

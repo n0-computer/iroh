@@ -1654,12 +1654,18 @@ impl Handle {
     /// Polling the socket ([`AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`]
     /// indefinitely after this call.
     #[instrument(skip_all, fields(me = %self.msock.me))]
-    pub(crate) async fn close(&self) -> Result<()> {
+    pub(crate) async fn close(&self) {
         if self.msock.is_closed() {
-            return Ok(());
+            return;
         }
         self.msock.closing.store(true, Ordering::Relaxed);
-        self.msock.actor_sender.send(ActorMessage::Shutdown).await?;
+        // If this fails, then there's no receiver listening for shutdown messages,
+        // so nothing to shut down anyways.
+        self.msock
+            .actor_sender
+            .send(ActorMessage::Shutdown)
+            .await
+            .ok();
         self.msock.closed.store(true, Ordering::SeqCst);
 
         let mut tasks = self.actor_tasks.lock().await;
@@ -1681,8 +1687,6 @@ impl Handle {
             debug!("aborting remaining {}/3 tasks", tasks.len());
             tasks.shutdown().await;
         }
-
-        Ok(())
     }
 }
 
@@ -3408,8 +3412,8 @@ mod tests {
             println!("closing endpoints");
             let msock1 = m1.endpoint.magic_sock();
             let msock2 = m2.endpoint.magic_sock();
-            m1.endpoint.close().await?;
-            m2.endpoint.close().await?;
+            m1.endpoint.close().await;
+            m2.endpoint.close().await;
 
             assert!(msock1.msock.is_closed());
             assert!(msock2.msock.is_closed());

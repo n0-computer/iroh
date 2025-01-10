@@ -83,17 +83,16 @@ pub enum EndpointSelector {
 }
 
 impl EndpointSelector {
-    pub async fn close(self) -> Result<()> {
+    pub async fn close(self) {
         match self {
             EndpointSelector::Iroh(endpoint) => {
-                endpoint.close().await?;
+                endpoint.close().await;
             }
             #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
             EndpointSelector::Quinn(endpoint) => {
                 endpoint.close(0u32.into(), b"");
             }
         }
-        Ok(())
     }
 }
 
@@ -255,7 +254,7 @@ pub async fn client_handler(
     // to `Arc`ing them
     connection.close(0u32, b"Benchmark done");
 
-    endpoint.close().await?;
+    endpoint.close().await;
 
     if opt.stats {
         println!("\nClient connection stats:\n{:#?}", connection.stats());

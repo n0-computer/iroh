@@ -218,13 +218,7 @@ async fn fetch(ticket: &str, relay_url: Option<String>, relay_only: bool) -> any
 
     // We received the last message: close all connections and allow for the close
     // message to be sent.
-    tokio::time::timeout(Duration::from_secs(3), async move {
-        let res = endpoint.close().await;
-        if res.is_err() {
-            println!("failed to close connection: {res:#?}");
-        }
-    })
-    .await?;
+    tokio::time::timeout(Duration::from_secs(3), endpoint.close()).await?;
 
     let duration = start.elapsed();
     println!(

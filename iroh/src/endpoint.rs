@@ -972,12 +972,9 @@ impl Endpoint {
     /// Be aware however that the underlying UDP sockets are only closed
     /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
     /// are dropped.
-    ///
-    /// Returns an error if closing the magic socket failed.
-    /// TODO: Document error cases.
-    pub async fn close(&self) -> Result<()> {
+    pub async fn close(&self) {
         if self.is_closed() {
-            return Ok(());
+            return;
         }
 
         tracing::debug!("Closing connections");
@@ -985,8 +982,7 @@ impl Endpoint {
         self.endpoint.wait_idle().await;
 
         tracing::debug!("Connections closed");
-        self.msock.close().await?;
-        Ok(())
+        self.msock.close().await;
     }
 
     /// Check if this endpoint is still alive, or already closed.
@@ -1594,7 +1590,7 @@ mod tests {
 
         info!("closing endpoint");
         // close the endpoint and restart it
-        endpoint.close().await.unwrap();
+        endpoint.close().await;
 
         info!("restarting endpoint");
         // now restart it and check the addressing info of the peer
@@ -1693,7 +1689,7 @@ mod tests {
                 send.stopped().await.unwrap();
                 recv.read_to_end(0).await.unwrap();
                 info!("client finished");
-                ep.close().await.unwrap();
+                ep.close().await;
                 info!("client closed");
             }
             .instrument(error_span!("client", %i))
