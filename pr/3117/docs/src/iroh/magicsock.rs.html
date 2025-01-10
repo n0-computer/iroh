@@ -4746,21 +4746,21 @@
                     }
                 }
 
-                <span class="kw">let </span>udp_pending = udp_addr.is_some()
-                    &amp;&amp; udp_error
-                        .as_ref()
-                        .map(|err| err.kind() == io::ErrorKind::WouldBlock)
-                        .unwrap_or_default();
+                <span class="kw">let </span>udp_pending = udp_error
+                    .as_ref()
+                    .map(|err| err.kind() == io::ErrorKind::WouldBlock)
+                    .unwrap_or_default();
 
-                <span class="kw">let </span>relay_pending = relay_url.is_some()
-                    &amp;&amp; relay_error
-                        .as_ref()
-                        .map(|err| err.kind() == io::ErrorKind::WouldBlock)
-                        .unwrap_or_default();
+                <span class="kw">let </span>relay_pending = relay_error
+                    .as_ref()
+                    .map(|err| err.kind() == io::ErrorKind::WouldBlock)
+                    .unwrap_or_default();
 
-                <span class="kw">let </span>has_path = udp_addr.is_some() || relay_url.is_some();
+                <span class="kw">let </span>udp_path = udp_addr.is_some();
+                <span class="kw">let </span>relay_path = relay_url.is_some();
+                <span class="kw">let </span>has_path = udp_path || relay_path;
 
-                <span class="kw">if </span>udp_pending &amp;&amp; relay_pending &amp;&amp; has_path {
+                <span class="kw">if </span>(udp_pending || !udp_path) &amp;&amp; (relay_pending || !relay_path) &amp;&amp; has_path {
                     <span class="comment">// Handle backpressure.
                     </span><span class="macro">inc!</span>(MagicsockMetrics, send_pending);
                     <span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::WouldBlock, <span class="string">"pending"</span>))
