@@ -551,6 +551,7 @@ impl MagicSock {
 
                 if udp_pending && relay_pending && has_path {
                     // Handle backpressure.
+                    inc!(MagicsockMetrics, send_pending);
                     Err(io::Error::new(io::ErrorKind::WouldBlock, "pending"))
                 } else {
                     if relay_sent || udp_sent {
