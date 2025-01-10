@@ -1,9 +1,9 @@
 [package]
 name = "iroh-net"
-version = "0.28.1"
+version = "0.28.2"
 edition = "2021"
 readme = "README.md"
-description = "networking support for iroh"
+description = "networking support for iroh (deprecated, use the iroh crate)"
 license = "MIT OR Apache-2.0"
 authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"

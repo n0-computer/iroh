@@ -1,5 +1,12 @@
 # iroh-net
 
+<div class="warning">
+
+The `iroh-net` crate has been renamed to `iroh`.  Please use the
+`iroh` crate instead.
+
+</div>
+
 This crate contains the networking support for iroh. Iroh networking is built on direct peer-to-peer [QUIC](https://en.wikipedia.org/wiki/QUIC) connections that use relays and holepunching. The main structure for connection is the `Endpoint` entrypoint.
 
 Peer to peer connectivity is established with the help of a _relay server_. The relay server provides Session Traversal Utilities for NAT [(STUN)](https://en.wikipedia.org/wiki/STUN) for the peers and connection coordination using the [DERP protocol](https://pkg.go.dev/tailscale.com/derp) (Designated Relay for Encrypted Packets protocol). If no direct connection can be established, the connection is relayed via the server.
