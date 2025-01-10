@@ -447,7 +447,6 @@ mod tests {
 
     use iroh_base::SecretKey;
     use rand::Rng;
-    use testresult::TestResult;
     use tokio_util::task::AbortOnDropHandle;
 
     use super::*;
