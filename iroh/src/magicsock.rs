@@ -33,9 +33,11 @@ use atomic_waker::AtomicWaker;
 use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
 use data_encoding::HEXLOWER;
-use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
+use iroh_base::{
+    IpMappedAddr, IpMappedAddrs, NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey, MAPPED_ADDR_PORT,
+};
 use iroh_metrics::{inc, inc_by};
-use iroh_relay::{protos::stun, RelayMap, RelayNode};
+use iroh_relay::{protos::stun, RelayMap};
 use n0_future::{
     boxed::BoxStream,
     task,
@@ -70,7 +72,7 @@ use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},
-    dns::{DnsResolver, ResolverExt},
+    dns::DnsResolver,
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     watchable::{Watchable, Watcher},
 };
@@ -878,7 +880,7 @@ impl MagicSock {
                                 "UDP recv QUIC address discovery packets",
                             );
                             quic_packets_total += quic_datagram_count;
-                            meta.addr = ip_mapped_addr.0;
+                            meta.addr = ip_mapped_addr.addr();
                         } else {
                             warn!(
                                 src = ?meta.addr,
@@ -1605,8 +1607,13 @@ impl Handle {
         let ipv4_addr = pconn4.local_addr()?;
         let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
-        let net_reporter =
-            net_report::Client::new(Some(port_mapper.clone()), dns_resolver.clone())?;
+        let ip_mapped_addrs = IpMappedAddrs::default();
+
+        let net_reporter = net_report::Client::new(
+            Some(port_mapper.clone()),
+            dns_resolver.clone(),
+            Some(ip_mapped_addrs.clone()),
+        )?;
 
         let pconn4_sock = pconn4.as_socket();
         let pconn6_sock = pconn6.as_ref().map(|p| p.as_socket());
@@ -1646,7 +1653,7 @@ impl Handle {
             pconn6,
             disco_secrets: DiscoSecrets::default(),
             node_map,
-            ip_mapped_addrs: IpMappedAddrs::new(),
+            ip_mapped_addrs,
             udp_disco_sender,
             discovery,
             direct_addrs: Default::default(),
@@ -2170,9 +2177,6 @@ impl Actor {
             }
         }
 
-        // kick off resolving the URLs for relay addresses
-        self.resolve_qad_addrs(Duration::from_millis(10)).await;
-
         let mut receiver_closed = false;
         let mut portmap_watcher_closed = false;
         let mut link_change_closed = false;
@@ -2551,10 +2555,6 @@ impl Actor {
             .stun_v4(Some(self.pconn4.clone()))
             .stun_v6(self.pconn6.clone());
 
-        // Need to get the SocketAddrs of the relay urls and add them to the node map
-        // so the socket knows to treat them special
-        self.resolve_qad_addrs(std::time::Duration::from_millis(300))
-            .await;
         // create a client config for the endpoint to use for QUIC address discovery
         let root_store =
             rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
@@ -2645,87 +2645,6 @@ impl Actor {
             self.call_net_info_callback(ni).await;
         }
         self.update_direct_addresses(report);
-    }
-
-    /// Does a DNS look up for the `RelayUrl` and returns the set of resolved
-    /// [`SocketAddr`]s
-    async fn resolve_relay_quic_endpoint(
-        dns_resolver: DnsResolver,
-        relay_node: Arc<RelayNode>,
-        duration: Duration,
-    ) -> BTreeSet<SocketAddr> {
-        let mut addrs = BTreeSet::new();
-        let port = if let Some(ref quic_config) = relay_node.quic {
-            quic_config.port
-        } else {
-            trace!(
-                ?relay_node,
-                "No quic config for the relay node: no need to resolve quic endpoint ip"
-            );
-            return addrs;
-        };
-
-        match relay_node.url.host() {
-            Some(url::Host::Domain(hostname)) => {
-                debug!(%hostname, "Performing DNS A lookup for relay addr");
-                let mut set = JoinSet::new();
-                let resolver = dns_resolver.clone();
-                let ipv4_resolver = resolver.clone();
-                let ipv4_hostname = hostname.to_owned();
-                set.spawn(async move {
-                    let res = ipv4_resolver.lookup_ipv4(ipv4_hostname, duration).await;
-                    res.map(|addrs| addrs.collect::<Vec<_>>())
-                });
-                let ipv6_hostname = hostname.to_owned();
-                set.spawn(async move {
-                    let res = resolver.lookup_ipv6(ipv6_hostname, duration).await;
-                    res.map(|addrs| addrs.collect::<Vec<_>>())
-                });
-                let responses = set.join_all().await;
-                for res in responses {
-                    match res {
-                        Err(_) => {}
-                        Ok(resolved_addrs) => {
-                            for addr in resolved_addrs {
-                                addrs.insert(SocketAddr::new(addr, port));
-                            }
-                        }
-                    }
-                }
-                if addrs.is_empty() {
-                    debug!(%hostname, "Unable to resolve ip addresses for relay node");
-                }
-            }
-            Some(url::Host::Ipv4(addr)) => {
-                addrs.insert(SocketAddr::new(addr.into(), port));
-            }
-            Some(url::Host::Ipv6(addr)) => {
-                addrs.insert(SocketAddr::new(addr.into(), port));
-            }
-            None => {
-                error!(?relay_node.url, "No hostname for relay node, cannot resolve ip");
-            }
-        }
-        addrs
-    }
-
-    /// Resolve the relay addresses used for QUIC address discovery.
-    async fn resolve_qad_addrs(&mut self, duration: Duration) {
-        let mut set = JoinSet::new();
-        let resolver = self.msock.dns_resolver();
-        for relay_node in self.msock.relay_map.nodes() {
-            set.spawn(Actor::resolve_relay_quic_endpoint(
-                resolver.clone(),
-                relay_node.clone(),
-                duration,
-            ));
-        }
-        let res = set.join_all().await;
-        for addrs in res {
-            addrs.iter().for_each(|addr| {
-                self.msock.ip_mapped_addrs.add(*addr);
-            });
-        }
     }
 
     fn set_nearest_relay(&mut self, relay_url: Option<RelayUrl>) -> bool {
@@ -2969,8 +2888,6 @@ pub(crate) struct NodeIdMappedAddr(pub(crate) SocketAddr);
 /// Counter to always generate unique addresses for [`NodeIdMappedAddr`].
 static NODE_ID_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-const MAPPED_ADDR_PORT: u16 = 12345;
-
 impl NodeIdMappedAddr {
     /// The Prefix/L of our Unique Local Addresses.
     const ADDR_PREFIXL: u8 = 0xfd;
@@ -3020,115 +2937,6 @@ impl TryFrom<SocketAddr> for NodeIdMappedAddr {
 impl std::fmt::Display for NodeIdMappedAddr {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "NodeIdMappedAddr({})", self.0)
-    }
-}
-
-/// A mirror for the `NodeIdMappedAddr`, mapping a fake Ipv6 address with an actual IP address.
-///
-/// You can consider this as nothing more than a lookup key for an IP the [`MagicSock`] knows
-/// about.
-///
-/// And in our QUIC-facing socket APIs like [`AsyncUdpSocket`] it
-/// comes in as the inner [`SocketAddr`], in those interfaces we have to be careful to do
-/// the conversion to this type.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub(crate) struct IpMappedAddr(pub(crate) SocketAddr);
-
-/// Counter to always generate unique addresses for [`NodeIdMappedAddr`].
-static IP_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-impl IpMappedAddr {
-    /// The Prefix/L of our Unique Local Addresses.
-    const ADDR_PREFIXL: u8 = 0xfd;
-    /// The Global ID used in our Unique Local Addresses.
-    const ADDR_GLOBAL_ID: [u8; 5] = [21, 7, 10, 81, 11];
-    /// The Subnet ID used in our Unique Local Addresses.
-    const ADDR_SUBNET: [u8; 2] = [0, 1];
-
-    /// Generates a globally unique fake UDP address.
-    ///
-    /// This generates and IPv6 Unique Local Address according to RFC 4193.
-    pub(crate) fn generate() -> Self {
-        let mut addr = [0u8; 16];
-        addr[0] = Self::ADDR_PREFIXL;
-        addr[1..6].copy_from_slice(&Self::ADDR_GLOBAL_ID);
-        addr[6..8].copy_from_slice(&Self::ADDR_SUBNET);
-
-        let counter = IP_ADDR_COUNTER.fetch_add(1, Ordering::Relaxed);
-        addr[8..16].copy_from_slice(&counter.to_be_bytes());
-
-        Self(SocketAddr::new(
-            IpAddr::V6(Ipv6Addr::from(addr)),
-            MAPPED_ADDR_PORT,
-        ))
-    }
-}
-
-impl TryFrom<SocketAddr> for IpMappedAddr {
-    type Error = anyhow::Error;
-
-    fn try_from(value: SocketAddr) -> std::result::Result<Self, Self::Error> {
-        match value {
-            SocketAddr::V4(_) => anyhow::bail!("IpMappedAddrs are all Ipv6, addr {value:?}"),
-            SocketAddr::V6(addr) => {
-                if addr.port() != MAPPED_ADDR_PORT {
-                    anyhow::bail!("not a mapped addr");
-                }
-                let octets = addr.ip().octets();
-                if octets[6..8] != IpMappedAddr::ADDR_SUBNET {
-                    anyhow::bail!("not an IpMappedAddr");
-                }
-                Ok(IpMappedAddr(value))
-            }
-        }
-    }
-}
-
-impl std::fmt::Display for IpMappedAddr {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "IpMappedAddr({})", self.0)
-    }
-}
-
-#[derive(Debug, Clone)]
-/// A Map of [`IpMappedAddrs`] to [`SocketAddrs`]
-pub(crate) struct IpMappedAddrs(Arc<std::sync::Mutex<BTreeMap<IpMappedAddr, SocketAddr>>>);
-
-impl IpMappedAddrs {
-    pub fn new() -> Self {
-        Self(Arc::new(std::sync::Mutex::new(BTreeMap::new())))
-    }
-
-    /// Add a [`SocketAddr`] to the map and the generated [`IpMappedAddr`] it is now associated with back.
-    ///
-    /// If this [`SocketAddr`] already exists in the map, it returns its associated [`IpMappedAddr`].
-    pub fn add(&self, ip_addr: SocketAddr) -> IpMappedAddr {
-        let mut map = self.0.lock().expect("poisoned");
-        for (mapped_addr, ip) in map.iter() {
-            if ip == &ip_addr {
-                return *mapped_addr;
-            }
-        }
-        let ip_mapped_addr = IpMappedAddr::generate();
-        map.insert(ip_mapped_addr, ip_addr);
-        ip_mapped_addr
-    }
-
-    /// Get the [`IpMappedAddr`] for the given [`SocketAddr`].
-    pub fn get_mapped_addr(&self, ip_addr: &SocketAddr) -> Option<IpMappedAddr> {
-        let map = self.0.lock().expect("poisoned");
-        for (mapped_addr, ip) in map.iter() {
-            if ip == ip_addr {
-                return Some(*mapped_addr);
-            }
-        }
-        None
-    }
-
-    /// Get the [`SocketAddr`] for the given [`IpMappedAddr`].
-    pub fn get_ip_addr(&self, mapped_addr: &IpMappedAddr) -> Option<SocketAddr> {
-        let map = self.0.lock().expect("poisoned");
-        map.get(mapped_addr).copied()
     }
 }
 
