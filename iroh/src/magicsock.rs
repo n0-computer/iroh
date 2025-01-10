@@ -535,15 +535,21 @@ impl MagicSock {
                     }
                 }
 
-                let udp_pending = udp_error
-                    .as_ref()
-                    .map(|err| err.kind() == io::ErrorKind::WouldBlock)
-                    .unwrap_or_default();
-                let relay_pending = relay_error
-                    .as_ref()
-                    .map(|err| err.kind() == io::ErrorKind::WouldBlock)
-                    .unwrap_or_default();
-                if udp_pending && relay_pending {
+                let udp_pending = udp_addr.is_some()
+                    && udp_error
+                        .as_ref()
+                        .map(|err| err.kind() == io::ErrorKind::WouldBlock)
+                        .unwrap_or_default();
+
+                let relay_pending = relay_url.is_some()
+                    && relay_error
+                        .as_ref()
+                        .map(|err| err.kind() == io::ErrorKind::WouldBlock)
+                        .unwrap_or_default();
+
+                let has_path = udp_addr.is_some() || relay_url.is_some();
+
+                if udp_pending && relay_pending && has_path {
                     // Handle backpressure.
                     Err(io::Error::new(io::ErrorKind::WouldBlock, "pending"))
                 } else {
