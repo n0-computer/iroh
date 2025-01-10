@@ -165,7 +165,7 @@
 </span><span class="attr">#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 </span><span class="kw">pub struct </span>IpMappedAddr(<span class="kw">pub</span>(<span class="kw">crate</span>) SocketAddr);
 
-<span class="doccomment">/// Counter to always generate unique addresses for [`NodeIdMappedAddr`].
+<span class="doccomment">/// Counter to always generate unique addresses for `NodeIdMappedAddr`.
 </span><span class="kw">static </span>IP_ADDR_COUNTER: AtomicU64 = AtomicU64::new(<span class="number">1</span>);
 
 <span class="kw">impl </span>IpMappedAddr {
