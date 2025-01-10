@@ -332,7 +332,7 @@
     /// peer is gone from the network.
     ///
     /// Must be passed a matching connection_id.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>unregister&lt;<span class="lifetime">'a</span>&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, connection_id: u64, node_id: NodeId) {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>unregister(<span class="kw-2">&amp;</span><span class="self">self</span>, connection_id: u64, node_id: NodeId) {
         <span class="macro">trace!</span>(
             node_id = node_id.fmt_short(),
             connection_id,
