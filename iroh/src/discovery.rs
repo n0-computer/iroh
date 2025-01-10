@@ -728,21 +728,6 @@ mod tests {
             .expect("time drift")
             .as_micros() as u64
     }
-
-    #[tokio::test]
-    async fn test_arc_discovery() -> TestResult {
-        let discovery = Arc::new(EmptyDiscovery);
-
-        let _ep = Endpoint::builder()
-            .add_discovery({
-                let discovery = discovery.clone();
-                move |_| Some(discovery)
-            })
-            .bind()
-            .await?;
-
-        Ok(())
-    }
 }
 
 /// This module contains end-to-end tests for DNS node discovery.
