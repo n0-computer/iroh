@@ -1784,7 +1784,7 @@ impl RelayDatagramSendChannelSender {
                 }
                 drop(wakers);
                 if self.sender.capacity() != 0 {
-                    // We "risk" a suprious wake-up in this case, but rather that
+                    // We "risk" a spurious wake-up in this case, but rather that
                     // than potentially skipping a receive.
                     Poll::Ready(Ok(()))
                 } else {
