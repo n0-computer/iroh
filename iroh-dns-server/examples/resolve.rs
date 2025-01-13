@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use std::net::SocketAddr;
 
 use clap::{Parser, ValueEnum};

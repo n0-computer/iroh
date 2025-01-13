@@ -3,6 +3,9 @@
 //! This example creates an iroh endpoint, a few additional iroh endpoints to discover, waits a few seconds, and reports all of the iroh NodeIds (also called `[iroh_net::key::PublicKey]`s) it has discovered.
 //!
 //! This is an async, non-determinate process, so the number of NodeIDs discovered each time may be different. If you have other iroh endpoints or iroh nodes with [`LocalSwarmDiscovery`] enabled, it may discover those nodes as well.
+
+#![allow(deprecated)]
+
 use std::time::Duration;
 
 use iroh_net::{

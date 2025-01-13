@@ -237,6 +237,10 @@
 //! [`Connection::open_bi`]: crate::endpoint::Connection::open_bi
 //! [`Connection::accept_bi`]: crate::endpoint::Connection::accept_bi
 
+#![deprecated(
+    note = "This crate has been renamed from 'iroh-net' to 'iroh', please use the new crate"
+)]
+#![allow(deprecated)]
 #![recursion_limit = "256"]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![cfg_attr(iroh_docsrs, feature(doc_cfg))]

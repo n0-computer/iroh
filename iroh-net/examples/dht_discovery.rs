@@ -8,6 +8,9 @@
 //! You can look at the published pkarr DNS record using <https://app.pkarr.org/>.
 //!
 //! To see what is going on, run with `RUST_LOG=iroh_pkarr_node_discovery=debug`.
+
+#![allow(deprecated)]
+
 use std::str::FromStr;
 
 use clap::Parser;
