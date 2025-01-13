@@ -111,7 +111,7 @@
     doc = "[`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery"
 )]
 
-use std::{collections::BTreeSet, net::SocketAddr, time::Duration};
+use std::{collections::BTreeSet, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, ensure, Result};
 use futures_lite::stream::{Boxed as BoxStream, StreamExt};
@@ -193,6 +193,8 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
         None
     }
 }
+
+impl<T: Discovery> Discovery for Arc<T> {}
 
 /// The results returned from [`Discovery::resolve`].
 #[derive(Debug, Clone)]
