@@ -5742,8 +5742,3 @@ dependencies = [
  "quote",
  "syn 2.0.96",
 ]
-
-[[patch.unused]]
-name = "iroh-metrics"
-version = "0.30.0"
-source = "git+https://github.com/n0-computer/iroh-metrics.git?branch=matheus23/optional-deps#9f0b95ad2f0f51e9040c6861d56d0d7f85828aff"
