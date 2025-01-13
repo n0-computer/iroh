@@ -1900,7 +1900,24 @@
 <a href="#1899" id="1899">1899</a>
 <a href="#1900" id="1900">1900</a>
 <a href="#1901" id="1901">1901</a>
-<a href="#1902" id="1902">1902</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#1902" id="1902">1902</a>
+<a href="#1903" id="1903">1903</a>
+<a href="#1904" id="1904">1904</a>
+<a href="#1905" id="1905">1905</a>
+<a href="#1906" id="1906">1906</a>
+<a href="#1907" id="1907">1907</a>
+<a href="#1908" id="1908">1908</a>
+<a href="#1909" id="1909">1909</a>
+<a href="#1910" id="1910">1910</a>
+<a href="#1911" id="1911">1911</a>
+<a href="#1912" id="1912">1912</a>
+<a href="#1913" id="1913">1913</a>
+<a href="#1914" id="1914">1914</a>
+<a href="#1915" id="1915">1915</a>
+<a href="#1916" id="1916">1916</a>
+<a href="#1917" id="1917">1917</a>
+<a href="#1918" id="1918">1918</a>
+<a href="#1919" id="1919">1919</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2395,11 +2412,14 @@
 /// while still remaining independent connections.  This will result in more optimal network
 /// behaviour.
 ///
-/// New connections are typically created using the [`Endpoint::connect`] and
-/// [`Endpoint::accept`] methods.  Once established, the [`Connection`] gives access to most
-/// [QUIC] features.  Individual streams to send data to the peer are created using the
-/// [`Connection::open_bi`], [`Connection::accept_bi`], [`Connection::open_uni`] and
-/// [`Connection::open_bi`] functions.
+/// The endpoint is created using the [`Builder`], which can be created using
+/// [`Endpoint::builder`].
+///
+/// Once an endpoint exists, new connections are typically created using the
+/// [`Endpoint::connect`] and [`Endpoint::accept`] methods.  Once established, the
+/// [`Connection`] gives access to most [QUIC] features.  Individual streams to send data to
+/// the peer are created using the [`Connection::open_bi`], [`Connection::accept_bi`],
+/// [`Connection::open_uni`] and [`Connection::open_bi`] functions.
 ///
 /// Note that due to the light-weight properties of streams a stream will only be accepted
 /// once the initiating peer has sent some data on it.
@@ -2615,10 +2635,17 @@
     ///
     /// See also [`Endpoint::add_node_addr_with_source`].
     ///
+    /// # Using node discovery instead
+    ///
+    /// It is strongly advised to use node discovery using the [`StaticProvider`] instead.
+    /// This provides more flexibility and future proofing.
+    ///
     /// # Errors
     ///
     /// Will return an error if we attempt to add our own [`PublicKey`] to the node map or if the
     /// direct addresses are a subset of ours.
+    ///
+    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
     </span><span class="kw">pub fn </span>add_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: NodeAddr) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="self">self</span>.add_node_addr_inner(node_addr, magicsock::Source::App)
     }
@@ -2631,10 +2658,17 @@
     /// address that matches this node's direct addresses will be silently ignored. The *source* is
     /// used for logging exclusively and will not be stored.
     ///
+    /// # Using node discovery instead
+    ///
+    /// It is strongly advised to use node discovery using the [`StaticProvider`] instead.
+    /// This provides more flexibility and future proofing.
+    ///
     /// # Errors
     ///
     /// Will return an error if we attempt to add our own [`PublicKey`] to the node map or if the
     /// direct addresses are a subset of ours.
+    ///
+    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
     </span><span class="kw">pub fn </span>add_node_addr_with_source(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_addr: NodeAddr,
