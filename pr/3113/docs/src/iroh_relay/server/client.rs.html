@@ -743,7 +743,9 @@
 <a href="#742" id="742">742</a>
 <a href="#743" id="743">743</a>
 <a href="#744" id="744">744</a>
-<a href="#745" id="745">745</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#745" id="745">745</a>
+<a href="#746" id="746">746</a>
+<a href="#747" id="747">747</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
@@ -995,6 +997,8 @@
                 }
                 maybe_frame = <span class="self">self</span>.stream.next() =&gt; {
                     <span class="self">self</span>.handle_frame(maybe_frame).<span class="kw">await</span>.context(<span class="string">"handle read"</span>)<span class="question-mark">?</span>;
+                    <span class="comment">// reset the ping interval, we just received a message
+                    </span>ping_interval.reset();
                 }
                 <span class="comment">// First priority, disco packets
                 </span>packet = <span class="self">self</span>.disco_send_queue.recv() =&gt; {
