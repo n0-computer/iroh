@@ -1,4 +1,15 @@
-//! A static discovery implementation that allows adding info for nodes manually.
+//! A static node discovery to manually add node addressing information.
+//!
+//! Often an application might get node addressing information out-of-band in an
+//! application-specific way.  [`NodeTicket`]'s are one common way used to achieve this.
+//! This "static" addressing information is often only usable for a limited time so needs to
+//! be able to be removed again once know it is no longer useful.
+//!
+//! This is where the [`StaticProvider`] is useful: it allows applications to add and
+//! retract node addressing information that is otherwise out-of-band to iroh.
+//!
+//! [`NodeTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.NodeTicket
+
 use std::{
     collections::{btree_map::Entry, BTreeMap, BTreeSet},
     net::SocketAddr,
@@ -11,7 +22,48 @@ use iroh_base::{NodeAddr, NodeId, RelayUrl};
 
 use super::{Discovery, DiscoveryItem};
 
-/// A static discovery implementation that allows providing info for nodes manually.
+/// A static node discovery to manually add node addressing information.
+///
+/// Often an application might get node addressing information out-of-band in an
+/// application-specific way.  [`NodeTicket`]'s are one common way used to achieve this.
+/// This "static" addressing information is often only usable for a limited time so needs to
+/// be able to be removed again once know it is no longer useful.
+///
+/// This is where the [`StaticProvider`] is useful: it allows applications to add and
+/// retract node addressing information that is otherwise out-of-band to iroh.
+///
+/// # Examples
+///
+/// ```rust
+/// use iroh::{discovery::static_provider::StaticProvider, Endpoint, NodeAddr};
+/// use iroh_base::SecretKey;
+///
+/// # #[tokio::main]
+/// # async fn main() -> anyhow::Result<()> {
+/// // Create the discovery service and endpoint.
+/// let discovery = StaticProvider::new();
+///
+/// let _ep = Endpoint::builder()
+///     .add_discovery({
+///         let discovery = discovery.clone();
+///         move |_| Some(discovery)
+///     })
+///     .bind()
+///     .await?;
+///
+/// /// Sometime later add a RelayUrl for a fake NodeId.
+/// let key = SecretKey::from_bytes(&[0u8; 32]); // Do not use fake secret keys!
+/// discovery.add_node_addr(NodeAddr {
+///     node_id: key.public(),
+///     relay_url: Some("https://example.com".parse()?),
+///     direct_addresses: Default::default(),
+/// });
+///
+/// # Ok(())
+/// # }
+/// ```
+///
+/// [`NodeTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.NodeTicket
 #[derive(Debug, Default, Clone)]
 #[repr(transparent)]
 pub struct StaticProvider {
@@ -27,16 +79,22 @@ struct NodeInfo {
 
 impl StaticProvider {
     /// The provenance string for this discovery implementation.
+    ///
+    /// This is mostly used for debugging information and allows understanding the origin of
+    /// addressing information used by an iroh [`Endpoint`].
+    ///
+    /// [`Endpoint`]: crate::Endpoint
     pub const PROVENANCE: &'static str = "static_discovery";
 
-    /// Create a new static discovery instance.
+    /// Creates a new static discovery instance.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Creates a static discovery instance from something that can be converted into node addresses.
+    /// Creates a static discovery instance from node addresses.
     ///
-    /// Example:
+    /// # Examples
+    ///
     /// ```rust
     /// use std::{net::SocketAddr, str::FromStr};
     ///
@@ -68,7 +126,7 @@ impl StaticProvider {
         res
     }
 
-    /// Add node info for the given node id.
+    /// Sets node addressing information for the given node ID.
     ///
     /// This will completely overwrite any existing info for the node.
     pub fn set_node_addr(&self, info: impl Into<NodeAddr>) -> Option<NodeAddr> {
@@ -90,9 +148,11 @@ impl StaticProvider {
         })
     }
 
-    /// Add node info for the given node id, combining it with any existing info.
+    /// Augments node addressing information for the given node ID.
     ///
-    /// This will add any new direct addresses and overwrite the relay url.
+    /// The provided addressing information is combined with the existing info in the static
+    /// provider.  Any new direct addresses are added to those already present while the
+    /// relay URL is overwritten.
     pub fn add_node_addr(&self, info: impl Into<NodeAddr>) {
         let info: NodeAddr = info.into();
         let last_updated = SystemTime::now();
@@ -114,7 +174,7 @@ impl StaticProvider {
         }
     }
 
-    /// Get node info for the given node id.
+    /// Returns node addressing information for the given node ID.
     pub fn get_node_addr(&self, node_id: NodeId) -> Option<NodeAddr> {
         let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id)?;
@@ -125,7 +185,9 @@ impl StaticProvider {
         })
     }
 
-    /// Remove node info for the given node id.
+    /// Removes all node addressing information for the given node ID.
+    ///
+    /// Any removed information is returned.
     pub fn remove_node_addr(&self, node_id: NodeId) -> Option<NodeAddr> {
         let mut guard = self.nodes.write().expect("poisoned");
         let info = guard.remove(&node_id)?;

@@ -493,11 +493,14 @@ pub fn make_server_config(
 /// while still remaining independent connections.  This will result in more optimal network
 /// behaviour.
 ///
-/// New connections are typically created using the [`Endpoint::connect`] and
-/// [`Endpoint::accept`] methods.  Once established, the [`Connection`] gives access to most
-/// [QUIC] features.  Individual streams to send data to the peer are created using the
-/// [`Connection::open_bi`], [`Connection::accept_bi`], [`Connection::open_uni`] and
-/// [`Connection::open_bi`] functions.
+/// The endpoint is created using the [`Builder`], which can be created using
+/// [`Endpoint::builder`].
+///
+/// Once an endpoint exists, new connections are typically created using the
+/// [`Endpoint::connect`] and [`Endpoint::accept`] methods.  Once established, the
+/// [`Connection`] gives access to most [QUIC] features.  Individual streams to send data to
+/// the peer are created using the [`Connection::open_bi`], [`Connection::accept_bi`],
+/// [`Connection::open_uni`] and [`Connection::open_bi`] functions.
 ///
 /// Note that due to the light-weight properties of streams a stream will only be accepted
 /// once the initiating peer has sent some data on it.
@@ -713,10 +716,17 @@ impl Endpoint {
     ///
     /// See also [`Endpoint::add_node_addr_with_source`].
     ///
+    /// # Using node discovery instead
+    ///
+    /// It is strongly advised to use node discovery using the [`StaticProvider`] instead.
+    /// This provides more flexibility and future proofing.
+    ///
     /// # Errors
     ///
     /// Will return an error if we attempt to add our own [`PublicKey`] to the node map or if the
     /// direct addresses are a subset of ours.
+    ///
+    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
     pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
         self.add_node_addr_inner(node_addr, magicsock::Source::App)
     }
@@ -729,10 +739,17 @@ impl Endpoint {
     /// address that matches this node's direct addresses will be silently ignored. The *source* is
     /// used for logging exclusively and will not be stored.
     ///
+    /// # Using node discovery instead
+    ///
+    /// It is strongly advised to use node discovery using the [`StaticProvider`] instead.
+    /// This provides more flexibility and future proofing.
+    ///
     /// # Errors
     ///
     /// Will return an error if we attempt to add our own [`PublicKey`] to the node map or if the
     /// direct addresses are a subset of ours.
+    ///
+    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
     pub fn add_node_addr_with_source(
         &self,
         node_addr: NodeAddr,

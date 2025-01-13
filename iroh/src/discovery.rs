@@ -23,6 +23,9 @@
 //!
 //! Some generally useful discovery implementations are provided:
 //!
+//! - [`StaticProvider`] which allows application to add and remove out-of-band addressing
+//!   information.
+//!
 //! - The [`DnsDiscovery`] which performs lookups via the standard DNS systems.  To publish
 //!   to this DNS server a [`PkarrPublisher`] is needed.  [Number 0] runs a public instance
 //!   of a [`PkarrPublisher`] with attached DNS server which is globally available and a
@@ -30,11 +33,9 @@
 //!
 //! - The [`PkarrResolver`] which can perform lookups from designated [pkarr relay servers]
 //!   using HTTP.
-#![cfg_attr(
-    feature = "discovery-local-network",
-    doc = "- [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
-             very similar to mDNS."
-)]
+//!
+//! - [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery which is an mDNS
+//!   implementation.
 //!
 //! - The [`DhtDiscovery`] also uses the [`pkarr`] system but can also publish and lookup
 //!   records to/from the Mainline DHT.
@@ -68,13 +69,7 @@
 //! # }
 //! ```
 //!
-//! To also enable
-#![cfg_attr(feature = "discovery-local-network", doc = "[`LocalSwarmDiscovery`]")]
-#![cfg_attr(
-    not(feature = "discovery-local-network"),
-    doc = "`LocalSwarmDiscovery`"
-)]
-//! it can be added as another service in the
+//! To also enable [`LocalSwarmDiscovery`] it can be added as another service in the
 //! [`ConcurrentDiscovery`]:
 //!
 //! ```no_run
@@ -106,10 +101,8 @@
 //! [`PkarrPublisher`]: pkarr::PkarrPublisher
 //! [`DhtDiscovery`]: pkarr::dht::DhtDiscovery
 //! [pkarr relay servers]: https://pkarr.org/#servers
-#![cfg_attr(
-    feature = "discovery-local-network",
-    doc = "[`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery"
-)]
+//! [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
+//! [`StaticProvider`]: static_provider::StaticProvider
 
 use std::{collections::BTreeSet, net::SocketAddr, sync::Arc, time::Duration};
 
