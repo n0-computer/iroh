@@ -8,7 +8,7 @@ use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use indicatif::HumanBytes;
 use iroh::{
-    discovery::pkarr::PkarrPublisher,
+    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
     endpoint::{ConnectionError, PathSelection},
     Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
