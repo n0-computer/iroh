@@ -9,16 +9,21 @@ use futures_sink::Sink;
 use futures_util::{SinkExt, Stream, StreamExt};
 use iroh_base::NodeId;
 use iroh_metrics::{inc, inc_by};
-use tokio::sync::mpsc::{self, error::TrySendError};
+use rand::Rng;
+use tokio::{
+    sync::mpsc::{self, error::TrySendError},
+    time::MissedTickBehavior,
+};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, instrument, trace, warn, Instrument};
 
 use crate::{
     protos::{
         disco,
-        relay::{write_frame, Frame, KEEP_ALIVE},
+        relay::{write_frame, Frame, PING_INTERVAL},
     },
     server::{clients::Clients, metrics::Metrics, streams::RelayedStream, ClientRateLimit},
+    PingTracker,
 };
 
 /// A request to write a dataframe to a Client
@@ -102,6 +107,7 @@ impl Client {
             node_id,
             connection_id,
             clients: clients.clone(),
+            ping_tracker: PingTracker::default(),
         };
 
         // start io loop
@@ -201,6 +207,7 @@ struct Actor {
     connection_id: u64,
     /// Reference to the other connected clients.
     clients: Clients,
+    ping_tracker: PingTracker,
 }
 
 impl Actor {
@@ -220,10 +227,16 @@ impl Actor {
     }
 
     async fn run_inner(&mut self, done: CancellationToken) -> Result<()> {
-        let jitter = Duration::from_secs(5);
-        let mut keep_alive = tokio::time::interval(KEEP_ALIVE + jitter);
+        // Add some jitter to ping pong interactions, to avoid all pings being sent at the same time
+        let next_interval = || {
+            let random_secs = rand::rngs::OsRng.gen_range(1..=5);
+            Duration::from_secs(random_secs) + PING_INTERVAL
+        };
+
+        let mut ping_interval = tokio::time::interval(next_interval());
         // ticks immediately
-        keep_alive.tick().await;
+        ping_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        ping_interval.tick().await;
 
         loop {
             tokio::select! {
@@ -237,6 +250,8 @@ impl Actor {
                 }
                 maybe_frame = self.stream.next() => {
                     self.handle_frame(maybe_frame).await.context("handle read")?;
+                    // reset the ping interval, we just received a message
+                    ping_interval.reset();
                 }
                 // First priority, disco packets
                 packet = self.disco_send_queue.recv() => {
@@ -254,11 +269,19 @@ impl Actor {
                     trace!("node_id gone: {:?}", node_id);
                     self.write_frame(Frame::NodeGone { node_id }).await?;
                 }
-                _ = keep_alive.tick() => {
-                    trace!("keep alive");
-                    self.write_frame(Frame::KeepAlive).await?;
+                _ = self.ping_tracker.timeout() => {
+                    trace!("pong timed out");
+                    break;
+                }
+                _ = ping_interval.tick() => {
+                    trace!("keep alive ping");
+                    // new interval
+                    ping_interval.reset_after(next_interval());
+                    let data = self.ping_tracker.new_ping();
+                    self.write_frame(Frame::Ping { data }).await?;
                 }
             }
+
             self.stream.flush().await.context("tick flush")?;
         }
         Ok(())
@@ -321,6 +344,7 @@ impl Actor {
             Some(frame) => frame?,
             None => anyhow::bail!("stream terminated"),
         };
+
         match frame {
             Frame::SendPacket { dst_key, packet } => {
                 let packet_len = packet.len();
@@ -332,6 +356,9 @@ impl Actor {
                 // TODO: add rate limiter
                 self.write_frame(Frame::Pong { data }).await?;
                 inc!(Metrics, sent_pong);
+            }
+            Frame::Pong { data } => {
+                self.ping_tracker.pong_received(data);
             }
             Frame::Health { problem } => {
                 bail!("server issue: {:?}", problem);
@@ -567,6 +594,7 @@ mod tests {
             connection_id: 0,
             node_id,
             clients: clients.clone(),
+            ping_tracker: PingTracker::default(),
         };
 
         let done = CancellationToken::new();

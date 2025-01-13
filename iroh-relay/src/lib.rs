@@ -38,6 +38,8 @@ pub mod quic;
 #[cfg(feature = "server")]
 pub mod server;
 
+mod ping_tracker;
+
 mod key_cache;
 mod relay_map;
 pub(crate) use key_cache::KeyCache;
@@ -47,4 +49,7 @@ mod dns;
 
 pub use protos::relay::MAX_PACKET_SIZE;
 
-pub use self::relay_map::{RelayMap, RelayNode, RelayQuicConfig};
+pub use self::{
+    ping_tracker::PingTracker,
+    relay_map::{RelayMap, RelayNode, RelayQuicConfig},
+};
