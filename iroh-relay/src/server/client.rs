@@ -250,6 +250,8 @@ impl Actor {
                 }
                 maybe_frame = self.stream.next() => {
                     self.handle_frame(maybe_frame).await.context("handle read")?;
+                    // reset the ping interval, we just received a message
+                    ping_interval.reset();
                 }
                 // First priority, disco packets
                 packet = self.disco_send_queue.recv() => {
