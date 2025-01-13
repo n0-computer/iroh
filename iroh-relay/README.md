@@ -49,7 +49,7 @@ The easiest get that is to generate self-signed certificates using `rcgen`
 
 Next, add the certificate paths to your iroh-relay config, here is an example of a config.toml file that will enable quic address discovery.
 ```toml
-[tlsconfig]
+[tls]
 cert_mode = "Manual"
 manual_cert_path = "/path/to/certs/cert.pem"
 manual_key_path = "/path/to/certs/cert.key.pem"
