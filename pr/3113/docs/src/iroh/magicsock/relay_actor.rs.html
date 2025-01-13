@@ -1542,7 +1542,9 @@
 <a href="#1541" id="1541">1541</a>
 <a href="#1542" id="1542">1542</a>
 <a href="#1543" id="1543">1543</a>
-<a href="#1544" id="1544">1544</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1544" id="1544">1544</a>
+<a href="#1545" id="1545">1545</a>
+<a href="#1546" id="1546">1546</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1615,9 +1617,6 @@
 
 <span class="doccomment">/// Maximum size a datagram payload is allowed to be.
 </span><span class="kw">const </span>MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PublicKey::LENGTH;
-
-<span class="doccomment">/// Maximum time for a relay server to respond to a relay protocol ping.
-</span><span class="kw">const </span>PING_TIMEOUT: Duration = Duration::from_secs(<span class="number">5</span>);
 
 <span class="doccomment">/// Interval in which we ping the relay server to ensure the connection is alive.
 ///
@@ -1984,7 +1983,7 @@
         <span class="kw">let </span>(<span class="kw-2">mut </span>client_stream, <span class="kw-2">mut </span>client_sink) = client.split();
 
         <span class="kw">let </span><span class="kw-2">mut </span>state = ConnectedRelayState {
-            ping_tracker: PingTracker::new(PING_TIMEOUT),
+            ping_tracker: PingTracker::default(),
             nodes_present: BTreeSet::new(),
             last_packet_src: <span class="prelude-val">None</span>,
             pong_pending: <span class="prelude-val">None</span>,
@@ -2101,7 +2100,11 @@
                         <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream finished"</span>));
                     };
                     <span class="kw">match </span>msg {
-                        <span class="prelude-val">Ok</span>(msg) =&gt; <span class="self">self</span>.handle_relay_msg(msg, <span class="kw-2">&amp;mut </span>state),
+                        <span class="prelude-val">Ok</span>(msg) =&gt; {
+                            <span class="self">self</span>.handle_relay_msg(msg, <span class="kw-2">&amp;mut </span>state);
+                            <span class="comment">// reset the ping timer, we have just received a message
+                            </span>ping_interval.reset();
+                        },
                         <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream read error: {err:#}"</span>)),
                     }
                 }
@@ -2185,9 +2188,10 @@
         state: <span class="kw-2">&amp;mut </span>ConnectedRelayState,
         client_stream: <span class="kw-2">&amp;mut </span>iroh_relay::client::ClientStream,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">const </span>SEND_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>); <span class="comment">// TODO: what should this be?
+        <span class="comment">// we use the same time as for our ping interval
+        </span><span class="kw">let </span>send_timeout = PING_INTERVAL;
 
-        </span><span class="kw">let </span><span class="kw-2">mut </span>timeout = <span class="macro">pin!</span>(tokio::time::sleep(SEND_TIMEOUT));
+        <span class="kw">let </span><span class="kw-2">mut </span>timeout = <span class="macro">pin!</span>(tokio::time::sleep(send_timeout));
         <span class="kw">let </span><span class="kw-2">mut </span>sending_fut = <span class="macro">pin!</span>(sending_fut);
         <span class="kw">loop </span>{
             <span class="macro">tokio::select!</span> {
@@ -3060,7 +3064,7 @@
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_ping_tracker() {
         tokio::time::pause();
-        <span class="kw">let </span><span class="kw-2">mut </span>tracker = PingTracker::new(PING_TIMEOUT);
+        <span class="kw">let </span><span class="kw-2">mut </span>tracker = PingTracker::default();
 
         <span class="kw">let </span>ping0 = tracker.new_ping();
 

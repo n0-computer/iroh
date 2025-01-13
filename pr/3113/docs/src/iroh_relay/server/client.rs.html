@@ -765,7 +765,7 @@
 <span class="kw">use crate</span>::{
     protos::{
         disco,
-        relay::{write_frame, Frame, PING_INTERVAL, PING_TIMEOUT},
+        relay::{write_frame, Frame, PING_INTERVAL},
     },
     server::{clients::Clients, metrics::Metrics, streams::RelayedStream, ClientRateLimit},
     PingTracker,
@@ -852,7 +852,7 @@
             node_id,
             connection_id,
             clients: clients.clone(),
-            ping_tracker: PingTracker::new(PING_TIMEOUT),
+            ping_tracker: PingTracker::default(),
         };
 
         <span class="comment">// start io loop
@@ -1337,7 +1337,7 @@
             connection_id: <span class="number">0</span>,
             node_id,
             clients: clients.clone(),
-            ping_tracker: PingTracker::new(Duration::from_secs(<span class="number">5</span>)),
+            ping_tracker: PingTracker::default(),
         };
 
         <span class="kw">let </span>done = CancellationToken::new();
