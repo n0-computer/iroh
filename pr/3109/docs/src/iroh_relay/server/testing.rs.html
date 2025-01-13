@@ -97,10 +97,15 @@
 <a href="#96" id="96">96</a>
 <a href="#97" id="97">97</a>
 <a href="#98" id="98">98</a>
-<a href="#99" id="99">99</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes functions to quickly configure a server suitable for testing.
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes functions to quickly configure a server suitable for testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
-<span class="kw">use super</span>::{CertConfig, QuicConfig, RelayConfig, ServerConfig, StunConfig, TlsConfig};
+<span class="kw">use super</span>::{
+    AccessConfig, CertConfig, QuicConfig, RelayConfig, ServerConfig, StunConfig, TlsConfig,
+};
 
 <span class="doccomment">/// Creates a [`StunConfig`] suitable for testing.
 ///
@@ -166,6 +171,7 @@
         tls: <span class="prelude-val">Some</span>(tls_config()),
         limits: Default::default(),
         key_cache_capacity: <span class="prelude-val">Some</span>(<span class="number">1024</span>),
+        access: AccessConfig::Everyone,
     }
 }
 

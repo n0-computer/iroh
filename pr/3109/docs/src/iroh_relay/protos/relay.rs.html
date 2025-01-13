@@ -839,8 +839,7 @@
 <a href="#838" id="838">838</a>
 <a href="#839" id="839">839</a>
 <a href="#840" id="840">840</a>
-<a href="#841" id="841">841</a>
-<a href="#842" id="842">842</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
+<a href="#841" id="841">841</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
 //!
 //! Protocol flow:
 //!
@@ -938,10 +937,9 @@
     <span class="doccomment">/// 8 byte payload, the contents of ping being replied to
     </span>Pong = <span class="number">13</span>,
     <span class="doccomment">/// Sent from server to client to tell the client if their connection is
-    /// unhealthy somehow. Currently the only unhealthy state is whether the
-    /// connection is detected as a duplicate.
-    /// The entire frame body is the text of the error message. An empty message
-    /// clears the error state.
+    /// unhealthy somehow.
+    ///
+    /// Currently this is used to indicate that the connection was closed because of authentication issues.
     </span>Health = <span class="number">14</span>,
 
     <span class="doccomment">/// Sent from server to client for the server to declare that it's restarting.

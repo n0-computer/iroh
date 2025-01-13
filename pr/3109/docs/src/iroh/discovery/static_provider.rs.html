@@ -263,7 +263,20 @@
 <a href="#262" id="262">262</a>
 <a href="#263" id="263">263</a>
 <a href="#264" id="264">264</a>
-<a href="#265" id="265">265</a></pre></div><pre class="rust"><code><span class="doccomment">//! A static node discovery to manually add node addressing information.
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a></pre></div><pre class="rust"><code><span class="doccomment">//! A static node discovery to manually add node addressing information.
 //!
 //! Often an application might get node addressing information out-of-band in an
 //! application-specific way.  [`NodeTicket`]'s are one common way used to achieve this.
@@ -500,6 +513,7 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
+    <span class="kw">use </span>anyhow::Context;
     <span class="kw">use </span>iroh_base::SecretKey;
     <span class="kw">use </span>testresult::TestResult;
 
@@ -519,11 +533,23 @@
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]);
-        discovery.add_node_addr(NodeAddr {
+        <span class="kw">let </span>addr = NodeAddr {
             node_id: key.public(),
             relay_url: <span class="prelude-val">Some</span>(<span class="string">"https://example.com"</span>.parse()<span class="question-mark">?</span>),
             direct_addresses: Default::default(),
-        });
+        };
+        discovery.add_node_addr(addr.clone());
+
+        <span class="kw">let </span>back = discovery.get_node_addr(key.public()).context(<span class="string">"no addr"</span>)<span class="question-mark">?</span>;
+
+        <span class="macro">assert_eq!</span>(back, addr);
+
+        <span class="kw">let </span>removed = discovery
+            .remove_node_addr(key.public())
+            .context(<span class="string">"nothing removed"</span>)<span class="question-mark">?</span>;
+        <span class="macro">assert_eq!</span>(removed, addr);
+        <span class="kw">let </span>res = discovery.get_node_addr(key.public());
+        <span class="macro">assert!</span>(res.is_none());
 
         <span class="prelude-val">Ok</span>(())
     }

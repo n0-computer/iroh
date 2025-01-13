@@ -4197,7 +4197,13 @@
 <a href="#4196" id="4196">4196</a>
 <a href="#4197" id="4197">4197</a>
 <a href="#4198" id="4198">4198</a>
-<a href="#4199" id="4199">4199</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4199" id="4199">4199</a>
+<a href="#4200" id="4200">4200</a>
+<a href="#4201" id="4201">4201</a>
+<a href="#4202" id="4202">4202</a>
+<a href="#4203" id="4203">4203</a>
+<a href="#4204" id="4204">4204</a>
+<a href="#4205" id="4205">4205</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4224,7 +4230,7 @@
         atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering},
         Arc, RwLock,
     },
-    task::{Context, Poll},
+    task::{Context, Poll, Waker},
     time::{Duration, Instant},
 };
 
@@ -5747,7 +5753,7 @@
 
         <span class="kw">let </span>(actor_sender, actor_receiver) = mpsc::channel(<span class="number">256</span>);
         <span class="kw">let </span>(relay_actor_sender, relay_actor_receiver) = mpsc::channel(<span class="number">256</span>);
-        <span class="kw">let </span>(relay_datagram_send_tx, relay_datagram_send_rx) = relay_datagram_sender();
+        <span class="kw">let </span>(relay_datagram_send_tx, relay_datagram_send_rx) = relay_datagram_send_channel();
         <span class="kw">let </span>(udp_disco_sender, <span class="kw-2">mut </span>udp_disco_receiver) = mpsc::channel(<span class="number">256</span>);
 
         <span class="comment">// load the node data
@@ -5853,12 +5859,18 @@
     /// Polling the socket ([`AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`]
     /// indefinitely after this call.
     </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.msock.me))]
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="kw">if </span><span class="self">self</span>.msock.is_closed() {
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+            <span class="kw">return</span>;
         }
         <span class="self">self</span>.msock.closing.store(<span class="bool-val">true</span>, Ordering::Relaxed);
-        <span class="self">self</span>.msock.actor_sender.send(ActorMessage::Shutdown).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="comment">// If this fails, then there's no receiver listening for shutdown messages,
+        // so nothing to shut down anyways.
+        </span><span class="self">self</span>.msock
+            .actor_sender
+            .send(ActorMessage::Shutdown)
+            .<span class="kw">await
+            </span>.ok();
         <span class="self">self</span>.msock.closed.store(<span class="bool-val">true</span>, Ordering::SeqCst);
 
         <span class="kw">let </span><span class="kw-2">mut </span>tasks = <span class="self">self</span>.actor_tasks.lock().<span class="kw">await</span>;
@@ -5880,8 +5892,6 @@
             </span><span class="macro">debug!</span>(<span class="string">"aborting remaining {}/3 tasks"</span>, tasks.len());
             tasks.shutdown().<span class="kw">await</span>;
         }
-
-        <span class="prelude-val">Ok</span>(())
     }
 }
 
@@ -5938,27 +5948,17 @@
 ///
 /// These includes the waker coordination required to support [`AsyncUdpSocket::try_send`]
 /// and [`quinn::UdpPoller::poll_writable`].
-///
-/// Note that this implementation has several bugs in them, but they have existed for rather
-/// a while:
-///
-/// - There can be multiple senders, which all have to be woken if they were blocked.  But
-///   only the last sender to install the waker is unblocked.
-///
-/// - poll_writable may return blocking when it doesn't need to.  Leaving the sender stuck
-///   until another recv is called (which hopefully would happen soon given that the channel
-///   is probably still rather full, but still).
-</span><span class="kw">fn </span>relay_datagram_sender() -&gt; (
+</span><span class="kw">fn </span>relay_datagram_send_channel() -&gt; (
     RelayDatagramSendChannelSender,
     RelayDatagramSendChannelReceiver,
 ) {
     <span class="kw">let </span>(sender, receiver) = mpsc::channel(<span class="number">256</span>);
-    <span class="kw">let </span>waker = Arc::new(AtomicWaker::new());
+    <span class="kw">let </span>wakers = Arc::new(std::sync::Mutex::new(Vec::new()));
     <span class="kw">let </span>tx = RelayDatagramSendChannelSender {
         sender,
-        waker: waker.clone(),
+        wakers: wakers.clone(),
     };
-    <span class="kw">let </span>rx = RelayDatagramSendChannelReceiver { receiver, waker };
+    <span class="kw">let </span>rx = RelayDatagramSendChannelReceiver { receiver, wakers };
     (tx, rx)
 }
 
@@ -5969,7 +5969,7 @@
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">struct </span>RelayDatagramSendChannelSender {
     sender: mpsc::Sender&lt;RelaySendItem&gt;,
-    waker: Arc&lt;AtomicWaker&gt;,
+    wakers: Arc&lt;std::sync::Mutex&lt;Vec&lt;Waker&gt;&gt;&gt;,
 }
 
 <span class="kw">impl </span>RelayDatagramSendChannelSender {
@@ -5983,8 +5983,18 @@
     <span class="kw">fn </span>poll_writable(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
         <span class="kw">match </span><span class="self">self</span>.sender.capacity() {
             <span class="number">0 </span>=&gt; {
-                <span class="self">self</span>.waker.register(cx.waker());
-                Poll::Pending
+                <span class="kw">let </span><span class="kw-2">mut </span>wakers = <span class="self">self</span>.wakers.lock().expect(<span class="string">"poisoned"</span>);
+                <span class="kw">if </span>!wakers.iter().any(|waker| waker.will_wake(cx.waker())) {
+                    wakers.push(cx.waker().clone());
+                }
+                drop(wakers);
+                <span class="kw">if </span><span class="self">self</span>.sender.capacity() != <span class="number">0 </span>{
+                    <span class="comment">// We "risk" a spurious wake-up in this case, but rather that
+                    // than potentially skipping a receive.
+                    </span>Poll::Ready(<span class="prelude-val">Ok</span>(()))
+                } <span class="kw">else </span>{
+                    Poll::Pending
+                }
             }
             <span class="kw">_ </span>=&gt; Poll::Ready(<span class="prelude-val">Ok</span>(())),
         }
@@ -5998,13 +6008,14 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>RelayDatagramSendChannelReceiver {
     receiver: mpsc::Receiver&lt;RelaySendItem&gt;,
-    waker: Arc&lt;AtomicWaker&gt;,
+    wakers: Arc&lt;std::sync::Mutex&lt;Vec&lt;Waker&gt;&gt;&gt;,
 }
 
 <span class="kw">impl </span>RelayDatagramSendChannelReceiver {
     <span class="kw">async fn </span>recv(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;RelaySendItem&gt; {
         <span class="kw">let </span>item = <span class="self">self</span>.receiver.recv().<span class="kw">await</span>;
-        <span class="self">self</span>.waker.wake();
+        <span class="kw">let </span><span class="kw-2">mut </span>wakers = <span class="self">self</span>.wakers.lock().expect(<span class="string">"poisoned"</span>);
+        wakers.drain(..).for_each(Waker::wake);
         item
     }
 }
@@ -7607,8 +7618,8 @@
             <span class="macro">println!</span>(<span class="string">"closing endpoints"</span>);
             <span class="kw">let </span>msock1 = m1.endpoint.magic_sock();
             <span class="kw">let </span>msock2 = m2.endpoint.magic_sock();
-            m1.endpoint.close().<span class="kw">await</span><span class="question-mark">?</span>;
-            m2.endpoint.close().<span class="kw">await</span><span class="question-mark">?</span>;
+            m1.endpoint.close().<span class="kw">await</span>;
+            m2.endpoint.close().<span class="kw">await</span>;
 
             <span class="macro">assert!</span>(msock1.msock.is_closed());
             <span class="macro">assert!</span>(msock2.msock.is_closed());
@@ -8295,26 +8306,20 @@
         tasks.spawn({
             <span class="kw">let </span>queue = queue.clone();
             <span class="kw">async move </span>{
-                <span class="kw">let </span><span class="kw-2">mut </span>expected_msgs = <span class="macro">vec!</span>[<span class="bool-val">false</span>; capacity];
-
-                <span class="kw">while let </span><span class="prelude-val">Ok</span>(datagram) = tokio::time::timeout(
-                    Duration::from_millis(<span class="number">100</span>),
-                    futures_lite::future::poll_fn(|cx| {
+                <span class="kw">let </span><span class="kw-2">mut </span>expected_msgs: BTreeSet&lt;usize&gt; = (<span class="number">0</span>..capacity).collect();
+                <span class="kw">while </span>!expected_msgs.is_empty() {
+                    <span class="kw">let </span>datagram = futures_lite::future::poll_fn(|cx| {
                         queue.poll_recv(cx).map(|result| result.unwrap())
-                    }),
-                )
-                .<span class="kw">await
-                </span>{
+                    })
+                    .<span class="kw">await</span>;
+
                     <span class="kw">let </span>msg_num = usize::from_le_bytes(datagram.buf.as_ref().try_into().unwrap());
+                    <span class="macro">debug!</span>(<span class="string">"Received {msg_num}"</span>);
 
-                    <span class="kw">if </span>expected_msgs[msg_num] {
-                        <span class="macro">panic!</span>(<span class="string">"Received message number {msg_num} more than once (duplicated)"</span>);
+                    <span class="kw">if </span>!expected_msgs.remove(<span class="kw-2">&amp;</span>msg_num) {
+                        <span class="macro">panic!</span>(<span class="string">"Received message number {msg_num} twice or more, but expected it only exactly once."</span>);
                     }
-
-                    expected_msgs[msg_num] = <span class="bool-val">true</span>;
                 }
-
-                <span class="macro">assert!</span>(expected_msgs.into_iter().all(|is_set| is_set));
             }
         });
 
@@ -8323,6 +8328,7 @@
                 <span class="kw">let </span>queue = queue.clone();
                 <span class="kw">let </span>url = url.clone();
                 <span class="kw">async move </span>{
+                    <span class="macro">debug!</span>(<span class="string">"Sending {i}"</span>);
                     queue
                         .try_send(RelayRecvDatagram {
                             url,
@@ -8334,7 +8340,13 @@
             });
         }
 
-        tasks.join_all().<span class="kw">await</span>;
+        <span class="comment">// We expect all of this work to be done in 10 seconds max.
+        </span><span class="kw">if </span>tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tasks.join_all())
+            .<span class="kw">await
+            </span>.is_err()
+        {
+            <span class="macro">panic!</span>(<span class="string">"Timeout - not all messages between 0 and {capacity} received."</span>);
+        }
     }
 
     <span class="attr">#[tokio::test]

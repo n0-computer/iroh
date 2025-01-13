@@ -721,7 +721,7 @@
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
-<span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>futures_lite::FutureExt;
 <span class="kw">use </span>futures_sink::Sink;
@@ -1052,8 +1052,8 @@
                 </span><span class="self">self</span>.write_frame(Frame::Pong { data }).<span class="kw">await</span><span class="question-mark">?</span>;
                 <span class="macro">inc!</span>(Metrics, sent_pong);
             }
-            Frame::Health { .. } =&gt; {
-                <span class="macro">inc!</span>(Metrics, other_packets_recv);
+            Frame::Health { problem } =&gt; {
+                <span class="macro">bail!</span>(<span class="string">"server issue: {:?}"</span>, problem);
             }
             <span class="kw">_ </span>=&gt; {
                 <span class="macro">inc!</span>(Metrics, unknown_frames);
