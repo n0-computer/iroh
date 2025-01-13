@@ -20,7 +20,7 @@ use tracing::{debug, error, instrument, trace, warn, Instrument};
 use crate::{
     protos::{
         disco,
-        relay::{write_frame, Frame, PING_INTERVAL, PING_TIMEOUT},
+        relay::{write_frame, Frame, PING_INTERVAL},
     },
     server::{clients::Clients, metrics::Metrics, streams::RelayedStream, ClientRateLimit},
     PingTracker,
@@ -107,7 +107,7 @@ impl Client {
             node_id,
             connection_id,
             clients: clients.clone(),
-            ping_tracker: PingTracker::new(PING_TIMEOUT),
+            ping_tracker: PingTracker::default(),
         };
 
         // start io loop
@@ -592,7 +592,7 @@ mod tests {
             connection_id: 0,
             node_id,
             clients: clients.clone(),
-            ping_tracker: PingTracker::new(Duration::from_secs(5)),
+            ping_tracker: PingTracker::default(),
         };
 
         let done = CancellationToken::new();

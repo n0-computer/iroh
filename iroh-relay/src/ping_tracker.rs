@@ -2,6 +2,9 @@ use std::time::{Duration, Instant};
 
 use tracing::debug;
 
+/// Maximum time for a ping response in the relay protocol.
+pub const PING_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Tracks pings on a single relay connection.
 ///
 /// Only the last ping needs is useful, any previously sent ping is forgotten and ignored.
@@ -17,6 +20,12 @@ struct PingInner {
     deadline: Instant,
 }
 
+impl Default for PingTracker {
+    fn default() -> Self {
+        Self::new(PING_TIMEOUT)
+    }
+}
+
 impl PingTracker {
     /// Creates a new ping tracker, setting the ping timeout for pings.
     pub fn new(default_timeout: Duration) -> Self {
@@ -24,6 +33,11 @@ impl PingTracker {
             inner: None,
             default_timeout,
         }
+    }
+
+    /// Returns the current timeout set for pings.
+    pub fn default_timeout(&self) -> Duration {
+        self.default_timeout
     }
 
     /// Starts a new ping.

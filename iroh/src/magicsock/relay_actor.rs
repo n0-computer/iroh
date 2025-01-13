@@ -72,9 +72,6 @@ const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
 /// Maximum size a datagram payload is allowed to be.
 const MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PublicKey::LENGTH;
 
-/// Maximum time for a relay server to respond to a relay protocol ping.
-const PING_TIMEOUT: Duration = Duration::from_secs(5);
-
 /// Interval in which we ping the relay server to ensure the connection is alive.
 ///
 /// The default QUIC max_idle_timeout is 30s, so setting that to half this time gives some
@@ -440,7 +437,7 @@ impl ActiveRelayActor {
         let (mut client_stream, mut client_sink) = client.split();
 
         let mut state = ConnectedRelayState {
-            ping_tracker: PingTracker::new(PING_TIMEOUT),
+            ping_tracker: PingTracker::default(),
             nodes_present: BTreeSet::new(),
             last_packet_src: None,
             pong_pending: None,
@@ -557,7 +554,11 @@ impl ActiveRelayActor {
                         break Err(anyhow!("Client stream finished"));
                     };
                     match msg {
-                        Ok(msg) => self.handle_relay_msg(msg, &mut state),
+                        Ok(msg) => {
+                            self.handle_relay_msg(msg, &mut state);
+                            // reset the ping timer, we have just received a message
+                            ping_interval.reset();
+                        },
                         Err(err) => break Err(anyhow!("Client stream read error: {err:#}")),
                     }
                 }
@@ -641,9 +642,10 @@ impl ActiveRelayActor {
         state: &mut ConnectedRelayState,
         client_stream: &mut iroh_relay::client::ClientStream,
     ) -> Result<()> {
-        const SEND_TIMEOUT: Duration = Duration::from_secs(10); // TODO: what should this be?
+        // we use the same time as for our ping interval
+        let send_timeout = PING_INTERVAL;
 
-        let mut timeout = pin!(tokio::time::sleep(SEND_TIMEOUT));
+        let mut timeout = pin!(tokio::time::sleep(send_timeout));
         let mut sending_fut = pin!(sending_fut);
         loop {
             tokio::select! {
@@ -1516,7 +1518,7 @@ mod tests {
     #[tokio::test]
     async fn test_ping_tracker() {
         tokio::time::pause();
-        let mut tracker = PingTracker::new(PING_TIMEOUT);
+        let mut tracker = PingTracker::default();
 
         let ping0 = tracker.new_ping();
 
