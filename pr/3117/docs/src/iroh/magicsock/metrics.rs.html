@@ -182,7 +182,7 @@
     <span class="comment">// Data packets (non-disco)
     </span><span class="kw">pub </span>send_data: Counter,
     <span class="kw">pub </span>send_data_network_down: Counter,
-    <span class="kw">pub </span>send_pending: Counter,
+    <span class="kw">pub </span>send_would_block: Counter,
     <span class="kw">pub </span>recv_data_relay: Counter,
     <span class="kw">pub </span>recv_data_ipv4: Counter,
     <span class="kw">pub </span>recv_data_ipv6: Counter,
@@ -262,7 +262,7 @@
             <span class="comment">// Data packets (non-disco)
             </span>send_data: Counter::new(<span class="string">"send_data"</span>),
             send_data_network_down: Counter::new(<span class="string">"send_data_network_down"</span>),
-            send_pending: Counter::new(<span class="string">"send_data"</span>),
+            send_would_block: Counter::new(<span class="string">"send_data"</span>),
             recv_data_relay: Counter::new(<span class="string">"recv_data_relay"</span>),
             recv_data_ipv4: Counter::new(<span class="string">"recv_data_ipv4"</span>),
             recv_data_ipv6: Counter::new(<span class="string">"recv_data_ipv6"</span>),

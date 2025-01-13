@@ -4209,7 +4209,11 @@
 <a href="#4208" id="4208">4208</a>
 <a href="#4209" id="4209">4209</a>
 <a href="#4210" id="4210">4210</a>
-<a href="#4211" id="4211">4211</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4211" id="4211">4211</a>
+<a href="#4212" id="4212">4212</a>
+<a href="#4213" id="4213">4213</a>
+<a href="#4214" id="4214">4214</a>
+<a href="#4215" id="4215">4215</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4236,7 +4240,7 @@
         atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering},
         Arc, RwLock,
     },
-    task::{Context, Poll},
+    task::{Context, Poll, Waker},
     time::{Duration, Instant},
 };
 
@@ -4756,13 +4760,16 @@
                     .map(|err| err.kind() == io::ErrorKind::WouldBlock)
                     .unwrap_or_default();
 
-                <span class="kw">let </span>udp_path = udp_addr.is_some();
-                <span class="kw">let </span>relay_path = relay_url.is_some();
-                <span class="kw">let </span>has_path = udp_path || relay_path;
+                <span class="kw">let </span>would_block = <span class="kw">match </span>(<span class="kw-2">&amp;</span>udp_addr, <span class="kw-2">&amp;</span>relay_url) {
+                    (<span class="prelude-val">Some</span>(_udp), <span class="prelude-val">Some</span>(_relay)) =&gt; udp_pending &amp;&amp; relay_pending,
+                    (<span class="prelude-val">Some</span>(_udp), <span class="prelude-val">None</span>) =&gt; udp_pending,
+                    (<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(_relay)) =&gt; relay_pending,
+                    (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>) =&gt; <span class="bool-val">false</span>,
+                };
 
-                <span class="kw">if </span>(udp_pending || !udp_path) &amp;&amp; (relay_pending || !relay_path) &amp;&amp; has_path {
+                <span class="kw">if </span>would_block {
                     <span class="comment">// Handle backpressure.
-                    </span><span class="macro">inc!</span>(MagicsockMetrics, send_pending);
+                    </span><span class="macro">inc!</span>(MagicsockMetrics, send_would_block);
                     <span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::WouldBlock, <span class="string">"pending"</span>))
                 } <span class="kw">else </span>{
                     <span class="kw">if </span>relay_sent || udp_sent {
@@ -5766,7 +5773,7 @@
 
         <span class="kw">let </span>(actor_sender, actor_receiver) = mpsc::channel(<span class="number">256</span>);
         <span class="kw">let </span>(relay_actor_sender, relay_actor_receiver) = mpsc::channel(<span class="number">256</span>);
-        <span class="kw">let </span>(relay_datagram_send_tx, relay_datagram_send_rx) = relay_datagram_sender();
+        <span class="kw">let </span>(relay_datagram_send_tx, relay_datagram_send_rx) = relay_datagram_send_channel();
         <span class="kw">let </span>(udp_disco_sender, <span class="kw-2">mut </span>udp_disco_receiver) = mpsc::channel(<span class="number">256</span>);
 
         <span class="comment">// load the node data
@@ -5961,27 +5968,17 @@
 ///
 /// These includes the waker coordination required to support [`AsyncUdpSocket::try_send`]
 /// and [`quinn::UdpPoller::poll_writable`].
-///
-/// Note that this implementation has several bugs in them, but they have existed for rather
-/// a while:
-///
-/// - There can be multiple senders, which all have to be woken if they were blocked.  But
-///   only the last sender to install the waker is unblocked.
-///
-/// - poll_writable may return blocking when it doesn't need to.  Leaving the sender stuck
-///   until another recv is called (which hopefully would happen soon given that the channel
-///   is probably still rather full, but still).
-</span><span class="kw">fn </span>relay_datagram_sender() -&gt; (
+</span><span class="kw">fn </span>relay_datagram_send_channel() -&gt; (
     RelayDatagramSendChannelSender,
     RelayDatagramSendChannelReceiver,
 ) {
     <span class="kw">let </span>(sender, receiver) = mpsc::channel(<span class="number">256</span>);
-    <span class="kw">let </span>waker = Arc::new(AtomicWaker::new());
+    <span class="kw">let </span>wakers = Arc::new(std::sync::Mutex::new(Vec::new()));
     <span class="kw">let </span>tx = RelayDatagramSendChannelSender {
         sender,
-        waker: waker.clone(),
+        wakers: wakers.clone(),
     };
-    <span class="kw">let </span>rx = RelayDatagramSendChannelReceiver { receiver, waker };
+    <span class="kw">let </span>rx = RelayDatagramSendChannelReceiver { receiver, wakers };
     (tx, rx)
 }
 
@@ -5992,7 +5989,7 @@
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">struct </span>RelayDatagramSendChannelSender {
     sender: mpsc::Sender&lt;RelaySendItem&gt;,
-    waker: Arc&lt;AtomicWaker&gt;,
+    wakers: Arc&lt;std::sync::Mutex&lt;Vec&lt;Waker&gt;&gt;&gt;,
 }
 
 <span class="kw">impl </span>RelayDatagramSendChannelSender {
@@ -6006,8 +6003,18 @@
     <span class="kw">fn </span>poll_writable(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
         <span class="kw">match </span><span class="self">self</span>.sender.capacity() {
             <span class="number">0 </span>=&gt; {
-                <span class="self">self</span>.waker.register(cx.waker());
-                Poll::Pending
+                <span class="kw">let </span><span class="kw-2">mut </span>wakers = <span class="self">self</span>.wakers.lock().expect(<span class="string">"poisoned"</span>);
+                <span class="kw">if </span>!wakers.iter().any(|waker| waker.will_wake(cx.waker())) {
+                    wakers.push(cx.waker().clone());
+                }
+                drop(wakers);
+                <span class="kw">if </span><span class="self">self</span>.sender.capacity() != <span class="number">0 </span>{
+                    <span class="comment">// We "risk" a spurious wake-up in this case, but rather that
+                    // than potentially skipping a receive.
+                    </span>Poll::Ready(<span class="prelude-val">Ok</span>(()))
+                } <span class="kw">else </span>{
+                    Poll::Pending
+                }
             }
             <span class="kw">_ </span>=&gt; Poll::Ready(<span class="prelude-val">Ok</span>(())),
         }
@@ -6021,13 +6028,14 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>RelayDatagramSendChannelReceiver {
     receiver: mpsc::Receiver&lt;RelaySendItem&gt;,
-    waker: Arc&lt;AtomicWaker&gt;,
+    wakers: Arc&lt;std::sync::Mutex&lt;Vec&lt;Waker&gt;&gt;&gt;,
 }
 
 <span class="kw">impl </span>RelayDatagramSendChannelReceiver {
     <span class="kw">async fn </span>recv(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;RelaySendItem&gt; {
         <span class="kw">let </span>item = <span class="self">self</span>.receiver.recv().<span class="kw">await</span>;
-        <span class="self">self</span>.waker.wake();
+        <span class="kw">let </span><span class="kw-2">mut </span>wakers = <span class="self">self</span>.wakers.lock().expect(<span class="string">"poisoned"</span>);
+        wakers.drain(..).for_each(Waker::wake);
         item
     }
 }
