@@ -448,6 +448,7 @@ mod tests {
     use anyhow::Context;
     use iroh_base::SecretKey;
     use rand::Rng;
+    use testresult::TestResult;
     use tokio_util::task::AbortOnDropHandle;
 
     use super::*;
@@ -733,6 +734,21 @@ mod tests {
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect("time drift")
             .as_micros() as u64
+    }
+
+    #[tokio::test]
+    async fn test_arc_discovery() -> TestResult {
+        let discovery = Arc::new(EmptyDiscovery);
+
+        let _ep = Endpoint::builder()
+            .add_discovery({
+                let discovery = discovery.clone();
+                move |_| Some(discovery)
+            })
+            .bind()
+            .await?;
+
+        Ok(())
     }
 }
 

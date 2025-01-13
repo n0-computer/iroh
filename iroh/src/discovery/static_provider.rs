@@ -12,7 +12,7 @@ use iroh_base::{NodeAddr, NodeId, RelayUrl};
 use super::{Discovery, DiscoveryItem};
 
 /// A static discovery implementation that allows providing info for nodes manually.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 #[repr(transparent)]
 pub struct StaticProvider {
     nodes: Arc<RwLock<BTreeMap<NodeId, NodeInfo>>>,
@@ -168,5 +168,49 @@ impl Discovery for StaticProvider {
             }
             None => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::Context;
+    use iroh_base::SecretKey;
+    use testresult::TestResult;
+
+    use super::*;
+    use crate::Endpoint;
+
+    #[tokio::test]
+    async fn test_basic() -> TestResult {
+        let discovery = StaticProvider::new();
+
+        let _ep = Endpoint::builder()
+            .add_discovery({
+                let discovery = discovery.clone();
+                move |_| Some(discovery)
+            })
+            .bind()
+            .await?;
+
+        let key = SecretKey::from_bytes(&[0u8; 32]);
+        let addr = NodeAddr {
+            node_id: key.public(),
+            relay_url: Some("https://example.com".parse()?),
+            direct_addresses: Default::default(),
+        };
+        discovery.add_node_addr(addr.clone());
+
+        let back = discovery.get_node_addr(key.public()).context("no addr")?;
+
+        assert_eq!(back, addr);
+
+        let removed = discovery
+            .remove_node_addr(key.public())
+            .context("nothing removed")?;
+        assert_eq!(removed, addr);
+        let res = discovery.get_node_addr(key.public());
+        assert!(res.is_none());
+
+        Ok(())
     }
 }
