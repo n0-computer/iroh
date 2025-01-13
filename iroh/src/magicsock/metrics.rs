@@ -20,7 +20,7 @@ pub struct Metrics {
     // Data packets (non-disco)
     pub send_data: Counter,
     pub send_data_network_down: Counter,
-    pub send_pending: Counter,
+    pub send_would_block: Counter,
     pub recv_data_relay: Counter,
     pub recv_data_ipv4: Counter,
     pub recv_data_ipv6: Counter,
@@ -100,7 +100,7 @@ impl Default for Metrics {
             // Data packets (non-disco)
             send_data: Counter::new("send_data"),
             send_data_network_down: Counter::new("send_data_network_down"),
-            send_pending: Counter::new("send_data"),
+            send_would_block: Counter::new("send_data"),
             recv_data_relay: Counter::new("recv_data_relay"),
             recv_data_ipv4: Counter::new("recv_data_ipv4"),
             recv_data_ipv6: Counter::new("recv_data_ipv6"),
