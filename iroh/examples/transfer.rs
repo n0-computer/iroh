@@ -36,7 +36,7 @@ enum Commands {
         #[clap(long)]
         pkarr_relay_url: Option<String>,
         #[clap(long)]
-        dns_url: Option<String>,
+        dns_origin_domain: Option<String>,
     },
     Fetch {
         #[arg(index = 1)]
@@ -48,7 +48,7 @@ enum Commands {
         #[clap(long)]
         pkarr_relay_url: Option<String>,
         #[clap(long)]
-        dns_url: Option<String>,
+        dns_origin_domain: Option<String>,
     },
 }
 
@@ -63,14 +63,14 @@ async fn main() -> anyhow::Result<()> {
             relay_url,
             relay_only,
             pkarr_relay_url,
-            dns_url,
+            dns_origin_domain,
         } => {
             provide(
                 *size,
                 relay_url.clone(),
                 *relay_only,
                 pkarr_relay_url.clone(),
-                dns_url.clone(),
+                dns_origin_domain.clone(),
             )
             .await?
         }
@@ -79,14 +79,14 @@ async fn main() -> anyhow::Result<()> {
             relay_url,
             relay_only,
             pkarr_relay_url,
-            dns_url,
+            dns_origin_domain,
         } => {
             fetch(
                 ticket,
                 relay_url.clone(),
                 *relay_only,
                 pkarr_relay_url.clone(),
-                dns_url.clone(),
+                dns_origin_domain.clone(),
             )
             .await?
         }
@@ -100,7 +100,7 @@ async fn provide(
     relay_url: Option<String>,
     relay_only: bool,
     pkarr_relay_url: Option<String>,
-    dns_url: Option<String>,
+    dns_origin_domain: Option<String>,
 ) -> anyhow::Result<()> {
     let secret_key = SecretKey::generate(rand::rngs::OsRng);
     let relay_mode = match relay_url {
@@ -119,7 +119,9 @@ async fn provide(
     let mut endpoint_builder = Endpoint::builder();
 
     if let Some(pkarr_relay_url) = pkarr_relay_url {
-        let pkarr_relay_url = pkarr_relay_url.parse().expect("url is valid");
+        let pkarr_relay_url = pkarr_relay_url
+            .parse()
+            .context("Invalid pkarr URL provided")?;
 
         let pkarr_discovery_closure = move |secret_key: &SecretKey| {
             let pkarr_d = PkarrPublisher::new(secret_key.clone(), pkarr_relay_url);
@@ -128,8 +130,8 @@ async fn provide(
         endpoint_builder = endpoint_builder.add_discovery(pkarr_discovery_closure);
     }
 
-    if let Some(dns_url) = dns_url {
-        let dns_discovery_closure = move |_: &SecretKey| Some(DnsDiscovery::new(dns_url.clone()));
+    if let Some(dns_origin_domain) = dns_origin_domain {
+        let dns_discovery_closure = move |_: &SecretKey| Some(DnsDiscovery::new(dns_origin_domain));
 
         endpoint_builder = endpoint_builder.add_discovery(dns_discovery_closure);
     }
@@ -221,7 +223,7 @@ async fn fetch(
     relay_url: Option<String>,
     relay_only: bool,
     pkarr_relay_url: Option<String>,
-    dns_url: Option<String>,
+    dns_origin_domain: Option<String>,
 ) -> anyhow::Result<()> {
     let ticket: NodeTicket = ticket.parse()?;
     let secret_key = SecretKey::generate(rand::rngs::OsRng);
@@ -240,7 +242,9 @@ async fn fetch(
     let mut endpoint_builder = Endpoint::builder();
 
     if let Some(pkarr_relay_url) = pkarr_relay_url {
-        let pkarr_relay_url = pkarr_relay_url.parse().expect("url is valid");
+        let pkarr_relay_url = pkarr_relay_url
+            .parse()
+            .context("Invalid pkarr URL provided")?;
 
         let pkarr_discovery_closure = move |secret_key: &SecretKey| {
             let pkarr_d = PkarrPublisher::new(secret_key.clone(), pkarr_relay_url);
@@ -249,8 +253,8 @@ async fn fetch(
         endpoint_builder = endpoint_builder.add_discovery(pkarr_discovery_closure);
     }
 
-    if let Some(dns_url) = dns_url {
-        let dns_discovery_closure = move |_: &SecretKey| Some(DnsDiscovery::new(dns_url.clone()));
+    if let Some(dns_origin_domain) = dns_origin_domain {
+        let dns_discovery_closure = move |_: &SecretKey| Some(DnsDiscovery::new(dns_origin_domain));
 
         endpoint_builder = endpoint_builder.add_discovery(dns_discovery_closure);
     }
