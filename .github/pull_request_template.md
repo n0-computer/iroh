@@ -12,7 +12,9 @@
 
 ## Change checklist
 
-- [ ] Self-review.
-- [ ] Documentation updates following the [style guide](https://rust-lang.github.io/rfcs/1574-more-api-documentation-conventions.html#appendix-a-full-conventions-text), if relevant.
-- [ ] Tests if relevant.
-- [ ] All breaking changes documented.
+Please make sure to consider all of these:
+
+- Self-review.
+- Documentation updates following the [style guide](https://rust-lang.github.io/rfcs/1574-more-api-documentation-conventions.html#appendix-a-full-conventions-text).
+- Tests.
+- Document breaking changes.
