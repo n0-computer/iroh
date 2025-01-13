@@ -8,6 +8,7 @@ use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use indicatif::HumanBytes;
 use iroh::{
+    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
     endpoint::{ConnectionError, PathSelection},
     Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
@@ -32,6 +33,10 @@ enum Commands {
         relay_url: Option<String>,
         #[clap(long, default_value = "false")]
         relay_only: bool,
+        #[clap(long)]
+        pkarr_relay_url: Option<String>,
+        #[clap(long)]
+        dns_origin_domain: Option<String>,
     },
     Fetch {
         #[arg(index = 1)]
@@ -40,6 +45,10 @@ enum Commands {
         relay_url: Option<String>,
         #[clap(long, default_value = "false")]
         relay_only: bool,
+        #[clap(long)]
+        pkarr_relay_url: Option<String>,
+        #[clap(long)]
+        dns_origin_domain: Option<String>,
     },
 }
 
@@ -53,18 +62,46 @@ async fn main() -> anyhow::Result<()> {
             size,
             relay_url,
             relay_only,
-        } => provide(*size, relay_url.clone(), *relay_only).await?,
+            pkarr_relay_url,
+            dns_origin_domain,
+        } => {
+            provide(
+                *size,
+                relay_url.clone(),
+                *relay_only,
+                pkarr_relay_url.clone(),
+                dns_origin_domain.clone(),
+            )
+            .await?
+        }
         Commands::Fetch {
             ticket,
             relay_url,
             relay_only,
-        } => fetch(ticket, relay_url.clone(), *relay_only).await?,
+            pkarr_relay_url,
+            dns_origin_domain,
+        } => {
+            fetch(
+                ticket,
+                relay_url.clone(),
+                *relay_only,
+                pkarr_relay_url.clone(),
+                dns_origin_domain.clone(),
+            )
+            .await?
+        }
     }
 
     Ok(())
 }
 
-async fn provide(size: u64, relay_url: Option<String>, relay_only: bool) -> anyhow::Result<()> {
+async fn provide(
+    size: u64,
+    relay_url: Option<String>,
+    relay_only: bool,
+    pkarr_relay_url: Option<String>,
+    dns_origin_domain: Option<String>,
+) -> anyhow::Result<()> {
     let secret_key = SecretKey::generate(rand::rngs::OsRng);
     let relay_mode = match relay_url {
         Some(relay_url) => {
@@ -78,7 +115,28 @@ async fn provide(size: u64, relay_url: Option<String>, relay_only: bool) -> anyh
         true => PathSelection::RelayOnly,
         false => PathSelection::default(),
     };
-    let endpoint = Endpoint::builder()
+
+    let mut endpoint_builder = Endpoint::builder();
+
+    if let Some(pkarr_relay_url) = pkarr_relay_url {
+        let pkarr_relay_url = pkarr_relay_url
+            .parse()
+            .context("Invalid pkarr URL provided")?;
+
+        let pkarr_discovery_closure = move |secret_key: &SecretKey| {
+            let pkarr_d = PkarrPublisher::new(secret_key.clone(), pkarr_relay_url);
+            Some(pkarr_d)
+        };
+        endpoint_builder = endpoint_builder.add_discovery(pkarr_discovery_closure);
+    }
+
+    if let Some(dns_origin_domain) = dns_origin_domain {
+        let dns_discovery_closure = move |_: &SecretKey| Some(DnsDiscovery::new(dns_origin_domain));
+
+        endpoint_builder = endpoint_builder.add_discovery(dns_discovery_closure);
+    }
+
+    let endpoint = endpoint_builder
         .secret_key(secret_key)
         .alpns(vec![TRANSFER_ALPN.to_vec()])
         .relay_mode(relay_mode)
@@ -160,7 +218,13 @@ async fn provide(size: u64, relay_url: Option<String>, relay_only: bool) -> anyh
     Ok(())
 }
 
-async fn fetch(ticket: &str, relay_url: Option<String>, relay_only: bool) -> anyhow::Result<()> {
+async fn fetch(
+    ticket: &str,
+    relay_url: Option<String>,
+    relay_only: bool,
+    pkarr_relay_url: Option<String>,
+    dns_origin_domain: Option<String>,
+) -> anyhow::Result<()> {
     let ticket: NodeTicket = ticket.parse()?;
     let secret_key = SecretKey::generate(rand::rngs::OsRng);
     let relay_mode = match relay_url {
@@ -175,7 +239,27 @@ async fn fetch(ticket: &str, relay_url: Option<String>, relay_only: bool) -> any
         true => PathSelection::RelayOnly,
         false => PathSelection::default(),
     };
-    let endpoint = Endpoint::builder()
+    let mut endpoint_builder = Endpoint::builder();
+
+    if let Some(pkarr_relay_url) = pkarr_relay_url {
+        let pkarr_relay_url = pkarr_relay_url
+            .parse()
+            .context("Invalid pkarr URL provided")?;
+
+        let pkarr_discovery_closure = move |secret_key: &SecretKey| {
+            let pkarr_d = PkarrPublisher::new(secret_key.clone(), pkarr_relay_url);
+            Some(pkarr_d)
+        };
+        endpoint_builder = endpoint_builder.add_discovery(pkarr_discovery_closure);
+    }
+
+    if let Some(dns_origin_domain) = dns_origin_domain {
+        let dns_discovery_closure = move |_: &SecretKey| Some(DnsDiscovery::new(dns_origin_domain));
+
+        endpoint_builder = endpoint_builder.add_discovery(dns_discovery_closure);
+    }
+
+    let endpoint = endpoint_builder
         .secret_key(secret_key)
         .alpns(vec![TRANSFER_ALPN.to_vec()])
         .relay_mode(relay_mode)
