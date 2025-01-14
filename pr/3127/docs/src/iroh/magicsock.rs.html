@@ -4203,7 +4203,9 @@
 <a href="#4202" id="4202">4202</a>
 <a href="#4203" id="4203">4203</a>
 <a href="#4204" id="4204">4204</a>
-<a href="#4205" id="4205">4205</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4205" id="4205">4205</a>
+<a href="#4206" id="4206">4206</a>
+<a href="#4207" id="4207">4207</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -5419,7 +5421,9 @@
                 <span class="self">self</span>.try_send_disco_message_udp(addr, dst_key, <span class="kw-2">&amp;</span>msg)<span class="question-mark">?</span>;
             }
             SendAddr::Relay(<span class="kw-2">ref </span>url) =&gt; {
-                <span class="self">self</span>.send_disco_message_relay(url, dst_key, msg);
+                <span class="kw">if </span>!<span class="self">self</span>.send_disco_message_relay(url, dst_key, msg) {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::Other, <span class="string">"Relay channel full"</span>));
+                }
             }
         }
         <span class="prelude-val">Ok</span>(())

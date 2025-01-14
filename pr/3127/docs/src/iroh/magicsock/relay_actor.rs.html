@@ -1544,7 +1544,9 @@
 <a href="#1543" id="1543">1543</a>
 <a href="#1544" id="1544">1544</a>
 <a href="#1545" id="1545">1545</a>
-<a href="#1546" id="1546">1546</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1546" id="1546">1546</a>
+<a href="#1547" id="1547">1547</a>
+<a href="#1548" id="1548">1548</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1642,7 +1644,9 @@
 /// When the [`ActiveRelayActor`] is not connected it can not deliver datagrams.  However it
 /// will still receive datagrams to send from the [`RelayActor`].  If connecting takes
 /// longer than this timeout datagrams will be dropped.
-</span><span class="kw">const </span>UNDELIVERABLE_DATAGRAM_TIMEOUT: Duration = Duration::from_millis(<span class="number">400</span>);
+///
+/// This value is set to 3 times the QUIC initial Probe Timeout (PTO).
+</span><span class="kw">const </span>UNDELIVERABLE_DATAGRAM_TIMEOUT: Duration = Duration::from_secs(<span class="number">3</span>);
 
 <span class="doccomment">/// An actor which handles the connection to a single relay server.
 ///
