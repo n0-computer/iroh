@@ -23,10 +23,10 @@ futures-buffered = "0.2.8"
 futures-lite = "2.3"
 hickory-resolver = "=0.25.0-alpha.4"
 iroh-base = { version = "0.30.0", path = "../iroh-base", default-features = false, features = ["relay"] }
-iroh-metrics = { version = "0.30.0", default-features = false }
+iroh-metrics = { version = "0.31", default-features = false }
 iroh-relay = { version = "0.30", path = "../iroh-relay" }
-netwatch = { version = "0.2.0" }
-portmapper = { version = "0.3.0", default-features = false }
+netwatch = { version = "0.3" }
+portmapper = { version = "0.3", default-features = false }
 quinn = { package = "iroh-quinn", version = "0.12.0" }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false }

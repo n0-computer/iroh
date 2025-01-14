@@ -29,7 +29,7 @@ governor = "0.6.3" #needs new release of tower_governor for 0.7.0
 hickory-server = { version = "=0.25.0-alpha.4", features = ["dns-over-rustls", "dns-over-https-rustls"] }
 http = "1.0.0"
 humantime-serde = "1.1.1"
-iroh-metrics = { version = "0.30.0" }
+iroh-metrics = { version = "0.31.0" }
 lru = "0.12.3"
 pkarr = { version = "2.3.1", features = [ "async", "relay", "dht"], default-features = false }
 rcgen = "0.13"
