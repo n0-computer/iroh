@@ -1214,7 +1214,9 @@ impl MagicSock {
                 self.try_send_disco_message_udp(addr, dst_key, &msg)?;
             }
             SendAddr::Relay(ref url) => {
-                self.send_disco_message_relay(url, dst_key, msg);
+                if !self.send_disco_message_relay(url, dst_key, msg) {
+                    return Err(io::Error::new(io::ErrorKind::Other, "Relay channel full"));
+                }
             }
         }
         Ok(())
