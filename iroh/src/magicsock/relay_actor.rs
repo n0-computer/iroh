@@ -96,7 +96,9 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// When the [`ActiveRelayActor`] is not connected it can not deliver datagrams.  However it
 /// will still receive datagrams to send from the [`RelayActor`].  If connecting takes
 /// longer than this timeout datagrams will be dropped.
-const UNDELIVERABLE_DATAGRAM_TIMEOUT: Duration = Duration::from_millis(400);
+///
+/// This value is set to 3 times the QUIC initial Probe Timeout (PTO).
+const UNDELIVERABLE_DATAGRAM_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// An actor which handles the connection to a single relay server.
 ///
