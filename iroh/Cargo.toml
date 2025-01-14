@@ -48,13 +48,13 @@ igd-next = { version = "0.15.1", features = ["aio_tokio"] }
 iroh-base = { version = "0.30.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 iroh-relay = { version = "0.30", path = "../iroh-relay", default-features = false }
 netdev = "0.31.0"
-netwatch = { version = "0.2.0" }
+netwatch = { version = "0.3" }
 pin-project = "1"
 pkarr = { version = "2", default-features = false, features = [
     "async",
     "relay",
 ] }
-portmapper = { version = "0.3.0", default-features = false }
+portmapper = { version = "0.3", default-features = false }
 quinn = { package = "iroh-quinn", version = "0.12.0" }
 quinn-proto = { package = "iroh-quinn-proto", version = "0.12.0" }
 quinn-udp = { package = "iroh-quinn-udp", version = "0.5.5" }
