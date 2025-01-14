@@ -2039,7 +2039,7 @@ dependencies = [
  "igd-next",
  "indicatif",
  "iroh-base",
- "iroh-metrics",
+ "iroh-metrics 0.31.0",
  "iroh-net-report",
  "iroh-quinn",
  "iroh-quinn-proto",
@@ -2113,7 +2113,7 @@ dependencies = [
  "futures-lite",
  "hdrhistogram",
  "iroh",
- "iroh-metrics",
+ "iroh-metrics 0.31.0",
  "iroh-quinn",
  "rcgen",
  "rustls",
@@ -2143,7 +2143,7 @@ dependencies = [
  "http 1.2.0",
  "humantime-serde",
  "iroh",
- "iroh-metrics",
+ "iroh-metrics 0.30.0",
  "iroh-test 0.30.0",
  "lru",
  "pkarr",
@@ -2194,6 +2194,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-metrics"
+version = "0.31.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "571d177e20f0848a643a2c0f662be0e08968f8743b0776941f83a2152b87a180"
+dependencies = [
+ "erased_set",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "prometheus-client",
+ "reqwest",
+ "serde",
+ "struct_iterable",
+ "thiserror 2.0.11",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "iroh-net-report"
 version = "0.30.0"
 dependencies = [
@@ -2204,7 +2223,7 @@ dependencies = [
  "futures-lite",
  "hickory-resolver",
  "iroh-base",
- "iroh-metrics",
+ "iroh-metrics 0.31.0",
  "iroh-quinn",
  "iroh-relay",
  "iroh-test 0.30.0",
@@ -2295,7 +2314,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "iroh-base",
- "iroh-metrics",
+ "iroh-metrics 0.31.0",
  "iroh-quinn",
  "iroh-quinn-proto",
  "iroh-test 0.30.0",
@@ -2727,8 +2746,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "304c0c1b348830b016039f2cb1c5ac8217084a78875262c5594925dd08aa77fc"
+source = "git+https://github.com/n0-computer/net-tools.git?branch=main#f58cd8b3ddb0a2609dcae3e490c96e659a57c4f3"
 dependencies = [
  "anyhow",
  "atomic-waker",
@@ -3202,8 +3220,7 @@ checksum = "280dc24453071f1b63954171985a0b0d30058d287960968b9b2aca264c8d4ee6"
 [[package]]
 name = "portmapper"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e6b2058e5b2c829b7dcc62bb94ec223e2fdf07cad157b09ab05c5520af6f5b6"
+source = "git+https://github.com/n0-computer/net-tools.git?branch=main#f58cd8b3ddb0a2609dcae3e490c96e659a57c4f3"
 dependencies = [
  "anyhow",
  "base64",
@@ -3212,7 +3229,7 @@ dependencies = [
  "futures-lite",
  "futures-util",
  "igd-next",
- "iroh-metrics",
+ "iroh-metrics 0.31.0",
  "libc",
  "netwatch",
  "num_enum",
