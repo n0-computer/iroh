@@ -19,7 +19,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use hickory_resolver::TokioResolver as DnsResolver;
-use iroh_base::{IpMappedAddrs, RelayUrl};
+use iroh_base::RelayUrl;
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
 use iroh_relay::{protos::stun, RelayMap};
@@ -33,10 +33,12 @@ use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 mod defaults;
 mod dns;
+mod ip_mapped_addrs;
 mod metrics;
 mod ping;
 mod reportgen;
 
+pub use ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddrs, MAPPED_ADDR_PORT};
 pub use metrics::Metrics;
 use reportgen::ProbeProto;
 pub use reportgen::QuicConfig;

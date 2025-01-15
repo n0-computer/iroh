@@ -7,8 +7,6 @@
 #[cfg(feature = "ticket")]
 pub mod ticket;
 
-#[cfg(feature = "relay")]
-mod ip_mapped_addrs;
 #[cfg(feature = "key")]
 mod key;
 #[cfg(feature = "key")]
@@ -16,8 +14,6 @@ mod node_addr;
 #[cfg(feature = "relay")]
 mod relay_url;
 
-#[cfg(feature = "relay")]
-pub use self::ip_mapped_addrs::{IpMappedAddr, IpMappedAddrs, MAPPED_ADDR_PORT};
 #[cfg(feature = "key")]
 pub use self::key::{KeyParsingError, NodeId, PublicKey, SecretKey, Signature};
 #[cfg(feature = "key")]

@@ -27,7 +27,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use hickory_resolver::TokioResolver as DnsResolver;
-use iroh_base::{IpMappedAddrs, RelayUrl};
+use iroh_base::RelayUrl;
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
 use iroh_relay::{
@@ -51,6 +51,7 @@ use crate::Metrics;
 use crate::{
     self as net_report,
     dns::ResolverExt,
+    ip_mapped_addrs::IpMappedAddrs,
     ping::{PingError, Pinger},
     Report,
 };

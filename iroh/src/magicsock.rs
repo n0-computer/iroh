@@ -33,9 +33,7 @@ use atomic_waker::AtomicWaker;
 use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
 use data_encoding::HEXLOWER;
-use iroh_base::{
-    IpMappedAddr, IpMappedAddrs, NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey, MAPPED_ADDR_PORT,
-};
+use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::{protos::stun, RelayMap};
 use n0_future::{
@@ -46,7 +44,7 @@ use n0_future::{
     time::{Duration, Instant},
     FutureExt, StreamExt,
 };
-use net_report::QuicConfig;
+use net_report::{IpMappedAddr, IpMappedAddrs, QuicConfig, MAPPED_ADDR_PORT};
 use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 use quinn::{AsyncUdpSocket, ServerConfig};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
