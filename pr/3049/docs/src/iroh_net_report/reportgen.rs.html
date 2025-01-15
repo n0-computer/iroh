@@ -1668,7 +1668,8 @@
 <a href="#1667" id="1667">1667</a>
 <a href="#1668" id="1668">1668</a>
 <a href="#1669" id="1669">1669</a>
-<a href="#1670" id="1670">1670</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1670" id="1670">1670</a>
+<a href="#1671" id="1671">1671</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1698,7 +1699,7 @@
 
 <span class="kw">use </span>anyhow::{anyhow, bail, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>hickory_resolver::TokioResolver <span class="kw">as </span>DnsResolver;
-<span class="kw">use </span>iroh_base::{IpMappedAddrs, RelayUrl};
+<span class="kw">use </span>iroh_base::RelayUrl;
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>iroh_relay::{
@@ -1723,6 +1724,7 @@
 <span class="kw">use crate</span>::{
     <span class="self">self </span><span class="kw">as </span>net_report,
     dns::ResolverExt,
+    ip_mapped_addrs::IpMappedAddrs,
     ping::{PingError, Pinger},
     Report,
 };

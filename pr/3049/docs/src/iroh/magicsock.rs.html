@@ -4397,12 +4397,10 @@
 <span class="kw">use </span>data_encoding::HEXLOWER;
 <span class="kw">use </span>futures_lite::{FutureExt, StreamExt};
 <span class="kw">use </span>futures_util::{stream::BoxStream, task::AtomicWaker};
-<span class="kw">use </span>iroh_base::{
-    IpMappedAddr, IpMappedAddrs, NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey, MAPPED_ADDR_PORT,
-};
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
-<span class="kw">use </span>net_report::QuicConfig;
+<span class="kw">use </span>net_report::{IpMappedAddr, IpMappedAddrs, QuicConfig, MAPPED_ADDR_PORT};
 <span class="kw">use </span>netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 <span class="kw">use </span>quinn::{AsyncUdpSocket, ServerConfig};
 <span class="kw">use </span>rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -5640,7 +5638,9 @@
                 <span class="self">self</span>.try_send_disco_message_udp(addr, dst_key, <span class="kw-2">&amp;</span>msg)<span class="question-mark">?</span>;
             }
             SendAddr::Relay(<span class="kw-2">ref </span>url) =&gt; {
-                <span class="self">self</span>.send_disco_message_relay(url, dst_key, msg);
+                <span class="kw">if </span>!<span class="self">self</span>.send_disco_message_relay(url, dst_key, msg) {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::Other, <span class="string">"Relay channel full"</span>));
+                }
             }
         }
         <span class="prelude-val">Ok</span>(())
