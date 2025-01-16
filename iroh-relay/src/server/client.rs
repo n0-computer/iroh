@@ -221,9 +221,7 @@ impl Actor {
             }
         }
 
-        self.clients
-            .unregister(self.connection_id, self.node_id)
-            .await;
+        self.clients.unregister(self.connection_id, self.node_id);
     }
 
     async fn run_inner(&mut self, done: CancellationToken) -> Result<()> {

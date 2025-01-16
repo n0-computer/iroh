@@ -71,7 +71,7 @@ impl Clients {
     /// peer is gone from the network.
     ///
     /// Must be passed a matching connection_id.
-    pub(super) async fn unregister(&self, connection_id: u64, node_id: NodeId) {
+    pub(super) fn unregister(&self, connection_id: u64, node_id: NodeId) {
         trace!(
             node_id = node_id.fmt_short(),
             connection_id,
@@ -102,7 +102,6 @@ impl Clients {
                     }
                 }
             }
-            client.shutdown().await;
         }
     }
 
