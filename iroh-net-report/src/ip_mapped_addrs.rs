@@ -21,10 +21,10 @@ pub struct IpMappedAddrError(String);
 /// about.
 ///
 /// And in our QUIC-facing socket APIs like iroh's `AsyncUdpSocket` it
-/// comes in as the inner [`SocketAddr`], in those interfaces we have to be careful to do
+/// comes in as the inner [`Ipv6Addr`], in those interfaces we have to be careful to do
 /// the conversion to this type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub struct IpMappedAddr(pub(crate) SocketAddr);
+pub struct IpMappedAddr(Ipv6Addr);
 
 /// Counter to always generate unique addresses for `NodeIdMappedAddr`.
 static IP_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -49,37 +49,29 @@ impl IpMappedAddr {
         let counter = IP_ADDR_COUNTER.fetch_add(1, Ordering::Relaxed);
         addr[8..16].copy_from_slice(&counter.to_be_bytes());
 
-        Self(SocketAddr::new(
-            IpAddr::V6(Ipv6Addr::from(addr)),
-            MAPPED_ADDR_PORT,
-        ))
+        Self(Ipv6Addr::from(addr))
     }
 
-    /// Return the underlying [`SocketAddr`].
+    /// Return a [`SocketAddr`] from the [`IpMappedAddr`].
     pub fn addr(&self) -> SocketAddr {
-        self.0
+        SocketAddr::new(IpAddr::from(self.0), MAPPED_ADDR_PORT)
     }
 }
 
-impl TryFrom<SocketAddr> for IpMappedAddr {
+impl TryFrom<Ipv6Addr> for IpMappedAddr {
     type Error = IpMappedAddrError;
 
-    fn try_from(value: SocketAddr) -> std::result::Result<Self, Self::Error> {
-        match value {
-            SocketAddr::V4(_) => Err(IpMappedAddrError(String::from(
-                "IpMappedAddrs are all Ipv6, found Ipv4 address",
-            ))),
-            SocketAddr::V6(addr) => {
-                if addr.port() != MAPPED_ADDR_PORT {
-                    return Err(IpMappedAddrError(String::from("not mapped addr")));
-                }
-                let octets = addr.ip().octets();
-                if octets[6..8] != IpMappedAddr::ADDR_SUBNET {
-                    return Err(IpMappedAddrError(String::from("not an IpMappedAddr")));
-                }
-                Ok(IpMappedAddr(value))
-            }
+    fn try_from(value: Ipv6Addr) -> std::result::Result<Self, Self::Error> {
+        let octets = value.octets();
+        if octets[0] == Self::ADDR_PREFIXL
+            && octets[1..6] == Self::ADDR_GLOBAL_ID
+            && octets[6..8] == Self::ADDR_SUBNET
+        {
+            return Ok(Self(value));
         }
+        Err(IpMappedAddrError(String::from(
+            "{value:?} is not an IpMappedAddr",
+        )))
     }
 }
 

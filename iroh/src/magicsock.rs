@@ -463,180 +463,188 @@ impl MagicSock {
                 "connection closed",
             ));
         }
-        trace!(
-            dst = %transmit.destination,
-            src = ?transmit.src_ip,
-            len = %transmit.contents.len(),
-            "sending",
-        );
-
-        // Check if the destination address is a NodeIdMappedAddr. If so,
-        // get the node's relay address and best direct address, as well
-        // as any pings that need to be sent for hole-punching purposes.
-        if let Ok(dest) = NodeIdMappedAddr::try_from(transmit.destination) {
-            let mut transmit = transmit.clone();
-            match self
-                .node_map
-                .get_send_addrs(dest, self.ipv6_reported.load(Ordering::Relaxed))
-            {
-                Some((node_id, udp_addr, relay_url, msgs)) => {
-                    let mut pings_sent = false;
-                    // If we have pings to send, we *have* to send them out first.
-                    if !msgs.is_empty() {
-                        if let Err(err) = self.try_send_ping_actions(msgs) {
-                            warn!(
-                                node = %node_id.fmt_short(),
-                                "failed to handle ping actions: {err:#}",
-                            );
-                        }
-                        pings_sent = true;
-                    }
-
-                    let mut udp_sent = false;
-                    let mut udp_error = None;
-                    let mut relay_sent = false;
-                    let mut relay_error = None;
-
-                    // send udp
-                    if let Some(addr) = udp_addr {
-                        // rewrite target address
-                        transmit.destination = addr;
-                        match self.try_send_udp(addr, &transmit) {
-                            Ok(()) => {
-                                trace!(node = %node_id.fmt_short(), dst = %addr,
-                                   "sent transmit over UDP");
-                                udp_sent = true;
-                            }
-                            Err(err) => {
-                                // No need to print "WouldBlock" errors to the console
-                                if err.kind() != io::ErrorKind::WouldBlock {
-                                    warn!(
-                                        node = %node_id.fmt_short(),
-                                        dst = %addr,
-                                        "failed to send udp: {err:#}"
-                                    );
-                                }
-                                udp_error = Some(err);
-                            }
-                        }
-                    }
-
-                    // send relay
-                    if let Some(ref relay_url) = relay_url {
-                        match self.try_send_relay(relay_url, node_id, split_packets(&transmit)) {
-                            Ok(()) => {
-                                relay_sent = true;
-                            }
-                            Err(err) => {
-                                relay_error = Some(err);
-                            }
-                        }
-                    }
-
-                    let udp_pending = udp_error
-                        .as_ref()
-                        .map(|err| err.kind() == io::ErrorKind::WouldBlock)
-                        .unwrap_or_default();
-                    let relay_pending = relay_error
-                        .as_ref()
-                        .map(|err| err.kind() == io::ErrorKind::WouldBlock)
-                        .unwrap_or_default();
-                    if udp_pending && relay_pending {
-                        // Handle backpressure.
-                        return Err(io::Error::new(io::ErrorKind::WouldBlock, "pending"));
-                    } else {
-                        if relay_sent || udp_sent {
-                            trace!(
-                                node = %node_id.fmt_short(),
-                                send_udp = ?udp_addr,
-                                send_relay = ?relay_url,
-                                "sent transmit",
-                            );
-                        } else if !pings_sent {
-                            // Returning Ok here means we let QUIC handle a timeout for a lost
-                            // packet, same would happen if we returned any errors.  The
-                            // philosophy of quinn-udp is that a UDP connection could come back
-                            // at any time so these errors should be treated as transient and
-                            // are just timeouts.  Hence we opt for returning Ok.  See
-                            // test_try_send_no_udp_addr_or_relay_url to explore this further.
-                            debug!(
-                                node = %node_id.fmt_short(),
-                                "no UDP or relay paths available for node, voiding transmit",
-                            );
-                            // We log this as debug instead of error, because this is a
-                            // situation that comes up under normal operation. If this were an
-                            // error log, it would unnecessarily pollute logs.
-                            // This situation happens essentially when `pings_sent` is false,
-                            // `relay_url` is `None`, so `relay_sent` is false, and the UDP
-                            // path is blocking, so `udp_sent` is false and `udp_pending` is
-                            // true.
-                            // Alternatively returning a WouldBlock error here would
-                            // potentially needlessly block sending on the relay path for the
-                            // next datagram.
-                        }
-                        return Ok(());
-                    }
-                }
-                None => {
-                    error!(%dest, "no NodeState for mapped address, voiding transmit");
-                    // Returning Ok here means we let QUIC timeout.  Returning WouldBlock
-                    // triggers a hot loop.  Returning an error would immediately fail a
-                    // connection.  The philosophy of quinn-udp is that a UDP connection could
-                    // come back at any time or missing should be transient so chooses to let
-                    // these kind of errors time out.  See test_try_send_no_send_addr to try
-                    // this out.
-                    return Ok(());
-                }
-            }
-        }
-        // Check if the destination address is an IpMappedAddr, which we use for
-        // quic address discovery, whose endpoints don't have `NodeId`s.
-        // If so, send the packet over udp.
-        else if let Ok(dest) = IpMappedAddr::try_from(transmit.destination) {
-            let mut transmit = transmit.clone();
-
-            // Get the socket addr
-            if let Some(addr) = self.ip_mapped_addrs.get_ip_addr(&dest) {
-                // rewrite target address
-                transmit.destination = addr;
-                // send udp
-                match self.try_send_udp(addr, &transmit) {
-                    Ok(()) => {
-                        trace!(dst = %addr,
-                               "sent IpMapped transmit over UDP");
-                    }
-                    Err(err) => {
-                        // No need to print "WouldBlock" errors to the console
-                        if err.kind() == io::ErrorKind::WouldBlock {
-                            return Err(io::Error::new(io::ErrorKind::WouldBlock, "pending"));
-                        } else {
-                            warn!(
-                                dst = %addr,
-                                "failed to send IpMapped message over udp: {err:#}"
-                            );
-                        }
-                    }
-                }
-                return Ok(());
-            } else {
-                error!(%dest, "no socketaddr for mapped address, voiding transmit");
+        match MappedAddr::from_socket_addr(transmit.destination) {
+            Err(e) => {
+                error!(%transmit.destination, "Cannot convert to a mapped address: {e}, voiding transmit.");
                 // Returning Ok here means we let QUIC timeout.
                 // Returning an error would immediately fail a connection.
                 // The philosophy of quinn-udp is that a UDP connection could
                 // come back at any time or missing should be transient so chooses to let
                 // these kind of errors time out.  See test_try_send_no_send_addr to try
                 // this out.
-                return Ok(());
+                Ok(())
             }
-        } else {
-            error!(%transmit.destination, "unrecognized address, voiding transmit");
-            // Returning Ok here means we let QUIC timeout.
-            // Returning an error would immediately fail a connection.
-            // The philosophy of quinn-udp is that a UDP connection could
-            // come back at any time or missing should be transient so chooses to let
-            // these kind of errors time out.  See test_try_send_no_send_addr to try
-            // this out.
-            return Ok(());
+            Ok(MappedAddr::NodeId(dest)) => {
+                trace!(
+                    dst = %dest,
+                    src = ?transmit.src_ip,
+                    len = %transmit.contents.len(),
+                    "sending",
+                );
+
+                // Get the node's relay address and best direct address, as well
+                // as any pings that need to be sent for hole-punching purposes.
+                let mut transmit = transmit.clone();
+                match self
+                    .node_map
+                    .get_send_addrs(dest, self.ipv6_reported.load(Ordering::Relaxed))
+                {
+                    Some((node_id, udp_addr, relay_url, msgs)) => {
+                        let mut pings_sent = false;
+                        // If we have pings to send, we *have* to send them out first.
+                        if !msgs.is_empty() {
+                            if let Err(err) = self.try_send_ping_actions(msgs) {
+                                warn!(
+                                    node = %node_id.fmt_short(),
+                                    "failed to handle ping actions: {err:#}",
+                                );
+                            }
+                            pings_sent = true;
+                        }
+
+                        let mut udp_sent = false;
+                        let mut udp_error = None;
+                        let mut relay_sent = false;
+                        let mut relay_error = None;
+
+                        // send udp
+                        if let Some(addr) = udp_addr {
+                            // rewrite target address
+                            transmit.destination = addr;
+                            match self.try_send_udp(addr, &transmit) {
+                                Ok(()) => {
+                                    trace!(node = %node_id.fmt_short(), dst = %addr,
+                                   "sent transmit over UDP");
+                                    udp_sent = true;
+                                }
+                                Err(err) => {
+                                    // No need to print "WouldBlock" errors to the console
+                                    if err.kind() != io::ErrorKind::WouldBlock {
+                                        warn!(
+                                            node = %node_id.fmt_short(),
+                                            dst = %addr,
+                                            "failed to send udp: {err:#}"
+                                        );
+                                    }
+                                    udp_error = Some(err);
+                                }
+                            }
+                        }
+
+                        // send relay
+                        if let Some(ref relay_url) = relay_url {
+                            match self.try_send_relay(relay_url, node_id, split_packets(&transmit))
+                            {
+                                Ok(()) => {
+                                    relay_sent = true;
+                                }
+                                Err(err) => {
+                                    relay_error = Some(err);
+                                }
+                            }
+                        }
+
+                        let udp_pending = udp_error
+                            .as_ref()
+                            .map(|err| err.kind() == io::ErrorKind::WouldBlock)
+                            .unwrap_or_default();
+                        let relay_pending = relay_error
+                            .as_ref()
+                            .map(|err| err.kind() == io::ErrorKind::WouldBlock)
+                            .unwrap_or_default();
+                        if udp_pending && relay_pending {
+                            // Handle backpressure.
+                            return Err(io::Error::new(io::ErrorKind::WouldBlock, "pending"));
+                        } else {
+                            if relay_sent || udp_sent {
+                                trace!(
+                                    node = %node_id.fmt_short(),
+                                    send_udp = ?udp_addr,
+                                    send_relay = ?relay_url,
+                                    "sent transmit",
+                                );
+                            } else if !pings_sent {
+                                // Returning Ok here means we let QUIC handle a timeout for a lost
+                                // packet, same would happen if we returned any errors.  The
+                                // philosophy of quinn-udp is that a UDP connection could come back
+                                // at any time so these errors should be treated as transient and
+                                // are just timeouts.  Hence we opt for returning Ok.  See
+                                // test_try_send_no_udp_addr_or_relay_url to explore this further.
+                                debug!(
+                                    node = %node_id.fmt_short(),
+                                    "no UDP or relay paths available for node, voiding transmit",
+                                );
+                                // We log this as debug instead of error, because this is a
+                                // situation that comes up under normal operation. If this were an
+                                // error log, it would unnecessarily pollute logs.
+                                // This situation happens essentially when `pings_sent` is false,
+                                // `relay_url` is `None`, so `relay_sent` is false, and the UDP
+                                // path is blocking, so `udp_sent` is false and `udp_pending` is
+                                // true.
+                                // Alternatively returning a WouldBlock error here would
+                                // potentially needlessly block sending on the relay path for the
+                                // next datagram.
+                            }
+                            return Ok(());
+                        }
+                    }
+                    None => {
+                        error!(%dest, "no NodeState for mapped address, dropping transmit");
+                        // Returning Ok here means we let QUIC timeout.  Returning WouldBlock
+                        // triggers a hot loop.  Returning an error would immediately fail a
+                        // connection.  The philosophy of quinn-udp is that a UDP connection could
+                        // come back at any time or missing should be transient so chooses to let
+                        // these kind of errors time out.  See test_try_send_no_send_addr to try
+                        // this out.
+                        return Ok(());
+                    }
+                }
+            }
+            Ok(MappedAddr::Ip(dest)) => {
+                trace!(
+                    dst = %dest,
+                    src = ?transmit.src_ip,
+                    len = %transmit.contents.len(),
+                    "sending",
+                );
+
+                // Check if this is a known IpMappedAddr, and if so, send over UDP
+                let mut transmit = transmit.clone();
+
+                // Get the socket addr
+                if let Some(addr) = self.ip_mapped_addrs.get_ip_addr(&dest) {
+                    // rewrite target address
+                    transmit.destination = addr;
+                    // send udp
+                    match self.try_send_udp(addr, &transmit) {
+                        Ok(()) => {
+                            trace!(dst = %addr,
+                               "sent IpMapped transmit over UDP");
+                        }
+                        Err(err) => {
+                            // No need to print "WouldBlock" errors to the console
+                            if err.kind() == io::ErrorKind::WouldBlock {
+                                return Err(io::Error::new(io::ErrorKind::WouldBlock, "pending"));
+                            } else {
+                                warn!(
+                                    dst = %addr,
+                                    "failed to send IpMapped message over udp: {err:#}"
+                                );
+                            }
+                        }
+                    }
+                    return Ok(());
+                } else {
+                    error!(%dest, "unknown mapped address, dropping transmit");
+                    // Returning Ok here means we let QUIC timeout.
+                    // Returning an error would immediately fail a connection.
+                    // The philosophy of quinn-udp is that a UDP connection could
+                    // come back at any time or missing should be transient so chooses to let
+                    // these kind of errors time out.  See test_try_send_no_send_addr to try
+                    // this out.
+                    return Ok(());
+                }
+            }
         }
     }
 
@@ -1464,6 +1472,31 @@ impl MagicSock {
     fn publish_my_addr(&self) {
         if let Some(ref discovery) = self.discovery {
             discovery.publish(self.my_relay().as_ref(), &self.direct_addrs.sockaddrs());
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum MappedAddr {
+    NodeId(NodeIdMappedAddr),
+    Ip(IpMappedAddr),
+}
+
+impl MappedAddr {
+    fn from_socket_addr(addr: SocketAddr) -> Result<Self> {
+        match addr.ip() {
+            IpAddr::V4(_) => {
+                anyhow::bail!("Ipv4 addresses are not MappedAddrs")
+            }
+            IpAddr::V6(addr) => {
+                if let Ok(node_id_mapped_addr) = NodeIdMappedAddr::try_from(addr) {
+                    Ok(MappedAddr::NodeId(node_id_mapped_addr))
+                } else if let Ok(ip_mapped_addr) = IpMappedAddr::try_from(addr) {
+                    Ok(MappedAddr::Ip(ip_mapped_addr))
+                } else {
+                    anyhow::bail!("address does not conform to MappedAddr specifications")
+                }
+            }
         }
     }
 }
@@ -2913,25 +2946,21 @@ impl NodeIdMappedAddr {
     }
 }
 
-impl TryFrom<SocketAddr> for NodeIdMappedAddr {
+impl TryFrom<Ipv6Addr> for NodeIdMappedAddr {
     type Error = anyhow::Error;
 
-    fn try_from(value: SocketAddr) -> std::result::Result<Self, Self::Error> {
-        match value {
-            SocketAddr::V4(_) => anyhow::bail!("NodeIdMappedAddrs are all Ipv6, addr {value:?}"),
-            SocketAddr::V6(addr) => {
-                if addr.port() != MAPPED_ADDR_PORT {
-                    anyhow::bail!("not a mapped addr");
-                }
-                let octets = addr.ip().octets();
-                if octets[6..8] != NodeIdMappedAddr::ADDR_SUBNET {
-                    anyhow::bail!("not a NodeIdMappedAddr");
-                }
-                Ok(NodeIdMappedAddr(value))
-            }
+    fn try_from(value: Ipv6Addr) -> std::result::Result<Self, Self::Error> {
+        let octets = value.octets();
+        if octets[0] == Self::ADDR_PREFIXL
+            && octets[1..6] == Self::ADDR_GLOBAL_ID
+            && octets[6..8] == Self::ADDR_SUBNET
+        {
+            return Ok(Self(SocketAddr::new(IpAddr::from(value), MAPPED_ADDR_PORT)));
         }
+        anyhow::bail!("{value:?} is not a NodeIdMappedAddr");
     }
 }
+
 impl std::fmt::Display for NodeIdMappedAddr {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "NodeIdMappedAddr({})", self.0)
