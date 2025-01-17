@@ -886,7 +886,7 @@ impl MagicSock {
                                 "UDP recv QUIC address discovery packets",
                             );
                             quic_packets_total += quic_datagram_count;
-                            meta.addr = ip_mapped_addr.addr();
+                            meta.addr = ip_mapped_addr.socket_addr();
                         } else {
                             warn!(
                                 src = ?meta.addr,
@@ -908,7 +908,7 @@ impl MagicSock {
                             "UDP recv quic packets",
                         );
                         quic_packets_total += quic_datagram_count;
-                        meta.addr = quic_mapped_addr.0;
+                        meta.addr = quic_mapped_addr.socket_addr();
                     }
                 }
             } else {
@@ -1022,7 +1022,7 @@ impl MagicSock {
         let meta = quinn_udp::RecvMeta {
             len: dm.buf.len(),
             stride: dm.buf.len(),
-            addr: quic_mapped_addr.0,
+            addr: quic_mapped_addr.socket_addr(),
             dst_ip,
             ecn: None,
         };
@@ -2911,10 +2911,10 @@ fn split_packets(transmit: &quinn_udp::Transmit) -> RelayContents {
 /// it is given a new fake address.  This is the type of that address.
 ///
 /// It is but a newtype.  And in our QUIC-facing socket APIs like [`AsyncUdpSocket`] it
-/// comes in as the inner [`SocketAddr`], in those interfaces we have to be careful to do
+/// comes in as the inner [`Ipv6Addr`], in those interfaces we have to be careful to do
 /// the conversion to this type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct NodeIdMappedAddr(pub(crate) SocketAddr);
+pub(crate) struct NodeIdMappedAddr(Ipv6Addr);
 
 /// Counter to always generate unique addresses for [`NodeIdMappedAddr`].
 static NODE_ID_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -2939,10 +2939,12 @@ impl NodeIdMappedAddr {
         let counter = NODE_ID_ADDR_COUNTER.fetch_add(1, Ordering::Relaxed);
         addr[8..16].copy_from_slice(&counter.to_be_bytes());
 
-        Self(SocketAddr::new(
-            IpAddr::V6(Ipv6Addr::from(addr)),
-            MAPPED_ADDR_PORT,
-        ))
+        Self(Ipv6Addr::from(addr))
+    }
+
+    /// Return the [`SocketAddr`] from the [`NodeIdMappedAddr`]
+    pub(crate) fn socket_addr(&self) -> SocketAddr {
+        SocketAddr::new(IpAddr::from(self.0), MAPPED_ADDR_PORT)
     }
 }
 
@@ -2955,7 +2957,7 @@ impl TryFrom<Ipv6Addr> for NodeIdMappedAddr {
             && octets[1..6] == Self::ADDR_GLOBAL_ID
             && octets[6..8] == Self::ADDR_SUBNET
         {
-            return Ok(Self(SocketAddr::new(IpAddr::from(value), MAPPED_ADDR_PORT)));
+            return Ok(Self(value));
         }
         anyhow::bail!("{value:?} is not a NodeIdMappedAddr");
     }
@@ -4061,7 +4063,7 @@ mod tests {
     async fn magicsock_connect_with_transport_config(
         ep: &quinn::Endpoint,
         ep_secret_key: SecretKey,
-        addr: NodeIdMappedAddr,
+        mapped_addr: NodeIdMappedAddr,
         node_id: NodeId,
         transport_config: Arc<quinn::TransportConfig>,
     ) -> Result<quinn::Connection> {
@@ -4070,7 +4072,7 @@ mod tests {
             tls::make_client_config(&ep_secret_key, Some(node_id), alpns, true)?;
         let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
-        let connect = ep.connect_with(client_config, addr.0, "localhost")?;
+        let connect = ep.connect_with(client_config, mapped_addr.socket_addr(), "localhost")?;
         let connection = connect.await?;
         Ok(connection)
     }

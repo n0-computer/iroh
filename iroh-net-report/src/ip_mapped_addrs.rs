@@ -53,7 +53,7 @@ impl IpMappedAddr {
     }
 
     /// Return a [`SocketAddr`] from the [`IpMappedAddr`].
-    pub fn addr(&self) -> SocketAddr {
+    pub fn socket_addr(&self) -> SocketAddr {
         SocketAddr::new(IpAddr::from(self.0), MAPPED_ADDR_PORT)
     }
 }
@@ -83,44 +83,47 @@ impl std::fmt::Display for IpMappedAddr {
 
 #[derive(Debug, Clone)]
 /// A Map of [`IpMappedAddrs`] to [`SocketAddr`]
-pub struct IpMappedAddrs(Arc<std::sync::Mutex<BTreeMap<IpMappedAddr, SocketAddr>>>);
+// TODO(ramfox): before this is ready to be used beyond QAD, we should add
+// mechanisms for keeping track of "aliveness" and pruning address, as we do
+// with the `NodeMap`
+pub struct IpMappedAddrs(Arc<std::sync::Mutex<Inner>>);
+
+#[derive(Debug, Default)]
+pub struct Inner {
+    by_mapped_addr: BTreeMap<IpMappedAddr, SocketAddr>,
+    by_socket_addr: BTreeMap<SocketAddr, IpMappedAddr>,
+}
 
 impl IpMappedAddrs {
     /// Create an empty [`IpMappedAddrs`]
     pub fn new() -> Self {
-        Self(Arc::new(std::sync::Mutex::new(BTreeMap::new())))
+        Self(Arc::new(std::sync::Mutex::new(Inner::default())))
     }
 
     /// Add a [`SocketAddr`] to the map and the generated [`IpMappedAddr`] it is now associated with back.
     ///
     /// If this [`SocketAddr`] already exists in the map, it returns its associated [`IpMappedAddr`].
     pub fn add(&self, ip_addr: SocketAddr) -> IpMappedAddr {
-        let mut map = self.0.lock().expect("poisoned");
-        for (mapped_addr, ip) in map.iter() {
-            if ip == &ip_addr {
-                return *mapped_addr;
-            }
+        let mut inner = self.0.lock().expect("poisoned");
+        if let Some(mapped_addr) = inner.by_socket_addr.get(&ip_addr) {
+            return *mapped_addr;
         }
         let ip_mapped_addr = IpMappedAddr::generate();
-        map.insert(ip_mapped_addr, ip_addr);
+        inner.by_mapped_addr.insert(ip_mapped_addr, ip_addr);
+        inner.by_socket_addr.insert(ip_addr, ip_mapped_addr);
         ip_mapped_addr
     }
 
     /// Get the [`IpMappedAddr`] for the given [`SocketAddr`].
     pub fn get_mapped_addr(&self, ip_addr: &SocketAddr) -> Option<IpMappedAddr> {
-        let map = self.0.lock().expect("poisoned");
-        for (mapped_addr, ip) in map.iter() {
-            if ip == ip_addr {
-                return Some(*mapped_addr);
-            }
-        }
-        None
+        let inner = self.0.lock().expect("poisoned");
+        inner.by_socket_addr.get(ip_addr).copied()
     }
 
     /// Get the [`SocketAddr`] for the given [`IpMappedAddr`].
     pub fn get_ip_addr(&self, mapped_addr: &IpMappedAddr) -> Option<SocketAddr> {
-        let map = self.0.lock().expect("poisoned");
-        map.get(mapped_addr).copied()
+        let inner = self.0.lock().expect("poisoned");
+        inner.by_mapped_addr.get(mapped_addr).copied()
     }
 }
 

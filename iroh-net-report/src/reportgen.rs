@@ -1147,7 +1147,7 @@ async fn relay_lookup_ipv6_staggered(
 
 fn maybe_to_mapped_addr(ip_mapped_addrs: Option<IpMappedAddrs>, addr: SocketAddr) -> SocketAddr {
     if let Some(ip_mapped_addrs) = ip_mapped_addrs.as_ref() {
-        return ip_mapped_addrs.add(addr).addr();
+        return ip_mapped_addrs.add(addr).socket_addr();
     }
     addr
 }

@@ -677,10 +677,10 @@ impl Endpoint {
         };
 
         // TODO: We'd eventually want to replace "localhost" with something that makes more sense.
-        let connect = self
-            .msock
-            .endpoint()
-            .connect_with(client_config, addr.0, "localhost")?;
+        let connect =
+            self.msock
+                .endpoint()
+                .connect_with(client_config, addr.socket_addr(), "localhost")?;
 
         let connection = connect
             .await
