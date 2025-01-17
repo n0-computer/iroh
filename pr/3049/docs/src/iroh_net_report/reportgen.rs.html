@@ -2759,7 +2759,7 @@
 
 <span class="doccomment">/// Do a staggared ipv4 DNS lookup based on [`RelayNode`]
 ///
-/// `port` is combined with the resolved [`Ipv4Addr`] to return a [`SocketAddr`]
+/// `port` is combined with the resolved [`std::net::Ipv4Addr`] to return a [`SocketAddr`]
 </span><span class="kw">async fn </span>relay_lookup_ipv4_staggered(
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddrs&gt;,
@@ -2790,7 +2790,7 @@
 
 <span class="doccomment">/// Do a staggared ipv6 DNS lookup based on [`RelayNode`]
 ///
-/// `port` is combined with the resolved [`Ipv6Addr`] to return a [`SocketAddr`]
+/// `port` is combined with the resolved [`std::net::Ipv6Addr`] to return a [`SocketAddr`]
 </span><span class="kw">async fn </span>relay_lookup_ipv6_staggered(
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddrs&gt;,
