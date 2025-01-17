@@ -2544,10 +2544,10 @@
         };
 
         <span class="comment">// TODO: We'd eventually want to replace "localhost" with something that makes more sense.
-        </span><span class="kw">let </span>connect = <span class="self">self
-            </span>.msock
-            .endpoint()
-            .connect_with(client_config, addr.<span class="number">0</span>, <span class="string">"localhost"</span>)<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>connect =
+            <span class="self">self</span>.msock
+                .endpoint()
+                .connect_with(client_config, addr.socket_addr(), <span class="string">"localhost"</span>)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>connection = connect
             .<span class="kw">await

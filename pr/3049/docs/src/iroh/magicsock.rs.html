@@ -4360,7 +4360,38 @@
 <a href="#4359" id="4359">4359</a>
 <a href="#4360" id="4360">4360</a>
 <a href="#4361" id="4361">4361</a>
-<a href="#4362" id="4362">4362</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4362" id="4362">4362</a>
+<a href="#4363" id="4363">4363</a>
+<a href="#4364" id="4364">4364</a>
+<a href="#4365" id="4365">4365</a>
+<a href="#4366" id="4366">4366</a>
+<a href="#4367" id="4367">4367</a>
+<a href="#4368" id="4368">4368</a>
+<a href="#4369" id="4369">4369</a>
+<a href="#4370" id="4370">4370</a>
+<a href="#4371" id="4371">4371</a>
+<a href="#4372" id="4372">4372</a>
+<a href="#4373" id="4373">4373</a>
+<a href="#4374" id="4374">4374</a>
+<a href="#4375" id="4375">4375</a>
+<a href="#4376" id="4376">4376</a>
+<a href="#4377" id="4377">4377</a>
+<a href="#4378" id="4378">4378</a>
+<a href="#4379" id="4379">4379</a>
+<a href="#4380" id="4380">4380</a>
+<a href="#4381" id="4381">4381</a>
+<a href="#4382" id="4382">4382</a>
+<a href="#4383" id="4383">4383</a>
+<a href="#4384" id="4384">4384</a>
+<a href="#4385" id="4385">4385</a>
+<a href="#4386" id="4386">4386</a>
+<a href="#4387" id="4387">4387</a>
+<a href="#4388" id="4388">4388</a>
+<a href="#4389" id="4389">4389</a>
+<a href="#4390" id="4390">4390</a>
+<a href="#4391" id="4391">4391</a>
+<a href="#4392" id="4392">4392</a>
+<a href="#4393" id="4393">4393</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4825,180 +4856,188 @@
                 <span class="string">"connection closed"</span>,
             ));
         }
-        <span class="macro">trace!</span>(
-            dst = %transmit.destination,
-            src = <span class="question-mark">?</span>transmit.src_ip,
-            len = %transmit.contents.len(),
-            <span class="string">"sending"</span>,
-        );
-
-        <span class="comment">// Check if the destination address is a NodeIdMappedAddr. If so,
-        // get the node's relay address and best direct address, as well
-        // as any pings that need to be sent for hole-punching purposes.
-        </span><span class="kw">if let </span><span class="prelude-val">Ok</span>(dest) = NodeIdMappedAddr::try_from(transmit.destination) {
-            <span class="kw">let </span><span class="kw-2">mut </span>transmit = transmit.clone();
-            <span class="kw">match </span><span class="self">self
-                </span>.node_map
-                .get_send_addrs(dest, <span class="self">self</span>.ipv6_reported.load(Ordering::Relaxed))
-            {
-                <span class="prelude-val">Some</span>((node_id, udp_addr, relay_url, msgs)) =&gt; {
-                    <span class="kw">let </span><span class="kw-2">mut </span>pings_sent = <span class="bool-val">false</span>;
-                    <span class="comment">// If we have pings to send, we *have* to send them out first.
-                    </span><span class="kw">if </span>!msgs.is_empty() {
-                        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.try_send_ping_actions(msgs) {
-                            <span class="macro">warn!</span>(
-                                node = %node_id.fmt_short(),
-                                <span class="string">"failed to handle ping actions: {err:#}"</span>,
-                            );
-                        }
-                        pings_sent = <span class="bool-val">true</span>;
-                    }
-
-                    <span class="kw">let </span><span class="kw-2">mut </span>udp_sent = <span class="bool-val">false</span>;
-                    <span class="kw">let </span><span class="kw-2">mut </span>udp_error = <span class="prelude-val">None</span>;
-                    <span class="kw">let </span><span class="kw-2">mut </span>relay_sent = <span class="bool-val">false</span>;
-                    <span class="kw">let </span><span class="kw-2">mut </span>relay_error = <span class="prelude-val">None</span>;
-
-                    <span class="comment">// send udp
-                    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = udp_addr {
-                        <span class="comment">// rewrite target address
-                        </span>transmit.destination = addr;
-                        <span class="kw">match </span><span class="self">self</span>.try_send_udp(addr, <span class="kw-2">&amp;</span>transmit) {
-                            <span class="prelude-val">Ok</span>(()) =&gt; {
-                                <span class="macro">trace!</span>(node = %node_id.fmt_short(), dst = %addr,
-                                   <span class="string">"sent transmit over UDP"</span>);
-                                udp_sent = <span class="bool-val">true</span>;
-                            }
-                            <span class="prelude-val">Err</span>(err) =&gt; {
-                                <span class="comment">// No need to print "WouldBlock" errors to the console
-                                </span><span class="kw">if </span>err.kind() != io::ErrorKind::WouldBlock {
-                                    <span class="macro">warn!</span>(
-                                        node = %node_id.fmt_short(),
-                                        dst = %addr,
-                                        <span class="string">"failed to send udp: {err:#}"
-                                    </span>);
-                                }
-                                udp_error = <span class="prelude-val">Some</span>(err);
-                            }
-                        }
-                    }
-
-                    <span class="comment">// send relay
-                    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>relay_url) = relay_url {
-                        <span class="kw">match </span><span class="self">self</span>.try_send_relay(relay_url, node_id, split_packets(<span class="kw-2">&amp;</span>transmit)) {
-                            <span class="prelude-val">Ok</span>(()) =&gt; {
-                                relay_sent = <span class="bool-val">true</span>;
-                            }
-                            <span class="prelude-val">Err</span>(err) =&gt; {
-                                relay_error = <span class="prelude-val">Some</span>(err);
-                            }
-                        }
-                    }
-
-                    <span class="kw">let </span>udp_pending = udp_error
-                        .as_ref()
-                        .map(|err| err.kind() == io::ErrorKind::WouldBlock)
-                        .unwrap_or_default();
-                    <span class="kw">let </span>relay_pending = relay_error
-                        .as_ref()
-                        .map(|err| err.kind() == io::ErrorKind::WouldBlock)
-                        .unwrap_or_default();
-                    <span class="kw">if </span>udp_pending &amp;&amp; relay_pending {
-                        <span class="comment">// Handle backpressure.
-                        </span><span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::WouldBlock, <span class="string">"pending"</span>));
-                    } <span class="kw">else </span>{
-                        <span class="kw">if </span>relay_sent || udp_sent {
-                            <span class="macro">trace!</span>(
-                                node = %node_id.fmt_short(),
-                                send_udp = <span class="question-mark">?</span>udp_addr,
-                                send_relay = <span class="question-mark">?</span>relay_url,
-                                <span class="string">"sent transmit"</span>,
-                            );
-                        } <span class="kw">else if </span>!pings_sent {
-                            <span class="comment">// Returning Ok here means we let QUIC handle a timeout for a lost
-                            // packet, same would happen if we returned any errors.  The
-                            // philosophy of quinn-udp is that a UDP connection could come back
-                            // at any time so these errors should be treated as transient and
-                            // are just timeouts.  Hence we opt for returning Ok.  See
-                            // test_try_send_no_udp_addr_or_relay_url to explore this further.
-                            </span><span class="macro">debug!</span>(
-                                node = %node_id.fmt_short(),
-                                <span class="string">"no UDP or relay paths available for node, voiding transmit"</span>,
-                            );
-                            <span class="comment">// We log this as debug instead of error, because this is a
-                            // situation that comes up under normal operation. If this were an
-                            // error log, it would unnecessarily pollute logs.
-                            // This situation happens essentially when `pings_sent` is false,
-                            // `relay_url` is `None`, so `relay_sent` is false, and the UDP
-                            // path is blocking, so `udp_sent` is false and `udp_pending` is
-                            // true.
-                            // Alternatively returning a WouldBlock error here would
-                            // potentially needlessly block sending on the relay path for the
-                            // next datagram.
-                        </span>}
-                        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-                    }
-                }
-                <span class="prelude-val">None </span>=&gt; {
-                    <span class="macro">error!</span>(%dest, <span class="string">"no NodeState for mapped address, voiding transmit"</span>);
-                    <span class="comment">// Returning Ok here means we let QUIC timeout.  Returning WouldBlock
-                    // triggers a hot loop.  Returning an error would immediately fail a
-                    // connection.  The philosophy of quinn-udp is that a UDP connection could
-                    // come back at any time or missing should be transient so chooses to let
-                    // these kind of errors time out.  See test_try_send_no_send_addr to try
-                    // this out.
-                    </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
-                }
-            }
-        }
-        <span class="comment">// Check if the destination address is an IpMappedAddr, which we use for
-        // quic address discovery, whose endpoints don't have `NodeId`s.
-        // If so, send the packet over udp.
-        </span><span class="kw">else if let </span><span class="prelude-val">Ok</span>(dest) = IpMappedAddr::try_from(transmit.destination) {
-            <span class="kw">let </span><span class="kw-2">mut </span>transmit = transmit.clone();
-
-            <span class="comment">// Get the socket addr
-            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = <span class="self">self</span>.ip_mapped_addrs.get_ip_addr(<span class="kw-2">&amp;</span>dest) {
-                <span class="comment">// rewrite target address
-                </span>transmit.destination = addr;
-                <span class="comment">// send udp
-                </span><span class="kw">match </span><span class="self">self</span>.try_send_udp(addr, <span class="kw-2">&amp;</span>transmit) {
-                    <span class="prelude-val">Ok</span>(()) =&gt; {
-                        <span class="macro">trace!</span>(dst = %addr,
-                               <span class="string">"sent IpMapped transmit over UDP"</span>);
-                    }
-                    <span class="prelude-val">Err</span>(err) =&gt; {
-                        <span class="comment">// No need to print "WouldBlock" errors to the console
-                        </span><span class="kw">if </span>err.kind() == io::ErrorKind::WouldBlock {
-                            <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::WouldBlock, <span class="string">"pending"</span>));
-                        } <span class="kw">else </span>{
-                            <span class="macro">warn!</span>(
-                                dst = %addr,
-                                <span class="string">"failed to send IpMapped message over udp: {err:#}"
-                            </span>);
-                        }
-                    }
-                }
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-            } <span class="kw">else </span>{
-                <span class="macro">error!</span>(%dest, <span class="string">"no socketaddr for mapped address, voiding transmit"</span>);
+        <span class="kw">match </span>MappedAddr::from_socket_addr(transmit.destination) {
+            <span class="prelude-val">Err</span>(e) =&gt; {
+                <span class="macro">error!</span>(%transmit.destination, <span class="string">"Cannot convert to a mapped address: {e}, voiding transmit."</span>);
                 <span class="comment">// Returning Ok here means we let QUIC timeout.
                 // Returning an error would immediately fail a connection.
                 // The philosophy of quinn-udp is that a UDP connection could
                 // come back at any time or missing should be transient so chooses to let
                 // these kind of errors time out.  See test_try_send_no_send_addr to try
                 // this out.
-                </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                </span><span class="prelude-val">Ok</span>(())
             }
-        } <span class="kw">else </span>{
-            <span class="macro">error!</span>(%transmit.destination, <span class="string">"unrecognized address, voiding transmit"</span>);
-            <span class="comment">// Returning Ok here means we let QUIC timeout.
-            // Returning an error would immediately fail a connection.
-            // The philosophy of quinn-udp is that a UDP connection could
-            // come back at any time or missing should be transient so chooses to let
-            // these kind of errors time out.  See test_try_send_no_send_addr to try
-            // this out.
-            </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
+            <span class="prelude-val">Ok</span>(MappedAddr::NodeId(dest)) =&gt; {
+                <span class="macro">trace!</span>(
+                    dst = %dest,
+                    src = <span class="question-mark">?</span>transmit.src_ip,
+                    len = %transmit.contents.len(),
+                    <span class="string">"sending"</span>,
+                );
+
+                <span class="comment">// Get the node's relay address and best direct address, as well
+                // as any pings that need to be sent for hole-punching purposes.
+                </span><span class="kw">let </span><span class="kw-2">mut </span>transmit = transmit.clone();
+                <span class="kw">match </span><span class="self">self
+                    </span>.node_map
+                    .get_send_addrs(dest, <span class="self">self</span>.ipv6_reported.load(Ordering::Relaxed))
+                {
+                    <span class="prelude-val">Some</span>((node_id, udp_addr, relay_url, msgs)) =&gt; {
+                        <span class="kw">let </span><span class="kw-2">mut </span>pings_sent = <span class="bool-val">false</span>;
+                        <span class="comment">// If we have pings to send, we *have* to send them out first.
+                        </span><span class="kw">if </span>!msgs.is_empty() {
+                            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.try_send_ping_actions(msgs) {
+                                <span class="macro">warn!</span>(
+                                    node = %node_id.fmt_short(),
+                                    <span class="string">"failed to handle ping actions: {err:#}"</span>,
+                                );
+                            }
+                            pings_sent = <span class="bool-val">true</span>;
+                        }
+
+                        <span class="kw">let </span><span class="kw-2">mut </span>udp_sent = <span class="bool-val">false</span>;
+                        <span class="kw">let </span><span class="kw-2">mut </span>udp_error = <span class="prelude-val">None</span>;
+                        <span class="kw">let </span><span class="kw-2">mut </span>relay_sent = <span class="bool-val">false</span>;
+                        <span class="kw">let </span><span class="kw-2">mut </span>relay_error = <span class="prelude-val">None</span>;
+
+                        <span class="comment">// send udp
+                        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = udp_addr {
+                            <span class="comment">// rewrite target address
+                            </span>transmit.destination = addr;
+                            <span class="kw">match </span><span class="self">self</span>.try_send_udp(addr, <span class="kw-2">&amp;</span>transmit) {
+                                <span class="prelude-val">Ok</span>(()) =&gt; {
+                                    <span class="macro">trace!</span>(node = %node_id.fmt_short(), dst = %addr,
+                                   <span class="string">"sent transmit over UDP"</span>);
+                                    udp_sent = <span class="bool-val">true</span>;
+                                }
+                                <span class="prelude-val">Err</span>(err) =&gt; {
+                                    <span class="comment">// No need to print "WouldBlock" errors to the console
+                                    </span><span class="kw">if </span>err.kind() != io::ErrorKind::WouldBlock {
+                                        <span class="macro">warn!</span>(
+                                            node = %node_id.fmt_short(),
+                                            dst = %addr,
+                                            <span class="string">"failed to send udp: {err:#}"
+                                        </span>);
+                                    }
+                                    udp_error = <span class="prelude-val">Some</span>(err);
+                                }
+                            }
+                        }
+
+                        <span class="comment">// send relay
+                        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>relay_url) = relay_url {
+                            <span class="kw">match </span><span class="self">self</span>.try_send_relay(relay_url, node_id, split_packets(<span class="kw-2">&amp;</span>transmit))
+                            {
+                                <span class="prelude-val">Ok</span>(()) =&gt; {
+                                    relay_sent = <span class="bool-val">true</span>;
+                                }
+                                <span class="prelude-val">Err</span>(err) =&gt; {
+                                    relay_error = <span class="prelude-val">Some</span>(err);
+                                }
+                            }
+                        }
+
+                        <span class="kw">let </span>udp_pending = udp_error
+                            .as_ref()
+                            .map(|err| err.kind() == io::ErrorKind::WouldBlock)
+                            .unwrap_or_default();
+                        <span class="kw">let </span>relay_pending = relay_error
+                            .as_ref()
+                            .map(|err| err.kind() == io::ErrorKind::WouldBlock)
+                            .unwrap_or_default();
+                        <span class="kw">if </span>udp_pending &amp;&amp; relay_pending {
+                            <span class="comment">// Handle backpressure.
+                            </span><span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::WouldBlock, <span class="string">"pending"</span>));
+                        } <span class="kw">else </span>{
+                            <span class="kw">if </span>relay_sent || udp_sent {
+                                <span class="macro">trace!</span>(
+                                    node = %node_id.fmt_short(),
+                                    send_udp = <span class="question-mark">?</span>udp_addr,
+                                    send_relay = <span class="question-mark">?</span>relay_url,
+                                    <span class="string">"sent transmit"</span>,
+                                );
+                            } <span class="kw">else if </span>!pings_sent {
+                                <span class="comment">// Returning Ok here means we let QUIC handle a timeout for a lost
+                                // packet, same would happen if we returned any errors.  The
+                                // philosophy of quinn-udp is that a UDP connection could come back
+                                // at any time so these errors should be treated as transient and
+                                // are just timeouts.  Hence we opt for returning Ok.  See
+                                // test_try_send_no_udp_addr_or_relay_url to explore this further.
+                                </span><span class="macro">debug!</span>(
+                                    node = %node_id.fmt_short(),
+                                    <span class="string">"no UDP or relay paths available for node, voiding transmit"</span>,
+                                );
+                                <span class="comment">// We log this as debug instead of error, because this is a
+                                // situation that comes up under normal operation. If this were an
+                                // error log, it would unnecessarily pollute logs.
+                                // This situation happens essentially when `pings_sent` is false,
+                                // `relay_url` is `None`, so `relay_sent` is false, and the UDP
+                                // path is blocking, so `udp_sent` is false and `udp_pending` is
+                                // true.
+                                // Alternatively returning a WouldBlock error here would
+                                // potentially needlessly block sending on the relay path for the
+                                // next datagram.
+                            </span>}
+                            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                        }
+                    }
+                    <span class="prelude-val">None </span>=&gt; {
+                        <span class="macro">error!</span>(%dest, <span class="string">"no NodeState for mapped address, dropping transmit"</span>);
+                        <span class="comment">// Returning Ok here means we let QUIC timeout.  Returning WouldBlock
+                        // triggers a hot loop.  Returning an error would immediately fail a
+                        // connection.  The philosophy of quinn-udp is that a UDP connection could
+                        // come back at any time or missing should be transient so chooses to let
+                        // these kind of errors time out.  See test_try_send_no_send_addr to try
+                        // this out.
+                        </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                    }
+                }
+            }
+            <span class="prelude-val">Ok</span>(MappedAddr::Ip(dest)) =&gt; {
+                <span class="macro">trace!</span>(
+                    dst = %dest,
+                    src = <span class="question-mark">?</span>transmit.src_ip,
+                    len = %transmit.contents.len(),
+                    <span class="string">"sending"</span>,
+                );
+
+                <span class="comment">// Check if this is a known IpMappedAddr, and if so, send over UDP
+                </span><span class="kw">let </span><span class="kw-2">mut </span>transmit = transmit.clone();
+
+                <span class="comment">// Get the socket addr
+                </span><span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = <span class="self">self</span>.ip_mapped_addrs.get_ip_addr(<span class="kw-2">&amp;</span>dest) {
+                    <span class="comment">// rewrite target address
+                    </span>transmit.destination = addr;
+                    <span class="comment">// send udp
+                    </span><span class="kw">match </span><span class="self">self</span>.try_send_udp(addr, <span class="kw-2">&amp;</span>transmit) {
+                        <span class="prelude-val">Ok</span>(()) =&gt; {
+                            <span class="macro">trace!</span>(dst = %addr,
+                               <span class="string">"sent IpMapped transmit over UDP"</span>);
+                        }
+                        <span class="prelude-val">Err</span>(err) =&gt; {
+                            <span class="comment">// No need to print "WouldBlock" errors to the console
+                            </span><span class="kw">if </span>err.kind() == io::ErrorKind::WouldBlock {
+                                <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::WouldBlock, <span class="string">"pending"</span>));
+                            } <span class="kw">else </span>{
+                                <span class="macro">warn!</span>(
+                                    dst = %addr,
+                                    <span class="string">"failed to send IpMapped message over udp: {err:#}"
+                                </span>);
+                            }
+                        }
+                    }
+                    <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                } <span class="kw">else </span>{
+                    <span class="macro">error!</span>(%dest, <span class="string">"unknown mapped address, dropping transmit"</span>);
+                    <span class="comment">// Returning Ok here means we let QUIC timeout.
+                    // Returning an error would immediately fail a connection.
+                    // The philosophy of quinn-udp is that a UDP connection could
+                    // come back at any time or missing should be transient so chooses to let
+                    // these kind of errors time out.  See test_try_send_no_send_addr to try
+                    // this out.
+                    </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                }
+            }
         }
     }
 
@@ -5240,7 +5279,7 @@
                                 <span class="string">"UDP recv QUIC address discovery packets"</span>,
                             );
                             quic_packets_total += quic_datagram_count;
-                            meta.addr = ip_mapped_addr.addr();
+                            meta.addr = ip_mapped_addr.socket_addr();
                         } <span class="kw">else </span>{
                             <span class="macro">warn!</span>(
                                 src = <span class="question-mark">?</span>meta.addr,
@@ -5262,7 +5301,7 @@
                             <span class="string">"UDP recv quic packets"</span>,
                         );
                         quic_packets_total += quic_datagram_count;
-                        meta.addr = quic_mapped_addr.<span class="number">0</span>;
+                        meta.addr = quic_mapped_addr.socket_addr();
                     }
                 }
             } <span class="kw">else </span>{
@@ -5376,7 +5415,7 @@
         <span class="kw">let </span>meta = quinn_udp::RecvMeta {
             len: dm.buf.len(),
             stride: dm.buf.len(),
-            addr: quic_mapped_addr.<span class="number">0</span>,
+            addr: quic_mapped_addr.socket_addr(),
             dst_ip,
             ecn: <span class="prelude-val">None</span>,
         };
@@ -5826,6 +5865,31 @@
     </span><span class="kw">fn </span>publish_my_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>discovery) = <span class="self">self</span>.discovery {
             discovery.publish(<span class="self">self</span>.my_relay().as_ref(), <span class="kw-2">&amp;</span><span class="self">self</span>.direct_addrs.sockaddrs());
+        }
+    }
+}
+
+<span class="attr">#[derive(Clone, Debug)]
+</span><span class="kw">enum </span>MappedAddr {
+    NodeId(NodeIdMappedAddr),
+    Ip(IpMappedAddr),
+}
+
+<span class="kw">impl </span>MappedAddr {
+    <span class="kw">fn </span>from_socket_addr(addr: SocketAddr) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">match </span>addr.ip() {
+            IpAddr::V4(<span class="kw">_</span>) =&gt; {
+                <span class="macro">anyhow::bail!</span>(<span class="string">"Ipv4 addresses are not MappedAddrs"</span>)
+            }
+            IpAddr::V6(addr) =&gt; {
+                <span class="kw">if let </span><span class="prelude-val">Ok</span>(node_id_mapped_addr) = NodeIdMappedAddr::try_from(addr) {
+                    <span class="prelude-val">Ok</span>(MappedAddr::NodeId(node_id_mapped_addr))
+                } <span class="kw">else if let </span><span class="prelude-val">Ok</span>(ip_mapped_addr) = IpMappedAddr::try_from(addr) {
+                    <span class="prelude-val">Ok</span>(MappedAddr::Ip(ip_mapped_addr))
+                } <span class="kw">else </span>{
+                    <span class="macro">anyhow::bail!</span>(<span class="string">"address does not conform to MappedAddr specifications"</span>)
+                }
+            }
         }
     }
 }
@@ -7241,10 +7305,10 @@
 /// it is given a new fake address.  This is the type of that address.
 ///
 /// It is but a newtype.  And in our QUIC-facing socket APIs like [`AsyncUdpSocket`] it
-/// comes in as the inner [`SocketAddr`], in those interfaces we have to be careful to do
+/// comes in as the inner [`Ipv6Addr`], in those interfaces we have to be careful to do
 /// the conversion to this type.
 </span><span class="attr">#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>NodeIdMappedAddr(<span class="kw">pub</span>(<span class="kw">crate</span>) SocketAddr);
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>NodeIdMappedAddr(Ipv6Addr);
 
 <span class="doccomment">/// Counter to always generate unique addresses for [`NodeIdMappedAddr`].
 </span><span class="kw">static </span>NODE_ID_ADDR_COUNTER: AtomicU64 = AtomicU64::new(<span class="number">1</span>);
@@ -7269,32 +7333,30 @@
         <span class="kw">let </span>counter = NODE_ID_ADDR_COUNTER.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
         addr[<span class="number">8</span>..<span class="number">16</span>].copy_from_slice(<span class="kw-2">&amp;</span>counter.to_be_bytes());
 
-        <span class="self">Self</span>(SocketAddr::new(
-            IpAddr::V6(Ipv6Addr::from(addr)),
-            MAPPED_ADDR_PORT,
-        ))
+        <span class="self">Self</span>(Ipv6Addr::from(addr))
+    }
+
+    <span class="doccomment">/// Return the [`SocketAddr`] from the [`NodeIdMappedAddr`]
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>socket_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
+        SocketAddr::new(IpAddr::from(<span class="self">self</span>.<span class="number">0</span>), MAPPED_ADDR_PORT)
     }
 }
 
-<span class="kw">impl </span>TryFrom&lt;SocketAddr&gt; <span class="kw">for </span>NodeIdMappedAddr {
+<span class="kw">impl </span>TryFrom&lt;Ipv6Addr&gt; <span class="kw">for </span>NodeIdMappedAddr {
     <span class="kw">type </span>Error = anyhow::Error;
 
-    <span class="kw">fn </span>try_from(value: SocketAddr) -&gt; std::result::Result&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
-        <span class="kw">match </span>value {
-            SocketAddr::V4(<span class="kw">_</span>) =&gt; <span class="macro">anyhow::bail!</span>(<span class="string">"NodeIdMappedAddrs are all Ipv6, addr {value:?}"</span>),
-            SocketAddr::V6(addr) =&gt; {
-                <span class="kw">if </span>addr.port() != MAPPED_ADDR_PORT {
-                    <span class="macro">anyhow::bail!</span>(<span class="string">"not a mapped addr"</span>);
-                }
-                <span class="kw">let </span>octets = addr.ip().octets();
-                <span class="kw">if </span>octets[<span class="number">6</span>..<span class="number">8</span>] != NodeIdMappedAddr::ADDR_SUBNET {
-                    <span class="macro">anyhow::bail!</span>(<span class="string">"not a NodeIdMappedAddr"</span>);
-                }
-                <span class="prelude-val">Ok</span>(NodeIdMappedAddr(value))
-            }
+    <span class="kw">fn </span>try_from(value: Ipv6Addr) -&gt; std::result::Result&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
+        <span class="kw">let </span>octets = value.octets();
+        <span class="kw">if </span>octets[<span class="number">0</span>] == <span class="self">Self</span>::ADDR_PREFIXL
+            &amp;&amp; octets[<span class="number">1</span>..<span class="number">6</span>] == <span class="self">Self</span>::ADDR_GLOBAL_ID
+            &amp;&amp; octets[<span class="number">6</span>..<span class="number">8</span>] == <span class="self">Self</span>::ADDR_SUBNET
+        {
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="self">Self</span>(value));
         }
+        <span class="macro">anyhow::bail!</span>(<span class="string">"{value:?} is not a NodeIdMappedAddr"</span>);
     }
 }
+
 <span class="kw">impl </span>std::fmt::Display <span class="kw">for </span>NodeIdMappedAddr {
     <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>std::fmt::Formatter) -&gt; std::fmt::Result {
         <span class="macro">write!</span>(f, <span class="string">"NodeIdMappedAddr({})"</span>, <span class="self">self</span>.<span class="number">0</span>)
@@ -8395,7 +8457,7 @@
     </span><span class="kw">async fn </span>magicsock_connect_with_transport_config(
         ep: <span class="kw-2">&amp;</span>quinn::Endpoint,
         ep_secret_key: SecretKey,
-        addr: NodeIdMappedAddr,
+        mapped_addr: NodeIdMappedAddr,
         node_id: NodeId,
         transport_config: Arc&lt;quinn::TransportConfig&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection&gt; {
@@ -8404,7 +8466,7 @@
             tls::make_client_config(<span class="kw-2">&amp;</span>ep_secret_key, <span class="prelude-val">Some</span>(node_id), alpns, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
-        <span class="kw">let </span>connect = ep.connect_with(client_config, addr.<span class="number">0</span>, <span class="string">"localhost"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>connect = ep.connect_with(client_config, mapped_addr.socket_addr(), <span class="string">"localhost"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>connection = connect.<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(connection)
     }

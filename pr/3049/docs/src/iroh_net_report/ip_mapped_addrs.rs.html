@@ -132,12 +132,7 @@
 <a href="#131" id="131">131</a>
 <a href="#132" id="132">132</a>
 <a href="#133" id="133">133</a>
-<a href="#134" id="134">134</a>
-<a href="#135" id="135">135</a>
-<a href="#136" id="136">136</a>
-<a href="#137" id="137">137</a>
-<a href="#138" id="138">138</a>
-<a href="#139" id="139">139</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#134" id="134">134</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::BTreeMap,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::{
@@ -160,10 +155,10 @@
 /// about.
 ///
 /// And in our QUIC-facing socket APIs like iroh's `AsyncUdpSocket` it
-/// comes in as the inner [`SocketAddr`], in those interfaces we have to be careful to do
+/// comes in as the inner [`Ipv6Addr`], in those interfaces we have to be careful to do
 /// the conversion to this type.
 </span><span class="attr">#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
-</span><span class="kw">pub struct </span>IpMappedAddr(<span class="kw">pub</span>(<span class="kw">crate</span>) SocketAddr);
+</span><span class="kw">pub struct </span>IpMappedAddr(Ipv6Addr);
 
 <span class="doccomment">/// Counter to always generate unique addresses for `NodeIdMappedAddr`.
 </span><span class="kw">static </span>IP_ADDR_COUNTER: AtomicU64 = AtomicU64::new(<span class="number">1</span>);
@@ -188,37 +183,29 @@
         <span class="kw">let </span>counter = IP_ADDR_COUNTER.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
         addr[<span class="number">8</span>..<span class="number">16</span>].copy_from_slice(<span class="kw-2">&amp;</span>counter.to_be_bytes());
 
-        <span class="self">Self</span>(SocketAddr::new(
-            IpAddr::V6(Ipv6Addr::from(addr)),
-            MAPPED_ADDR_PORT,
-        ))
+        <span class="self">Self</span>(Ipv6Addr::from(addr))
     }
 
-    <span class="doccomment">/// Return the underlying [`SocketAddr`].
-    </span><span class="kw">pub fn </span>addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
-        <span class="self">self</span>.<span class="number">0
-    </span>}
+    <span class="doccomment">/// Return a [`SocketAddr`] from the [`IpMappedAddr`].
+    </span><span class="kw">pub fn </span>socket_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
+        SocketAddr::new(IpAddr::from(<span class="self">self</span>.<span class="number">0</span>), MAPPED_ADDR_PORT)
+    }
 }
 
-<span class="kw">impl </span>TryFrom&lt;SocketAddr&gt; <span class="kw">for </span>IpMappedAddr {
+<span class="kw">impl </span>TryFrom&lt;Ipv6Addr&gt; <span class="kw">for </span>IpMappedAddr {
     <span class="kw">type </span>Error = IpMappedAddrError;
 
-    <span class="kw">fn </span>try_from(value: SocketAddr) -&gt; std::result::Result&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
-        <span class="kw">match </span>value {
-            SocketAddr::V4(<span class="kw">_</span>) =&gt; <span class="prelude-val">Err</span>(IpMappedAddrError(String::from(
-                <span class="string">"IpMappedAddrs are all Ipv6, found Ipv4 address"</span>,
-            ))),
-            SocketAddr::V6(addr) =&gt; {
-                <span class="kw">if </span>addr.port() != MAPPED_ADDR_PORT {
-                    <span class="kw">return </span><span class="prelude-val">Err</span>(IpMappedAddrError(String::from(<span class="string">"not mapped addr"</span>)));
-                }
-                <span class="kw">let </span>octets = addr.ip().octets();
-                <span class="kw">if </span>octets[<span class="number">6</span>..<span class="number">8</span>] != IpMappedAddr::ADDR_SUBNET {
-                    <span class="kw">return </span><span class="prelude-val">Err</span>(IpMappedAddrError(String::from(<span class="string">"not an IpMappedAddr"</span>)));
-                }
-                <span class="prelude-val">Ok</span>(IpMappedAddr(value))
-            }
+    <span class="kw">fn </span>try_from(value: Ipv6Addr) -&gt; std::result::Result&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
+        <span class="kw">let </span>octets = value.octets();
+        <span class="kw">if </span>octets[<span class="number">0</span>] == <span class="self">Self</span>::ADDR_PREFIXL
+            &amp;&amp; octets[<span class="number">1</span>..<span class="number">6</span>] == <span class="self">Self</span>::ADDR_GLOBAL_ID
+            &amp;&amp; octets[<span class="number">6</span>..<span class="number">8</span>] == <span class="self">Self</span>::ADDR_SUBNET
+        {
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="self">Self</span>(value));
         }
+        <span class="prelude-val">Err</span>(IpMappedAddrError(String::from(
+            <span class="string">"{value:?} is not an IpMappedAddr"</span>,
+        )))
     }
 }
 
@@ -230,44 +217,47 @@
 
 <span class="attr">#[derive(Debug, Clone)]
 </span><span class="doccomment">/// A Map of [`IpMappedAddrs`] to [`SocketAddr`]
-</span><span class="kw">pub struct </span>IpMappedAddrs(Arc&lt;std::sync::Mutex&lt;BTreeMap&lt;IpMappedAddr, SocketAddr&gt;&gt;&gt;);
+</span><span class="comment">// TODO(ramfox): before this is ready to be used beyond QAD, we should add
+// mechanisms for keeping track of "aliveness" and pruning address, as we do
+// with the `NodeMap`
+</span><span class="kw">pub struct </span>IpMappedAddrs(Arc&lt;std::sync::Mutex&lt;Inner&gt;&gt;);
+
+<span class="attr">#[derive(Debug, Default)]
+</span><span class="kw">pub struct </span>Inner {
+    by_mapped_addr: BTreeMap&lt;IpMappedAddr, SocketAddr&gt;,
+    by_socket_addr: BTreeMap&lt;SocketAddr, IpMappedAddr&gt;,
+}
 
 <span class="kw">impl </span>IpMappedAddrs {
     <span class="doccomment">/// Create an empty [`IpMappedAddrs`]
     </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>(Arc::new(std::sync::Mutex::new(BTreeMap::new())))
+        <span class="self">Self</span>(Arc::new(std::sync::Mutex::new(Inner::default())))
     }
 
     <span class="doccomment">/// Add a [`SocketAddr`] to the map and the generated [`IpMappedAddr`] it is now associated with back.
     ///
     /// If this [`SocketAddr`] already exists in the map, it returns its associated [`IpMappedAddr`].
     </span><span class="kw">pub fn </span>add(<span class="kw-2">&amp;</span><span class="self">self</span>, ip_addr: SocketAddr) -&gt; IpMappedAddr {
-        <span class="kw">let </span><span class="kw-2">mut </span>map = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
-        <span class="kw">for </span>(mapped_addr, ip) <span class="kw">in </span>map.iter() {
-            <span class="kw">if </span>ip == <span class="kw-2">&amp;</span>ip_addr {
-                <span class="kw">return </span><span class="kw-2">*</span>mapped_addr;
-            }
+        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(mapped_addr) = inner.by_socket_addr.get(<span class="kw-2">&amp;</span>ip_addr) {
+            <span class="kw">return </span><span class="kw-2">*</span>mapped_addr;
         }
         <span class="kw">let </span>ip_mapped_addr = IpMappedAddr::generate();
-        map.insert(ip_mapped_addr, ip_addr);
+        inner.by_mapped_addr.insert(ip_mapped_addr, ip_addr);
+        inner.by_socket_addr.insert(ip_addr, ip_mapped_addr);
         ip_mapped_addr
     }
 
     <span class="doccomment">/// Get the [`IpMappedAddr`] for the given [`SocketAddr`].
     </span><span class="kw">pub fn </span>get_mapped_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, ip_addr: <span class="kw-2">&amp;</span>SocketAddr) -&gt; <span class="prelude-ty">Option</span>&lt;IpMappedAddr&gt; {
-        <span class="kw">let </span>map = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
-        <span class="kw">for </span>(mapped_addr, ip) <span class="kw">in </span>map.iter() {
-            <span class="kw">if </span>ip == ip_addr {
-                <span class="kw">return </span><span class="prelude-val">Some</span>(<span class="kw-2">*</span>mapped_addr);
-            }
-        }
-        <span class="prelude-val">None
-    </span>}
+        <span class="kw">let </span>inner = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
+        inner.by_socket_addr.get(ip_addr).copied()
+    }
 
     <span class="doccomment">/// Get the [`SocketAddr`] for the given [`IpMappedAddr`].
     </span><span class="kw">pub fn </span>get_ip_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, mapped_addr: <span class="kw-2">&amp;</span>IpMappedAddr) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
-        <span class="kw">let </span>map = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
-        map.get(mapped_addr).copied()
+        <span class="kw">let </span>inner = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
+        inner.by_mapped_addr.get(mapped_addr).copied()
     }
 }
 
