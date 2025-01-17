@@ -1085,7 +1085,7 @@ async fn get_relay_addr(
 
 /// Do a staggared ipv4 DNS lookup based on [`RelayNode`]
 ///
-/// `port` is combined with the resolved [`Ipv4Addr`] to return a [`SocketAddr`]
+/// `port` is combined with the resolved [`std::net::Ipv4Addr`] to return a [`SocketAddr`]
 async fn relay_lookup_ipv4_staggered(
     dns_resolver: &DnsResolver,
     ip_mapped_addrs: Option<IpMappedAddrs>,
@@ -1116,7 +1116,7 @@ async fn relay_lookup_ipv4_staggered(
 
 /// Do a staggared ipv6 DNS lookup based on [`RelayNode`]
 ///
-/// `port` is combined with the resolved [`Ipv6Addr`] to return a [`SocketAddr`]
+/// `port` is combined with the resolved [`std::net::Ipv6Addr`] to return a [`SocketAddr`]
 async fn relay_lookup_ipv6_staggered(
     dns_resolver: &DnsResolver,
     ip_mapped_addrs: Option<IpMappedAddrs>,
