@@ -176,9 +176,8 @@ impl Actor {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use bytes::BytesMut;
+    use n0_future::time::Duration;
     use tokio::sync::mpsc;
     use tracing::info;
 
@@ -255,7 +254,7 @@ mod tests {
                     // We want hairpinning to fail, just wait but do not drop the STUN response
                     // channel because that would make the hairpin actor detect an error.
                     info!("Received hairpin request, not sending response");
-                    tokio::time::sleep(HAIRPIN_CHECK_TIMEOUT * 8).await;
+                    time::sleep(HAIRPIN_CHECK_TIMEOUT * 8).await;
                 }
             }
             .instrument(info_span!("dummy-net_report")),

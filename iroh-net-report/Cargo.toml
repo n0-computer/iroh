@@ -19,30 +19,49 @@ workspace = true
 anyhow = "1"
 bytes = "1.7"
 derive_more = { version = "1.0.0", features = ["display"] }
-hickory-resolver = "=0.25.0-alpha.4"
 iroh-base = { version = "0.31.0", path = "../iroh-base", default-features = false, features = ["relay"] }
 iroh-metrics = { version = "0.31", default-features = false }
-iroh-relay = { version = "0.31", path = "../iroh-relay" }
+iroh-relay = { version = "0.31", path = "../iroh-relay", default-features = false }
 n0-future = "0.1.2"
-netwatch = { version = "0.3" }
-portmapper = { version = "0.3", default-features = false }
-quinn = { package = "iroh-quinn", version = "0.13.0" }
+quinn = { package = "iroh-quinn", version = "0.13.0", default-features = false }
 rand = "0.8"
-reqwest = { version = "0.12", default-features = false }
+reqwest = { version = "0.12", default-features = false, features = ["stream"] }
 rustls = { version = "0.23", default-features = false }
-surge-ping = "0.8.0"
 thiserror = "2"
-tokio = { version = "1", default-features = false, features = ["sync", "time", "macros", "rt"] }
+tokio = { version = "1", default-features = false, features = ["sync", "time", "macros"] }
 tokio-util = { version = "0.7.12", default-features = false }
 tracing = "0.1"
 url = { version = "2.4" }
 
+# non-wasm-in-browser dependencies
+[target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
+hickory-resolver = "=0.25.0-alpha.4"
+netwatch = { version = "0.3" }
+portmapper = { version = "0.3", default-features = false }
+surge-ping = "0.8.0"
+tokio = { version = "1", default-features = false, features = ["sync", "time", "macros", "rt"] }
+
+# wasm-in-browser dependencies
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+futures-util = "0.3"
+js-sys = "0.3"
+pin-project = "1"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-time = "1"
+send_wrapper = "0.6"
+
 [dev-dependencies]
+futures-lite = "2.3"
 iroh-relay = { path = "../iroh-relay", features = ["test-utils", "server"] }
 iroh-test = { path = "../iroh-test" }
 pretty_assertions = "1.4"
+quinn = { package = "iroh-quinn", version = "0.12.0" }
 testresult = "0.4.0"
 tokio = { version = "1", default-features = false, features = ["test-util"] }
+
+[build-dependencies]
+cfg_aliases = { version = "0.2" }
 
 [features]
 default = ["metrics"]
