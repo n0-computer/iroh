@@ -1155,38 +1155,7 @@
 <a href="#1154" id="1154">1154</a>
 <a href="#1155" id="1155">1155</a>
 <a href="#1156" id="1156">1156</a>
-<a href="#1157" id="1157">1157</a>
-<a href="#1158" id="1158">1158</a>
-<a href="#1159" id="1159">1159</a>
-<a href="#1160" id="1160">1160</a>
-<a href="#1161" id="1161">1161</a>
-<a href="#1162" id="1162">1162</a>
-<a href="#1163" id="1163">1163</a>
-<a href="#1164" id="1164">1164</a>
-<a href="#1165" id="1165">1165</a>
-<a href="#1166" id="1166">1166</a>
-<a href="#1167" id="1167">1167</a>
-<a href="#1168" id="1168">1168</a>
-<a href="#1169" id="1169">1169</a>
-<a href="#1170" id="1170">1170</a>
-<a href="#1171" id="1171">1171</a>
-<a href="#1172" id="1172">1172</a>
-<a href="#1173" id="1173">1173</a>
-<a href="#1174" id="1174">1174</a>
-<a href="#1175" id="1175">1175</a>
-<a href="#1176" id="1176">1176</a>
-<a href="#1177" id="1177">1177</a>
-<a href="#1178" id="1178">1178</a>
-<a href="#1179" id="1179">1179</a>
-<a href="#1180" id="1180">1180</a>
-<a href="#1181" id="1181">1181</a>
-<a href="#1182" id="1182">1182</a>
-<a href="#1183" id="1183">1183</a>
-<a href="#1184" id="1184">1184</a>
-<a href="#1185" id="1185">1185</a>
-<a href="#1186" id="1186">1186</a>
-<a href="#1187" id="1187">1187</a>
-<a href="#1188" id="1188">1188</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1157" id="1157">1157</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -1195,13 +1164,7 @@
 <span class="kw">use </span>derive_more::Debug;
 <span class="kw">use </span>futures_lite::FutureExt;
 <span class="kw">use </span>futures_util::SinkExt;
-<span class="kw">use </span>http::{
-    header::{
-        ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
-        ACCESS_CONTROL_REQUEST_HEADERS, ACCESS_CONTROL_REQUEST_METHOD, CONNECTION, ORIGIN,
-    },
-    response::Builder <span class="kw">as </span>ResponseBuilder,
-};
+<span class="kw">use </span>http::{header::CONNECTION, response::Builder <span class="kw">as </span>ResponseBuilder};
 <span class="kw">use </span>hyper::{
     body::Incoming,
     header::{HeaderValue, UPGRADE},
@@ -1526,9 +1489,6 @@
         <span class="kw">for </span>(key, value) <span class="kw">in </span><span class="self">self</span>.<span class="number">0</span>.headers.iter() {
             builder = builder.header(key, value);
         }
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(origin) = req.headers().get(ORIGIN) {
-            builder = builder.header(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-        }
 
         <span class="kw">async move </span>{
             {
@@ -1630,25 +1590,6 @@
     <span class="kw">type </span>Future = Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Response, <span class="self">Self</span>::Error&gt;&gt; + Send&gt;&gt;;
 
     <span class="kw">fn </span>call(<span class="kw-2">&amp;</span><span class="self">self</span>, req: Request&lt;Incoming&gt;) -&gt; <span class="self">Self</span>::Future {
-        <span class="kw">let </span>origin = req.headers().get(ORIGIN).cloned();
-        <span class="kw">if </span>req.method() == Method::OPTIONS {
-            <span class="kw">return </span>Box::pin(<span class="kw">async move </span>{
-                <span class="kw">let </span><span class="kw-2">mut </span>builder = Response::builder();
-
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(method) = req.headers().get(ACCESS_CONTROL_REQUEST_METHOD) {
-                    builder = builder.header(ACCESS_CONTROL_ALLOW_METHODS, method);
-                }
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(headers) = req.headers().get(ACCESS_CONTROL_REQUEST_HEADERS) {
-                    builder = builder.header(ACCESS_CONTROL_ALLOW_HEADERS, headers);
-                }
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(origin) = origin {
-                    builder = builder.header(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
-                }
-
-                <span class="prelude-val">Ok</span>(builder.status(StatusCode::OK).body(body_empty())<span class="question-mark">?</span>)
-            });
-        }
-
         <span class="comment">// Create a client if the request hits the relay endpoint.
         </span><span class="kw">if </span><span class="macro">matches!</span>(
             (req.method(), req.uri().path()),
@@ -1662,23 +1603,20 @@
         // Check all other possible endpoints.
         </span><span class="kw">let </span>uri = req.uri().clone();
         <span class="kw">if let </span><span class="prelude-val">Some</span>(res) = <span class="self">self</span>.<span class="number">0</span>.handlers.get(<span class="kw-2">&amp;</span>(req.method().clone(), uri.path())) {
-            <span class="kw">let </span>f = res(req, <span class="self">self</span>.<span class="number">0</span>.default_response(origin));
+            <span class="kw">let </span>f = res(req, <span class="self">self</span>.<span class="number">0</span>.default_response());
             <span class="kw">return </span>Box::pin(<span class="kw">async move </span>{ f });
         }
         <span class="comment">// Otherwise return 404
-        </span><span class="kw">let </span>res = <span class="self">self</span>.<span class="number">0</span>.not_found_fn(req, <span class="self">self</span>.<span class="number">0</span>.default_response(origin));
+        </span><span class="kw">let </span>res = <span class="self">self</span>.<span class="number">0</span>.not_found_fn(req, <span class="self">self</span>.<span class="number">0</span>.default_response());
         Box::pin(<span class="kw">async move </span>{ res })
     }
 }
 
 <span class="kw">impl </span>Inner {
-    <span class="kw">fn </span>default_response(<span class="kw-2">&amp;</span><span class="self">self</span>, origin: <span class="prelude-ty">Option</span>&lt;HeaderValue&gt;) -&gt; ResponseBuilder {
+    <span class="kw">fn </span>default_response(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ResponseBuilder {
         <span class="kw">let </span><span class="kw-2">mut </span>response = Response::builder();
         <span class="kw">for </span>(key, value) <span class="kw">in </span><span class="self">self</span>.headers.iter() {
             response = response.header(key.clone(), value.clone());
-        }
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(origin) = origin {
-            response = response.header(ACCESS_CONTROL_ALLOW_ORIGIN, origin);
         }
         response
     }

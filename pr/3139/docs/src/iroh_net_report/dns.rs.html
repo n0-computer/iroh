@@ -260,13 +260,15 @@
 <a href="#259" id="259">259</a>
 <a href="#260" id="260">260</a>
 <a href="#261" id="261">261</a>
-<a href="#262" id="262">262</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt::Write, net::IpAddr};
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt::Write, net::IpAddr};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>futures_lite::{Future, StreamExt};
 <span class="kw">use </span>hickory_resolver::{IntoName, TokioResolver};
+<span class="kw">use </span>iroh_relay::time;
 
-<span class="kw">use crate</span>::{defaults::timeouts::DNS_TIMEOUT, time};
+<span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::DNS_TIMEOUT;
 
 <span class="doccomment">/// Delay used to perform staggered dns queries.
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>DNS_STAGGERING_MS: <span class="kw-2">&amp;</span>[u64] = <span class="kw-2">&amp;</span>[<span class="number">200</span>, <span class="number">300</span>];

@@ -1710,7 +1710,9 @@
 <a href="#1709" id="1709">1709</a>
 <a href="#1710" id="1710">1710</a>
 <a href="#1711" id="1711">1711</a>
-<a href="#1712" id="1712">1712</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1712" id="1712">1712</a>
+<a href="#1713" id="1713">1713</a>
+<a href="#1714" id="1714">1714</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1735,11 +1737,9 @@
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Duration,
 };
 
 <span class="kw">use </span><span class="kw">crate</span>::task::{<span class="self">self</span>, AbortOnDropHandle, JoinSet};
-<span class="kw">use </span><span class="kw">crate</span>::time::{<span class="self">self</span>, Instant};
 <span class="kw">use </span>anyhow::{anyhow, bail, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::StreamExt <span class="kw">as _</span>;
 <span class="attr">#[cfg(not(wasm_browser))]
@@ -1751,6 +1751,7 @@
     defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT},
     http::RELAY_PROBE_PATH,
     protos::stun,
+    time::{<span class="self">self</span>, Duration, Instant},
     RelayMap, RelayNode,
 };
 <span class="attr">#[cfg(not(wasm_browser))]
@@ -1963,7 +1964,10 @@
         </span><span class="kw">let </span>port_mapper = <span class="bool-val">false</span>;
         <span class="macro">debug!</span>(%port_mapper, <span class="string">"reportstate actor starting"</span>);
 
-        <span class="self">self</span>.report.os_has_ipv6 = <span class="kw">super</span>::os_has_ipv6();
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span>{
+            <span class="self">self</span>.report.os_has_ipv6 = <span class="kw">super</span>::os_has_ipv6();
+        }
 
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span><span class="kw-2">mut </span>port_mapping = <span class="self">self</span>.prepare_portmapper_task();

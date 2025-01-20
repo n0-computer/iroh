@@ -11,8 +11,8 @@
         problem: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>&gt;,
     },
     ServerRestarting {
-        reconnect_in: <a class="struct" href="https://doc.rust-lang.org/nightly/core/time/struct.Duration.html" title="struct core::time::Duration">Duration</a>,
-        try_for: <a class="struct" href="https://doc.rust-lang.org/nightly/core/time/struct.Duration.html" title="struct core::time::Duration">Duration</a>,
+        reconnect_in: <a class="struct" href="../time/struct.Duration.html" title="struct iroh_relay::time::Duration">Duration</a>,
+        try_for: <a class="struct" href="../time/struct.Duration.html" title="struct iroh_relay::time::Duration">Duration</a>,
     },
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The messages received from a framed relay stream.</p>
 <p>This is a type-validated version of the <code>Frame</code>s on the <code>RelayCodec</code>.</p>
@@ -34,9 +34,9 @@ a reply from the client.</p>
 <p>The default condition is healthy, so the server doesn’t broadcast a <a href="enum.ReceivedMessage.html#variant.Health" title="variant iroh_relay::client::ReceivedMessage::Health"><code>ReceivedMessage::Health</code></a>
 until a problem exists.</p>
 </div></div></div><section id="variant.ServerRestarting" class="variant"><a href="#variant.ServerRestarting" class="anchor">§</a><h3 class="code-header">ServerRestarting</h3></section><div class="docblock"><p>A one-way message from server to client, advertising that the server is restarting.</p>
-</div><div class="sub-variant" id="variant.ServerRestarting.fields"><h4>Fields</h4><div class="sub-variant-field"><span id="variant.ServerRestarting.field.reconnect_in" class="section-header"><a href="#variant.ServerRestarting.field.reconnect_in" class="anchor field">§</a><code>reconnect_in: <a class="struct" href="https://doc.rust-lang.org/nightly/core/time/struct.Duration.html" title="struct core::time::Duration">Duration</a></code></span><div class="docblock"><p>An advisory duration that the client should wait before attempting to reconnect.
+</div><div class="sub-variant" id="variant.ServerRestarting.fields"><h4>Fields</h4><div class="sub-variant-field"><span id="variant.ServerRestarting.field.reconnect_in" class="section-header"><a href="#variant.ServerRestarting.field.reconnect_in" class="anchor field">§</a><code>reconnect_in: <a class="struct" href="../time/struct.Duration.html" title="struct iroh_relay::time::Duration">Duration</a></code></span><div class="docblock"><p>An advisory duration that the client should wait before attempting to reconnect.
 It might be zero. It exists for the server to smear out the reconnects.</p>
-</div></div><div class="sub-variant-field"><span id="variant.ServerRestarting.field.try_for" class="section-header"><a href="#variant.ServerRestarting.field.try_for" class="anchor field">§</a><code>try_for: <a class="struct" href="https://doc.rust-lang.org/nightly/core/time/struct.Duration.html" title="struct core::time::Duration">Duration</a></code></span><div class="docblock"><p>An advisory duration for how long the client should attempt to reconnect
+</div></div><div class="sub-variant-field"><span id="variant.ServerRestarting.field.try_for" class="section-header"><a href="#variant.ServerRestarting.field.try_for" class="anchor field">§</a><code>try_for: <a class="struct" href="../time/struct.Duration.html" title="struct iroh_relay::time::Duration">Duration</a></code></span><div class="docblock"><p>An advisory duration for how long the client should attempt to reconnect
 before giving up and proceeding with its normal connection failure logic. The interval
 between retries is undefined for now. A server should not send a TryFor duration more
 than a few seconds.</p>

@@ -1518,25 +1518,7 @@
 <a href="#1517" id="1517">1517</a>
 <a href="#1518" id="1518">1518</a>
 <a href="#1519" id="1519">1519</a>
-<a href="#1520" id="1520">1520</a>
-<a href="#1521" id="1521">1521</a>
-<a href="#1522" id="1522">1522</a>
-<a href="#1523" id="1523">1523</a>
-<a href="#1524" id="1524">1524</a>
-<a href="#1525" id="1525">1525</a>
-<a href="#1526" id="1526">1526</a>
-<a href="#1527" id="1527">1527</a>
-<a href="#1528" id="1528">1528</a>
-<a href="#1529" id="1529">1529</a>
-<a href="#1530" id="1530">1530</a>
-<a href="#1531" id="1531">1531</a>
-<a href="#1532" id="1532">1532</a>
-<a href="#1533" id="1533">1533</a>
-<a href="#1534" id="1534">1534</a>
-<a href="#1535" id="1535">1535</a>
-<a href="#1536" id="1536">1536</a>
-<a href="#1537" id="1537">1537</a>
-<a href="#1538" id="1538">1538</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1520" id="1520">1520</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -1544,8 +1526,8 @@
 </span><span class="comment">// Based on &lt;https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go&gt;
 
 </span><span class="attr">#![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
-</span><span class="comment">// #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
-</span><span class="attr">#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 </span><span class="kw">use </span>std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -1555,7 +1537,6 @@
 };
 
 <span class="kw">use </span><span class="kw">crate</span>::task::AbortOnDropHandle;
-<span class="kw">use </span><span class="kw">crate</span>::time::{Duration, Instant};
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="attr">#[cfg(not(wasm_browser))]
@@ -1563,7 +1544,11 @@
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
+<span class="kw">use </span>iroh_relay::{
+    protos::stun,
+    time::{<span class="self">self</span>, Duration, Instant},
+    RelayMap,
+};
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>netwatch::UdpSocket;
 <span class="kw">use </span>tokio::sync::{<span class="self">self</span>, mpsc, oneshot};
@@ -1578,7 +1563,6 @@
 <span class="kw">mod </span>reportgen;
 
 <span class="kw">pub mod </span>task;
-<span class="kw">pub mod </span>time;
 
 <span class="kw">pub use </span>metrics::Metrics;
 <span class="kw">use </span>reportgen::ProbeProto;
@@ -1917,23 +1901,16 @@
     ///
     /// This starts a connected actor in the background.  Once the client is dropped it will
     /// stop running.
-    </span><span class="attr">#[cfg(not(wasm_browser))]
-    </span><span class="kw">pub fn </span>new(port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;, dns_resolver: DnsResolver) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>actor = Actor::new(port_mapper, dns_resolver)<span class="question-mark">?</span>;
-        <span class="kw">let </span>addr = actor.addr();
-        <span class="kw">let </span>task = task::spawn(
-            <span class="kw">async move </span>{ actor.run().<span class="kw">await </span>}.instrument(<span class="macro">info_span!</span>(<span class="string">"net_report.actor"</span>)),
-        );
-        <span class="kw">let </span>drop_guard = AbortOnDropHandle::new(task);
-        <span class="prelude-val">Ok</span>(Client {
-            addr,
-            _drop_guard: Arc::new(drop_guard),
-        })
-    }
-
-    <span class="attr">#[cfg(wasm_browser)]
-    </span><span class="kw">pub fn </span>new() -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>actor = Actor::new();
+    </span><span class="kw">pub fn </span>new(
+        <span class="attr">#[cfg(not(wasm_browser))] </span>port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;,
+        <span class="attr">#[cfg(not(wasm_browser))] </span>dns_resolver: DnsResolver,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>actor = Actor::new(
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>port_mapper,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>dns_resolver,
+        )<span class="question-mark">?</span>;
         <span class="kw">let </span>addr = actor.addr();
         <span class="kw">let </span>task = task::spawn(
             <span class="kw">async move </span>{ actor.run().<span class="kw">await </span>}.instrument(<span class="macro">info_span!</span>(<span class="string">"net_report.actor"</span>)),
@@ -2162,31 +2139,23 @@
     ///
     /// This does not start the actor, see [`Actor::run`] for this.  You should not
     /// normally create this directly but rather create a [`Client`].
-    </span><span class="attr">#[cfg(not(wasm_browser))]
-    </span><span class="kw">fn </span>new(port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;, dns_resolver: DnsResolver) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">fn </span>new(
+        <span class="attr">#[cfg(not(wasm_browser))] </span>port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;,
+        <span class="attr">#[cfg(not(wasm_browser))] </span>dns_resolver: DnsResolver,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="comment">// TODO: consider an instrumented flume channel so we have metrics.
         </span><span class="kw">let </span>(sender, receiver) = mpsc::channel(<span class="number">32</span>);
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             receiver,
             sender,
             reports: Default::default(),
-            port_mapper,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>port_mapper,
             in_flight_stun_requests: Default::default(),
             current_report_run: <span class="prelude-val">None</span>,
-            dns_resolver,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>dns_resolver,
         })
-    }
-
-    <span class="attr">#[cfg(wasm_browser)]
-    </span><span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>(sender, receiver) = mpsc::channel(<span class="number">32</span>);
-        <span class="self">Self </span>{
-            receiver,
-            sender,
-            reports: Default::default(),
-            in_flight_stun_requests: Default::default(),
-            current_report_run: <span class="prelude-val">None</span>,
-        }
     }
 
     <span class="doccomment">/// Returns the channel to send messages to the actor.
@@ -2474,11 +2443,6 @@
     UdpSocket::bind_local_v6(<span class="number">0</span>).is_ok()
 }
 
-<span class="attr">#[cfg(wasm_browser)]
-</span><span class="kw">pub fn </span>os_has_ipv6() -&gt; bool {
-    <span class="bool-val">false
-</span>}
-
 <span class="attr">#[cfg(any(test, feature = <span class="string">"stun-utils"</span>))]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>stun_utils {
     <span class="kw">use </span>anyhow::Context <span class="kw">as _</span>;
@@ -2606,7 +2570,7 @@
     <span class="kw">use </span>tracing::info;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use crate</span>::{ping::Pinger, stun_utils::bind_local_stun_socket, time};
+    <span class="kw">use crate</span>::{ping::Pinger, stun_utils::bind_local_stun_socket};
 
     <span class="kw">mod </span>stun_utils {
         <span class="doccomment">//! Utils for testing that expose a simple stun server.
@@ -3001,7 +2965,7 @@
             <span class="kw">let </span><span class="kw-2">mut </span>actor = Actor::new(<span class="prelude-val">None</span>, resolver.clone()).unwrap();
             <span class="kw">for </span>s <span class="kw">in </span><span class="kw-2">&amp;mut </span>tt.steps {
                 <span class="comment">// trigger the timer
-                </span>time::advance(Duration::from_secs(s.after)).<span class="kw">await</span>;
+                </span>tokio::time::advance(Duration::from_secs(s.after)).<span class="kw">await</span>;
                 <span class="kw">let </span>r = Arc::try_unwrap(s.r.take().unwrap()).unwrap();
                 s.r = <span class="prelude-val">Some</span>(actor.add_report_history_and_set_preferred_relay(r));
             }

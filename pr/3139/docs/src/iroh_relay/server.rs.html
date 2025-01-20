@@ -1237,7 +1237,8 @@
 <a href="#1236" id="1236">1236</a>
 <a href="#1237" id="1237">1237</a>
 <a href="#1238" id="1238">1238</a>
-<a href="#1239" id="1239">1239</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
+<a href="#1239" id="1239">1239</a>
+<a href="#1240" id="1240">1240</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
 //! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
@@ -1916,6 +1917,7 @@
 ) -&gt; HyperResult&lt;Response&lt;BytesBody&gt;&gt; {
     response
         .status(StatusCode::OK)
+        .header(<span class="string">"Access-Control-Allow-Origin"</span>, <span class="string">"*"</span>)
         .body(body_empty())
         .map_err(|err| Box::new(err) <span class="kw">as </span>HyperError)
 }

@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh-net-report/src/time.rs`."><title>time.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh_net_report" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../../static.files/src-script-56102188.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh_net_report/</div>time.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh-relay/src/time.rs`."><title>time.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh_relay" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../static.files/storage-59e33391.js"></script><script defer src="../../static.files/src-script-56102188.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh_relay/</div>time.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
 <a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
@@ -244,13 +244,54 @@
 <a href="#243" id="243">243</a>
 <a href="#244" id="244">244</a>
 <a href="#245" id="245">245</a>
-<a href="#246" id="246">246</a></pre></div><pre class="rust"><code><span class="doccomment">//! Sleep and timeout utilities that work natively (via tokio) and in the browser.
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a></pre></div><pre class="rust"><code><span class="doccomment">//! Sleep and timeout utilities that work natively (via tokio) and in the browser.
 
 </span><span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">pub use </span>tokio::time::<span class="kw-2">*</span>;
+</span><span class="kw">pub use </span>tokio::time::{
+    error::Elapsed, sleep, sleep_until, timeout, Duration, Instant, Sleep, Timeout,
+};
 
 <span class="attr">#[cfg(wasm_browser)]
-</span><span class="kw">pub use </span>wasm::{sleep, timeout, Duration, Elapsed, Instant, Sleep, Timeout};
+</span><span class="kw">pub use </span>wasm::{error::Elapsed, sleep, sleep_until, timeout, Duration, Instant, Sleep, Timeout};
 
 <span class="attr">#[cfg(wasm_browser)]
 </span><span class="kw">mod </span>wasm {
@@ -269,16 +310,29 @@
 
     <span class="kw">pub use </span>web_time::{Duration, Instant};
 
-    <span class="attr">#[derive(Debug)]
+    <span class="doccomment">/// Future that will wake up once its deadline is reached.
+    </span><span class="attr">#[derive(Debug)]
     </span><span class="kw">pub struct </span>Sleep {
         deadline: Instant,
         triggered: Flag,
         timeout_id: SendWrapper&lt;JsValue&gt;,
     }
 
-    <span class="kw">pub fn </span>sleep(duration: Duration) -&gt; Sleep {
+    <span class="doccomment">/// Sleeps for given duration
+    </span><span class="kw">pub fn </span>sleep(duration: Duration) -&gt; Sleep {
         <span class="kw">let </span>now = Instant::now();
         <span class="kw">let </span>deadline = now + duration;
+        sleep_impl(duration, deadline)
+    }
+
+    <span class="doccomment">/// Sleeps until given deadline
+    </span><span class="kw">pub fn </span>sleep_until(deadline: Instant) -&gt; Sleep {
+        <span class="kw">let </span>now = Instant::now();
+        <span class="kw">let </span>duration = deadline.duration_since(now);
+        sleep_impl(duration, deadline)
+    }
+
+    <span class="kw">fn </span>sleep_impl(duration: Duration, deadline: Instant) -&gt; Sleep {
         <span class="kw">let </span>triggered = Flag::new();
 
         <span class="kw">let </span>closure = Closure::once({
@@ -319,15 +373,22 @@
     }
 
     <span class="kw">impl </span>Sleep {
-        <span class="kw">pub fn </span>deadline(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Instant {
+        <span class="doccomment">/// Returns the instant at which the sleep is scheduled to wake up
+        </span><span class="kw">pub fn </span>deadline(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Instant {
             <span class="self">self</span>.deadline
         }
 
-        <span class="kw">pub fn </span>is_elapsed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="doccomment">/// Returns whether the sleep has reached its deadline
+        /// (and the scheduler has handled the sleep's timer).
+        </span><span class="kw">pub fn </span>is_elapsed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
             <span class="self">self</span>.triggered.has_triggered()
         }
 
-        <span class="kw">pub fn </span>reset(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, deadline: Instant) {
+        <span class="doccomment">/// Resets this sleep's deadline to given instant.
+        ///
+        /// Also works with sleeps that have already reached their deadline
+        /// in the past.
+        </span><span class="kw">pub fn </span>reset(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, deadline: Instant) {
             <span class="kw">let </span>duration = deadline.duration_since(Instant::now());
             <span class="kw">let </span>triggered = Flag::new();
 
@@ -358,7 +419,9 @@
         }
     }
 
-    <span class="attr">#[derive(Debug)]
+    <span class="doccomment">/// Future that either resolves to [`error::Elapsed`] if the timeout
+    /// is hit first. Otherwise, it resolves to `Ok` of the wrapped future.
+    </span><span class="attr">#[derive(Debug)]
     #[pin_project::pin_project]
     </span><span class="kw">pub struct </span>Timeout&lt;T&gt; {
         <span class="attr">#[pin]
@@ -367,9 +430,15 @@
         </span>sleep: Sleep,
     }
 
-    <span class="kw">pub struct </span>Elapsed;
+    <span class="doccomment">/// Error structs for time utilities (wasm mirror for `tokio::time::error`).
+    </span><span class="kw">pub mod </span>error {
+        <span class="doccomment">/// Error when a timeout is elapsed.
+        </span><span class="attr">#[derive(Debug)]
+        </span><span class="kw">pub struct </span>Elapsed;
+    }
 
-    <span class="kw">pub fn </span>timeout&lt;F&gt;(duration: Duration, future: F) -&gt; Timeout&lt;F::IntoFuture&gt;
+    <span class="doccomment">/// Timeout of a function in wasm.
+    </span><span class="kw">pub fn </span>timeout&lt;F&gt;(duration: Duration, future: F) -&gt; Timeout&lt;F::IntoFuture&gt;
     <span class="kw">where
         </span>F: IntoFuture,
     {
@@ -380,17 +449,17 @@
     }
 
     <span class="kw">impl</span>&lt;T: Future&gt; Future <span class="kw">for </span>Timeout&lt;T&gt; {
-        <span class="kw">type </span>Output = <span class="prelude-ty">Result</span>&lt;T::Output, Elapsed&gt;;
+        <span class="kw">type </span>Output = <span class="prelude-ty">Result</span>&lt;T::Output, error::Elapsed&gt;;
 
-        <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
-            <span class="kw">let </span><span class="kw-2">mut </span>this = <span class="self">self</span>.project();
+        <span class="kw">fn </span>poll(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
+            <span class="kw">let </span>this = <span class="self">self</span>.project();
 
             <span class="kw">if let </span>Poll::Ready(result) = this.future.poll(cx) {
                 <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(result));
             }
 
             <span class="kw">if let </span>Poll::Ready(()) = this.sleep.poll(cx) {
-                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(Elapsed));
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(error::Elapsed));
             }
 
             Poll::Pending
@@ -398,15 +467,19 @@
     }
 
     <span class="kw">impl</span>&lt;T&gt; Timeout&lt;T&gt; {
-        <span class="kw">pub fn </span>get_ref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>T {
+        <span class="doccomment">/// Returns a reference of the wrapped future.
+        </span><span class="kw">pub fn </span>get_ref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>T {
             <span class="kw-2">&amp;</span><span class="self">self</span>.future
         }
 
-        <span class="kw">pub fn </span>get_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>T {
+        <span class="doccomment">/// Returns a mutable reference to the wrapped future.
+        </span><span class="kw">pub fn </span>get_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>T {
             <span class="kw-2">&amp;mut </span><span class="self">self</span>.future
         }
 
-        <span class="kw">pub fn </span>into_inner(<span class="self">self</span>) -&gt; T {
+        <span class="doccomment">/// Returns the wrapped future and throws away and cancels the
+        /// associated timeout.
+        </span><span class="kw">pub fn </span>into_inner(<span class="self">self</span>) -&gt; T {
             <span class="self">self</span>.future
         }
     }
@@ -490,4 +563,9 @@
         global_scope.clear_timeout_with_handle(timeout_id)
     }
 }
+
+<span class="attr">#[cfg(test)]
+</span><span class="kw">mod </span>tests {
+    <span class="comment">// TODO(matheus23): Write some tests for `sleep`, `sleep_until`, `timeout` and `Sleep::reset`
+</span>}
 </code></pre></div></section></main></body></html>
