@@ -281,7 +281,9 @@
 <a href="#280" id="280">280</a>
 <a href="#281" id="281">281</a>
 <a href="#282" id="282">282</a>
-<a href="#283" id="283">283</a></pre></div><pre class="rust"><code><span class="doccomment">//! Sleep and timeout utilities that work natively (via tokio) and in the browser.
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a></pre></div><pre class="rust"><code><span class="doccomment">//! Sleep and timeout utilities that work natively (via tokio) and in the browser.
 
 </span><span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">pub use </span>tokio::time::{
@@ -563,5 +565,7 @@
 }
 
 <span class="attr">#[cfg(test)]
-</span><span class="kw">mod </span>tests {}
+</span><span class="kw">mod </span>tests {
+    <span class="comment">// TODO(matheus23): Write some tests for `sleep`, `sleep_until`, `timeout` and `Sleep::reset`
+</span>}
 </code></pre></div></section></main></body></html>

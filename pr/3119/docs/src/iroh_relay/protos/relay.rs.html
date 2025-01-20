@@ -861,7 +861,12 @@
 <a href="#860" id="860">860</a>
 <a href="#861" id="861">861</a>
 <a href="#862" id="862">862</a>
-<a href="#863" id="863">863</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
+<a href="#863" id="863">863</a>
+<a href="#864" id="864">864</a>
+<a href="#865" id="865">865</a>
+<a href="#866" id="866">866</a>
+<a href="#867" id="867">867</a>
+<a href="#868" id="868">868</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
 //!
 //! Protocol flow:
 //!
@@ -1364,6 +1369,11 @@
 
 <span class="comment">// No need for framing when using websockets, thus this is cfg-ed out for browsers:
 </span><span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="comment">// For some reason rustc doesn't realize that this import is needed when
+// - the server feature is turned *off*
+// - we're *outside* wasm
+// Because we need the `Decoder` and `Encoder` impls.
+</span><span class="attr">#[allow(unused)]
 </span><span class="kw">use </span>framing::<span class="kw-2">*</span>;
 
 <span class="attr">#[cfg(not(wasm_browser))]
