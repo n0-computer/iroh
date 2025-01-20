@@ -102,6 +102,13 @@ tokio = { version = "1", features = [
     "process",
 ] }
 
+# wasm-in-browser dependencies
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+web-time = "1"
+send_wrapper = "0.6"
+
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
 crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
