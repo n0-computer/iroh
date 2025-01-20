@@ -870,7 +870,18 @@
 <a href="#869" id="869">869</a>
 <a href="#870" id="870">870</a>
 <a href="#871" id="871">871</a>
-<a href="#872" id="872">872</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#872" id="872">872</a>
+<a href="#873" id="873">873</a>
+<a href="#874" id="874">874</a>
+<a href="#875" id="875">875</a>
+<a href="#876" id="876">876</a>
+<a href="#877" id="877">877</a>
+<a href="#878" id="878">878</a>
+<a href="#879" id="879">879</a>
+<a href="#880" id="880">880</a>
+<a href="#881" id="881">881</a>
+<a href="#882" id="882">882</a>
+<a href="#883" id="883">883</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -895,6 +906,9 @@
 //!
 //! Some generally useful discovery implementations are provided:
 //!
+//! - [`StaticProvider`] which allows application to add and remove out-of-band addressing
+//!   information.
+//!
 //! - The [`DnsDiscovery`] which performs lookups via the standard DNS systems.  To publish
 //!   to this DNS server a [`PkarrPublisher`] is needed.  [Number 0] runs a public instance
 //!   of a [`PkarrPublisher`] with attached DNS server which is globally available and a
@@ -902,12 +916,10 @@
 //!
 //! - The [`PkarrResolver`] which can perform lookups from designated [pkarr relay servers]
 //!   using HTTP.
-</span><span class="attr">#![cfg_attr(
-    feature = <span class="string">"discovery-local-network"</span>,
-    doc = <span class="string">"- [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
-             very similar to mDNS."
-</span>)]
-</span><span class="doccomment">//!
+//!
+//! - [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery which is an mDNS
+//!   implementation.
+//!
 //! - The [`DhtDiscovery`] also uses the [`pkarr`] system but can also publish and lookup
 //!   records to/from the Mainline DHT.
 //!
@@ -940,13 +952,7 @@
 //! # }
 //! ```
 //!
-//! To also enable
-</span><span class="attr">#![cfg_attr(feature = <span class="string">"discovery-local-network"</span>, doc = <span class="string">"[`LocalSwarmDiscovery`]"</span>)]
-#![cfg_attr(
-    not(feature = <span class="string">"discovery-local-network"</span>),
-    doc = <span class="string">"`LocalSwarmDiscovery`"
-</span>)]
-</span><span class="doccomment">//! it can be added as another service in the
+//! To also enable [`LocalSwarmDiscovery`] it can be added as another service in the
 //! [`ConcurrentDiscovery`]:
 //!
 //! ```no_run
@@ -978,12 +984,10 @@
 //! [`PkarrPublisher`]: pkarr::PkarrPublisher
 //! [`DhtDiscovery`]: pkarr::dht::DhtDiscovery
 //! [pkarr relay servers]: https://pkarr.org/#servers
-</span><span class="attr">#![cfg_attr(
-    feature = <span class="string">"discovery-local-network"</span>,
-    doc = <span class="string">"[`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery"
-</span>)]
+//! [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
+//! [`StaticProvider`]: static_provider::StaticProvider
 
-</span><span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr, time::Duration};
+</span><span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr, sync::Arc, time::Duration};
 
 <span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>futures_lite::stream::{Boxed <span class="kw">as </span>BoxStream, StreamExt};
@@ -1065,6 +1069,8 @@
         <span class="prelude-val">None
     </span>}
 }
+
+<span class="kw">impl</span>&lt;T: Discovery&gt; Discovery <span class="kw">for </span>Arc&lt;T&gt; {}
 
 <span class="doccomment">/// The results returned from [`Discovery::resolve`].
 </span><span class="attr">#[derive(Debug, Clone)]
@@ -1318,6 +1324,7 @@
     <span class="kw">use </span>anyhow::Context;
     <span class="kw">use </span>iroh_base::SecretKey;
     <span class="kw">use </span>rand::Rng;
+    <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
@@ -1603,6 +1610,21 @@
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect(<span class="string">"time drift"</span>)
             .as_micros() <span class="kw">as </span>u64
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_arc_discovery() -&gt; TestResult {
+        <span class="kw">let </span>discovery = Arc::new(EmptyDiscovery);
+
+        <span class="kw">let </span>_ep = Endpoint::builder()
+            .add_discovery({
+                <span class="kw">let </span>discovery = discovery.clone();
+                <span class="kw">move </span>|<span class="kw">_</span>| <span class="prelude-val">Some</span>(discovery)
+            })
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="prelude-val">Ok</span>(())
     }
 }
 

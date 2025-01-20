@@ -717,7 +717,35 @@
 <a href="#716" id="716">716</a>
 <a href="#717" id="717">717</a>
 <a href="#718" id="718">718</a>
-<a href="#719" id="719">719</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#719" id="719">719</a>
+<a href="#720" id="720">720</a>
+<a href="#721" id="721">721</a>
+<a href="#722" id="722">722</a>
+<a href="#723" id="723">723</a>
+<a href="#724" id="724">724</a>
+<a href="#725" id="725">725</a>
+<a href="#726" id="726">726</a>
+<a href="#727" id="727">727</a>
+<a href="#728" id="728">728</a>
+<a href="#729" id="729">729</a>
+<a href="#730" id="730">730</a>
+<a href="#731" id="731">731</a>
+<a href="#732" id="732">732</a>
+<a href="#733" id="733">733</a>
+<a href="#734" id="734">734</a>
+<a href="#735" id="735">735</a>
+<a href="#736" id="736">736</a>
+<a href="#737" id="737">737</a>
+<a href="#738" id="738">738</a>
+<a href="#739" id="739">739</a>
+<a href="#740" id="740">740</a>
+<a href="#741" id="741">741</a>
+<a href="#742" id="742">742</a>
+<a href="#743" id="743">743</a>
+<a href="#744" id="744">744</a>
+<a href="#745" id="745">745</a>
+<a href="#746" id="746">746</a>
+<a href="#747" id="747">747</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
@@ -728,16 +756,21 @@
 <span class="kw">use </span>futures_util::{SinkExt, Stream, StreamExt};
 <span class="kw">use </span>iroh_base::NodeId;
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
-<span class="kw">use </span>tokio::sync::mpsc::{<span class="self">self</span>, error::TrySendError};
+<span class="kw">use </span>rand::Rng;
+<span class="kw">use </span>tokio::{
+    sync::mpsc::{<span class="self">self</span>, error::TrySendError},
+    time::MissedTickBehavior,
+};
 <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, error, instrument, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{
     protos::{
         disco,
-        relay::{write_frame, Frame, KEEP_ALIVE},
+        relay::{write_frame, Frame, PING_INTERVAL},
     },
     server::{clients::Clients, metrics::Metrics, streams::RelayedStream, ClientRateLimit},
+    PingTracker,
 };
 
 <span class="doccomment">/// A request to write a dataframe to a Client
@@ -821,6 +854,7 @@
             node_id,
             connection_id,
             clients: clients.clone(),
+            ping_tracker: PingTracker::default(),
         };
 
         <span class="comment">// start io loop
@@ -920,6 +954,7 @@
     </span>connection_id: u64,
     <span class="doccomment">/// Reference to the other connected clients.
     </span>clients: Clients,
+    ping_tracker: PingTracker,
 }
 
 <span class="kw">impl </span>Actor {
@@ -939,10 +974,16 @@
     }
 
     <span class="kw">async fn </span>run_inner(<span class="kw-2">&amp;mut </span><span class="self">self</span>, done: CancellationToken) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>jitter = Duration::from_secs(<span class="number">5</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>keep_alive = tokio::time::interval(KEEP_ALIVE + jitter);
+        <span class="comment">// Add some jitter to ping pong interactions, to avoid all pings being sent at the same time
+        </span><span class="kw">let </span>next_interval = || {
+            <span class="kw">let </span>random_secs = rand::rngs::OsRng.gen_range(<span class="number">1</span>..=<span class="number">5</span>);
+            Duration::from_secs(random_secs) + PING_INTERVAL
+        };
+
+        <span class="kw">let </span><span class="kw-2">mut </span>ping_interval = tokio::time::interval(next_interval());
         <span class="comment">// ticks immediately
-        </span>keep_alive.tick().<span class="kw">await</span>;
+        </span>ping_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        ping_interval.tick().<span class="kw">await</span>;
 
         <span class="kw">loop </span>{
             <span class="macro">tokio::select!</span> {
@@ -956,6 +997,8 @@
                 }
                 maybe_frame = <span class="self">self</span>.stream.next() =&gt; {
                     <span class="self">self</span>.handle_frame(maybe_frame).<span class="kw">await</span>.context(<span class="string">"handle read"</span>)<span class="question-mark">?</span>;
+                    <span class="comment">// reset the ping interval, we just received a message
+                    </span>ping_interval.reset();
                 }
                 <span class="comment">// First priority, disco packets
                 </span>packet = <span class="self">self</span>.disco_send_queue.recv() =&gt; {
@@ -973,11 +1016,19 @@
                     <span class="macro">trace!</span>(<span class="string">"node_id gone: {:?}"</span>, node_id);
                     <span class="self">self</span>.write_frame(Frame::NodeGone { node_id }).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
-                <span class="kw">_ </span>= keep_alive.tick() =&gt; {
-                    <span class="macro">trace!</span>(<span class="string">"keep alive"</span>);
-                    <span class="self">self</span>.write_frame(Frame::KeepAlive).<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="kw">_ </span>= <span class="self">self</span>.ping_tracker.timeout() =&gt; {
+                    <span class="macro">trace!</span>(<span class="string">"pong timed out"</span>);
+                    <span class="kw">break</span>;
+                }
+                <span class="kw">_ </span>= ping_interval.tick() =&gt; {
+                    <span class="macro">trace!</span>(<span class="string">"keep alive ping"</span>);
+                    <span class="comment">// new interval
+                    </span>ping_interval.reset_after(next_interval());
+                    <span class="kw">let </span>data = <span class="self">self</span>.ping_tracker.new_ping();
+                    <span class="self">self</span>.write_frame(Frame::Ping { data }).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
             }
+
             <span class="self">self</span>.stream.flush().<span class="kw">await</span>.context(<span class="string">"tick flush"</span>)<span class="question-mark">?</span>;
         }
         <span class="prelude-val">Ok</span>(())
@@ -1040,6 +1091,7 @@
             <span class="prelude-val">Some</span>(frame) =&gt; frame<span class="question-mark">?</span>,
             <span class="prelude-val">None </span>=&gt; <span class="macro">anyhow::bail!</span>(<span class="string">"stream terminated"</span>),
         };
+
         <span class="kw">match </span>frame {
             Frame::SendPacket { dst_key, packet } =&gt; {
                 <span class="kw">let </span>packet_len = packet.len();
@@ -1051,6 +1103,9 @@
                 <span class="comment">// TODO: add rate limiter
                 </span><span class="self">self</span>.write_frame(Frame::Pong { data }).<span class="kw">await</span><span class="question-mark">?</span>;
                 <span class="macro">inc!</span>(Metrics, sent_pong);
+            }
+            Frame::Pong { data } =&gt; {
+                <span class="self">self</span>.ping_tracker.pong_received(data);
             }
             Frame::Health { problem } =&gt; {
                 <span class="macro">bail!</span>(<span class="string">"server issue: {:?}"</span>, problem);
@@ -1286,6 +1341,7 @@
             connection_id: <span class="number">0</span>,
             node_id,
             clients: clients.clone(),
+            ping_tracker: PingTracker::default(),
         };
 
         <span class="kw">let </span>done = CancellationToken::new();
