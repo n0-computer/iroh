@@ -280,4 +280,6 @@ mod wasm {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    // TODO(matheus23): Write some tests for `sleep`, `sleep_until`, `timeout` and `Sleep::reset`
+}
