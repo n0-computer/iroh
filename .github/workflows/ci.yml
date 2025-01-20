@@ -161,7 +161,10 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: wasm32 build (iroh-base)
-        run: cargo build -p iroh-base --all-features --target wasm32-unknown-unknown
+        run: cargo build --target wasm32-unknown-unknown -p iroh-base --all-features
+
+      - name: wasm32 build (iroh-relay)
+        run: cargo build --target wasm32-unknown-unknown -p iroh-relay --no-default-features
 
   check_semver:
     runs-on: ubuntu-latest
