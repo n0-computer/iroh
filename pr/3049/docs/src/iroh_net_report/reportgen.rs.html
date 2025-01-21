@@ -1667,9 +1667,7 @@
 <a href="#1666" id="1666">1666</a>
 <a href="#1667" id="1667">1667</a>
 <a href="#1668" id="1668">1668</a>
-<a href="#1669" id="1669">1669</a>
-<a href="#1670" id="1670">1670</a>
-<a href="#1671" id="1671">1671</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1669" id="1669">1669</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -2428,7 +2426,7 @@
         ));
     }
 
-    <span class="kw">let </span>relay_addr = get_relay_addr(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>relay_node, probe.proto(), ip_mapped_addrs)
+    <span class="kw">let </span>relay_addr = get_relay_addr(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>relay_node, probe.proto())
         .<span class="kw">await
         </span>.context(<span class="string">"no relay node addr"</span>)
         .map_err(|e| ProbeError::AbortSet(e, probe.clone()))<span class="question-mark">?</span>;
@@ -2482,7 +2480,8 @@
             <span class="kw">let </span>url = node.url.clone();
             <span class="kw">match </span>quic_config {
                 <span class="prelude-val">Some</span>(quic_config) =&gt; {
-                    result = run_quic_probe(quic_config, url, relay_addr, probe).<span class="kw">await</span><span class="question-mark">?</span>;
+                    result = run_quic_probe(quic_config, url, relay_addr, probe, ip_mapped_addrs)
+                        .<span class="kw">await</span><span class="question-mark">?</span>;
                 }
                 <span class="prelude-val">None </span>=&gt; {
                     <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeError::AbortSet(
@@ -2581,18 +2580,27 @@
     }
 }
 
+<span class="kw">fn </span>maybe_to_mapped_addr(ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddrs&gt;, addr: SocketAddr) -&gt; SocketAddr {
+    <span class="kw">if let </span><span class="prelude-val">Some</span>(ip_mapped_addrs) = ip_mapped_addrs.as_ref() {
+        <span class="kw">return </span>ip_mapped_addrs.add(addr).socket_addr();
+    }
+    addr
+}
+
 <span class="doccomment">/// Run a QUIC address discovery probe.
 </span><span class="kw">async fn </span>run_quic_probe(
     quic_config: QuicConfig,
     url: RelayUrl,
     relay_addr: SocketAddr,
     probe: Probe,
+    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddrs&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeError&gt; {
     <span class="kw">match </span>probe.proto() {
         ProbeProto::QuicIpv4 =&gt; <span class="macro">debug_assert!</span>(relay_addr.is_ipv4()),
         ProbeProto::QuicIpv6 =&gt; <span class="macro">debug_assert!</span>(relay_addr.is_ipv6()),
         <span class="kw">_ </span>=&gt; <span class="macro">debug_assert!</span>(<span class="bool-val">false</span>, <span class="string">"wrong probe"</span>),
     }
+    <span class="kw">let </span>relay_addr = maybe_to_mapped_addr(ip_mapped_addrs, relay_addr);
     <span class="kw">let </span>host = <span class="kw">match </span>url.host_str() {
         <span class="prelude-val">Some</span>(host) =&gt; host,
         <span class="prelude-val">None </span>=&gt; {
@@ -2733,11 +2741,15 @@
 /// *proto* specifies the protocol of the probe.  Depending on the protocol we may return
 /// different results.  Obviously IPv4 vs IPv6 but a [`RelayNode`] may also have disabled
 /// some protocols.
+///
+/// If the protocol is `QuicIpv4` or `QuicIpv6`, and `IpMappedAddrs` is not `None`, we
+/// assume that we are running this net report with `iroh`, and need to provide mapped
+/// addresses to the probe in order for it to function in the specialize iroh-quinn
+/// endpoint that expects mapped addresses.
 </span><span class="kw">async fn </span>get_relay_addr(
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     relay_node: <span class="kw-2">&amp;</span>RelayNode,
     proto: ProbeProto,
-    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddrs&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;SocketAddr&gt; {
     <span class="kw">if </span>relay_node.stun_only &amp;&amp; !<span class="macro">matches!</span>(proto, ProbeProto::StunIpv4 | ProbeProto::StunIpv6) {
         <span class="macro">bail!</span>(<span class="string">"Relay node not suitable for non-STUN probes"</span>);
@@ -2746,11 +2758,11 @@
 
     <span class="kw">match </span>proto {
         ProbeProto::StunIpv4 | ProbeProto::IcmpV4 | ProbeProto::QuicIpv4 =&gt; {
-            relay_lookup_ipv4_staggered(dns_resolver, ip_mapped_addrs, relay_node, port).<span class="kw">await
+            relay_lookup_ipv4_staggered(dns_resolver, relay_node, port).<span class="kw">await
         </span>}
 
         ProbeProto::StunIpv6 | ProbeProto::IcmpV6 | ProbeProto::QuicIpv6 =&gt; {
-            relay_lookup_ipv6_staggered(dns_resolver, ip_mapped_addrs, relay_node, port).<span class="kw">await
+            relay_lookup_ipv6_staggered(dns_resolver, relay_node, port).<span class="kw">await
         </span>}
 
         ProbeProto::Https =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Not implemented"</span>)),
@@ -2762,7 +2774,6 @@
 /// `port` is combined with the resolved [`std::net::Ipv4Addr`] to return a [`SocketAddr`]
 </span><span class="kw">async fn </span>relay_lookup_ipv4_staggered(
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
-    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddrs&gt;,
     relay: <span class="kw-2">&amp;</span>RelayNode,
     port: u16,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;SocketAddr&gt; {
@@ -2774,15 +2785,11 @@
                     .next()
                     .map(|ip| ip.to_canonical())
                     .map(|addr| SocketAddr::new(addr, port))
-                    .map(|addr| maybe_to_mapped_addr(ip_mapped_addrs, addr))
                     .ok_or(<span class="macro">anyhow!</span>(<span class="string">"No suitable relay addr found"</span>)),
                 <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err.context(<span class="string">"No suitable relay addr found"</span>)),
             }
         }
-        <span class="prelude-val">Some</span>(url::Host::Ipv4(addr)) =&gt; <span class="prelude-val">Ok</span>(maybe_to_mapped_addr(
-            ip_mapped_addrs,
-            SocketAddr::new(addr.into(), port),
-        )),
+        <span class="prelude-val">Some</span>(url::Host::Ipv4(addr)) =&gt; <span class="prelude-val">Ok</span>(SocketAddr::new(addr.into(), port)),
         <span class="prelude-val">Some</span>(url::Host::Ipv6(_addr)) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No suitable relay addr found"</span>)),
         <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No valid hostname in RelayUrl"</span>)),
     }
@@ -2793,7 +2800,6 @@
 /// `port` is combined with the resolved [`std::net::Ipv6Addr`] to return a [`SocketAddr`]
 </span><span class="kw">async fn </span>relay_lookup_ipv6_staggered(
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
-    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddrs&gt;,
     relay: <span class="kw-2">&amp;</span>RelayNode,
     port: u16,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;SocketAddr&gt; {
@@ -2805,25 +2811,14 @@
                     .next()
                     .map(|ip| ip.to_canonical())
                     .map(|addr| SocketAddr::new(addr, port))
-                    .map(|addr| maybe_to_mapped_addr(ip_mapped_addrs, addr))
                     .ok_or(<span class="macro">anyhow!</span>(<span class="string">"No suitable relay addr found"</span>)),
                 <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err.context(<span class="string">"No suitable relay addr found"</span>)),
             }
         }
         <span class="prelude-val">Some</span>(url::Host::Ipv4(_addr)) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No suitable relay addr found"</span>)),
-        <span class="prelude-val">Some</span>(url::Host::Ipv6(addr)) =&gt; <span class="prelude-val">Ok</span>(maybe_to_mapped_addr(
-            ip_mapped_addrs,
-            SocketAddr::new(addr.into(), port),
-        )),
+        <span class="prelude-val">Some</span>(url::Host::Ipv6(addr)) =&gt; <span class="prelude-val">Ok</span>(SocketAddr::new(addr.into(), port)),
         <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No valid hostname in RelayUrl"</span>)),
     }
-}
-
-<span class="kw">fn </span>maybe_to_mapped_addr(ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddrs&gt;, addr: SocketAddr) -&gt; SocketAddr {
-    <span class="kw">if let </span><span class="prelude-val">Some</span>(ip_mapped_addrs) = ip_mapped_addrs.as_ref() {
-        <span class="kw">return </span>ip_mapped_addrs.add(addr).socket_addr();
-    }
-    addr
 }
 
 <span class="doccomment">/// Runs an ICMP IPv4 or IPv6 probe.
@@ -3323,6 +3318,7 @@
             url,
             (Ipv4Addr::LOCALHOST, port).into(),
             probe,
+            <span class="prelude-val">None</span>,
         )
         .<span class="kw">await
         </span>{
