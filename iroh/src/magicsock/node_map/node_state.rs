@@ -12,6 +12,7 @@ use iroh_relay::protos::stun;
 use netwatch::ip::is_unicast_link_local;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, event, info, instrument, trace, warn, Level};
 
 use super::{
@@ -24,7 +25,7 @@ use super::{
 use crate::endpoint::PathSelection;
 use crate::{
     disco::{self, SendAddr},
-    magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
+    magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, HEARTBEAT_INTERVAL},
     watchable::{Watchable, Watcher},
 };
 
@@ -526,19 +527,20 @@ impl NodeState {
         }
 
         let id = self.id;
-        let timer = Timer::after(PING_TIMEOUT_DURATION, async move {
+        let _expiry_task = AbortOnDropHandle::new(tokio::spawn(async move {
+            tokio::time::sleep(PING_TIMEOUT_DURATION).await;
             sender
                 .send(ActorMessage::EndpointPingExpired(id, tx_id))
                 .await
                 .ok();
-        });
+        }));
         self.sent_pings.insert(
             tx_id,
             SentPing {
                 to,
                 at: now,
                 purpose,
-                timer,
+                _expiry_task,
             },
         );
     }
@@ -887,8 +889,6 @@ impl NodeState {
                 None
             }
             Some(sp) => {
-                sp.timer.abort();
-
                 let mut node_map_insert = None;
 
                 let now = Instant::now();
@@ -1230,7 +1230,7 @@ pub(super) struct SentPing {
     pub(super) at: Instant,
     #[allow(dead_code)]
     pub(super) purpose: DiscoPingPurpose,
-    pub(super) timer: Timer,
+    pub(super) _expiry_task: AbortOnDropHandle<()>,
 }
 
 /// The reason why a discovery ping message was sent.
