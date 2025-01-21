@@ -754,7 +754,7 @@ async fn run_probe(
         ));
     }
 
-    let relay_addr = get_relay_addr(&dns_resolver, &relay_node, probe.proto(), ip_mapped_addrs)
+    let relay_addr = get_relay_addr(&dns_resolver, &relay_node, probe.proto())
         .await
         .context("no relay node addr")
         .map_err(|e| ProbeError::AbortSet(e, probe.clone()))?;
@@ -808,7 +808,8 @@ async fn run_probe(
             let url = node.url.clone();
             match quic_config {
                 Some(quic_config) => {
-                    result = run_quic_probe(quic_config, url, relay_addr, probe).await?;
+                    result = run_quic_probe(quic_config, url, relay_addr, probe, ip_mapped_addrs)
+                        .await?;
                 }
                 None => {
                     return Err(ProbeError::AbortSet(
@@ -907,18 +908,27 @@ async fn run_stun_probe(
     }
 }
 
+fn maybe_to_mapped_addr(ip_mapped_addrs: Option<IpMappedAddrs>, addr: SocketAddr) -> SocketAddr {
+    if let Some(ip_mapped_addrs) = ip_mapped_addrs.as_ref() {
+        return ip_mapped_addrs.add(addr).socket_addr();
+    }
+    addr
+}
+
 /// Run a QUIC address discovery probe.
 async fn run_quic_probe(
     quic_config: QuicConfig,
     url: RelayUrl,
     relay_addr: SocketAddr,
     probe: Probe,
+    ip_mapped_addrs: Option<IpMappedAddrs>,
 ) -> Result<ProbeReport, ProbeError> {
     match probe.proto() {
         ProbeProto::QuicIpv4 => debug_assert!(relay_addr.is_ipv4()),
         ProbeProto::QuicIpv6 => debug_assert!(relay_addr.is_ipv6()),
         _ => debug_assert!(false, "wrong probe"),
     }
+    let relay_addr = maybe_to_mapped_addr(ip_mapped_addrs, relay_addr);
     let host = match url.host_str() {
         Some(host) => host,
         None => {
@@ -1059,11 +1069,15 @@ fn get_port(relay_node: &RelayNode, proto: &ProbeProto) -> Result<u16> {
 /// *proto* specifies the protocol of the probe.  Depending on the protocol we may return
 /// different results.  Obviously IPv4 vs IPv6 but a [`RelayNode`] may also have disabled
 /// some protocols.
+///
+/// If the protocol is `QuicIpv4` or `QuicIpv6`, and `IpMappedAddrs` is not `None`, we
+/// assume that we are running this net report with `iroh`, and need to provide mapped
+/// addresses to the probe in order for it to function in the specialize iroh-quinn
+/// endpoint that expects mapped addresses.
 async fn get_relay_addr(
     dns_resolver: &DnsResolver,
     relay_node: &RelayNode,
     proto: ProbeProto,
-    ip_mapped_addrs: Option<IpMappedAddrs>,
 ) -> Result<SocketAddr> {
     if relay_node.stun_only && !matches!(proto, ProbeProto::StunIpv4 | ProbeProto::StunIpv6) {
         bail!("Relay node not suitable for non-STUN probes");
@@ -1072,11 +1086,11 @@ async fn get_relay_addr(
 
     match proto {
         ProbeProto::StunIpv4 | ProbeProto::IcmpV4 | ProbeProto::QuicIpv4 => {
-            relay_lookup_ipv4_staggered(dns_resolver, ip_mapped_addrs, relay_node, port).await
+            relay_lookup_ipv4_staggered(dns_resolver, relay_node, port).await
         }
 
         ProbeProto::StunIpv6 | ProbeProto::IcmpV6 | ProbeProto::QuicIpv6 => {
-            relay_lookup_ipv6_staggered(dns_resolver, ip_mapped_addrs, relay_node, port).await
+            relay_lookup_ipv6_staggered(dns_resolver, relay_node, port).await
         }
 
         ProbeProto::Https => Err(anyhow!("Not implemented")),
@@ -1088,7 +1102,6 @@ async fn get_relay_addr(
 /// `port` is combined with the resolved [`std::net::Ipv4Addr`] to return a [`SocketAddr`]
 async fn relay_lookup_ipv4_staggered(
     dns_resolver: &DnsResolver,
-    ip_mapped_addrs: Option<IpMappedAddrs>,
     relay: &RelayNode,
     port: u16,
 ) -> Result<SocketAddr> {
@@ -1100,15 +1113,11 @@ async fn relay_lookup_ipv4_staggered(
                     .next()
                     .map(|ip| ip.to_canonical())
                     .map(|addr| SocketAddr::new(addr, port))
-                    .map(|addr| maybe_to_mapped_addr(ip_mapped_addrs, addr))
                     .ok_or(anyhow!("No suitable relay addr found")),
                 Err(err) => Err(err.context("No suitable relay addr found")),
             }
         }
-        Some(url::Host::Ipv4(addr)) => Ok(maybe_to_mapped_addr(
-            ip_mapped_addrs,
-            SocketAddr::new(addr.into(), port),
-        )),
+        Some(url::Host::Ipv4(addr)) => Ok(SocketAddr::new(addr.into(), port)),
         Some(url::Host::Ipv6(_addr)) => Err(anyhow!("No suitable relay addr found")),
         None => Err(anyhow!("No valid hostname in RelayUrl")),
     }
@@ -1119,7 +1128,6 @@ async fn relay_lookup_ipv4_staggered(
 /// `port` is combined with the resolved [`std::net::Ipv6Addr`] to return a [`SocketAddr`]
 async fn relay_lookup_ipv6_staggered(
     dns_resolver: &DnsResolver,
-    ip_mapped_addrs: Option<IpMappedAddrs>,
     relay: &RelayNode,
     port: u16,
 ) -> Result<SocketAddr> {
@@ -1131,25 +1139,14 @@ async fn relay_lookup_ipv6_staggered(
                     .next()
                     .map(|ip| ip.to_canonical())
                     .map(|addr| SocketAddr::new(addr, port))
-                    .map(|addr| maybe_to_mapped_addr(ip_mapped_addrs, addr))
                     .ok_or(anyhow!("No suitable relay addr found")),
                 Err(err) => Err(err.context("No suitable relay addr found")),
             }
         }
         Some(url::Host::Ipv4(_addr)) => Err(anyhow!("No suitable relay addr found")),
-        Some(url::Host::Ipv6(addr)) => Ok(maybe_to_mapped_addr(
-            ip_mapped_addrs,
-            SocketAddr::new(addr.into(), port),
-        )),
+        Some(url::Host::Ipv6(addr)) => Ok(SocketAddr::new(addr.into(), port)),
         None => Err(anyhow!("No valid hostname in RelayUrl")),
     }
-}
-
-fn maybe_to_mapped_addr(ip_mapped_addrs: Option<IpMappedAddrs>, addr: SocketAddr) -> SocketAddr {
-    if let Some(ip_mapped_addrs) = ip_mapped_addrs.as_ref() {
-        return ip_mapped_addrs.add(addr).socket_addr();
-    }
-    addr
 }
 
 /// Runs an ICMP IPv4 or IPv6 probe.
@@ -1649,6 +1646,7 @@ mod tests {
             url,
             (Ipv4Addr::LOCALHOST, port).into(),
             probe,
+            None,
         )
         .await
         {
