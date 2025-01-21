@@ -476,15 +476,8 @@ impl Actor {
         // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
         // it's unnecessary.
         if self.last_report.is_none() {
-            // Even if we're doing a non-incremental update, we may want to try our
-            // preferred relay for captive portal detection.
-            let preferred_relay = self
-                .last_report
-                .as_ref()
-                .and_then(|l| l.preferred_relay.clone());
-
             let dns_resolver = self.dns_resolver.clone();
-            let dm = self.relay_map.clone();
+            let relay_map = self.relay_map.clone();
             self.outstanding_tasks.captive_task = true;
             MaybeFuture {
                 inner: Some(Box::pin(async move {
@@ -492,7 +485,7 @@ impl Actor {
                     debug!("Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}");
                     let captive_portal_check = tokio::time::timeout(
                         CAPTIVE_PORTAL_TIMEOUT,
-                        check_captive_portal(&dns_resolver, &dm, preferred_relay)
+                        check_captive_portal(&dns_resolver, &relay_map)
                             .instrument(debug_span!("captive-portal")),
                     );
                     match captive_portal_check.await {
@@ -945,37 +938,21 @@ async fn run_quic_probe(
 /// return a "204 No Content" response and checking if that's what we get.
 ///
 /// The boolean return is whether we think we have a captive portal.
-async fn check_captive_portal(
-    dns_resolver: &DnsResolver,
-    dm: &RelayMap,
-    preferred_relay: Option<RelayUrl>,
-) -> Result<bool> {
-    // If we have a preferred relay node and we can use it for non-STUN requests, try that;
-    // otherwise, pick a random one suitable for non-STUN requests.
-    let preferred_relay = preferred_relay.and_then(|url| match dm.get_node(&url) {
-        Some(node) if node.stun_only => Some(url),
-        _ => None,
-    });
+async fn check_captive_portal(dns_resolver: &DnsResolver, relay_map: &RelayMap) -> Result<bool> {
+    let urls: Vec<_> = relay_map
+        .nodes()
+        .filter(|n| !n.stun_only)
+        .map(|n| n.url.clone())
+        .collect();
+    if urls.is_empty() {
+        debug!("No suitable relay node for captive portal check");
+        return Ok(false);
+    }
 
-    let url = match preferred_relay {
-        Some(url) => url,
-        None => {
-            let urls: Vec<_> = dm
-                .nodes()
-                .filter(|n| !n.stun_only)
-                .map(|n| n.url.clone())
-                .collect();
-            if urls.is_empty() {
-                debug!("No suitable relay node for captive portal check");
-                return Ok(false);
-            }
-
-            let i = (0..urls.len())
-                .choose(&mut rand::thread_rng())
-                .unwrap_or_default();
-            urls[i].clone()
-        }
-    };
+    let i = (0..urls.len())
+        .choose(&mut rand::thread_rng())
+        .unwrap_or_default();
+    let url = urls[i].clone();
 
     let mut builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
     if let Some(Host::Domain(domain)) = url.host() {
