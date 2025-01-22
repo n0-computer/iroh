@@ -1782,11 +1782,17 @@ impl Handle {
     /// indefinitely after this call.
     #[instrument(skip_all, fields(me = %self.msock.me))]
     pub(crate) async fn close(&self) {
-        tracing::debug!("Closing connections");
+        tracing::warn!("Closing connections");
+
+        // Initiate closing all connections, and refuse future connections.
+        // We must call `self.endpoint.wait_idle` before exiting this method,
+        // to ensure all connections are closed gracefully before dropping
+        // the endpoint.
         self.endpoint.close(0u16.into(), b"");
-        self.endpoint.wait_idle().await;
 
         if self.msock.is_closed() {
+            // Wait for all connections to finish closing gracefully before exiting.
+            self.endpoint.wait_idle().await;
             return;
         }
         self.msock.closing.store(true, Ordering::Relaxed);
@@ -1817,6 +1823,9 @@ impl Handle {
             debug!("aborting remaining {}/3 tasks", tasks.len());
             tasks.shutdown().await;
         }
+
+        // Wait for all connections to finish closing gracefully before exiting.
+        self.endpoint.wait_idle().await;
     }
 }
 
