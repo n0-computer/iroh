@@ -3,6 +3,8 @@
 //! This handles only the CLI and config file loading, the server implementation lives in
 //! [`iroh_net::relay::server`].
 
+#![allow(deprecated)]
+
 use std::{
     net::{Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},

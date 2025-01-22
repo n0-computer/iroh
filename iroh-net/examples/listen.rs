@@ -3,6 +3,9 @@
 //! This example uses the default relay servers to attempt to holepunch, and will use that relay server to relay packets if the two devices cannot establish a direct UDP connection.
 //! run this example from the project root:
 //!     $ cargo run --example listen
+
+#![allow(deprecated)]
+
 use std::time::Duration;
 
 use anyhow::Context;

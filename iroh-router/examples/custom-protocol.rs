@@ -29,6 +29,8 @@
 //!
 //! That's it! Follow along in the code below, we added a bunch of comments to explain things.
 
+#![allow(deprecated)]
+
 use std::{collections::BTreeSet, sync::Arc};
 
 use anyhow::Result;

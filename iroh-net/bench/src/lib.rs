@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use std::{
     num::ParseIntError,
     str::FromStr,

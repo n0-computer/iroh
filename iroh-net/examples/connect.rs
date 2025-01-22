@@ -5,6 +5,9 @@
 //! This example uses the default relay servers to attempt to holepunch, and will use that relay server to relay packets if the two devices cannot establish a direct UDP connection.
 //!
 //! Run the `listen` example first (`iroh-net/examples/listen.rs`), which will give you instructions on how to run this example to watch two nodes connect and exchange bytes.
+
+#![allow(deprecated)]
+
 use std::net::SocketAddr;
 
 use anyhow::Context;

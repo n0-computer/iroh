@@ -1,5 +1,6 @@
 //! A DNS server and pkarr relay
 
+#![allow(deprecated)]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
 pub mod config;
