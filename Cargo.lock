@@ -2009,6 +2009,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e0242819d153cba4b4b05a5a8f2a7e9bbf97b6055b2a002b395c96b5ff3c0222"
 dependencies = [
  "cfg-if",
+ "js-sys",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -2056,6 +2059,7 @@ dependencies = [
  "http 1.2.0",
  "igd-next",
  "indicatif",
+ "instant",
  "iroh-base",
  "iroh-metrics",
  "iroh-net-report",
@@ -2086,6 +2090,7 @@ dependencies = [
  "swarm-discovery",
  "testresult",
  "thiserror 2.0.11",
+ "time",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -4578,6 +4583,7 @@ checksum = "35e7868883861bd0e56d9ac6efcaaca0d6d5d82a2a7ec8209ff492c07cf37b21"
 dependencies = [
  "deranged",
  "itoa",
+ "js-sys",
  "libc",
  "num-conv",
  "num_threads",

@@ -120,6 +120,9 @@ tokio = { version = "1", features = [
 # wasm-in-browser dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 wasm-bindgen-futures = "0.4"
+# we don't use instant nor time directly, but need to enable it because backoff and x509_parser use these in browsers and we need to enable some feature flags for that to work
+instant = { version = "0.1", features = ["wasm-bindgen"] }
+time = { version = "0.3", features = ["wasm-bindgen"] }
 
 [dev-dependencies]
 axum = { version = "0.7" }
