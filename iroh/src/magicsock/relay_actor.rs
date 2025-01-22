@@ -58,8 +58,9 @@ use tracing::{debug, error, event, info_span, instrument, trace, warn, Instrumen
 use url::Url;
 
 use super::RelayDatagramSendChannelReceiver;
+#[cfg(not(wasm_browser))]
+use crate::dns::DnsResolver;
 use crate::{
-    dns::DnsResolver,
     magicsock::{MagicSock, Metrics as MagicsockMetrics, RelayContents, RelayDatagramRecvQueue},
     util::MaybeFuture,
 };
@@ -204,6 +205,7 @@ struct ActiveRelayActorOptions {
 #[derive(Debug, Clone)]
 struct RelayConnectionOptions {
     secret_key: SecretKey,
+    #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
     proxy_url: Option<Url>,
     prefer_ipv6: Arc<AtomicBool>,
@@ -242,12 +244,16 @@ impl ActiveRelayActor {
     ) -> relay::client::ClientBuilder {
         let RelayConnectionOptions {
             secret_key,
+            #[cfg(not(wasm_browser))]
             dns_resolver,
             proxy_url,
             prefer_ipv6,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify,
         } = opts;
+        #[cfg(wasm_browser)]
+        let dns_resolver = ();
+
         let mut builder = relay::client::ClientBuilder::new(url, secret_key, dns_resolver)
             .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
         if let Some(proxy_url) = proxy_url {
@@ -393,7 +399,7 @@ impl ActiveRelayActor {
     /// The future only completes once the connection is established and retries
     /// connections.  It currently does not ever return `Err` as the retries continue
     /// forever.
-    fn dial_relay(&self) -> Pin<Box<dyn Future<Output = Result<Client>> + Send>> {
+    fn dial_relay(&self) -> BoxedFut<Result<Client>> {
         let backoff: ExponentialBackoff<backoff::SystemClock> = ExponentialBackoffBuilder::new()
             .with_initial_interval(Duration::from_millis(10))
             .with_max_interval(Duration::from_secs(5))
@@ -417,7 +423,24 @@ impl ActiveRelayActor {
                 }
             }
         };
-        let retry_fut = backoff::future::retry(backoff, connect_fn);
+
+        struct Sleeper;
+
+        impl backoff::future::Sleeper for Sleeper {
+            type Sleep = time::Sleep;
+
+            fn sleep(&self, dur: Duration) -> Self::Sleep {
+                time::sleep(dur)
+            }
+        }
+
+        struct NoopNotify;
+
+        impl<E> backoff::Notify<E> for NoopNotify {
+            fn notify(&mut self, _: E, _: Duration) {}
+        }
+
+        let retry_fut = backoff::future::Retry::new(Sleeper, backoff, NoopNotify, connect_fn);
         Box::pin(retry_fut)
     }
 
@@ -954,6 +977,7 @@ impl RelayActor {
 
         let connection_opts = RelayConnectionOptions {
             secret_key: self.msock.secret_key.clone(),
+            #[cfg(not(wasm_browser))]
             dns_resolver: self.msock.dns_resolver.clone(),
             proxy_url: self.msock.proxy_url().cloned(),
             prefer_ipv6: self.msock.ipv6_reported.clone(),
@@ -1190,6 +1214,12 @@ impl Iterator for PacketSplitIter {
         }
     }
 }
+
+#[cfg(not(wasm_browser))]
+type BoxedFut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+
+#[cfg(wasm_browser)]
+type BoxedFut<T> = Pin<Box<dyn Future<Output = T>>>;
 
 #[cfg(test)]
 mod tests {

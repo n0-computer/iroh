@@ -41,6 +41,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
+#[cfg(not(wasm_browser))]
 use hickory_resolver::{proto::ProtoError, Name};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use tracing::warn;
@@ -248,8 +249,9 @@ impl NodeInfo {
         self.into()
     }
 
+    #[cfg(not(wasm_browser))]
     /// Parses a [`NodeInfo`] from a TXT records lookup.
-    pub fn from_txt_lookup(lookup: super::TxtLookup) -> Result<Self> {
+    pub fn from_txt_lookup(lookup: crate::dns::TxtLookup) -> Result<Self> {
         let attrs = TxtAttrs::from_txt_lookup(lookup)?;
         Ok(attrs.into())
     }
@@ -295,6 +297,7 @@ impl std::ops::DerefMut for NodeInfo {
 /// Takes a [`hickory_resolver::proto::rr::Name`] DNS name and expects the first label to be
 /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
 /// subsequent labels.
+#[cfg(not(wasm_browser))]
 fn node_id_from_hickory_name(name: &hickory_resolver::proto::rr::Name) -> Option<NodeId> {
     if name.num_labels() < 2 {
         return None;
@@ -316,7 +319,7 @@ fn node_id_from_hickory_name(name: &hickory_resolver::proto::rr::Name) -> Option
     Debug, strum::Display, strum::AsRefStr, strum::EnumString, Hash, Eq, PartialEq, Ord, PartialOrd,
 )]
 #[strum(serialize_all = "kebab-case")]
-pub(super) enum IrohAttr {
+pub(crate) enum IrohAttr {
     /// URL of home relay.
     Relay,
     /// Direct address.
@@ -329,7 +332,7 @@ pub(super) enum IrohAttr {
 /// all attributes. Can also be used with an enum, if it implements [`FromStr`] and
 /// [`Display`].
 #[derive(Debug)]
-pub(super) struct TxtAttrs<T> {
+pub(crate) struct TxtAttrs<T> {
     node_id: NodeId,
     attrs: BTreeMap<T, Vec<String>>,
 }
@@ -349,7 +352,7 @@ impl From<&NodeInfo> for TxtAttrs<IrohAttr> {
 
 impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     /// Creates [`TxtAttrs`] from a node id and an iterator of key-value pairs.
-    pub(super) fn from_parts(node_id: NodeId, pairs: impl Iterator<Item = (T, String)>) -> Self {
+    pub(crate) fn from_parts(node_id: NodeId, pairs: impl Iterator<Item = (T, String)>) -> Self {
         let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
         for (k, v) in pairs {
             attrs.entry(k).or_default().push(v);
@@ -358,7 +361,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Creates [`TxtAttrs`] from a node id and an iterator of "{key}={value}" strings.
-    pub(super) fn from_strings(
+    pub(crate) fn from_strings(
         node_id: NodeId,
         strings: impl Iterator<Item = String>,
     ) -> Result<Self> {
@@ -376,6 +379,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         Ok(Self { attrs, node_id })
     }
 
+    #[cfg(not(wasm_browser))]
     async fn lookup(resolver: &DnsResolver, name: Name) -> Result<Self> {
         let name = ensure_iroh_txt_label(name)?;
         let lookup = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
@@ -384,7 +388,8 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Looks up attributes by [`NodeId`] and origin domain.
-    pub(super) async fn lookup_by_id(
+    #[cfg(not(wasm_browser))]
+    pub(crate) async fn lookup_by_id(
         resolver: &DnsResolver,
         node_id: &NodeId,
         origin: &str,
@@ -394,23 +399,24 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Looks up attributes by DNS name.
-    pub(super) async fn lookup_by_name(resolver: &DnsResolver, name: &str) -> Result<Self> {
+    #[cfg(not(wasm_browser))]
+    pub(crate) async fn lookup_by_name(resolver: &DnsResolver, name: &str) -> Result<Self> {
         let name = Name::from_str(name)?;
         TxtAttrs::lookup(resolver, name).await
     }
 
     /// Returns the parsed attributes.
-    pub(super) fn attrs(&self) -> &BTreeMap<T, Vec<String>> {
+    pub(crate) fn attrs(&self) -> &BTreeMap<T, Vec<String>> {
         &self.attrs
     }
 
     /// Returns the node id.
-    pub(super) fn node_id(&self) -> NodeId {
+    pub(crate) fn node_id(&self) -> NodeId {
         self.node_id
     }
 
     /// Parses a [`pkarr::SignedPacket`].
-    pub(super) fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
+    pub(crate) fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
         use pkarr::dns::{
             rdata::RData,
             {self},
@@ -433,7 +439,8 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Parses a TXT records lookup.
-    pub(super) fn from_txt_lookup(lookup: super::TxtLookup) -> Result<Self> {
+    #[cfg(not(wasm_browser))]
+    pub(crate) fn from_txt_lookup(lookup: crate::dns::TxtLookup) -> Result<Self> {
         let queried_node_id = node_id_from_hickory_name(lookup.0.query().name())
             .ok_or_else(|| anyhow!("invalid DNS answer: not a query for _iroh.z32encodedpubkey"))?;
 
@@ -482,14 +489,15 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     /// Creates a [`pkarr::SignedPacket`]
     ///
     /// This constructs a DNS packet and signs it with a [`SecretKey`].
-    pub(super) fn to_pkarr_signed_packet(
+    pub(crate) fn to_pkarr_signed_packet(
         &self,
         secret_key: &SecretKey,
         ttl: u32,
     ) -> Result<pkarr::SignedPacket> {
         let packet = self.to_pkarr_dns_packet(ttl)?;
         let keypair = pkarr::Keypair::from_secret_key(&secret_key.to_bytes());
-        let signed_packet = pkarr::SignedPacket::from_packet(&keypair, &packet)?;
+        let signed_packet = pkarr::SignedPacket::from_packet(&keypair, &packet)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(signed_packet)
     }
 
@@ -513,6 +521,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 }
 
+#[cfg(not(wasm_browser))]
 fn ensure_iroh_txt_label(name: Name) -> Result<Name, ProtoError> {
     if name.iter().next() == Some(IROH_TXT_NAME.as_bytes()) {
         Ok(name)
@@ -521,6 +530,7 @@ fn ensure_iroh_txt_label(name: Name) -> Result<Name, ProtoError> {
     }
 }
 
+#[cfg(not(wasm_browser))]
 fn node_domain(node_id: &NodeId, origin: &str) -> Result<Name> {
     let domain = format!("{}.{}", NodeId::to_z32(node_id), origin);
     let domain = Name::from_str(&domain)?;

@@ -17,6 +17,7 @@ use std::{
 
 use iroh_base::NodeId;
 use n0_future::{
+    boxed::BoxStream,
     stream::{self, StreamExt},
     time::SystemTime,
 };
@@ -191,7 +192,7 @@ impl Discovery for StaticProvider {
         &self,
         _endpoint: crate::Endpoint,
         node_id: NodeId,
-    ) -> Option<n0_future::stream::Boxed<anyhow::Result<super::DiscoveryItem>>> {
+    ) -> Option<BoxStream<anyhow::Result<super::DiscoveryItem>>> {
         let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id);
         match info {

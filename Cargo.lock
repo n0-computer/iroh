@@ -335,7 +335,6 @@ dependencies = [
  "instant",
  "pin-project-lite",
  "rand 0.8.5",
- "tokio",
 ]
 
 [[package]]
@@ -2043,6 +2042,7 @@ dependencies = [
  "axum",
  "backoff",
  "bytes",
+ "cfg_aliases",
  "clap",
  "concurrent-queue",
  "crypto_box",
@@ -2093,6 +2093,7 @@ dependencies = [
  "tracing-subscriber",
  "tracing-test",
  "url",
+ "wasm-bindgen-futures",
  "webpki-roots",
  "x509-parser",
  "z32",
