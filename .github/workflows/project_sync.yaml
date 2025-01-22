@@ -3,6 +3,7 @@ name: Add PRs and Issues to the Project Board
 on:
   schedule:
     - cron: '0 * * * *'
+  workflow_dispatch:
 
 env:
   REPOS_LIST: "iroh tools n0.computer ops iroh.computer quic-rpc chuck abao bao-tree iroh-examples iroh.network tokio-rustls-acme iroh-ffi iroh-car iroh-io iroh-blake3 dumbpipe.dev dumbpipe sendme swarmie iroh-c-ffi willow-store quinn iroh-experiments willow-rs iroh-gossip iroh-doctor iroh-blobs iroh-docs iroh-s3 iroh-doctor-server iroh-willow iroh-metrics net-tools iroh-node-util workflows ips"
