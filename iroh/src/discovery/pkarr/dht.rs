@@ -31,7 +31,7 @@ use crate::{
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
         Discovery, DiscoveryItem,
     },
-    dns::node_info::NodeInfo,
+    node_info::NodeInfo,
     Endpoint,
 };
 

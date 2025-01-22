@@ -59,8 +59,8 @@ use url::Url;
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
-    dns::node_info::NodeInfo,
     endpoint::force_staging_infra,
+    node_info::NodeInfo,
     watchable::{Disconnected, Watchable, Watcher},
     Endpoint,
 };
@@ -364,7 +364,8 @@ impl PkarrRelayClient {
 
     /// Resolves a [`SignedPacket`] for the given [`NodeId`].
     pub async fn resolve(&self, node_id: NodeId) -> anyhow::Result<SignedPacket> {
-        let public_key = pkarr::PublicKey::try_from(node_id.as_bytes())?;
+        let public_key = pkarr::PublicKey::try_from(node_id.as_bytes())
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let mut url = self.pkarr_relay_url.clone();
         url.path_segments_mut()
             .map_err(|_| anyhow!("Failed to resolve: Invalid relay URL"))?
@@ -380,7 +381,8 @@ impl PkarrRelayClient {
         }
 
         let payload = response.bytes().await?;
-        Ok(SignedPacket::from_relay_payload(&public_key, &payload)?)
+        Ok(SignedPacket::from_relay_payload(&public_key, &payload)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?)
     }
 
     /// Publishes a [`SignedPacket`].

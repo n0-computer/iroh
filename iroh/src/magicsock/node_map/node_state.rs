@@ -10,10 +10,8 @@ use iroh_metrics::inc;
 use iroh_relay::protos::stun;
 use n0_future::{
     task::{self, AbortOnDropHandle},
-    time,
-    time::{Duration, Instant},
+    time::{self, Duration, Instant},
 };
-use netwatch::ip::is_unicast_link_local;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, event, info, instrument, trace, warn, Level};
@@ -1433,6 +1431,12 @@ pub enum ConnectionType {
     #[default]
     #[display("none")]
     None,
+}
+
+/// Returns true if the address is a unicast address with link-local scope, as defined in RFC 4291.
+// Copied from std lib, not stable yet
+pub const fn is_unicast_link_local(addr: std::net::Ipv6Addr) -> bool {
+    (addr.segments()[0] & 0xffc0) == 0xfe80
 }
 
 #[cfg(test)]

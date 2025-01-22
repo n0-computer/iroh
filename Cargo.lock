@@ -335,7 +335,6 @@ dependencies = [
  "instant",
  "pin-project-lite",
  "rand",
- "tokio",
 ]
 
 [[package]]
@@ -2079,6 +2078,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "wasm-bindgen-futures",
  "webpki-roots",
  "x509-parser",
  "z32",
