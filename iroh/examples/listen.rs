@@ -72,9 +72,8 @@ async fn main() -> anyhow::Result<()> {
         let conn = connecting.await?;
         let node_id = conn.remote_node_id()?;
         info!(
-            "new connection from {node_id} with ALPN {} (coming from {})",
+            "new connection from {node_id} with ALPN {}",
             String::from_utf8_lossy(&alpn),
-            conn.remote_address()
         );
 
         // spawn a task to handle reading and writing off of the connection
