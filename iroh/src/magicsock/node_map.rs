@@ -158,6 +158,7 @@ impl NodeMap {
         self.inner.lock().expect("poisoned").node_count()
     }
 
+    #[cfg(not(wasm_browser))]
     pub(super) fn receive_udp(&self, udp_addr: SocketAddr) -> Option<(PublicKey, QuicMappedAddr)> {
         self.inner.lock().expect("poisoned").receive_udp(udp_addr)
     }
@@ -435,6 +436,7 @@ impl NodeMapInner {
     }
 
     /// Marks the node we believe to be at `ipp` as recently used.
+    #[cfg(not(wasm_browser))]
     fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(NodeId, QuicMappedAddr)> {
         let ip_port: IpPort = udp_addr.into();
         let Some(node_state) = self.get_mut(NodeStateKey::IpPort(ip_port)) else {

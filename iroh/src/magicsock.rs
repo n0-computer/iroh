@@ -769,6 +769,7 @@ impl MagicSock {
     ///
     /// This fixes up the datagrams to use the correct [`QuicMappedAddr`] and extracts DISCO
     /// packets, processing them inside the magic socket.
+    #[cfg(not(wasm_browser))]
     fn process_udp_datagrams(
         &self,
         from_ipv4: bool,
@@ -788,11 +789,11 @@ impl MagicSock {
         // NodeState/PathSate together with the send address and substituted at send time.
         // This is relevant for IPv6 link-local addresses where the OS otherwise does not
         // know which intervace to send from.
-        #[cfg(not(any(windows, wasm_browser)))]
+        #[cfg(not(windows))]
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
         // Reasoning for this here:
         // https://github.com/n0-computer/iroh/pull/2595#issuecomment-2290947319
-        #[cfg(any(windows, wasm_browser))]
+        #[cfg(windows)]
         let dst_ip = None;
 
         let mut quic_packets_total = 0;
@@ -1171,10 +1172,16 @@ impl MagicSock {
             node_key: self.public_key(),
         });
         let sent = match dst {
+            #[cfg(not(wasm_browser))]
             SendAddr::Udp(addr) => self
                 .udp_disco_sender
                 .try_send((addr, dst_node, msg))
                 .is_ok(),
+            #[cfg(wasm_browser)]
+            SendAddr::Udp(_) => {
+                // Ignoring sending pings over UDP. We don't have a UDP socket.
+                false
+            }
             SendAddr::Relay(ref url) => self.send_disco_message_relay(url, dst_node, msg),
         };
         if sent {
