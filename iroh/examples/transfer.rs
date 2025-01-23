@@ -179,7 +179,7 @@ async fn provide(
             }
         };
         let conn = connecting.await?;
-        let node_id = iroh::endpoint::get_remote_node_id(&conn)?;
+        let node_id = conn.remote_node_id()?;
         info!(
             "new connection from {node_id} with ALPN {} (coming from {})",
             String::from_utf8_lossy(TRANSFER_ALPN),
