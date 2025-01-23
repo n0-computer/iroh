@@ -12,7 +12,6 @@
 //! [module docs]: crate
 
 use std::{
-    any::Any,
     collections::BTreeSet,
     future::{Future, IntoFuture},
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
@@ -1277,11 +1276,6 @@ impl Connecting {
         }
     }
 
-    /// Parameters negotiated during the handshake
-    pub async fn handshake_data(&mut self) -> Result<Box<dyn Any>, ConnectionError> {
-        self.inner.handshake_data().await
-    }
-
     /// The local IP address which was used when the peer established the connection.
     pub fn local_ip(&self) -> Option<IpAddr> {
         self.inner.local_ip()
@@ -1295,15 +1289,12 @@ impl Connecting {
     /// Extracts the ALPN protocol from the peer's handshake data.
     // Note, we could totally provide this method to be on a Connection as well.  But we'd
     // need to wrap Connection too.
-    pub async fn alpn(&mut self) -> Result<Vec<u8>> {
-        let data = self.handshake_data().await?;
-        match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
-            Ok(data) => match data.protocol {
-                Some(protocol) => Ok(protocol),
-                None => bail!("no ALPN protocol available"),
-            },
-            Err(_) => bail!("unknown handshake type"),
-        }
+    pub async fn alpn(&mut self) -> Result<Vec<u8>, ConnectionError> {
+        let data = self.inner.handshake_data().await?;
+        let data = data
+            .downcast::<quinn::crypto::rustls::HandshakeData>()
+            .expect("crypto setup for iroh");
+        Ok(data.protocol.expect("ALPN required by iroh crypto setup"))
     }
 }
 
@@ -1539,38 +1530,13 @@ impl Connection {
         self.inner.congestion_state()
     }
 
-    /// Parameters negotiated during the handshake.
-    ///
-    /// Guaranteed to return `Some` on fully established connections or after
-    /// [`Connecting::handshake_data()`] succeeds. See that method's documentations for
-    /// details on the returned value.
-    ///
-    /// [`Connection::handshake_data()`]: crate::Connecting::handshake_data
-    #[inline]
-    pub fn handshake_data(&self) -> Option<Box<dyn Any>> {
-        self.inner.handshake_data()
-    }
-
     /// Extracts the ALPN protocol from the peer's handshake data.
-    pub fn alpn(&self) -> Option<Vec<u8>> {
-        let data = self.handshake_data()?;
-        match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
-            Ok(data) => data.protocol,
-            Err(_) => None,
-        }
-    }
-
-    /// Cryptographic identity of the peer.
-    ///
-    /// The dynamic type returned is determined by the configured [`Session`]. For the
-    /// default `rustls` session, the return value can be [`downcast`] to a
-    /// <code>Vec<[rustls::pki_types::CertificateDer]></code>
-    ///
-    /// [`Session`]: quinn_proto::crypto::Session
-    /// [`downcast`]: Box::downcast
-    #[inline]
-    pub fn peer_identity(&self) -> Option<Box<dyn Any>> {
-        self.inner.peer_identity()
+    pub fn alpn(&self) -> Vec<u8> {
+        let data = self.inner.handshake_data().expect("iroh crypto setup");
+        let data = data
+            .downcast::<quinn::crypto::rustls::HandshakeData>()
+            .expect("iroh crypto setup");
+        data.protocol.expect("ALPN required by iroh crypto setup")
     }
 
     /// Returns the [`NodeId`] from the peer's TLS certificate.
@@ -1581,25 +1547,17 @@ impl Connection {
     /// connection.
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
-    // TODO: Would be nice if this could be infallible.
-    pub fn remote_node_id(&self) -> Result<NodeId> {
-        let data = self.peer_identity();
-        match data {
-            None => bail!("no peer certificate found"),
-            Some(data) => match data.downcast::<Vec<rustls::pki_types::CertificateDer>>() {
-                Ok(certs) => {
-                    if certs.len() != 1 {
-                        bail!(
-                            "expected a single peer certificate, but {} found",
-                            certs.len()
-                        );
-                    }
-                    let cert = tls::certificate::parse(&certs[0])?;
-                    Ok(cert.peer_id())
-                }
-                Err(_) => bail!("invalid peer certificate"),
-            },
-        }
+    pub fn remote_node_id(&self) -> NodeId {
+        let data = self
+            .inner
+            .peer_identity()
+            .expect("required by iroh crypto setup");
+        let certs = data
+            .downcast::<Vec<rustls::pki_types::CertificateDer>>()
+            .expect("iroh crypto setup");
+        debug_assert_eq!(certs.len(), 1);
+        let cert = tls::certificate::parse(&certs[0]).expect("TODO: is this guaranteed by now?");
+        cert.peer_id()
     }
 
     /// A stable identifier for this connection.
@@ -1660,10 +1618,7 @@ impl Connection {
 /// function.
 fn try_send_rtt_msg(conn: &Connection, magic_ep: &Endpoint) {
     // If we can't notify the rtt-actor that's not great but not critical.
-    let Ok(node_id) = conn.remote_node_id() else {
-        warn!(?conn, "failed to get remote node id");
-        return;
-    };
+    let node_id = conn.remote_node_id();
     let Ok(conn_type_changes) = magic_ep.conn_type(node_id) else {
         warn!(?conn, "failed to create conn_type stream");
         return;
@@ -1989,7 +1944,7 @@ mod tests {
                         info!("[server] round {i}");
                         let incoming = ep.accept().await.unwrap();
                         let conn = incoming.await.unwrap();
-                        let node_id = conn.remote_node_id().unwrap();
+                        let node_id = conn.remote_node_id();
                         info!(%i, peer = %node_id.fmt_short(), "accepted connection");
                         let (mut send, mut recv) = conn.accept_bi().await.unwrap();
                         let mut buf = vec![0u8; chunk_size];
@@ -2105,7 +2060,7 @@ mod tests {
             let mut iconn = incoming.accept().unwrap();
             let alpn = iconn.alpn().await.unwrap();
             let conn = iconn.await.unwrap();
-            let node_id = conn.remote_node_id().unwrap();
+            let node_id = conn.remote_node_id();
             assert_eq!(node_id, src);
             assert_eq!(alpn, TEST_ALPN);
             let (mut send, mut recv) = conn.accept_bi().await.unwrap();
@@ -2195,7 +2150,7 @@ mod tests {
         async fn accept(ep: &Endpoint) -> NodeId {
             let incoming = ep.accept().await.unwrap();
             let conn = incoming.await.unwrap();
-            let node_id = conn.remote_node_id().unwrap();
+            let node_id = conn.remote_node_id();
             tracing::info!(node_id=%node_id.fmt_short(), "accepted connection");
             node_id
         }
