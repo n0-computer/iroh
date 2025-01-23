@@ -752,7 +752,7 @@ impl Endpoint {
     ///
     /// # Errors
     ///
-    /// Will return an error if we attempt to add our own [`PublicKey`] to the node map or
+    /// Will return an error if we attempt to add our own [`NodeId`] to the node map or
     /// if the direct addresses are a subset of ours.
     ///
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
@@ -775,7 +775,7 @@ impl Endpoint {
     ///
     /// # Errors
     ///
-    /// Will return an error if we attempt to add our own [`PublicKey`] to the node map or
+    /// Will return an error if we attempt to add our own [`NodeId`] to the node map or
     /// if the direct addresses are a subset of ours.
     ///
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
