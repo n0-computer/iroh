@@ -1040,6 +1040,7 @@ impl NodeState {
     }
 
     /// Marks this node as having received a UDP payload message.
+    #[cfg(not(wasm_browser))]
     pub(super) fn receive_udp(&mut self, addr: IpPort, now: Instant) {
         let Some(state) = self.udp_paths.paths.get_mut(&addr) else {
             debug_assert!(false, "node map inconsistency by_ip_port <-> direct addr");
