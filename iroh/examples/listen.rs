@@ -59,7 +59,7 @@ async fn main() -> anyhow::Result<()> {
     );
     // accept incoming connections, returns a normal QUIC connection
     while let Some(incoming) = endpoint.accept().await {
-        let mut connecting = match incoming.accept() {
+        let connecting = match incoming.accept() {
             Ok(connecting) => connecting,
             Err(err) => {
                 warn!("incoming connection failed: {err:#}");
@@ -68,9 +68,9 @@ async fn main() -> anyhow::Result<()> {
                 continue;
             }
         };
-        let alpn = connecting.alpn().await?;
         let conn = connecting.await?;
-        let node_id = conn.remote_node_id()?;
+        let alpn = conn.alpn();
+        let node_id = conn.remote_node_id();
         info!(
             "new connection from {node_id} with ALPN {} (coming from {})",
             String::from_utf8_lossy(&alpn),
