@@ -173,7 +173,7 @@
 //!
 //!     // Gracefully close the connection and endpoint.
 //!     conn.close(1u8.into(), b"done");
-//!     ep.close().await?;
+//!     ep.close().await;
 //!     println!("Client closed");
 //!     Ok(())
 //! }
@@ -202,7 +202,7 @@
 //!
 //!     // Wait for the client to close the connection and gracefully close the endpoint.
 //!     conn.closed().await;
-//!     ep.close().await?;
+//!     ep.close().await;
 //!     Ok(())
 //! }
 //! ```

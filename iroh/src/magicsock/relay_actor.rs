@@ -42,13 +42,13 @@ use backoff::exponential::{ExponentialBackoff, ExponentialBackoffBuilder};
 use bytes::{Bytes, BytesMut};
 use futures_buffered::FuturesUnorderedBounded;
 use futures_lite::StreamExt;
-use futures_util::{future, SinkExt};
+use futures_util::SinkExt;
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::{
     self as relay,
     client::{Client, ReceivedMessage, SendMessage},
-    MAX_PACKET_SIZE,
+    PingTracker, MAX_PACKET_SIZE,
 };
 use tokio::{
     sync::{mpsc, oneshot},
@@ -72,8 +72,11 @@ const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
 /// Maximum size a datagram payload is allowed to be.
 const MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PublicKey::LENGTH;
 
-/// Maximum time for a relay server to respond to a relay protocol ping.
-const PING_TIMEOUT: Duration = Duration::from_secs(5);
+/// Interval in which we ping the relay server to ensure the connection is alive.
+///
+/// The default QUIC max_idle_timeout is 30s, so setting that to half this time gives some
+/// chance of recovering.
+const PING_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Number of datagrams which can be sent to the relay server in one batch.
 ///
@@ -93,7 +96,9 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// When the [`ActiveRelayActor`] is not connected it can not deliver datagrams.  However it
 /// will still receive datagrams to send from the [`RelayActor`].  If connecting takes
 /// longer than this timeout datagrams will be dropped.
-const UNDELIVERABLE_DATAGRAM_TIMEOUT: Duration = Duration::from_millis(400);
+///
+/// This value is set to 3 times the QUIC initial Probe Timeout (PTO).
+const UNDELIVERABLE_DATAGRAM_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// An actor which handles the connection to a single relay server.
 ///
@@ -434,14 +439,21 @@ impl ActiveRelayActor {
         let (mut client_stream, mut client_sink) = client.split();
 
         let mut state = ConnectedRelayState {
-            ping_tracker: PingTracker::new(),
+            ping_tracker: PingTracker::default(),
             nodes_present: BTreeSet::new(),
             last_packet_src: None,
             pong_pending: None,
             #[cfg(test)]
             test_pong: None,
         };
+
+        // A buffer to pass through multiple datagrams at once as an optimisation.
         let mut send_datagrams_buf = Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE);
+
+        // Regularly send pings so we know the connection is healthy.
+        let mut ping_interval = tokio::time::interval(PING_INTERVAL);
+        ping_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        ping_interval.reset(); // skip the ping at current time.
 
         let res = loop {
             if let Some(data) = state.pong_pending.take() {
@@ -469,6 +481,11 @@ impl ActiveRelayActor {
                 }
                 _ = state.ping_tracker.timeout() => {
                     break Err(anyhow!("Ping timeout"));
+                }
+                _ = ping_interval.tick() => {
+                    let data = state.ping_tracker.new_ping();
+                    let fut = client_sink.send(SendMessage::Ping(data));
+                    self.run_sending(fut, &mut state, &mut client_stream).await?;
                 }
                 msg = self.inbox.recv() => {
                     let Some(msg) = msg else {
@@ -539,7 +556,11 @@ impl ActiveRelayActor {
                         break Err(anyhow!("Client stream finished"));
                     };
                     match msg {
-                        Ok(msg) => self.handle_relay_msg(msg, &mut state),
+                        Ok(msg) => {
+                            self.handle_relay_msg(msg, &mut state);
+                            // reset the ping timer, we have just received a message
+                            ping_interval.reset();
+                        },
                         Err(err) => break Err(anyhow!("Client stream read error: {err:#}")),
                     }
                 }
@@ -623,12 +644,19 @@ impl ActiveRelayActor {
         state: &mut ConnectedRelayState,
         client_stream: &mut iroh_relay::client::ClientStream,
     ) -> Result<()> {
+        // we use the same time as for our ping interval
+        let send_timeout = PING_INTERVAL;
+
+        let mut timeout = pin!(tokio::time::sleep(send_timeout));
         let mut sending_fut = pin!(sending_fut);
         loop {
             tokio::select! {
                 biased;
                 _ = self.stop_token.cancelled() => {
                     break Ok(());
+                }
+                _ = &mut timeout => {
+                    break Err(anyhow!("Send timeout"));
                 }
                 msg = self.prio_inbox.recv() => {
                     let Some(msg) = msg else {
@@ -1165,62 +1193,6 @@ impl Iterator for PacketSplitIter {
     }
 }
 
-/// Tracks pings on a single relay connection.
-///
-/// Only the last ping needs is useful, any previously sent ping is forgotten and ignored.
-#[derive(Debug)]
-struct PingTracker {
-    inner: Option<PingInner>,
-}
-
-#[derive(Debug)]
-struct PingInner {
-    data: [u8; 8],
-    deadline: Instant,
-}
-
-impl PingTracker {
-    fn new() -> Self {
-        Self { inner: None }
-    }
-
-    /// Starts a new ping.
-    fn new_ping(&mut self) -> [u8; 8] {
-        let ping_data = rand::random();
-        debug!(data = ?ping_data, "Sending ping to relay server.");
-        self.inner = Some(PingInner {
-            data: ping_data,
-            deadline: Instant::now() + PING_TIMEOUT,
-        });
-        ping_data
-    }
-
-    /// Updates the ping tracker with a received pong.
-    ///
-    /// Only the pong of the most recent ping will do anything.  There is no harm feeding
-    /// any pong however.
-    fn pong_received(&mut self, data: [u8; 8]) {
-        if self.inner.as_ref().map(|inner| inner.data) == Some(data) {
-            debug!(?data, "Pong received from relay server");
-            self.inner = None;
-        }
-    }
-
-    /// Cancel-safe waiting for a ping timeout.
-    ///
-    /// Unless the most recent sent ping times out, this will never return.
-    async fn timeout(&mut self) {
-        match self.inner {
-            Some(PingInner { deadline, data }) => {
-                tokio::time::sleep_until(deadline).await;
-                debug!(?data, "Ping timeout.");
-                self.inner = None;
-            }
-            None => future::pending().await,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
@@ -1548,7 +1520,7 @@ mod tests {
     #[tokio::test]
     async fn test_ping_tracker() {
         tokio::time::pause();
-        let mut tracker = PingTracker::new();
+        let mut tracker = PingTracker::default();
 
         let ping0 = tracker.new_ping();
 

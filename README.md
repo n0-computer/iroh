@@ -40,12 +40,12 @@ To ensure these connections are as fast as possible, we [continuously measure ir
 ### Built on [QUIC]
 
 Iroh uses [Quinn] to establish [QUIC] connections between nodes.
-This way you get authenticated encryption, concurrent streams with stream prioirities, a datagram transport and avoid head-of-line-blocking out of the box.
+This way you get authenticated encryption, concurrent streams with stream priorities, a datagram transport and avoid head-of-line-blocking out of the box.
 
 ## Compose Protocols
 
 Use pre-existing protocols built on iroh instead of writing your own:
-- [iroh-blobs] for [BLAKE3]-based content-addressed blob transfer scaling from kilobytes to terrabytes
+- [iroh-blobs] for [BLAKE3]-based content-addressed blob transfer scaling from kilobytes to terabytes
 - [iroh-gossip] for establishing publish-subscribe overlay networks that scale, requiring only resources that your average phone can handle
 - [iroh-docs] for an eventually-consistent key-value store of [iroh-blobs] blobs
 - [iroh-willow] for an (in-construction) implementation of the [willow protocol]
@@ -77,7 +77,7 @@ let response = recv.read_to_end(1000).await?;
 assert_eq!(&response, b"Hello, world!");
 
 // Close the endpoint and all its connections
-endpoint.close().await?;
+endpoint.close().await;
 ```
 
 And on the accepting side:

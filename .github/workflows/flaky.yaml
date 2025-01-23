@@ -87,7 +87,7 @@ jobs:
             echo "$failure" >> $GITHUB_OUTPUT
           done
           echo "" >> $GITHUB_OUTPUT
-          echo "See https://github.com/n0-computer/iroh/actions/workflows/flaky.yaml" >> $GITHUB_OUTPUT
+          echo "See https://github.com/${{ github.repository }}/actions/workflows/flaky.yaml" >> $GITHUB_OUTPUT
           echo "$EOF" >> $GITHUB_OUTPUT
       - name: Notify discord on failure
         uses: n0-computer/discord-webhook-notify@v1

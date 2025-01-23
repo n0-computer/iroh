@@ -265,13 +265,13 @@ impl ProbePlan {
                             node: relay_node.clone(),
                         })
                         .expect("adding StunIpv6 probe to a StunIpv6 probe set");
+                    quic_ipv6_probes
+                        .push(Probe::QuicIpv6 {
+                            delay,
+                            node: relay_node.clone(),
+                        })
+                        .expect("adding QuicIpv6 probe to a QuicAddrIpv6 probe set");
                 }
-                quic_ipv6_probes
-                    .push(Probe::QuicIpv6 {
-                        delay,
-                        node: relay_node.clone(),
-                    })
-                    .expect("adding QuicIpv6 probe to a QuicAddrIpv6 probe set");
             }
             plan.add_if_enabled(stun_ipv4_probes);
             plan.add_if_enabled(stun_ipv6_probes);

@@ -1,6 +1,6 @@
 [package]
 name = "iroh-bench"
-version = "0.30.0"
+version = "0.31.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
@@ -10,7 +10,7 @@ anyhow = "1.0.22"
 bytes = "1.7"
 hdrhistogram = { version = "7.2", default-features = false }
 iroh = { path = ".." }
-iroh-metrics = "0.30"
+iroh-metrics = "0.31"
 quinn = { package = "iroh-quinn", version = "0.12" }
 rcgen = "0.13"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }

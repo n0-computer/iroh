@@ -135,6 +135,7 @@ jobs:
         cp target/${{inputs.build_profile}}/examples/* ../chuck/netsim/bins/
         cp target/${{inputs.build_profile}}/examples/transfer ../chuck/netsim/bins/iroh-transfer
         cp target/${{inputs.build_profile}}/iroh-relay ../chuck/netsim/bins/iroh-relay
+        cp target/${{inputs.build_profile}}/iroh-dns-server ../chuck/netsim/bins/iroh-dns-server
         cp ../chuck/target/release/chuck ../chuck/netsim/bins/chuck
 
     - name: Get commit sha

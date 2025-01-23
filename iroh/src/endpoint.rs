@@ -95,7 +95,7 @@ pub struct Builder {
     secret_key: Option<SecretKey>,
     relay_mode: RelayMode,
     alpn_protocols: Vec<Vec<u8>>,
-    transport_config: Option<quinn::TransportConfig>,
+    transport_config: quinn::TransportConfig,
     keylog: bool,
     #[debug(skip)]
     discovery: Vec<DiscoveryBuilder>,
@@ -113,11 +113,13 @@ pub struct Builder {
 
 impl Default for Builder {
     fn default() -> Self {
+        let mut transport_config = quinn::TransportConfig::default();
+        transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
         Self {
             secret_key: Default::default(),
             relay_mode: default_relay_mode(),
             alpn_protocols: Default::default(),
-            transport_config: Default::default(),
+            transport_config,
             keylog: Default::default(),
             discovery: Default::default(),
             proxy_url: None,
@@ -146,7 +148,7 @@ impl Builder {
             .secret_key
             .unwrap_or_else(|| SecretKey::generate(rand::rngs::OsRng));
         let static_config = StaticConfig {
-            transport_config: Arc::new(self.transport_config.unwrap_or_default()),
+            transport_config: Arc::new(self.transport_config),
             keylog: self.keylog,
             secret_key: secret_key.clone(),
         };
@@ -380,8 +382,11 @@ impl Builder {
     /// internet applications. Applications protocols which forbid remotely-initiated
     /// streams should set `max_concurrent_bidi_streams` and `max_concurrent_uni_streams` to
     /// zero.
+    ///
+    /// Please be aware that changing some settings may have adverse effects on establishing
+    /// and maintaining direct connections.
     pub fn transport_config(mut self, transport_config: quinn::TransportConfig) -> Self {
-        self.transport_config = Some(transport_config);
+        self.transport_config = transport_config;
         self
     }
 
@@ -495,11 +500,14 @@ pub fn make_server_config(
 /// while still remaining independent connections.  This will result in more optimal network
 /// behaviour.
 ///
-/// New connections are typically created using the [`Endpoint::connect`] and
-/// [`Endpoint::accept`] methods.  Once established, the [`Connection`] gives access to most
-/// [QUIC] features.  Individual streams to send data to the peer are created using the
-/// [`Connection::open_bi`], [`Connection::accept_bi`], [`Connection::open_uni`] and
-/// [`Connection::open_bi`] functions.
+/// The endpoint is created using the [`Builder`], which can be created using
+/// [`Endpoint::builder`].
+///
+/// Once an endpoint exists, new connections are typically created using the
+/// [`Endpoint::connect`] and [`Endpoint::accept`] methods.  Once established, the
+/// [`Connection`] gives access to most [QUIC] features.  Individual streams to send data to
+/// the peer are created using the [`Connection::open_bi`], [`Connection::accept_bi`],
+/// [`Connection::open_uni`] and [`Connection::open_bi`] functions.
 ///
 /// Note that due to the light-weight properties of streams a stream will only be accepted
 /// once the initiating peer has sent some data on it.
@@ -598,8 +606,25 @@ impl Endpoint {
     /// The `alpn`, or application-level protocol identifier, is also required. The remote
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
-    #[instrument(skip_all, fields(me = %self.node_id().fmt_short(), alpn = ?String::from_utf8_lossy(alpn)))]
     pub async fn connect(&self, node_addr: impl Into<NodeAddr>, alpn: &[u8]) -> Result<Connection> {
+        self.connect_with(node_addr, alpn, self.static_config.transport_config.clone())
+            .await
+    }
+
+    /// Connects to a remote [`Endpoint`] using a custom [`TransportConfig`].
+    ///
+    /// Like [`Endpoint::connect`], but allows providing a custom for the connection.  See
+    /// the docs of [`Endpoint::connect`] for details.
+    ///
+    /// Please be aware that changing some settings may have adverse effects on establishing
+    /// and maintaining direct connections.  Carefully test settings you use and consider
+    /// this currently as still rather experimental.
+    pub async fn connect_with(
+        &self,
+        node_addr: impl Into<NodeAddr>,
+        alpn: &[u8],
+        transport_config: Arc<TransportConfig>,
+    ) -> Result<Connection> {
         let node_addr: NodeAddr = node_addr.into();
         tracing::Span::current().record("remote", node_addr.node_id.fmt_short());
         // Connecting to ourselves is not supported.
@@ -637,18 +662,25 @@ impl Endpoint {
 
         // Start connecting via quinn. This will time out after 10 seconds if no reachable
         // address is available.
-        self.connect_quinn(node_id, alpn, addr).await
+        self.connect_quinn(node_id, alpn, addr, transport_config)
+            .await
     }
 
     #[instrument(
+        name = "connect",
         skip_all,
-        fields(remote_node = node_id.fmt_short(), alpn = %String::from_utf8_lossy(alpn))
+        fields(
+            me = %self.node_id().fmt_short(),
+            remote_node = node_id.fmt_short(),
+            alpn = %String::from_utf8_lossy(alpn),
+        )
     )]
     async fn connect_quinn(
         &self,
         node_id: NodeId,
         alpn: &[u8],
         addr: QuicMappedAddr,
+        transport_config: Arc<TransportConfig>,
     ) -> Result<Connection> {
         debug!("Attempting connection...");
         let client_config = {
@@ -660,9 +692,7 @@ impl Endpoint {
                 self.static_config.keylog,
             )?;
             let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
-            let mut transport_config = quinn::TransportConfig::default();
-            transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
-            client_config.transport_config(Arc::new(transport_config));
+            client_config.transport_config(transport_config);
             client_config
         };
 
@@ -715,12 +745,17 @@ impl Endpoint {
     ///
     /// See also [`Endpoint::add_node_addr_with_source`].
     ///
+    /// # Using node discovery instead
+    ///
+    /// It is strongly advised to use node discovery using the [`StaticProvider`] instead.
+    /// This provides more flexibility and future proofing.
+    ///
     /// # Errors
     ///
     /// Will return an error if we attempt to add our own [`PublicKey`] to the node map or
     /// if the direct addresses are a subset of ours.
     ///
-    /// [`PublicKey`]: iroh_base::PublicKey
+    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
     pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
         self.add_node_addr_inner(node_addr, magicsock::Source::App)
     }
@@ -733,12 +768,17 @@ impl Endpoint {
     /// address that matches this node's direct addresses will be silently ignored. The *source* is
     /// used for logging exclusively and will not be stored.
     ///
+    /// # Using node discovery instead
+    ///
+    /// It is strongly advised to use node discovery using the [`StaticProvider`] instead.
+    /// This provides more flexibility and future proofing.
+    ///
     /// # Errors
     ///
     /// Will return an error if we attempt to add our own [`PublicKey`] to the node map or
     /// if the direct addresses are a subset of ours.
     ///
-    /// [`PublicKey`]: iroh_base::PublicKey
+    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
     pub fn add_node_addr_with_source(
         &self,
         node_addr: NodeAddr,
@@ -978,12 +1018,9 @@ impl Endpoint {
     /// Be aware however that the underlying UDP sockets are only closed
     /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
     /// are dropped.
-    ///
-    /// Returns an error if closing the magic socket failed.
-    /// TODO: Document error cases.
-    pub async fn close(&self) -> Result<()> {
+    pub async fn close(&self) {
         if self.is_closed() {
-            return Ok(());
+            return;
         }
 
         tracing::debug!("Closing connections");
@@ -991,8 +1028,7 @@ impl Endpoint {
         self.endpoint.wait_idle().await;
 
         tracing::debug!("Connections closed");
-        self.msock.close().await?;
-        Ok(())
+        self.msock.close().await;
     }
 
     /// Check if this endpoint is still alive, or already closed.
@@ -1911,7 +1947,7 @@ mod tests {
 
         info!("closing endpoint");
         // close the endpoint and restart it
-        endpoint.close().await.unwrap();
+        endpoint.close().await;
 
         info!("restarting endpoint");
         // now restart it and check the addressing info of the peer
@@ -2010,7 +2046,7 @@ mod tests {
                 send.stopped().await.unwrap();
                 recv.read_to_end(0).await.unwrap();
                 info!("client finished");
-                ep.close().await.unwrap();
+                ep.close().await;
                 info!("client closed");
             }
             .instrument(error_span!("client", %i))

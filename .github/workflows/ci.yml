@@ -228,9 +228,6 @@ jobs:
       - name: Docs
         run: cargo doc --workspace --all-features --no-deps --document-private-items
 
-      - name: Docs (default features)
-        run: cargo doc --workspace --no-deps
-
   clippy_check:
     timeout-minutes: 30
     runs-on: ubuntu-latest

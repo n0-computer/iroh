@@ -23,6 +23,9 @@
 //!
 //! Some generally useful discovery implementations are provided:
 //!
+//! - [`StaticProvider`] which allows application to add and remove out-of-band addressing
+//!   information.
+//!
 //! - The [`DnsDiscovery`] which performs lookups via the standard DNS systems.  To publish
 //!   to this DNS server a [`PkarrPublisher`] is needed.  [Number 0] runs a public instance
 //!   of a [`PkarrPublisher`] with attached DNS server which is globally available and a
@@ -30,11 +33,9 @@
 //!
 //! - The [`PkarrResolver`] which can perform lookups from designated [pkarr relay servers]
 //!   using HTTP.
-#![cfg_attr(
-    feature = "discovery-local-network",
-    doc = "- [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
-             very similar to mDNS."
-)]
+//!
+//! - [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery which is an mDNS
+//!   implementation.
 //!
 //! - The [`DhtDiscovery`] also uses the [`pkarr`] system but can also publish and lookup
 //!   records to/from the Mainline DHT.
@@ -68,13 +69,7 @@
 //! # }
 //! ```
 //!
-//! To also enable
-#![cfg_attr(feature = "discovery-local-network", doc = "[`LocalSwarmDiscovery`]")]
-#![cfg_attr(
-    not(feature = "discovery-local-network"),
-    doc = "`LocalSwarmDiscovery`"
-)]
-//! it can be added as another service in the
+//! To also enable [`LocalSwarmDiscovery`] it can be added as another service in the
 //! [`ConcurrentDiscovery`]:
 //!
 //! ```no_run
@@ -106,12 +101,10 @@
 //! [`PkarrPublisher`]: pkarr::PkarrPublisher
 //! [`DhtDiscovery`]: pkarr::dht::DhtDiscovery
 //! [pkarr relay servers]: https://pkarr.org/#servers
-#![cfg_attr(
-    feature = "discovery-local-network",
-    doc = "[`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery"
-)]
+//! [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
+//! [`StaticProvider`]: static_provider::StaticProvider
 
-use std::{collections::BTreeSet, net::SocketAddr, time::Duration};
+use std::{collections::BTreeSet, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, ensure, Result};
 use futures_lite::stream::{Boxed as BoxStream, StreamExt};
@@ -193,6 +186,8 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
         None
     }
 }
+
+impl<T: Discovery> Discovery for Arc<T> {}
 
 /// The results returned from [`Discovery::resolve`].
 #[derive(Debug, Clone)]
@@ -443,8 +438,10 @@ mod tests {
         time::SystemTime,
     };
 
+    use anyhow::Context;
     use iroh_base::SecretKey;
     use rand::Rng;
+    use testresult::TestResult;
     use tokio_util::task::AbortOnDropHandle;
 
     use super::*;
@@ -604,8 +601,11 @@ mod tests {
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
         // wait for out address to be updated and thus published at least once
-        ep1.node_addr().await?;
-        let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
+        ep1.node_addr().await.context("waiting for NodeAddr")?;
+        let _conn = ep2
+            .connect(ep1_addr, TEST_ALPN)
+            .await
+            .context("connecting")?;
         Ok(())
     }
 
@@ -706,10 +706,13 @@ mod tests {
         let handle = tokio::spawn({
             let ep = ep.clone();
             async move {
+                // Keep connections alive until the task is dropped.
+                let mut connections = Vec::new();
                 // we skip accept() errors, they can be caused by retransmits
                 while let Some(connecting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
-                    let _conn = connecting.await?;
                     // Just accept incoming connections, but don't do anything with them.
+                    let conn = connecting.await?;
+                    connections.push(conn);
                 }
 
                 anyhow::Ok(())
@@ -724,6 +727,21 @@ mod tests {
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect("time drift")
             .as_micros() as u64
+    }
+
+    #[tokio::test]
+    async fn test_arc_discovery() -> TestResult {
+        let discovery = Arc::new(EmptyDiscovery);
+
+        let _ep = Endpoint::builder()
+            .add_discovery({
+                let discovery = discovery.clone();
+                move |_| Some(discovery)
+            })
+            .bind()
+            .await?;
+
+        Ok(())
     }
 }
 
