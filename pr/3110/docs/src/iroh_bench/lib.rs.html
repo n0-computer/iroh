@@ -265,8 +265,7 @@
 <a href="#264" id="264">264</a>
 <a href="#265" id="265">265</a>
 <a href="#266" id="266">266</a>
-<a href="#267" id="267">267</a>
-<a href="#268" id="268">268</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#267" id="267">267</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     num::ParseIntError,
     str::FromStr,
     sync::{Arc, Mutex},
@@ -351,17 +350,16 @@
 }
 
 <span class="kw">impl </span>EndpointSelector {
-    <span class="kw">pub async fn </span>close(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">pub async fn </span>close(<span class="self">self</span>) {
         <span class="kw">match </span><span class="self">self </span>{
             EndpointSelector::Iroh(endpoint) =&gt; {
-                endpoint.close().<span class="kw">await</span><span class="question-mark">?</span>;
+                endpoint.close().<span class="kw">await</span>;
             }
             <span class="attr">#[cfg(not(any(target_os = <span class="string">"freebsd"</span>, target_os = <span class="string">"openbsd"</span>, target_os = <span class="string">"netbsd"</span>)))]
             </span>EndpointSelector::Quinn(endpoint) =&gt; {
                 endpoint.close(<span class="number">0u32</span>.into(), <span class="string">b""</span>);
             }
         }
-        <span class="prelude-val">Ok</span>(())
     }
 }
 
@@ -523,7 +521,7 @@
     // to `Arc`ing them
     </span>connection.close(<span class="number">0u32</span>, <span class="string">b"Benchmark done"</span>);
 
-    endpoint.close().<span class="kw">await</span><span class="question-mark">?</span>;
+    endpoint.close().<span class="kw">await</span>;
 
     <span class="kw">if </span>opt.stats {
         <span class="macro">println!</span>(<span class="string">"\nClient connection stats:\n{:#?}"</span>, connection.stats());

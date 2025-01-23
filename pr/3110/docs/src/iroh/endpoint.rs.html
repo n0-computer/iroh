@@ -2221,7 +2221,43 @@
 <a href="#2220" id="2220">2220</a>
 <a href="#2221" id="2221">2221</a>
 <a href="#2222" id="2222">2222</a>
-<a href="#2223" id="2223">2223</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2223" id="2223">2223</a>
+<a href="#2224" id="2224">2224</a>
+<a href="#2225" id="2225">2225</a>
+<a href="#2226" id="2226">2226</a>
+<a href="#2227" id="2227">2227</a>
+<a href="#2228" id="2228">2228</a>
+<a href="#2229" id="2229">2229</a>
+<a href="#2230" id="2230">2230</a>
+<a href="#2231" id="2231">2231</a>
+<a href="#2232" id="2232">2232</a>
+<a href="#2233" id="2233">2233</a>
+<a href="#2234" id="2234">2234</a>
+<a href="#2235" id="2235">2235</a>
+<a href="#2236" id="2236">2236</a>
+<a href="#2237" id="2237">2237</a>
+<a href="#2238" id="2238">2238</a>
+<a href="#2239" id="2239">2239</a>
+<a href="#2240" id="2240">2240</a>
+<a href="#2241" id="2241">2241</a>
+<a href="#2242" id="2242">2242</a>
+<a href="#2243" id="2243">2243</a>
+<a href="#2244" id="2244">2244</a>
+<a href="#2245" id="2245">2245</a>
+<a href="#2246" id="2246">2246</a>
+<a href="#2247" id="2247">2247</a>
+<a href="#2248" id="2248">2248</a>
+<a href="#2249" id="2249">2249</a>
+<a href="#2250" id="2250">2250</a>
+<a href="#2251" id="2251">2251</a>
+<a href="#2252" id="2252">2252</a>
+<a href="#2253" id="2253">2253</a>
+<a href="#2254" id="2254">2254</a>
+<a href="#2255" id="2255">2255</a>
+<a href="#2256" id="2256">2256</a>
+<a href="#2257" id="2257">2257</a>
+<a href="#2258" id="2258">2258</a>
+<a href="#2259" id="2259">2259</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2318,7 +2354,7 @@
     secret_key: <span class="prelude-ty">Option</span>&lt;SecretKey&gt;,
     relay_mode: RelayMode,
     alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;,
-    transport_config: <span class="prelude-ty">Option</span>&lt;quinn::TransportConfig&gt;,
+    transport_config: quinn::TransportConfig,
     keylog: bool,
     <span class="attr">#[debug(skip)]
     </span>discovery: Vec&lt;DiscoveryBuilder&gt;,
@@ -2336,11 +2372,13 @@
 
 <span class="kw">impl </span>Default <span class="kw">for </span>Builder {
     <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();
+        transport_config.keep_alive_interval(<span class="prelude-val">Some</span>(Duration::from_secs(<span class="number">1</span>)));
         <span class="self">Self </span>{
             secret_key: Default::default(),
             relay_mode: default_relay_mode(),
             alpn_protocols: Default::default(),
-            transport_config: Default::default(),
+            transport_config,
             keylog: Default::default(),
             discovery: Default::default(),
             proxy_url: <span class="prelude-val">None</span>,
@@ -2369,7 +2407,7 @@
             </span>.secret_key
             .unwrap_or_else(|| SecretKey::generate(rand::rngs::OsRng));
         <span class="kw">let </span>static_config = StaticConfig {
-            transport_config: Arc::new(<span class="self">self</span>.transport_config.unwrap_or_default()),
+            transport_config: Arc::new(<span class="self">self</span>.transport_config),
             keylog: <span class="self">self</span>.keylog,
             secret_key: secret_key.clone(),
         };
@@ -2603,8 +2641,11 @@
     /// internet applications. Applications protocols which forbid remotely-initiated
     /// streams should set `max_concurrent_bidi_streams` and `max_concurrent_uni_streams` to
     /// zero.
+    ///
+    /// Please be aware that changing some settings may have adverse effects on establishing
+    /// and maintaining direct connections.
     </span><span class="kw">pub fn </span>transport_config(<span class="kw-2">mut </span><span class="self">self</span>, transport_config: quinn::TransportConfig) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.transport_config = <span class="prelude-val">Some</span>(transport_config);
+        <span class="self">self</span>.transport_config = transport_config;
         <span class="self">self
     </span>}
 
@@ -2718,11 +2759,14 @@
 /// while still remaining independent connections.  This will result in more optimal network
 /// behaviour.
 ///
-/// New connections are typically created using the [`Endpoint::connect`] and
-/// [`Endpoint::accept`] methods.  Once established, the [`Connection`] gives access to most
-/// [QUIC] features.  Individual streams to send data to the peer are created using the
-/// [`Connection::open_bi`], [`Connection::accept_bi`], [`Connection::open_uni`] and
-/// [`Connection::open_bi`] functions.
+/// The endpoint is created using the [`Builder`], which can be created using
+/// [`Endpoint::builder`].
+///
+/// Once an endpoint exists, new connections are typically created using the
+/// [`Endpoint::connect`] and [`Endpoint::accept`] methods.  Once established, the
+/// [`Connection`] gives access to most [QUIC] features.  Individual streams to send data to
+/// the peer are created using the [`Connection::open_bi`], [`Connection::accept_bi`],
+/// [`Connection::open_uni`] and [`Connection::open_bi`] functions.
 ///
 /// Note that due to the light-weight properties of streams a stream will only be accepted
 /// once the initiating peer has sent some data on it.
@@ -2821,8 +2865,25 @@
     /// The `alpn`, or application-level protocol identifier, is also required. The remote
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
-    </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.node_id().fmt_short(), alpn = <span class="question-mark">?</span>String::from_utf8_lossy(alpn)))]
     </span><span class="kw">pub async fn </span>connect(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: <span class="kw">impl </span>Into&lt;NodeAddr&gt;, alpn: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;Connection&gt; {
+        <span class="self">self</span>.connect_with(node_addr, alpn, <span class="self">self</span>.static_config.transport_config.clone())
+            .<span class="kw">await
+    </span>}
+
+    <span class="doccomment">/// Connects to a remote [`Endpoint`] using a custom [`TransportConfig`].
+    ///
+    /// Like [`Endpoint::connect`], but allows providing a custom for the connection.  See
+    /// the docs of [`Endpoint::connect`] for details.
+    ///
+    /// Please be aware that changing some settings may have adverse effects on establishing
+    /// and maintaining direct connections.  Carefully test settings you use and consider
+    /// this currently as still rather experimental.
+    </span><span class="kw">pub async fn </span>connect_with(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        node_addr: <span class="kw">impl </span>Into&lt;NodeAddr&gt;,
+        alpn: <span class="kw-2">&amp;</span>[u8],
+        transport_config: Arc&lt;TransportConfig&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;Connection&gt; {
         <span class="kw">let </span>node_addr: NodeAddr = node_addr.into();
         tracing::Span::current().record(<span class="string">"remote"</span>, node_addr.node_id.fmt_short());
         <span class="comment">// Connecting to ourselves is not supported.
@@ -2860,18 +2921,25 @@
 
         <span class="comment">// Start connecting via quinn. This will time out after 10 seconds if no reachable
         // address is available.
-        </span><span class="self">self</span>.connect_quinn(node_id, alpn, addr).<span class="kw">await
+        </span><span class="self">self</span>.connect_quinn(node_id, alpn, addr, transport_config)
+            .<span class="kw">await
     </span>}
 
     <span class="attr">#[instrument(
+        name = <span class="string">"connect"</span>,
         skip_all,
-        fields(remote_node = node_id.fmt_short(), alpn = %String::from_utf8_lossy(alpn))
+        fields(
+            me = %<span class="self">self</span>.node_id().fmt_short(),
+            remote_node = node_id.fmt_short(),
+            alpn = %String::from_utf8_lossy(alpn),
+        )
     )]
     </span><span class="kw">async fn </span>connect_quinn(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_id: NodeId,
         alpn: <span class="kw-2">&amp;</span>[u8],
         addr: QuicMappedAddr,
+        transport_config: Arc&lt;TransportConfig&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;Connection&gt; {
         <span class="macro">debug!</span>(<span class="string">"Attempting connection..."</span>);
         <span class="kw">let </span>client_config = {
@@ -2883,9 +2951,7 @@
                 <span class="self">self</span>.static_config.keylog,
             )<span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
-            <span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();
-            transport_config.keep_alive_interval(<span class="prelude-val">Some</span>(Duration::from_secs(<span class="number">1</span>)));
-            client_config.transport_config(Arc::new(transport_config));
+            client_config.transport_config(transport_config);
             client_config
         };
 
@@ -2938,12 +3004,17 @@
     ///
     /// See also [`Endpoint::add_node_addr_with_source`].
     ///
+    /// # Using node discovery instead
+    ///
+    /// It is strongly advised to use node discovery using the [`StaticProvider`] instead.
+    /// This provides more flexibility and future proofing.
+    ///
     /// # Errors
     ///
-    /// Will return an error if we attempt to add our own [`PublicKey`] to the node map or
+    /// Will return an error if we attempt to add our own [`NodeId`] to the node map or
     /// if the direct addresses are a subset of ours.
     ///
-    /// [`PublicKey`]: iroh_base::PublicKey
+    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
     </span><span class="kw">pub fn </span>add_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: NodeAddr) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="self">self</span>.add_node_addr_inner(node_addr, magicsock::Source::App)
     }
@@ -2956,12 +3027,17 @@
     /// address that matches this node's direct addresses will be silently ignored. The *source* is
     /// used for logging exclusively and will not be stored.
     ///
+    /// # Using node discovery instead
+    ///
+    /// It is strongly advised to use node discovery using the [`StaticProvider`] instead.
+    /// This provides more flexibility and future proofing.
+    ///
     /// # Errors
     ///
-    /// Will return an error if we attempt to add our own [`PublicKey`] to the node map or
+    /// Will return an error if we attempt to add our own [`NodeId`] to the node map or
     /// if the direct addresses are a subset of ours.
     ///
-    /// [`PublicKey`]: iroh_base::PublicKey
+    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
     </span><span class="kw">pub fn </span>add_node_addr_with_source(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_addr: NodeAddr,
@@ -3201,12 +3277,9 @@
     /// Be aware however that the underlying UDP sockets are only closed
     /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
     /// are dropped.
-    ///
-    /// Returns an error if closing the magic socket failed.
-    /// TODO: Document error cases.
-    </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="kw">if </span><span class="self">self</span>.is_closed() {
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+            <span class="kw">return</span>;
         }
 
         <span class="macro">tracing::debug!</span>(<span class="string">"Closing connections"</span>);
@@ -3214,8 +3287,7 @@
         <span class="self">self</span>.endpoint.wait_idle().<span class="kw">await</span>;
 
         <span class="macro">tracing::debug!</span>(<span class="string">"Connections closed"</span>);
-        <span class="self">self</span>.msock.close().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(())
+        <span class="self">self</span>.msock.close().<span class="kw">await</span>;
     }
 
     <span class="doccomment">/// Check if this endpoint is still alive, or already closed.
@@ -4134,7 +4206,7 @@
 
         <span class="macro">info!</span>(<span class="string">"closing endpoint"</span>);
         <span class="comment">// close the endpoint and restart it
-        </span>endpoint.close().<span class="kw">await</span>.unwrap();
+        </span>endpoint.close().<span class="kw">await</span>;
 
         <span class="macro">info!</span>(<span class="string">"restarting endpoint"</span>);
         <span class="comment">// now restart it and check the addressing info of the peer
@@ -4233,7 +4305,7 @@
                 send.stopped().<span class="kw">await</span>.unwrap();
                 recv.read_to_end(<span class="number">0</span>).<span class="kw">await</span>.unwrap();
                 <span class="macro">info!</span>(<span class="string">"client finished"</span>);
-                ep.close().<span class="kw">await</span>.unwrap();
+                ep.close().<span class="kw">await</span>;
                 <span class="macro">info!</span>(<span class="string">"client closed"</span>);
             }
             .instrument(<span class="macro">error_span!</span>(<span class="string">"client"</span>, %i))
