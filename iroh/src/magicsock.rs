@@ -227,7 +227,7 @@ pub(crate) struct MagicSock {
 
     /// None (or zero nodes) means relay is disabled.
     relay_map: RelayMap,
-    /// Nearest relay node ID. None means unknown.
+    /// Nearest relay node ID; 0 means none/unknown.
     my_relay: Watchable<Option<RelayUrl>>,
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
@@ -238,7 +238,6 @@ pub(crate) struct MagicSock {
     #[cfg(not(wasm_browser))]
     pconn6: Option<UdpConn>,
     /// NetReport client
-    #[cfg(not(wasm_browser))]
     net_reporter: net_report::Addr,
     /// The state for an active DiscoKey.
     disco_secrets: DiscoSecrets,
@@ -1594,9 +1593,12 @@ impl Handle {
         #[cfg(not(wasm_browser))]
         let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
-        #[cfg(not(wasm_browser))]
-        let net_reporter =
-            net_report::Client::new(Some(port_mapper.clone()), dns_resolver.clone())?;
+        let net_reporter = net_report::Client::new(
+            #[cfg(not(wasm_browser))]
+            Some(port_mapper.clone()),
+            #[cfg(not(wasm_browser))]
+            dns_resolver.clone(),
+        )?;
 
         #[cfg(not(wasm_browser))]
         let pconn4_sock = pconn4.as_socket();
@@ -1635,7 +1637,6 @@ impl Handle {
             ipv6_reported: Arc::new(AtomicBool::new(false)),
             relay_map,
             my_relay: Default::default(),
-            #[cfg(not(wasm_browser))]
             net_reporter: net_reporter.addr(),
             #[cfg(not(wasm_browser))]
             pconn4,
@@ -1694,7 +1695,6 @@ impl Handle {
                     msock: inner2,
                     #[cfg(not(wasm_browser))]
                     periodic_re_stun_timer: new_re_stun_timer(false),
-                    #[cfg(not(wasm_browser))]
                     net_info_last: None,
                     #[cfg(not(wasm_browser))]
                     port_mapper,
@@ -1703,7 +1703,6 @@ impl Handle {
                     #[cfg(not(wasm_browser))]
                     pconn6: pconn6_sock,
                     no_v4_send: false,
-                    #[cfg(not(wasm_browser))]
                     net_reporter,
                     #[cfg(not(wasm_browser))]
                     network_monitor,
@@ -2089,7 +2088,6 @@ impl quinn::UdpPoller for IoPoller {
 enum ActorMessage {
     Shutdown,
     EndpointPingExpired(usize, stun_rs::TransactionId),
-    #[cfg(not(wasm_browser))]
     NetReport(Result<Option<Arc<net_report::Report>>>, &'static str),
     NetworkChange,
     #[cfg(test)]
@@ -2106,7 +2104,6 @@ struct Actor {
     #[cfg(not(wasm_browser))]
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
-    #[cfg(not(wasm_browser))]
     net_info_last: Option<NetInfo>,
 
     // The underlying UDP sockets used to send/rcv packets.
@@ -2125,7 +2122,6 @@ struct Actor {
     no_v4_send: bool,
 
     /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
-    #[cfg(not(wasm_browser))]
     net_reporter: net_report::Client,
 
     #[cfg(not(wasm_browser))]
@@ -2356,7 +2352,6 @@ impl Actor {
             ActorMessage::EndpointPingExpired(id, txid) => {
                 self.msock.node_map.notify_ping_timeout(id, txid);
             }
-            #[cfg(not(wasm_browser))]
             ActorMessage::NetReport(report, why) => {
                 match report {
                     Ok(report) => {
@@ -2392,11 +2387,11 @@ impl Actor {
     /// never be invoked directly.  Some day this will be refactored to not allow this easy
     /// mistake to be made.
     #[instrument(level = "debug", skip_all)]
-    #[cfg(not(wasm_browser))]
     async fn refresh_direct_addrs(&mut self, why: &'static str) {
         inc!(MagicsockMetrics, update_direct_addrs);
 
         debug!("starting direct addr update ({})", why);
+        #[cfg(not(wasm_browser))]
         self.port_mapper.procure_mapping();
         self.update_net_info(why).await;
     }
@@ -2557,7 +2552,6 @@ impl Actor {
 
     /// Updates `NetInfo.HavePortMap` to true.
     #[instrument(level = "debug", skip_all)]
-    #[cfg(not(wasm_browser))]
     fn set_net_info_have_port_map(&mut self) {
         if let Some(ref mut net_info_last) = self.net_info_last {
             if net_info_last.have_port_map {
@@ -2570,7 +2564,6 @@ impl Actor {
     }
 
     #[instrument(level = "debug", skip_all)]
-    #[cfg(not(wasm_browser))]
     async fn call_net_info_callback(&mut self, ni: NetInfo) {
         if let Some(ref net_info_last) = self.net_info_last {
             if ni.basically_equal(net_info_last) {
@@ -2587,7 +2580,6 @@ impl Actor {
     /// [`Actor::refresh_direct_addrs`] and this should never be invoked directly.  Some day
     /// this will be refactored to not allow this easy mistake to be made.
     #[instrument(level = "debug", skip_all)]
-    #[cfg(not(wasm_browser))]
     async fn update_net_info(&mut self, why: &'static str) {
         if self.msock.relay_map.is_empty() {
             debug!("skipping net_report, empty RelayMap");
@@ -2633,7 +2625,6 @@ impl Actor {
         }
     }
 
-    #[cfg(not(wasm_browser))]
     async fn handle_net_report_report(&mut self, report: Option<Arc<net_report::Report>>) {
         if let Some(ref report) = report {
             self.msock
@@ -2647,7 +2638,10 @@ impl Actor {
             );
             self.no_v4_send = !r.ipv4_can_send;
 
+            #[cfg(not(wasm_browser))]
             let have_port_map = self.port_mapper.watch_external_address().borrow().is_some();
+            #[cfg(wasm_browser)]
+            let have_port_map = false;
 
             let mut ni = NetInfo {
                 relay_latency: Default::default(),
@@ -2684,6 +2678,7 @@ impl Actor {
             // TODO: set link type
             self.call_net_info_callback(ni).await;
         }
+        #[cfg(not(wasm_browser))]
         self.update_direct_addresses(report);
     }
 
