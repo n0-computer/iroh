@@ -6535,7 +6535,7 @@
         }
 
         <span class="kw">let </span><span class="kw-2">mut </span>receiver_closed = <span class="bool-val">false</span>;
-        <span class="attr">#[cfg_attr(wasm_browser, allow(unused))] </span><span class="comment">// unused in wasm
+        <span class="attr">#[cfg_attr(wasm_browser, allow(unused_mut))]
         </span><span class="kw">let </span><span class="kw-2">mut </span>portmap_watcher_closed = <span class="bool-val">false</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>link_change_closed = <span class="bool-val">false</span>;
         <span class="kw">loop </span>{
@@ -6594,7 +6594,7 @@
                         <span class="self">self</span>.msock.re_stun(<span class="string">"portmap_updated"</span>);
                     }
                     <span class="attr">#[cfg(wasm_browser)]
-                    </span><span class="kw">let </span>_unused = change;
+                    </span><span class="kw">let </span>_unused_in_browsers = change;
                 },
                 <span class="kw">_ </span>= direct_addr_heartbeat_timer_tick =&gt; {
                     <span class="attr">#[cfg(not(wasm_browser))]
