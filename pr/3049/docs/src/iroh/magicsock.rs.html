@@ -4406,7 +4406,17 @@
 <a href="#4405" id="4405">4405</a>
 <a href="#4406" id="4406">4406</a>
 <a href="#4407" id="4407">4407</a>
-<a href="#4408" id="4408">4408</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4408" id="4408">4408</a>
+<a href="#4409" id="4409">4409</a>
+<a href="#4410" id="4410">4410</a>
+<a href="#4411" id="4411">4411</a>
+<a href="#4412" id="4412">4412</a>
+<a href="#4413" id="4413">4413</a>
+<a href="#4414" id="4414">4414</a>
+<a href="#4415" id="4415">4415</a>
+<a href="#4416" id="4416">4416</a>
+<a href="#4417" id="4417">4417</a>
+<a href="#4418" id="4418">4418</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4869,9 +4879,9 @@
                 <span class="string">"connection closed"</span>,
             ));
         }
-        <span class="kw">match </span>MappedAddr::from_socket_addr(transmit.destination) {
-            <span class="prelude-val">Err</span>(e) =&gt; {
-                <span class="macro">error!</span>(%transmit.destination, <span class="string">"Cannot convert to a mapped address: {e}, voiding transmit."</span>);
+        <span class="kw">match </span>MappedAddr::from(transmit.destination) {
+            MappedAddr::None(dest) =&gt; {
+                <span class="macro">error!</span>(%dest, <span class="string">"Cannot convert to a mapped address, voiding transmit."</span>);
                 <span class="comment">// Returning Ok here means we let QUIC timeout.
                 // Returning an error would immediately fail a connection.
                 // The philosophy of quinn-udp is that a UDP connection could
@@ -4880,7 +4890,7 @@
                 // this out.
                 </span><span class="prelude-val">Ok</span>(())
             }
-            <span class="prelude-val">Ok</span>(MappedAddr::NodeId(dest)) =&gt; {
+            MappedAddr::NodeId(dest) =&gt; {
                 <span class="macro">trace!</span>(
                     dst = %dest,
                     src = <span class="question-mark">?</span>transmit.src_ip,
@@ -5006,7 +5016,7 @@
                     }
                 }
             }
-            <span class="prelude-val">Ok</span>(MappedAddr::Ip(dest)) =&gt; {
+            MappedAddr::Ip(dest) =&gt; {
                 <span class="macro">trace!</span>(
                     dst = %dest,
                     src = <span class="question-mark">?</span>transmit.src_ip,
@@ -5018,37 +5028,43 @@
                 </span><span class="kw">let </span><span class="kw-2">mut </span>transmit = transmit.clone();
 
                 <span class="comment">// Get the socket addr
-                </span><span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = <span class="self">self</span>.ip_mapped_addrs.get_ip_addr(<span class="kw-2">&amp;</span>dest) {
-                    <span class="comment">// rewrite target address
-                    </span>transmit.destination = addr;
-                    <span class="comment">// send udp
-                    </span><span class="kw">match </span><span class="self">self</span>.try_send_udp(addr, <span class="kw-2">&amp;</span>transmit) {
-                        <span class="prelude-val">Ok</span>(()) =&gt; {
-                            <span class="macro">trace!</span>(dst = %addr,
+                </span><span class="kw">match </span><span class="self">self</span>.ip_mapped_addrs.get_ip_addr(<span class="kw-2">&amp;</span>dest) {
+                    <span class="prelude-val">Some</span>(addr) =&gt; {
+                        <span class="comment">// rewrite target address
+                        </span>transmit.destination = addr;
+                        <span class="comment">// send udp
+                        </span><span class="kw">match </span><span class="self">self</span>.try_send_udp(addr, <span class="kw-2">&amp;</span>transmit) {
+                            <span class="prelude-val">Ok</span>(()) =&gt; {
+                                <span class="macro">trace!</span>(dst = %addr,
                                <span class="string">"sent IpMapped transmit over UDP"</span>);
-                        }
-                        <span class="prelude-val">Err</span>(err) =&gt; {
-                            <span class="comment">// No need to print "WouldBlock" errors to the console
-                            </span><span class="kw">if </span>err.kind() == io::ErrorKind::WouldBlock {
-                                <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::WouldBlock, <span class="string">"pending"</span>));
-                            } <span class="kw">else </span>{
-                                <span class="macro">warn!</span>(
-                                    dst = %addr,
-                                    <span class="string">"failed to send IpMapped message over udp: {err:#}"
-                                </span>);
+                            }
+                            <span class="prelude-val">Err</span>(err) =&gt; {
+                                <span class="comment">// No need to print "WouldBlock" errors to the console
+                                </span><span class="kw">if </span>err.kind() == io::ErrorKind::WouldBlock {
+                                    <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(
+                                        io::ErrorKind::WouldBlock,
+                                        <span class="string">"pending"</span>,
+                                    ));
+                                } <span class="kw">else </span>{
+                                    <span class="macro">warn!</span>(
+                                        dst = %addr,
+                                        <span class="string">"failed to send IpMapped message over udp: {err:#}"
+                                    </span>);
+                                }
                             }
                         }
+                        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
                     }
-                    <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-                } <span class="kw">else </span>{
-                    <span class="macro">error!</span>(%dest, <span class="string">"unknown mapped address, dropping transmit"</span>);
-                    <span class="comment">// Returning Ok here means we let QUIC timeout.
-                    // Returning an error would immediately fail a connection.
-                    // The philosophy of quinn-udp is that a UDP connection could
-                    // come back at any time or missing should be transient so chooses to let
-                    // these kind of errors time out.  See test_try_send_no_send_addr to try
-                    // this out.
-                    </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                    <span class="prelude-val">None </span>=&gt; {
+                        <span class="macro">error!</span>(%dest, <span class="string">"unknown mapped address, dropping transmit"</span>);
+                        <span class="comment">// Returning Ok here means we let QUIC timeout.
+                        // Returning an error would immediately fail a connection.
+                        // The philosophy of quinn-udp is that a UDP connection could
+                        // come back at any time or missing should be transient so chooses to let
+                        // these kind of errors time out.  See test_try_send_no_send_addr to try
+                        // this out.
+                        </span><span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                    }
                 }
             }
         }
@@ -5886,21 +5902,20 @@
 </span><span class="kw">enum </span>MappedAddr {
     NodeId(NodeIdMappedAddr),
     Ip(IpMappedAddr),
+    <span class="prelude-val">None</span>(SocketAddr),
 }
 
-<span class="kw">impl </span>MappedAddr {
-    <span class="kw">fn </span>from_socket_addr(addr: SocketAddr) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">match </span>addr.ip() {
-            IpAddr::V4(<span class="kw">_</span>) =&gt; {
-                <span class="macro">anyhow::bail!</span>(<span class="string">"Ipv4 addresses are not MappedAddrs"</span>)
-            }
+<span class="kw">impl </span>From&lt;SocketAddr&gt; <span class="kw">for </span>MappedAddr {
+    <span class="kw">fn </span>from(value: SocketAddr) -&gt; <span class="self">Self </span>{
+        <span class="kw">match </span>value.ip() {
+            IpAddr::V4(<span class="kw">_</span>) =&gt; MappedAddr::None(value),
             IpAddr::V6(addr) =&gt; {
                 <span class="kw">if let </span><span class="prelude-val">Ok</span>(node_id_mapped_addr) = NodeIdMappedAddr::try_from(addr) {
-                    <span class="prelude-val">Ok</span>(MappedAddr::NodeId(node_id_mapped_addr))
+                    MappedAddr::NodeId(node_id_mapped_addr)
                 } <span class="kw">else if let </span><span class="prelude-val">Ok</span>(ip_mapped_addr) = IpMappedAddr::try_from(addr) {
-                    <span class="prelude-val">Ok</span>(MappedAddr::Ip(ip_mapped_addr))
+                    MappedAddr::Ip(ip_mapped_addr)
                 } <span class="kw">else </span>{
-                    <span class="macro">anyhow::bail!</span>(<span class="string">"address does not conform to MappedAddr specifications"</span>)
+                    MappedAddr::None(value)
                 }
             }
         }
@@ -7340,6 +7355,11 @@
 </span><span class="attr">#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>NodeIdMappedAddr(Ipv6Addr);
 
+<span class="doccomment">/// Can occur when converting a [`SocketAddr`] to an [`NodeIdMappedAddr`]
+</span><span class="attr">#[derive(Debug, thiserror::Error)]
+#[error(<span class="string">"Failed to convert"</span>)]
+</span><span class="kw">pub struct </span>NodeIdMappedAddrError;
+
 <span class="doccomment">/// Counter to always generate unique addresses for [`NodeIdMappedAddr`].
 </span><span class="kw">static </span>NODE_ID_ADDR_COUNTER: AtomicU64 = AtomicU64::new(<span class="number">1</span>);
 
@@ -7373,7 +7393,7 @@
 }
 
 <span class="kw">impl </span>TryFrom&lt;Ipv6Addr&gt; <span class="kw">for </span>NodeIdMappedAddr {
-    <span class="kw">type </span>Error = anyhow::Error;
+    <span class="kw">type </span>Error = NodeIdMappedAddrError;
 
     <span class="kw">fn </span>try_from(value: Ipv6Addr) -&gt; std::result::Result&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
         <span class="kw">let </span>octets = value.octets();
@@ -7383,7 +7403,7 @@
         {
             <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="self">Self</span>(value));
         }
-        <span class="macro">anyhow::bail!</span>(<span class="string">"{value:?} is not a NodeIdMappedAddr"</span>);
+        <span class="prelude-val">Err</span>(NodeIdMappedAddrError)
     }
 }
 

@@ -130,10 +130,7 @@
 <a href="#129" id="129">129</a>
 <a href="#130" id="130">130</a>
 <a href="#131" id="131">131</a>
-<a href="#132" id="132">132</a>
-<a href="#133" id="133">133</a>
-<a href="#134" id="134">134</a>
-<a href="#135" id="135">135</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#132" id="132">132</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::BTreeMap,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::{
@@ -147,8 +144,8 @@
 
 <span class="doccomment">/// Can occur when converting a [`SocketAddr`] to an [`IpMappedAddr`]
 </span><span class="attr">#[derive(Debug, thiserror::Error)]
-#[error(<span class="string">"Failed to convert: {0}"</span>)]
-</span><span class="kw">pub struct </span>IpMappedAddrError(String);
+#[error(<span class="string">"Failed to convert"</span>)]
+</span><span class="kw">pub struct </span>IpMappedAddrError;
 
 <span class="doccomment">/// A mirror for the `NodeIdMappedAddr`, mapping a fake Ipv6 address with an actual IP address.
 ///
@@ -156,8 +153,7 @@
 /// about.
 ///
 /// And in our QUIC-facing socket APIs like iroh's `AsyncUdpSocket` it
-/// comes in as the inner [`Ipv6Addr`], in those interfaces we have to be careful to do
-/// the conversion to this type.
+/// comes in as the inn his type.
 </span><span class="attr">#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 </span><span class="kw">pub struct </span>IpMappedAddr(Ipv6Addr);
 
@@ -205,9 +201,7 @@
         {
             <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="self">Self</span>(value));
         }
-        <span class="prelude-val">Err</span>(IpMappedAddrError(String::from(
-            <span class="string">"{value:?} is not an IpMappedAddr"</span>,
-        )))
+        <span class="prelude-val">Err</span>(IpMappedAddrError)
     }
 }
 
@@ -217,11 +211,11 @@
     }
 }
 
-<span class="attr">#[derive(Debug, Clone)]
-</span><span class="doccomment">/// A Map of [`IpMappedAddrs`] to [`SocketAddr`].
+<span class="doccomment">/// A Map of [`IpMappedAddrs`] to [`SocketAddr`].
 </span><span class="comment">// TODO(ramfox): before this is ready to be used beyond QAD, we should add
 // mechanisms for keeping track of "aliveness" and pruning address, as we do
 // with the `NodeMap`
+</span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>IpMappedAddrs(Arc&lt;std::sync::Mutex&lt;Inner&gt;&gt;);
 
 <span class="attr">#[derive(Debug, Default)]
