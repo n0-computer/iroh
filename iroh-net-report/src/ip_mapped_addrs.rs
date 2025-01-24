@@ -121,7 +121,7 @@ impl IpMappedAddrs {
         inner.by_socket_addr.get(ip_addr).copied()
     }
 
-    /// Get the [`SocketAddr`] for the given [`IpMappedAddr`].
+    /// Returns the [`SocketAddr`] for the given [`IpMappedAddr`].
     pub fn get_ip_addr(&self, mapped_addr: &IpMappedAddr) -> Option<SocketAddr> {
         let inner = self.0.lock().expect("poisoned");
         inner.by_mapped_addr.get(mapped_addr).copied()
