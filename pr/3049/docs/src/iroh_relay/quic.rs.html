@@ -312,25 +312,7 @@
 <a href="#311" id="311">311</a>
 <a href="#312" id="312">312</a>
 <a href="#313" id="313">313</a>
-<a href="#314" id="314">314</a>
-<a href="#315" id="315">315</a>
-<a href="#316" id="316">316</a>
-<a href="#317" id="317">317</a>
-<a href="#318" id="318">318</a>
-<a href="#319" id="319">319</a>
-<a href="#320" id="320">320</a>
-<a href="#321" id="321">321</a>
-<a href="#322" id="322">322</a>
-<a href="#323" id="323">323</a>
-<a href="#324" id="324">324</a>
-<a href="#325" id="325">325</a>
-<a href="#326" id="326">326</a>
-<a href="#327" id="327">327</a>
-<a href="#328" id="328">328</a>
-<a href="#329" id="329">329</a>
-<a href="#330" id="330">330</a>
-<a href="#331" id="331">331</a>
-<a href="#332" id="332">332</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
+<a href="#314" id="314">314</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
 
@@ -509,10 +491,8 @@
             }
         };
         <span class="macro">debug!</span>(<span class="string">"established"</span>);
-        <span class="macro">tracing::warn!</span>(<span class="string">"QAD SERVER - CONN ACCEPTED"</span>);
         <span class="comment">// wait for the client to close the connection
         </span><span class="kw">let </span>connection_err = connection.closed().<span class="kw">await</span>;
-        <span class="macro">tracing::warn!</span>(<span class="string">"QAD SERVER - CONN CLOSED"</span>);
         <span class="kw">match </span>connection_err {
             quinn::ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. })
                 <span class="kw">if </span>error_code == QUIC_ADDR_DISC_CLOSE_CODE =&gt;
@@ -527,26 +507,16 @@
 <span class="doccomment">/// Handles the client side of QUIC address discovery.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>QuicClient {
-    <span class="doccomment">/// client id
-    </span>id: [u8; <span class="number">8</span>],
     <span class="doccomment">/// A QUIC Endpoint.
     </span>ep: quinn::Endpoint,
     <span class="doccomment">/// A client config.
     </span>client_config: quinn::ClientConfig,
 }
 
-<span class="kw">impl </span>Drop <span class="kw">for </span>QuicClient {
-    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="macro">tracing::error!</span>(<span class="string">"DROPPED QUIC CLIENT {:?}"</span>, <span class="self">self</span>.id)
-    }
-}
-
 <span class="kw">impl </span>QuicClient {
     <span class="doccomment">/// Create a new QuicClient to handle the client side of QUIC
     /// address discovery.
     </span><span class="kw">pub fn </span>new(ep: quinn::Endpoint, <span class="kw-2">mut </span>client_config: rustls::ClientConfig) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>id: [u8; <span class="number">8</span>] = rand::random();
-        <span class="macro">tracing::error!</span>(<span class="string">"STARTING QUIC CLIENT {id:?}"</span>);
         <span class="comment">// add QAD alpn
         </span>client_config.alpn_protocols = <span class="macro">vec!</span>[ALPN_QUIC_ADDR_DISC.into()];
         <span class="comment">// go from rustls client config to rustls QUIC specific client config to
@@ -559,11 +529,7 @@
         transport.receive_observed_address_reports(<span class="bool-val">true</span>);
         client_config.transport_config(Arc::new(transport));
 
-        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-            ep,
-            client_config,
-            id,
-        })
+        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{ ep, client_config })
     }
 
     <span class="doccomment">/// Client side of QUIC address discovery.
@@ -597,8 +563,7 @@
         //         Ok((addr, latency))
         //     }
 
-        </span><span class="macro">tracing::warn!</span>(<span class="string">"QAD CLIENT: WAIT FOR ADDRESS"</span>);
-        <span class="kw">let </span>res = <span class="kw">match </span>external_addresses.wait_for(|addr| addr.is_some()).<span class="kw">await </span>{
+        </span><span class="kw">let </span>res = <span class="kw">match </span>external_addresses.wait_for(|addr| addr.is_some()).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(res) =&gt; res,
             <span class="prelude-val">Err</span>(err) =&gt; {
                 <span class="comment">// attempt to gracefully close the connections
@@ -613,7 +578,6 @@
         <span class="kw">let </span>latency = conn.rtt() / <span class="number">2</span>;
         <span class="comment">// gracefully close the connections
         </span>conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-        <span class="macro">tracing::warn!</span>(<span class="string">"QAD CLIENT: GRACEFULLY CLOSED"</span>);
         <span class="prelude-val">Ok</span>((observed_addr, latency))
     }
 }
