@@ -2162,7 +2162,7 @@ impl Actor {
         }
 
         let mut receiver_closed = false;
-        #[cfg_attr(wasm_browser, allow(unused))] // unused in wasm
+        #[cfg_attr(wasm_browser, allow(unused_mut))]
         let mut portmap_watcher_closed = false;
         let mut link_change_closed = false;
         loop {
@@ -2221,7 +2221,7 @@ impl Actor {
                         self.msock.re_stun("portmap_updated");
                     }
                     #[cfg(wasm_browser)]
-                    let _unused = change;
+                    let _unused_in_browsers = change;
                 },
                 _ = direct_addr_heartbeat_timer_tick => {
                     #[cfg(not(wasm_browser))]
