@@ -4,11 +4,9 @@ use std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time
 
 use anyhow::{bail, Context, Result};
 use bytes::Bytes;
-use futures_lite::FutureExt;
-use futures_sink::Sink;
-use futures_util::{SinkExt, Stream, StreamExt};
 use iroh_base::NodeId;
 use iroh_metrics::{inc, inc_by};
+use n0_future::{FutureExt, Sink, SinkExt, Stream, StreamExt};
 use rand::Rng;
 use tokio::{
     sync::mpsc::{self, error::TrySendError},

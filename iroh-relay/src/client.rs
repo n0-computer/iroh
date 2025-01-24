@@ -11,12 +11,11 @@ use std::{
 
 use anyhow::{anyhow, bail, Result};
 use conn::Conn;
-use futures_lite::Stream;
-use futures_util::{
-    stream::{SplitSink, SplitStream},
-    Sink, StreamExt,
-};
 use iroh_base::{RelayUrl, SecretKey};
+use n0_future::{
+    split::{split, SplitSink, SplitStream},
+    Sink, Stream,
+};
 #[cfg(any(test, feature = "test-utils"))]
 use tracing::warn;
 use tracing::{debug, event, trace, Level};
@@ -207,7 +206,7 @@ pub struct Client {
 impl Client {
     /// Splits the client into a sink and a stream.
     pub fn split(self) -> (ClientStream, ClientSink) {
-        let (sink, stream) = self.conn.split();
+        let (sink, stream) = split(self.conn);
         (
             ClientStream {
                 stream,

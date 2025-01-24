@@ -11,9 +11,8 @@ use std::{
 
 use anyhow::{bail, Result};
 use bytes::Bytes;
-use futures_lite::Stream;
-use futures_util::Sink;
 use iroh_base::{NodeId, SecretKey};
+use n0_future::{Sink, Stream};
 use tokio_tungstenite_wasm::WebSocketStream;
 #[cfg(not(wasm_browser))]
 use tokio_util::codec::Framed;

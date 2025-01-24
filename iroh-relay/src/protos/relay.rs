@@ -12,16 +12,14 @@
 //!  * clients sends `FrameType::SendPacket`
 //!  * server then sends `FrameType::RecvPacket` to recipient
 
-#[cfg(feature = "server")]
-use std::time::Duration;
-
 use anyhow::{bail, ensure};
 use bytes::{BufMut, Bytes};
-#[cfg(any(test, feature = "server"))]
-use futures_lite::{Stream, StreamExt};
-use futures_sink::Sink;
-use futures_util::SinkExt;
 use iroh_base::{PublicKey, SecretKey, Signature};
+#[cfg(feature = "server")]
+use n0_future::time::Duration;
+use n0_future::{Sink, SinkExt};
+#[cfg(any(test, feature = "server"))]
+use n0_future::{Stream, StreamExt};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 

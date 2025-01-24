@@ -2638,7 +2638,7 @@ dependencies = [
 [[package]]
 name = "n0-future"
 version = "0.0.1"
-source = "git+https://github.com/n0-computer/n0-future.git?branch=main#f9ca3c093b9673659729460c68490ab81987122a"
+source = "git+https://github.com/n0-computer/n0-future.git?branch=main#a566728beafdfc89ae1aa3e1039da48f31c08843"
 dependencies = [
  "cfg_aliases",
  "derive_more",
