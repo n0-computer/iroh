@@ -86,8 +86,6 @@ tokio-rustls = { version = "0.26", default-features = false, features = [
     "ring",
 ] }
 tokio-stream = { version = "0.1.15" }
-tokio-tungstenite = "0.21" # avoid duplicating this dependency as long as tokio-tungstenite-wasm isn't updated
-tokio-tungstenite-wasm = "0.3"
 tokio-util = { version = "0.7", features = ["io-util", "io", "codec", "rt"] }
 tracing = "0.1"
 url = { version = "2.5", features = ["serde"] }

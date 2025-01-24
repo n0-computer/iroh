@@ -2082,8 +2082,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-stream",
- "tokio-tungstenite 0.21.0",
- "tokio-tungstenite-wasm 0.3.1",
  "tokio-util",
  "tracing",
  "tracing-subscriber",
@@ -2338,8 +2336,8 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-rustls-acme",
- "tokio-tungstenite 0.24.0",
- "tokio-tungstenite-wasm 0.4.0",
+ "tokio-tungstenite",
+ "tokio-tungstenite-wasm",
  "tokio-util",
  "toml",
  "tracing",
@@ -4700,18 +4698,6 @@ dependencies = [
 
 [[package]]
 name = "tokio-tungstenite"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c83b561d025642014097b66e6c1bb422783339e0909e4429cde4749d1990bc38"
-dependencies = [
- "futures-util",
- "log",
- "tokio",
- "tungstenite 0.21.0",
-]
-
-[[package]]
-name = "tokio-tungstenite"
 version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edc5f74e248dc973e0dbb7b74c7e0d6fcc301c694ff50049504004ef4d0cdcd9"
@@ -4719,25 +4705,7 @@ dependencies = [
  "futures-util",
  "log",
  "tokio",
- "tungstenite 0.24.0",
-]
-
-[[package]]
-name = "tokio-tungstenite-wasm"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e57a65894797a018b28345fa298a00c450a574aa9671e50b18218a6292a55ac"
-dependencies = [
- "futures-channel",
- "futures-util",
- "http 1.2.0",
- "httparse",
- "js-sys",
- "thiserror 1.0.69",
- "tokio",
- "tokio-tungstenite 0.21.0",
- "wasm-bindgen",
- "web-sys",
+ "tungstenite",
 ]
 
 [[package]]
@@ -4753,7 +4721,7 @@ dependencies = [
  "js-sys",
  "thiserror 1.0.69",
  "tokio",
- "tokio-tungstenite 0.24.0",
+ "tokio-tungstenite",
  "wasm-bindgen",
  "web-sys",
 ]
@@ -4958,25 +4926,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4189890526f0168710b6ee65ceaedf1460c48a14318ceec933cb26baa492096a"
 dependencies = [
  "linked-hash-map",
-]
-
-[[package]]
-name = "tungstenite"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ef1a641ea34f399a848dea702823bbecfb4c486f911735368f1f137cb8257e1"
-dependencies = [
- "byteorder",
- "bytes",
- "data-encoding",
- "http 1.2.0",
- "httparse",
- "log",
- "rand",
- "sha1",
- "thiserror 1.0.69",
- "url",
- "utf-8",
 ]
 
 [[package]]
