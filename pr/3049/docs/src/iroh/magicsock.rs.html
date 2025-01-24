@@ -4415,8 +4415,7 @@
 <a href="#4414" id="4414">4414</a>
 <a href="#4415" id="4415">4415</a>
 <a href="#4416" id="4416">4416</a>
-<a href="#4417" id="4417">4417</a>
-<a href="#4418" id="4418">4418</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4417" id="4417">4417</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4456,7 +4455,7 @@
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
-<span class="kw">use </span>net_report::{IpMappedAddr, IpMappedAddrs, QuicConfig, MAPPED_ADDR_PORT};
+<span class="kw">use </span>net_report::{IpMappedAddr, IpMappedAddrs, MAPPED_ADDR_PORT};
 <span class="kw">use </span>netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 <span class="kw">use </span>quinn::{AsyncUdpSocket, ServerConfig};
 <span class="kw">use </span>rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -6155,8 +6154,8 @@
 
         <span class="kw">let </span>inner2 = inner.clone();
         <span class="kw">let </span>network_monitor = netmon::Monitor::new().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>qad_endpoint = endpoint.clone();
-        actor_tasks.spawn(
+        <span class="comment">// let qad_endpoint = endpoint.clone();
+        </span>actor_tasks.spawn(
             <span class="kw">async move </span>{
                 <span class="kw">let </span>actor = Actor {
                     msg_receiver: actor_receiver,
@@ -6172,8 +6171,8 @@
                     no_v4_send: <span class="bool-val">false</span>,
                     net_reporter,
                     network_monitor,
-                    qad_endpoint,
-                };
+                    <span class="comment">// qad_endpoint,
+                </span>};
 
                 <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = actor.run().<span class="kw">await </span>{
                     <span class="macro">warn!</span>(<span class="string">"relay handler errored: {:?}"</span>, err);
@@ -6602,12 +6601,11 @@
     </span>net_reporter: net_report::Client,
 
     network_monitor: netmon::Monitor,
-
-    <span class="doccomment">/// The internal quinn::Endpoint
-    ///
-    /// Needed for Quic Address Discovery
-    </span>qad_endpoint: quinn::Endpoint,
-}
+    <span class="comment">// / The internal quinn::Endpoint
+    // /
+    // / Needed for Quic Address Discovery
+    // qad_endpoint: quinn::Endpoint,
+</span>}
 
 <span class="kw">impl </span>Actor {
     <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
