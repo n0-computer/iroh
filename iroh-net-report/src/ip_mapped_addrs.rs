@@ -39,7 +39,8 @@ impl IpMappedAddr {
 
     /// Generates a globally unique fake UDP address.
     ///
-    /// This generates and IPv6 Unique Local Address according to RFC 4193.
+    /// This generates a new IPv6 address in the  Unique Local Address range (RFC 4193)
+    /// which is recognised by iroh as an IP mapped address.
     pub fn generate() -> Self {
         let mut addr = [0u8; 16];
         addr[0] = Self::ADDR_PREFIXL;
