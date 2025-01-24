@@ -4,7 +4,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use iroh_relay::time;
+use n0_future::time;
 
 #[derive(Debug, Clone)]
 pub struct WebRuntime;
