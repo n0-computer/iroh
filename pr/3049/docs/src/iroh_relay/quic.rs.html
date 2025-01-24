@@ -312,7 +312,11 @@
 <a href="#311" id="311">311</a>
 <a href="#312" id="312">312</a>
 <a href="#313" id="313">313</a>
-<a href="#314" id="314">314</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
 
@@ -491,8 +495,10 @@
             }
         };
         <span class="macro">debug!</span>(<span class="string">"established"</span>);
+        <span class="macro">tracing::warn!</span>(<span class="string">"QAD SERVER - CONN ACCEPTED"</span>);
         <span class="comment">// wait for the client to close the connection
         </span><span class="kw">let </span>connection_err = connection.closed().<span class="kw">await</span>;
+        <span class="macro">tracing::warn!</span>(<span class="string">"QAD SERVER - CONN CLOSED"</span>);
         <span class="kw">match </span>connection_err {
             quinn::ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. })
                 <span class="kw">if </span>error_code == QUIC_ADDR_DISC_CLOSE_CODE =&gt;
@@ -563,7 +569,8 @@
         //         Ok((addr, latency))
         //     }
 
-        </span><span class="kw">let </span>res = <span class="kw">match </span>external_addresses.wait_for(|addr| addr.is_some()).<span class="kw">await </span>{
+        </span><span class="macro">tracing::warn!</span>(<span class="string">"QAD CLIENT: WAIT FOR ADDRESS"</span>);
+        <span class="kw">let </span>res = <span class="kw">match </span>external_addresses.wait_for(|addr| addr.is_some()).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(res) =&gt; res,
             <span class="prelude-val">Err</span>(err) =&gt; {
                 <span class="comment">// attempt to gracefully close the connections
@@ -578,6 +585,7 @@
         <span class="kw">let </span>latency = conn.rtt() / <span class="number">2</span>;
         <span class="comment">// gracefully close the connections
         </span>conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+        <span class="macro">tracing::warn!</span>(<span class="string">"QAD CLIENT: GRACEFULLY CLOSED"</span>);
         <span class="prelude-val">Ok</span>((observed_addr, latency))
     }
 }

@@ -4397,7 +4397,16 @@
 <a href="#4396" id="4396">4396</a>
 <a href="#4397" id="4397">4397</a>
 <a href="#4398" id="4398">4398</a>
-<a href="#4399" id="4399">4399</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4399" id="4399">4399</a>
+<a href="#4400" id="4400">4400</a>
+<a href="#4401" id="4401">4401</a>
+<a href="#4402" id="4402">4402</a>
+<a href="#4403" id="4403">4403</a>
+<a href="#4404" id="4404">4404</a>
+<a href="#4405" id="4405">4405</a>
+<a href="#4406" id="4406">4406</a>
+<a href="#4407" id="4407">4407</a>
+<a href="#4408" id="4408">4408</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -6181,8 +6190,11 @@
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="macro">tracing::warn!</span>(<span class="string">"msock - closing connections"</span>);
         <span class="comment">// Initiate closing all connections, and refuse future connections.
-        </span><span class="self">self</span>.endpoint.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
+        </span><span class="macro">tracing::warn!</span>(<span class="string">"msock - endpoint close"</span>);
+        <span class="self">self</span>.endpoint.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
+        <span class="macro">tracing::warn!</span>(<span class="string">"msock - wait idle"</span>);
         <span class="self">self</span>.endpoint.wait_idle().<span class="kw">await</span>;
+        <span class="macro">tracing::warn!</span>(<span class="string">"msock - endpoint done"</span>);
 
         <span class="kw">if </span><span class="self">self</span>.msock.is_closed() {
             <span class="kw">return</span>;
@@ -6190,7 +6202,8 @@
         <span class="self">self</span>.msock.closing.store(<span class="bool-val">true</span>, Ordering::Relaxed);
         <span class="comment">// If this fails, then there's no receiver listening for shutdown messages,
         // so nothing to shut down anyways.
-        </span><span class="self">self</span>.msock
+        </span><span class="macro">tracing::warn!</span>(<span class="string">"msock - send actor shutdown message"</span>);
+        <span class="self">self</span>.msock
             .actor_sender
             .send(ActorMessage::Shutdown)
             .<span class="kw">await
@@ -6210,9 +6223,14 @@
         })
         .<span class="kw">await</span>;
         <span class="kw">if </span>shutdown_done.is_ok() {
-            <span class="macro">debug!</span>(<span class="string">"tasks shutdown complete"</span>);
+            <span class="macro">warn!</span>(<span class="string">"tasks shutdown complete"</span>);
             <span class="comment">// shutdown all tasks
-            </span><span class="macro">debug!</span>(<span class="string">"aborting remaining {}/3 tasks"</span>, tasks.len());
+            </span><span class="macro">warn!</span>(<span class="string">"aborting remaining {}/3 tasks"</span>, tasks.len());
+            tasks.shutdown().<span class="kw">await</span>;
+        } <span class="kw">else </span>{
+            <span class="macro">warn!</span>(<span class="string">"tasks did not shut cleanly"</span>);
+            <span class="comment">// shutdown all tasks
+            </span><span class="macro">warn!</span>(<span class="string">"aborting remaining {}/3 tasks"</span>, tasks.len());
             tasks.shutdown().<span class="kw">await</span>;
         }
         <span class="macro">warn!</span>(<span class="string">"msock - finished closing"</span>);
