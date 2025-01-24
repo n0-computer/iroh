@@ -29,7 +29,8 @@ mod tests {
     use hickory_server::proto::xfer::Protocol;
     use iroh::{
         discovery::pkarr::PkarrRelayClient,
-        dns::{node_info::NodeInfo, DnsResolver, ResolverExt},
+        dns::{DnsResolver, ResolverExt},
+        node_info::NodeInfo,
         SecretKey,
     };
     use pkarr::{PkarrClient, SignedPacket};

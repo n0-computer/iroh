@@ -79,6 +79,7 @@ swarm-discovery = { version = "0.3.0-alpha.1", optional = true }
 
 # test_utils
 axum = { version = "0.7", optional = true }
+http = "1"
 
 # Examples
 clap = { version = "4", features = ["derive"], optional = true }
