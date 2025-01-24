@@ -67,7 +67,7 @@ impl PingTracker {
     pub async fn timeout(&mut self) {
         match self.inner {
             Some(PingInner { deadline, data }) => {
-                time::sleep_until(deadline.into()).await;
+                time::sleep_until(deadline).await;
                 debug!(?data, "Ping timeout.");
                 self.inner = None;
             }
