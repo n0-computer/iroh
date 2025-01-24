@@ -26,7 +26,7 @@ pub struct IpMappedAddrError(String);
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct IpMappedAddr(Ipv6Addr);
 
-/// Counter to always generate unique addresses for `NodeIdMappedAddr`.
+/// Counter to always generate unique addresses for [`IpMappedAddr`].
 static IP_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 impl IpMappedAddr {
