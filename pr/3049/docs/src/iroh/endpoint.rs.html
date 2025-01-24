@@ -2202,39 +2202,7 @@
 <a href="#2201" id="2201">2201</a>
 <a href="#2202" id="2202">2202</a>
 <a href="#2203" id="2203">2203</a>
-<a href="#2204" id="2204">2204</a>
-<a href="#2205" id="2205">2205</a>
-<a href="#2206" id="2206">2206</a>
-<a href="#2207" id="2207">2207</a>
-<a href="#2208" id="2208">2208</a>
-<a href="#2209" id="2209">2209</a>
-<a href="#2210" id="2210">2210</a>
-<a href="#2211" id="2211">2211</a>
-<a href="#2212" id="2212">2212</a>
-<a href="#2213" id="2213">2213</a>
-<a href="#2214" id="2214">2214</a>
-<a href="#2215" id="2215">2215</a>
-<a href="#2216" id="2216">2216</a>
-<a href="#2217" id="2217">2217</a>
-<a href="#2218" id="2218">2218</a>
-<a href="#2219" id="2219">2219</a>
-<a href="#2220" id="2220">2220</a>
-<a href="#2221" id="2221">2221</a>
-<a href="#2222" id="2222">2222</a>
-<a href="#2223" id="2223">2223</a>
-<a href="#2224" id="2224">2224</a>
-<a href="#2225" id="2225">2225</a>
-<a href="#2226" id="2226">2226</a>
-<a href="#2227" id="2227">2227</a>
-<a href="#2228" id="2228">2228</a>
-<a href="#2229" id="2229">2229</a>
-<a href="#2230" id="2230">2230</a>
-<a href="#2231" id="2231">2231</a>
-<a href="#2232" id="2232">2232</a>
-<a href="#2233" id="2233">2233</a>
-<a href="#2234" id="2234">2234</a>
-<a href="#2235" id="2235">2235</a>
-<a href="#2236" id="2236">2236</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2204" id="2204">2204</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3495,16 +3463,6 @@
         <span class="self">self</span>.inner.handshake_data().<span class="kw">await
     </span>}
 
-    <span class="doccomment">/// The local IP address which was used when the peer established the connection.
-    </span><span class="kw">pub fn </span>local_ip(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;IpAddr&gt; {
-        <span class="self">self</span>.inner.local_ip()
-    }
-
-    <span class="doccomment">/// The peer's UDP address.
-    </span><span class="kw">pub fn </span>remote_address(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
-        <span class="self">self</span>.inner.remote_address()
-    }
-
     <span class="doccomment">/// Extracts the ALPN protocol from the peer's handshake data.
     </span><span class="comment">// Note, we could totally provide this method to be on a Connection as well.  But we'd
     // need to wrap Connection too.
@@ -3710,28 +3668,6 @@
     </span><span class="attr">#[inline]
     </span><span class="kw">pub fn </span>datagram_send_buffer_space(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.inner.datagram_send_buffer_space()
-    }
-
-    <span class="doccomment">/// The peer's UDP address.
-    ///
-    /// If [`ServerConfig::migration`] is `true`, clients may change addresses at will,
-    /// e.g. when switching to a cellular internet connection.
-    </span><span class="attr">#[inline]
-    </span><span class="kw">pub fn </span>remote_address(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
-        <span class="self">self</span>.inner.remote_address()
-    }
-
-    <span class="doccomment">/// The local IP address which was used when the peer established the connection.
-    ///
-    /// This can be different from the address the endpoint is bound to, in case the
-    /// endpoint is bound to a wildcard address like `0.0.0.0` or `::`.
-    ///
-    /// This will return `None` for clients, or when the platform does not expose this
-    /// information. See [`quinn::udp::RecvMeta::dst_ip`] for a list of supported
-    /// platforms.
-    </span><span class="attr">#[inline]
-    </span><span class="kw">pub fn </span>local_ip(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;IpAddr&gt; {
-        <span class="self">self</span>.inner.local_ip()
     }
 
     <span class="doccomment">/// Current best estimate of this connection's latency (round-trip-time).

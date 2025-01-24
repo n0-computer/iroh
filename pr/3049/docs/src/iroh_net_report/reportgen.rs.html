@@ -2237,7 +2237,7 @@
                 <span class="kw">let </span>reportstate = <span class="self">self</span>.addr();
                 <span class="kw">let </span>stun_sock4 = <span class="self">self</span>.stun_sock4.clone();
                 <span class="kw">let </span>stun_sock6 = <span class="self">self</span>.stun_sock6.clone();
-                <span class="kw">let </span>_quic_config = <span class="self">self</span>.quic_config.clone();
+                <span class="kw">let </span>quic_config = <span class="self">self</span>.quic_config.clone();
                 <span class="kw">let </span>relay_node = probe.node().clone();
                 <span class="kw">let </span>probe = probe.clone();
                 <span class="kw">let </span>net_report = <span class="self">self</span>.net_report.clone();
@@ -2250,7 +2250,7 @@
                         reportstate,
                         stun_sock4,
                         stun_sock6,
-                        <span class="prelude-val">None</span>,
+                        quic_config,
                         relay_node,
                         probe.clone(),
                         net_report,
