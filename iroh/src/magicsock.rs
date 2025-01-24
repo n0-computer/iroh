@@ -1784,8 +1784,11 @@ impl Handle {
     pub(crate) async fn close(&self) {
         tracing::warn!("msock - closing connections");
         // Initiate closing all connections, and refuse future connections.
+        tracing::warn!("msock - endpoint close");
         self.endpoint.close(0u16.into(), b"");
+        tracing::warn!("msock - wait idle");
         self.endpoint.wait_idle().await;
+        tracing::warn!("msock - endpoint done");
 
         if self.msock.is_closed() {
             return;
@@ -1793,6 +1796,7 @@ impl Handle {
         self.msock.closing.store(true, Ordering::Relaxed);
         // If this fails, then there's no receiver listening for shutdown messages,
         // so nothing to shut down anyways.
+        tracing::warn!("msock - send actor shutdown message");
         self.msock
             .actor_sender
             .send(ActorMessage::Shutdown)
@@ -1813,9 +1817,14 @@ impl Handle {
         })
         .await;
         if shutdown_done.is_ok() {
-            debug!("tasks shutdown complete");
+            warn!("tasks shutdown complete");
             // shutdown all tasks
-            debug!("aborting remaining {}/3 tasks", tasks.len());
+            warn!("aborting remaining {}/3 tasks", tasks.len());
+            tasks.shutdown().await;
+        } else {
+            warn!("tasks did not shut cleanly");
+            // shutdown all tasks
+            warn!("aborting remaining {}/3 tasks", tasks.len());
             tasks.shutdown().await;
         }
         warn!("msock - finished closing");
