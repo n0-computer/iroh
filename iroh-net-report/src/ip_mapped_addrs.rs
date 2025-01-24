@@ -12,8 +12,8 @@ pub const MAPPED_ADDR_PORT: u16 = 12345;
 
 /// Can occur when converting a [`SocketAddr`] to an [`IpMappedAddr`]
 #[derive(Debug, thiserror::Error)]
-#[error("Failed to convert: {0}")]
-pub struct IpMappedAddrError(String);
+#[error("Failed to convert")]
+pub struct IpMappedAddrError;
 
 /// A mirror for the `NodeIdMappedAddr`, mapping a fake Ipv6 address with an actual IP address.
 ///
@@ -21,8 +21,7 @@ pub struct IpMappedAddrError(String);
 /// about.
 ///
 /// And in our QUIC-facing socket APIs like iroh's `AsyncUdpSocket` it
-/// comes in as the inner [`Ipv6Addr`], in those interfaces we have to be careful to do
-/// the conversion to this type.
+/// comes in as the inn his type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct IpMappedAddr(Ipv6Addr);
 
@@ -70,9 +69,7 @@ impl TryFrom<Ipv6Addr> for IpMappedAddr {
         {
             return Ok(Self(value));
         }
-        Err(IpMappedAddrError(String::from(
-            "{value:?} is not an IpMappedAddr",
-        )))
+        Err(IpMappedAddrError)
     }
 }
 
@@ -82,11 +79,11 @@ impl std::fmt::Display for IpMappedAddr {
     }
 }
 
-#[derive(Debug, Clone)]
 /// A Map of [`IpMappedAddrs`] to [`SocketAddr`].
 // TODO(ramfox): before this is ready to be used beyond QAD, we should add
 // mechanisms for keeping track of "aliveness" and pruning address, as we do
 // with the `NodeMap`
+#[derive(Debug, Clone)]
 pub struct IpMappedAddrs(Arc<std::sync::Mutex<Inner>>);
 
 #[derive(Debug, Default)]

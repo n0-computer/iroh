@@ -463,9 +463,9 @@ impl MagicSock {
                 "connection closed",
             ));
         }
-        match MappedAddr::from_socket_addr(transmit.destination) {
-            Err(e) => {
-                error!(%transmit.destination, "Cannot convert to a mapped address: {e}, voiding transmit.");
+        match MappedAddr::from(transmit.destination) {
+            MappedAddr::None(dest) => {
+                error!(%dest, "Cannot convert to a mapped address, voiding transmit.");
                 // Returning Ok here means we let QUIC timeout.
                 // Returning an error would immediately fail a connection.
                 // The philosophy of quinn-udp is that a UDP connection could
@@ -474,7 +474,7 @@ impl MagicSock {
                 // this out.
                 Ok(())
             }
-            Ok(MappedAddr::NodeId(dest)) => {
+            MappedAddr::NodeId(dest) => {
                 trace!(
                     dst = %dest,
                     src = ?transmit.src_ip,
@@ -600,7 +600,7 @@ impl MagicSock {
                     }
                 }
             }
-            Ok(MappedAddr::Ip(dest)) => {
+            MappedAddr::Ip(dest) => {
                 trace!(
                     dst = %dest,
                     src = ?transmit.src_ip,
@@ -612,37 +612,43 @@ impl MagicSock {
                 let mut transmit = transmit.clone();
 
                 // Get the socket addr
-                if let Some(addr) = self.ip_mapped_addrs.get_ip_addr(&dest) {
-                    // rewrite target address
-                    transmit.destination = addr;
-                    // send udp
-                    match self.try_send_udp(addr, &transmit) {
-                        Ok(()) => {
-                            trace!(dst = %addr,
+                match self.ip_mapped_addrs.get_ip_addr(&dest) {
+                    Some(addr) => {
+                        // rewrite target address
+                        transmit.destination = addr;
+                        // send udp
+                        match self.try_send_udp(addr, &transmit) {
+                            Ok(()) => {
+                                trace!(dst = %addr,
                                "sent IpMapped transmit over UDP");
-                        }
-                        Err(err) => {
-                            // No need to print "WouldBlock" errors to the console
-                            if err.kind() == io::ErrorKind::WouldBlock {
-                                return Err(io::Error::new(io::ErrorKind::WouldBlock, "pending"));
-                            } else {
-                                warn!(
-                                    dst = %addr,
-                                    "failed to send IpMapped message over udp: {err:#}"
-                                );
+                            }
+                            Err(err) => {
+                                // No need to print "WouldBlock" errors to the console
+                                if err.kind() == io::ErrorKind::WouldBlock {
+                                    return Err(io::Error::new(
+                                        io::ErrorKind::WouldBlock,
+                                        "pending",
+                                    ));
+                                } else {
+                                    warn!(
+                                        dst = %addr,
+                                        "failed to send IpMapped message over udp: {err:#}"
+                                    );
+                                }
                             }
                         }
+                        return Ok(());
                     }
-                    return Ok(());
-                } else {
-                    error!(%dest, "unknown mapped address, dropping transmit");
-                    // Returning Ok here means we let QUIC timeout.
-                    // Returning an error would immediately fail a connection.
-                    // The philosophy of quinn-udp is that a UDP connection could
-                    // come back at any time or missing should be transient so chooses to let
-                    // these kind of errors time out.  See test_try_send_no_send_addr to try
-                    // this out.
-                    return Ok(());
+                    None => {
+                        error!(%dest, "unknown mapped address, dropping transmit");
+                        // Returning Ok here means we let QUIC timeout.
+                        // Returning an error would immediately fail a connection.
+                        // The philosophy of quinn-udp is that a UDP connection could
+                        // come back at any time or missing should be transient so chooses to let
+                        // these kind of errors time out.  See test_try_send_no_send_addr to try
+                        // this out.
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -1480,21 +1486,20 @@ impl MagicSock {
 enum MappedAddr {
     NodeId(NodeIdMappedAddr),
     Ip(IpMappedAddr),
+    None(SocketAddr),
 }
 
-impl MappedAddr {
-    fn from_socket_addr(addr: SocketAddr) -> Result<Self> {
-        match addr.ip() {
-            IpAddr::V4(_) => {
-                anyhow::bail!("Ipv4 addresses are not MappedAddrs")
-            }
+impl From<SocketAddr> for MappedAddr {
+    fn from(value: SocketAddr) -> Self {
+        match value.ip() {
+            IpAddr::V4(_) => MappedAddr::None(value),
             IpAddr::V6(addr) => {
                 if let Ok(node_id_mapped_addr) = NodeIdMappedAddr::try_from(addr) {
-                    Ok(MappedAddr::NodeId(node_id_mapped_addr))
+                    MappedAddr::NodeId(node_id_mapped_addr)
                 } else if let Ok(ip_mapped_addr) = IpMappedAddr::try_from(addr) {
-                    Ok(MappedAddr::Ip(ip_mapped_addr))
+                    MappedAddr::Ip(ip_mapped_addr)
                 } else {
-                    anyhow::bail!("address does not conform to MappedAddr specifications")
+                    MappedAddr::None(value)
                 }
             }
         }
@@ -2933,6 +2938,11 @@ fn split_packets(transmit: &quinn_udp::Transmit) -> RelayContents {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct NodeIdMappedAddr(Ipv6Addr);
 
+/// Can occur when converting a [`SocketAddr`] to an [`NodeIdMappedAddr`]
+#[derive(Debug, thiserror::Error)]
+#[error("Failed to convert")]
+pub struct NodeIdMappedAddrError;
+
 /// Counter to always generate unique addresses for [`NodeIdMappedAddr`].
 static NODE_ID_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -2966,7 +2976,7 @@ impl NodeIdMappedAddr {
 }
 
 impl TryFrom<Ipv6Addr> for NodeIdMappedAddr {
-    type Error = anyhow::Error;
+    type Error = NodeIdMappedAddrError;
 
     fn try_from(value: Ipv6Addr) -> std::result::Result<Self, Self::Error> {
         let octets = value.octets();
@@ -2976,7 +2986,7 @@ impl TryFrom<Ipv6Addr> for NodeIdMappedAddr {
         {
             return Ok(Self(value));
         }
-        anyhow::bail!("{value:?} is not a NodeIdMappedAddr");
+        Err(NodeIdMappedAddrError)
     }
 }
 
