@@ -370,8 +370,7 @@
 <a href="#369" id="369">369</a>
 <a href="#370" id="370">370</a>
 <a href="#371" id="371">371</a>
-<a href="#372" id="372">372</a>
-<a href="#373" id="373">373</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#372" id="372">372</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -384,12 +383,11 @@
 
 <span class="kw">use </span>anyhow::{anyhow, bail, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>conn::Conn;
-<span class="kw">use </span>futures_lite::Stream;
-<span class="kw">use </span>futures_util::{
-    stream::{SplitSink, SplitStream},
-    Sink, StreamExt,
-};
 <span class="kw">use </span>iroh_base::{RelayUrl, SecretKey};
+<span class="kw">use </span>n0_future::{
+    split::{split, SplitSink, SplitStream},
+    Sink, Stream,
+};
 <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 </span><span class="kw">use </span>tracing::warn;
 <span class="kw">use </span>tracing::{debug, event, trace, Level};
@@ -580,7 +578,7 @@
 <span class="kw">impl </span>Client {
     <span class="doccomment">/// Splits the client into a sink and a stream.
     </span><span class="kw">pub fn </span>split(<span class="self">self</span>) -&gt; (ClientStream, ClientSink) {
-        <span class="kw">let </span>(sink, stream) = <span class="self">self</span>.conn.split();
+        <span class="kw">let </span>(sink, stream) = split(<span class="self">self</span>.conn);
         (
             ClientStream {
                 stream,
