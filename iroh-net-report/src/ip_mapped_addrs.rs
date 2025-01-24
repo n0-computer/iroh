@@ -100,9 +100,9 @@ impl IpMappedAddrs {
         Self(Arc::new(std::sync::Mutex::new(Inner::default())))
     }
 
-    /// Add a [`SocketAddr`] to the map and the generated [`IpMappedAddr`] it is now associated with back.
+    /// Adds a [`SocketAddr`] to the map and returns the generated [`IpMappedAddr`].
     ///
-    /// If this [`SocketAddr`] already exists in the map, it returns its associated [`IpMappedAddr`].
+    /// If this [`SocketAddr`] already exists in the map, it returns its associated [`IpMappedAddr`].  Otherwise a new [`IpMappedAddr`] is generated for it and returned.
     pub fn add(&self, ip_addr: SocketAddr) -> IpMappedAddr {
         let mut inner = self.0.lock().expect("poisoned");
         if let Some(mapped_addr) = inner.by_socket_addr.get(&ip_addr) {
