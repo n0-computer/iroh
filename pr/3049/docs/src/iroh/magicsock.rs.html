@@ -4391,7 +4391,13 @@
 <a href="#4390" id="4390">4390</a>
 <a href="#4391" id="4391">4391</a>
 <a href="#4392" id="4392">4392</a>
-<a href="#4393" id="4393">4393</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4393" id="4393">4393</a>
+<a href="#4394" id="4394">4394</a>
+<a href="#4395" id="4395">4395</a>
+<a href="#4396" id="4396">4396</a>
+<a href="#4397" id="4397">4397</a>
+<a href="#4398" id="4398">4398</a>
+<a href="#4399" id="4399">4399</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4469,12 +4475,10 @@
 <span class="kw">mod </span>metrics;
 <span class="kw">mod </span>node_map;
 <span class="kw">mod </span>relay_actor;
-<span class="kw">mod </span>timer;
 <span class="kw">mod </span>udp_conn;
 
 <span class="kw">pub use </span>node_map::Source;
 
-<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">use </span><span class="self">self</span>::timer::Timer;
 <span class="kw">pub use </span><span class="self">self</span>::{
     metrics::Metrics,
     node_map::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo},
@@ -6175,8 +6179,9 @@
     /// indefinitely after this call.
     </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.msock.me))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="macro">tracing::debug!</span>(<span class="string">"Closing connections"</span>);
-        <span class="self">self</span>.endpoint.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
+        <span class="macro">tracing::warn!</span>(<span class="string">"msock - closing connections"</span>);
+        <span class="comment">// Initiate closing all connections, and refuse future connections.
+        </span><span class="self">self</span>.endpoint.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
         <span class="self">self</span>.endpoint.wait_idle().<span class="kw">await</span>;
 
         <span class="kw">if </span><span class="self">self</span>.msock.is_closed() {
@@ -6210,6 +6215,7 @@
             </span><span class="macro">debug!</span>(<span class="string">"aborting remaining {}/3 tasks"</span>, tasks.len());
             tasks.shutdown().<span class="kw">await</span>;
         }
+        <span class="macro">warn!</span>(<span class="string">"msock - finished closing"</span>);
     }
 }
 
@@ -6966,6 +6972,12 @@
     /// this will be refactored to not allow this easy mistake to be made.
     </span><span class="attr">#[instrument(level = <span class="string">"debug"</span>, skip_all)]
     </span><span class="kw">async fn </span>update_net_info(<span class="kw-2">&amp;mut </span><span class="self">self</span>, why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) {
+        <span class="comment">// Don't start a net report probe if we know
+        // we are shutting down
+        </span><span class="kw">if </span><span class="self">self</span>.msock.is_closing() || <span class="self">self</span>.msock.is_closed() {
+            <span class="macro">debug!</span>(<span class="string">"skipping net_report, socket is shutting down"</span>);
+            <span class="kw">return</span>;
+        }
         <span class="kw">if </span><span class="self">self</span>.msock.relay_map.is_empty() {
             <span class="macro">debug!</span>(<span class="string">"skipping net_report, empty RelayMap"</span>);
             <span class="self">self</span>.msg_sender

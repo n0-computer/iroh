@@ -132,7 +132,8 @@
 <a href="#131" id="131">131</a>
 <a href="#132" id="132">132</a>
 <a href="#133" id="133">133</a>
-<a href="#134" id="134">134</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::BTreeMap,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::{
@@ -160,7 +161,7 @@
 </span><span class="attr">#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 </span><span class="kw">pub struct </span>IpMappedAddr(Ipv6Addr);
 
-<span class="doccomment">/// Counter to always generate unique addresses for `NodeIdMappedAddr`.
+<span class="doccomment">/// Counter to always generate unique addresses for [`IpMappedAddr`].
 </span><span class="kw">static </span>IP_ADDR_COUNTER: AtomicU64 = AtomicU64::new(<span class="number">1</span>);
 
 <span class="kw">impl </span>IpMappedAddr {
@@ -173,7 +174,8 @@
 
     <span class="doccomment">/// Generates a globally unique fake UDP address.
     ///
-    /// This generates and IPv6 Unique Local Address according to RFC 4193.
+    /// This generates a new IPv6 address in the  Unique Local Address range (RFC 4193)
+    /// which is recognised by iroh as an IP mapped address.
     </span><span class="kw">pub fn </span>generate() -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>addr = [<span class="number">0u8</span>; <span class="number">16</span>];
         addr[<span class="number">0</span>] = <span class="self">Self</span>::ADDR_PREFIXL;
@@ -216,7 +218,7 @@
 }
 
 <span class="attr">#[derive(Debug, Clone)]
-</span><span class="doccomment">/// A Map of [`IpMappedAddrs`] to [`SocketAddr`]
+</span><span class="doccomment">/// A Map of [`IpMappedAddrs`] to [`SocketAddr`].
 </span><span class="comment">// TODO(ramfox): before this is ready to be used beyond QAD, we should add
 // mechanisms for keeping track of "aliveness" and pruning address, as we do
 // with the `NodeMap`
@@ -229,14 +231,14 @@
 }
 
 <span class="kw">impl </span>IpMappedAddrs {
-    <span class="doccomment">/// Create an empty [`IpMappedAddrs`]
+    <span class="doccomment">/// Creates an empty [`IpMappedAddrs`].
     </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>(Arc::new(std::sync::Mutex::new(Inner::default())))
     }
 
-    <span class="doccomment">/// Add a [`SocketAddr`] to the map and the generated [`IpMappedAddr`] it is now associated with back.
+    <span class="doccomment">/// Adds a [`SocketAddr`] to the map and returns the generated [`IpMappedAddr`].
     ///
-    /// If this [`SocketAddr`] already exists in the map, it returns its associated [`IpMappedAddr`].
+    /// If this [`SocketAddr`] already exists in the map, it returns its associated [`IpMappedAddr`].  Otherwise a new [`IpMappedAddr`] is generated for it and returned.
     </span><span class="kw">pub fn </span>add(<span class="kw-2">&amp;</span><span class="self">self</span>, ip_addr: SocketAddr) -&gt; IpMappedAddr {
         <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
         <span class="kw">if let </span><span class="prelude-val">Some</span>(mapped_addr) = inner.by_socket_addr.get(<span class="kw-2">&amp;</span>ip_addr) {
@@ -248,13 +250,13 @@
         ip_mapped_addr
     }
 
-    <span class="doccomment">/// Get the [`IpMappedAddr`] for the given [`SocketAddr`].
+    <span class="doccomment">/// Returns the [`IpMappedAddr`] for the given [`SocketAddr`].
     </span><span class="kw">pub fn </span>get_mapped_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, ip_addr: <span class="kw-2">&amp;</span>SocketAddr) -&gt; <span class="prelude-ty">Option</span>&lt;IpMappedAddr&gt; {
         <span class="kw">let </span>inner = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
         inner.by_socket_addr.get(ip_addr).copied()
     }
 
-    <span class="doccomment">/// Get the [`SocketAddr`] for the given [`IpMappedAddr`].
+    <span class="doccomment">/// Returns the [`SocketAddr`] for the given [`IpMappedAddr`].
     </span><span class="kw">pub fn </span>get_ip_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, mapped_addr: <span class="kw-2">&amp;</span>IpMappedAddr) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
         <span class="kw">let </span>inner = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
         inner.by_mapped_addr.get(mapped_addr).copied()
