@@ -144,7 +144,7 @@
     </span><span class="kw">pub async fn </span>timeout(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="kw">match </span><span class="self">self</span>.inner {
             <span class="prelude-val">Some</span>(PingInner { deadline, data }) =&gt; {
-                time::sleep_until(deadline.into()).<span class="kw">await</span>;
+                time::sleep_until(deadline).<span class="kw">await</span>;
                 <span class="macro">debug!</span>(<span class="question-mark">?</span>data, <span class="string">"Ping timeout."</span>);
                 <span class="self">self</span>.inner = <span class="prelude-val">None</span>;
             }
