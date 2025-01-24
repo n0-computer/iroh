@@ -1282,16 +1282,6 @@ impl Connecting {
         self.inner.handshake_data().await
     }
 
-    /// The local IP address which was used when the peer established the connection.
-    pub fn local_ip(&self) -> Option<IpAddr> {
-        self.inner.local_ip()
-    }
-
-    /// The peer's UDP address.
-    pub fn remote_address(&self) -> SocketAddr {
-        self.inner.remote_address()
-    }
-
     /// Extracts the ALPN protocol from the peer's handshake data.
     // Note, we could totally provide this method to be on a Connection as well.  But we'd
     // need to wrap Connection too.
@@ -1497,28 +1487,6 @@ impl Connection {
     #[inline]
     pub fn datagram_send_buffer_space(&self) -> usize {
         self.inner.datagram_send_buffer_space()
-    }
-
-    /// The peer's UDP address.
-    ///
-    /// If [`ServerConfig::migration`] is `true`, clients may change addresses at will,
-    /// e.g. when switching to a cellular internet connection.
-    #[inline]
-    pub fn remote_address(&self) -> SocketAddr {
-        self.inner.remote_address()
-    }
-
-    /// The local IP address which was used when the peer established the connection.
-    ///
-    /// This can be different from the address the endpoint is bound to, in case the
-    /// endpoint is bound to a wildcard address like `0.0.0.0` or `::`.
-    ///
-    /// This will return `None` for clients, or when the platform does not expose this
-    /// information. See [`quinn::udp::RecvMeta::dst_ip`] for a list of supported
-    /// platforms.
-    #[inline]
-    pub fn local_ip(&self) -> Option<IpAddr> {
-        self.inner.local_ip()
     }
 
     /// Current best estimate of this connection's latency (round-trip-time).
