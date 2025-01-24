@@ -40,8 +40,6 @@ mod metrics;
 mod ping;
 mod reportgen;
 
-pub mod task;
-
 pub use metrics::Metrics;
 use reportgen::ProbeProto;
 pub use reportgen::QuicConfig;
