@@ -69,11 +69,10 @@ async fn main() -> anyhow::Result<()> {
         };
         let alpn = connecting.alpn().await?;
         let conn = connecting.await?;
-        let node_id = iroh::endpoint::get_remote_node_id(&conn)?;
+        let node_id = conn.remote_node_id()?;
         info!(
-            "new (unreliable) connection from {node_id} with ALPN {} (coming from {})",
+            "new (unreliable) connection from {node_id} with ALPN {}",
             String::from_utf8_lossy(&alpn),
-            conn.remote_address()
         );
         // spawn a task to handle reading and writing off of the connection
         tokio::spawn(async move {
