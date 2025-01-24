@@ -4415,7 +4415,8 @@
 <a href="#4414" id="4414">4414</a>
 <a href="#4415" id="4415">4415</a>
 <a href="#4416" id="4416">4416</a>
-<a href="#4417" id="4417">4417</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4417" id="4417">4417</a>
+<a href="#4418" id="4418">4418</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4455,7 +4456,7 @@
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
-<span class="kw">use </span>net_report::{IpMappedAddr, IpMappedAddrs, MAPPED_ADDR_PORT};
+<span class="kw">use </span>net_report::{IpMappedAddr, IpMappedAddrs, QuicConfig, MAPPED_ADDR_PORT};
 <span class="kw">use </span>netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 <span class="kw">use </span>quinn::{AsyncUdpSocket, ServerConfig};
 <span class="kw">use </span>rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -6154,8 +6155,8 @@
 
         <span class="kw">let </span>inner2 = inner.clone();
         <span class="kw">let </span>network_monitor = netmon::Monitor::new().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="comment">// let qad_endpoint = endpoint.clone();
-        </span>actor_tasks.spawn(
+        <span class="kw">let </span>qad_endpoint = endpoint.clone();
+        actor_tasks.spawn(
             <span class="kw">async move </span>{
                 <span class="kw">let </span>actor = Actor {
                     msg_receiver: actor_receiver,
@@ -6171,8 +6172,8 @@
                     no_v4_send: <span class="bool-val">false</span>,
                     net_reporter,
                     network_monitor,
-                    <span class="comment">// qad_endpoint,
-                </span>};
+                    qad_endpoint,
+                };
 
                 <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = actor.run().<span class="kw">await </span>{
                     <span class="macro">warn!</span>(<span class="string">"relay handler errored: {:?}"</span>, err);
@@ -6601,11 +6602,12 @@
     </span>net_reporter: net_report::Client,
 
     network_monitor: netmon::Monitor,
-    <span class="comment">// / The internal quinn::Endpoint
-    // /
-    // / Needed for Quic Address Discovery
-    // qad_endpoint: quinn::Endpoint,
-</span>}
+
+    <span class="doccomment">/// The internal quinn::Endpoint
+    ///
+    /// Needed for Quic Address Discovery
+    </span>qad_endpoint: quinn::Endpoint,
+}
 
 <span class="kw">impl </span>Actor {
     <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
@@ -7019,25 +7021,25 @@
         }
 
         <span class="kw">let </span>relay_map = <span class="self">self</span>.msock.relay_map.clone();
-        <span class="kw">let </span>opts = net_report::Options::default()
+        <span class="kw">let </span><span class="kw-2">mut </span>opts = net_report::Options::default()
             .stun_v4(<span class="prelude-val">Some</span>(<span class="self">self</span>.pconn4.clone()))
             .stun_v6(<span class="self">self</span>.pconn6.clone());
 
-        <span class="comment">// // create a client config for the endpoint to use for QUIC address discovery
-        // let root_store =
-        //     rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        // let client_config = rustls::ClientConfig::builder()
-        //     .with_root_certificates(root_store)
-        //     .with_no_client_auth();
-        // let quic_config = Some(QuicConfig {
-        //     ep: self.qad_endpoint.clone(),
-        //     client_config,
-        //     ipv4: true,
-        //     ipv6: self.pconn6.is_some(),
-        // });
-        // opts = opts.quic_config(quic_config);
+        <span class="comment">// create a client config for the endpoint to use for QUIC address discovery
+        </span><span class="kw">let </span>root_store =
+            rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        <span class="kw">let </span>client_config = rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        <span class="kw">let </span>quic_config = <span class="prelude-val">Some</span>(QuicConfig {
+            ep: <span class="self">self</span>.qad_endpoint.clone(),
+            client_config,
+            ipv4: <span class="bool-val">true</span>,
+            ipv6: <span class="self">self</span>.pconn6.is_some(),
+        });
+        opts = opts.quic_config(quic_config);
 
-        </span><span class="macro">debug!</span>(<span class="string">"requesting net_report report"</span>);
+        <span class="macro">debug!</span>(<span class="string">"requesting net_report report"</span>);
         <span class="kw">match </span><span class="self">self</span>.net_reporter.get_report_channel(relay_map, opts).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(rx) =&gt; {
                 <span class="kw">let </span>msg_sender = <span class="self">self</span>.msg_sender.clone();
