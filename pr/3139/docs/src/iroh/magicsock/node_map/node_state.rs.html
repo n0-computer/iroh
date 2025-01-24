@@ -1751,7 +1751,6 @@
 <span class="kw">use </span>netwatch::ip::is_unicast_link_local;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::sync::mpsc;
-<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, event, info, instrument, trace, warn, Level};
 
 <span class="kw">use super</span>::{
@@ -1764,7 +1763,7 @@
 </span><span class="kw">use </span><span class="kw">crate</span>::endpoint::PathSelection;
 <span class="kw">use crate</span>::{
     disco::{<span class="self">self</span>, SendAddr},
-    magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, HEARTBEAT_INTERVAL},
+    magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, Timer, HEARTBEAT_INTERVAL},
     watchable::{Watchable, Watcher},
 };
 
@@ -2266,20 +2265,19 @@
         }
 
         <span class="kw">let </span>id = <span class="self">self</span>.id;
-        <span class="kw">let </span>_expiry_task = AbortOnDropHandle::new(tokio::spawn(<span class="kw">async move </span>{
-            tokio::time::sleep(PING_TIMEOUT_DURATION).<span class="kw">await</span>;
+        <span class="kw">let </span>timer = Timer::after(PING_TIMEOUT_DURATION, <span class="kw">async move </span>{
             sender
                 .send(ActorMessage::EndpointPingExpired(id, tx_id))
                 .<span class="kw">await
                 </span>.ok();
-        }));
+        });
         <span class="self">self</span>.sent_pings.insert(
             tx_id,
             SentPing {
                 to,
                 at: now,
                 purpose,
-                _expiry_task,
+                timer,
             },
         );
     }
@@ -2628,6 +2626,8 @@
                 <span class="prelude-val">None
             </span>}
             <span class="prelude-val">Some</span>(sp) =&gt; {
+                sp.timer.abort();
+
                 <span class="kw">let </span><span class="kw-2">mut </span>node_map_insert = <span class="prelude-val">None</span>;
 
                 <span class="kw">let </span>now = Instant::now();
@@ -2969,7 +2969,7 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) at: Instant,
     <span class="attr">#[allow(dead_code)]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) purpose: DiscoPingPurpose,
-    <span class="kw">pub</span>(<span class="kw">super</span>) _expiry_task: AbortOnDropHandle&lt;()&gt;,
+    <span class="kw">pub</span>(<span class="kw">super</span>) timer: Timer,
 }
 
 <span class="doccomment">/// The reason why a discovery ping message was sent.

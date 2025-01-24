@@ -4203,7 +4203,9 @@
 <a href="#4202" id="4202">4202</a>
 <a href="#4203" id="4203">4203</a>
 <a href="#4204" id="4204">4204</a>
-<a href="#4205" id="4205">4205</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4205" id="4205">4205</a>
+<a href="#4206" id="4206">4206</a>
+<a href="#4207" id="4207">4207</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4280,10 +4282,12 @@
 <span class="kw">mod </span>metrics;
 <span class="kw">mod </span>node_map;
 <span class="kw">mod </span>relay_actor;
+<span class="kw">mod </span>timer;
 <span class="kw">mod </span>udp_conn;
 
 <span class="kw">pub use </span>node_map::Source;
 
+<span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">use </span><span class="self">self</span>::timer::Timer;
 <span class="kw">pub use </span><span class="self">self</span>::{
     metrics::Metrics,
     node_map::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo},
