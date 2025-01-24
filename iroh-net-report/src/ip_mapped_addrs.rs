@@ -83,7 +83,7 @@ impl std::fmt::Display for IpMappedAddr {
 }
 
 #[derive(Debug, Clone)]
-/// A Map of [`IpMappedAddrs`] to [`SocketAddr`]
+/// A Map of [`IpMappedAddrs`] to [`SocketAddr`].
 // TODO(ramfox): before this is ready to be used beyond QAD, we should add
 // mechanisms for keeping track of "aliveness" and pruning address, as we do
 // with the `NodeMap`
