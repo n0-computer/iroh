@@ -1181,7 +1181,7 @@ impl MagicSock {
             #[cfg(wasm_browser)]
             SendAddr::Udp(_) => {
                 // Ignoring sending pings over UDP. We don't have a UDP socket.
-                false
+                return;
             }
             SendAddr::Relay(ref url) => self.send_disco_message_relay(url, dst_node, msg),
         };
