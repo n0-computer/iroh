@@ -306,7 +306,8 @@
 <a href="#305" id="305">305</a>
 <a href="#306" id="306">306</a>
 <a href="#307" id="307">307</a>
-<a href="#308" id="308">308</a></pre></div><pre class="rust"><code><span class="doccomment">//! Actor to run hairpinning check.
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a></pre></div><pre class="rust"><code><span class="doccomment">//! Actor to run hairpinning check.
 //!
 //! This actor works as follows:
 //!
@@ -324,6 +325,7 @@
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>iroh_relay::protos::stun;
+<span class="kw">use </span>n0_future::task;
 <span class="kw">use </span>netwatch::UdpSocket;
 <span class="kw">use </span>tokio::sync::oneshot;
 <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
@@ -332,7 +334,7 @@
 <span class="kw">use crate</span>::{
     <span class="self">self </span><span class="kw">as </span>net_report,
     defaults::timeouts::HAIRPIN_CHECK_TIMEOUT,
-    reportgen, task,
+    reportgen,
     time::{<span class="self">self</span>, Instant},
     Inflight,
 };
@@ -488,7 +490,7 @@
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>bytes::BytesMut;
-    <span class="kw">use </span>iroh_relay::time::Duration;
+    <span class="kw">use </span>n0_future::time::Duration;
     <span class="kw">use </span>tokio::sync::mpsc;
     <span class="kw">use </span>tracing::info;
 

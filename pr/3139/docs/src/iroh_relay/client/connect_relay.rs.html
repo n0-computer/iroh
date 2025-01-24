@@ -390,7 +390,10 @@
 <a href="#389" id="389">389</a>
 <a href="#390" id="390">390</a>
 <a href="#391" id="391">391</a>
-<a href="#392" id="392">392</a></pre></div><pre class="rust"><code><span class="doccomment">//! Functionality related to `ClientBuilder::connect_relay`.
+<a href="#392" id="392">392</a>
+<a href="#393" id="393">393</a>
+<a href="#394" id="394">394</a>
+<a href="#395" id="395">395</a></pre></div><pre class="rust"><code><span class="doccomment">//! Functionality related to `ClientBuilder::connect_relay`.
 //!
 //! This is (1) likely to be phased out over time in favor of websockets, and
 //! (2) doesn't work in the browser - thus separated into its own file.
@@ -405,8 +408,8 @@
 
 </span><span class="comment">// Based on tailscale/derp/derphttp/derphttp_client.go
 
-</span><span class="kw">use </span><span class="kw">super</span>::streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
-<span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::<span class="kw-2">*</span>;
+</span><span class="kw">use </span>std::{future::Future, net::IpAddr};
+
 <span class="kw">use </span>anyhow::Context;
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>data_encoding::BASE64URL;
@@ -418,11 +421,14 @@
     Request,
 };
 <span class="kw">use </span>rustls::client::Resumption;
-<span class="kw">use </span>std::{future::Future, net::IpAddr};
 <span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
 <span class="kw">use </span>tracing::{error, info_span, Instrument};
 
-<span class="kw">use super</span>::<span class="kw-2">*</span>;
+<span class="kw">use super</span>::{
+    streams::{downcast_upgrade, MaybeTlsStream, ProxyStream},
+    <span class="kw-2">*</span>,
+};
+<span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::<span class="kw-2">*</span>;
 
 <span class="kw">impl </span>ClientBuilder {
     <span class="doccomment">/// Connects to configured relay using HTTP(S) with an upgrade header

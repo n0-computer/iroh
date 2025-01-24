@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["spawn"],"struct":["AbortOnDropHandle","JoinError","JoinHandle","JoinSet"]};

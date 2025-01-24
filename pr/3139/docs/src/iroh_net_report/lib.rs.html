@@ -1515,10 +1515,7 @@
 <a href="#1514" id="1514">1514</a>
 <a href="#1515" id="1515">1515</a>
 <a href="#1516" id="1516">1516</a>
-<a href="#1517" id="1517">1517</a>
-<a href="#1518" id="1518">1518</a>
-<a href="#1519" id="1519">1519</a>
-<a href="#1520" id="1520">1520</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1517" id="1517">1517</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -1536,7 +1533,6 @@
     sync::Arc,
 };
 
-<span class="kw">use </span><span class="kw">crate</span>::task::AbortOnDropHandle;
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="attr">#[cfg(not(wasm_browser))]
@@ -1544,10 +1540,10 @@
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>iroh_relay::{
-    protos::stun,
+<span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
+<span class="kw">use </span>n0_future::{
+    task::{<span class="self">self</span>, AbortOnDropHandle},
     time::{<span class="self">self</span>, Duration, Instant},
-    RelayMap,
 };
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>netwatch::UdpSocket;
@@ -1561,8 +1557,6 @@
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">mod </span>ping;
 <span class="kw">mod </span>reportgen;
-
-<span class="kw">pub mod </span>task;
 
 <span class="kw">pub use </span>metrics::Metrics;
 <span class="kw">use </span>reportgen::ProbeProto;
