@@ -96,7 +96,7 @@ pub struct Inner {
 }
 
 impl IpMappedAddrs {
-    /// Create an empty [`IpMappedAddrs`]
+    /// Creates an empty [`IpMappedAddrs`].
     pub fn new() -> Self {
         Self(Arc::new(std::sync::Mutex::new(Inner::default())))
     }
