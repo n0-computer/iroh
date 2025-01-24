@@ -1782,17 +1782,12 @@ impl Handle {
     /// indefinitely after this call.
     #[instrument(skip_all, fields(me = %self.msock.me))]
     pub(crate) async fn close(&self) {
-        tracing::warn!("Closing connections");
-
+        tracing::warn!("msock - closing connections");
         // Initiate closing all connections, and refuse future connections.
-        // We must call `self.endpoint.wait_idle` before exiting this method,
-        // to ensure all connections are closed gracefully before dropping
-        // the endpoint.
         self.endpoint.close(0u16.into(), b"");
+        self.endpoint.wait_idle().await;
 
         if self.msock.is_closed() {
-            // Wait for all connections to finish closing gracefully before exiting.
-            self.endpoint.wait_idle().await;
             return;
         }
         self.msock.closing.store(true, Ordering::Relaxed);
@@ -1823,9 +1818,7 @@ impl Handle {
             debug!("aborting remaining {}/3 tasks", tasks.len());
             tasks.shutdown().await;
         }
-
-        // Wait for all connections to finish closing gracefully before exiting.
-        self.endpoint.wait_idle().await;
+        warn!("msock - finished closing");
     }
 }
 
@@ -2581,6 +2574,12 @@ impl Actor {
     /// this will be refactored to not allow this easy mistake to be made.
     #[instrument(level = "debug", skip_all)]
     async fn update_net_info(&mut self, why: &'static str) {
+        // Don't start a net report probe if we know
+        // we are shutting down
+        if self.msock.is_closing() || self.msock.is_closed() {
+            debug!("skipping net_report, socket is shutting down");
+            return;
+        }
         if self.msock.relay_map.is_empty() {
             debug!("skipping net_report, empty RelayMap");
             self.msg_sender
