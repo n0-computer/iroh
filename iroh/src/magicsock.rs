@@ -1693,7 +1693,6 @@ impl Handle {
                     relay_actor_sender,
                     relay_actor_cancel_token,
                     msock: inner2,
-                    #[cfg(not(wasm_browser))]
                     periodic_re_stun_timer: new_re_stun_timer(false),
                     net_info_last: None,
                     #[cfg(not(wasm_browser))]
@@ -2101,7 +2100,6 @@ struct Actor {
     relay_actor_sender: mpsc::Sender<RelayActorMessage>,
     relay_actor_cancel_token: CancellationToken,
     /// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
-    #[cfg(not(wasm_browser))]
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
     net_info_last: Option<NetInfo>,
@@ -2151,7 +2149,6 @@ impl Actor {
             time::Instant::now() + HEARTBEAT_INTERVAL,
             HEARTBEAT_INTERVAL,
         );
-        #[cfg(not(wasm_browser))]
         let mut direct_addr_update_receiver =
             self.msock.direct_addr_update_state.running.subscribe();
         #[cfg(not(wasm_browser))]
@@ -2176,19 +2173,9 @@ impl Actor {
             let portmap_watcher_changed = futures_lite::future::pending();
 
             #[cfg(not(wasm_browser))]
-            let periodic_re_stun_timer = self.periodic_re_stun_timer.tick();
-            #[cfg(wasm_browser)]
-            let periodic_re_stun_timer = futures_lite::future::pending();
-
-            #[cfg(not(wasm_browser))]
             let direct_addr_heartbeat_timer_tick = direct_addr_heartbeat_timer.tick();
             #[cfg(wasm_browser)]
             let direct_addr_heartbeat_timer_tick = futures_lite::future::pending();
-
-            #[cfg(not(wasm_browser))]
-            let direct_addr_update_receiver_changed = direct_addr_update_receiver.changed();
-            #[cfg(wasm_browser)]
-            let direct_addr_update_receiver_changed = futures_lite::future::pending();
 
             #[cfg(not(wasm_browser))]
             let link_change_r_recv = link_change_r.recv();
@@ -2211,13 +2198,10 @@ impl Actor {
                         return Ok(());
                     }
                 }
-                tick = periodic_re_stun_timer => {
-                    #[cfg(not(wasm_browser))]
-                    {
-                        trace!("tick: re_stun {:?}", tick);
-                        inc!(Metrics, actor_tick_re_stun);
-                        self.msock.re_stun("periodic");
-                    }
+                tick = self.periodic_re_stun_timer.tick() => {
+                    trace!("tick: re_stun {:?}", tick);
+                    inc!(Metrics, actor_tick_re_stun);
+                    self.msock.re_stun("periodic");
                 }
                 change = portmap_watcher_changed, if !portmap_watcher_closed => {
                     #[cfg(not(wasm_browser))]
@@ -2254,15 +2238,12 @@ impl Actor {
                         self.handle_ping_actions(msgs).await;
                     }
                 }
-                _ = direct_addr_update_receiver_changed => {
-                    #[cfg(not(wasm_browser))]
-                    {
-                        let reason = *direct_addr_update_receiver.borrow();
-                        trace!("tick: direct addr update receiver {:?}", reason);
-                        inc!(Metrics, actor_tick_direct_addr_update_receiver);
-                        if let Some(reason) = reason {
-                            self.refresh_direct_addrs(reason).await;
-                        }
+                _ = direct_addr_update_receiver.changed() => {
+                    let reason = *direct_addr_update_receiver.borrow();
+                    trace!("tick: direct addr update receiver {:?}", reason);
+                    inc!(Metrics, actor_tick_direct_addr_update_receiver);
+                    if let Some(reason) = reason {
+                        self.refresh_direct_addrs(reason).await;
                     }
                 }
                 is_major = link_change_r_recv, if !link_change_closed => {
@@ -2769,7 +2750,6 @@ impl Actor {
     }
 }
 
-#[cfg(not(wasm_browser))]
 fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
     // Pick a random duration between 20 and 26 seconds (just under 30s,
     // a common UDP NAT timeout on Linux,etc)
