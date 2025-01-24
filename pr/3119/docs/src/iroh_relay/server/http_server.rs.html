@@ -1155,7 +1155,11 @@
 <a href="#1154" id="1154">1154</a>
 <a href="#1155" id="1155">1155</a>
 <a href="#1156" id="1156">1156</a>
-<a href="#1157" id="1157">1157</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1157" id="1157">1157</a>
+<a href="#1158" id="1158">1158</a>
+<a href="#1159" id="1159">1159</a>
+<a href="#1160" id="1160">1160</a>
+<a href="#1161" id="1161">1161</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -1801,7 +1805,11 @@
             },
             TlsAcceptor::Manual(a) =&gt; {
                 <span class="macro">debug!</span>(<span class="string">"TLS[manual]: accept"</span>);
-                <span class="kw">let </span>tls_stream = a.accept(stream).<span class="kw">await</span>.context(<span class="string">"TLS[manual] accept"</span>)<span class="question-mark">?</span>;
+                <span class="kw">let </span>tls_stream = tokio::time::timeout(Duration::from_secs(<span class="number">30</span>), a.accept(stream))
+                    .<span class="kw">await
+                    </span>.context(<span class="string">"TLS[manual] timeout"</span>)<span class="question-mark">?
+                    </span>.context(<span class="string">"TLS[manual] accept"</span>)<span class="question-mark">?</span>;
+
                 <span class="self">self</span>.serve_connection(MaybeTlsStream::Tls(tls_stream))
                     .<span class="kw">await
                     </span>.context(<span class="string">"TLS[manual] serve connection"</span>)<span class="question-mark">?</span>;
