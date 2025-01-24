@@ -7021,25 +7021,25 @@
         }
 
         <span class="kw">let </span>relay_map = <span class="self">self</span>.msock.relay_map.clone();
-        <span class="kw">let </span><span class="kw-2">mut </span>opts = net_report::Options::default()
+        <span class="kw">let </span>opts = net_report::Options::default()
             .stun_v4(<span class="prelude-val">Some</span>(<span class="self">self</span>.pconn4.clone()))
             .stun_v6(<span class="self">self</span>.pconn6.clone());
 
-        <span class="comment">// create a client config for the endpoint to use for QUIC address discovery
-        </span><span class="kw">let </span>root_store =
-            rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        <span class="kw">let </span>client_config = rustls::ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
-        <span class="kw">let </span>quic_config = <span class="prelude-val">Some</span>(QuicConfig {
-            ep: <span class="self">self</span>.qad_endpoint.clone(),
-            client_config,
-            ipv4: <span class="bool-val">true</span>,
-            ipv6: <span class="self">self</span>.pconn6.is_some(),
-        });
-        opts = opts.quic_config(quic_config);
+        <span class="comment">// // create a client config for the endpoint to use for QUIC address discovery
+        // let root_store =
+        //     rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        // let client_config = rustls::ClientConfig::builder()
+        //     .with_root_certificates(root_store)
+        //     .with_no_client_auth();
+        // let quic_config = Some(QuicConfig {
+        //     ep: self.qad_endpoint.clone(),
+        //     client_config,
+        //     ipv4: true,
+        //     ipv6: self.pconn6.is_some(),
+        // });
+        // opts = opts.quic_config(quic_config);
 
-        <span class="macro">debug!</span>(<span class="string">"requesting net_report report"</span>);
+        </span><span class="macro">debug!</span>(<span class="string">"requesting net_report report"</span>);
         <span class="kw">match </span><span class="self">self</span>.net_reporter.get_report_channel(relay_map, opts).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(rx) =&gt; {
                 <span class="kw">let </span>msg_sender = <span class="self">self</span>.msg_sender.clone();
