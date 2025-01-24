@@ -836,6 +836,7 @@ mod test_dns_pkarr {
     use crate::{
         discovery::{pkarr::PkarrPublisher, NodeData},
         dns::DnsResolver,
+        node_info::NodeInfo,
         test_utils::{
             dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server, DnsPkarrServer,
         },
