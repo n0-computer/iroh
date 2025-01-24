@@ -2345,6 +2345,7 @@ struct Actor {
 impl Actor {
     async fn run(mut self) -> Result<()> {
         // Setup network monitoring
+        #[cfg(not(wasm_browser))]
         let (link_change_s, mut link_change_r) = mpsc::channel(8);
         #[cfg(not(wasm_browser))]
         let _token = self
@@ -2357,8 +2358,6 @@ impl Actor {
                 .boxed()
             })
             .await?;
-        #[cfg(wasm_browser)]
-        let _unused = link_change_s;
 
         // Let the the heartbeat only start a couple seconds later
         #[cfg(not(wasm_browser))]
@@ -2366,6 +2365,7 @@ impl Actor {
             time::Instant::now() + HEARTBEAT_INTERVAL,
             HEARTBEAT_INTERVAL,
         );
+        #[cfg(not(wasm_browser))]
         let mut direct_addr_update_receiver =
             self.msock.direct_addr_update_state.running.subscribe();
         #[cfg(not(wasm_browser))]
@@ -2403,6 +2403,11 @@ impl Actor {
             let direct_addr_update_receiver_changed = direct_addr_update_receiver.changed();
             #[cfg(wasm_browser)]
             let direct_addr_update_receiver_changed = futures_lite::future::pending();
+
+            #[cfg(not(wasm_browser))]
+            let link_change_r_recv = link_change_r.recv();
+            #[cfg(wasm_browser)]
+            let link_change_r_recv = futures_lite::future::pending();
 
             tokio::select! {
                 msg = self.msg_receiver.recv(), if !receiver_closed => {
@@ -2474,18 +2479,23 @@ impl Actor {
                         }
                     }
                 }
-                is_major = link_change_r.recv(), if !link_change_closed => {
-                    let Some(is_major) = is_major else {
-                        trace!("tick: link change receiver closed");
-                        inc!(Metrics, actor_tick_other);
+                is_major = link_change_r_recv, if !link_change_closed => {
+                    #[cfg(not(wasm_browser))]
+                    {
+                        let Some(is_major) = is_major else {
+                            trace!("tick: link change receiver closed");
+                            inc!(Metrics, actor_tick_other);
 
-                        link_change_closed = true;
-                        continue;
-                    };
+                            link_change_closed = true;
+                            continue;
+                        };
 
-                    trace!("tick: link change {}", is_major);
-                    inc!(Metrics, actor_link_change);
-                    self.handle_network_change(is_major).await;
+                        trace!("tick: link change {}", is_major);
+                        inc!(Metrics, actor_link_change);
+                        self.handle_network_change(is_major).await;
+                    }
+                    #[cfg(wasm_browser)]
+                    let _unused_in_browsers = is_major;
                 }
                 // Even if `discovery_events` yields `None`, it could begin to yield
                 // `Some` again in the future, so we don't want to disable this branch
@@ -2506,29 +2516,24 @@ impl Actor {
         }
     }
 
+    #[cfg(not(wasm_browser))]
     async fn handle_network_change(&mut self, is_major: bool) {
         debug!("link change detected: major? {}", is_major);
 
         if is_major {
-            #[cfg(not(wasm_browser))]
             if let Err(err) = self.pconn4.rebind() {
                 warn!("failed to rebind Udp IPv4 socket: {:?}", err);
             };
-            #[cfg(not(wasm_browser))]
             if let Some(ref pconn6) = self.pconn6 {
                 if let Err(err) = pconn6.rebind() {
                     warn!("failed to rebind Udp IPv6 socket: {:?}", err);
                 };
             }
-            #[cfg(not(wasm_browser))]
             self.msock.dns_resolver.clear_cache();
-            #[cfg(not(wasm_browser))]
             self.msock.re_stun("link-change-major");
-            #[cfg(not(wasm_browser))]
             self.close_stale_relay_connections().await;
             self.reset_endpoint_states();
         } else {
-            #[cfg(not(wasm_browser))]
             self.msock.re_stun("link-change-minor");
         }
     }
