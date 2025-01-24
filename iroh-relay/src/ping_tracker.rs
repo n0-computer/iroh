@@ -1,6 +1,5 @@
-use tracing::debug;
-
 use n0_future::time::{self, Duration, Instant};
+use tracing::debug;
 
 /// Maximum time for a ping response in the relay protocol.
 pub const PING_TIMEOUT: Duration = Duration::from_secs(5);

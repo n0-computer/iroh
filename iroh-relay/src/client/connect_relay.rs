@@ -13,8 +13,8 @@
 
 // Based on tailscale/derp/derphttp/derphttp_client.go
 
-use super::streams::{downcast_upgrade, MaybeTlsStream, ProxyStream};
-use crate::defaults::timeouts::*;
+use std::{future::Future, net::IpAddr};
+
 use anyhow::Context;
 use bytes::Bytes;
 use data_encoding::BASE64URL;
@@ -26,11 +26,14 @@ use hyper::{
     Request,
 };
 use rustls::client::Resumption;
-use std::{future::Future, net::IpAddr};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{error, info_span, Instrument};
 
-use super::*;
+use super::{
+    streams::{downcast_upgrade, MaybeTlsStream, ProxyStream},
+    *,
+};
+use crate::defaults::timeouts::*;
 
 impl ClientBuilder {
     /// Connects to configured relay using HTTP(S) with an upgrade header
