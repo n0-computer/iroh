@@ -2313,8 +2313,8 @@ dependencies = [
  "iroh-quinn",
  "iroh-quinn-proto",
  "iroh-test 0.31.0",
- "js-sys",
  "lru",
+ "n0-future",
  "num_enum",
  "pin-project",
  "postcard",
@@ -2330,7 +2330,6 @@ dependencies = [
  "rustls-cert-reloadable-resolver",
  "rustls-pemfile",
  "rustls-webpki",
- "send_wrapper",
  "serde",
  "serde_json",
  "stun-rs",
@@ -2346,8 +2345,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
- "wasm-bindgen",
- "web-time",
  "webpki-roots",
 ]
 
@@ -2636,6 +2633,27 @@ dependencies = [
  "tagptr",
  "thiserror 1.0.69",
  "uuid",
+]
+
+[[package]]
+name = "n0-future"
+version = "0.0.1"
+source = "git+https://github.com/n0-computer/n0-future.git?branch=main#f9ca3c093b9673659729460c68490ab81987122a"
+dependencies = [
+ "cfg_aliases",
+ "derive_more",
+ "futures-buffered",
+ "futures-lite",
+ "futures-sink",
+ "futures-util",
+ "js-sys",
+ "pin-project",
+ "send_wrapper",
+ "tokio",
+ "tokio-util",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-time",
 ]
 
 [[package]]

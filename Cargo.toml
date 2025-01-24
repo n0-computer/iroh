@@ -44,6 +44,8 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 unused-async = "warn"
 
 [patch.crates-io]
+n0-future = { git = "https://github.com/n0-computer/n0-future.git", branch = "main" }
+# n0-future = { path = "../n0-future" }
 iroh-quinn = { git = "https://github.com/n0-computer/quinn.git", branch = "matheus23/browser" }
 iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn.git", branch = "matheus23/browser" }
 iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn.git", branch = "matheus23/browser" }

@@ -38,8 +38,6 @@ pub mod quic;
 #[cfg(feature = "server")]
 pub mod server;
 
-pub mod time;
-
 mod ping_tracker;
 
 mod key_cache;

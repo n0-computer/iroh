@@ -33,6 +33,7 @@ hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
 iroh-base = { version = "0.31.0", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
 iroh-metrics = { version = "0.31", default-features = false }
+n0-future = { version = "0.0.1" }
 num_enum = "0.7"
 pin-project = "1"
 postcard = { version = "1", default-features = false, features = [
@@ -101,13 +102,6 @@ tokio = { version = "1", features = [
     "signal",
     "process",
 ] }
-
-# wasm-in-browser dependencies
-[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
-js-sys = "0.3"
-wasm-bindgen = "0.2"
-web-time = "1"
-send_wrapper = "0.6"
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
