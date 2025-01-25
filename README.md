@@ -166,6 +166,6 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 [iroh-yt-video]: https://www.youtube.com/watch?v=RwAt36Xe3UI_
 [Iroh Examples]: https://github.com/n0-computer/iroh-examples
 [Iroh Experiments]: https://github.com/n0-computer/iroh-experiments
-[echo-rs]: /iroh-router/examples/echo.rs
+[echo-rs]: /iroh/examples/echo.rs
 [iroh-perf]: https://perf.iroh.computer
 [docs]: https://iroh.computer/docs
