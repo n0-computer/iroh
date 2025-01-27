@@ -26,7 +26,7 @@ use iroh_metrics::inc;
 use iroh_relay::{protos::stun, RelayMap};
 use n0_future::{
     task::{self, AbortOnDropHandle},
-    time::{self, Duration, Instant},
+    time::{Duration, Instant},
 };
 use netwatch::UdpSocket;
 use tokio::sync::{self, mpsc, oneshot};
