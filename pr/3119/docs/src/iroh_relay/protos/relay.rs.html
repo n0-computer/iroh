@@ -1361,12 +1361,12 @@
 }
 
 <span class="comment">// No need for framing when using websockets, thus this is cfg-ed out for browsers:
-// Technically, you can't enable the server feature with wasm at the same time, but
-// this still seems to trigger unused warnings.
-</span><span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"server"</span>))]
-</span><span class="kw">use </span>framing::<span class="kw-2">*</span>;
+</span><span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="comment">// rustc doesn't figure out that the trait impls mean it's not unused
+</span><span class="attr">#[cfg_attr(not(wasm_browser), allow(unused))]
+</span><span class="kw">pub use </span>framing::<span class="kw-2">*</span>;
 
-<span class="attr">#[cfg(all(not(wasm_browser), feature = <span class="string">"server"</span>))]
+<span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">mod </span>framing {
     <span class="kw">use </span>bytes::{Buf, BytesMut};
     <span class="kw">use </span>tokio_util::codec::{Decoder, Encoder};
