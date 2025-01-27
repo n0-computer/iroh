@@ -498,15 +498,12 @@ impl Frame {
 }
 
 // No need for framing when using websockets, thus this is cfg-ed out for browsers:
-#[cfg(not(wasm_browser))]
-// For some reason rustc doesn't realize that this import is needed when
-// - the server feature is turned *off*
-// - we're *outside* wasm
-// Because we need the `Decoder` and `Encoder` impls.
-#[allow(unused)]
+// Technically, you can't enable the server feature with wasm at the same time, but
+// this still seems to trigger unused warnings.
+#[cfg(all(not(wasm_browser), feature = "server"))]
 use framing::*;
 
-#[cfg(not(wasm_browser))]
+#[cfg(all(not(wasm_browser), feature = "server"))]
 mod framing {
     use bytes::{Buf, BytesMut};
     use tokio_util::codec::{Decoder, Encoder};
