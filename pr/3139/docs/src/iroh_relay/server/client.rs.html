@@ -743,19 +743,15 @@
 <a href="#742" id="742">742</a>
 <a href="#743" id="743">743</a>
 <a href="#744" id="744">744</a>
-<a href="#745" id="745">745</a>
-<a href="#746" id="746">746</a>
-<a href="#747" id="747">747</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#745" id="745">745</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
-<span class="kw">use </span>futures_lite::FutureExt;
-<span class="kw">use </span>futures_sink::Sink;
-<span class="kw">use </span>futures_util::{SinkExt, Stream, StreamExt};
 <span class="kw">use </span>iroh_base::NodeId;
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
+<span class="kw">use </span>n0_future::{FutureExt, Sink, SinkExt, Stream, StreamExt};
 <span class="kw">use </span>rand::Rng;
 <span class="kw">use </span>tokio::{
     sync::mpsc::{<span class="self">self</span>, error::TrySendError},

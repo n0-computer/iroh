@@ -42,9 +42,7 @@
 <a href="#41" id="41">41</a>
 <a href="#42" id="42">42</a>
 <a href="#43" id="43">43</a>
-<a href="#44" id="44">44</a>
-<a href="#45" id="45">45</a>
-<a href="#46" id="46">46</a></pre></div><pre class="rust"><code><span class="doccomment">//! Default values used in the relay.
+<a href="#44" id="44">44</a></pre></div><pre class="rust"><code><span class="doccomment">//! Default values used in the relay.
 
 /// The default STUN port used by the Relay server.
 ///
@@ -74,16 +72,14 @@
 </span><span class="kw">pub const </span>DEFAULT_KEY_CACHE_CAPACITY: usize = <span class="number">1024 </span>* <span class="number">1024</span>;
 
 <span class="doccomment">/// Contains all timeouts that we use in `iroh`.
+</span><span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>timeouts {
-    <span class="attr">#[cfg(any(not(wasm_browser), feature = <span class="string">"server"</span>))]
-    </span><span class="kw">use </span>std::time::Duration;
+    <span class="kw">use </span>n0_future::time::Duration;
 
     <span class="doccomment">/// Timeout used by the relay client while connecting to the relay server,
     /// using `TcpStream::connect`
-    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(<span class="number">1500</span>);
     <span class="doccomment">/// Timeout for our async dns resolver
-    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>DNS_TIMEOUT: Duration = Duration::from_secs(<span class="number">1</span>);
 
     <span class="doccomment">/// Maximum time the server will attempt to get a successful write to the connection.

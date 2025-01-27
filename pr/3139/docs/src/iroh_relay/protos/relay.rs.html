@@ -861,12 +861,7 @@
 <a href="#860" id="860">860</a>
 <a href="#861" id="861">861</a>
 <a href="#862" id="862">862</a>
-<a href="#863" id="863">863</a>
-<a href="#864" id="864">864</a>
-<a href="#865" id="865">865</a>
-<a href="#866" id="866">866</a>
-<a href="#867" id="867">867</a>
-<a href="#868" id="868">868</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
+<a href="#863" id="863">863</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
 //!
 //! Protocol flow:
 //!
@@ -880,16 +875,14 @@
 //!  * clients sends `FrameType::SendPacket`
 //!  * server then sends `FrameType::RecvPacket` to recipient
 
-</span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
-</span><span class="kw">use </span>std::time::Duration;
-
-<span class="kw">use </span>anyhow::{bail, ensure};
+</span><span class="kw">use </span>anyhow::{bail, ensure};
 <span class="kw">use </span>bytes::{BufMut, Bytes};
-<span class="attr">#[cfg(any(test, feature = <span class="string">"server"</span>))]
-</span><span class="kw">use </span>futures_lite::{Stream, StreamExt};
-<span class="kw">use </span>futures_sink::Sink;
-<span class="kw">use </span>futures_util::SinkExt;
 <span class="kw">use </span>iroh_base::{PublicKey, SecretKey, Signature};
+<span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
+</span><span class="kw">use </span>n0_future::time::Duration;
+<span class="kw">use </span>n0_future::{Sink, SinkExt};
+<span class="attr">#[cfg(any(test, feature = <span class="string">"server"</span>))]
+</span><span class="kw">use </span>n0_future::{Stream, StreamExt};
 <span class="kw">use </span>postcard::experimental::max_size::MaxSize;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
@@ -1369,12 +1362,9 @@
 
 <span class="comment">// No need for framing when using websockets, thus this is cfg-ed out for browsers:
 </span><span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="comment">// For some reason rustc doesn't realize that this import is needed when
-// - the server feature is turned *off*
-// - we're *outside* wasm
-// Because we need the `Decoder` and `Encoder` impls.
-</span><span class="attr">#[allow(unused)]
-</span><span class="kw">use </span>framing::<span class="kw-2">*</span>;
+</span><span class="comment">// rustc doesn't figure out that the trait impls mean it's not unused
+</span><span class="attr">#[cfg_attr(not(wasm_browser), allow(unused))]
+</span><span class="kw">pub use </span>framing::<span class="kw-2">*</span>;
 
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">mod </span>framing {

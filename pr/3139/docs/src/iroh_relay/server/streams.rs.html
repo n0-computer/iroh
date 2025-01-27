@@ -168,8 +168,7 @@
 <a href="#167" id="167">167</a>
 <a href="#168" id="168">168</a>
 <a href="#169" id="169">169</a>
-<a href="#170" id="170">170</a>
-<a href="#171" id="171">171</a></pre></div><pre class="rust"><code><span class="doccomment">//! Streams used in the server-side implementation of iroh relays.
+<a href="#170" id="170">170</a></pre></div><pre class="rust"><code><span class="doccomment">//! Streams used in the server-side implementation of iroh relays.
 
 </span><span class="kw">use </span>std::{
     pin::Pin,
@@ -177,8 +176,7 @@
 };
 
 <span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>futures_lite::Stream;
-<span class="kw">use </span>futures_sink::Sink;
+<span class="kw">use </span>n0_future::{Sink, Stream};
 <span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
 <span class="kw">use </span>tokio_tungstenite::{tungstenite, WebSocketStream};
 <span class="kw">use </span>tokio_util::codec::Framed;

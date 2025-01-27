@@ -1153,17 +1153,13 @@
 <a href="#1152" id="1152">1152</a>
 <a href="#1153" id="1153">1153</a>
 <a href="#1154" id="1154">1154</a>
-<a href="#1155" id="1155">1155</a>
-<a href="#1156" id="1156">1156</a>
-<a href="#1157" id="1157">1157</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1155" id="1155">1155</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
 <span class="kw">use </span>anyhow::{bail, ensure, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>derive_more::Debug;
-<span class="kw">use </span>futures_lite::FutureExt;
-<span class="kw">use </span>futures_util::SinkExt;
 <span class="kw">use </span>http::{header::CONNECTION, response::Builder <span class="kw">as </span>ResponseBuilder};
 <span class="kw">use </span>hyper::{
     body::Incoming,
@@ -1173,6 +1169,7 @@
     HeaderMap, Method, Request, Response, StatusCode,
 };
 <span class="kw">use </span>iroh_metrics::inc;
+<span class="kw">use </span>n0_future::{FutureExt, SinkExt};
 <span class="kw">use </span>tokio::net::{TcpListener, TcpStream};
 <span class="kw">use </span>tokio_rustls_acme::AcmeAcceptor;
 <span class="kw">use </span>tokio_tungstenite::{
@@ -1856,9 +1853,8 @@
 
     <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>bytes::Bytes;
-    <span class="kw">use </span>futures_lite::StreamExt;
-    <span class="kw">use </span>futures_util::SinkExt;
     <span class="kw">use </span>iroh_base::{PublicKey, SecretKey};
+    <span class="kw">use </span>n0_future::{SinkExt, StreamExt};
     <span class="kw">use </span>reqwest::Url;
     <span class="kw">use </span>tracing::info;
     <span class="kw">use </span>tracing_subscriber::{prelude::<span class="kw-2">*</span>, EnvFilter};
