@@ -133,7 +133,7 @@ testresult = "0.4.0"
 iroh-relay = { path = "../iroh-relay", default-features = false, features = ["test-utils", "server"] }
 
 [features]
-default = ["metrics", "discovery-pkarr-dht"]
+default = ["metrics"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "net-report/metrics", "portmapper/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 discovery-local-network = ["dep:swarm-discovery"]
