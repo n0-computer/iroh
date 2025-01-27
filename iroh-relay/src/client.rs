@@ -11,6 +11,8 @@ use std::{
 
 use anyhow::{anyhow, bail, Result};
 use conn::Conn;
+#[cfg(not(wasm_browser))]
+use hickory_resolver::TokioResolver as DnsResolver;
 use iroh_base::{RelayUrl, SecretKey};
 use n0_future::{
     split::{split, SplitSink, SplitStream},
@@ -35,12 +37,6 @@ pub(crate) mod streams;
 #[cfg(not(wasm_browser))]
 mod util;
 
-#[cfg(wasm_browser)]
-type DnsResolver = ();
-
-#[cfg(not(wasm_browser))]
-use hickory_resolver::TokioResolver as DnsResolver;
-
 /// Build a Client.
 #[derive(derive_more::Debug, Clone)]
 pub struct ClientBuilder {
@@ -61,7 +57,7 @@ pub struct ClientBuilder {
     /// The secret key of this client.
     secret_key: SecretKey,
     /// The DNS resolver to use.
-    #[cfg_attr(wasm_browser, allow(unused))]
+    #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
     /// Cache for public keys of remote nodes.
     key_cache: KeyCache,
@@ -69,7 +65,11 @@ pub struct ClientBuilder {
 
 impl ClientBuilder {
     /// Create a new [`ClientBuilder`]
-    pub fn new(url: impl Into<RelayUrl>, secret_key: SecretKey, dns_resolver: DnsResolver) -> Self {
+    pub fn new(
+        url: impl Into<RelayUrl>,
+        secret_key: SecretKey,
+        #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
+    ) -> Self {
         ClientBuilder {
             address_family_selector: None,
             is_prober: false,
@@ -86,6 +86,7 @@ impl ClientBuilder {
 
             proxy_url: None,
             secret_key,
+            #[cfg(not(wasm_browser))]
             dns_resolver,
             key_cache: KeyCache::new(128),
         }
