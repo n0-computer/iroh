@@ -370,7 +370,8 @@
 <a href="#369" id="369">369</a>
 <a href="#370" id="370">370</a>
 <a href="#371" id="371">371</a>
-<a href="#372" id="372">372</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -383,6 +384,8 @@
 
 <span class="kw">use </span>anyhow::{anyhow, bail, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>conn::Conn;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">use </span>hickory_resolver::TokioResolver <span class="kw">as </span>DnsResolver;
 <span class="kw">use </span>iroh_base::{RelayUrl, SecretKey};
 <span class="kw">use </span>n0_future::{
     split::{split, SplitSink, SplitStream},
@@ -407,12 +410,6 @@
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">mod </span>util;
 
-<span class="attr">#[cfg(wasm_browser)]
-</span><span class="kw">type </span>DnsResolver = ();
-
-<span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span>hickory_resolver::TokioResolver <span class="kw">as </span>DnsResolver;
-
 <span class="doccomment">/// Build a Client.
 </span><span class="attr">#[derive(derive_more::Debug, Clone)]
 </span><span class="kw">pub struct </span>ClientBuilder {
@@ -433,7 +430,7 @@
     <span class="doccomment">/// The secret key of this client.
     </span>secret_key: SecretKey,
     <span class="doccomment">/// The DNS resolver to use.
-    </span><span class="attr">#[cfg_attr(wasm_browser, allow(unused))]
+    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>dns_resolver: DnsResolver,
     <span class="doccomment">/// Cache for public keys of remote nodes.
     </span>key_cache: KeyCache,
@@ -441,7 +438,11 @@
 
 <span class="kw">impl </span>ClientBuilder {
     <span class="doccomment">/// Create a new [`ClientBuilder`]
-    </span><span class="kw">pub fn </span>new(url: <span class="kw">impl </span>Into&lt;RelayUrl&gt;, secret_key: SecretKey, dns_resolver: DnsResolver) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>new(
+        url: <span class="kw">impl </span>Into&lt;RelayUrl&gt;,
+        secret_key: SecretKey,
+        <span class="attr">#[cfg(not(wasm_browser))] </span>dns_resolver: DnsResolver,
+    ) -&gt; <span class="self">Self </span>{
         ClientBuilder {
             address_family_selector: <span class="prelude-val">None</span>,
             is_prober: <span class="bool-val">false</span>,
@@ -458,7 +459,8 @@
 
             proxy_url: <span class="prelude-val">None</span>,
             secret_key,
-            dns_resolver,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>dns_resolver,
             key_cache: KeyCache::new(<span class="number">128</span>),
         }
     }
