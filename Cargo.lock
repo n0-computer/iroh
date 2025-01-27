@@ -2636,7 +2636,8 @@ dependencies = [
 [[package]]
 name = "n0-future"
 version = "0.0.1"
-source = "git+https://github.com/n0-computer/n0-future.git?branch=main#a566728beafdfc89ae1aa3e1039da48f31c08843"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7d4800d43db24b202e42bb129710ee5f809d46345d2e31ed702d5c6ed02601e"
 dependencies = [
  "cfg_aliases",
  "derive_more",
