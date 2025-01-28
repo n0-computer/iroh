@@ -1687,7 +1687,12 @@
 <a href="#1686" id="1686">1686</a>
 <a href="#1687" id="1687">1687</a>
 <a href="#1688" id="1688">1688</a>
-<a href="#1689" id="1689">1689</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1689" id="1689">1689</a>
+<a href="#1690" id="1690">1690</a>
+<a href="#1691" id="1691">1691</a>
+<a href="#1692" id="1692">1692</a>
+<a href="#1693" id="1693">1693</a>
+<a href="#1694" id="1694">1694</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -2298,7 +2303,10 @@
                     </span><span class="kw">let </span><span class="kw-2">mut </span>probe_proto = <span class="prelude-val">None</span>;
                     <span class="kw">while let </span><span class="prelude-val">Some</span>(res) = set.join_next().<span class="kw">await </span>{
                         <span class="kw">match </span>res {
-                            <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(report)) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(report),
+                            <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(report)) =&gt; {
+                                parent_cancel.cancel();
+                                <span class="kw">return </span><span class="prelude-val">Ok</span>(report);
+                            }
                             <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(ProbeError::Error(err, probe))) =&gt; {
                                 probe_proto = <span class="prelude-val">Some</span>(probe.proto());
                                 <span class="macro">warn!</span>(<span class="question-mark">?</span>probe, <span class="string">"probe failed: {:#}"</span>, err);
@@ -2306,6 +2314,7 @@
                             }
                             <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(ProbeError::AbortSet(err, probe))) =&gt; {
                                 <span class="macro">debug!</span>(<span class="question-mark">?</span>probe, <span class="string">"probe set aborted: {:#}"</span>, err);
+                                parent_cancel.cancel();
                                 set.abort_all();
                                 <span class="kw">return </span><span class="prelude-val">Err</span>(err);
                             }
@@ -2324,6 +2333,7 @@
         }
         <span class="self">self</span>.outstanding_tasks.probes = <span class="bool-val">true</span>;
 
+        cancel.cancel();
         <span class="prelude-val">Ok</span>(probes)
     }
 }

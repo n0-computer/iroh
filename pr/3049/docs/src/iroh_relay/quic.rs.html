@@ -343,7 +343,9 @@
 <a href="#342" id="342">342</a>
 <a href="#343" id="343">343</a>
 <a href="#344" id="344">344</a>
-<a href="#345" id="345">345</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
+<a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
+<a href="#347" id="347">347</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
 
@@ -583,6 +585,7 @@
         <span class="macro">tracing::warn!</span>(<span class="string">"QAD: AFTER CONNECTING"</span>);
         <span class="kw">let </span>conn = <span class="macro">tokio::select!</span> {
             <span class="kw">_ </span>= cancel.cancelled() =&gt; {
+                <span class="macro">tracing::warn!</span>(<span class="string">"QAD CANCELLED1"</span>);
                 <span class="macro">anyhow::bail!</span>(<span class="string">"QUIC address discovery cancelled early"</span>);
             },
             conn = connecting =&gt; {
@@ -595,6 +598,7 @@
         <span class="macro">tokio::select!</span> {
             <span class="kw">_ </span>= cancel.cancelled() =&gt; {
                 conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+                <span class="macro">tracing::warn!</span>(<span class="string">"QAD CANCELLED2"</span>);
                 <span class="macro">anyhow::bail!</span>(<span class="string">"QUIC address discovery cancelled early"</span>);
             },
             res = external_addresses.wait_for(|addr| addr.is_some()) =&gt; {
