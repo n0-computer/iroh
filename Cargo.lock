@@ -2049,8 +2049,8 @@ dependencies = [
  "iroh-base",
  "iroh-metrics",
  "iroh-net-report",
- "iroh-quinn 0.13.0",
- "iroh-quinn-proto 0.13.0",
+ "iroh-quinn",
+ "iroh-quinn-proto",
  "iroh-quinn-udp",
  "iroh-relay",
  "iroh-test 0.31.0",
@@ -2120,7 +2120,7 @@ dependencies = [
  "hdrhistogram",
  "iroh",
  "iroh-metrics",
- "iroh-quinn 0.13.0",
+ "iroh-quinn",
  "n0-future",
  "rcgen",
  "rustls",
@@ -2211,8 +2211,7 @@ dependencies = [
  "hickory-resolver",
  "iroh-base",
  "iroh-metrics",
- "iroh-quinn 0.12.0",
- "iroh-quinn 0.13.0",
+ "iroh-quinn",
  "iroh-relay",
  "iroh-test 0.31.0",
  "n0-future",
@@ -2233,31 +2232,13 @@ dependencies = [
 
 [[package]]
 name = "iroh-quinn"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35ba75a5c57cff299d2d7ca1ddee053f66339d1756bd79ec637bcad5aa61100e"
-dependencies = [
- "bytes",
- "iroh-quinn-proto 0.12.0",
- "iroh-quinn-udp",
- "pin-project-lite",
- "rustc-hash",
- "rustls",
- "socket2",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "iroh-quinn"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76c6245c9ed906506ab9185e8d7f64857129aee4f935e899f398a3bd3b70338d"
 dependencies = [
  "bytes",
  "cfg_aliases",
- "iroh-quinn-proto 0.13.0",
+ "iroh-quinn-proto",
  "iroh-quinn-udp",
  "pin-project-lite",
  "rustc-hash",
@@ -2267,24 +2248,6 @@ dependencies = [
  "tokio",
  "tracing",
  "web-time",
-]
-
-[[package]]
-name = "iroh-quinn-proto"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2c869ba52683d3d067c83ab4c00a2fda18eaf13b1434d4c1352f428674d4a5d"
-dependencies = [
- "bytes",
- "rand",
- "ring",
- "rustc-hash",
- "rustls",
- "rustls-platform-verifier 0.3.4",
- "slab",
- "thiserror 1.0.69",
- "tinyvec",
- "tracing",
 ]
 
 [[package]]
@@ -2300,7 +2263,7 @@ dependencies = [
  "rustc-hash",
  "rustls",
  "rustls-pki-types",
- "rustls-platform-verifier 0.5.0",
+ "rustls-platform-verifier",
  "slab",
  "thiserror 2.0.11",
  "tinyvec",
@@ -2343,8 +2306,8 @@ dependencies = [
  "hyper-util",
  "iroh-base",
  "iroh-metrics",
- "iroh-quinn 0.13.0",
- "iroh-quinn-proto 0.13.0",
+ "iroh-quinn",
+ "iroh-quinn-proto",
  "iroh-test 0.31.0",
  "lru",
  "n0-future",
@@ -2434,20 +2397,6 @@ name = "itoa"
 version = "1.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d75a2a4b1b190afb6f5425f10f6a8f959d2ea0b9c2b1d79553551850539e4674"
-
-[[package]]
-name = "jni"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6df18c2e3db7e453d3c6ac5b3e9d5182664d28788126d39b91f2d1e22b017ec"
-dependencies = [
- "cesu8",
- "combine",
- "jni-sys",
- "log",
- "thiserror 1.0.69",
- "walkdir",
-]
 
 [[package]]
 name = "jni"
@@ -3937,19 +3886,6 @@ dependencies = [
 
 [[package]]
 name = "rustls-native-certs"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5bfb394eeed242e909609f56089eecfe5fda225042e8b171791b9c95f5931e5"
-dependencies = [
- "openssl-probe",
- "rustls-pemfile",
- "rustls-pki-types",
- "schannel",
- "security-framework 2.11.1",
-]
-
-[[package]]
-name = "rustls-native-certs"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7fcff2dd52b58a8d98a70243663a0d234c4e2b79235637849d15913394a247d3"
@@ -3957,7 +3893,7 @@ dependencies = [
  "openssl-probe",
  "rustls-pki-types",
  "schannel",
- "security-framework 3.2.0",
+ "security-framework",
 ]
 
 [[package]]
@@ -3980,41 +3916,20 @@ dependencies = [
 
 [[package]]
 name = "rustls-platform-verifier"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "afbb878bdfdf63a336a5e63561b1835e7a8c91524f51621db870169eac84b490"
-dependencies = [
- "core-foundation 0.9.4",
- "core-foundation-sys",
- "jni 0.19.0",
- "log",
- "once_cell",
- "rustls",
- "rustls-native-certs 0.7.3",
- "rustls-platform-verifier-android",
- "rustls-webpki",
- "security-framework 2.11.1",
- "security-framework-sys",
- "webpki-roots",
- "winapi",
-]
-
-[[package]]
-name = "rustls-platform-verifier"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e012c45844a1790332c9386ed4ca3a06def221092eda277e6f079728f8ea99da"
 dependencies = [
  "core-foundation 0.10.0",
  "core-foundation-sys",
- "jni 0.21.1",
+ "jni",
  "log",
  "once_cell",
  "rustls",
- "rustls-native-certs 0.8.1",
+ "rustls-native-certs",
  "rustls-platform-verifier-android",
  "rustls-webpki",
- "security-framework 3.2.0",
+ "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
  "windows-sys 0.52.0",
@@ -4099,20 +4014,6 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
-
-[[package]]
-name = "security-framework"
-version = "2.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "897b2245f0b511c87893af39b033e5ca9cce68824c4d7e7630b5a1d339658d02"
-dependencies = [
- "bitflags 2.7.0",
- "core-foundation 0.9.4",
- "core-foundation-sys",
- "libc",
- "num-bigint",
- "security-framework-sys",
-]
 
 [[package]]
 name = "security-framework"
