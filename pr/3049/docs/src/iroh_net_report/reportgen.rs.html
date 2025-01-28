@@ -1667,12 +1667,7 @@
 <a href="#1666" id="1666">1666</a>
 <a href="#1667" id="1667">1667</a>
 <a href="#1668" id="1668">1668</a>
-<a href="#1669" id="1669">1669</a>
-<a href="#1670" id="1670">1670</a>
-<a href="#1671" id="1671">1671</a>
-<a href="#1672" id="1672">1672</a>
-<a href="#1673" id="1673">1673</a>
-<a href="#1674" id="1674">1674</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1669" id="1669">1669</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1793,12 +1788,7 @@
             ip_mapped_addrs,
         };
         <span class="kw">let </span>task = tokio::spawn(
-            <span class="kw">async move </span>{
-                actor.run().<span class="kw">await</span>;
-                drop(actor);
-                <span class="macro">tracing::error!</span>(<span class="string">"NET REPORT ACTOR DROPPED"</span>);
-            }
-            .instrument(<span class="macro">info_span!</span>(<span class="string">"reportgen.actor"</span>)),
+            <span class="kw">async move </span>{ actor.run().<span class="kw">await </span>}.instrument(<span class="macro">info_span!</span>(<span class="string">"reportgen.actor"</span>)),
         );
         <span class="self">Self </span>{
             _drop_guard: AbortOnDropHandle::new(task),

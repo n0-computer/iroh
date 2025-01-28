@@ -318,14 +318,7 @@
 <a href="#317" id="317">317</a>
 <a href="#318" id="318">318</a>
 <a href="#319" id="319">319</a>
-<a href="#320" id="320">320</a>
-<a href="#321" id="321">321</a>
-<a href="#322" id="322">322</a>
-<a href="#323" id="323">323</a>
-<a href="#324" id="324">324</a>
-<a href="#325" id="325">325</a>
-<a href="#326" id="326">326</a>
-<a href="#327" id="327">327</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
+<a href="#320" id="320">320</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
 
@@ -520,18 +513,10 @@
 <span class="doccomment">/// Handles the client side of QUIC address discovery.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>QuicClient {
-    <span class="comment">// id
-    </span>id: [u8; <span class="number">8</span>],
     <span class="doccomment">/// A QUIC Endpoint.
     </span>ep: quinn::Endpoint,
     <span class="doccomment">/// A client config.
     </span>client_config: quinn::ClientConfig,
-}
-
-<span class="kw">impl </span>Drop <span class="kw">for </span>QuicClient {
-    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="macro">tracing::error!</span>(<span class="string">"DROPPING QUICCLIENT ID: {:?}"</span>, <span class="self">self</span>.id);
-    }
 }
 
 <span class="kw">impl </span>QuicClient {
@@ -549,13 +534,8 @@
         </span><span class="kw">let </span><span class="kw-2">mut </span>transport = quinn_proto::TransportConfig::default();
         transport.receive_observed_address_reports(<span class="bool-val">true</span>);
         client_config.transport_config(Arc::new(transport));
-        <span class="kw">let </span>id = rand::random();
-        <span class="macro">tracing::error!</span>(<span class="string">"NEW QUICCLIENT ID: {id:?}"</span>);
-        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-            id,
-            ep,
-            client_config,
-        })
+
+        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{ ep, client_config })
     }
 
     <span class="doccomment">/// Client side of QUIC address discovery.
@@ -569,12 +549,17 @@
         server_addr: SocketAddr,
         host: <span class="kw-2">&amp;</span>str,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(SocketAddr, std::time::Duration)&gt; {
-        <span class="kw">let </span>connecting = <span class="self">self
-            </span>.ep
-            .connect_with(<span class="self">self</span>.client_config.clone(), server_addr, host);
-        <span class="kw">let </span>conn = connecting<span class="question-mark">?</span>.<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span><span class="kw-2">mut </span>external_addresses = conn.observed_external_addr();
-        <span class="comment">// TODO(ramfox): I'd like to be able to cancel this so we can close cleanly
+        <span class="macro">tracing::debug!</span>(
+            <span class="string">"quic::QuicClient::get_addr_and_latency {:?}, {:?}, {server_addr:?}, {host:?}"</span>,
+            <span class="self">self</span>.ep,
+            <span class="self">self</span>.client_config
+        );
+        <span class="comment">// let connecting = self
+        //     .ep
+        //     .connect_with(self.client_config.clone(), server_addr, host);
+        // let conn = connecting?.await?;
+        // let mut external_addresses = conn.observed_external_addr();
+        // TODO(ramfox): I'd like to be able to cancel this so we can close cleanly
         // if there the task that runs this function gets aborted.
         // tokio::select! {
         //     _ = cancel.cancelled() =&gt; {
@@ -589,22 +574,23 @@
         //         Ok((addr, latency))
         //     }
 
-        </span><span class="kw">let </span>res = <span class="kw">match </span>external_addresses.wait_for(|addr| addr.is_some()).<span class="kw">await </span>{
-            <span class="prelude-val">Ok</span>(res) =&gt; res,
-            <span class="prelude-val">Err</span>(err) =&gt; {
-                <span class="comment">// attempt to gracefully close the connections
-                </span>conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-                <span class="kw">return </span><span class="prelude-val">Err</span>(err.into());
-            }
-        };
-        <span class="kw">let </span><span class="kw-2">mut </span>observed_addr = res.expect(<span class="string">"checked"</span>);
-        <span class="comment">// if we've sent to an ipv4 address, but received an observed address
-        // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
-        </span>observed_addr = SocketAddr::new(observed_addr.ip().to_canonical(), observed_addr.port());
-        <span class="kw">let </span>latency = conn.rtt() / <span class="number">2</span>;
-        <span class="comment">// gracefully close the connections
-        </span>conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-        <span class="prelude-val">Ok</span>((observed_addr, latency))
+        // let res = match external_addresses.wait_for(|addr| addr.is_some()).await {
+        //     Ok(res) =&gt; res,
+        //     Err(err) =&gt; {
+        //         // attempt to gracefully close the connections
+        //         conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+        //         return Err(err.into());
+        //     }
+        // };
+        // let mut observed_addr = res.expect("checked");
+        // // if we've sent to an ipv4 address, but received an observed address
+        // // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
+        // observed_addr = SocketAddr::new(observed_addr.ip().to_canonical(), observed_addr.port());
+        // let latency = conn.rtt() / 2;
+        // // gracefully close the connections
+        // conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+        // Ok((observed_addr, latency))
+        </span><span class="macro">anyhow::bail!</span>(<span class="string">"no qad"</span>);
     }
 }
 

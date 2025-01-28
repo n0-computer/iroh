@@ -4411,9 +4411,7 @@
 <a href="#4410" id="4410">4410</a>
 <a href="#4411" id="4411">4411</a>
 <a href="#4412" id="4412">4412</a>
-<a href="#4413" id="4413">4413</a>
-<a href="#4414" id="4414">4414</a>
-<a href="#4415" id="4415">4415</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4413" id="4413">4413</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -6201,19 +6199,17 @@
     </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.msock.me))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="macro">tracing::warn!</span>(<span class="string">"msock - closing connections"</span>);
-        <span class="kw">if </span><span class="self">self</span>.msock.is_closed() {
-            <span class="comment">// Initiate closing all connections, and refuse future connections.
-            </span><span class="self">self</span>.endpoint.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
-            <span class="self">self</span>.endpoint.wait_idle().<span class="kw">await</span>;
-            <span class="kw">return</span>;
-        }
-        <span class="self">self</span>.msock.closing.store(<span class="bool-val">true</span>, Ordering::Relaxed);
         <span class="comment">// Initiate closing all connections, and refuse future connections.
         </span><span class="macro">warn!</span>(<span class="string">"msock - endpoint close"</span>);
         <span class="self">self</span>.endpoint.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
         <span class="macro">warn!</span>(<span class="string">"msock - endpoint waiting idle"</span>);
         <span class="self">self</span>.endpoint.wait_idle().<span class="kw">await</span>;
         <span class="macro">warn!</span>(<span class="string">"msock - endpoint done"</span>);
+
+        <span class="kw">if </span><span class="self">self</span>.msock.is_closed() {
+            <span class="kw">return</span>;
+        }
+        <span class="self">self</span>.msock.closing.store(<span class="bool-val">true</span>, Ordering::Relaxed);
 
         <span class="comment">// If this fails, then there's no receiver listening for shutdown messages,
         // so nothing to shut down anyways.
