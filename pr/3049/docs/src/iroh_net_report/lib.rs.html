@@ -1477,7 +1477,20 @@
 <a href="#1476" id="1476">1476</a>
 <a href="#1477" id="1477">1477</a>
 <a href="#1478" id="1478">1478</a>
-<a href="#1479" id="1479">1479</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1479" id="1479">1479</a>
+<a href="#1480" id="1480">1480</a>
+<a href="#1481" id="1481">1481</a>
+<a href="#1482" id="1482">1482</a>
+<a href="#1483" id="1483">1483</a>
+<a href="#1484" id="1484">1484</a>
+<a href="#1485" id="1485">1485</a>
+<a href="#1486" id="1486">1486</a>
+<a href="#1487" id="1487">1487</a>
+<a href="#1488" id="1488">1488</a>
+<a href="#1489" id="1489">1489</a>
+<a href="#1490" id="1490">1490</a>
+<a href="#1491" id="1491">1491</a>
+<a href="#1492" id="1492">1492</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -2183,23 +2196,22 @@
             <span class="self">self</span>.ip_mapped_addrs.clone(),
         );
 
-        <span class="self">self</span>.current_report_run = <span class="prelude-val">Some</span>(ReportRun {
-            _reportgen: actor,
-            report_tx: response_tx,
-        });
+        <span class="self">self</span>.current_report_run = <span class="prelude-val">Some</span>(ReportRun::new(actor, response_tx));
     }
 
     <span class="kw">fn </span>handle_report_ready(<span class="kw-2">&amp;mut </span><span class="self">self</span>, report: Report) {
         <span class="kw">let </span>report = <span class="self">self</span>.finish_and_store_report(report);
         <span class="self">self</span>.in_flight_stun_requests.clear();
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(ReportRun { report_tx, .. }) = <span class="self">self</span>.current_report_run.take() {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(ReportRun { report_tx, id, .. }) = <span class="self">self</span>.current_report_run.take() {
+            <span class="macro">tracing::error!</span>(<span class="string">"DROPPING REPORTRUN ID: {id:?}"</span>);
             report_tx.send(<span class="prelude-val">Ok</span>(report)).ok();
         }
     }
 
     <span class="kw">fn </span>handle_report_aborted(<span class="kw-2">&amp;mut </span><span class="self">self</span>, err: anyhow::Error) {
         <span class="self">self</span>.in_flight_stun_requests.clear();
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(ReportRun { report_tx, .. }) = <span class="self">self</span>.current_report_run.take() {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(ReportRun { report_tx, id, .. }) = <span class="self">self</span>.current_report_run.take() {
+            <span class="macro">tracing::error!</span>(<span class="string">"DROPPING REPORTRUN ID: {id:?}"</span>);
             report_tx.send(<span class="prelude-val">Err</span>(err.context(<span class="string">"report aborted"</span>))).ok();
         }
     }
@@ -2353,6 +2365,20 @@
     </span>_reportgen: reportgen::Client,
     <span class="doccomment">/// Where to send the completed report.
     </span>report_tx: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt;&gt;,
+    <span class="doccomment">/// id
+    </span>id: [u8; <span class="number">8</span>],
+}
+
+<span class="kw">impl </span>ReportRun {
+    <span class="kw">fn </span>new(reportgen: reportgen::Client, report_tx: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt;&gt;) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>id = rand::random();
+        <span class="macro">tracing::error!</span>(<span class="string">"REPORTRUN ID: {id:?}"</span>);
+        <span class="self">Self </span>{
+            id,
+            _reportgen: reportgen,
+            report_tx,
+        }
+    }
 }
 
 <span class="doccomment">/// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
