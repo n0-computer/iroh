@@ -23,10 +23,6 @@ derive_more = { version = "1.0.0", features = [
     "try_into",
     "deref",
 ] }
-futures-buffered = "0.2.9"
-futures-lite = "2.5"
-futures-sink = "0.3"
-futures-util = "0.3"
 http = "1"
 http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }

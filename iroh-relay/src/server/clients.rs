@@ -40,10 +40,8 @@ impl Clients {
         trace!("shutting down {} clients", keys.len());
         let clients = keys.into_iter().filter_map(|k| self.0.clients.remove(&k));
 
-        futures_buffered::join_all(
-            clients.map(|(_, client)| async move { client.shutdown().await }),
-        )
-        .await;
+        n0_future::join_all(clients.map(|(_, client)| async move { client.shutdown().await }))
+            .await;
     }
 
     /// Builds the client handler and starts the read & write loops for the connection.
