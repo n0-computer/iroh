@@ -11,6 +11,7 @@ bytes = "1.7"
 hdrhistogram = { version = "7.2", default-features = false }
 iroh = { path = ".." }
 iroh-metrics = "0.31"
+n0-future = "0.1.1"
 quinn = { package = "iroh-quinn", version = "0.13" }
 rcgen = "0.13"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
@@ -24,7 +25,6 @@ tracing-subscriber = { version = "0.3.0", default-features = false, features = [
     "time",
     "local-time",
 ] }
-futures-lite = "2.5"
 
 [features]
 default = []

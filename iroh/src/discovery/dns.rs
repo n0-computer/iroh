@@ -1,8 +1,8 @@
 //! DNS node discovery for iroh
 
 use anyhow::Result;
-use futures_lite::stream::Boxed as BoxStream;
 use iroh_base::NodeId;
+use n0_future::boxed::BoxStream;
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
@@ -81,7 +81,7 @@ impl Discovery for DnsDiscovery {
                 last_updated: None,
             })
         };
-        let stream = futures_lite::stream::once_future(fut);
+        let stream = n0_future::stream::once_future(fut);
         Some(Box::pin(stream))
     }
 }

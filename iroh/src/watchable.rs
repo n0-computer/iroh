@@ -18,9 +18,9 @@ use std::{
     task::{self, Poll, Waker},
 };
 
-use futures_lite::stream::Stream;
 #[cfg(iroh_loom)]
 use loom::sync;
+use n0_future::stream::Stream;
 use sync::{Mutex, RwLock};
 
 /// A wrapper around a value that notifies [`Watcher`]s when the value is modified.
@@ -236,7 +236,7 @@ impl<T: Clone + Eq> Future for WatchInitializedFut<'_, T> {
             let Some(shared) = self.watcher.shared.upgrade() else {
                 return Poll::Ready(Err(Disconnected));
             };
-            let (epoch, value) = futures_lite::ready!(shared.poll_next(cx, self.watcher.epoch));
+            let (epoch, value) = n0_future::ready!(shared.poll_next(cx, self.watcher.epoch));
             self.watcher.epoch = epoch;
 
             if let Some(value) = value {
@@ -354,7 +354,7 @@ impl<T: Clone> Shared<T> {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use futures_lite::StreamExt;
+    use n0_future::StreamExt;
     use rand::{thread_rng, Rng};
     use tokio::task::JoinSet;
     use tokio_util::sync::CancellationToken;
@@ -458,12 +458,12 @@ mod tests {
         let mut watcher = watchable.watch();
         let mut initialized = watcher.initialized();
 
-        let poll = futures_lite::future::poll_once(&mut initialized).await;
+        let poll = n0_future::future::poll_once(&mut initialized).await;
         assert!(poll.is_none());
 
         watchable.set(Some(1u8)).ok();
 
-        let poll = futures_lite::future::poll_once(&mut initialized).await;
+        let poll = n0_future::future::poll_once(&mut initialized).await;
         assert_eq!(poll.unwrap().unwrap(), 1u8);
     }
 
@@ -474,7 +474,7 @@ mod tests {
         let mut watcher = watchable.watch();
         let mut initialized = watcher.initialized();
 
-        let poll = futures_lite::future::poll_once(&mut initialized).await;
+        let poll = n0_future::future::poll_once(&mut initialized).await;
         assert_eq!(poll.unwrap().unwrap(), 1u8);
     }
 
@@ -490,7 +490,7 @@ mod tests {
             let watchable = Watchable::<Option<u8>>::new(None);
 
             let mut watch = watchable.watch();
-            let thread = thread::spawn(move || futures_lite::future::block_on(watch.initialized()));
+            let thread = thread::spawn(move || n0_future::future::block_on(watch.initialized()));
 
             watchable.set(Some(42)).ok();
 

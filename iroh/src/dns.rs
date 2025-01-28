@@ -13,9 +13,9 @@ use std::{
 };
 
 use anyhow::Result;
-use futures_lite::{Future, StreamExt};
 use hickory_resolver::{IntoName, Resolver, TokioResolver};
 use iroh_base::{NodeAddr, NodeId};
+use n0_future::{Future, StreamExt};
 
 pub mod node_info;
 
@@ -347,7 +347,7 @@ async fn stagger_call<T, F: Fn() -> Fut, Fut: Future<Output = Result<T>>>(
     f: F,
     delays_ms: &[u64],
 ) -> Result<T> {
-    let mut calls = futures_buffered::FuturesUnorderedBounded::new(delays_ms.len() + 1);
+    let mut calls = n0_future::FuturesUnorderedBounded::new(delays_ms.len() + 1);
     // NOTE: we add the 0 delay here to have a uniform set of futures. This is more performant than
     // using alternatives that allow futures of different types.
     for delay in std::iter::once(&0u64).chain(delays_ms) {

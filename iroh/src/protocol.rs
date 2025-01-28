@@ -41,8 +41,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use anyhow::Result;
-use futures_buffered::join_all;
-use futures_lite::future::Boxed as BoxedFuture;
+use n0_future::{future::Boxed as BoxedFuture, join_all};
 use tokio::{sync::Mutex, task::JoinSet};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{error, info_span, trace, warn, Instrument};

@@ -17,8 +17,8 @@ use std::{
     time::SystemTime,
 };
 
-use futures_lite::stream::{self, StreamExt};
 use iroh_base::{NodeAddr, NodeId, RelayUrl};
+use n0_future::stream::{self, StreamExt};
 
 use super::{Discovery, DiscoveryItem};
 
@@ -206,7 +206,7 @@ impl Discovery for StaticProvider {
         &self,
         _endpoint: crate::Endpoint,
         node_id: NodeId,
-    ) -> Option<futures_lite::stream::Boxed<anyhow::Result<super::DiscoveryItem>>> {
+    ) -> Option<n0_future::stream::Boxed<anyhow::Result<super::DiscoveryItem>>> {
         let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id);
         match info {

@@ -196,7 +196,6 @@ pub(crate) mod dns_server {
     };
 
     use anyhow::{ensure, Result};
-    use futures_lite::future::Boxed as BoxFuture;
     use hickory_resolver::{
         config::NameServerConfig,
         proto::{
@@ -205,6 +204,7 @@ pub(crate) mod dns_server {
         },
         TokioResolver,
     };
+    use n0_future::future::Boxed as BoxFuture;
     use tokio::{net::UdpSocket, sync::oneshot};
     use tracing::{debug, error, warn};
 

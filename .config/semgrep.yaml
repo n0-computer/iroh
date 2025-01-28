@@ -1,0 +1,57 @@
+rules:
+
+- id: ban-futures-lite
+  languages:
+    - rust
+  message: Use re-exports in n0-future in favor of futures-lite for consistency
+  pattern: use futures_lite
+
+  severity: ERROR
+
+- id: ban-futures-util-split-stream
+  languages:
+    - rust
+  message: Use n0_future::split::SplitStream in favor of futures_util::stream::SplitStream for consistency
+  pattern: futures_util::stream::SplitStream
+
+  severity: ERROR
+
+- id: ban-futures-util-split-sink
+  languages:
+    - rust
+  message: Use n0_future::split::SplitSink in favor of futures_util::stream::SplitSink for consistency
+  pattern: futures_util::stream::SplitSink
+
+  severity: ERROR
+
+- id: ban-futures-sink
+  languages:
+    - rust
+  message: Use re-exports in n0-future in favor of futures-sink for consistency
+  pattern: use futures_sink
+
+  severity: ERROR
+
+- id: ban-futures-buffered
+  languages:
+    - rust
+  message: Use re-exports in n0-future in favor of futures-buffered for consistency
+  pattern: use futures_buffered
+
+  severity: ERROR
+
+# - id: ban-std-instant
+#   languages:
+#     - rust
+#   message: Use n0_future::time::Instant instead of sld::time::Instant, because the latter's Instant::now implementation panics in Wasm
+#   pattern: std::time::Instant
+
+#   severity: ERROR
+
+# - id: ban-std-duration
+#   languages:
+#     - rust
+#   message: Use n0_future::time::Duration instead of sld::time::Duration for consistency with n0_future::time::Instant
+#   pattern: std::time::Duration
+
+#   severity: ERROR

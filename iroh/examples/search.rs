@@ -33,12 +33,12 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use anyhow::Result;
 use clap::Parser;
-use futures_lite::future::Boxed as BoxedFuture;
 use iroh::{
     endpoint::Connecting,
     protocol::{ProtocolHandler, Router},
     Endpoint, NodeId,
 };
+use n0_future::boxed::BoxFuture;
 use tokio::sync::Mutex;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -127,7 +127,7 @@ impl ProtocolHandler for BlobSearch {
     ///
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
     /// the connection lasts.
-    fn accept(&self, connecting: Connecting) -> BoxedFuture<Result<()>> {
+    fn accept(&self, connecting: Connecting) -> BoxFuture<Result<()>> {
         let this = self.clone();
         // We have to return a boxed future from the handler.
         Box::pin(async move {

@@ -13,11 +13,8 @@ use std::{
 };
 
 use anyhow::Result;
-use futures_lite::{
-    stream::{Boxed, StreamExt},
-    FutureExt,
-};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
+use n0_future::{boxed::BoxStream, stream::StreamExt, FutureExt};
 use pkarr::{
     PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, RelaySettings,
     SignedPacket,
@@ -380,7 +377,7 @@ impl Discovery for DhtDiscovery {
         &self,
         _endpoint: Endpoint,
         node_id: NodeId,
-    ) -> Option<Boxed<anyhow::Result<DiscoveryItem>>> {
+    ) -> Option<BoxStream<anyhow::Result<DiscoveryItem>>> {
         let pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect("valid public key");
         tracing::info!("resolving {} as {}", node_id, pkarr_public_key.to_z32());

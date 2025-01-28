@@ -107,8 +107,8 @@
 use std::{collections::BTreeSet, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, ensure, Result};
-use futures_lite::stream::{Boxed as BoxStream, StreamExt};
 use iroh_base::{NodeAddr, NodeId, RelayUrl};
+use n0_future::stream::{Boxed as BoxStream, StreamExt};
 use tokio::sync::oneshot;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error_span, warn, Instrument};
@@ -257,7 +257,7 @@ impl Discovery for ConcurrentDiscovery {
             .iter()
             .filter_map(|service| service.resolve(endpoint.clone(), node_id));
 
-        let streams = futures_buffered::MergeBounded::from_iter(streams);
+        let streams = n0_future::MergeBounded::from_iter(streams);
         Some(Box::pin(streams))
     }
 
@@ -269,7 +269,7 @@ impl Discovery for ConcurrentDiscovery {
             }
         }
 
-        let streams = futures_buffered::MergeBounded::from_iter(streams);
+        let streams = n0_future::MergeBounded::from_iter(streams);
         Some(Box::pin(streams))
     }
 }
@@ -534,9 +534,9 @@ mod tests {
                         );
                         Ok(item)
                     };
-                    futures_lite::stream::once_future(fut).boxed()
+                    n0_future::stream::once_future(fut).boxed()
                 }
-                None => futures_lite::stream::empty().boxed(),
+                None => n0_future::stream::empty().boxed(),
             };
             Some(stream)
         }
@@ -552,7 +552,7 @@ mod tests {
             _endpoint: Endpoint,
             _node_id: NodeId,
         ) -> Option<BoxStream<Result<DiscoveryItem>>> {
-            Some(futures_lite::stream::empty().boxed())
+            Some(n0_future::stream::empty().boxed())
         }
     }
 

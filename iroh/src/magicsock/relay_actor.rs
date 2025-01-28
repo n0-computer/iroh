@@ -40,9 +40,6 @@ use std::{
 use anyhow::{anyhow, Result};
 use backoff::exponential::{ExponentialBackoff, ExponentialBackoffBuilder};
 use bytes::{Bytes, BytesMut};
-use futures_buffered::FuturesUnorderedBounded;
-use futures_lite::StreamExt;
-use futures_util::SinkExt;
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::{
@@ -50,6 +47,7 @@ use iroh_relay::{
     client::{Client, ReceivedMessage, SendMessage},
     PingTracker, MAX_PACKET_SIZE,
 };
+use n0_future::{FuturesUnorderedBounded, SinkExt, StreamExt};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
@@ -547,7 +545,7 @@ impl ActiveRelayActor {
                         })
                         .map(Ok)
                     });
-                    let mut packet_stream = futures_util::stream::iter(packet_iter);
+                    let mut packet_stream = n0_future::stream::iter(packet_iter);
                     let fut = client_sink.send_all(&mut packet_stream);
                     self.run_sending(fut, &mut state, &mut client_stream).await?;
                 }
@@ -874,7 +872,7 @@ impl RelayActor {
 
     async fn set_home_relay(&mut self, home_url: RelayUrl) {
         let home_url_ref = &home_url;
-        futures_buffered::join_all(self.active_relays.iter().map(|(url, handle)| async move {
+        n0_future::join_all(self.active_relays.iter().map(|(url, handle)| async move {
             let is_preferred = url == home_url_ref;
             handle
                 .inbox_addr
@@ -1009,7 +1007,7 @@ impl RelayActor {
                 .await
                 .ok();
         });
-        futures_buffered::join_all(send_futs).await;
+        n0_future::join_all(send_futs).await;
         self.log_active_relay();
     }
 
@@ -1196,8 +1194,8 @@ impl Iterator for PacketSplitIter {
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
-    use futures_lite::future;
     use iroh_base::SecretKey;
+    use n0_future::future;
     use smallvec::smallvec;
     use testresult::TestResult;
     use tokio_util::task::AbortOnDropHandle;

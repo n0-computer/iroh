@@ -30,14 +30,14 @@ use std::{
 };
 
 use anyhow::{anyhow, Context as _, Result};
+use atomic_waker::AtomicWaker;
 use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
 use data_encoding::HEXLOWER;
-use futures_lite::{FutureExt, StreamExt};
-use futures_util::{stream::BoxStream, task::AtomicWaker};
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::{protos::stun, RelayMap};
+use n0_future::{boxed::BoxStream, FutureExt, StreamExt};
 use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -1249,7 +1249,7 @@ impl MagicSock {
         dst_node: NodeId,
         msg: &disco::Message,
     ) -> io::Result<()> {
-        futures_lite::future::poll_fn(move |cx| {
+        n0_future::future::poll_fn(move |cx| {
             loop {
                 match self.try_send_disco_message_udp(dst, dst_node, msg) {
                     Ok(()) => return Poll::Ready(Ok(())),
@@ -2046,8 +2046,7 @@ impl Actor {
             self.msock.direct_addr_update_state.running.subscribe();
         let mut portmap_watcher = self.port_mapper.watch_external_address();
 
-        let mut discovery_events: BoxStream<DiscoveryItem> =
-            Box::pin(futures_lite::stream::empty());
+        let mut discovery_events: BoxStream<DiscoveryItem> = Box::pin(n0_future::stream::empty());
         if let Some(d) = self.msock.discovery() {
             if let Some(events) = d.subscribe() {
                 discovery_events = events;
@@ -3792,7 +3791,7 @@ mod tests {
 
         // no relay, nothing to report
         assert_eq!(
-            futures_lite::future::poll_once(relay_stream.next()).await,
+            n0_future::future::poll_once(relay_stream.next()).await,
             None
         );
 
@@ -3805,7 +3804,7 @@ mod tests {
 
         let mut relay_stream = msock.home_relay().stream().filter_map(|r| r);
         assert_eq!(
-            futures_lite::future::poll_once(relay_stream.next()).await,
+            n0_future::future::poll_once(relay_stream.next()).await,
             Some(Some(url))
         );
     }
@@ -4103,7 +4102,7 @@ mod tests {
             async move {
                 let mut expected_msgs: BTreeSet<usize> = (0..capacity).collect();
                 while !expected_msgs.is_empty() {
-                    let datagram = futures_lite::future::poll_fn(|cx| {
+                    let datagram = n0_future::future::poll_fn(|cx| {
                         queue.poll_recv(cx).map(|result| result.unwrap())
                     })
                     .await;

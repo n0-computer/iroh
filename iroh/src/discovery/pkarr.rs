@@ -47,8 +47,8 @@
 use std::{collections::BTreeSet, net::SocketAddr, sync::Arc};
 
 use anyhow::{anyhow, bail, Result};
-use futures_util::stream::BoxStream;
 use iroh_base::{NodeId, RelayUrl, SecretKey};
+use n0_future::boxed::BoxStream;
 use pkarr::SignedPacket;
 use tokio::{
     task::JoinHandle,
@@ -336,11 +336,7 @@ impl PkarrResolver {
 }
 
 impl Discovery for PkarrResolver {
-    fn resolve(
-        &self,
-        _ep: Endpoint,
-        node_id: NodeId,
-    ) -> Option<BoxStream<'static, Result<DiscoveryItem>>> {
+    fn resolve(&self, _ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
         let pkarr_client = self.pkarr_client.clone();
         let fut = async move {
             let signed_packet = pkarr_client.resolve(node_id).await?;
@@ -352,7 +348,7 @@ impl Discovery for PkarrResolver {
             };
             Ok(item)
         };
-        let stream = futures_lite::stream::once_future(fut);
+        let stream = n0_future::stream::once_future(fut);
         Some(Box::pin(stream))
     }
 }

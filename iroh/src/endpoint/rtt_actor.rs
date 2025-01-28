@@ -2,10 +2,9 @@
 
 use std::{pin::Pin, task::Poll};
 
-use futures_buffered::MergeUnbounded;
-use futures_lite::{Stream, StreamExt};
 use iroh_base::NodeId;
 use iroh_metrics::inc;
+use n0_future::{MergeUnbounded, Stream, StreamExt};
 use tokio::sync::mpsc;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, info_span, Instrument};

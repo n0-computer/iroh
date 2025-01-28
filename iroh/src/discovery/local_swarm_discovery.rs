@@ -38,9 +38,8 @@ use std::{
 
 use anyhow::Result;
 use derive_more::FromStr;
-use futures_lite::stream::Boxed as BoxStream;
-use futures_util::FutureExt;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
+use n0_future::{boxed::BoxStream, FutureExt};
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::{
     sync::mpsc::{
@@ -402,8 +401,8 @@ mod tests {
     /// This module's name signals nextest to run test in a single thread (no other concurrent
     /// tests)
     mod run_in_isolation {
-        use futures_lite::StreamExt;
         use iroh_base::SecretKey;
+        use n0_future::StreamExt;
         use testresult::TestResult;
 
         use super::super::*;
