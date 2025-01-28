@@ -2762,7 +2762,8 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.3.0"
-source = "git+https://github.com/n0-computer/net-tools.git?branch=matheus23/update-quinn#6cb800c4c8ba57474cb43566746ccd9ab2c6b810"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64da82edf903649e6cb6a77b5a6f7fe01387d8865065d411d139018510880302"
 dependencies = [
  "anyhow",
  "atomic-waker",
