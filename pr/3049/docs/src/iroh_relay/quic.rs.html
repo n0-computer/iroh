@@ -338,7 +338,12 @@
 <a href="#337" id="337">337</a>
 <a href="#338" id="338">338</a>
 <a href="#339" id="339">339</a>
-<a href="#340" id="340">340</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
+<a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
+<a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
 
@@ -571,9 +576,11 @@
         host: <span class="kw-2">&amp;</span>str,
         cancel: CancellationToken,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(SocketAddr, std::time::Duration)&gt; {
+        <span class="macro">tracing::warn!</span>(<span class="string">"QAD: CONNECTING"</span>);
         <span class="kw">let </span>connecting = <span class="self">self
             </span>.ep
             .connect_with(<span class="self">self</span>.client_config.clone(), server_addr, host)<span class="question-mark">?</span>;
+        <span class="macro">tracing::warn!</span>(<span class="string">"QAD: AFTER CONNECTING"</span>);
         <span class="kw">let </span>conn = <span class="macro">tokio::select!</span> {
             <span class="kw">_ </span>= cancel.cancelled() =&gt; {
                 <span class="macro">anyhow::bail!</span>(<span class="string">"QUIC address discovery cancelled early"</span>);
@@ -582,7 +589,9 @@
                 conn<span class="question-mark">?
             </span>}
         };
+        <span class="macro">tracing::warn!</span>(<span class="string">"QAD: CONN SUCCESS"</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>external_addresses = conn.observed_external_addr();
+        <span class="macro">tracing::warn!</span>(<span class="string">"QAD: AFTER EXTERNAL ADDRESSES"</span>);
         <span class="macro">tokio::select!</span> {
             <span class="kw">_ </span>= cancel.cancelled() =&gt; {
                 conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
@@ -593,6 +602,7 @@
                 <span class="kw">let </span>latency = conn.rtt() / <span class="number">2</span>;
                 <span class="comment">// gracefully close the connections
                 </span>conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+                <span class="macro">tracing::warn!</span>(<span class="string">"QAD: SUCCESS"</span>);
                 <span class="prelude-val">Ok</span>((addr, latency))
             }
         }
