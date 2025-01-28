@@ -313,7 +313,8 @@
 <a href="#312" id="312">312</a>
 <a href="#313" id="313">313</a>
 <a href="#314" id="314">314</a>
-<a href="#315" id="315">315</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
 
@@ -543,12 +544,13 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         server_addr: SocketAddr,
         host: <span class="kw-2">&amp;</span>str,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(SocketAddr, std::time::Duration)&gt; {
-        <span class="kw">let </span>connecting = <span class="self">self
+        <span class="comment">// cancel: CancellationToken,
+    </span>) -&gt; <span class="prelude-ty">Result</span>&lt;(SocketAddr, std::time::Duration)&gt; {
+        <span class="kw">let </span>_connecting = <span class="self">self
             </span>.ep
             .connect_with(<span class="self">self</span>.client_config.clone(), server_addr, host);
-        <span class="kw">let </span>conn = connecting<span class="question-mark">?</span>.<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="comment">// let mut external_addresses = conn.observed_external_addr();
+        <span class="comment">// let conn = connecting?.await?;
+        // let mut external_addresses = conn.observed_external_addr();
         // TODO(ramfox): I'd like to be able to cancel this so we can close cleanly
         // if there the task that runs this function gets aborted.
         // tokio::select! {
@@ -578,8 +580,8 @@
         // observed_addr = SocketAddr::new(observed_addr.ip().to_canonical(), observed_addr.port());
         // let latency = conn.rtt() / 2;
         // gracefully close the connections
-        </span>conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-        <span class="comment">// Ok((observed_addr, latency))
+        // conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+        // Ok((observed_addr, latency))
         </span><span class="macro">anyhow::bail!</span>(<span class="string">"not waiting for connections in qad"</span>);
     }
 }
