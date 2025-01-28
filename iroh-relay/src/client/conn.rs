@@ -11,18 +11,17 @@ use std::{
 
 use anyhow::{bail, Result};
 use bytes::Bytes;
-use futures_lite::Stream;
-use futures_util::Sink;
 use iroh_base::{NodeId, SecretKey};
+use n0_future::{Sink, Stream};
 use tokio_tungstenite_wasm::WebSocketStream;
+#[cfg(not(wasm_browser))]
 use tokio_util::codec::Framed;
 use tracing::debug;
 
 use super::KeyCache;
-use crate::{
-    client::streams::MaybeTlsStreamChained,
-    protos::relay::{ClientInfo, Frame, RelayCodec, MAX_PACKET_SIZE, PROTOCOL_VERSION},
-};
+use crate::protos::relay::{ClientInfo, Frame, MAX_PACKET_SIZE, PROTOCOL_VERSION};
+#[cfg(not(wasm_browser))]
+use crate::{client::streams::MaybeTlsStreamChained, protos::relay::RelayCodec};
 
 /// Error for sending messages to the relay server.
 #[derive(Debug, thiserror::Error)]
@@ -58,6 +57,7 @@ impl From<tokio_tungstenite_wasm::Error> for ConnSendError {
 /// invariants.
 #[derive(derive_more::Debug)]
 pub(crate) enum Conn {
+    #[cfg(not(wasm_browser))]
     Relay {
         #[debug("Framed<MaybeTlsStreamChained, RelayCodec>")]
         conn: Framed<MaybeTlsStreamChained, RelayCodec>,
@@ -85,6 +85,7 @@ impl Conn {
     }
 
     /// Constructs a new websocket connection, including the initial server handshake.
+    #[cfg(not(wasm_browser))]
     pub(crate) async fn new_relay(
         conn: MaybeTlsStreamChained,
         key_cache: KeyCache,
@@ -119,6 +120,7 @@ impl Stream for Conn {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
+            #[cfg(not(wasm_browser))]
             Self::Relay { ref mut conn } => match Pin::new(conn).poll_next(cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(Some(Ok(frame))) => {
@@ -154,6 +156,7 @@ impl Sink<Frame> for Conn {
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
+            #[cfg(not(wasm_browser))]
             Self::Relay { ref mut conn } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
             Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
         }
@@ -166,6 +169,7 @@ impl Sink<Frame> for Conn {
             }
         }
         match *self {
+            #[cfg(not(wasm_browser))]
             Self::Relay { ref mut conn } => Pin::new(conn).start_send(frame).map_err(Into::into),
             Self::Ws { ref mut conn, .. } => Pin::new(conn)
                 .start_send(tokio_tungstenite_wasm::Message::binary(
@@ -177,6 +181,7 @@ impl Sink<Frame> for Conn {
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
+            #[cfg(not(wasm_browser))]
             Self::Relay { ref mut conn } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
             Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
         }
@@ -184,6 +189,7 @@ impl Sink<Frame> for Conn {
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
+            #[cfg(not(wasm_browser))]
             Self::Relay { ref mut conn } => Pin::new(conn).poll_close(cx).map_err(Into::into),
             Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_close(cx).map_err(Into::into),
         }
@@ -195,6 +201,7 @@ impl Sink<SendMessage> for Conn {
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
+            #[cfg(not(wasm_browser))]
             Self::Relay { ref mut conn } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
             Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
         }
@@ -208,6 +215,7 @@ impl Sink<SendMessage> for Conn {
         }
         let frame = Frame::from(item);
         match *self {
+            #[cfg(not(wasm_browser))]
             Self::Relay { ref mut conn } => Pin::new(conn).start_send(frame).map_err(Into::into),
             Self::Ws { ref mut conn, .. } => Pin::new(conn)
                 .start_send(tokio_tungstenite_wasm::Message::binary(
@@ -219,6 +227,7 @@ impl Sink<SendMessage> for Conn {
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
+            #[cfg(not(wasm_browser))]
             Self::Relay { ref mut conn } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
             Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
         }
@@ -226,6 +235,7 @@ impl Sink<SendMessage> for Conn {
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
+            #[cfg(not(wasm_browser))]
             Self::Relay { ref mut conn } => Pin::new(conn).poll_close(cx).map_err(Into::into),
             Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_close(cx).map_err(Into::into),
         }

@@ -160,8 +160,21 @@ jobs:
       - name: Add wasm target
         run: rustup target add wasm32-unknown-unknown
 
+      - name: Install wasm-tools
+        uses: bytecodealliance/actions/wasm-tools/setup@v1
+
       - name: wasm32 build (iroh-base)
-        run: cargo build -p iroh-base --all-features --target wasm32-unknown-unknown
+        run: cargo build --target wasm32-unknown-unknown -p iroh-base --all-features
+
+      - name: wasm32 build (iroh-relay)
+        run: cargo build --target wasm32-unknown-unknown -p iroh-relay --no-default-features
+
+      # If the Wasm file contains any 'import "env"' declarations, then
+      # some non-Wasm-compatible code made it into the final code.
+      - name: Ensure no 'import "env"' in iroh-relay Wasm
+        run: |
+          ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/iroh_relay.wasm | grep 'import "env"'
+      
 
   check_semver:
     runs-on: ubuntu-latest

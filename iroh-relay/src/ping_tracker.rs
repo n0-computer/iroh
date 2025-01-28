@@ -1,5 +1,4 @@
-use std::time::{Duration, Instant};
-
+use n0_future::time::{self, Duration, Instant};
 use tracing::debug;
 
 /// Maximum time for a ping response in the relay protocol.
@@ -68,7 +67,7 @@ impl PingTracker {
     pub async fn timeout(&mut self) {
         match self.inner {
             Some(PingInner { deadline, data }) => {
-                tokio::time::sleep_until(deadline.into()).await;
+                time::sleep_until(deadline).await;
                 debug!(?data, "Ping timeout.");
                 self.inner = None;
             }

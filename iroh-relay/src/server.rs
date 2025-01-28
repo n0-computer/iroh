@@ -20,7 +20,6 @@ use std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync:
 
 use anyhow::{anyhow, bail, Context, Result};
 use derive_more::Debug;
-use futures_lite::{future::Boxed, StreamExt};
 use http::{
     response::Builder as ResponseBuilder, HeaderMap, Method, Request, Response, StatusCode,
 };
@@ -29,6 +28,7 @@ use iroh_base::NodeId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
 use iroh_metrics::inc;
+use n0_future::{future::Boxed, StreamExt};
 use tokio::{
     net::{TcpListener, UdpSocket},
     task::JoinSet,
@@ -528,13 +528,13 @@ async fn relay_supervisor(
 ) -> Result<()> {
     let quic_enabled = quic_server.is_some();
     let mut quic_fut = match quic_server {
-        Some(ref mut server) => futures_util::future::Either::Left(server.task_handle()),
-        None => futures_util::future::Either::Right(futures_lite::future::pending()),
+        Some(ref mut server) => n0_future::Either::Left(server.task_handle()),
+        None => n0_future::Either::Right(n0_future::future::pending()),
     };
     let relay_enabled = relay_http_server.is_some();
     let mut relay_fut = match relay_http_server {
-        Some(ref mut server) => futures_util::future::Either::Left(server.task_handle()),
-        None => futures_util::future::Either::Right(futures_lite::future::pending()),
+        Some(ref mut server) => n0_future::Either::Left(server.task_handle()),
+        None => n0_future::Either::Right(n0_future::future::pending()),
     };
     let res = tokio::select! {
         biased;
@@ -808,10 +808,9 @@ mod tests {
     use std::{net::Ipv4Addr, time::Duration};
 
     use bytes::Bytes;
-    use futures_lite::FutureExt;
-    use futures_util::SinkExt;
     use http::header::UPGRADE;
     use iroh_base::{NodeId, SecretKey};
+    use n0_future::{FutureExt, SinkExt};
     use testresult::TestResult;
 
     use super::*;

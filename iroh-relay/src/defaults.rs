@@ -28,8 +28,9 @@ pub const DEFAULT_METRICS_PORT: u16 = 9090;
 pub const DEFAULT_KEY_CACHE_CAPACITY: usize = 1024 * 1024;
 
 /// Contains all timeouts that we use in `iroh`.
+#[cfg(not(wasm_browser))]
 pub(crate) mod timeouts {
-    use std::time::Duration;
+    use n0_future::time::Duration;
 
     /// Timeout used by the relay client while connecting to the relay server,
     /// using `TcpStream::connect`

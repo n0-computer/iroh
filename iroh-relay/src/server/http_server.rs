@@ -5,8 +5,6 @@ use std::{
 use anyhow::{bail, ensure, Context as _, Result};
 use bytes::Bytes;
 use derive_more::Debug;
-use futures_lite::FutureExt;
-use futures_util::SinkExt;
 use http::{header::CONNECTION, response::Builder as ResponseBuilder};
 use hyper::{
     body::Incoming,
@@ -16,6 +14,7 @@ use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
 };
 use iroh_metrics::inc;
+use n0_future::{FutureExt, SinkExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_tungstenite::{
@@ -703,9 +702,8 @@ mod tests {
 
     use anyhow::Result;
     use bytes::Bytes;
-    use futures_lite::StreamExt;
-    use futures_util::SinkExt;
     use iroh_base::{PublicKey, SecretKey};
+    use n0_future::{SinkExt, StreamExt};
     use reqwest::Url;
     use tracing::info;
     use tracing_subscriber::{prelude::*, EnvFilter};

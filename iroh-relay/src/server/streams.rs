@@ -6,8 +6,7 @@ use std::{
 };
 
 use anyhow::Result;
-use futures_lite::Stream;
-use futures_sink::Sink;
+use n0_future::{Sink, Stream};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::{tungstenite, WebSocketStream};
 use tokio_util::codec::Framed;

@@ -11,7 +11,6 @@ use std::{
 
 use anyhow::{bail, Context as _, Result};
 use clap::Parser;
-use futures_lite::FutureExt;
 use iroh_base::NodeId;
 use iroh_relay::{
     defaults::{
@@ -20,6 +19,7 @@ use iroh_relay::{
     },
     server::{self as relay, ClientRateLimit, QuicConfig},
 };
+use n0_future::FutureExt;
 use serde::{Deserialize, Serialize};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
 use tracing::debug;
