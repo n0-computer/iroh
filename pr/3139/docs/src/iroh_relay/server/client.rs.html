@@ -741,9 +741,7 @@
 <a href="#740" id="740">740</a>
 <a href="#741" id="741">741</a>
 <a href="#742" id="742">742</a>
-<a href="#743" id="743">743</a>
-<a href="#744" id="744">744</a>
-<a href="#745" id="745">745</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#743" id="743">743</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
@@ -964,9 +962,7 @@
             }
         }
 
-        <span class="self">self</span>.clients
-            .unregister(<span class="self">self</span>.connection_id, <span class="self">self</span>.node_id)
-            .<span class="kw">await</span>;
+        <span class="self">self</span>.clients.unregister(<span class="self">self</span>.connection_id, <span class="self">self</span>.node_id);
     }
 
     <span class="kw">async fn </span>run_inner(<span class="kw-2">&amp;mut </span><span class="self">self</span>, done: CancellationToken) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {

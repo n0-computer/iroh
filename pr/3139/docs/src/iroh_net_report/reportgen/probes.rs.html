@@ -1484,13 +1484,13 @@
                             node: relay_node.clone(),
                         })
                         .expect(<span class="string">"adding StunIpv6 probe to a StunIpv6 probe set"</span>);
+                    quic_ipv6_probes
+                        .push(Probe::QuicIpv6 {
+                            delay,
+                            node: relay_node.clone(),
+                        })
+                        .expect(<span class="string">"adding QuicIpv6 probe to a QuicAddrIpv6 probe set"</span>);
                 }
-                quic_ipv6_probes
-                    .push(Probe::QuicIpv6 {
-                        delay,
-                        node: relay_node.clone(),
-                    })
-                    .expect(<span class="string">"adding QuicIpv6 probe to a QuicAddrIpv6 probe set"</span>);
             }
             plan.add_if_enabled(stun_ipv4_probes);
             plan.add_if_enabled(stun_ipv6_probes);
