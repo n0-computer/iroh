@@ -251,11 +251,14 @@ impl ActiveRelayActor {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify,
         } = opts;
-        #[cfg(wasm_browser)]
-        let dns_resolver = ();
 
-        let mut builder = relay::client::ClientBuilder::new(url, secret_key, dns_resolver)
-            .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
+        let mut builder = relay::client::ClientBuilder::new(
+            url,
+            secret_key,
+            #[cfg(not(wasm_browser))]
+            dns_resolver,
+        )
+        .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
         }
