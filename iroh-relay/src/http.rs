@@ -26,6 +26,15 @@ pub enum Protocol {
     Websocket,
 }
 
+impl Default for Protocol {
+    fn default() -> Self {
+        #[cfg(wasm_browser)]
+        return Self::Websocket;
+        #[cfg(not(wasm_browser))]
+        return Self::Relay;
+    }
+}
+
 impl Protocol {
     /// The HTTP upgrade header used or expected.
     pub const fn upgrade_header(&self) -> &'static str {

@@ -75,11 +75,8 @@ impl ClientBuilder {
             is_prober: false,
             url: url.into(),
 
-            // always prefer websockets in browser contexts
-            #[cfg(wasm_browser)]
-            protocol: Protocol::Websocket,
-            #[cfg(not(wasm_browser))]
-            protocol: Protocol::Relay,
+            // Resolves to websockets in browsers and relay otherwise
+            protocol: Protocol::default(),
 
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify: false,
