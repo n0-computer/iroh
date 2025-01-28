@@ -28,7 +28,7 @@ rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["stream"] }
 rustls = { version = "0.23", default-features = false }
 thiserror = "2"
-tokio = { version = "1", default-features = false, features = ["sync", "time", "macros"] }
+tokio = { version = "1", default-features = false, features = ["sync", "time", "macros", "rt"] }
 tokio-util = { version = "0.7.12", default-features = false }
 tracing = "0.1"
 url = { version = "2.4" }
@@ -39,7 +39,6 @@ hickory-resolver = "=0.25.0-alpha.4"
 netwatch = { version = "0.3" }
 portmapper = { version = "0.3", default-features = false }
 surge-ping = "0.8.0"
-tokio = { version = "1", default-features = false, features = ["sync", "time", "macros", "rt"] }
 
 [dev-dependencies]
 futures-lite = "2.3"
