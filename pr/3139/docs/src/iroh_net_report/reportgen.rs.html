@@ -1742,7 +1742,6 @@
 };
 
 <span class="kw">use </span>anyhow::{anyhow, bail, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>futures_lite::StreamExt <span class="kw">as _</span>;
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>hickory_resolver::TokioResolver <span class="kw">as </span>DnsResolver;
 <span class="kw">use </span>iroh_base::RelayUrl;
@@ -1757,6 +1756,7 @@
 <span class="kw">use </span>n0_future::{
     task::{<span class="self">self</span>, AbortOnDropHandle, JoinSet},
     time::{<span class="self">self</span>, Duration, Instant},
+    StreamExt <span class="kw">as _</span>,
 };
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>netwatch::{interfaces, UdpSocket};

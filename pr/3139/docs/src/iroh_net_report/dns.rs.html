@@ -260,13 +260,11 @@
 <a href="#259" id="259">259</a>
 <a href="#260" id="260">260</a>
 <a href="#261" id="261">261</a>
-<a href="#262" id="262">262</a>
-<a href="#263" id="263">263</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt::Write, net::IpAddr};
+<a href="#262" id="262">262</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt::Write, net::IpAddr};
 
 <span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>futures_lite::{Future, StreamExt};
 <span class="kw">use </span>hickory_resolver::{IntoName, TokioResolver};
-<span class="kw">use </span>n0_future::time;
+<span class="kw">use </span>n0_future::{time, Future, StreamExt};
 
 <span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::DNS_TIMEOUT;
 
@@ -414,7 +412,7 @@
     f: F,
     delays_ms: <span class="kw-2">&amp;</span>[u64],
 ) -&gt; <span class="prelude-ty">Result</span>&lt;T&gt; {
-    <span class="kw">let </span><span class="kw-2">mut </span>calls = futures_buffered::FuturesUnorderedBounded::new(delays_ms.len() + <span class="number">1</span>);
+    <span class="kw">let </span><span class="kw-2">mut </span>calls = n0_future::FuturesUnorderedBounded::new(delays_ms.len() + <span class="number">1</span>);
     <span class="comment">// NOTE: we add the 0 delay here to have a uniform set of futures. This is more performant than
     // using alternatives that allow futures of different types.
     </span><span class="kw">for </span>delay <span class="kw">in </span>std::iter::once(<span class="kw-2">&amp;</span><span class="number">0u64</span>).chain(delays_ms) {
