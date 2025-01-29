@@ -2170,17 +2170,17 @@ impl Actor {
             #[cfg(not(wasm_browser))]
             let portmap_watcher_changed = portmap_watcher.changed();
             #[cfg(wasm_browser)]
-            let portmap_watcher_changed = futures_lite::future::pending();
+            let portmap_watcher_changed = n0_future::future::pending();
 
             #[cfg(not(wasm_browser))]
             let direct_addr_heartbeat_timer_tick = direct_addr_heartbeat_timer.tick();
             #[cfg(wasm_browser)]
-            let direct_addr_heartbeat_timer_tick = futures_lite::future::pending();
+            let direct_addr_heartbeat_timer_tick = n0_future::future::pending();
 
             #[cfg(not(wasm_browser))]
             let link_change_r_recv = link_change_r.recv();
             #[cfg(wasm_browser)]
-            let link_change_r_recv = futures_lite::future::pending();
+            let link_change_r_recv = n0_future::future::pending();
 
             tokio::select! {
                 msg = self.msg_receiver.recv(), if !receiver_closed => {
