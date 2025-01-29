@@ -49,8 +49,7 @@ use iroh_relay::{
 };
 use n0_future::{
     task::JoinSet,
-    time,
-    time::{Duration, Instant, MissedTickBehavior},
+    time::{self, Duration, Instant, MissedTickBehavior},
     FuturesUnorderedBounded, SinkExt, StreamExt,
 };
 use tokio::sync::{mpsc, oneshot};

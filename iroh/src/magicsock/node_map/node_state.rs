@@ -10,8 +10,7 @@ use iroh_metrics::inc;
 use iroh_relay::protos::stun;
 use n0_future::{
     task::{self, AbortOnDropHandle},
-    time,
-    time::{Duration, Instant},
+    time::{self, Duration, Instant},
 };
 use netwatch::ip::is_unicast_link_local;
 use serde::{Deserialize, Serialize};

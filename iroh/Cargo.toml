@@ -18,6 +18,7 @@ workspace = true
 [dependencies]
 aead = { version = "0.5.2", features = ["bytes"] }
 anyhow = { version = "1" }
+atomic-waker = "1.1.2"
 concurrent-queue = "2.5"
 axum = { version = "0.7", optional = true }
 backoff = { version = "0.4.0", features = ["futures", "tokio"]}
@@ -106,10 +107,9 @@ tracing-subscriber = { version = "0.3", features = [
 ], optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 parse-size = { version = "=1.0.0", optional = true } # pinned version to avoid bumping msrv to 1.81
-atomic-waker = "1.1.2"
 
 [dev-dependencies]
-axum = { version = "0.7" }  
+axum = { version = "0.7" }
 clap = { version = "4", features = ["derive"] }
 futures-lite = "2.6"
 pretty_assertions = "1.4"

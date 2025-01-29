@@ -3,8 +3,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use n0_future::{
     task::{self, AbortOnDropHandle},
-    time,
-    time::Duration,
+    time::{self, Duration},
 };
 use reloadable_state::Reloadable;
 use rustls::{
