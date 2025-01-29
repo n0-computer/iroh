@@ -41,9 +41,13 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use anyhow::Result;
-use n0_future::{future::Boxed as BoxedFuture, join_all};
-use tokio::{sync::Mutex, task::JoinSet};
-use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+use n0_future::{
+    boxed::BoxFuture,
+    join_all,
+    task::{self, AbortOnDropHandle, JoinSet},
+};
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info_span, trace, warn, Instrument};
 
 use crate::{endpoint::Connecting, Endpoint};
@@ -108,30 +112,30 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     /// Handle an incoming connection.
     ///
     /// This runs on a freshly spawned tokio task so this can be long-running.
-    fn accept(&self, conn: Connecting) -> BoxedFuture<Result<()>>;
+    fn accept(&self, conn: Connecting) -> BoxFuture<Result<()>>;
 
     /// Called when the node shuts down.
-    fn shutdown(&self) -> BoxedFuture<()> {
+    fn shutdown(&self) -> BoxFuture<()> {
         Box::pin(async move {})
     }
 }
 
 impl<T: ProtocolHandler> ProtocolHandler for Arc<T> {
-    fn accept(&self, conn: Connecting) -> BoxedFuture<Result<()>> {
+    fn accept(&self, conn: Connecting) -> BoxFuture<Result<()>> {
         self.as_ref().accept(conn)
     }
 
-    fn shutdown(&self) -> BoxedFuture<()> {
+    fn shutdown(&self) -> BoxFuture<()> {
         self.as_ref().shutdown()
     }
 }
 
 impl<T: ProtocolHandler> ProtocolHandler for Box<T> {
-    fn accept(&self, conn: Connecting) -> BoxedFuture<Result<()>> {
+    fn accept(&self, conn: Connecting) -> BoxFuture<Result<()>> {
         self.as_ref().accept(conn)
     }
 
-    fn shutdown(&self) -> BoxedFuture<()> {
+    fn shutdown(&self) -> BoxFuture<()> {
         self.as_ref().shutdown()
     }
 }
@@ -305,7 +309,7 @@ impl RouterBuilder {
             tracing::info!("Shutting down remaining tasks");
             join_set.shutdown().await;
         };
-        let task = tokio::task::spawn(run_loop_fut);
+        let task = task::spawn(run_loop_fut);
         let task = AbortOnDropHandle::new(task);
 
         Ok(Router {

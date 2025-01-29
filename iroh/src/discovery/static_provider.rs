@@ -14,11 +14,13 @@ use std::{
     collections::{btree_map::Entry, BTreeMap, BTreeSet},
     net::SocketAddr,
     sync::{Arc, RwLock},
-    time::SystemTime,
 };
 
 use iroh_base::{NodeAddr, NodeId, RelayUrl};
-use n0_future::stream::{self, StreamExt};
+use n0_future::{
+    stream::{self, StreamExt},
+    time::SystemTime,
+};
 
 use super::{Discovery, DiscoveryItem};
 

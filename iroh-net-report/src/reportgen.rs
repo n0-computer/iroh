@@ -23,7 +23,6 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Duration,
 };
 
 use anyhow::{anyhow, bail, Context as _, Result};
@@ -37,14 +36,13 @@ use iroh_relay::{
     protos::stun,
     RelayMap, RelayNode,
 };
+use n0_future::{
+    task::{self, AbortOnDropHandle, JoinSet},
+    time::{self, Duration, Instant},
+};
 use netwatch::{interfaces, UdpSocket};
 use rand::seq::IteratorRandom;
-use tokio::{
-    sync::{mpsc, oneshot},
-    task::JoinSet,
-    time::{self, Instant},
-};
-use tokio_util::task::AbortOnDropHandle;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
 use url::Host;
 
@@ -115,9 +113,8 @@ impl Client {
             dns_resolver,
             protocols,
         };
-        let task = tokio::spawn(
-            async move { actor.run().await }.instrument(info_span!("reportgen.actor")),
-        );
+        let task =
+            task::spawn(async move { actor.run().await }.instrument(info_span!("reportgen.actor")));
         Self {
             _drop_guard: AbortOnDropHandle::new(task),
         }
@@ -245,9 +242,9 @@ impl Actor {
         let mut captive_task = self.prepare_captive_portal_task();
         let mut probes = self.spawn_probes_task().await?;
 
-        let total_timer = tokio::time::sleep(OVERALL_REPORT_TIMEOUT);
+        let total_timer = time::sleep(OVERALL_REPORT_TIMEOUT);
         tokio::pin!(total_timer);
-        let probe_timer = tokio::time::sleep(PROBES_TIMEOUT);
+        let probe_timer = time::sleep(PROBES_TIMEOUT);
         tokio::pin!(probe_timer);
 
         loop {
@@ -385,7 +382,7 @@ impl Actor {
                 delay=?timeout,
                 "Have enough probe reports, aborting further probes soon",
             );
-            tokio::spawn(
+            task::spawn(
                 async move {
                     time::sleep(timeout).await;
                     // Because we do this after a timeout it is entirely normal that the
@@ -488,9 +485,9 @@ impl Actor {
             self.outstanding_tasks.captive_task = true;
             MaybeFuture {
                 inner: Some(Box::pin(async move {
-                    tokio::time::sleep(CAPTIVE_PORTAL_DELAY).await;
+                    time::sleep(CAPTIVE_PORTAL_DELAY).await;
                     debug!("Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}");
-                    let captive_portal_check = tokio::time::timeout(
+                    let captive_portal_check = time::timeout(
                         CAPTIVE_PORTAL_TIMEOUT,
                         check_captive_portal(&dns_resolver, &dm, preferred_relay)
                             .instrument(debug_span!("captive-portal")),
@@ -719,7 +716,7 @@ async fn run_probe(
 ) -> Result<ProbeReport, ProbeError> {
     if !probe.delay().is_zero() {
         trace!("delaying probe");
-        tokio::time::sleep(probe.delay()).await;
+        time::sleep(probe.delay()).await;
     }
     debug!("starting probe");
 

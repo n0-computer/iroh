@@ -2,7 +2,7 @@ use std::{fmt::Write, net::IpAddr};
 
 use anyhow::Result;
 use hickory_resolver::{IntoName, TokioResolver};
-use n0_future::{Future, StreamExt};
+use n0_future::{time, Future, StreamExt};
 
 use crate::defaults::timeouts::DNS_TIMEOUT;
 
@@ -66,12 +66,12 @@ pub(crate) trait ResolverExt {
 
 impl ResolverExt for TokioResolver {
     async fn lookup_ipv4<N: IntoName>(&self, host: N) -> Result<impl Iterator<Item = IpAddr>> {
-        let addrs = tokio::time::timeout(DNS_TIMEOUT, self.ipv4_lookup(host)).await??;
+        let addrs = time::timeout(DNS_TIMEOUT, self.ipv4_lookup(host)).await??;
         Ok(addrs.into_iter().map(|ip| IpAddr::V4(ip.0)))
     }
 
     async fn lookup_ipv6<N: IntoName>(&self, host: N) -> Result<impl Iterator<Item = IpAddr>> {
-        let addrs = tokio::time::timeout(DNS_TIMEOUT, self.ipv6_lookup(host)).await??;
+        let addrs = time::timeout(DNS_TIMEOUT, self.ipv6_lookup(host)).await??;
         Ok(addrs.into_iter().map(|ip| IpAddr::V6(ip.0)))
     }
 
@@ -154,10 +154,10 @@ async fn stagger_call<T, F: Fn() -> Fut, Fut: Future<Output = Result<T>>>(
     // NOTE: we add the 0 delay here to have a uniform set of futures. This is more performant than
     // using alternatives that allow futures of different types.
     for delay in std::iter::once(&0u64).chain(delays_ms) {
-        let delay = std::time::Duration::from_millis(*delay);
+        let delay = n0_future::time::Duration::from_millis(*delay);
         let fut = f();
         let staggered_fut = async move {
-            tokio::time::sleep(delay).await;
+            n0_future::time::sleep(delay).await;
             fut.await
         };
         calls.push(staggered_fut)

@@ -5,12 +5,9 @@
 //! the inside and instead only notifies this struct of state changes to each path.
 //!
 //! [`NodeState`]: super::node_state::NodeState
-use std::{
-    collections::BTreeMap,
-    net::SocketAddr,
-    time::{Duration, Instant},
-};
+use std::{collections::BTreeMap, net::SocketAddr};
 
+use n0_future::time::{Duration, Instant};
 use rand::seq::IteratorRandom;
 use tracing::warn;
 

@@ -4,9 +4,11 @@ use std::{pin::Pin, task::Poll};
 
 use iroh_base::NodeId;
 use iroh_metrics::inc;
-use n0_future::{MergeUnbounded, Stream, StreamExt};
+use n0_future::{
+    task::{self, AbortOnDropHandle},
+    MergeUnbounded, Stream, StreamExt,
+};
 use tokio::sync::mpsc;
-use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, info_span, Instrument};
 
 use crate::{magicsock::ConnectionType, metrics::MagicsockMetrics, watchable::WatcherStream};
@@ -24,7 +26,7 @@ impl RttHandle {
             connection_events: Default::default(),
         };
         let (msg_tx, msg_rx) = mpsc::channel(16);
-        let handle = tokio::spawn(
+        let handle = task::spawn(
             async move {
                 actor.run(msg_rx).await;
             }

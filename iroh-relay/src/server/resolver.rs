@@ -1,12 +1,17 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
+use n0_future::{
+    task::{self, AbortOnDropHandle},
+    time,
+    time::Duration,
+};
 use reloadable_state::Reloadable;
 use rustls::{
     server::{ClientHello, ResolvesServerCert},
     sign::CertifiedKey,
 };
-use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+use tokio_util::sync::CancellationToken;
 
 /// The default certificate reload interval.
 pub const DEFAULT_CERT_RELOAD_INTERVAL: Duration = Duration::from_secs(60 * 60 * 24);
@@ -38,8 +43,8 @@ where
         // Spawn a task to reload the certificate every interval.
         let _reloadable = reloadable.clone();
         let _cancel_token = cancel_token.clone();
-        let _handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(interval);
+        let _handle = task::spawn(async move {
+            let mut interval = time::interval(interval);
             loop {
                 tokio::select! {
                     _ = interval.tick() => {

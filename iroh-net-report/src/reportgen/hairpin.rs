@@ -16,9 +16,12 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use anyhow::{bail, Context, Result};
 use iroh_relay::protos::stun;
+use n0_future::{
+    task::{self, AbortOnDropHandle},
+    time::{self, Instant},
+};
 use netwatch::UdpSocket;
-use tokio::{sync::oneshot, time::Instant};
-use tokio_util::task::AbortOnDropHandle;
+use tokio::sync::oneshot;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::{self as net_report, defaults::timeouts::HAIRPIN_CHECK_TIMEOUT, reportgen, Inflight};
@@ -43,7 +46,7 @@ impl Client {
         };
 
         let task =
-            tokio::spawn(async move { actor.run().await }.instrument(info_span!("hairpin.actor")));
+            task::spawn(async move { actor.run().await }.instrument(info_span!("hairpin.actor")));
         Self {
             addr: Some(addr),
             _drop_guard: AbortOnDropHandle::new(task),
@@ -127,7 +130,7 @@ impl Actor {
         }
 
         let now = Instant::now();
-        let hairpinning_works = match tokio::time::timeout(HAIRPIN_CHECK_TIMEOUT, stun_rx).await {
+        let hairpinning_works = match time::timeout(HAIRPIN_CHECK_TIMEOUT, stun_rx).await {
             Ok(Ok(_)) => true,
             Ok(Err(_)) => bail!("net_report actor dropped stun response channel"),
             Err(_) => false, // Elapsed

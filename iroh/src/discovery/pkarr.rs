@@ -48,12 +48,12 @@ use std::{collections::BTreeSet, net::SocketAddr, sync::Arc};
 
 use anyhow::{anyhow, bail, Result};
 use iroh_base::{NodeId, RelayUrl, SecretKey};
-use n0_future::boxed::BoxStream;
-use pkarr::SignedPacket;
-use tokio::{
-    task::JoinHandle,
-    time::{Duration, Instant},
+use n0_future::{
+    boxed::BoxStream,
+    task::{self, AbortOnDropHandle},
+    time::{self, Duration, Instant},
 };
+use pkarr::SignedPacket;
 use tracing::{debug, error_span, info, warn, Instrument};
 use url::Url;
 
@@ -116,7 +116,7 @@ pub const DEFAULT_REPUBLISH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 pub struct PkarrPublisher {
     node_id: NodeId,
     watchable: Watchable<Option<NodeInfo>>,
-    join_handle: Arc<JoinHandle<()>>,
+    _drop_guard: Arc<AbortOnDropHandle<()>>,
 }
 
 impl PkarrPublisher {
@@ -145,7 +145,7 @@ impl PkarrPublisher {
         secret_key: SecretKey,
         pkarr_relay: Url,
         ttl: u32,
-        republish_interval: std::time::Duration,
+        republish_interval: Duration,
     ) -> Self {
         debug!("creating pkarr publisher that publishes to {pkarr_relay}");
         let node_id = secret_key.public();
@@ -158,7 +158,7 @@ impl PkarrPublisher {
             pkarr_client,
             republish_interval,
         };
-        let join_handle = tokio::task::spawn(
+        let join_handle = task::spawn(
             service
                 .run()
                 .instrument(error_span!("pkarr_publish", me=%node_id.fmt_short())),
@@ -166,7 +166,7 @@ impl PkarrPublisher {
         Self {
             watchable,
             node_id,
-            join_handle: Arc::new(join_handle),
+            _drop_guard: Arc::new(AbortOnDropHandle::new(join_handle)),
         }
     }
 
@@ -212,15 +212,6 @@ impl Discovery for PkarrPublisher {
     }
 }
 
-impl Drop for PkarrPublisher {
-    fn drop(&mut self) {
-        // this means we're dropping the last reference
-        if let Some(handle) = Arc::get_mut(&mut self.join_handle) {
-            handle.abort();
-        }
-    }
-}
-
 /// Publish node info to a pkarr relay.
 #[derive(derive_more::Debug, Clone)]
 struct PublisherService {
@@ -236,8 +227,8 @@ struct PublisherService {
 impl PublisherService {
     async fn run(mut self) {
         let mut failed_attempts = 0;
-        let republish = tokio::time::sleep(Duration::MAX);
-        tokio::pin!(republish);
+        let republish = time::sleep(Duration::MAX);
+        n0_future::pin!(republish);
         loop {
             let Ok(info) = self.watcher.get() else {
                 break; // disconnected

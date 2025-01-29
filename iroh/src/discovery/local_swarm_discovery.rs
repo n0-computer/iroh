@@ -33,22 +33,19 @@
 use std::{
     collections::{BTreeSet, HashMap},
     net::{IpAddr, SocketAddr},
-    time::Duration,
 };
 
 use anyhow::Result;
 use derive_more::FromStr;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
-use n0_future::{boxed::BoxStream, FutureExt};
-use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
-use tokio::{
-    sync::mpsc::{
-        error::TrySendError,
-        {self},
-    },
-    task::JoinSet,
+use n0_future::{
+    boxed::BoxStream,
+    task::{self, AbortOnDropHandle, JoinSet},
+    time::{self, Duration},
+    FutureExt,
 };
-use tokio_util::task::AbortOnDropHandle;
+use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
+use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::{
@@ -269,7 +266,7 @@ impl LocalSwarmDiscovery {
                         }
                         let timeout_sender = task_sender.clone();
                         timeouts.spawn(async move {
-                            tokio::time::sleep(DISCOVERY_DURATION).await;
+                            time::sleep(DISCOVERY_DURATION).await;
                             trace!(?node_id, "discovery timeout");
                             timeout_sender
                                 .send(Message::Timeout(node_id, id))
@@ -293,7 +290,7 @@ impl LocalSwarmDiscovery {
                 }
             }
         };
-        let handle = tokio::spawn(discovery_fut.instrument(info_span!("swarm-discovery.actor")));
+        let handle = task::spawn(discovery_fut.instrument(info_span!("swarm-discovery.actor")));
         Ok(Self {
             handle: AbortOnDropHandle::new(handle),
             sender: send,

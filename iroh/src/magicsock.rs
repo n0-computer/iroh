@@ -26,7 +26,6 @@ use std::{
         Arc, RwLock,
     },
     task::{Context, Poll, Waker},
-    time::{Duration, Instant},
 };
 
 use anyhow::{anyhow, Context as _, Result};
@@ -37,17 +36,20 @@ use data_encoding::HEXLOWER;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::{protos::stun, RelayMap};
-use n0_future::{boxed::BoxStream, FutureExt, StreamExt};
+use n0_future::{
+    boxed::BoxStream,
+    task,
+    task::JoinSet,
+    time,
+    time::{Duration, Instant},
+    FutureExt, StreamExt,
+};
 use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use relay_actor::RelaySendItem;
 use smallvec::{smallvec, SmallVec};
-use tokio::{
-    sync::{self, mpsc, Mutex},
-    task::JoinSet,
-    time,
-};
+use tokio::sync::{self, mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{
     debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
@@ -2306,7 +2308,7 @@ impl Actor {
 
         // The following code can be slow, we do not want to block the caller since it would
         // block the actor loop.
-        tokio::spawn(
+        task::spawn(
             async move {
                 // If a socket is bound to the unspecified address, create SocketAddrs for
                 // each local IP address by pairing it with the port the socket is bound on.
@@ -2435,7 +2437,7 @@ impl Actor {
         match self.net_reporter.get_report_channel(relay_map, opts).await {
             Ok(rx) => {
                 let msg_sender = self.msg_sender.clone();
-                tokio::task::spawn(async move {
+                task::spawn(async move {
                     let report = time::timeout(NET_REPORT_TIMEOUT, rx).await;
                     let report: anyhow::Result<_> = match report {
                         Ok(Ok(Ok(report))) => Ok(Some(report)),
@@ -3055,7 +3057,7 @@ mod tests {
                 if ready.iter().all(|meshed| *meshed) {
                     break;
                 }
-                tokio::time::sleep(Duration::from_millis(200)).await;
+                time::sleep(Duration::from_millis(200)).await;
             }
         })
         .await
