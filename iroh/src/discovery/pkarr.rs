@@ -228,7 +228,7 @@ impl PublisherService {
     async fn run(mut self) {
         let mut failed_attempts = 0;
         let republish = time::sleep(Duration::MAX);
-        n0_future::pin!(republish);
+        tokio::pin!(republish);
         loop {
             let Ok(info) = self.watcher.get() else {
                 break; // disconnected
