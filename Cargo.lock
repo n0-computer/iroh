@@ -2039,6 +2039,7 @@ dependencies = [
  "derive_more",
  "ed25519-dalek",
  "futures-lite",
+ "futures-util",
  "governor 0.7.0",
  "hickory-resolver",
  "http 1.2.0",

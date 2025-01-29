@@ -97,6 +97,7 @@ iroh-metrics = { version = "0.31", default-features = false }
 
 # local-swarm-discovery
 swarm-discovery = { version = "0.3.0-alpha.1", optional = true }
+futures-util = "0.3"
 
 # Examples
 clap = { version = "4", features = ["derive"], optional = true }
@@ -108,7 +109,7 @@ parse-size = { version = "=1.0.0", optional = true } # pinned version to avoid b
 atomic-waker = "1.1.2"
 
 [dev-dependencies]
-axum = { version = "0.7" }
+axum = { version = "0.7" }  
 clap = { version = "4", features = ["derive"] }
 futures-lite = "2.6"
 pretty_assertions = "1.4"

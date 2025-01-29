@@ -42,7 +42,6 @@ use n0_future::{
     boxed::BoxStream,
     task::{self, AbortOnDropHandle, JoinSet},
     time::{self, Duration},
-    FutureExt,
 };
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::sync::mpsc::{self, error::TrySendError};
@@ -363,6 +362,8 @@ fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
 
 impl Discovery for LocalSwarmDiscovery {
     fn resolve(&self, _ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
+        use futures_util::stream::StreamExt;
+
         let (send, recv) = mpsc::channel(20);
         let discovery_sender = self.sender.clone();
         let stream = async move {
@@ -382,6 +383,8 @@ impl Discovery for LocalSwarmDiscovery {
     }
 
     fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+        use futures_util::stream::StreamExt;
+
         let (sender, recv) = mpsc::channel(20);
         let discovery_sender = self.sender.clone();
         let stream = async move {
