@@ -417,7 +417,9 @@
 <a href="#416" id="416">416</a>
 <a href="#417" id="417">417</a>
 <a href="#418" id="418">418</a>
-<a href="#419" id="419">419</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module exports a DNS resolver, which is also the default resolver used in the
+<a href="#419" id="419">419</a>
+<a href="#420" id="420">420</a>
+<a href="#421" id="421">421</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module exports a DNS resolver, which is also the default resolver used in the
 //! [`crate::Endpoint`] if no custom resolver is configured.
 //!
 //! It also exports [`ResolverExt`]: A extension trait over [`DnsResolver`] to perform DNS queries
@@ -428,13 +430,15 @@
     fmt::Write,
     net::{IpAddr, Ipv6Addr},
     sync::OnceLock,
-    time::Duration,
 };
 
 <span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>futures_lite::{Future, StreamExt};
 <span class="kw">use </span>hickory_resolver::{IntoName, Resolver, TokioResolver};
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId};
+<span class="kw">use </span>n0_future::{
+    time::{<span class="self">self</span>, Duration},
+    Future, StreamExt,
+};
 
 <span class="kw">pub mod </span>node_info;
 
@@ -606,7 +610,7 @@
         host: N,
         timeout: Duration,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;&gt; {
-        <span class="kw">let </span>addrs = tokio::time::timeout(timeout, <span class="self">self</span>.ipv4_lookup(host)).<span class="kw">await</span><span class="question-mark">??</span>;
+        <span class="kw">let </span>addrs = time::timeout(timeout, <span class="self">self</span>.ipv4_lookup(host)).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(addrs.into_iter().map(|ip| IpAddr::V4(ip.<span class="number">0</span>)))
     }
 
@@ -615,7 +619,7 @@
         host: N,
         timeout: Duration,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;&gt; {
-        <span class="kw">let </span>addrs = tokio::time::timeout(timeout, <span class="self">self</span>.ipv6_lookup(host)).<span class="kw">await</span><span class="question-mark">??</span>;
+        <span class="kw">let </span>addrs = time::timeout(timeout, <span class="self">self</span>.ipv6_lookup(host)).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(addrs.into_iter().map(|ip| IpAddr::V6(ip.<span class="number">0</span>)))
     }
 
@@ -766,14 +770,14 @@
     f: F,
     delays_ms: <span class="kw-2">&amp;</span>[u64],
 ) -&gt; <span class="prelude-ty">Result</span>&lt;T&gt; {
-    <span class="kw">let </span><span class="kw-2">mut </span>calls = futures_buffered::FuturesUnorderedBounded::new(delays_ms.len() + <span class="number">1</span>);
+    <span class="kw">let </span><span class="kw-2">mut </span>calls = n0_future::FuturesUnorderedBounded::new(delays_ms.len() + <span class="number">1</span>);
     <span class="comment">// NOTE: we add the 0 delay here to have a uniform set of futures. This is more performant than
     // using alternatives that allow futures of different types.
     </span><span class="kw">for </span>delay <span class="kw">in </span>std::iter::once(<span class="kw-2">&amp;</span><span class="number">0u64</span>).chain(delays_ms) {
-        <span class="kw">let </span>delay = std::time::Duration::from_millis(<span class="kw-2">*</span>delay);
+        <span class="kw">let </span>delay = Duration::from_millis(<span class="kw-2">*</span>delay);
         <span class="kw">let </span>fut = f();
         <span class="kw">let </span>staggered_fut = <span class="kw">async move </span>{
-            tokio::time::sleep(delay).<span class="kw">await</span>;
+            time::sleep(delay).<span class="kw">await</span>;
             fut.<span class="kw">await
         </span>};
         calls.push(staggered_fut)

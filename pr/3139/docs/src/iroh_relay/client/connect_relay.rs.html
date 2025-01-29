@@ -420,6 +420,7 @@
     upgrade::Parts,
     Request,
 };
+<span class="kw">use </span>n0_future::{task, time};
 <span class="kw">use </span>rustls::client::Resumption;
 <span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
 <span class="kw">use </span>tracing::{error, info_span, Instrument};
@@ -512,7 +513,7 @@
         <span class="kw">let </span>(<span class="kw-2">mut </span>request_sender, connection) = hyper::client::conn::http1::Builder::new()
             .handshake(io)
             .<span class="kw">await</span><span class="question-mark">?</span>;
-        tokio::spawn(
+        task::spawn(
             <span class="comment">// This task drives the HTTP exchange, completes once connection is upgraded.
             </span><span class="kw">async move </span>{
                 <span class="macro">debug!</span>(<span class="string">"HTTP upgrade driver started"</span>);
@@ -564,14 +565,13 @@
         <span class="kw">let </span>addr = SocketAddr::new(dst_ip, port);
 
         <span class="macro">debug!</span>(<span class="string">"connecting to {}"</span>, addr);
-        <span class="kw">let </span>tcp_stream =
-            tokio::time::timeout(
-                DIAL_NODE_TIMEOUT,
-                <span class="kw">async move </span>{ TcpStream::connect(addr).<span class="kw">await </span>},
-            )
-            .<span class="kw">await
-            </span>.context(<span class="string">"Timeout connecting"</span>)<span class="question-mark">?
-            </span>.context(<span class="string">"Failed connecting"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>tcp_stream = time::timeout(
+            DIAL_NODE_TIMEOUT,
+            <span class="kw">async move </span>{ TcpStream::connect(addr).<span class="kw">await </span>},
+        )
+        .<span class="kw">await
+        </span>.context(<span class="string">"Timeout connecting"</span>)<span class="question-mark">?
+        </span>.context(<span class="string">"Failed connecting"</span>)<span class="question-mark">?</span>;
         tcp_stream.set_nodelay(<span class="bool-val">true</span>)<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(tcp_stream)
@@ -598,7 +598,7 @@
 
         <span class="macro">debug!</span>(%proxy_addr, <span class="string">"connecting to proxy"</span>);
 
-        <span class="kw">let </span>tcp_stream = tokio::time::timeout(DIAL_NODE_TIMEOUT, <span class="kw">async move </span>{
+        <span class="kw">let </span>tcp_stream = time::timeout(DIAL_NODE_TIMEOUT, <span class="kw">async move </span>{
             TcpStream::connect(proxy_addr).<span class="kw">await
         </span>})
         .<span class="kw">await
@@ -651,7 +651,7 @@
         <span class="macro">debug!</span>(<span class="string">"Sending proxy request: {:?}"</span>, req);
 
         <span class="kw">let </span>(<span class="kw-2">mut </span>sender, conn) = hyper::client::conn::http1::handshake(io).<span class="kw">await</span><span class="question-mark">?</span>;
-        tokio::task::spawn(<span class="kw">async move </span>{
+        task::spawn(<span class="kw">async move </span>{
             <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = conn.with_upgrades().<span class="kw">await </span>{
                 <span class="macro">error!</span>(<span class="string">"Proxy connection failed: {:?}"</span>, err);
             }

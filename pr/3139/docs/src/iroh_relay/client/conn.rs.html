@@ -351,8 +351,7 @@
 <a href="#350" id="350">350</a>
 <a href="#351" id="351">351</a>
 <a href="#352" id="352">352</a>
-<a href="#353" id="353">353</a>
-<a href="#354" id="354">354</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
+<a href="#353" id="353">353</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
 //!
 //! based on tailscale/derp/derp_client.go
 
@@ -360,13 +359,12 @@
     io,
     pin::Pin,
     task::{Context, Poll},
-    time::Duration,
 };
 
 <span class="kw">use </span>anyhow::{bail, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
-<span class="kw">use </span>n0_future::{Sink, Stream};
+<span class="kw">use </span>n0_future::{time::Duration, Sink, Stream};
 <span class="kw">use </span>tokio_tungstenite_wasm::WebSocketStream;
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>tokio_util::codec::Framed;

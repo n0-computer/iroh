@@ -2246,12 +2246,12 @@
     pin::Pin,
     sync::Arc,
     task::Poll,
-    time::Duration,
 };
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_relay::RelayMap;
+<span class="kw">use </span>n0_future::time::Duration;
 <span class="kw">use </span>pin_project::pin_project;
 <span class="kw">use </span>tracing::{debug, instrument, trace, warn};
 <span class="kw">use </span>url::Url;
@@ -3974,8 +3974,8 @@
 
     <span class="kw">use </span>std::time::Instant;
 
-    <span class="kw">use </span>futures_lite::StreamExt;
     <span class="kw">use </span>iroh_test::CallOnDrop;
+    <span class="kw">use </span>n0_future::StreamExt;
     <span class="kw">use </span>rand::SeedableRng;
     <span class="kw">use </span>tracing::{error_span, info, info_span, Instrument};
 
@@ -4089,7 +4089,7 @@
 
         <span class="kw">let </span>(server, client) = tokio::time::timeout(
             Duration::from_secs(<span class="number">30</span>),
-            futures_lite::future::zip(server, client),
+            n0_future::future::zip(server, client),
         )
         .<span class="kw">await
         </span>.expect(<span class="string">"timeout"</span>);

@@ -219,15 +219,11 @@
 <a href="#218" id="218">218</a>
 <a href="#219" id="219">219</a>
 <a href="#220" id="220">220</a>
-<a href="#221" id="221">221</a>
-<a href="#222" id="222">222</a>
-<a href="#223" id="223">223</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`BestAddr`] is the currently active best address for UDP sends.
+<a href="#221" id="221">221</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`BestAddr`] is the currently active best address for UDP sends.
 
-</span><span class="kw">use </span>std::{
-    net::SocketAddr,
-    time::{Duration, Instant},
-};
+</span><span class="kw">use </span>std::net::SocketAddr;
 
+<span class="kw">use </span>n0_future::time::{Duration, Instant};
 <span class="kw">use </span>tracing::{debug, info};
 
 <span class="doccomment">/// How long we trust a UDP address as the exclusive path (without using relay) without having heard a Pong reply.

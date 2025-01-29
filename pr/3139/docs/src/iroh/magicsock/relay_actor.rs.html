@@ -1544,9 +1544,7 @@
 <a href="#1543" id="1543">1543</a>
 <a href="#1544" id="1544">1544</a>
 <a href="#1545" id="1545">1545</a>
-<a href="#1546" id="1546">1546</a>
-<a href="#1547" id="1547">1547</a>
-<a href="#1548" id="1548">1548</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1546" id="1546">1546</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1588,9 +1586,6 @@
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>backoff::exponential::{ExponentialBackoff, ExponentialBackoffBuilder};
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
-<span class="kw">use </span>futures_buffered::FuturesUnorderedBounded;
-<span class="kw">use </span>futures_lite::StreamExt;
-<span class="kw">use </span>futures_util::SinkExt;
 <span class="kw">use </span>iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>iroh_relay::{
@@ -1598,11 +1593,12 @@
     client::{Client, ReceivedMessage, SendMessage},
     PingTracker, MAX_PACKET_SIZE,
 };
-<span class="kw">use </span>tokio::{
-    sync::{mpsc, oneshot},
+<span class="kw">use </span>n0_future::{
     task::JoinSet,
-    time::{Duration, Instant, MissedTickBehavior},
+    time::{<span class="self">self</span>, Duration, Instant, MissedTickBehavior},
+    FuturesUnorderedBounded, SinkExt, StreamExt,
 };
+<span class="kw">use </span>tokio::sync::{mpsc, oneshot};
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{debug, error, event, info_span, instrument, trace, warn, Instrument, Level};
 <span class="kw">use </span>url::Url;
@@ -1703,7 +1699,7 @@
     /// Unless it is managing the home relay connection.  Inactivity is only tracked on the
     /// last datagram sent to the relay, received datagrams will trigger QUIC ACKs which is
     /// sufficient to keep active connections open.
-    </span>inactive_timeout: Pin&lt;Box&lt;tokio::time::Sleep&gt;&gt;,
+    </span>inactive_timeout: Pin&lt;Box&lt;time::Sleep&gt;&gt;,
     <span class="doccomment">/// Token indicating the [`ActiveRelayActor`] should stop.
     </span>stop_token: CancellationToken,
 }
@@ -1781,7 +1777,7 @@
             url,
             relay_client_builder,
             is_home_relay: <span class="bool-val">false</span>,
-            inactive_timeout: Box::pin(tokio::time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
+            inactive_timeout: Box::pin(time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
             stop_token,
         }
     }
@@ -1866,7 +1862,7 @@
         // is not an ideal mechanism, an alternative approach would be to use
         // e.g. ConcurrentQueue with force_push, though now you might still send very stale
         // packets when eventually connected.  So perhaps this is a reasonable compromise.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>send_datagram_flush = tokio::time::interval(UNDELIVERABLE_DATAGRAM_TIMEOUT);
+        </span><span class="kw">let </span><span class="kw-2">mut </span>send_datagram_flush = time::interval(UNDELIVERABLE_DATAGRAM_TIMEOUT);
         send_datagram_flush.set_missed_tick_behavior(MissedTickBehavior::Delay);
         send_datagram_flush.reset(); <span class="comment">// Skip the immediate interval
 
@@ -1953,7 +1949,7 @@
             <span class="kw">move </span>|| {
                 <span class="kw">let </span>client_builder = client_builder.clone();
                 <span class="kw">async move </span>{
-                    <span class="kw">match </span>tokio::time::timeout(CONNECT_TIMEOUT, client_builder.connect()).<span class="kw">await </span>{
+                    <span class="kw">match </span>time::timeout(CONNECT_TIMEOUT, client_builder.connect()).<span class="kw">await </span>{
                         <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(client)) =&gt; <span class="prelude-val">Ok</span>(client),
                         <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
                             <span class="macro">warn!</span>(<span class="string">"Relay connection failed: {err:#}"</span>);
@@ -1999,7 +1995,7 @@
         </span><span class="kw">let </span><span class="kw-2">mut </span>send_datagrams_buf = Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE);
 
         <span class="comment">// Regularly send pings so we know the connection is healthy.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>ping_interval = tokio::time::interval(PING_INTERVAL);
+        </span><span class="kw">let </span><span class="kw-2">mut </span>ping_interval = time::interval(PING_INTERVAL);
         ping_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
         ping_interval.reset(); <span class="comment">// skip the ping at current time.
 
@@ -2095,7 +2091,7 @@
                         })
                         .map(<span class="prelude-val">Ok</span>)
                     });
-                    <span class="kw">let </span><span class="kw-2">mut </span>packet_stream = futures_util::stream::iter(packet_iter);
+                    <span class="kw">let </span><span class="kw-2">mut </span>packet_stream = n0_future::stream::iter(packet_iter);
                     <span class="kw">let </span>fut = client_sink.send_all(<span class="kw-2">&amp;mut </span>packet_stream);
                     <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
@@ -2195,7 +2191,7 @@
         <span class="comment">// we use the same time as for our ping interval
         </span><span class="kw">let </span>send_timeout = PING_INTERVAL;
 
-        <span class="kw">let </span><span class="kw-2">mut </span>timeout = <span class="macro">pin!</span>(tokio::time::sleep(send_timeout));
+        <span class="kw">let </span><span class="kw-2">mut </span>timeout = <span class="macro">pin!</span>(time::sleep(send_timeout));
         <span class="kw">let </span><span class="kw-2">mut </span>sending_fut = <span class="macro">pin!</span>(sending_fut);
         <span class="kw">loop </span>{
             <span class="macro">tokio::select!</span> {
@@ -2373,7 +2369,7 @@
         }
 
         <span class="comment">// try shutdown
-        </span><span class="kw">if </span>tokio::time::timeout(Duration::from_secs(<span class="number">3</span>), <span class="self">self</span>.close_all_active_relays())
+        </span><span class="kw">if </span>time::timeout(Duration::from_secs(<span class="number">3</span>), <span class="self">self</span>.close_all_active_relays())
             .<span class="kw">await
             </span>.is_err()
         {
@@ -2422,7 +2418,7 @@
 
     <span class="kw">async fn </span>set_home_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, home_url: RelayUrl) {
         <span class="kw">let </span>home_url_ref = <span class="kw-2">&amp;</span>home_url;
-        futures_buffered::join_all(<span class="self">self</span>.active_relays.iter().map(|(url, handle)| <span class="kw">async move </span>{
+        n0_future::join_all(<span class="self">self</span>.active_relays.iter().map(|(url, handle)| <span class="kw">async move </span>{
             <span class="kw">let </span>is_preferred = url == home_url_ref;
             handle
                 .inbox_addr
@@ -2557,7 +2553,7 @@
                 .<span class="kw">await
                 </span>.ok();
         });
-        futures_buffered::join_all(send_futs).<span class="kw">await</span>;
+        n0_future::join_all(send_futs).<span class="kw">await</span>;
         <span class="self">self</span>.log_active_relay();
     }
 
@@ -2744,8 +2740,8 @@
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>anyhow::Context;
-    <span class="kw">use </span>futures_lite::future;
     <span class="kw">use </span>iroh_base::SecretKey;
+    <span class="kw">use </span>n0_future::future;
     <span class="kw">use </span>smallvec::smallvec;
     <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;

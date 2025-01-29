@@ -887,11 +887,11 @@
     hash::Hash,
     net::{IpAddr, SocketAddr},
     sync::Mutex,
-    time::Instant,
 };
 
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 <span class="kw">use </span>iroh_metrics::inc;
+<span class="kw">use </span>n0_future::time::Instant;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>stun_rs::TransactionId;
 <span class="kw">use </span>tracing::{debug, info, instrument, trace, warn};

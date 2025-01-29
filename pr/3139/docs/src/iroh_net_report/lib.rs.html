@@ -1543,7 +1543,7 @@
 <span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
 <span class="kw">use </span>n0_future::{
     task::{<span class="self">self</span>, AbortOnDropHandle},
-    time::{<span class="self">self</span>, Duration, Instant},
+    time::{Duration, Instant},
 };
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>netwatch::UdpSocket;
@@ -2471,7 +2471,7 @@
         );
         {
             <span class="kw">let </span>sock = sock.clone();
-            tokio::spawn(
+            task::spawn(
                 <span class="kw">async move </span>{
                     <span class="macro">debug!</span>(<span class="string">"udp stun socket listener started"</span>);
                     <span class="comment">// TODO: Can we do better for buffers here?  Probably doesn't matter much.

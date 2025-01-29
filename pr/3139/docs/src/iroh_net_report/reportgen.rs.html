@@ -1976,11 +1976,11 @@
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span><span class="kw-2">mut </span>port_mapping = <span class="self">self</span>.prepare_portmapper_task();
         <span class="attr">#[cfg(wasm_browser)]
-        </span><span class="kw">let </span><span class="kw-2">mut </span>port_mapping = futures_lite::future::pending();
+        </span><span class="kw">let </span><span class="kw-2">mut </span>port_mapping = n0_future::future::pending();
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span><span class="kw-2">mut </span>captive_task = <span class="self">self</span>.prepare_captive_portal_task();
         <span class="attr">#[cfg(wasm_browser)]
-        </span><span class="kw">let </span><span class="kw-2">mut </span>captive_task = futures_lite::future::pending();
+        </span><span class="kw">let </span><span class="kw-2">mut </span>captive_task = n0_future::future::pending();
         <span class="kw">let </span><span class="kw-2">mut </span>probes = <span class="self">self</span>.spawn_probes_task().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>total_timer = time::sleep(OVERALL_REPORT_TIMEOUT);

@@ -16,7 +16,7 @@ stop running.</p>
 allows sending messages to the actor.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.get_report" class="method"><a class="src rightside" href="../src/iroh_net_report/lib.rs.html#432-451">Source</a><h4 class="code-header">pub async fn <a href="#method.get_report" class="fn">get_report</a>(
     &amp;mut self,
-    relay_map: RelayMap,
+    relay_map: <a class="struct" href="../iroh_relay/relay_map/struct.RelayMap.html" title="struct iroh_relay::relay_map::RelayMap">RelayMap</a>,
     stun_sock_v4: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;UdpSocket&gt;&gt;,
     stun_sock_v6: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;UdpSocket&gt;&gt;,
     quic_config: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="struct.QuicConfig.html" title="struct iroh_net_report::QuicConfig">QuicConfig</a>&gt;,
@@ -38,14 +38,14 @@ using QUIC address discovery.</p>
 <p>This will attempt to use <em>all</em> probe protocols.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.get_report_with_opts" class="method"><a class="src rightside" href="../src/iroh_net_report/lib.rs.html#458-468">Source</a><h4 class="code-header">pub async fn <a href="#method.get_report_with_opts" class="fn">get_report_with_opts</a>(
     &amp;mut self,
-    relay_map: RelayMap,
+    relay_map: <a class="struct" href="../iroh_relay/relay_map/struct.RelayMap.html" title="struct iroh_relay::relay_map::RelayMap">RelayMap</a>,
     opts: <a class="struct" href="struct.Options.html" title="struct iroh_net_report::Options">Options</a>,
 ) -&gt; <a class="type" href="https://docs.rs/anyhow/1.0.95/anyhow/type.Result.html" title="type anyhow::Result">Result</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;<a class="struct" href="struct.Report.html" title="struct iroh_net_report::Report">Report</a>&gt;&gt;</h4></section></summary><div class="docblock"><p>Runs a net_report, returning the report.</p>
 <p>It may not be called concurrently with itself, <code>&amp;mut self</code> takes care of that.</p>
 <p>Look at <a href="struct.Options.html" title="struct iroh_net_report::Options"><code>Options</code></a> for the different configuration options.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.get_report_channel" class="method"><a class="src rightside" href="../src/iroh_net_report/lib.rs.html#473-487">Source</a><h4 class="code-header">pub async fn <a href="#method.get_report_channel" class="fn">get_report_channel</a>(
     &amp;mut self,
-    relay_map: RelayMap,
+    relay_map: <a class="struct" href="../iroh_relay/relay_map/struct.RelayMap.html" title="struct iroh_relay::relay_map::RelayMap">RelayMap</a>,
     opts: <a class="struct" href="struct.Options.html" title="struct iroh_net_report::Options">Options</a>,
 ) -&gt; <a class="type" href="https://docs.rs/anyhow/1.0.95/anyhow/type.Result.html" title="type anyhow::Result">Result</a>&lt;Receiver&lt;<a class="type" href="https://docs.rs/anyhow/1.0.95/anyhow/type.Result.html" title="type anyhow::Result">Result</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;<a class="struct" href="struct.Report.html" title="struct iroh_net_report::Report">Report</a>&gt;&gt;&gt;&gt;</h4></section></summary><div class="docblock"><p>Get report with channel</p>
 <p>Look at <a href="struct.Options.html" title="struct iroh_net_report::Options"><code>Options</code></a> for the different configuration options.</p>

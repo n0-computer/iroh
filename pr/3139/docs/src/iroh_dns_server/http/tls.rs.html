@@ -194,7 +194,7 @@
     accept::Accept,
     tls_rustls::{RustlsAcceptor, RustlsConfig},
 };
-<span class="kw">use </span>futures_lite::{future::Boxed <span class="kw">as </span>BoxFuture, FutureExt};
+<span class="kw">use </span>n0_future::{future::Boxed <span class="kw">as </span>BoxFuture, FutureExt};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
 <span class="kw">use </span>tokio_rustls_acme::{axum::AxumAcceptor, caches::DirCache, AcmeConfig};

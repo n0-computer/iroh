@@ -881,7 +881,9 @@
 <a href="#880" id="880">880</a>
 <a href="#881" id="881">881</a>
 <a href="#882" id="882">882</a>
-<a href="#883" id="883">883</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#883" id="883">883</a>
+<a href="#884" id="884">884</a>
+<a href="#885" id="885">885</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -987,13 +989,16 @@
 //! [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
 //! [`StaticProvider`]: static_provider::StaticProvider
 
-</span><span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr, sync::Arc, time::Duration};
+</span><span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr, sync::Arc};
 
 <span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>futures_lite::stream::{Boxed <span class="kw">as </span>BoxStream, StreamExt};
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl};
+<span class="kw">use </span>n0_future::{
+    stream::{Boxed <span class="kw">as </span>BoxStream, StreamExt},
+    task::{<span class="self">self</span>, AbortOnDropHandle},
+    time::{<span class="self">self</span>, Duration},
+};
 <span class="kw">use </span>tokio::sync::oneshot;
-<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
 
 <span class="kw">use </span><span class="kw">crate</span>::Endpoint;
@@ -1140,7 +1145,7 @@
             .iter()
             .filter_map(|service| service.resolve(endpoint.clone(), node_id));
 
-        <span class="kw">let </span>streams = futures_buffered::MergeBounded::from_iter(streams);
+        <span class="kw">let </span>streams = n0_future::MergeBounded::from_iter(streams);
         <span class="prelude-val">Some</span>(Box::pin(streams))
     }
 
@@ -1152,7 +1157,7 @@
             }
         }
 
-        <span class="kw">let </span>streams = futures_buffered::MergeBounded::from_iter(streams);
+        <span class="kw">let </span>streams = n0_future::MergeBounded::from_iter(streams);
         <span class="prelude-val">Some</span>(Box::pin(streams))
     }
 }
@@ -1173,7 +1178,7 @@
         <span class="macro">ensure!</span>(ep.discovery().is_some(), <span class="string">"No discovery services configured"</span>);
         <span class="kw">let </span>(on_first_tx, on_first_rx) = oneshot::channel();
         <span class="kw">let </span>me = ep.node_id();
-        <span class="kw">let </span>task = tokio::task::spawn(
+        <span class="kw">let </span>task = task::spawn(
             <span class="kw">async move </span>{ <span class="self">Self</span>::run(ep, node_id, on_first_tx).<span class="kw">await </span>}.instrument(
                 <span class="macro">error_span!</span>(<span class="string">"discovery"</span>, me = %me.fmt_short(), node = %node_id.fmt_short()),
             ),
@@ -1205,11 +1210,11 @@
         <span class="kw">let </span>(on_first_tx, on_first_rx) = oneshot::channel();
         <span class="kw">let </span>ep = ep.clone();
         <span class="kw">let </span>me = ep.node_id();
-        <span class="kw">let </span>task = tokio::task::spawn(
+        <span class="kw">let </span>task = task::spawn(
             <span class="kw">async move </span>{
                 <span class="comment">// If delay is set, wait and recheck if discovery is needed. If not, early-exit.
                 </span><span class="kw">if let </span><span class="prelude-val">Some</span>(delay) = delay {
-                    tokio::time::sleep(delay).<span class="kw">await</span>;
+                    time::sleep(delay).<span class="kw">await</span>;
                     <span class="kw">if </span>!<span class="self">Self</span>::needs_discovery(<span class="kw-2">&amp;</span>ep, node_id) {
                         <span class="macro">debug!</span>(<span class="string">"no discovery needed, abort"</span>);
                         on_first_tx.send(<span class="prelude-val">Ok</span>(())).ok();
@@ -1409,7 +1414,7 @@
                     };
                     <span class="kw">let </span>delay = <span class="self">self</span>.delay;
                     <span class="kw">let </span>fut = <span class="kw">async move </span>{
-                        tokio::time::sleep(delay).<span class="kw">await</span>;
+                        time::sleep(delay).<span class="kw">await</span>;
                         <span class="macro">tracing::debug!</span>(
                             <span class="string">"resolve on {}: {} = {item:?}"</span>,
                             endpoint.node_id().fmt_short(),
@@ -1417,9 +1422,9 @@
                         );
                         <span class="prelude-val">Ok</span>(item)
                     };
-                    futures_lite::stream::once_future(fut).boxed()
+                    n0_future::stream::once_future(fut).boxed()
                 }
-                <span class="prelude-val">None </span>=&gt; futures_lite::stream::empty().boxed(),
+                <span class="prelude-val">None </span>=&gt; n0_future::stream::empty().boxed(),
             };
             <span class="prelude-val">Some</span>(stream)
         }
@@ -1435,7 +1440,7 @@
             _endpoint: Endpoint,
             _node_id: NodeId,
         ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
-            <span class="prelude-val">Some</span>(futures_lite::stream::empty().boxed())
+            <span class="prelude-val">Some</span>(n0_future::stream::empty().boxed())
         }
     }
 
@@ -1634,11 +1639,10 @@
 /// publish to. The DNS and pkarr servers share their state.
 </span><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>test_dns_pkarr {
-    <span class="kw">use </span>std::time::Duration;
-
     <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>iroh_base::{NodeAddr, SecretKey};
     <span class="kw">use </span>iroh_relay::RelayMap;
+    <span class="kw">use </span>n0_future::time::Duration;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 
     <span class="kw">use crate</span>::{
