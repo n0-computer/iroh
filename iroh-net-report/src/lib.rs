@@ -28,6 +28,7 @@ use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{Duration, Instant},
 };
+#[cfg(not(wasm_browser))]
 use netwatch::UdpSocket;
 use tokio::sync::{self, mpsc, oneshot};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
