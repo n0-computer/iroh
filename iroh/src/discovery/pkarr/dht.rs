@@ -386,7 +386,7 @@ impl Discovery for DhtDiscovery {
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect("valid public key");
         tracing::info!("resolving {} as {}", node_id, pkarr_public_key.to_z32());
 
-        let mut stream = futures_buffered::FuturesUnorderedBounded::new(2);
+        let mut stream = n0_future::FuturesUnorderedBounded::new(2);
         if self.0.pkarr_relay.is_some() {
             let key = pkarr_public_key.clone();
             let discovery = self.0.clone();
