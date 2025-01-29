@@ -41,6 +41,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
+#[cfg(not(wasm_browser))]
 use hickory_resolver::{proto::ProtoError, Name, TokioResolver};
 use iroh_base::{NodeAddr, NodeId, SecretKey};
 use tracing::warn;
@@ -163,6 +164,7 @@ impl NodeInfo {
         self.into()
     }
 
+    #[cfg(not(wasm_browser))]
     /// Parses a [`NodeInfo`] from a TXT records lookup.
     pub fn from_hickory_lookup(lookup: hickory_resolver::lookup::TxtLookup) -> Result<Self> {
         let attrs = TxtAttrs::from_hickory_lookup(lookup)?;
@@ -187,6 +189,7 @@ impl NodeInfo {
     }
 
     /// Converts into a [`hickory_resolver::proto::rr::Record`] DNS record.
+    #[cfg(not(wasm_browser))]
     pub fn to_hickory_records(
         &self,
         origin: &str,
@@ -203,6 +206,7 @@ impl NodeInfo {
 /// Takes a [`hickory_resolver::proto::rr::Name`] DNS name and expects the first label to be
 /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
 /// subsequent labels.
+#[cfg(not(wasm_browser))]
 pub(crate) fn node_id_from_hickory_name(
     name: &hickory_resolver::proto::rr::Name,
 ) -> Option<NodeId> {
@@ -256,6 +260,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         Ok(Self { attrs, node_id })
     }
 
+    #[cfg(not(wasm_browser))]
     async fn lookup(resolver: &TokioResolver, name: Name) -> Result<Self> {
         let name = ensure_iroh_txt_label(name)?;
         let lookup = resolver.txt_lookup(name).await?;
@@ -264,6 +269,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Looks up attributes by [`NodeId`] and origin domain.
+    #[cfg(not(wasm_browser))]
     pub async fn lookup_by_id(
         resolver: &TokioResolver,
         node_id: &NodeId,
@@ -274,6 +280,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Looks up attributes by DNS name.
+    #[cfg(not(wasm_browser))]
     pub async fn lookup_by_name(resolver: &TokioResolver, name: &str) -> Result<Self> {
         let name = Name::from_str(name)?;
         TxtAttrs::lookup(resolver, name).await
@@ -313,6 +320,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Parses a TXT records lookup.
+    #[cfg(not(wasm_browser))]
     pub fn from_hickory_lookup(lookup: hickory_resolver::lookup::TxtLookup) -> Result<Self> {
         let queried_node_id = node_id_from_hickory_name(lookup.query().name())
             .ok_or_else(|| anyhow!("invalid DNS answer: not a query for _iroh.z32encodedpubkey"))?;
@@ -360,6 +368,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Converts to a list of [`hickory_resolver::proto::rr::Record`] resource records.
+    #[cfg(not(wasm_browser))]
     pub fn to_hickory_records(
         &self,
         origin: &str,
@@ -386,7 +395,8 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     ) -> Result<pkarr::SignedPacket> {
         let packet = self.to_pkarr_dns_packet(ttl)?;
         let keypair = pkarr::Keypair::from_secret_key(&secret_key.to_bytes());
-        let signed_packet = pkarr::SignedPacket::from_packet(&keypair, &packet)?;
+        let signed_packet = pkarr::SignedPacket::from_packet(&keypair, &packet)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(signed_packet)
     }
 
@@ -410,6 +420,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 }
 
+#[cfg(not(wasm_browser))]
 fn ensure_iroh_txt_label(name: Name) -> Result<Name, ProtoError> {
     if name.iter().next() == Some(IROH_TXT_NAME.as_bytes()) {
         Ok(name)
@@ -418,6 +429,7 @@ fn ensure_iroh_txt_label(name: Name) -> Result<Name, ProtoError> {
     }
 }
 
+#[cfg(not(wasm_browser))]
 fn node_domain(node_id: &NodeId, origin: &str) -> Result<Name> {
     let domain = format!("{}.{}", to_z32(node_id), origin);
     let domain = Name::from_str(&domain)?;
@@ -443,7 +455,7 @@ mod tests {
     use testresult::TestResult;
 
     use super::NodeInfo;
-    use crate::dns::node_info::to_z32;
+    use crate::node_info::to_z32;
 
     #[test]
     fn txt_attr_roundtrip() {

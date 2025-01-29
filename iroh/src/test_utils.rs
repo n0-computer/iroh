@@ -388,7 +388,7 @@ pub(crate) mod pkarr_dns_state {
     use pkarr::SignedPacket;
 
     use crate::{
-        dns::node_info::{node_id_from_hickory_name, NodeInfo},
+        node_info::{node_id_from_hickory_name, NodeInfo},
         test_utils::dns_server::QueryHandler,
     };
 

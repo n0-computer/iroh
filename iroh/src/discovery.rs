@@ -109,7 +109,8 @@ use std::{collections::BTreeSet, net::SocketAddr, sync::Arc};
 use anyhow::{anyhow, ensure, Result};
 use iroh_base::{NodeAddr, NodeId, RelayUrl};
 use n0_future::{
-    stream::{Boxed as BoxStream, StreamExt},
+    boxed::BoxStream,
+    stream::StreamExt,
     task::{self, AbortOnDropHandle},
     time::{self, Duration},
 };
@@ -118,6 +119,7 @@ use tracing::{debug, error_span, warn, Instrument};
 
 use crate::Endpoint;
 
+#[cfg(not(wasm_browser))]
 pub mod dns;
 
 #[cfg(feature = "discovery-local-network")]
@@ -423,12 +425,6 @@ impl DiscoveryTask {
             let err = anyhow!("Discovery produced no results for {}", node_id.fmt_short());
             tx.send(Err(err)).ok();
         }
-    }
-}
-
-impl Drop for DiscoveryTask {
-    fn drop(&mut self) {
-        self.task.abort();
     }
 }
 
@@ -762,7 +758,8 @@ mod test_dns_pkarr {
 
     use crate::{
         discovery::pkarr::PkarrPublisher,
-        dns::{node_info::NodeInfo, ResolverExt},
+        dns::ResolverExt,
+        node_info::NodeInfo,
         test_utils::{
             dns_server::{create_dns_resolver, run_dns_server},
             pkarr_dns_state::State,

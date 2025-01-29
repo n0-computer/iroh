@@ -38,12 +38,11 @@ use iroh_metrics::{inc, inc_by};
 use iroh_relay::{protos::stun, RelayMap};
 use n0_future::{
     boxed::BoxStream,
-    task,
-    task::JoinSet,
-    time,
-    time::{Duration, Instant},
+    task::{self, JoinSet},
+    time::{self, Duration, Instant},
     FutureExt, StreamExt,
 };
+#[cfg(not(wasm_browser))]
 use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -57,19 +56,21 @@ use tracing::{
 };
 use url::Url;
 
+#[cfg(not(wasm_browser))]
+use self::udp_conn::UdpConn;
 use self::{
     metrics::Metrics as MagicsockMetrics,
     node_map::{NodeMap, PingAction, PingRole, SendPing},
     relay_actor::{RelayActor, RelayActorMessage, RelayRecvDatagram},
-    udp_conn::UdpConn,
 };
+#[cfg(not(wasm_browser))]
+use crate::dns::DnsResolver;
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem},
-    dns::DnsResolver,
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     watchable::{Watchable, Watcher},
 };
@@ -77,6 +78,7 @@ use crate::{
 mod metrics;
 mod node_map;
 mod relay_actor;
+#[cfg(not(wasm_browser))]
 mod udp_conn;
 
 pub use node_map::Source;
@@ -120,6 +122,7 @@ pub(crate) struct Options {
     ///
     /// You can use [`crate::dns::default_resolver`] for a resolver that uses the system's DNS
     /// configuration.
+    #[cfg(not(wasm_browser))]
     pub(crate) dns_resolver: DnsResolver,
 
     /// Proxy configuration.
@@ -146,6 +149,7 @@ impl Default for Options {
             node_map: None,
             discovery: None,
             proxy_url: None,
+            #[cfg(not(wasm_browser))]
             dns_resolver: crate::dns::default_resolver().clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -199,6 +203,7 @@ pub(crate) struct MagicSock {
     poll_recv_counter: AtomicUsize,
 
     /// The DNS resolver to be used in this magicsock.
+    #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
 
     /// Key for this node.
@@ -207,6 +212,7 @@ pub(crate) struct MagicSock {
     secret_encryption_key: crypto_box::SecretKey,
 
     /// Cached version of the Ipv4 and Ipv6 addrs of the current connection.
+    #[cfg(not(wasm_browser))]
     local_addrs: std::sync::RwLock<(SocketAddr, Option<SocketAddr>)>,
 
     /// Preferred port from `Options::port`; 0 means auto.
@@ -226,8 +232,10 @@ pub(crate) struct MagicSock {
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
     /// UDP IPv4 socket
+    #[cfg(not(wasm_browser))]
     pconn4: UdpConn,
     /// UDP IPv6 socket
+    #[cfg(not(wasm_browser))]
     pconn6: Option<UdpConn>,
     /// NetReport client
     net_reporter: net_report::Addr,
@@ -295,6 +303,7 @@ impl MagicSock {
     }
 
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
+    #[cfg(not(wasm_browser))]
     pub(crate) fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
         *self.local_addrs.read().expect("not poisoned")
     }
@@ -395,6 +404,7 @@ impl MagicSock {
     }
 
     /// Get a reference to the DNS resolver used in this [`MagicSock`].
+    #[cfg(not(wasm_browser))]
     pub(crate) fn dns_resolver(&self) -> &DnsResolver {
         &self.dns_resolver
     }
@@ -420,6 +430,7 @@ impl MagicSock {
             .ok();
     }
 
+    #[cfg(not(wasm_browser))]
     #[cfg_attr(windows, allow(dead_code))]
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
         let (v4, v6) = self.local_addr();
@@ -442,11 +453,15 @@ impl MagicSock {
         // Right now however we have one single poller behaving the same for each
         // connection.  It checks all paths and returns Poll::Ready as soon as any path is
         // ready.
+        #[cfg(not(wasm_browser))]
         let ipv4_poller = self.pconn4.create_io_poller();
+        #[cfg(not(wasm_browser))]
         let ipv6_poller = self.pconn6.as_ref().map(|sock| sock.create_io_poller());
         let relay_sender = self.relay_datagram_send_channel.clone();
         Box::pin(IoPoller {
+            #[cfg(not(wasm_browser))]
             ipv4_poller,
+            #[cfg(not(wasm_browser))]
             ipv6_poller,
             relay_sender,
         })
@@ -495,11 +510,12 @@ impl MagicSock {
                 }
 
                 let mut udp_sent = false;
-                let mut udp_error = None;
+                let mut udp_error: Option<io::Error> = None;
                 let mut relay_sent = false;
                 let mut relay_error = None;
 
                 // send udp
+                #[cfg(not(wasm_browser))]
                 if let Some(addr) = udp_addr {
                     // rewrite target address
                     transmit.destination = addr;
@@ -535,10 +551,13 @@ impl MagicSock {
                     }
                 }
 
+                #[cfg(not(wasm_browser))]
                 let udp_pending = udp_error
                     .as_ref()
                     .map(|err| err.kind() == io::ErrorKind::WouldBlock)
                     .unwrap_or_default();
+                #[cfg(wasm_browser)]
+                let udp_pending = false;
                 let relay_pending = relay_error
                     .as_ref()
                     .map(|err| err.kind() == io::ErrorKind::WouldBlock)
@@ -635,6 +654,7 @@ impl MagicSock {
         }
     }
 
+    #[cfg(not(wasm_browser))]
     fn try_send_udp(&self, addr: SocketAddr, transmit: &quinn_udp::Transmit) -> io::Result<()> {
         let conn = self.conn_for_addr(addr)?;
         conn.try_send(transmit)?;
@@ -647,6 +667,7 @@ impl MagicSock {
         Ok(())
     }
 
+    #[cfg(not(wasm_browser))]
     fn conn_for_addr(&self, addr: SocketAddr) -> io::Result<&UdpConn> {
         let sock = match addr {
             SocketAddr::V4(_) => &self.pconn4,
@@ -674,6 +695,7 @@ impl MagicSock {
         // Three macros to help polling: they return if they get a result, execution
         // continues if they were Pending and we need to poll others (or finally return
         // Pending).
+        #[cfg(not(wasm_browser))]
         macro_rules! poll_ipv4 {
             () => {
                 match self.pconn4.poll_recv(cx, bufs, metas)? {
@@ -685,6 +707,7 @@ impl MagicSock {
                 }
             };
         }
+        #[cfg(not(wasm_browser))]
         macro_rules! poll_ipv6 {
             () => {
                 if let Some(ref pconn) = self.pconn6 {
@@ -707,7 +730,9 @@ impl MagicSock {
             };
         }
 
+        #[cfg(not(wasm_browser))]
         let counter = self.poll_recv_counter.fetch_add(1, Ordering::Relaxed);
+        #[cfg(not(wasm_browser))]
         match counter % 3 {
             0 => {
                 // order of polling: UDPv4, UDPv6, relay
@@ -731,6 +756,11 @@ impl MagicSock {
                 Poll::Pending
             }
         }
+        #[cfg(wasm_browser)]
+        {
+            poll_relay!();
+            Poll::Pending
+        }
     }
 
     /// Process datagrams received from UDP sockets.
@@ -739,6 +769,7 @@ impl MagicSock {
     ///
     /// This fixes up the datagrams to use the correct [`QuicMappedAddr`] and extracts DISCO
     /// packets, processing them inside the magic socket.
+    #[cfg(not(wasm_browser))]
     fn process_udp_datagrams(
         &self,
         from_ipv4: bool,
@@ -942,11 +973,11 @@ impl MagicSock {
         let quic_mapped_addr = self.node_map.receive_relay(&dm.url, dm.src);
 
         // Normalize local_ip
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, wasm_browser)))]
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
         // Reasoning for this here:
         // https://github.com/n0-computer/iroh/pull/2595#issuecomment-2290947319
-        #[cfg(windows)]
+        #[cfg(any(windows, wasm_browser))]
         let dst_ip = None;
 
         let meta = quinn_udp::RecvMeta {
@@ -1141,10 +1172,16 @@ impl MagicSock {
             node_key: self.public_key(),
         });
         let sent = match dst {
+            #[cfg(not(wasm_browser))]
             SendAddr::Udp(addr) => self
                 .udp_disco_sender
                 .try_send((addr, dst_node, msg))
                 .is_ok(),
+            #[cfg(wasm_browser)]
+            SendAddr::Udp(_) => {
+                // Ignoring sending pings over UDP. We don't have a UDP socket.
+                return;
+            }
             SendAddr::Relay(ref url) => self.send_disco_message_relay(url, dst_node, msg),
         };
         if sent {
@@ -1210,8 +1247,13 @@ impl MagicSock {
         msg: disco::Message,
     ) -> io::Result<()> {
         match dst {
+            #[cfg(not(wasm_browser))]
             SendAddr::Udp(addr) => {
                 self.try_send_disco_message_udp(addr, dst_key, &msg)?;
+            }
+            #[cfg(wasm_browser)]
+            SendAddr::Udp(addr) => {
+                error!(?addr, "Asked to send on UDP in browser code");
             }
             SendAddr::Relay(ref url) => {
                 if !self.send_disco_message_relay(url, dst_key, msg) {
@@ -1245,6 +1287,7 @@ impl MagicSock {
         }
     }
 
+    #[cfg(not(wasm_browser))]
     async fn send_disco_message_udp(
         &self,
         dst: SocketAddr,
@@ -1271,6 +1314,7 @@ impl MagicSock {
         .await
     }
 
+    #[cfg(not(wasm_browser))]
     fn try_send_disco_message_udp(
         &self,
         dst: SocketAddr,
@@ -1510,6 +1554,7 @@ impl Handle {
     }
 
     async fn with_name(me: String, opts: Options) -> Result<Self> {
+        #[cfg(not(wasm_browser))]
         let port_mapper = portmapper::Client::default();
 
         let Options {
@@ -1519,6 +1564,7 @@ impl Handle {
             relay_map,
             node_map,
             discovery,
+            #[cfg(not(wasm_browser))]
             dns_resolver,
             proxy_url,
             #[cfg(any(test, feature = "test-utils"))]
@@ -1527,30 +1573,42 @@ impl Handle {
             path_selection,
         } = opts;
 
-        let relay_datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
-
+        #[cfg(not(wasm_browser))]
         let (pconn4, pconn6) = bind(addr_v4, addr_v6)?;
+        #[cfg(not(wasm_browser))]
         let port = pconn4.port();
+        #[cfg(wasm_browser)]
+        let port = 0;
 
         // NOTE: we can end up with a zero port if `std::net::UdpSocket::socket_addr` fails
+        #[cfg(not(wasm_browser))]
         match port.try_into() {
             Ok(non_zero_port) => {
                 port_mapper.update_local_port(non_zero_port);
             }
             Err(_zero_port) => debug!("Skipping port mapping with zero local port"),
         }
+        #[cfg(not(wasm_browser))]
         let ipv4_addr = pconn4.local_addr()?;
+        #[cfg(not(wasm_browser))]
         let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
-        let net_reporter =
-            net_report::Client::new(Some(port_mapper.clone()), dns_resolver.clone())?;
+        let net_reporter = net_report::Client::new(
+            #[cfg(not(wasm_browser))]
+            Some(port_mapper.clone()),
+            #[cfg(not(wasm_browser))]
+            dns_resolver.clone(),
+        )?;
 
+        #[cfg(not(wasm_browser))]
         let pconn4_sock = pconn4.as_socket();
+        #[cfg(not(wasm_browser))]
         let pconn6_sock = pconn6.as_ref().map(|p| p.as_socket());
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
         let (relay_actor_sender, relay_actor_receiver) = mpsc::channel(256);
         let (relay_datagram_send_tx, relay_datagram_send_rx) = relay_datagram_send_channel();
+        let relay_datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
         let (udp_disco_sender, mut udp_disco_receiver) = mpsc::channel(256);
 
         // load the node data
@@ -1568,6 +1626,7 @@ impl Handle {
             secret_key,
             secret_encryption_key,
             proxy_url,
+            #[cfg(not(wasm_browser))]
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
@@ -1579,7 +1638,9 @@ impl Handle {
             relay_map,
             my_relay: Default::default(),
             net_reporter: net_reporter.addr(),
+            #[cfg(not(wasm_browser))]
             pconn4,
+            #[cfg(not(wasm_browser))]
             pconn6,
             disco_secrets: DiscoSecrets::default(),
             node_map,
@@ -1588,6 +1649,7 @@ impl Handle {
             direct_addrs: Default::default(),
             pending_call_me_maybes: Default::default(),
             direct_addr_update_state: DirectAddrUpdateState::new(),
+            #[cfg(not(wasm_browser))]
             dns_resolver,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
@@ -1606,16 +1668,22 @@ impl Handle {
             .instrument(info_span!("relay-actor")),
         );
 
-        let inner2 = inner.clone();
-        actor_tasks.spawn(async move {
-            while let Some((dst, dst_key, msg)) = udp_disco_receiver.recv().await {
-                if let Err(err) = inner2.send_disco_message_udp(dst, dst_key, &msg).await {
-                    warn!(%dst, node = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
+        #[cfg(not(wasm_browser))]
+        {
+            actor_tasks.spawn({
+                let inner = inner.clone();
+                async move {
+                    while let Some((dst, dst_key, msg)) = udp_disco_receiver.recv().await {
+                        if let Err(err) = inner.send_disco_message_udp(dst, dst_key, &msg).await {
+                            warn!(%dst, node = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
+                        }
+                    }
                 }
-            }
-        });
+            });
+        }
 
         let inner2 = inner.clone();
+        #[cfg(not(wasm_browser))]
         let network_monitor = netmon::Monitor::new().await?;
         actor_tasks.spawn(
             async move {
@@ -1627,11 +1695,15 @@ impl Handle {
                     msock: inner2,
                     periodic_re_stun_timer: new_re_stun_timer(false),
                     net_info_last: None,
+                    #[cfg(not(wasm_browser))]
                     port_mapper,
+                    #[cfg(not(wasm_browser))]
                     pconn4: pconn4_sock,
+                    #[cfg(not(wasm_browser))]
                     pconn6: pconn6_sock,
                     no_v4_send: false,
                     net_reporter,
+                    #[cfg(not(wasm_browser))]
                     network_monitor,
                 };
 
@@ -1909,6 +1981,7 @@ impl AsyncUdpSocket for Handle {
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
+        #[cfg(not(wasm_browser))]
         match &*self.msock.local_addrs.read().expect("not poisoned") {
             (ipv4, None) => {
                 // Pretend to be IPv6, because our QuinnMappedAddrs
@@ -1921,8 +1994,12 @@ impl AsyncUdpSocket for Handle {
             }
             (_, Some(ipv6)) => Ok(*ipv6),
         }
+        // Again, we need to pretend we're IPv6, because of our QuinnMappedAddrs.
+        #[cfg(wasm_browser)]
+        return Ok(SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), 0));
     }
 
+    #[cfg(not(wasm_browser))]
     fn max_transmit_segments(&self) -> usize {
         if let Some(pconn6) = self.pconn6.as_ref() {
             std::cmp::min(
@@ -1934,6 +2011,12 @@ impl AsyncUdpSocket for Handle {
         }
     }
 
+    #[cfg(wasm_browser)]
+    fn max_transmit_segments(&self) -> usize {
+        1
+    }
+
+    #[cfg(not(wasm_browser))]
     fn max_receive_segments(&self) -> usize {
         if let Some(pconn6) = self.pconn6.as_ref() {
             // `max_receive_segments` controls the size of the `RecvMeta` buffer
@@ -1951,6 +2034,12 @@ impl AsyncUdpSocket for Handle {
         }
     }
 
+    #[cfg(wasm_browser)]
+    fn max_receive_segments(&self) -> usize {
+        1
+    }
+
+    #[cfg(not(wasm_browser))]
     fn may_fragment(&self) -> bool {
         if let Some(pconn6) = self.pconn6.as_ref() {
             pconn6.may_fragment() || self.pconn4.may_fragment()
@@ -1958,11 +2047,18 @@ impl AsyncUdpSocket for Handle {
             self.pconn4.may_fragment()
         }
     }
+
+    #[cfg(wasm_browser)]
+    fn may_fragment(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug)]
 struct IoPoller {
+    #[cfg(not(wasm_browser))]
     ipv4_poller: Pin<Box<dyn quinn::UdpPoller>>,
+    #[cfg(not(wasm_browser))]
     ipv6_poller: Option<Pin<Box<dyn quinn::UdpPoller>>>,
     relay_sender: RelayDatagramSendChannelSender,
 }
@@ -1971,10 +2067,12 @@ impl quinn::UdpPoller for IoPoller {
     fn poll_writable(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
         // This version returns Ready as soon as any of them are ready.
         let this = &mut *self;
+        #[cfg(not(wasm_browser))]
         match this.ipv4_poller.as_mut().poll_writable(cx) {
             Poll::Ready(_) => return Poll::Ready(Ok(())),
             Poll::Pending => (),
         }
+        #[cfg(not(wasm_browser))]
         if let Some(ref mut ipv6_poller) = this.ipv6_poller {
             match ipv6_poller.as_mut().poll_writable(cx) {
                 Poll::Ready(_) => return Poll::Ready(Ok(())),
@@ -2007,10 +2105,13 @@ struct Actor {
     net_info_last: Option<NetInfo>,
 
     // The underlying UDP sockets used to send/rcv packets.
+    #[cfg(not(wasm_browser))]
     pconn4: Arc<UdpSocket>,
+    #[cfg(not(wasm_browser))]
     pconn6: Option<Arc<UdpSocket>>,
 
     /// The NAT-PMP/PCP/UPnP prober/client, for requesting port mappings from NAT devices.
+    #[cfg(not(wasm_browser))]
     port_mapper: portmapper::Client,
 
     /// Whether IPv4 UDP is known to be unable to transmit
@@ -2021,13 +2122,16 @@ struct Actor {
     /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
     net_reporter: net_report::Client,
 
+    #[cfg(not(wasm_browser))]
     network_monitor: netmon::Monitor,
 }
 
 impl Actor {
     async fn run(mut self) -> Result<()> {
         // Setup network monitoring
+        #[cfg(not(wasm_browser))]
         let (link_change_s, mut link_change_r) = mpsc::channel(8);
+        #[cfg(not(wasm_browser))]
         let _token = self
             .network_monitor
             .subscribe(move |is_major| {
@@ -2040,12 +2144,14 @@ impl Actor {
             .await?;
 
         // Let the the heartbeat only start a couple seconds later
+        #[cfg(not(wasm_browser))]
         let mut direct_addr_heartbeat_timer = time::interval_at(
             time::Instant::now() + HEARTBEAT_INTERVAL,
             HEARTBEAT_INTERVAL,
         );
         let mut direct_addr_update_receiver =
             self.msock.direct_addr_update_state.running.subscribe();
+        #[cfg(not(wasm_browser))]
         let mut portmap_watcher = self.port_mapper.watch_external_address();
 
         let mut discovery_events: BoxStream<DiscoveryItem> = Box::pin(n0_future::stream::empty());
@@ -2056,10 +2162,26 @@ impl Actor {
         }
 
         let mut receiver_closed = false;
+        #[cfg_attr(wasm_browser, allow(unused_mut))]
         let mut portmap_watcher_closed = false;
         let mut link_change_closed = false;
         loop {
             inc!(Metrics, actor_tick_main);
+            #[cfg(not(wasm_browser))]
+            let portmap_watcher_changed = portmap_watcher.changed();
+            #[cfg(wasm_browser)]
+            let portmap_watcher_changed = n0_future::future::pending();
+
+            #[cfg(not(wasm_browser))]
+            let direct_addr_heartbeat_timer_tick = direct_addr_heartbeat_timer.tick();
+            #[cfg(wasm_browser)]
+            let direct_addr_heartbeat_timer_tick = n0_future::future::pending();
+
+            #[cfg(not(wasm_browser))]
+            let link_change_r_recv = link_change_r.recv();
+            #[cfg(wasm_browser)]
+            let link_change_r_recv = n0_future::future::pending();
+
             tokio::select! {
                 msg = self.msg_receiver.recv(), if !receiver_closed => {
                     let Some(msg) = msg else {
@@ -2081,32 +2203,40 @@ impl Actor {
                     inc!(Metrics, actor_tick_re_stun);
                     self.msock.re_stun("periodic");
                 }
-                change = portmap_watcher.changed(), if !portmap_watcher_closed => {
-                    if change.is_err() {
-                        trace!("tick: portmap watcher closed");
-                        inc!(Metrics, actor_tick_other);
+                change = portmap_watcher_changed, if !portmap_watcher_closed => {
+                    #[cfg(not(wasm_browser))]
+                    {
+                        if change.is_err() {
+                            trace!("tick: portmap watcher closed");
+                            inc!(Metrics, actor_tick_other);
 
-                        portmap_watcher_closed = true;
-                        continue;
+                            portmap_watcher_closed = true;
+                            continue;
+                        }
+
+                        trace!("tick: portmap changed");
+                        inc!(Metrics, actor_tick_portmap_changed);
+                        let new_external_address = *portmap_watcher.borrow();
+                        debug!("external address updated: {new_external_address:?}");
+                        self.msock.re_stun("portmap_updated");
                     }
-
-                    trace!("tick: portmap changed");
-                    inc!(Metrics, actor_tick_portmap_changed);
-                    let new_external_address = *portmap_watcher.borrow();
-                    debug!("external address updated: {new_external_address:?}");
-                    self.msock.re_stun("portmap_updated");
+                    #[cfg(wasm_browser)]
+                    let _unused_in_browsers = change;
                 },
-                _ = direct_addr_heartbeat_timer.tick() => {
-                    trace!(
-                        "tick: direct addr heartbeat {} direct addrs",
-                        self.msock.node_map.node_count(),
-                    );
-                    inc!(Metrics, actor_tick_direct_addr_heartbeat);
-                    // TODO: this might trigger too many packets at once, pace this
+                _ = direct_addr_heartbeat_timer_tick => {
+                    #[cfg(not(wasm_browser))]
+                    {
+                        trace!(
+                            "tick: direct addr heartbeat {} direct addrs",
+                            self.msock.node_map.node_count(),
+                        );
+                        inc!(Metrics, actor_tick_direct_addr_heartbeat);
+                        // TODO: this might trigger too many packets at once, pace this
 
-                    self.msock.node_map.prune_inactive();
-                    let msgs = self.msock.node_map.nodes_stayin_alive();
-                    self.handle_ping_actions(msgs).await;
+                        self.msock.node_map.prune_inactive();
+                        let msgs = self.msock.node_map.nodes_stayin_alive();
+                        self.handle_ping_actions(msgs).await;
+                    }
                 }
                 _ = direct_addr_update_receiver.changed() => {
                     let reason = *direct_addr_update_receiver.borrow();
@@ -2116,18 +2246,23 @@ impl Actor {
                         self.refresh_direct_addrs(reason).await;
                     }
                 }
-                is_major = link_change_r.recv(), if !link_change_closed => {
-                    let Some(is_major) = is_major else {
-                        trace!("tick: link change receiver closed");
-                        inc!(Metrics, actor_tick_other);
+                is_major = link_change_r_recv, if !link_change_closed => {
+                    #[cfg(not(wasm_browser))]
+                    {
+                        let Some(is_major) = is_major else {
+                            trace!("tick: link change receiver closed");
+                            inc!(Metrics, actor_tick_other);
 
-                        link_change_closed = true;
-                        continue;
-                    };
+                            link_change_closed = true;
+                            continue;
+                        };
 
-                    trace!("tick: link change {}", is_major);
-                    inc!(Metrics, actor_link_change);
-                    self.handle_network_change(is_major).await;
+                        trace!("tick: link change {}", is_major);
+                        inc!(Metrics, actor_link_change);
+                        self.handle_network_change(is_major).await;
+                    }
+                    #[cfg(wasm_browser)]
+                    let _unused_in_browsers = is_major;
                 }
                 // Even if `discovery_events` yields `None`, it could begin to yield
                 // `Some` again in the future, so we don't want to disable this branch
@@ -2146,6 +2281,7 @@ impl Actor {
         }
     }
 
+    #[cfg(not(wasm_browser))]
     async fn handle_network_change(&mut self, is_major: bool) {
         debug!("link change detected: major? {}", is_major);
 
@@ -2187,6 +2323,7 @@ impl Actor {
                 debug!("shutting down");
 
                 self.msock.node_map.notify_shutdown();
+                #[cfg(not(wasm_browser))]
                 self.port_mapper.deactivate();
                 self.relay_actor_cancel_token.cancel();
 
@@ -2211,6 +2348,7 @@ impl Actor {
                 self.finalize_direct_addrs_update(why);
             }
             ActorMessage::NetworkChange => {
+                #[cfg(not(wasm_browser))]
                 self.network_monitor.network_change().await.ok();
             }
             #[cfg(test)]
@@ -2234,6 +2372,7 @@ impl Actor {
         inc!(MagicsockMetrics, update_direct_addrs);
 
         debug!("starting direct addr update ({})", why);
+        #[cfg(not(wasm_browser))]
         self.port_mapper.procure_mapping();
         self.update_net_info(why).await;
     }
@@ -2246,6 +2385,7 @@ impl Actor {
     /// - The portmapper.
     /// - A net_report report.
     /// - The local interfaces IP addresses.
+    #[cfg(not(wasm_browser))]
     fn update_direct_addresses(&mut self, net_report_report: Option<Arc<net_report::Report>>) {
         let portmap_watcher = self.port_mapper.watch_external_address();
 
@@ -2381,7 +2521,10 @@ impl Actor {
                 self.msock.direct_addr_update_state.run(new_why);
                 return;
             }
-            self.periodic_re_stun_timer = new_re_stun_timer(true);
+            #[cfg(not(wasm_browser))]
+            {
+                self.periodic_re_stun_timer = new_re_stun_timer(true);
+            }
         }
 
         self.msock.direct_addr_update_state.finish_run();
@@ -2429,9 +2572,12 @@ impl Actor {
         }
 
         let relay_map = self.msock.relay_map.clone();
+        #[cfg(not(wasm_browser))]
         let opts = net_report::Options::default()
             .stun_v4(Some(self.pconn4.clone()))
             .stun_v6(self.pconn6.clone());
+        #[cfg(wasm_browser)]
+        let opts = net_report::Options::default();
 
         debug!("requesting net_report report");
         match self.net_reporter.get_report_channel(relay_map, opts).await {
@@ -2473,11 +2619,16 @@ impl Actor {
             );
             self.no_v4_send = !r.ipv4_can_send;
 
+            #[cfg(not(wasm_browser))]
             let have_port_map = self.port_mapper.watch_external_address().borrow().is_some();
+            #[cfg(wasm_browser)]
+            let have_port_map = false;
+
             let mut ni = NetInfo {
                 relay_latency: Default::default(),
                 mapping_varies_by_dest_ip: r.mapping_varies_by_dest_ip,
                 hair_pinning: r.hair_pinning,
+                #[cfg(not(wasm_browser))]
                 portmap_probe: r.portmap_probe.clone(),
                 have_port_map,
                 working_ipv6: Some(r.ipv6),
@@ -2508,6 +2659,7 @@ impl Actor {
             // TODO: set link type
             self.call_net_info_callback(ni).await;
         }
+        #[cfg(not(wasm_browser))]
         self.update_direct_addresses(report);
     }
 
@@ -2573,6 +2725,7 @@ impl Actor {
     /// The relay connections who's local endpoints no longer exist after a network change
     /// will error out soon enough.  Closing them eagerly speeds this up however and allows
     /// re-establishing a relay connection faster.
+    #[cfg(not(wasm_browser))]
     async fn close_stale_relay_connections(&self) {
         let ifs = interfaces::State::new().await;
         let local_ips = ifs
@@ -2615,6 +2768,7 @@ fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
 }
 
 /// Initial connection setup.
+#[cfg(not(wasm_browser))]
 fn bind(
     addr_v4: Option<SocketAddrV4>,
     addr_v6: Option<SocketAddrV6>,
@@ -2877,6 +3031,7 @@ struct NetInfo {
     have_port_map: bool,
 
     /// Probe indicating the presence of port mapping protocols on the LAN.
+    #[cfg(not(wasm_browser))]
     portmap_probe: Option<portmapper::ProbeOutput>,
 
     /// This node's preferred relay server for incoming traffic.
@@ -2907,6 +3062,12 @@ impl NetInfo {
             (Some(slf), Some(other)) => slf == other,
             _ => true, // ignore for comparison if only one report had this info
         };
+
+        #[cfg(not(wasm_browser))]
+        let probe_eq = self.portmap_probe == other.portmap_probe;
+        #[cfg(wasm_browser)]
+        let probe_eq = true;
+
         self.mapping_varies_by_dest_ip == other.mapping_varies_by_dest_ip
             && self.hair_pinning == other.hair_pinning
             && self.working_ipv6 == other.working_ipv6
@@ -2915,7 +3076,7 @@ impl NetInfo {
             && eq_icmp_v4
             && eq_icmp_v6
             && self.have_port_map == other.have_port_map
-            && self.portmap_probe == other.portmap_probe
+            && probe_eq
             && self.preferred_relay == other.preferred_relay
     }
 }

@@ -7,7 +7,7 @@ use iroh::{
         dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
         pkarr::{PkarrRelayClient, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
     },
-    dns::node_info::{to_z32, NodeInfo, IROH_TXT_NAME},
+    node_info::{to_z32, NodeInfo, IROH_TXT_NAME},
     NodeId, SecretKey,
 };
 use url::Url;

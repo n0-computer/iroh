@@ -19,7 +19,7 @@ use n0_future::{
     Future, StreamExt,
 };
 
-pub mod node_info;
+use crate::node_info;
 
 /// The DNS resolver type used throughout `iroh`.
 pub type DnsResolver = TokioResolver;
