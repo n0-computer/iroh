@@ -487,8 +487,7 @@
 <a href="#486" id="486">486</a>
 <a href="#487" id="487">487</a>
 <a href="#488" id="488">488</a>
-<a href="#489" id="489">489</a>
-<a href="#490" id="490">490</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
+<a href="#489" id="489">489</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
@@ -523,23 +522,18 @@
 </span><span class="kw">use </span>std::{
     collections::{BTreeSet, HashMap},
     net::{IpAddr, SocketAddr},
-    time::Duration,
 };
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>derive_more::FromStr;
-<span class="kw">use </span>futures_lite::stream::Boxed <span class="kw">as </span>BoxStream;
-<span class="kw">use </span>futures_util::FutureExt;
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
-<span class="kw">use </span>swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
-<span class="kw">use </span>tokio::{
-    sync::mpsc::{
-        error::TrySendError,
-        {<span class="self">self</span>},
-    },
-    task::JoinSet,
+<span class="kw">use </span>n0_future::{
+    boxed::BoxStream,
+    task::{<span class="self">self</span>, AbortOnDropHandle, JoinSet},
+    time::{<span class="self">self</span>, Duration},
 };
-<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
+<span class="kw">use </span>swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
+<span class="kw">use </span>tokio::sync::mpsc::{<span class="self">self</span>, error::TrySendError};
 <span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{
@@ -760,7 +754,7 @@
                         }
                         <span class="kw">let </span>timeout_sender = task_sender.clone();
                         timeouts.spawn(<span class="kw">async move </span>{
-                            tokio::time::sleep(DISCOVERY_DURATION).<span class="kw">await</span>;
+                            time::sleep(DISCOVERY_DURATION).<span class="kw">await</span>;
                             <span class="macro">trace!</span>(<span class="question-mark">?</span>node_id, <span class="string">"discovery timeout"</span>);
                             timeout_sender
                                 .send(Message::Timeout(node_id, id))
@@ -784,7 +778,7 @@
                 }
             }
         };
-        <span class="kw">let </span>handle = tokio::spawn(discovery_fut.instrument(<span class="macro">info_span!</span>(<span class="string">"swarm-discovery.actor"</span>)));
+        <span class="kw">let </span>handle = task::spawn(discovery_fut.instrument(<span class="macro">info_span!</span>(<span class="string">"swarm-discovery.actor"</span>)));
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             handle: AbortOnDropHandle::new(handle),
             sender: send,
@@ -857,6 +851,8 @@
 
 <span class="kw">impl </span>Discovery <span class="kw">for </span>LocalSwarmDiscovery {
     <span class="kw">fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, _ep: Endpoint, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
+        <span class="kw">use </span>futures_util::FutureExt;
+
         <span class="kw">let </span>(send, recv) = mpsc::channel(<span class="number">20</span>);
         <span class="kw">let </span>discovery_sender = <span class="self">self</span>.sender.clone();
         <span class="kw">let </span>stream = <span class="kw">async move </span>{
@@ -876,6 +872,8 @@
     }
 
     <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;DiscoveryItem&gt;&gt; {
+        <span class="kw">use </span>futures_util::FutureExt;
+
         <span class="kw">let </span>(sender, recv) = mpsc::channel(<span class="number">20</span>);
         <span class="kw">let </span>discovery_sender = <span class="self">self</span>.sender.clone();
         <span class="kw">let </span>stream = <span class="kw">async move </span>{
@@ -892,8 +890,8 @@
     <span class="doccomment">/// This module's name signals nextest to run test in a single thread (no other concurrent
     /// tests)
     </span><span class="kw">mod </span>run_in_isolation {
-        <span class="kw">use </span>futures_lite::StreamExt;
         <span class="kw">use </span>iroh_base::SecretKey;
+        <span class="kw">use </span>n0_future::StreamExt;
         <span class="kw">use </span>testresult::TestResult;
 
         <span class="kw">use </span><span class="kw">super</span>::<span class="kw">super</span>::<span class="kw-2">*</span>;

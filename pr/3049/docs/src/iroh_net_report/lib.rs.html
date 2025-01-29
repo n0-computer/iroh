@@ -1476,8 +1476,7 @@
 <a href="#1475" id="1475">1475</a>
 <a href="#1476" id="1476">1476</a>
 <a href="#1477" id="1477">1477</a>
-<a href="#1478" id="1478">1478</a>
-<a href="#1479" id="1479">1479</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1478" id="1478">1478</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -1502,12 +1501,12 @@
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
-<span class="kw">use </span>netwatch::UdpSocket;
-<span class="kw">use </span>tokio::{
-    sync::{<span class="self">self</span>, mpsc, oneshot},
+<span class="kw">use </span>n0_future::{
+    task::{<span class="self">self</span>, AbortOnDropHandle},
     time::{Duration, Instant},
 };
-<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
+<span class="kw">use </span>netwatch::UdpSocket;
+<span class="kw">use </span>tokio::sync::{<span class="self">self</span>, mpsc, oneshot};
 <span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 
 <span class="kw">mod </span>defaults;
@@ -1836,7 +1835,7 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>actor = Actor::new(port_mapper, dns_resolver, ip_mapped_addrs)<span class="question-mark">?</span>;
         <span class="kw">let </span>addr = actor.addr();
-        <span class="kw">let </span>task = tokio::spawn(
+        <span class="kw">let </span>task = task::spawn(
             <span class="kw">async move </span>{ actor.run().<span class="kw">await </span>}.instrument(<span class="macro">info_span!</span>(<span class="string">"net_report.actor"</span>)),
         );
         <span class="kw">let </span>drop_guard = AbortOnDropHandle::new(task);
@@ -2394,7 +2393,7 @@
         );
         {
             <span class="kw">let </span>sock = sock.clone();
-            tokio::spawn(
+            task::spawn(
                 <span class="kw">async move </span>{
                     <span class="macro">debug!</span>(<span class="string">"udp stun socket listener started"</span>);
                     <span class="comment">// TODO: Can we do better for buffers here?  Probably doesn't matter much.
@@ -2483,7 +2482,6 @@
 
     <span class="kw">use </span>bytes::BytesMut;
     <span class="kw">use </span>netwatch::IpFamily;
-    <span class="kw">use </span>tokio::time;
     <span class="kw">use </span>tokio_util::sync::CancellationToken;
     <span class="kw">use </span>tracing::info;
 
@@ -2883,7 +2881,7 @@
             <span class="kw">let </span><span class="kw-2">mut </span>actor = Actor::new(<span class="prelude-val">None</span>, resolver.clone(), <span class="prelude-val">None</span>).unwrap();
             <span class="kw">for </span>s <span class="kw">in </span><span class="kw-2">&amp;mut </span>tt.steps {
                 <span class="comment">// trigger the timer
-                </span>time::advance(Duration::from_secs(s.after)).<span class="kw">await</span>;
+                </span>tokio::time::advance(Duration::from_secs(s.after)).<span class="kw">await</span>;
                 <span class="kw">let </span>r = Arc::try_unwrap(s.r.take().unwrap()).unwrap();
                 s.r = <span class="prelude-val">Some</span>(actor.add_report_history_and_set_preferred_relay(r));
             }

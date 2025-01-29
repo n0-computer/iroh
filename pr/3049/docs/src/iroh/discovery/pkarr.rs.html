@@ -407,20 +407,7 @@
 <a href="#406" id="406">406</a>
 <a href="#407" id="407">407</a>
 <a href="#408" id="408">408</a>
-<a href="#409" id="409">409</a>
-<a href="#410" id="410">410</a>
-<a href="#411" id="411">411</a>
-<a href="#412" id="412">412</a>
-<a href="#413" id="413">413</a>
-<a href="#414" id="414">414</a>
-<a href="#415" id="415">415</a>
-<a href="#416" id="416">416</a>
-<a href="#417" id="417">417</a>
-<a href="#418" id="418">418</a>
-<a href="#419" id="419">419</a>
-<a href="#420" id="420">420</a>
-<a href="#421" id="421">421</a>
-<a href="#422" id="422">422</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
+<a href="#409" id="409">409</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
 //! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
@@ -469,13 +456,13 @@
 </span><span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr, sync::Arc};
 
 <span class="kw">use </span>anyhow::{anyhow, bail, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>futures_util::stream::BoxStream;
 <span class="kw">use </span>iroh_base::{NodeId, RelayUrl, SecretKey};
-<span class="kw">use </span>pkarr::SignedPacket;
-<span class="kw">use </span>tokio::{
-    task::JoinHandle,
-    time::{Duration, Instant},
+<span class="kw">use </span>n0_future::{
+    boxed::BoxStream,
+    task::{<span class="self">self</span>, AbortOnDropHandle},
+    time::{<span class="self">self</span>, Duration, Instant},
 };
+<span class="kw">use </span>pkarr::SignedPacket;
 <span class="kw">use </span>tracing::{debug, error_span, info, warn, Instrument};
 <span class="kw">use </span>url::Url;
 
@@ -538,7 +525,7 @@
 </span><span class="kw">pub struct </span>PkarrPublisher {
     node_id: NodeId,
     watchable: Watchable&lt;<span class="prelude-ty">Option</span>&lt;NodeInfo&gt;&gt;,
-    join_handle: Arc&lt;JoinHandle&lt;()&gt;&gt;,
+    _drop_guard: Arc&lt;AbortOnDropHandle&lt;()&gt;&gt;,
 }
 
 <span class="kw">impl </span>PkarrPublisher {
@@ -567,7 +554,7 @@
         secret_key: SecretKey,
         pkarr_relay: Url,
         ttl: u32,
-        republish_interval: std::time::Duration,
+        republish_interval: Duration,
     ) -&gt; <span class="self">Self </span>{
         <span class="macro">debug!</span>(<span class="string">"creating pkarr publisher that publishes to {pkarr_relay}"</span>);
         <span class="kw">let </span>node_id = secret_key.public();
@@ -580,7 +567,7 @@
             pkarr_client,
             republish_interval,
         };
-        <span class="kw">let </span>join_handle = tokio::task::spawn(
+        <span class="kw">let </span>join_handle = task::spawn(
             service
                 .run()
                 .instrument(<span class="macro">error_span!</span>(<span class="string">"pkarr_publish"</span>, me=%node_id.fmt_short())),
@@ -588,7 +575,7 @@
         <span class="self">Self </span>{
             watchable,
             node_id,
-            join_handle: Arc::new(join_handle),
+            _drop_guard: Arc::new(AbortOnDropHandle::new(join_handle)),
         }
     }
 
@@ -634,15 +621,6 @@
     }
 }
 
-<span class="kw">impl </span>Drop <span class="kw">for </span>PkarrPublisher {
-    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="comment">// this means we're dropping the last reference
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(handle) = Arc::get_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>.join_handle) {
-            handle.abort();
-        }
-    }
-}
-
 <span class="doccomment">/// Publish node info to a pkarr relay.
 </span><span class="attr">#[derive(derive_more::Debug, Clone)]
 </span><span class="kw">struct </span>PublisherService {
@@ -658,7 +636,7 @@
 <span class="kw">impl </span>PublisherService {
     <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) {
         <span class="kw">let </span><span class="kw-2">mut </span>failed_attempts = <span class="number">0</span>;
-        <span class="kw">let </span>republish = tokio::time::sleep(Duration::MAX);
+        <span class="kw">let </span>republish = time::sleep(Duration::MAX);
         <span class="macro">tokio::pin!</span>(republish);
         <span class="kw">loop </span>{
             <span class="kw">let </span><span class="prelude-val">Ok</span>(info) = <span class="self">self</span>.watcher.get() <span class="kw">else </span>{
@@ -758,11 +736,7 @@
 }
 
 <span class="kw">impl </span>Discovery <span class="kw">for </span>PkarrResolver {
-    <span class="kw">fn </span>resolve(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        _ep: Endpoint,
-        node_id: NodeId,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="lifetime">'static</span>, <span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
+    <span class="kw">fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, _ep: Endpoint, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
         <span class="kw">let </span>pkarr_client = <span class="self">self</span>.pkarr_client.clone();
         <span class="kw">let </span>fut = <span class="kw">async move </span>{
             <span class="kw">let </span>signed_packet = pkarr_client.resolve(node_id).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -774,7 +748,7 @@
             };
             <span class="prelude-val">Ok</span>(item)
         };
-        <span class="kw">let </span>stream = futures_lite::stream::once_future(fut);
+        <span class="kw">let </span>stream = n0_future::stream::once_future(fut);
         <span class="prelude-val">Some</span>(Box::pin(stream))
     }
 }

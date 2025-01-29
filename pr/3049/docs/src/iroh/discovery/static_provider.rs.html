@@ -276,7 +276,9 @@
 <a href="#275" id="275">275</a>
 <a href="#276" id="276">276</a>
 <a href="#277" id="277">277</a>
-<a href="#278" id="278">278</a></pre></div><pre class="rust"><code><span class="doccomment">//! A static node discovery to manually add node addressing information.
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a></pre></div><pre class="rust"><code><span class="doccomment">//! A static node discovery to manually add node addressing information.
 //!
 //! Often an application might get node addressing information out-of-band in an
 //! application-specific way.  [`NodeTicket`]'s are one common way used to achieve this.
@@ -292,11 +294,13 @@
     collections::{btree_map::Entry, BTreeMap, BTreeSet},
     net::SocketAddr,
     sync::{Arc, RwLock},
-    time::SystemTime,
 };
 
-<span class="kw">use </span>futures_lite::stream::{<span class="self">self</span>, StreamExt};
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl};
+<span class="kw">use </span>n0_future::{
+    stream::{<span class="self">self</span>, StreamExt},
+    time::SystemTime,
+};
 
 <span class="kw">use super</span>::{Discovery, DiscoveryItem};
 
@@ -484,7 +488,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         _endpoint: <span class="kw">crate</span>::Endpoint,
         node_id: NodeId,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;futures_lite::stream::Boxed&lt;anyhow::Result&lt;<span class="kw">super</span>::DiscoveryItem&gt;&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;n0_future::stream::Boxed&lt;anyhow::Result&lt;<span class="kw">super</span>::DiscoveryItem&gt;&gt;&gt; {
         <span class="kw">let </span>guard = <span class="self">self</span>.nodes.read().expect(<span class="string">"poisoned"</span>);
         <span class="kw">let </span>info = guard.get(<span class="kw-2">&amp;</span>node_id);
         <span class="kw">match </span>info {

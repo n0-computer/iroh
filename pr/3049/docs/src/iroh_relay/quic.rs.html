@@ -316,42 +316,12 @@
 <a href="#315" id="315">315</a>
 <a href="#316" id="316">316</a>
 <a href="#317" id="317">317</a>
-<a href="#318" id="318">318</a>
-<a href="#319" id="319">319</a>
-<a href="#320" id="320">320</a>
-<a href="#321" id="321">321</a>
-<a href="#322" id="322">322</a>
-<a href="#323" id="323">323</a>
-<a href="#324" id="324">324</a>
-<a href="#325" id="325">325</a>
-<a href="#326" id="326">326</a>
-<a href="#327" id="327">327</a>
-<a href="#328" id="328">328</a>
-<a href="#329" id="329">329</a>
-<a href="#330" id="330">330</a>
-<a href="#331" id="331">331</a>
-<a href="#332" id="332">332</a>
-<a href="#333" id="333">333</a>
-<a href="#334" id="334">334</a>
-<a href="#335" id="335">335</a>
-<a href="#336" id="336">336</a>
-<a href="#337" id="337">337</a>
-<a href="#338" id="338">338</a>
-<a href="#339" id="339">339</a>
-<a href="#340" id="340">340</a>
-<a href="#341" id="341">341</a>
-<a href="#342" id="342">342</a>
-<a href="#343" id="343">343</a>
-<a href="#344" id="344">344</a>
-<a href="#345" id="345">345</a>
-<a href="#346" id="346">346</a>
-<a href="#347" id="347">347</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
+<a href="#318" id="318">318</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>quinn::{crypto::rustls::QuicClientConfig, VarInt};
-<span class="kw">use </span>tokio_util::sync::CancellationToken;
 
 <span class="doccomment">/// ALPN for our quic addr discovery
 </span><span class="kw">pub const </span>ALPN_QUIC_ADDR_DISC: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"/iroh-qad/0"</span>;
@@ -525,8 +495,10 @@
             }
         };
         <span class="macro">debug!</span>(<span class="string">"established"</span>);
+        <span class="macro">tracing::warn!</span>(<span class="string">"QAD SERVER - CONN ACCEPTED"</span>);
         <span class="comment">// wait for the client to close the connection
         </span><span class="kw">let </span>connection_err = connection.closed().<span class="kw">await</span>;
+        <span class="macro">tracing::warn!</span>(<span class="string">"QAD SERVER - CONN CLOSED"</span>);
         <span class="kw">match </span>connection_err {
             quinn::ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. })
                 <span class="kw">if </span>error_code == QUIC_ADDR_DISC_CLOSE_CODE =&gt;
@@ -576,43 +548,13 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         server_addr: SocketAddr,
         host: <span class="kw-2">&amp;</span>str,
-        cancel: CancellationToken,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(SocketAddr, std::time::Duration)&gt; {
-        <span class="macro">tracing::warn!</span>(<span class="string">"QAD: CONNECTING"</span>);
         <span class="kw">let </span>connecting = <span class="self">self
             </span>.ep
-            .connect_with(<span class="self">self</span>.client_config.clone(), server_addr, host)<span class="question-mark">?</span>;
-        <span class="macro">tracing::warn!</span>(<span class="string">"QAD: AFTER CONNECTING"</span>);
-        <span class="kw">let </span>conn = <span class="macro">tokio::select!</span> {
-            <span class="kw">_ </span>= cancel.cancelled() =&gt; {
-                <span class="macro">tracing::warn!</span>(<span class="string">"QAD CANCELLED1"</span>);
-                <span class="macro">anyhow::bail!</span>(<span class="string">"QUIC address discovery cancelled early"</span>);
-            },
-            conn = connecting =&gt; {
-                conn<span class="question-mark">?
-            </span>}
-        };
-        <span class="macro">tracing::warn!</span>(<span class="string">"QAD: CONN SUCCESS"</span>);
+            .connect_with(<span class="self">self</span>.client_config.clone(), server_addr, host);
+        <span class="kw">let </span>conn = connecting<span class="question-mark">?</span>.<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>external_addresses = conn.observed_external_addr();
-        <span class="macro">tracing::warn!</span>(<span class="string">"QAD: AFTER EXTERNAL ADDRESSES"</span>);
-        <span class="macro">tokio::select!</span> {
-            <span class="kw">_ </span>= cancel.cancelled() =&gt; {
-                conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-                <span class="macro">tracing::warn!</span>(<span class="string">"QAD CANCELLED2"</span>);
-                <span class="macro">anyhow::bail!</span>(<span class="string">"QUIC address discovery cancelled early"</span>);
-            },
-            res = external_addresses.wait_for(|addr| addr.is_some()) =&gt; {
-                <span class="kw">let </span>addr = res<span class="question-mark">?</span>.expect(<span class="string">"checked"</span>);
-                <span class="kw">let </span>latency = conn.rtt() / <span class="number">2</span>;
-                <span class="comment">// gracefully close the connections
-                </span>conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-                <span class="macro">tracing::warn!</span>(<span class="string">"QAD: SUCCESS"</span>);
-                <span class="prelude-val">Ok</span>((addr, latency))
-            }
-        }
-        <span class="comment">// let conn = connecting?.await?;
-        // let mut external_addresses = conn.observed_external_addr();
-        // TODO(ramfox): I'd like to be able to cancel this so we can close cleanly
+        <span class="comment">// TODO(ramfox): I'd like to be able to cancel this so we can close cleanly
         // if there the task that runs this function gets aborted.
         // tokio::select! {
         //     _ = cancel.cancelled() =&gt; {
@@ -627,24 +569,25 @@
         //         Ok((addr, latency))
         //     }
 
-        // let res = match external_addresses.wait_for(|addr| addr.is_some()).await {
-        //     Ok(res) =&gt; res,
-        //     Err(err) =&gt; {
-        //         // attempt to gracefully close the connections
-        //         conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-        //         return Err(err.into());
-        //     }
-        // };
-        // let mut observed_addr = res.expect("checked");
-        // // if we've sent to an ipv4 address, but received an observed address
-        // // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
-        // observed_addr = SocketAddr::new(observed_addr.ip().to_canonical(), observed_addr.port());
-        // let latency = conn.rtt() / 2;
-        // gracefully close the connections
-        // conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-        // Ok((observed_addr, latency))
-        // anyhow::bail!("not waiting for connections in qad");
-    </span>}
+        </span><span class="macro">tracing::warn!</span>(<span class="string">"QAD CLIENT: WAIT FOR ADDRESS"</span>);
+        <span class="kw">let </span>res = <span class="kw">match </span>external_addresses.wait_for(|addr| addr.is_some()).<span class="kw">await </span>{
+            <span class="prelude-val">Ok</span>(res) =&gt; res,
+            <span class="prelude-val">Err</span>(err) =&gt; {
+                <span class="comment">// attempt to gracefully close the connections
+                </span>conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+                <span class="kw">return </span><span class="prelude-val">Err</span>(err.into());
+            }
+        };
+        <span class="kw">let </span><span class="kw-2">mut </span>observed_addr = res.expect(<span class="string">"checked"</span>);
+        <span class="comment">// if we've sent to an ipv4 address, but received an observed address
+        // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
+        </span>observed_addr = SocketAddr::new(observed_addr.ip().to_canonical(), observed_addr.port());
+        <span class="kw">let </span>latency = conn.rtt() / <span class="number">2</span>;
+        <span class="comment">// gracefully close the connections
+        </span>conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+        <span class="macro">tracing::warn!</span>(<span class="string">"QAD CLIENT: GRACEFULLY CLOSED"</span>);
+        <span class="prelude-val">Ok</span>((observed_addr, latency))
+    }
 }
 
 <span class="attr">#[cfg(all(test, feature = <span class="string">"server"</span>))]
@@ -678,9 +621,8 @@
         </span><span class="kw">let </span>client_config = <span class="kw">crate</span>::client::make_dangerous_client_config();
         <span class="kw">let </span>quic_client = QuicClient::new(client_endpoint.clone(), client_config)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>cancel = CancellationToken::new();
         <span class="kw">let </span>(addr, _latency) = quic_client
-            .get_addr_and_latency(quic_server.bind_addr(), <span class="kw-2">&amp;</span>host.to_string(), cancel)
+            .get_addr_and_latency(quic_server.bind_addr(), <span class="kw-2">&amp;</span>host.to_string())
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// wait until the endpoint delivers the closing message to the server

@@ -301,7 +301,10 @@
 <a href="#300" id="300">300</a>
 <a href="#301" id="301">301</a>
 <a href="#302" id="302">302</a>
-<a href="#303" id="303">303</a></pre></div><pre class="rust"><code><span class="doccomment">//! Actor to run hairpinning check.
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a></pre></div><pre class="rust"><code><span class="doccomment">//! Actor to run hairpinning check.
 //!
 //! This actor works as follows:
 //!
@@ -319,9 +322,12 @@
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>iroh_relay::protos::stun;
+<span class="kw">use </span>n0_future::{
+    task::{<span class="self">self</span>, AbortOnDropHandle},
+    time::{<span class="self">self</span>, Instant},
+};
 <span class="kw">use </span>netwatch::UdpSocket;
-<span class="kw">use </span>tokio::{sync::oneshot, time::Instant};
-<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
+<span class="kw">use </span>tokio::sync::oneshot;
 <span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{<span class="self">self </span><span class="kw">as </span>net_report, defaults::timeouts::HAIRPIN_CHECK_TIMEOUT, reportgen, Inflight};
@@ -346,7 +352,7 @@
         };
 
         <span class="kw">let </span>task =
-            tokio::spawn(<span class="kw">async move </span>{ actor.run().<span class="kw">await </span>}.instrument(<span class="macro">info_span!</span>(<span class="string">"hairpin.actor"</span>)));
+            task::spawn(<span class="kw">async move </span>{ actor.run().<span class="kw">await </span>}.instrument(<span class="macro">info_span!</span>(<span class="string">"hairpin.actor"</span>)));
         <span class="self">Self </span>{
             addr: <span class="prelude-val">Some</span>(addr),
             _drop_guard: AbortOnDropHandle::new(task),
@@ -430,7 +436,7 @@
         }
 
         <span class="kw">let </span>now = Instant::now();
-        <span class="kw">let </span>hairpinning_works = <span class="kw">match </span>tokio::time::timeout(HAIRPIN_CHECK_TIMEOUT, stun_rx).<span class="kw">await </span>{
+        <span class="kw">let </span>hairpinning_works = <span class="kw">match </span>time::timeout(HAIRPIN_CHECK_TIMEOUT, stun_rx).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(<span class="kw">_</span>)) =&gt; <span class="bool-val">true</span>,
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="kw">_</span>)) =&gt; <span class="macro">bail!</span>(<span class="string">"net_report actor dropped stun response channel"</span>),
             <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="bool-val">false</span>, <span class="comment">// Elapsed

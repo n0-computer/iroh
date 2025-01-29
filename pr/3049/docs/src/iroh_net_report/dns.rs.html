@@ -263,8 +263,8 @@
 <a href="#262" id="262">262</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt::Write, net::IpAddr};
 
 <span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>futures_lite::{Future, StreamExt};
 <span class="kw">use </span>hickory_resolver::{IntoName, TokioResolver};
+<span class="kw">use </span>n0_future::{time, Future, StreamExt};
 
 <span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::DNS_TIMEOUT;
 
@@ -328,12 +328,12 @@
 
 <span class="kw">impl </span>ResolverExt <span class="kw">for </span>TokioResolver {
     <span class="kw">async fn </span>lookup_ipv4&lt;N: IntoName&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, host: N) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;&gt; {
-        <span class="kw">let </span>addrs = tokio::time::timeout(DNS_TIMEOUT, <span class="self">self</span>.ipv4_lookup(host)).<span class="kw">await</span><span class="question-mark">??</span>;
+        <span class="kw">let </span>addrs = time::timeout(DNS_TIMEOUT, <span class="self">self</span>.ipv4_lookup(host)).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(addrs.into_iter().map(|ip| IpAddr::V4(ip.<span class="number">0</span>)))
     }
 
     <span class="kw">async fn </span>lookup_ipv6&lt;N: IntoName&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, host: N) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;&gt; {
-        <span class="kw">let </span>addrs = tokio::time::timeout(DNS_TIMEOUT, <span class="self">self</span>.ipv6_lookup(host)).<span class="kw">await</span><span class="question-mark">??</span>;
+        <span class="kw">let </span>addrs = time::timeout(DNS_TIMEOUT, <span class="self">self</span>.ipv6_lookup(host)).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(addrs.into_iter().map(|ip| IpAddr::V6(ip.<span class="number">0</span>)))
     }
 
@@ -412,14 +412,14 @@
     f: F,
     delays_ms: <span class="kw-2">&amp;</span>[u64],
 ) -&gt; <span class="prelude-ty">Result</span>&lt;T&gt; {
-    <span class="kw">let </span><span class="kw-2">mut </span>calls = futures_buffered::FuturesUnorderedBounded::new(delays_ms.len() + <span class="number">1</span>);
+    <span class="kw">let </span><span class="kw-2">mut </span>calls = n0_future::FuturesUnorderedBounded::new(delays_ms.len() + <span class="number">1</span>);
     <span class="comment">// NOTE: we add the 0 delay here to have a uniform set of futures. This is more performant than
     // using alternatives that allow futures of different types.
     </span><span class="kw">for </span>delay <span class="kw">in </span>std::iter::once(<span class="kw-2">&amp;</span><span class="number">0u64</span>).chain(delays_ms) {
-        <span class="kw">let </span>delay = std::time::Duration::from_millis(<span class="kw-2">*</span>delay);
+        <span class="kw">let </span>delay = time::Duration::from_millis(<span class="kw-2">*</span>delay);
         <span class="kw">let </span>fut = f();
         <span class="kw">let </span>staggered_fut = <span class="kw">async move </span>{
-            tokio::time::sleep(delay).<span class="kw">await</span>;
+            time::sleep(delay).<span class="kw">await</span>;
             fut.<span class="kw">await
         </span>};
         calls.push(staggered_fut)

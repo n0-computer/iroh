@@ -158,16 +158,18 @@
 <a href="#157" id="157">157</a>
 <a href="#158" id="158">158</a>
 <a href="#159" id="159">159</a>
-<a href="#160" id="160">160</a></pre></div><pre class="rust"><code><span class="doccomment">//! Actor which coordinates the congestion controller for the magic socket
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a></pre></div><pre class="rust"><code><span class="doccomment">//! Actor which coordinates the congestion controller for the magic socket
 
 </span><span class="kw">use </span>std::{pin::Pin, task::Poll};
 
-<span class="kw">use </span>futures_buffered::MergeUnbounded;
-<span class="kw">use </span>futures_lite::{Stream, StreamExt};
 <span class="kw">use </span>iroh_base::NodeId;
 <span class="kw">use </span>iroh_metrics::inc;
+<span class="kw">use </span>n0_future::{
+    task::{<span class="self">self</span>, AbortOnDropHandle},
+    MergeUnbounded, Stream, StreamExt,
+};
 <span class="kw">use </span>tokio::sync::mpsc;
-<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, info_span, Instrument};
 
 <span class="kw">use crate</span>::{magicsock::ConnectionType, metrics::MagicsockMetrics, watchable::WatcherStream};
@@ -185,7 +187,7 @@
             connection_events: Default::default(),
         };
         <span class="kw">let </span>(msg_tx, msg_rx) = mpsc::channel(<span class="number">16</span>);
-        <span class="kw">let </span>handle = tokio::spawn(
+        <span class="kw">let </span>handle = task::spawn(
             <span class="kw">async move </span>{
                 actor.run(msg_rx).<span class="kw">await</span>;
             }

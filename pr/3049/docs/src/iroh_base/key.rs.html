@@ -391,7 +391,18 @@
 <a href="#390" id="390">390</a>
 <a href="#391" id="391">391</a>
 <a href="#392" id="392">392</a>
-<a href="#393" id="393">393</a></pre></div><pre class="rust"><code><span class="doccomment">//! Cryptographic key handling for `iroh`.
+<a href="#393" id="393">393</a>
+<a href="#394" id="394">394</a>
+<a href="#395" id="395">395</a>
+<a href="#396" id="396">396</a>
+<a href="#397" id="397">397</a>
+<a href="#398" id="398">398</a>
+<a href="#399" id="399">399</a>
+<a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a></pre></div><pre class="rust"><code><span class="doccomment">//! Cryptographic key handling for `iroh`.
 
 </span><span class="kw">use </span>std::{
     borrow::Borrow,
@@ -723,7 +734,12 @@
         <span class="comment">// hex
         </span>data_encoding::HEXLOWER.decode_mut(s.as_bytes(), <span class="kw-2">&amp;mut </span>bytes)
     } <span class="kw">else </span>{
-        data_encoding::BASE32_NOPAD.decode_mut(s.to_ascii_uppercase().as_bytes(), <span class="kw-2">&amp;mut </span>bytes)
+        <span class="kw">let </span>input = s.to_ascii_uppercase();
+        <span class="kw">let </span>input = input.as_bytes();
+        <span class="kw">if </span>data_encoding::BASE32_NOPAD.decode_len(input.len())<span class="question-mark">? </span>!= bytes.len() {
+            <span class="kw">return </span><span class="prelude-val">Err</span>(KeyParsingError::DecodeInvalidLength);
+        }
+        data_encoding::BASE32_NOPAD.decode_mut(input, <span class="kw-2">&amp;mut </span>bytes)
     };
     <span class="kw">match </span>res {
         <span class="prelude-val">Ok</span>(len) =&gt; {
@@ -782,6 +798,12 @@
             PublicKey::from_str(<span class="kw-2">&amp;</span>key.public().to_string()).unwrap(),
             key.public()
         );
+    }
+
+    <span class="attr">#[test]
+    </span><span class="kw">fn </span>test_regression_parse_node_id_panic() {
+        <span class="kw">let </span>not_a_node_id = <span class="string">"foobarbaz"</span>;
+        <span class="macro">assert!</span>(PublicKey::from_str(not_a_node_id).is_err());
     }
 }
 </code></pre></div></section></main></body></html>

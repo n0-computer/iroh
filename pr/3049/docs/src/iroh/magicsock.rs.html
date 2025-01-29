@@ -4411,7 +4411,13 @@
 <a href="#4410" id="4410">4410</a>
 <a href="#4411" id="4411">4411</a>
 <a href="#4412" id="4412">4412</a>
-<a href="#4413" id="4413">4413</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4413" id="4413">4413</a>
+<a href="#4414" id="4414">4414</a>
+<a href="#4415" id="4415">4415</a>
+<a href="#4416" id="4416">4416</a>
+<a href="#4417" id="4417">4417</a>
+<a href="#4418" id="4418">4418</a>
+<a href="#4419" id="4419">4419</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4439,29 +4445,31 @@
         Arc, RwLock,
     },
     task::{Context, Poll, Waker},
-    time::{Duration, Instant},
 };
 
 <span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>atomic_waker::AtomicWaker;
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>concurrent_queue::ConcurrentQueue;
 <span class="kw">use </span>data_encoding::HEXLOWER;
-<span class="kw">use </span>futures_lite::{FutureExt, StreamExt};
-<span class="kw">use </span>futures_util::{stream::BoxStream, task::AtomicWaker};
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
+<span class="kw">use </span>n0_future::{
+    boxed::BoxStream,
+    task,
+    task::JoinSet,
+    time,
+    time::{Duration, Instant},
+    FutureExt, StreamExt,
+};
 <span class="kw">use </span>net_report::{IpMappedAddr, IpMappedAddrs, QuicConfig, MAPPED_ADDR_PORT};
 <span class="kw">use </span>netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 <span class="kw">use </span>quinn::{AsyncUdpSocket, ServerConfig};
 <span class="kw">use </span>rand::{seq::SliceRandom, Rng, SeedableRng};
 <span class="kw">use </span>relay_actor::RelaySendItem;
 <span class="kw">use </span>smallvec::{smallvec, SmallVec};
-<span class="kw">use </span>tokio::{
-    sync::{<span class="self">self</span>, mpsc, Mutex},
-    task::JoinSet,
-    time,
-};
+<span class="kw">use </span>tokio::sync::{<span class="self">self</span>, mpsc, Mutex};
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{
     debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
@@ -5738,7 +5746,7 @@
         dst_node: NodeId,
         msg: <span class="kw-2">&amp;</span>disco::Message,
     ) -&gt; io::Result&lt;()&gt; {
-        futures_lite::future::poll_fn(<span class="kw">move </span>|cx| {
+        n0_future::future::poll_fn(<span class="kw">move </span>|cx| {
             <span class="kw">loop </span>{
                 <span class="kw">match </span><span class="self">self</span>.try_send_disco_message_udp(dst, dst_node, msg) {
                     <span class="prelude-val">Ok</span>(()) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(())),
@@ -6200,20 +6208,20 @@
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="macro">tracing::warn!</span>(<span class="string">"msock - closing connections"</span>);
         <span class="comment">// Initiate closing all connections, and refuse future connections.
-        </span><span class="macro">warn!</span>(<span class="string">"msock - endpoint close"</span>);
+        </span><span class="macro">tracing::warn!</span>(<span class="string">"msock - endpoint close"</span>);
         <span class="self">self</span>.endpoint.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
-        <span class="macro">warn!</span>(<span class="string">"msock - endpoint waiting idle"</span>);
+        <span class="macro">tracing::warn!</span>(<span class="string">"msock - wait idle"</span>);
         <span class="self">self</span>.endpoint.wait_idle().<span class="kw">await</span>;
-        <span class="macro">warn!</span>(<span class="string">"msock - endpoint done"</span>);
+        <span class="macro">tracing::warn!</span>(<span class="string">"msock - endpoint done"</span>);
 
         <span class="kw">if </span><span class="self">self</span>.msock.is_closed() {
             <span class="kw">return</span>;
         }
         <span class="self">self</span>.msock.closing.store(<span class="bool-val">true</span>, Ordering::Relaxed);
-
         <span class="comment">// If this fails, then there's no receiver listening for shutdown messages,
         // so nothing to shut down anyways.
-        </span><span class="self">self</span>.msock
+        </span><span class="macro">tracing::warn!</span>(<span class="string">"msock - send actor shutdown message"</span>);
+        <span class="self">self</span>.msock
             .actor_sender
             .send(ActorMessage::Shutdown)
             .<span class="kw">await
@@ -6233,9 +6241,14 @@
         })
         .<span class="kw">await</span>;
         <span class="kw">if </span>shutdown_done.is_ok() {
-            <span class="macro">debug!</span>(<span class="string">"tasks shutdown complete"</span>);
+            <span class="macro">warn!</span>(<span class="string">"tasks shutdown complete"</span>);
             <span class="comment">// shutdown all tasks
-            </span><span class="macro">debug!</span>(<span class="string">"aborting remaining {}/3 tasks"</span>, tasks.len());
+            </span><span class="macro">warn!</span>(<span class="string">"aborting remaining {}/3 tasks"</span>, tasks.len());
+            tasks.shutdown().<span class="kw">await</span>;
+        } <span class="kw">else </span>{
+            <span class="macro">warn!</span>(<span class="string">"tasks did not shut cleanly"</span>);
+            <span class="comment">// shutdown all tasks
+            </span><span class="macro">warn!</span>(<span class="string">"aborting remaining {}/3 tasks"</span>, tasks.len());
             tasks.shutdown().<span class="kw">await</span>;
         }
         <span class="macro">warn!</span>(<span class="string">"msock - finished closing"</span>);
@@ -6623,8 +6636,7 @@
             <span class="self">self</span>.msock.direct_addr_update_state.running.subscribe();
         <span class="kw">let </span><span class="kw-2">mut </span>portmap_watcher = <span class="self">self</span>.port_mapper.watch_external_address();
 
-        <span class="kw">let </span><span class="kw-2">mut </span>discovery_events: BoxStream&lt;DiscoveryItem&gt; =
-            Box::pin(futures_lite::stream::empty());
+        <span class="kw">let </span><span class="kw-2">mut </span>discovery_events: BoxStream&lt;DiscoveryItem&gt; = Box::pin(n0_future::stream::empty());
         <span class="kw">if let </span><span class="prelude-val">Some</span>(d) = <span class="self">self</span>.msock.discovery() {
             <span class="kw">if let </span><span class="prelude-val">Some</span>(events) = d.subscribe() {
                 discovery_events = events;
@@ -6760,13 +6772,13 @@
     </span><span class="kw">async fn </span>handle_actor_message(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: ActorMessage) -&gt; bool {
         <span class="kw">match </span>msg {
             ActorMessage::Shutdown =&gt; {
-                <span class="macro">debug!</span>(<span class="string">"magicsock actor shutting down"</span>);
+                <span class="macro">debug!</span>(<span class="string">"shutting down"</span>);
 
                 <span class="self">self</span>.msock.node_map.notify_shutdown();
                 <span class="self">self</span>.port_mapper.deactivate();
                 <span class="self">self</span>.relay_actor_cancel_token.cancel();
 
-                <span class="macro">debug!</span>(<span class="string">"magicsock actor shutdown complete"</span>);
+                <span class="macro">debug!</span>(<span class="string">"shutdown complete"</span>);
                 <span class="kw">return </span><span class="bool-val">true</span>;
             }
             ActorMessage::EndpointPingExpired(id, txid) =&gt; {
@@ -6884,7 +6896,7 @@
 
         <span class="comment">// The following code can be slow, we do not want to block the caller since it would
         // block the actor loop.
-        </span>tokio::spawn(
+        </span>task::spawn(
             <span class="kw">async move </span>{
                 <span class="comment">// If a socket is bound to the unspecified address, create SocketAddrs for
                 // each local IP address by pairing it with the port the socket is bound on.
@@ -7033,7 +7045,7 @@
         <span class="kw">match </span><span class="self">self</span>.net_reporter.get_report_channel(relay_map, opts).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(rx) =&gt; {
                 <span class="kw">let </span>msg_sender = <span class="self">self</span>.msg_sender.clone();
-                tokio::task::spawn(<span class="kw">async move </span>{
+                task::spawn(<span class="kw">async move </span>{
                     <span class="kw">let </span>report = time::timeout(NET_REPORT_TIMEOUT, rx).<span class="kw">await</span>;
                     <span class="kw">let </span>report: anyhow::Result&lt;<span class="kw">_</span>&gt; = <span class="kw">match </span>report {
                         <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(report))) =&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(report)),
@@ -7679,7 +7691,7 @@
                 <span class="kw">if </span>ready.iter().all(|meshed| <span class="kw-2">*</span>meshed) {
                     <span class="kw">break</span>;
                 }
-                tokio::time::sleep(Duration::from_millis(<span class="number">200</span>)).<span class="kw">await</span>;
+                time::sleep(Duration::from_millis(<span class="number">200</span>)).<span class="kw">await</span>;
             }
         })
         .<span class="kw">await
@@ -8415,7 +8427,7 @@
 
         <span class="comment">// no relay, nothing to report
         </span><span class="macro">assert_eq!</span>(
-            futures_lite::future::poll_once(relay_stream.next()).<span class="kw">await</span>,
+            n0_future::future::poll_once(relay_stream.next()).<span class="kw">await</span>,
             <span class="prelude-val">None
         </span>);
 
@@ -8428,7 +8440,7 @@
 
         </span><span class="kw">let </span><span class="kw-2">mut </span>relay_stream = msock.home_relay().stream().filter_map(|r| r);
         <span class="macro">assert_eq!</span>(
-            futures_lite::future::poll_once(relay_stream.next()).<span class="kw">await</span>,
+            n0_future::future::poll_once(relay_stream.next()).<span class="kw">await</span>,
             <span class="prelude-val">Some</span>(<span class="prelude-val">Some</span>(url))
         );
     }
@@ -8724,7 +8736,7 @@
             <span class="kw">async move </span>{
                 <span class="kw">let </span><span class="kw-2">mut </span>expected_msgs: BTreeSet&lt;usize&gt; = (<span class="number">0</span>..capacity).collect();
                 <span class="kw">while </span>!expected_msgs.is_empty() {
-                    <span class="kw">let </span>datagram = futures_lite::future::poll_fn(|cx| {
+                    <span class="kw">let </span>datagram = n0_future::future::poll_fn(|cx| {
                         queue.poll_recv(cx).map(|result| result.unwrap())
                     })
                     .<span class="kw">await</span>;

@@ -178,22 +178,16 @@
 <a href="#177" id="177">177</a>
 <a href="#178" id="178">178</a>
 <a href="#179" id="179">179</a>
-<a href="#180" id="180">180</a>
-<a href="#181" id="181">181</a>
-<a href="#182" id="182">182</a>
-<a href="#183" id="183">183</a></pre></div><pre class="rust"><code><span class="doccomment">//! Path state for UDP addresses of a single peer node.
+<a href="#180" id="180">180</a></pre></div><pre class="rust"><code><span class="doccomment">//! Path state for UDP addresses of a single peer node.
 //!
 //! This started as simply moving the [`NodeState`]'s `direct_addresses` and `best_addr`
 //! into one place together.  The aim is for external places to not directly interact with
 //! the inside and instead only notifies this struct of state changes to each path.
 //!
 //! [`NodeState`]: super::node_state::NodeState
-</span><span class="kw">use </span>std::{
-    collections::BTreeMap,
-    net::SocketAddr,
-    time::{Duration, Instant},
-};
+</span><span class="kw">use </span>std::{collections::BTreeMap, net::SocketAddr};
 
+<span class="kw">use </span>n0_future::time::{Duration, Instant};
 <span class="kw">use </span>rand::seq::IteratorRandom;
 <span class="kw">use </span>tracing::warn;
 

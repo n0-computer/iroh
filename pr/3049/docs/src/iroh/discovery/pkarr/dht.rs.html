@@ -461,7 +461,8 @@
 <a href="#460" id="460">460</a>
 <a href="#461" id="461">461</a>
 <a href="#462" id="462">462</a>
-<a href="#463" id="463">463</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
+<a href="#463" id="463">463</a>
+<a href="#464" id="464">464</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
 //!
 //! This module contains pkarr-based node discovery for iroh which can use both pkarr
 //! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
@@ -472,20 +473,21 @@
     collections::BTreeSet,
     net::SocketAddr,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 
 <span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>futures_lite::{
-    stream::{Boxed, StreamExt},
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
+<span class="kw">use </span>n0_future::{
+    boxed::BoxStream,
+    stream::StreamExt,
+    task::{<span class="self">self</span>, AbortOnDropHandle},
+    time::{<span class="self">self</span>, Duration},
     FutureExt,
 };
-<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 <span class="kw">use </span>pkarr::{
     PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, RelaySettings,
     SignedPacket,
 };
-<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>url::Url;
 
 <span class="kw">use crate</span>::{
@@ -767,7 +769,7 @@
             .to_z32();
         <span class="comment">// initial delay. If the task gets aborted before this delay is over,
         // we have not published anything to the DHT yet.
-        </span>tokio::time::sleep(this.<span class="number">0</span>.initial_publish_delay).<span class="kw">await</span>;
+        </span>time::sleep(this.<span class="number">0</span>.initial_publish_delay).<span class="kw">await</span>;
         <span class="kw">loop </span>{
             <span class="comment">// publish to the DHT if enabled
             </span><span class="kw">let </span>dht_publish = <span class="kw">async </span>{
@@ -808,7 +810,7 @@
             };
             <span class="comment">// do both at the same time
             </span><span class="macro">tokio::join!</span>(relay_publish, dht_publish);
-            tokio::time::sleep(this.<span class="number">0</span>.republish_delay).<span class="kw">await</span>;
+            time::sleep(this.<span class="number">0</span>.republish_delay).<span class="kw">await</span>;
         }
     }
 }
@@ -834,7 +836,7 @@
             <span class="kw">return</span>;
         };
         <span class="kw">let </span>this = <span class="self">self</span>.clone();
-        <span class="kw">let </span>curr = tokio::spawn(this.publish_loop(keypair.clone(), signed_packet));
+        <span class="kw">let </span>curr = task::spawn(this.publish_loop(keypair.clone(), signed_packet));
         <span class="kw">let </span><span class="kw-2">mut </span>task = <span class="self">self</span>.<span class="number">0</span>.task.lock().expect(<span class="string">"poisoned"</span>);
         <span class="kw-2">*</span>task = <span class="prelude-val">Some</span>(AbortOnDropHandle::new(curr));
     }
@@ -843,12 +845,12 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         _endpoint: Endpoint,
         node_id: NodeId,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;Boxed&lt;anyhow::Result&lt;DiscoveryItem&gt;&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;anyhow::Result&lt;DiscoveryItem&gt;&gt;&gt; {
         <span class="kw">let </span>pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect(<span class="string">"valid public key"</span>);
         <span class="macro">tracing::info!</span>(<span class="string">"resolving {} as {}"</span>, node_id, pkarr_public_key.to_z32());
 
-        <span class="kw">let </span><span class="kw-2">mut </span>stream = futures_buffered::FuturesUnorderedBounded::new(<span class="number">2</span>);
+        <span class="kw">let </span><span class="kw-2">mut </span>stream = n0_future::FuturesUnorderedBounded::new(<span class="number">2</span>);
         <span class="kw">if </span><span class="self">self</span>.<span class="number">0</span>.pkarr_relay.is_some() {
             <span class="kw">let </span>key = pkarr_public_key.clone();
             <span class="kw">let </span>discovery = <span class="self">self</span>.<span class="number">0</span>.clone();

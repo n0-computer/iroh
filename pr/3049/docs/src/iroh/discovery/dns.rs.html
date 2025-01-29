@@ -88,8 +88,8 @@
 <a href="#87" id="87">87</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS node discovery for iroh
 
 </span><span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>futures_lite::stream::Boxed <span class="kw">as </span>BoxStream;
 <span class="kw">use </span>iroh_base::NodeId;
+<span class="kw">use </span>n0_future::boxed::BoxStream;
 
 <span class="kw">use crate</span>::{
     discovery::{Discovery, DiscoveryItem},
@@ -168,7 +168,7 @@
                 last_updated: <span class="prelude-val">None</span>,
             })
         };
-        <span class="kw">let </span>stream = futures_lite::stream::once_future(fut);
+        <span class="kw">let </span>stream = n0_future::stream::once_future(fut);
         <span class="prelude-val">Some</span>(Box::pin(stream))
     }
 }

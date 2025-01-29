@@ -844,7 +844,24 @@
 <a href="#843" id="843">843</a>
 <a href="#844" id="844">844</a>
 <a href="#845" id="845">845</a>
-<a href="#846" id="846">846</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
+<a href="#846" id="846">846</a>
+<a href="#847" id="847">847</a>
+<a href="#848" id="848">848</a>
+<a href="#849" id="849">849</a>
+<a href="#850" id="850">850</a>
+<a href="#851" id="851">851</a>
+<a href="#852" id="852">852</a>
+<a href="#853" id="853">853</a>
+<a href="#854" id="854">854</a>
+<a href="#855" id="855">855</a>
+<a href="#856" id="856">856</a>
+<a href="#857" id="857">857</a>
+<a href="#858" id="858">858</a>
+<a href="#859" id="859">859</a>
+<a href="#860" id="860">860</a>
+<a href="#861" id="861">861</a>
+<a href="#862" id="862">862</a>
+<a href="#863" id="863">863</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
 //!
 //! Protocol flow:
 //!
@@ -858,19 +875,16 @@
 //!  * clients sends `FrameType::SendPacket`
 //!  * server then sends `FrameType::RecvPacket` to recipient
 
-</span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
-</span><span class="kw">use </span>std::time::Duration;
-
-<span class="kw">use </span>anyhow::{bail, ensure};
-<span class="kw">use </span>bytes::{Buf, BufMut, Bytes, BytesMut};
-<span class="attr">#[cfg(any(test, feature = <span class="string">"server"</span>))]
-</span><span class="kw">use </span>futures_lite::{Stream, StreamExt};
-<span class="kw">use </span>futures_sink::Sink;
-<span class="kw">use </span>futures_util::SinkExt;
+</span><span class="kw">use </span>anyhow::{bail, ensure};
+<span class="kw">use </span>bytes::{BufMut, Bytes};
 <span class="kw">use </span>iroh_base::{PublicKey, SecretKey, Signature};
+<span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
+</span><span class="kw">use </span>n0_future::time::Duration;
+<span class="kw">use </span>n0_future::{Sink, SinkExt};
+<span class="attr">#[cfg(any(test, feature = <span class="string">"server"</span>))]
+</span><span class="kw">use </span>n0_future::{Stream, StreamExt};
 <span class="kw">use </span>postcard::experimental::max_size::MaxSize;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
-<span class="kw">use </span>tokio_util::codec::{Decoder, Encoder};
 
 <span class="kw">use crate</span>::{client::conn::ConnSendError, KeyCache};
 
@@ -882,6 +896,7 @@
 <span class="doccomment">/// The maximum frame size.
 ///
 /// This is also the minimum burst size that a rate-limiter has to accept.
+</span><span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">const </span>MAX_FRAME_SIZE: usize = <span class="number">1024 </span>* <span class="number">1024</span>;
 
 <span class="doccomment">/// The Relay magic number, sent in the FrameType::ClientInfo frame upon initial connection.
@@ -1055,12 +1070,14 @@
 ///
 /// This is a framed protocol, using [`tokio_util::codec`] to turn the streams of bytes into
 /// [`Frame`]s.
-</span><span class="attr">#[derive(Debug, Clone)]
+</span><span class="attr">#[cfg(not(wasm_browser))]
+#[derive(Debug, Clone)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>RelayCodec {
     cache: KeyCache,
 }
 
-<span class="kw">impl </span>RelayCodec {
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">impl </span>RelayCodec {
     <span class="attr">#[cfg(test)]
     </span><span class="kw">pub fn </span>test() -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
@@ -1128,6 +1145,7 @@
     }
 
     <span class="doccomment">/// Serialized length (without the frame header)
+    </span><span class="attr">#[cfg(not(wasm_browser))] </span><span class="comment">// Not needed with websocket framing - thus not needed in browsers
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="kw">match </span><span class="self">self </span>{
             Frame::ClientInfo {
@@ -1342,72 +1360,86 @@
     }
 }
 
-<span class="kw">const </span>HEADER_LEN: usize = <span class="number">5</span>;
+<span class="comment">// No need for framing when using websockets, thus this is cfg-ed out for browsers:
+</span><span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="comment">// rustc doesn't figure out that the trait impls mean it's not unused
+</span><span class="attr">#[cfg_attr(not(wasm_browser), allow(unused))]
+</span><span class="kw">pub use </span>framing::<span class="kw-2">*</span>;
 
-<span class="kw">impl </span>Decoder <span class="kw">for </span>RelayCodec {
-    <span class="kw">type </span>Item = Frame;
-    <span class="kw">type </span>Error = anyhow::Error;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">mod </span>framing {
+    <span class="kw">use </span>bytes::{Buf, BytesMut};
+    <span class="kw">use </span>tokio_util::codec::{Decoder, Encoder};
 
-    <span class="kw">fn </span>decode(<span class="kw-2">&amp;mut </span><span class="self">self</span>, src: <span class="kw-2">&amp;mut </span>BytesMut) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;, <span class="self">Self</span>::Error&gt; {
-        <span class="comment">// Need at least 5 bytes
-        </span><span class="kw">if </span>src.len() &lt; HEADER_LEN {
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const </span>HEADER_LEN: usize = <span class="number">5</span>;
+
+    <span class="kw">impl </span>Decoder <span class="kw">for </span>RelayCodec {
+        <span class="kw">type </span>Item = Frame;
+        <span class="kw">type </span>Error = anyhow::Error;
+
+        <span class="kw">fn </span>decode(<span class="kw-2">&amp;mut </span><span class="self">self</span>, src: <span class="kw-2">&amp;mut </span>BytesMut) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;, <span class="self">Self</span>::Error&gt; {
+            <span class="comment">// Need at least 5 bytes
+            </span><span class="kw">if </span>src.len() &lt; HEADER_LEN {
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+            }
+
+            <span class="comment">// Can't use the `Buf::get_*` APIs, as that advances the buffer.
+            </span><span class="kw">let </span><span class="prelude-val">Some</span>(frame_type) = src.first().map(|b| FrameType::from(<span class="kw-2">*</span>b)) <span class="kw">else </span>{
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>); <span class="comment">// Not enough bytes
+            </span>};
+            <span class="kw">let </span><span class="prelude-val">Some</span>(frame_len) = src
+                .get(<span class="number">1</span>..<span class="number">5</span>)
+                .and_then(|s| TryInto::&lt;[u8; <span class="number">4</span>]&gt;::try_into(s).ok())
+                .map(u32::from_be_bytes)
+                .map(|l| l <span class="kw">as </span>usize)
+            <span class="kw">else </span>{
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>); <span class="comment">// Not enough bytes
+            </span>};
+
+            <span class="kw">if </span>frame_len &gt; MAX_FRAME_SIZE {
+                <span class="macro">anyhow::bail!</span>(<span class="string">"Frame of length {} is too large."</span>, frame_len);
+            }
+
+            <span class="kw">if </span>src.len() &lt; HEADER_LEN + frame_len {
+                <span class="comment">// Optimization: prereserve the buffer space
+                </span>src.reserve(HEADER_LEN + frame_len - src.len());
+
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+            }
+
+            <span class="comment">// advance the header
+            </span>src.advance(HEADER_LEN);
+
+            <span class="kw">let </span>content = src.split_to(frame_len).freeze();
+            <span class="kw">let </span>frame = Frame::from_bytes(frame_type, content, <span class="kw-2">&amp;</span><span class="self">self</span>.cache)<span class="question-mark">?</span>;
+
+            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(frame))
         }
-
-        <span class="comment">// Can't use the `Buf::get_*` APIs, as that advances the buffer.
-        </span><span class="kw">let </span><span class="prelude-val">Some</span>(frame_type) = src.first().map(|b| FrameType::from(<span class="kw-2">*</span>b)) <span class="kw">else </span>{
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>); <span class="comment">// Not enough bytes
-        </span>};
-        <span class="kw">let </span><span class="prelude-val">Some</span>(frame_len) = src
-            .get(<span class="number">1</span>..<span class="number">5</span>)
-            .and_then(|s| TryInto::&lt;[u8; <span class="number">4</span>]&gt;::try_into(s).ok())
-            .map(u32::from_be_bytes)
-            .map(|l| l <span class="kw">as </span>usize)
-        <span class="kw">else </span>{
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>); <span class="comment">// Not enough bytes
-        </span>};
-
-        <span class="kw">if </span>frame_len &gt; MAX_FRAME_SIZE {
-            <span class="macro">anyhow::bail!</span>(<span class="string">"Frame of length {} is too large."</span>, frame_len);
-        }
-
-        <span class="kw">if </span>src.len() &lt; HEADER_LEN + frame_len {
-            <span class="comment">// Optimization: prereserve the buffer space
-            </span>src.reserve(HEADER_LEN + frame_len - src.len());
-
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-        }
-
-        <span class="comment">// advance the header
-        </span>src.advance(HEADER_LEN);
-
-        <span class="kw">let </span>content = src.split_to(frame_len).freeze();
-        <span class="kw">let </span>frame = Frame::from_bytes(frame_type, content, <span class="kw-2">&amp;</span><span class="self">self</span>.cache)<span class="question-mark">?</span>;
-
-        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(frame))
     }
-}
 
-<span class="kw">impl </span>Encoder&lt;Frame&gt; <span class="kw">for </span>RelayCodec {
-    <span class="kw">type </span>Error = std::io::Error;
+    <span class="kw">impl </span>Encoder&lt;Frame&gt; <span class="kw">for </span>RelayCodec {
+        <span class="kw">type </span>Error = std::io::Error;
 
-    <span class="kw">fn </span>encode(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: Frame, dst: <span class="kw-2">&amp;mut </span>BytesMut) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
-        <span class="kw">let </span>frame_len: usize = frame.len();
-        <span class="kw">if </span>frame_len &gt; MAX_FRAME_SIZE {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                <span class="macro">format!</span>(<span class="string">"Frame of length {} is too large."</span>, frame_len),
-            ));
+        <span class="kw">fn </span>encode(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: Frame, dst: <span class="kw-2">&amp;mut </span>BytesMut) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
+            <span class="kw">let </span>frame_len: usize = frame.len();
+            <span class="kw">if </span>frame_len &gt; MAX_FRAME_SIZE {
+                <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    <span class="macro">format!</span>(<span class="string">"Frame of length {} is too large."</span>, frame_len),
+                ));
+            }
+
+            <span class="kw">let </span>frame_len_u32 = u32::try_from(frame_len).expect(<span class="string">"just checked"</span>);
+
+            dst.reserve(HEADER_LEN + frame_len);
+            dst.put_u8(frame.typ().into());
+            dst.put_u32(frame_len_u32);
+            frame.write_to(dst);
+
+            <span class="prelude-val">Ok</span>(())
         }
-
-        <span class="kw">let </span>frame_len_u32 = u32::try_from(frame_len).expect(<span class="string">"just checked"</span>);
-
-        dst.reserve(HEADER_LEN + frame_len);
-        dst.put_u8(frame.typ().into());
-        dst.put_u32(frame_len_u32);
-        frame.write_to(dst);
-
-        <span class="prelude-val">Ok</span>(())
     }
 }
 
@@ -1570,7 +1602,9 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>proptests {
+    <span class="kw">use </span>bytes::BytesMut;
     <span class="kw">use </span>proptest::prelude::<span class="kw-2">*</span>;
+    <span class="kw">use </span>tokio_util::codec::{Decoder, Encoder};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 

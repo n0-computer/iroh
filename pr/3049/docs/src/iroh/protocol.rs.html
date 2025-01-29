@@ -372,7 +372,10 @@
 <a href="#371" id="371">371</a>
 <a href="#372" id="372">372</a>
 <a href="#373" id="373">373</a>
-<a href="#374" id="374">374</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
+<a href="#377" id="377">377</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
 //!
@@ -415,10 +418,13 @@
 </span><span class="kw">use </span>std::{collections::BTreeMap, sync::Arc};
 
 <span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>futures_buffered::join_all;
-<span class="kw">use </span>futures_lite::future::Boxed <span class="kw">as </span>BoxedFuture;
-<span class="kw">use </span>tokio::{sync::Mutex, task::JoinSet};
-<span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+<span class="kw">use </span>n0_future::{
+    boxed::BoxFuture,
+    join_all,
+    task::{<span class="self">self</span>, AbortOnDropHandle, JoinSet},
+};
+<span class="kw">use </span>tokio::sync::Mutex;
+<span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{error, info_span, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{endpoint::Connecting, Endpoint};
@@ -483,30 +489,30 @@
     <span class="doccomment">/// Handle an incoming connection.
     ///
     /// This runs on a freshly spawned tokio task so this can be long-running.
-    </span><span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxedFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;;
+    </span><span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;;
 
     <span class="doccomment">/// Called when the node shuts down.
-    </span><span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxedFuture&lt;()&gt; {
+    </span><span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxFuture&lt;()&gt; {
         Box::pin(<span class="kw">async move </span>{})
     }
 }
 
 <span class="kw">impl</span>&lt;T: ProtocolHandler&gt; ProtocolHandler <span class="kw">for </span>Arc&lt;T&gt; {
-    <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxedFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
+    <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
         <span class="self">self</span>.as_ref().accept(conn)
     }
 
-    <span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxedFuture&lt;()&gt; {
+    <span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxFuture&lt;()&gt; {
         <span class="self">self</span>.as_ref().shutdown()
     }
 }
 
 <span class="kw">impl</span>&lt;T: ProtocolHandler&gt; ProtocolHandler <span class="kw">for </span>Box&lt;T&gt; {
-    <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxedFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
+    <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
         <span class="self">self</span>.as_ref().accept(conn)
     }
 
-    <span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxedFuture&lt;()&gt; {
+    <span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxFuture&lt;()&gt; {
         <span class="self">self</span>.as_ref().shutdown()
     }
 }
@@ -680,7 +686,7 @@
             </span><span class="macro">tracing::info!</span>(<span class="string">"Shutting down remaining tasks"</span>);
             join_set.shutdown().<span class="kw">await</span>;
         };
-        <span class="kw">let </span>task = tokio::task::spawn(run_loop_fut);
+        <span class="kw">let </span>task = task::spawn(run_loop_fut);
         <span class="kw">let </span>task = AbortOnDropHandle::new(task);
 
         <span class="prelude-val">Ok</span>(Router {
