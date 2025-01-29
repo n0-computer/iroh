@@ -26,3 +26,15 @@ args = [
      "--config",
      "imports_granularity=Crate,group_imports=StdExternalCrate,reorder_imports=true,format_code_in_doc_comments=true",
 ]
+
+[tasks.semgrep]
+workspace = false
+command = "semgrep"
+args = [
+     "scan",
+     "--config",
+     ".config/semgrep.yaml",
+     "iroh",
+     "iroh-relay",
+     "iroh-net-report",
+]

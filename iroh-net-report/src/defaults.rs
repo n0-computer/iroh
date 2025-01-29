@@ -2,7 +2,7 @@
 
 /// Contains all timeouts that we use in `iroh-net-report`.
 pub(crate) mod timeouts {
-    use std::time::Duration;
+    use n0_future::time::Duration;
 
     // Timeouts for net_report
 

@@ -40,18 +40,18 @@ rules:
 
   severity: ERROR
 
-# - id: ban-std-instant
-#   languages:
-#     - rust
-#   message: Use n0_future::time::Instant instead of sld::time::Instant, because the latter's Instant::now implementation panics in Wasm
-#   pattern: std::time::Instant
+- id: ban-std-instant
+  languages:
+    - rust
+  message: Use n0_future::time::Instant instead of std::time::Instant, because the latter's Instant::now implementation panics in Wasm
+  pattern: std::time::Instant
 
-#   severity: ERROR
+  severity: ERROR
 
-# - id: ban-std-duration
-#   languages:
-#     - rust
-#   message: Use n0_future::time::Duration instead of sld::time::Duration for consistency with n0_future::time::Instant
-#   pattern: std::time::Duration
+- id: ban-std-duration
+  languages:
+    - rust
+  message: Use n0_future::time::Duration instead of std::time::Duration for consistency with n0_future::time::Instant
+  pattern: std::time::Duration
 
-#   severity: ERROR
+  severity: ERROR

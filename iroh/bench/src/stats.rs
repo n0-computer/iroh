@@ -1,6 +1,5 @@
-use std::time::Duration;
-
 use hdrhistogram::Histogram;
+use n0_future::time::Duration;
 
 #[derive(Default, Debug)]
 pub struct Stats {

@@ -751,11 +751,10 @@ mod tests {
 /// publish to. The DNS and pkarr servers share their state.
 #[cfg(test)]
 mod test_dns_pkarr {
-    use std::time::Duration;
-
     use anyhow::Result;
     use iroh_base::{NodeAddr, SecretKey};
     use iroh_relay::RelayMap;
+    use n0_future::time::Duration;
     use tokio_util::task::AbortOnDropHandle;
 
     use crate::{
