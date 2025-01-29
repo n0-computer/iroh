@@ -2,17 +2,19 @@ use std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
-    time::{Duration, Instant},
 };
 
 use data_encoding::HEXLOWER;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 use iroh_metrics::inc;
 use iroh_relay::protos::stun;
+use n0_future::{
+    task::{self, AbortOnDropHandle},
+    time::{self, Duration, Instant},
+};
 use netwatch::ip::is_unicast_link_local;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, event, info, instrument, trace, warn, Level};
 
 use super::{
@@ -527,8 +529,8 @@ impl NodeState {
         }
 
         let id = self.id;
-        let _expiry_task = AbortOnDropHandle::new(tokio::spawn(async move {
-            tokio::time::sleep(PING_TIMEOUT_DURATION).await;
+        let _expiry_task = AbortOnDropHandle::new(task::spawn(async move {
+            time::sleep(PING_TIMEOUT_DURATION).await;
             sender
                 .send(ActorMessage::EndpointPingExpired(id, tx_id))
                 .await

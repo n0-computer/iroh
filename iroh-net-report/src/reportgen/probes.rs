@@ -9,8 +9,8 @@ use std::{collections::BTreeSet, fmt, sync::Arc};
 use anyhow::{ensure, Result};
 use iroh_base::RelayUrl;
 use iroh_relay::{RelayMap, RelayNode};
+use n0_future::time::Duration;
 use netwatch::interfaces;
-use tokio::time::Duration;
 
 use crate::Report;
 

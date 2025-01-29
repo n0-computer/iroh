@@ -1,10 +1,8 @@
 //! The [`BestAddr`] is the currently active best address for UDP sends.
 
-use std::{
-    net::SocketAddr,
-    time::{Duration, Instant},
-};
+use std::net::SocketAddr;
 
+use n0_future::time::{Duration, Instant};
 use tracing::{debug, info};
 
 /// How long we trust a UDP address as the exclusive path (without using relay) without having heard a Pong reply.

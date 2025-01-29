@@ -3,11 +3,11 @@ use std::{
     hash::Hash,
     net::{IpAddr, SocketAddr},
     sync::Mutex,
-    time::Instant,
 };
 
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 use iroh_metrics::inc;
+use n0_future::time::Instant;
 use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
 use tracing::{debug, info, instrument, trace, warn};

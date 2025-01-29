@@ -10,7 +10,7 @@ use axum_server::{
     accept::Accept,
     tls_rustls::{RustlsAcceptor, RustlsConfig},
 };
-use futures_lite::{future::Boxed as BoxFuture, FutureExt};
+use n0_future::{future::Boxed as BoxFuture, FutureExt};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls_acme::{axum::AxumAcceptor, caches::DirCache, AcmeConfig};

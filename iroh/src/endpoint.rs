@@ -19,12 +19,12 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::Poll,
-    time::Duration,
 };
 
 use anyhow::{bail, Context, Result};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
+use n0_future::time::Duration;
 use pin_project::pin_project;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
@@ -1747,8 +1747,8 @@ mod tests {
 
     use std::time::Instant;
 
-    use futures_lite::StreamExt;
     use iroh_test::CallOnDrop;
+    use n0_future::StreamExt;
     use rand::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
 
@@ -1862,7 +1862,7 @@ mod tests {
 
         let (server, client) = tokio::time::timeout(
             Duration::from_secs(30),
-            futures_lite::future::zip(server, client),
+            n0_future::future::zip(server, client),
         )
         .await
         .expect("timeout");

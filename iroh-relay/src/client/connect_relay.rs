@@ -25,6 +25,7 @@ use hyper::{
     upgrade::Parts,
     Request,
 };
+use n0_future::{task, time};
 use rustls::client::Resumption;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{error, info_span, Instrument};
@@ -117,7 +118,7 @@ impl ClientBuilder {
         let (mut request_sender, connection) = hyper::client::conn::http1::Builder::new()
             .handshake(io)
             .await?;
-        tokio::spawn(
+        task::spawn(
             // This task drives the HTTP exchange, completes once connection is upgraded.
             async move {
                 debug!("HTTP upgrade driver started");
@@ -169,14 +170,13 @@ impl ClientBuilder {
         let addr = SocketAddr::new(dst_ip, port);
 
         debug!("connecting to {}", addr);
-        let tcp_stream =
-            tokio::time::timeout(
-                DIAL_NODE_TIMEOUT,
-                async move { TcpStream::connect(addr).await },
-            )
-            .await
-            .context("Timeout connecting")?
-            .context("Failed connecting")?;
+        let tcp_stream = time::timeout(
+            DIAL_NODE_TIMEOUT,
+            async move { TcpStream::connect(addr).await },
+        )
+        .await
+        .context("Timeout connecting")?
+        .context("Failed connecting")?;
         tcp_stream.set_nodelay(true)?;
 
         Ok(tcp_stream)
@@ -203,7 +203,7 @@ impl ClientBuilder {
 
         debug!(%proxy_addr, "connecting to proxy");
 
-        let tcp_stream = tokio::time::timeout(DIAL_NODE_TIMEOUT, async move {
+        let tcp_stream = time::timeout(DIAL_NODE_TIMEOUT, async move {
             TcpStream::connect(proxy_addr).await
         })
         .await
@@ -256,7 +256,7 @@ impl ClientBuilder {
         debug!("Sending proxy request: {:?}", req);
 
         let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
-        tokio::task::spawn(async move {
+        task::spawn(async move {
             if let Err(err) = conn.with_upgrades().await {
                 error!("Proxy connection failed: {:?}", err);
             }

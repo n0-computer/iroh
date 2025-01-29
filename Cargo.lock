@@ -2027,6 +2027,7 @@ version = "0.31.0"
 dependencies = [
  "aead",
  "anyhow",
+ "atomic-waker",
  "axum",
  "backoff",
  "bytes",
@@ -2037,9 +2038,7 @@ dependencies = [
  "der",
  "derive_more",
  "ed25519-dalek",
- "futures-buffered",
  "futures-lite",
- "futures-sink",
  "futures-util",
  "governor 0.7.0",
  "hickory-resolver",
@@ -2057,6 +2056,7 @@ dependencies = [
  "iroh-quinn-udp",
  "iroh-relay",
  "iroh-test 0.31.0",
+ "n0-future",
  "netdev",
  "netwatch",
  "parse-size",
@@ -2119,11 +2119,11 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
- "futures-lite",
  "hdrhistogram",
  "iroh",
  "iroh-metrics",
  "iroh-quinn",
+ "n0-future",
  "rcgen",
  "rustls",
  "tokio",
@@ -2145,7 +2145,6 @@ dependencies = [
  "criterion",
  "derive_more",
  "dirs-next",
- "futures-lite",
  "governor 0.6.3",
  "hickory-resolver",
  "hickory-server",
@@ -2155,6 +2154,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-test 0.31.0",
  "lru",
+ "n0-future",
  "pkarr",
  "rand",
  "rand_chacha",
@@ -2208,14 +2208,13 @@ dependencies = [
  "anyhow",
  "bytes",
  "derive_more",
- "futures-buffered",
- "futures-lite",
  "hickory-resolver",
  "iroh-base",
  "iroh-metrics",
  "iroh-quinn",
  "iroh-relay",
  "iroh-test 0.31.0",
+ "n0-future",
  "netwatch",
  "portmapper",
  "pretty_assertions",
@@ -2634,15 +2633,14 @@ dependencies = [
 
 [[package]]
 name = "n0-future"
-version = "0.0.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7d4800d43db24b202e42bb129710ee5f809d46345d2e31ed702d5c6ed02601e"
+checksum = "399e11dc3b0e8d9d65b27170d22f5d779d52d9bed888db70d7e0c2c7ce3dfc52"
 dependencies = [
  "cfg_aliases",
  "derive_more",
  "futures-buffered",
  "futures-lite",
- "futures-sink",
  "futures-util",
  "js-sys",
  "pin-project",

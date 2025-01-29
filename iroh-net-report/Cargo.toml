@@ -19,12 +19,11 @@ workspace = true
 anyhow = "1"
 bytes = "1.7"
 derive_more = { version = "1.0.0", features = ["display"] }
-futures-buffered = "0.2.8"
-futures-lite = "2.3"
 hickory-resolver = "=0.25.0-alpha.4"
 iroh-base = { version = "0.31.0", path = "../iroh-base", default-features = false, features = ["relay"] }
 iroh-metrics = { version = "0.31", default-features = false }
 iroh-relay = { version = "0.31", path = "../iroh-relay" }
+n0-future = "0.1.2"
 netwatch = { version = "0.3" }
 portmapper = { version = "0.3", default-features = false }
 quinn = { package = "iroh-quinn", version = "0.13.0" }

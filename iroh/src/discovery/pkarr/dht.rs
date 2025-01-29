@@ -9,20 +9,21 @@ use std::{
     collections::BTreeSet,
     net::SocketAddr,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 
 use anyhow::Result;
-use futures_lite::{
-    stream::{Boxed, StreamExt},
+use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
+use n0_future::{
+    boxed::BoxStream,
+    stream::StreamExt,
+    task::{self, AbortOnDropHandle},
+    time::{self, Duration},
     FutureExt,
 };
-use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use pkarr::{
     PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, RelaySettings,
     SignedPacket,
 };
-use tokio_util::task::AbortOnDropHandle;
 use url::Url;
 
 use crate::{
@@ -304,7 +305,7 @@ impl DhtDiscovery {
             .to_z32();
         // initial delay. If the task gets aborted before this delay is over,
         // we have not published anything to the DHT yet.
-        tokio::time::sleep(this.0.initial_publish_delay).await;
+        time::sleep(this.0.initial_publish_delay).await;
         loop {
             // publish to the DHT if enabled
             let dht_publish = async {
@@ -345,7 +346,7 @@ impl DhtDiscovery {
             };
             // do both at the same time
             tokio::join!(relay_publish, dht_publish);
-            tokio::time::sleep(this.0.republish_delay).await;
+            time::sleep(this.0.republish_delay).await;
         }
     }
 }
@@ -371,7 +372,7 @@ impl Discovery for DhtDiscovery {
             return;
         };
         let this = self.clone();
-        let curr = tokio::spawn(this.publish_loop(keypair.clone(), signed_packet));
+        let curr = task::spawn(this.publish_loop(keypair.clone(), signed_packet));
         let mut task = self.0.task.lock().expect("poisoned");
         *task = Some(AbortOnDropHandle::new(curr));
     }
@@ -380,12 +381,12 @@ impl Discovery for DhtDiscovery {
         &self,
         _endpoint: Endpoint,
         node_id: NodeId,
-    ) -> Option<Boxed<anyhow::Result<DiscoveryItem>>> {
+    ) -> Option<BoxStream<anyhow::Result<DiscoveryItem>>> {
         let pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect("valid public key");
         tracing::info!("resolving {} as {}", node_id, pkarr_public_key.to_z32());
 
-        let mut stream = futures_buffered::FuturesUnorderedBounded::new(2);
+        let mut stream = n0_future::FuturesUnorderedBounded::new(2);
         if self.0.pkarr_relay.is_some() {
             let key = pkarr_public_key.clone();
             let discovery = self.0.clone();

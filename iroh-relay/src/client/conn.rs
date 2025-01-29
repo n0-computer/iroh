@@ -6,13 +6,12 @@ use std::{
     io,
     pin::Pin,
     task::{Context, Poll},
-    time::Duration,
 };
 
 use anyhow::{bail, Result};
 use bytes::Bytes;
 use iroh_base::{NodeId, SecretKey};
-use n0_future::{Sink, Stream};
+use n0_future::{time::Duration, Sink, Stream};
 use tokio_tungstenite_wasm::WebSocketStream;
 #[cfg(not(wasm_browser))]
 use tokio_util::codec::Framed;

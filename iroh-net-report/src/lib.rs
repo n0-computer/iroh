@@ -23,12 +23,12 @@ use iroh_base::RelayUrl;
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
 use iroh_relay::{protos::stun, RelayMap};
-use netwatch::UdpSocket;
-use tokio::{
-    sync::{self, mpsc, oneshot},
+use n0_future::{
+    task::{self, AbortOnDropHandle},
     time::{Duration, Instant},
 };
-use tokio_util::task::AbortOnDropHandle;
+use netwatch::UdpSocket;
+use tokio::sync::{self, mpsc, oneshot};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 mod defaults;
@@ -351,7 +351,7 @@ impl Client {
     pub fn new(port_mapper: Option<portmapper::Client>, dns_resolver: DnsResolver) -> Result<Self> {
         let mut actor = Actor::new(port_mapper, dns_resolver)?;
         let addr = actor.addr();
-        let task = tokio::spawn(
+        let task = task::spawn(
             async move { actor.run().await }.instrument(info_span!("net_report.actor")),
         );
         let drop_guard = AbortOnDropHandle::new(task);
@@ -899,7 +899,7 @@ pub(crate) mod stun_utils {
         );
         {
             let sock = sock.clone();
-            tokio::spawn(
+            task::spawn(
                 async move {
                     debug!("udp stun socket listener started");
                     // TODO: Can we do better for buffers here?  Probably doesn't matter much.
@@ -988,7 +988,6 @@ mod tests {
 
     use bytes::BytesMut;
     use netwatch::IpFamily;
-    use tokio::time;
     use tokio_util::sync::CancellationToken;
     use tracing::info;
 
@@ -1388,7 +1387,7 @@ mod tests {
             let mut actor = Actor::new(None, resolver.clone()).unwrap();
             for s in &mut tt.steps {
                 // trigger the timer
-                time::advance(Duration::from_secs(s.after)).await;
+                tokio::time::advance(Duration::from_secs(s.after)).await;
                 let r = Arc::try_unwrap(s.r.take().unwrap()).unwrap();
                 s.r = Some(actor.add_report_history_and_set_preferred_relay(r));
             }

@@ -104,13 +104,16 @@
 //! [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
 //! [`StaticProvider`]: static_provider::StaticProvider
 
-use std::{collections::BTreeSet, net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::BTreeSet, net::SocketAddr, sync::Arc};
 
 use anyhow::{anyhow, ensure, Result};
-use futures_lite::stream::{Boxed as BoxStream, StreamExt};
 use iroh_base::{NodeAddr, NodeId, RelayUrl};
+use n0_future::{
+    stream::{Boxed as BoxStream, StreamExt},
+    task::{self, AbortOnDropHandle},
+    time::{self, Duration},
+};
 use tokio::sync::oneshot;
-use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error_span, warn, Instrument};
 
 use crate::Endpoint;
@@ -257,7 +260,7 @@ impl Discovery for ConcurrentDiscovery {
             .iter()
             .filter_map(|service| service.resolve(endpoint.clone(), node_id));
 
-        let streams = futures_buffered::MergeBounded::from_iter(streams);
+        let streams = n0_future::MergeBounded::from_iter(streams);
         Some(Box::pin(streams))
     }
 
@@ -269,7 +272,7 @@ impl Discovery for ConcurrentDiscovery {
             }
         }
 
-        let streams = futures_buffered::MergeBounded::from_iter(streams);
+        let streams = n0_future::MergeBounded::from_iter(streams);
         Some(Box::pin(streams))
     }
 }
@@ -290,7 +293,7 @@ impl DiscoveryTask {
         ensure!(ep.discovery().is_some(), "No discovery services configured");
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let me = ep.node_id();
-        let task = tokio::task::spawn(
+        let task = task::spawn(
             async move { Self::run(ep, node_id, on_first_tx).await }.instrument(
                 error_span!("discovery", me = %me.fmt_short(), node = %node_id.fmt_short()),
             ),
@@ -322,11 +325,11 @@ impl DiscoveryTask {
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
         let me = ep.node_id();
-        let task = tokio::task::spawn(
+        let task = task::spawn(
             async move {
                 // If delay is set, wait and recheck if discovery is needed. If not, early-exit.
                 if let Some(delay) = delay {
-                    tokio::time::sleep(delay).await;
+                    time::sleep(delay).await;
                     if !Self::needs_discovery(&ep, node_id) {
                         debug!("no discovery needed, abort");
                         on_first_tx.send(Ok(())).ok();
@@ -526,7 +529,7 @@ mod tests {
                     };
                     let delay = self.delay;
                     let fut = async move {
-                        tokio::time::sleep(delay).await;
+                        time::sleep(delay).await;
                         tracing::debug!(
                             "resolve on {}: {} = {item:?}",
                             endpoint.node_id().fmt_short(),
@@ -534,9 +537,9 @@ mod tests {
                         );
                         Ok(item)
                     };
-                    futures_lite::stream::once_future(fut).boxed()
+                    n0_future::stream::once_future(fut).boxed()
                 }
-                None => futures_lite::stream::empty().boxed(),
+                None => n0_future::stream::empty().boxed(),
             };
             Some(stream)
         }
@@ -552,7 +555,7 @@ mod tests {
             _endpoint: Endpoint,
             _node_id: NodeId,
         ) -> Option<BoxStream<Result<DiscoveryItem>>> {
-            Some(futures_lite::stream::empty().boxed())
+            Some(n0_future::stream::empty().boxed())
         }
     }
 
@@ -751,11 +754,10 @@ mod tests {
 /// publish to. The DNS and pkarr servers share their state.
 #[cfg(test)]
 mod test_dns_pkarr {
-    use std::time::Duration;
-
     use anyhow::Result;
     use iroh_base::{NodeAddr, SecretKey};
     use iroh_relay::RelayMap;
+    use n0_future::time::Duration;
     use tokio_util::task::AbortOnDropHandle;
 
     use crate::{

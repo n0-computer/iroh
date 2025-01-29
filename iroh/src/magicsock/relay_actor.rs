@@ -40,9 +40,6 @@ use std::{
 use anyhow::{anyhow, Result};
 use backoff::exponential::{ExponentialBackoff, ExponentialBackoffBuilder};
 use bytes::{Bytes, BytesMut};
-use futures_buffered::FuturesUnorderedBounded;
-use futures_lite::StreamExt;
-use futures_util::SinkExt;
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::{
@@ -50,11 +47,12 @@ use iroh_relay::{
     client::{Client, ReceivedMessage, SendMessage},
     PingTracker, MAX_PACKET_SIZE,
 };
-use tokio::{
-    sync::{mpsc, oneshot},
+use n0_future::{
     task::JoinSet,
-    time::{Duration, Instant, MissedTickBehavior},
+    time::{self, Duration, Instant, MissedTickBehavior},
+    FuturesUnorderedBounded, SinkExt, StreamExt,
 };
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, event, info_span, instrument, trace, warn, Instrument, Level};
 use url::Url;
@@ -155,7 +153,7 @@ struct ActiveRelayActor {
     /// Unless it is managing the home relay connection.  Inactivity is only tracked on the
     /// last datagram sent to the relay, received datagrams will trigger QUIC ACKs which is
     /// sufficient to keep active connections open.
-    inactive_timeout: Pin<Box<tokio::time::Sleep>>,
+    inactive_timeout: Pin<Box<time::Sleep>>,
     /// Token indicating the [`ActiveRelayActor`] should stop.
     stop_token: CancellationToken,
 }
@@ -233,7 +231,7 @@ impl ActiveRelayActor {
             url,
             relay_client_builder,
             is_home_relay: false,
-            inactive_timeout: Box::pin(tokio::time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
+            inactive_timeout: Box::pin(time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
             stop_token,
         }
     }
@@ -318,7 +316,7 @@ impl ActiveRelayActor {
         // is not an ideal mechanism, an alternative approach would be to use
         // e.g. ConcurrentQueue with force_push, though now you might still send very stale
         // packets when eventually connected.  So perhaps this is a reasonable compromise.
-        let mut send_datagram_flush = tokio::time::interval(UNDELIVERABLE_DATAGRAM_TIMEOUT);
+        let mut send_datagram_flush = time::interval(UNDELIVERABLE_DATAGRAM_TIMEOUT);
         send_datagram_flush.set_missed_tick_behavior(MissedTickBehavior::Delay);
         send_datagram_flush.reset(); // Skip the immediate interval
 
@@ -405,7 +403,7 @@ impl ActiveRelayActor {
             move || {
                 let client_builder = client_builder.clone();
                 async move {
-                    match tokio::time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
+                    match time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
                         Ok(Ok(client)) => Ok(client),
                         Ok(Err(err)) => {
                             warn!("Relay connection failed: {err:#}");
@@ -451,7 +449,7 @@ impl ActiveRelayActor {
         let mut send_datagrams_buf = Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE);
 
         // Regularly send pings so we know the connection is healthy.
-        let mut ping_interval = tokio::time::interval(PING_INTERVAL);
+        let mut ping_interval = time::interval(PING_INTERVAL);
         ping_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
         ping_interval.reset(); // skip the ping at current time.
 
@@ -547,7 +545,7 @@ impl ActiveRelayActor {
                         })
                         .map(Ok)
                     });
-                    let mut packet_stream = futures_util::stream::iter(packet_iter);
+                    let mut packet_stream = n0_future::stream::iter(packet_iter);
                     let fut = client_sink.send_all(&mut packet_stream);
                     self.run_sending(fut, &mut state, &mut client_stream).await?;
                 }
@@ -647,7 +645,7 @@ impl ActiveRelayActor {
         // we use the same time as for our ping interval
         let send_timeout = PING_INTERVAL;
 
-        let mut timeout = pin!(tokio::time::sleep(send_timeout));
+        let mut timeout = pin!(time::sleep(send_timeout));
         let mut sending_fut = pin!(sending_fut);
         loop {
             tokio::select! {
@@ -825,7 +823,7 @@ impl RelayActor {
         }
 
         // try shutdown
-        if tokio::time::timeout(Duration::from_secs(3), self.close_all_active_relays())
+        if time::timeout(Duration::from_secs(3), self.close_all_active_relays())
             .await
             .is_err()
         {
@@ -874,7 +872,7 @@ impl RelayActor {
 
     async fn set_home_relay(&mut self, home_url: RelayUrl) {
         let home_url_ref = &home_url;
-        futures_buffered::join_all(self.active_relays.iter().map(|(url, handle)| async move {
+        n0_future::join_all(self.active_relays.iter().map(|(url, handle)| async move {
             let is_preferred = url == home_url_ref;
             handle
                 .inbox_addr
@@ -1009,7 +1007,7 @@ impl RelayActor {
                 .await
                 .ok();
         });
-        futures_buffered::join_all(send_futs).await;
+        n0_future::join_all(send_futs).await;
         self.log_active_relay();
     }
 
@@ -1196,8 +1194,8 @@ impl Iterator for PacketSplitIter {
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
-    use futures_lite::future;
     use iroh_base::SecretKey;
+    use n0_future::future;
     use smallvec::smallvec;
     use testresult::TestResult;
     use tokio_util::task::AbortOnDropHandle;

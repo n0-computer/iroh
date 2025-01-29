@@ -26,28 +26,30 @@ use std::{
         Arc, RwLock,
     },
     task::{Context, Poll, Waker},
-    time::{Duration, Instant},
 };
 
 use anyhow::{anyhow, Context as _, Result};
+use atomic_waker::AtomicWaker;
 use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
 use data_encoding::HEXLOWER;
-use futures_lite::{FutureExt, StreamExt};
-use futures_util::{stream::BoxStream, task::AtomicWaker};
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::{protos::stun, RelayMap};
+use n0_future::{
+    boxed::BoxStream,
+    task,
+    task::JoinSet,
+    time,
+    time::{Duration, Instant},
+    FutureExt, StreamExt,
+};
 use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use relay_actor::RelaySendItem;
 use smallvec::{smallvec, SmallVec};
-use tokio::{
-    sync::{self, mpsc, Mutex},
-    task::JoinSet,
-    time,
-};
+use tokio::sync::{self, mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{
     debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
@@ -1249,7 +1251,7 @@ impl MagicSock {
         dst_node: NodeId,
         msg: &disco::Message,
     ) -> io::Result<()> {
-        futures_lite::future::poll_fn(move |cx| {
+        n0_future::future::poll_fn(move |cx| {
             loop {
                 match self.try_send_disco_message_udp(dst, dst_node, msg) {
                     Ok(()) => return Poll::Ready(Ok(())),
@@ -2046,8 +2048,7 @@ impl Actor {
             self.msock.direct_addr_update_state.running.subscribe();
         let mut portmap_watcher = self.port_mapper.watch_external_address();
 
-        let mut discovery_events: BoxStream<DiscoveryItem> =
-            Box::pin(futures_lite::stream::empty());
+        let mut discovery_events: BoxStream<DiscoveryItem> = Box::pin(n0_future::stream::empty());
         if let Some(d) = self.msock.discovery() {
             if let Some(events) = d.subscribe() {
                 discovery_events = events;
@@ -2307,7 +2308,7 @@ impl Actor {
 
         // The following code can be slow, we do not want to block the caller since it would
         // block the actor loop.
-        tokio::spawn(
+        task::spawn(
             async move {
                 // If a socket is bound to the unspecified address, create SocketAddrs for
                 // each local IP address by pairing it with the port the socket is bound on.
@@ -2436,7 +2437,7 @@ impl Actor {
         match self.net_reporter.get_report_channel(relay_map, opts).await {
             Ok(rx) => {
                 let msg_sender = self.msg_sender.clone();
-                tokio::task::spawn(async move {
+                task::spawn(async move {
                     let report = time::timeout(NET_REPORT_TIMEOUT, rx).await;
                     let report: anyhow::Result<_> = match report {
                         Ok(Ok(Ok(report))) => Ok(Some(report)),
@@ -3056,7 +3057,7 @@ mod tests {
                 if ready.iter().all(|meshed| *meshed) {
                     break;
                 }
-                tokio::time::sleep(Duration::from_millis(200)).await;
+                time::sleep(Duration::from_millis(200)).await;
             }
         })
         .await
@@ -3792,7 +3793,7 @@ mod tests {
 
         // no relay, nothing to report
         assert_eq!(
-            futures_lite::future::poll_once(relay_stream.next()).await,
+            n0_future::future::poll_once(relay_stream.next()).await,
             None
         );
 
@@ -3805,7 +3806,7 @@ mod tests {
 
         let mut relay_stream = msock.home_relay().stream().filter_map(|r| r);
         assert_eq!(
-            futures_lite::future::poll_once(relay_stream.next()).await,
+            n0_future::future::poll_once(relay_stream.next()).await,
             Some(Some(url))
         );
     }
@@ -4103,7 +4104,7 @@ mod tests {
             async move {
                 let mut expected_msgs: BTreeSet<usize> = (0..capacity).collect();
                 while !expected_msgs.is_empty() {
-                    let datagram = futures_lite::future::poll_fn(|cx| {
+                    let datagram = n0_future::future::poll_fn(|cx| {
                         queue.poll_recv(cx).map(|result| result.unwrap())
                     })
                     .await;

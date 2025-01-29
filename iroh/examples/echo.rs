@@ -7,12 +7,12 @@
 //!     cargo run --example echo --features=examples
 
 use anyhow::Result;
-use futures_lite::future::Boxed as BoxedFuture;
 use iroh::{
     endpoint::Connecting,
     protocol::{ProtocolHandler, Router},
     Endpoint, NodeAddr,
 };
+use n0_future::boxed::BoxFuture;
 
 /// Each protocol is identified by its ALPN string.
 ///
@@ -71,7 +71,7 @@ impl ProtocolHandler for Echo {
     ///
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
     /// the connection lasts.
-    fn accept(&self, connecting: Connecting) -> BoxedFuture<Result<()>> {
+    fn accept(&self, connecting: Connecting) -> BoxFuture<Result<()>> {
         // We have to return a boxed future from the handler.
         Box::pin(async move {
             // Wait for the connection to be fully established.

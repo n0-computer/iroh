@@ -33,23 +33,18 @@
 use std::{
     collections::{BTreeSet, HashMap},
     net::{IpAddr, SocketAddr},
-    time::Duration,
 };
 
 use anyhow::Result;
 use derive_more::FromStr;
-use futures_lite::stream::Boxed as BoxStream;
-use futures_util::FutureExt;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
-use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
-use tokio::{
-    sync::mpsc::{
-        error::TrySendError,
-        {self},
-    },
-    task::JoinSet,
+use n0_future::{
+    boxed::BoxStream,
+    task::{self, AbortOnDropHandle, JoinSet},
+    time::{self, Duration},
 };
-use tokio_util::task::AbortOnDropHandle;
+use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
+use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::{
@@ -270,7 +265,7 @@ impl LocalSwarmDiscovery {
                         }
                         let timeout_sender = task_sender.clone();
                         timeouts.spawn(async move {
-                            tokio::time::sleep(DISCOVERY_DURATION).await;
+                            time::sleep(DISCOVERY_DURATION).await;
                             trace!(?node_id, "discovery timeout");
                             timeout_sender
                                 .send(Message::Timeout(node_id, id))
@@ -294,7 +289,7 @@ impl LocalSwarmDiscovery {
                 }
             }
         };
-        let handle = tokio::spawn(discovery_fut.instrument(info_span!("swarm-discovery.actor")));
+        let handle = task::spawn(discovery_fut.instrument(info_span!("swarm-discovery.actor")));
         Ok(Self {
             handle: AbortOnDropHandle::new(handle),
             sender: send,
@@ -367,6 +362,8 @@ fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
 
 impl Discovery for LocalSwarmDiscovery {
     fn resolve(&self, _ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
+        use futures_util::FutureExt;
+
         let (send, recv) = mpsc::channel(20);
         let discovery_sender = self.sender.clone();
         let stream = async move {
@@ -386,6 +383,8 @@ impl Discovery for LocalSwarmDiscovery {
     }
 
     fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+        use futures_util::FutureExt;
+
         let (sender, recv) = mpsc::channel(20);
         let discovery_sender = self.sender.clone();
         let stream = async move {
@@ -402,8 +401,8 @@ mod tests {
     /// This module's name signals nextest to run test in a single thread (no other concurrent
     /// tests)
     mod run_in_isolation {
-        use futures_lite::StreamExt;
         use iroh_base::SecretKey;
+        use n0_future::StreamExt;
         use testresult::TestResult;
 
         use super::super::*;
