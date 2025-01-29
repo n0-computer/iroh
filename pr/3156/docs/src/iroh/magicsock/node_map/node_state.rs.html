@@ -1739,8 +1739,7 @@
 <a href="#1738" id="1738">1738</a>
 <a href="#1739" id="1739">1739</a>
 <a href="#1740" id="1740">1740</a>
-<a href="#1741" id="1741">1741</a>
-<a href="#1742" id="1742">1742</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1741" id="1741">1741</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -1752,8 +1751,7 @@
 <span class="kw">use </span>iroh_relay::protos::stun;
 <span class="kw">use </span>n0_future::{
     task::{<span class="self">self</span>, AbortOnDropHandle},
-    time,
-    time::{Duration, Instant},
+    time::{<span class="self">self</span>, Duration, Instant},
 };
 <span class="kw">use </span>netwatch::ip::is_unicast_link_local;
 <span class="kw">use </span>serde::{Deserialize, Serialize};

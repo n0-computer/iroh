@@ -1544,8 +1544,7 @@
 <a href="#1543" id="1543">1543</a>
 <a href="#1544" id="1544">1544</a>
 <a href="#1545" id="1545">1545</a>
-<a href="#1546" id="1546">1546</a>
-<a href="#1547" id="1547">1547</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1546" id="1546">1546</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1596,8 +1595,7 @@
 };
 <span class="kw">use </span>n0_future::{
     task::JoinSet,
-    time,
-    time::{Duration, Instant, MissedTickBehavior},
+    time::{<span class="self">self</span>, Duration, Instant, MissedTickBehavior},
     FuturesUnorderedBounded, SinkExt, StreamExt,
 };
 <span class="kw">use </span>tokio::sync::{mpsc, oneshot};
