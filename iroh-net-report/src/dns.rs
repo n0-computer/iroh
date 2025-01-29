@@ -154,10 +154,10 @@ async fn stagger_call<T, F: Fn() -> Fut, Fut: Future<Output = Result<T>>>(
     // NOTE: we add the 0 delay here to have a uniform set of futures. This is more performant than
     // using alternatives that allow futures of different types.
     for delay in std::iter::once(&0u64).chain(delays_ms) {
-        let delay = n0_future::time::Duration::from_millis(*delay);
+        let delay = time::Duration::from_millis(*delay);
         let fut = f();
         let staggered_fut = async move {
-            n0_future::time::sleep(delay).await;
+            time::sleep(delay).await;
             fut.await
         };
         calls.push(staggered_fut)

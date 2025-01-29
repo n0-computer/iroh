@@ -988,7 +988,6 @@ mod tests {
 
     use bytes::BytesMut;
     use netwatch::IpFamily;
-    use tokio::time;
     use tokio_util::sync::CancellationToken;
     use tracing::info;
 
@@ -1388,7 +1387,7 @@ mod tests {
             let mut actor = Actor::new(None, resolver.clone()).unwrap();
             for s in &mut tt.steps {
                 // trigger the timer
-                time::advance(Duration::from_secs(s.after)).await;
+                tokio::time::advance(Duration::from_secs(s.after)).await;
                 let r = Arc::try_unwrap(s.r.take().unwrap()).unwrap();
                 s.r = Some(actor.add_report_history_and_set_preferred_relay(r));
             }
