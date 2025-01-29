@@ -362,7 +362,7 @@ fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
 
 impl Discovery for LocalSwarmDiscovery {
     fn resolve(&self, _ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
-        use futures_util::stream::StreamExt;
+        use futures_util::FutureExt;
 
         let (send, recv) = mpsc::channel(20);
         let discovery_sender = self.sender.clone();
@@ -383,7 +383,7 @@ impl Discovery for LocalSwarmDiscovery {
     }
 
     fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
-        use futures_util::stream::StreamExt;
+        use futures_util::FutureExt;
 
         let (sender, recv) = mpsc::channel(20);
         let discovery_sender = self.sender.clone();
