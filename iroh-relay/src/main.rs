@@ -39,14 +39,6 @@ struct Cli {
     /// Running in dev mode will ignore any config file fields pertaining to TLS.
     #[clap(long, default_value_t = false)]
     dev: bool,
-    /// Run in localhost development mode over plain HTTP and the QUIC endpoint for QUIC address discovery.
-    ///
-    /// Defaults to running the relay server on port 3340 and the QUIC endpoint over 7842.
-    ///
-    /// Running in dev-quic mode requires tls configuration for the QUIC endpoint. It will ignore
-    /// any tls configuration for the relay.
-    #[clap(long, default_value_t = false)]
-    dev_quic: bool,
     /// Path to the configuration file.
     ///
     /// If provided and no configuration file exists the default configuration will be
