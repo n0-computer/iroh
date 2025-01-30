@@ -441,7 +441,7 @@ impl NodeMapInner {
     fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(NodeId, NodeIdMappedAddr)> {
         let ip_port: IpPort = udp_addr.into();
         let Some(node_state) = self.get_mut(NodeStateKey::IpPort(ip_port)) else {
-            info!(src=%udp_addr, "receive_udp: no node_state found for addr, ignore");
+            trace!(src=%udp_addr, "receive_udp: no node_state found for addr, ignore");
             return None;
         };
         node_state.receive_udp(ip_port, Instant::now());
