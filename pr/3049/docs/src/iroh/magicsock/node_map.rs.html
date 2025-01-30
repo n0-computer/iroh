@@ -1328,7 +1328,7 @@
     </span><span class="kw">fn </span>receive_udp(<span class="kw-2">&amp;mut </span><span class="self">self</span>, udp_addr: SocketAddr) -&gt; <span class="prelude-ty">Option</span>&lt;(NodeId, NodeIdMappedAddr)&gt; {
         <span class="kw">let </span>ip_port: IpPort = udp_addr.into();
         <span class="kw">let </span><span class="prelude-val">Some</span>(node_state) = <span class="self">self</span>.get_mut(NodeStateKey::IpPort(ip_port)) <span class="kw">else </span>{
-            <span class="macro">info!</span>(src=%udp_addr, <span class="string">"receive_udp: no node_state found for addr, ignore"</span>);
+            <span class="macro">trace!</span>(src=%udp_addr, <span class="string">"receive_udp: no node_state found for addr, ignore"</span>);
             <span class="kw">return </span><span class="prelude-val">None</span>;
         };
         node_state.receive_udp(ip_port, Instant::now());
