@@ -85,7 +85,7 @@ pub struct IpMappedAddresses(Arc<std::sync::Mutex<Inner>>);
 #[derive(Debug, Default)]
 pub struct Inner {
     by_mapped_addr: BTreeMap<IpMappedAddr, SocketAddr>,
-    /// Because [`SocketAddrV6`] contains extra fields besides the IP
+    /// Because [`std::net::SocketAddrV6`] contains extra fields besides the IP
     /// address and port (ie, flow_info and scope_id), the a [`SocketAddrV6`]
     /// with the same IP addr and port might Hash to something different.
     /// So to get a hashable key for the map, we are using `(IpAddr, u6)`.
