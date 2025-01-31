@@ -41,6 +41,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use anyhow::Result;
+use iroh_base::NodeId;
 use n0_future::{
     boxed::BoxFuture,
     join_all,
@@ -50,7 +51,10 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info_span, trace, warn, Instrument};
 
-use crate::{endpoint::Connecting, Endpoint};
+use crate::{
+    endpoint::{Connecting, Connection},
+    Endpoint,
+};
 
 /// The built router.
 ///
@@ -109,10 +113,18 @@ pub struct RouterBuilder {
 /// The protocol handler must then be registered on the node for an ALPN protocol with
 /// [`crate::protocol::RouterBuilder::accept`].
 pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
+    /// Optional interception point to handle the `Connecting` state.
+    fn on_connecting(&self, conn: Connecting) -> BoxFuture<Result<Connection>> {
+        Box::pin(async move {
+            let conn = conn.await?;
+            Ok(conn)
+        })
+    }
+
     /// Handle an incoming connection.
     ///
     /// This runs on a freshly spawned tokio task so this can be long-running.
-    fn accept(&self, conn: Connecting) -> BoxFuture<Result<()>>;
+    fn accept(&self, conn: Connection) -> BoxFuture<Result<()>>;
 
     /// Called when the node shuts down.
     fn shutdown(&self) -> BoxFuture<()> {
@@ -121,7 +133,10 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
 }
 
 impl<T: ProtocolHandler> ProtocolHandler for Arc<T> {
-    fn accept(&self, conn: Connecting) -> BoxFuture<Result<()>> {
+    fn on_connecting(&self, conn: Connecting) -> BoxFuture<Result<Connection>> {
+        self.as_ref().on_connecting(conn)
+    }
+    fn accept(&self, conn: Connection) -> BoxFuture<Result<()>> {
         self.as_ref().accept(conn)
     }
 
@@ -131,7 +146,10 @@ impl<T: ProtocolHandler> ProtocolHandler for Arc<T> {
 }
 
 impl<T: ProtocolHandler> ProtocolHandler for Box<T> {
-    fn accept(&self, conn: Connecting) -> BoxFuture<Result<()>> {
+    fn on_connecting(&self, conn: Connecting) -> BoxFuture<Result<Connection>> {
+        self.as_ref().on_connecting(conn)
+    }
+    fn accept(&self, conn: Connection) -> BoxFuture<Result<()>> {
         self.as_ref().accept(conn)
     }
 
@@ -350,8 +368,62 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
         warn!("Ignoring connection: unsupported ALPN protocol");
         return;
     };
-    if let Err(err) = handler.accept(connecting).await {
-        warn!("Handling incoming connection ended with error: {err}");
+    match handler.on_connecting(connecting).await {
+        Ok(connection) => {
+            if let Err(err) = handler.accept(connection).await {
+                warn!("Handling incoming connection ended with error: {err}");
+            }
+        }
+        Err(err) => {
+            warn!("Handling incoming connecting ended with error: {err}");
+        }
+    }
+}
+
+/// Limit
+#[derive(derive_more::Debug, Clone)]
+pub struct AccessLimit<P: ProtocolHandler + Clone> {
+    proto: P,
+    #[debug("limiter")]
+    limiter: Arc<dyn Fn(NodeId) -> bool + Send + Sync + 'static>,
+}
+
+impl<P: ProtocolHandler + Clone> AccessLimit<P> {
+    /// Create a new `AccessLimit`.
+    pub fn new<F>(proto: P, limiter: F) -> Self
+    where
+        F: Fn(NodeId) -> bool + Send + Sync + 'static,
+    {
+        Self {
+            proto,
+            limiter: Arc::new(limiter),
+        }
+    }
+}
+
+impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
+    fn on_connecting(&self, conn: Connecting) -> BoxFuture<Result<Connection>> {
+        self.proto.on_connecting(conn)
+    }
+
+    fn accept(&self, conn: Connection) -> BoxFuture<Result<()>> {
+        println!("accepting limiter");
+        let this = self.clone();
+        Box::pin(async move {
+            let remote = conn.remote_node_id()?;
+            let is_allowed = (this.limiter)(remote);
+            dbg!(is_allowed);
+            if !is_allowed {
+                conn.close(0u32.into(), b"not allowed");
+                anyhow::bail!("not allowed");
+            }
+            this.proto.accept(conn).await?;
+            Ok(())
+        })
+    }
+
+    fn shutdown(&self) -> BoxFuture<()> {
+        self.proto.shutdown()
     }
 }
 
@@ -371,6 +443,55 @@ mod tests {
 
         assert!(router.is_shutdown());
         assert!(endpoint.is_closed());
+
+        Ok(())
+    }
+
+    // The protocol definition:
+    #[derive(Debug, Clone)]
+    struct Echo;
+
+    const ECHO_ALPN: &[u8] = b"/iroh/echo/1";
+
+    impl ProtocolHandler for Echo {
+        fn accept(&self, connection: Connection) -> BoxFuture<Result<()>> {
+            println!("accepting echo");
+            Box::pin(async move {
+                let (mut send, mut recv) = connection.accept_bi().await?;
+
+                // Echo any bytes received back directly.
+                let _bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
+
+                send.finish()?;
+                connection.closed().await;
+
+                Ok(())
+            })
+        }
+    }
+    #[tokio::test]
+    async fn test_limiter() -> Result<()> {
+        let e1 = Endpoint::builder().bind().await?;
+        // deny all access
+        let proto = AccessLimit::new(Echo, |_node_id| false);
+        let r1 = Router::builder(e1.clone())
+            .accept(ECHO_ALPN, proto)
+            .spawn()
+            .await?;
+
+        let addr1 = r1.endpoint().node_addr().await?;
+
+        let e2 = Endpoint::builder().bind().await?;
+
+        println!("connecting");
+        let conn = e2.connect(addr1, ECHO_ALPN).await?;
+
+        let (_send, mut recv) = conn.open_bi().await?;
+        let response = recv.read_to_end(1000).await.unwrap_err();
+        assert!(format!("{:#?}", response).contains("not allowed"));
+
+        r1.shutdown().await?;
+        e2.close().await;
 
         Ok(())
     }
