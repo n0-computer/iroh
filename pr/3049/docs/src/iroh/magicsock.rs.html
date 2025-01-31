@@ -4463,7 +4463,7 @@
     time::{Duration, Instant},
     FutureExt, StreamExt,
 };
-<span class="kw">use </span>net_report::{IpMappedAddr, IpMappedAddrs, QuicConfig, MAPPED_ADDR_PORT};
+<span class="kw">use </span>net_report::{IpMappedAddr, IpMappedAddresses, QuicConfig, MAPPED_ADDR_PORT};
 <span class="kw">use </span>netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 <span class="kw">use </span>quinn::{AsyncUdpSocket, ServerConfig};
 <span class="kw">use </span>rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -4663,7 +4663,7 @@
     <span class="doccomment">/// Tracks the networkmap node entity for each node discovery key.
     </span>node_map: NodeMap,
     <span class="doccomment">/// Tracks the mapped IP addresses
-    </span>ip_mapped_addrs: IpMappedAddrs,
+    </span>ip_mapped_addrs: IpMappedAddresses,
     <span class="doccomment">/// UDP IPv4 socket
     </span>pconn4: UdpConn,
     <span class="doccomment">/// UDP IPv6 socket
@@ -6062,7 +6062,7 @@
         <span class="kw">let </span>ipv4_addr = pconn4.local_addr()<span class="question-mark">?</span>;
         <span class="kw">let </span>ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
-        <span class="kw">let </span>ip_mapped_addrs = IpMappedAddrs::default();
+        <span class="kw">let </span>ip_mapped_addrs = IpMappedAddresses::default();
 
         <span class="kw">let </span>net_reporter = net_report::Client::new(
             <span class="prelude-val">Some</span>(port_mapper.clone()),

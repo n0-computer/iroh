@@ -1664,7 +1664,10 @@
 <a href="#1663" id="1663">1663</a>
 <a href="#1664" id="1664">1664</a>
 <a href="#1665" id="1665">1665</a>
-<a href="#1666" id="1666">1666</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1666" id="1666">1666</a>
+<a href="#1667" id="1667">1667</a>
+<a href="#1668" id="1668">1668</a>
+<a href="#1669" id="1669">1669</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1717,7 +1720,7 @@
 <span class="kw">use crate</span>::{
     <span class="self">self </span><span class="kw">as </span>net_report,
     dns::ResolverExt,
-    ip_mapped_addrs::IpMappedAddrs,
+    ip_mapped_addrs::IpMappedAddresses,
     ping::{PingError, Pinger},
     Report,
 };
@@ -1759,7 +1762,7 @@
         quic_config: <span class="prelude-ty">Option</span>&lt;QuicConfig&gt;,
         dns_resolver: DnsResolver,
         protocols: BTreeSet&lt;ProbeProto&gt;,
-        ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddrs&gt;,
+        ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>(msg_tx, msg_rx) = mpsc::channel(<span class="number">32</span>);
         <span class="kw">let </span>addr = Addr {
@@ -1866,8 +1869,8 @@
     <span class="doccomment">/// Protocols we should attempt to create probes for, if we have the correct
     /// configuration for that protocol.
     </span>protocols: BTreeSet&lt;ProbeProto&gt;,
-    <span class="doccomment">/// Optional [`IpMappedAddrs`] used to enable QAD in iroh
-    </span>ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddrs&gt;,
+    <span class="doccomment">/// Optional [`IpMappedAddresses`] used to enable QAD in iroh
+    </span>ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
 }
 
 <span class="kw">impl </span>Actor {
@@ -2386,7 +2389,7 @@
     net_report: net_report::Addr,
     pinger: Pinger,
     dns_resolver: DnsResolver,
-    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddrs&gt;,
+    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeError&gt; {
     <span class="kw">if </span>!probe.delay().is_zero() {
         <span class="macro">trace!</span>(<span class="string">"delaying probe"</span>);
@@ -2574,9 +2577,12 @@
     }
 }
 
-<span class="kw">fn </span>maybe_to_mapped_addr(ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddrs&gt;, addr: SocketAddr) -&gt; SocketAddr {
+<span class="kw">fn </span>maybe_to_mapped_addr(
+    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
+    addr: SocketAddr,
+) -&gt; SocketAddr {
     <span class="kw">if let </span><span class="prelude-val">Some</span>(ip_mapped_addrs) = ip_mapped_addrs.as_ref() {
-        <span class="kw">return </span>ip_mapped_addrs.add(addr).socket_addr();
+        <span class="kw">return </span>ip_mapped_addrs.get_or_register(addr).socket_addr();
     }
     addr
 }
@@ -2587,7 +2593,7 @@
     url: RelayUrl,
     relay_addr: SocketAddr,
     probe: Probe,
-    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddrs&gt;,
+    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeError&gt; {
     <span class="kw">match </span>probe.proto() {
         ProbeProto::QuicIpv4 =&gt; <span class="macro">debug_assert!</span>(relay_addr.is_ipv4()),
@@ -2736,7 +2742,7 @@
 /// different results.  Obviously IPv4 vs IPv6 but a [`RelayNode`] may also have disabled
 /// some protocols.
 ///
-/// If the protocol is `QuicIpv4` or `QuicIpv6`, and `IpMappedAddrs` is not `None`, we
+/// If the protocol is `QuicIpv4` or `QuicIpv6`, and `IpMappedAddresses` is not `None`, we
 /// assume that we are running this net report with `iroh`, and need to provide mapped
 /// addresses to the probe in order for it to function in the specialize iroh-quinn
 /// endpoint that expects mapped addresses.

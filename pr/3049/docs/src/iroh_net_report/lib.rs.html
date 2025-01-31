@@ -1516,7 +1516,7 @@
 <span class="kw">mod </span>ping;
 <span class="kw">mod </span>reportgen;
 
-<span class="kw">pub use </span>ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddrs, MAPPED_ADDR_PORT};
+<span class="kw">pub use </span>ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddresses, MAPPED_ADDR_PORT};
 <span class="kw">pub use </span>metrics::Metrics;
 <span class="kw">use </span>reportgen::ProbeProto;
 <span class="kw">pub use </span>reportgen::QuicConfig;
@@ -1831,7 +1831,7 @@
     </span><span class="kw">pub fn </span>new(
         port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;,
         dns_resolver: DnsResolver,
-        ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddrs&gt;,
+        ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>actor = Actor::new(port_mapper, dns_resolver, ip_mapped_addrs)<span class="question-mark">?</span>;
         <span class="kw">let </span>addr = actor.addr();
@@ -2051,8 +2051,8 @@
     <span class="doccomment">/// The DNS resolver to use for probes that need to perform DNS lookups
     </span>dns_resolver: DnsResolver,
 
-    <span class="doccomment">/// The [`IpMappedAddrs`] that allows you to do QAD in iroh
-    </span>ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddrs&gt;,
+    <span class="doccomment">/// The [`IpMappedAddresses`] that allows you to do QAD in iroh
+    </span>ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
 }
 
 <span class="kw">impl </span>Actor {
@@ -2063,7 +2063,7 @@
     </span><span class="kw">fn </span>new(
         port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;,
         dns_resolver: DnsResolver,
-        ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddrs&gt;,
+        ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="comment">// TODO: consider an instrumented flume channel so we have metrics.
         </span><span class="kw">let </span>(sender, receiver) = mpsc::channel(<span class="number">32</span>);
