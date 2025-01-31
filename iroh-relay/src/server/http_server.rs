@@ -712,7 +712,6 @@ impl std::ops::DerefMut for Handlers {
 mod tests {
     use std::sync::Arc;
 
-    use anyhow::Result;
     use bytes::Bytes;
     use iroh_base::{PublicKey, SecretKey};
     use n0_future::{SinkExt, StreamExt};
@@ -773,7 +772,7 @@ mod tests {
             if let std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
                 ipv4_addr
             } else {
-                anyhow::bail!("cannot get ipv4 addr from socket addr {addr:?}");
+                bail!("cannot get ipv4 addr from socket addr {addr:?}");
             }
         };
         info!("addr: {addr}:{port}");
@@ -834,7 +833,9 @@ mod tests {
         Ok((public_key, client))
     }
 
-    fn process_msg(msg: Option<Result<ReceivedMessage>>) -> Option<(PublicKey, Bytes)> {
+    fn process_msg(
+        msg: Option<Result<ReceivedMessage, crate::client::RecvError>>,
+    ) -> Option<(PublicKey, Bytes)> {
         match msg {
             Some(Err(e)) => {
                 info!("client `recv` error {e}");
@@ -882,7 +883,7 @@ mod tests {
             if let std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
                 ipv4_addr
             } else {
-                anyhow::bail!("cannot get ipv4 addr from socket addr {addr:?}");
+                bail!("cannot get ipv4 addr from socket addr {addr:?}");
             }
         };
         info!("Relay listening on: {addr}:{port}");
@@ -992,7 +993,7 @@ mod tests {
                 assert_eq!(&msg[..], data);
             }
             msg => {
-                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+                bail!("expected ReceivedPacket msg, got {msg:?}");
             }
         }
 
@@ -1010,7 +1011,7 @@ mod tests {
                 assert_eq!(&msg[..], data);
             }
             msg => {
-                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+                bail!("expected ReceivedPacket msg, got {msg:?}");
             }
         }
 
@@ -1079,7 +1080,7 @@ mod tests {
                 assert_eq!(&msg[..], data);
             }
             msg => {
-                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+                bail!("expected ReceivedPacket msg, got {msg:?}");
             }
         }
 
@@ -1097,7 +1098,7 @@ mod tests {
                 assert_eq!(&msg[..], data);
             }
             msg => {
-                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+                bail!("expected ReceivedPacket msg, got {msg:?}");
             }
         }
 
@@ -1127,7 +1128,7 @@ mod tests {
                 assert_eq!(&msg[..], data);
             }
             msg => {
-                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+                bail!("expected ReceivedPacket msg, got {msg:?}");
             }
         }
 
@@ -1145,7 +1146,7 @@ mod tests {
                 assert_eq!(&msg[..], data);
             }
             msg => {
-                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+                bail!("expected ReceivedPacket msg, got {msg:?}");
             }
         }
 

@@ -302,7 +302,8 @@ impl Actor {
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn write_frame(&mut self, frame: Frame) -> Result<()> {
-        write_frame(&mut self.stream, frame, Some(self.timeout)).await
+        write_frame(&mut self.stream, frame, Some(self.timeout)).await?;
+        Ok(())
     }
 
     /// Writes contents to the client in a `RECV_PACKET` frame.
@@ -349,11 +350,14 @@ impl Actor {
     }
 
     /// Handles frame read results.
-    async fn handle_frame(&mut self, maybe_frame: Option<Result<Frame>>) -> Result<()> {
+    async fn handle_frame(
+        &mut self,
+        maybe_frame: Option<Result<Frame, super::streams::Error>>,
+    ) -> Result<()> {
         trace!(?maybe_frame, "handle incoming frame");
         let frame = match maybe_frame {
             Some(frame) => frame?,
-            None => anyhow::bail!("stream terminated"),
+            None => bail!("stream terminated"),
         };
 
         match frame {
@@ -415,7 +419,7 @@ enum State {
         /// Future which will complete when the item can be yielded.
         delay: Pin<Box<dyn Future<Output = ()> + Send + Sync>>,
         /// Item to yield when the `delay` future completes.
-        item: anyhow::Result<Frame>,
+        item: Result<Frame, super::streams::Error>,
     },
     Ready,
 }
@@ -453,7 +457,7 @@ impl RateLimitedRelayedStream {
 }
 
 impl Stream for RateLimitedRelayedStream {
-    type Item = anyhow::Result<Frame>;
+    type Item = Result<Frame, super::streams::Error>;
 
     #[instrument(name = "rate_limited_relayed_stream", skip_all)]
     fn poll_next(
@@ -616,7 +620,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_client_actor_basic() -> Result<()> {
+    async fn test_client_actor_basic() -> TestResult {
         let (send_queue_s, send_queue_r) = mpsc::channel(10);
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(10);

@@ -450,7 +450,7 @@ impl ActiveRelayActor {
         async move {
             match time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
                 Ok(Ok(client)) => Ok(client),
-                Ok(Err(err)) => Err(err),
+                Ok(Err(err)) => Err(anyhow::Error::from(err)),
                 Err(_) => Err(anyhow!("Connecting timed out after {CONNECT_TIMEOUT:?}")),
             }
         }

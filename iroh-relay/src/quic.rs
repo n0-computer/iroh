@@ -2,9 +2,12 @@
 //! for QUIC address discovery.
 use std::{net::SocketAddr, sync::Arc};
 
-use anyhow::Result;
 use n0_future::time::Duration;
-use quinn::{crypto::rustls::QuicClientConfig, VarInt};
+use quinn::{
+    crypto::rustls::{NoInitialCipherSuite, QuicClientConfig},
+    VarInt,
+};
+use tokio::sync::watch;
 
 /// ALPN for our quic addr discovery
 pub const ALPN_QUIC_ADDR_DISC: &[u8] = b"/iroh-qad/0";
@@ -15,6 +18,7 @@ pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 
 #[cfg(feature = "server")]
 pub(crate) mod server {
+    use anyhow::Result;
     use quinn::{crypto::rustls::QuicServerConfig, ApplicationClose};
     use tokio::task::JoinSet;
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -191,6 +195,20 @@ pub(crate) mod server {
     }
 }
 
+/// Quic client related errors.
+#[allow(missing_docs)]
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error(transparent)]
+    Connect(#[from] quinn::ConnectError),
+    #[error(transparent)]
+    Connection(#[from] quinn::ConnectionError),
+    #[error(transparent)]
+    WatchRecv(#[from] watch::error::RecvError),
+    #[error(transparent)]
+    NoIntitialCipherSuite(#[from] NoInitialCipherSuite),
+}
+
 /// Handles the client side of QUIC address discovery.
 #[derive(Debug)]
 pub struct QuicClient {
@@ -203,7 +221,10 @@ pub struct QuicClient {
 impl QuicClient {
     /// Create a new QuicClient to handle the client side of QUIC
     /// address discovery.
-    pub fn new(ep: quinn::Endpoint, mut client_config: rustls::ClientConfig) -> Result<Self> {
+    pub fn new(
+        ep: quinn::Endpoint,
+        mut client_config: rustls::ClientConfig,
+    ) -> Result<Self, Error> {
         // add QAD alpn
         client_config.alpn_protocols = vec![ALPN_QUIC_ADDR_DISC.into()];
         // go from rustls client config to rustls QUIC specific client config to
@@ -240,7 +261,7 @@ impl QuicClient {
         &self,
         server_addr: SocketAddr,
         host: &str,
-    ) -> Result<(SocketAddr, std::time::Duration)> {
+    ) -> Result<(SocketAddr, std::time::Duration), Error> {
         let connecting = self
             .ep
             .connect_with(self.client_config.clone(), server_addr, host);

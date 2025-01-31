@@ -18,7 +18,7 @@
 
 use std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync::Arc};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Result};
 use derive_more::Debug;
 use http::{
     response::Builder as ResponseBuilder, HeaderMap, Method, Request, Response, StatusCode,
@@ -278,6 +278,8 @@ impl Server {
         EC: fmt::Debug + 'static,
         EA: fmt::Debug + 'static,
     {
+        use anyhow::Context;
+
         let mut tasks = JoinSet::new();
 
         #[cfg(feature = "metrics")]
@@ -812,6 +814,7 @@ mod tests {
     use iroh_base::{NodeId, RelayUrl, SecretKey};
     use n0_future::{FutureExt, SinkExt};
     use testresult::TestResult;
+    use tracing_subscriber::layer::SubscriberExt;
     use tracing_test::traced_test;
 
     use super::*;
@@ -837,12 +840,15 @@ mod tests {
         .await
     }
 
+    #[instrument]
     async fn try_send_recv(
         client_a: &mut crate::client::Client,
         client_b: &mut crate::client::Client,
         b_key: NodeId,
         msg: Bytes,
     ) -> Result<ReceivedMessage> {
+        use anyhow::Context;
+
         // try resend 10 times
         for _ in 0..10 {
             client_a
@@ -852,7 +858,8 @@ mod tests {
             else {
                 continue;
             };
-            return res.context("stream finished")?;
+            let res = res.context("stream finished")??;
+            return Ok(res);
         }
         panic!("failed to send and recv message");
     }
@@ -1151,9 +1158,18 @@ mod tests {
         assert_eq!(response_addr, socket.local_addr().unwrap());
     }
 
+    use n0_snafu::{TestError, TestResultExt};
+
     #[tokio::test]
-    #[traced_test]
-    async fn test_relay_access_control() -> Result<()> {
+    // #[traced_test]
+    async fn test_relay_access_control() -> n0_snafu::TestResult {
+        let subscriber =
+            tracing_subscriber::Registry::default().with(n0_snafu::ErrorLayer::default());
+        tracing::subscriber::set_global_default(subscriber).unwrap();
+
+        let current_span = tracing::info_span!("this is a test");
+        let _guard = current_span.enter();
+
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
 
@@ -1181,9 +1197,10 @@ mod tests {
             metrics_addr: None,
         })
         .await
-        .unwrap();
+        .map_err(TestError::anyhow)?;
+
         let relay_url = format!("http://{}", server.http_addr().unwrap());
-        let relay_url: RelayUrl = relay_url.parse()?;
+        let relay_url: RelayUrl = relay_url.parse().context("url parse")?;
 
         // set up client a
         let resolver = dns_resolver();
@@ -1202,7 +1219,8 @@ mod tests {
                 }
             }
         })
-        .await?;
+        .await
+        .context("waiting for health")?;
 
         // test that another client has access
 
@@ -1226,7 +1244,9 @@ mod tests {
 
         // send message from b to c
         let msg = Bytes::from("hello, c");
-        let res = try_send_recv(&mut client_b, &mut client_c, c_key, msg.clone()).await?;
+        let res = try_send_recv(&mut client_b, &mut client_c, c_key, msg.clone())
+            .await
+            .map_err(TestError::anyhow)?;
 
         if let ReceivedMessage::ReceivedPacket {
             remote_node_id,

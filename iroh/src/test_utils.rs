@@ -106,7 +106,7 @@ pub async fn run_relay_server_with(
         stun_only: false,
         stun_port: server.stun_addr().map_or(DEFAULT_STUN_PORT, |s| s.port()),
         quic,
-    }])?;
+    }]);
     Ok((m, url, server))
 }
 

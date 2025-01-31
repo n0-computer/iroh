@@ -8,7 +8,6 @@ use std::{
     task::{ready, Context, Poll},
 };
 
-use anyhow::{bail, Result};
 use bytes::Bytes;
 use iroh_base::{NodeId, SecretKey};
 use n0_future::{time::Duration, Sink, Stream};
@@ -16,8 +15,11 @@ use n0_future::{time::Duration, Sink, Stream};
 use tokio_util::codec::Framed;
 use tracing::debug;
 
-use super::KeyCache;
-use crate::protos::relay::{ClientInfo, Frame, MAX_PACKET_SIZE, PROTOCOL_VERSION};
+use super::{ConnectError, KeyCache};
+use crate::protos::{
+    self,
+    relay::{ClientInfo, Frame, MAX_PACKET_SIZE, PROTOCOL_VERSION},
+};
 #[cfg(not(wasm_browser))]
 use crate::{
     client::streams::{MaybeTlsStream, MaybeTlsStreamChained, ProxyStream},
@@ -28,7 +30,7 @@ use crate::{
 #[derive(Debug, thiserror::Error)]
 pub enum ConnSendError {
     /// An IO error.
-    #[error("IO error")]
+    #[error(transparent)]
     Io(#[from] io::Error),
     /// A protocol error.
     #[error("Protocol error")]
@@ -61,6 +63,31 @@ impl From<tokio_websockets::Error> for ConnSendError {
         };
         Self::Io(io_err)
     }
+}
+
+/// Error when handshaking with the server
+#[derive(Debug, thiserror::Error)]
+pub enum HandshakeError {
+    /// An IO error.
+    #[error("failed to send handshake message to the relay")]
+    Send(#[from] protos::relay::Error),
+}
+
+/// Errors when receiving messages from the relay server.
+#[derive(Debug, thiserror::Error)]
+#[allow(missing_docs)]
+pub enum RecvError {
+    /// An IO error.
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    #[error(transparent)]
+    Protocol(#[from] crate::protos::relay::Error),
+    #[error(transparent)]
+    Websocket(#[from] tokio_websockets::Error),
+    #[error("invalid protocol message encoding")]
+    InvalidProtocolMessageEncoding,
+    #[error("Unexpected frame received {0}")]
+    UnexpectedFrame(crate::protos::relay::FrameType),
 }
 
 /// A connection to a relay server.
@@ -102,7 +129,7 @@ impl Conn {
         conn: ws_stream_wasm::WsStream,
         key_cache: KeyCache,
         secret_key: &SecretKey,
-    ) -> Result<Self> {
+    ) -> Result<Self, ConnectError> {
         let mut conn = Self::WsBrowser { conn, key_cache };
 
         // exchange information with the server
@@ -117,7 +144,7 @@ impl Conn {
         conn: MaybeTlsStreamChained,
         key_cache: KeyCache,
         secret_key: &SecretKey,
-    ) -> Result<Self> {
+    ) -> Result<Self, ConnectError> {
         let conn = Framed::new(conn, RelayCodec::new(key_cache));
 
         let mut conn = Self::Relay { conn };
@@ -133,7 +160,7 @@ impl Conn {
         conn: tokio_websockets::WebSocketStream<MaybeTlsStream<ProxyStream>>,
         key_cache: KeyCache,
         secret_key: &SecretKey,
-    ) -> Result<Self> {
+    ) -> Result<Self, ConnectError> {
         let mut conn = Self::Ws { conn, key_cache };
 
         // exchange information with the server
@@ -144,7 +171,7 @@ impl Conn {
 }
 
 /// Sends the server handshake message.
-async fn server_handshake(writer: &mut Conn, secret_key: &SecretKey) -> Result<()> {
+async fn server_handshake(writer: &mut Conn, secret_key: &SecretKey) -> Result<(), HandshakeError> {
     debug!("server_handshake: started");
     let client_info = ClientInfo {
         version: PROTOCOL_VERSION,
@@ -157,7 +184,7 @@ async fn server_handshake(writer: &mut Conn, secret_key: &SecretKey) -> Result<(
 }
 
 impl Stream for Conn {
-    type Item = Result<ReceivedMessage>;
+    type Item = Result<ReceivedMessage, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
@@ -167,7 +194,7 @@ impl Stream for Conn {
                     let message = ReceivedMessage::try_from(frame);
                     Poll::Ready(Some(message))
                 }
-                Some(Err(err)) => Poll::Ready(Some(Err(err))),
+                Some(Err(err)) => Poll::Ready(Some(Err(err.into()))),
                 None => Poll::Ready(None),
             },
             #[cfg(not(wasm_browser))]
@@ -189,7 +216,8 @@ impl Stream for Conn {
                         return Poll::Pending;
                     }
                     let frame = Frame::decode_from_ws_msg(msg.into_payload().into(), key_cache)?;
-                    Poll::Ready(Some(ReceivedMessage::try_from(frame)))
+                    let message = ReceivedMessage::try_from(frame);
+                    Poll::Ready(Some(message))
                 }
                 Some(Err(e)) => Poll::Ready(Some(Err(e.into()))),
                 None => Poll::Ready(None),
@@ -394,7 +422,7 @@ pub enum ReceivedMessage {
 }
 
 impl TryFrom<Frame> for ReceivedMessage {
-    type Error = anyhow::Error;
+    type Error = RecvError;
 
     fn try_from(frame: Frame) -> std::result::Result<Self, Self::Error> {
         match frame {
@@ -414,7 +442,9 @@ impl TryFrom<Frame> for ReceivedMessage {
             Frame::Ping { data } => Ok(ReceivedMessage::Ping(data)),
             Frame::Pong { data } => Ok(ReceivedMessage::Pong(data)),
             Frame::Health { problem } => {
-                let problem = std::str::from_utf8(&problem)?.to_owned();
+                let problem = std::str::from_utf8(&problem)
+                    .map_err(|_| RecvError::InvalidProtocolMessageEncoding)?
+                    .to_owned();
                 let problem = Some(problem);
                 Ok(ReceivedMessage::Health { problem })
             }
@@ -429,7 +459,7 @@ impl TryFrom<Frame> for ReceivedMessage {
                     try_for,
                 })
             }
-            _ => bail!("unexpected packet: {:?}", frame.typ()),
+            _ => Err(RecvError::UnexpectedFrame(frame.typ())),
         }
     }
 }

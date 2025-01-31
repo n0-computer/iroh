@@ -9,21 +9,21 @@ use std::{
     task::{self, Poll},
 };
 
-use anyhow::{anyhow, bail, Result};
 use conn::Conn;
 use iroh_base::{RelayUrl, SecretKey};
 use n0_future::{
     split::{split, SplitSink, SplitStream},
-    Sink, Stream,
+    time, Sink, Stream,
 };
+use snafu::{Backtrace, Snafu};
 #[cfg(any(test, feature = "test-utils"))]
 use tracing::warn;
 use tracing::{debug, event, trace, Level};
 use url::Url;
 
-pub use self::conn::{ConnSendError, ReceivedMessage, SendMessage};
+pub use self::conn::{ConnSendError, HandshakeError, ReceivedMessage, RecvError, SendMessage};
 #[cfg(not(wasm_browser))]
-use crate::dns::DnsResolver;
+use crate::dns::{DnsResolver, Error as DnsError};
 use crate::{
     http::{Protocol, RELAY_PATH},
     KeyCache,
@@ -36,6 +36,117 @@ pub(crate) mod streams;
 mod tls;
 #[cfg(not(wasm_browser))]
 mod util;
+
+/// Connection errors
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(pub(crate)))]
+pub enum ConnectError {
+    #[snafu(display("Invalid URL for websocket: {url}"))]
+    InvalidWebsocketUrl {
+        url: Url,
+        backtrace: Option<Backtrace>,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("Invalid relay URL: {url}"))]
+    InvalidRelayUrl {
+        url: Url,
+        backtrace: Option<Backtrace>,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(transparent)]
+    Websocket {
+        source: tokio_websockets::Error,
+        backtrace: Option<Backtrace>,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(transparent)]
+    Handshake {
+        source: HandshakeError,
+        backtrace: Option<Backtrace>,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(transparent)]
+    Dial {
+        source: DialError,
+        backtrace: Option<Backtrace>,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("Unexpected status during upgrade: {code}"))]
+    UnexpectedUpgradeStatus {
+        code: hyper::StatusCode,
+        backtrace: Option<Backtrace>,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("Failed to upgrade response"))]
+    Upgrade {
+        source: hyper::Error,
+        backtrace: Option<Backtrace>,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("Invalid TLS servername"))]
+    InvalidTlsServername {
+        backtrace: Option<Backtrace>,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("No local address available"))]
+    NoLocalAddr {
+        backtrace: Option<Backtrace>,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("tls connection failed"))]
+    Tls {
+        source: std::io::Error,
+        backtrace: Option<Backtrace>,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[cfg(wasm_browser)]
+    #[snafu(display("The relay protocol is not available in browsers"))]
+    RelayProtoNotAvailable {
+        backtrace: Option<Backtrace>,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+}
+
+/// Dialing errors
+#[allow(missing_docs)]
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum DialError {
+    #[error("Invliad target port")]
+    InvalidTargetPort,
+    #[error(transparent)]
+    #[cfg(not(wasm_browser))]
+    Dns(#[from] DnsError),
+    #[error("Timeout")]
+    Timeout(#[from] time::Elapsed),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error("Invalid URL {0}")]
+    InvalidUrl(Url),
+    #[error("Failed proxy connection: {0}")]
+    ProxyConnectInvalidStatus(hyper::StatusCode),
+    #[error("Invalid Proxy URL {0}")]
+    ProxyInvalidUrl(Url),
+    #[error("failed to establish proxy connection")]
+    ProxyConnect(#[source] hyper::Error),
+    #[error("Invalid proxy TLS servername")]
+    ProxyInvalidTlsServername,
+    #[error("Invliad proxy target port")]
+    ProxyInvalidTargetPort,
+}
 
 /// Build a Client.
 #[derive(derive_more::Debug, Clone)]
@@ -138,7 +249,7 @@ impl ClientBuilder {
     }
 
     /// Establishes a new connection to the relay server.
-    pub async fn connect(&self) -> Result<Client> {
+    pub async fn connect(&self) -> Result<Client, ConnectError> {
         let (conn, local_addr) = match self.protocol {
             #[cfg(wasm_browser)]
             Protocol::Websocket => {
@@ -157,9 +268,7 @@ impl ClientBuilder {
                 (conn, Some(local_addr))
             }
             #[cfg(wasm_browser)]
-            Protocol::Relay => {
-                bail!("Can only connect to relay using websockets in browsers.");
-            }
+            Protocol::Relay => return Err(ConnectError::RelayProtoNotAvailable),
         };
 
         event!(
@@ -174,7 +283,7 @@ impl ClientBuilder {
     }
 
     #[cfg(wasm_browser)]
-    async fn connect_ws(&self) -> Result<Conn> {
+    async fn connect_ws(&self) -> Result<Conn, ConnectError> {
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
@@ -185,7 +294,12 @@ impl ClientBuilder {
                 "ws" => "ws",
                 _ => "wss",
             })
-            .map_err(|()| anyhow!("Invalid URL"))?;
+            .map_err(|_| {
+                InvalidWebsocketUrlSnafu {
+                    url: dial_url.clone(),
+                }
+                .build()
+            })?;
 
         debug!(%dial_url, "Dialing relay by websocket");
 
@@ -218,7 +332,7 @@ impl Client {
 }
 
 impl Stream for Client {
-    type Item = Result<ReceivedMessage>;
+    type Item = Result<ReceivedMessage, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.conn).poll_next(cx)
@@ -304,7 +418,7 @@ impl ClientStream {
 }
 
 impl Stream for ClientStream {
-    type Item = Result<ReceivedMessage>;
+    type Item = Result<ReceivedMessage, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.stream).poll_next(cx)
