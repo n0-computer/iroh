@@ -44,7 +44,7 @@ use n0_future::{
     time::{Duration, Instant},
     FutureExt, StreamExt,
 };
-use net_report::{IpMappedAddr, IpMappedAddrs, QuicConfig, MAPPED_ADDR_PORT};
+use net_report::{IpMappedAddr, IpMappedAddresses, QuicConfig, MAPPED_ADDR_PORT};
 use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 use quinn::{AsyncUdpSocket, ServerConfig};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -244,7 +244,7 @@ pub(crate) struct MagicSock {
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
     /// Tracks the mapped IP addresses
-    ip_mapped_addrs: IpMappedAddrs,
+    ip_mapped_addrs: IpMappedAddresses,
     /// UDP IPv4 socket
     pconn4: UdpConn,
     /// UDP IPv6 socket
@@ -1643,7 +1643,7 @@ impl Handle {
         let ipv4_addr = pconn4.local_addr()?;
         let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
-        let ip_mapped_addrs = IpMappedAddrs::default();
+        let ip_mapped_addrs = IpMappedAddresses::default();
 
         let net_reporter = net_report::Client::new(
             Some(port_mapper.clone()),

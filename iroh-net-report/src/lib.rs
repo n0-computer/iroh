@@ -38,7 +38,7 @@ mod metrics;
 mod ping;
 mod reportgen;
 
-pub use ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddrs, MAPPED_ADDR_PORT};
+pub use ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddresses, MAPPED_ADDR_PORT};
 pub use metrics::Metrics;
 use reportgen::ProbeProto;
 pub use reportgen::QuicConfig;
@@ -353,7 +353,7 @@ impl Client {
     pub fn new(
         port_mapper: Option<portmapper::Client>,
         dns_resolver: DnsResolver,
-        ip_mapped_addrs: Option<IpMappedAddrs>,
+        ip_mapped_addrs: Option<IpMappedAddresses>,
     ) -> Result<Self> {
         let mut actor = Actor::new(port_mapper, dns_resolver, ip_mapped_addrs)?;
         let addr = actor.addr();
@@ -573,8 +573,8 @@ struct Actor {
     /// The DNS resolver to use for probes that need to perform DNS lookups
     dns_resolver: DnsResolver,
 
-    /// The [`IpMappedAddrs`] that allows you to do QAD in iroh
-    ip_mapped_addrs: Option<IpMappedAddrs>,
+    /// The [`IpMappedAddresses`] that allows you to do QAD in iroh
+    ip_mapped_addrs: Option<IpMappedAddresses>,
 }
 
 impl Actor {
@@ -585,7 +585,7 @@ impl Actor {
     fn new(
         port_mapper: Option<portmapper::Client>,
         dns_resolver: DnsResolver,
-        ip_mapped_addrs: Option<IpMappedAddrs>,
+        ip_mapped_addrs: Option<IpMappedAddresses>,
     ) -> Result<Self> {
         // TODO: consider an instrumented flume channel so we have metrics.
         let (sender, receiver) = mpsc::channel(32);

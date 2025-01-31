@@ -15,13 +15,9 @@ pub const MAPPED_ADDR_PORT: u16 = 12345;
 #[error("Failed to convert")]
 pub struct IpMappedAddrError;
 
-/// A mirror for the `NodeIdMappedAddr`, mapping a fake Ipv6 address with an actual IP address.
+/// A map fake Ipv6 address with an actual IP address.
 ///
-/// You can consider this as nothing more than a lookup key for an IP that iroh's  magicsocket knows
-/// about.
-///
-/// And in our QUIC-facing socket APIs like iroh's `AsyncUdpSocket` it
-/// comes in as the inn his type.
+/// It is essentially a lookup key for an IP that iroh's magicsocket knows about.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct IpMappedAddr(Ipv6Addr);
 
@@ -38,7 +34,7 @@ impl IpMappedAddr {
 
     /// Generates a globally unique fake UDP address.
     ///
-    /// This generates a new IPv6 address in the  Unique Local Address range (RFC 4193)
+    /// This generates a new IPv6 address in the Unique Local Address range (RFC 4193)
     /// which is recognised by iroh as an IP mapped address.
     pub fn generate() -> Self {
         let mut addr = [0u8; 16];
@@ -79,12 +75,12 @@ impl std::fmt::Display for IpMappedAddr {
     }
 }
 
-/// A Map of [`IpMappedAddrs`] to [`SocketAddr`].
+/// A Map of [`IpMappedAddresses`] to [`SocketAddr`].
 // TODO(ramfox): before this is ready to be used beyond QAD, we should add
 // mechanisms for keeping track of "aliveness" and pruning address, as we do
 // with the `NodeMap`
-#[derive(Debug, Clone)]
-pub struct IpMappedAddrs(Arc<std::sync::Mutex<Inner>>);
+#[derive(Debug, Clone, Default)]
+pub struct IpMappedAddresses(Arc<std::sync::Mutex<Inner>>);
 
 #[derive(Debug, Default)]
 pub struct Inner {
@@ -92,16 +88,19 @@ pub struct Inner {
     by_socket_addr: BTreeMap<SocketAddr, IpMappedAddr>,
 }
 
-impl IpMappedAddrs {
-    /// Creates an empty [`IpMappedAddrs`].
+impl IpMappedAddresses {
+    /// Creates an empty [`IpMappedAddresses`].
     pub fn new() -> Self {
         Self(Arc::new(std::sync::Mutex::new(Inner::default())))
     }
 
     /// Adds a [`SocketAddr`] to the map and returns the generated [`IpMappedAddr`].
     ///
-    /// If this [`SocketAddr`] already exists in the map, it returns its associated [`IpMappedAddr`].  Otherwise a new [`IpMappedAddr`] is generated for it and returned.
-    pub fn add(&self, ip_addr: SocketAddr) -> IpMappedAddr {
+    /// If this [`SocketAddr`] already exists in the map, it returns its
+    /// associated [`IpMappedAddr`].
+    ///
+    /// Otherwise a new [`IpMappedAddr`] is generated for it and returned.
+    pub fn get_or_register(&self, ip_addr: SocketAddr) -> IpMappedAddr {
         let mut inner = self.0.lock().expect("poisoned");
         if let Some(mapped_addr) = inner.by_socket_addr.get(&ip_addr) {
             return *mapped_addr;
@@ -122,11 +121,5 @@ impl IpMappedAddrs {
     pub fn get_ip_addr(&self, mapped_addr: &IpMappedAddr) -> Option<SocketAddr> {
         let inner = self.0.lock().expect("poisoned");
         inner.by_mapped_addr.get(mapped_addr).copied()
-    }
-}
-
-impl Default for IpMappedAddrs {
-    fn default() -> Self {
-        IpMappedAddrs::new()
     }
 }

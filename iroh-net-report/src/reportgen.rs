@@ -51,7 +51,7 @@ use crate::Metrics;
 use crate::{
     self as net_report,
     dns::ResolverExt,
-    ip_mapped_addrs::IpMappedAddrs,
+    ip_mapped_addrs::IpMappedAddresses,
     ping::{PingError, Pinger},
     Report,
 };
@@ -93,7 +93,7 @@ impl Client {
         quic_config: Option<QuicConfig>,
         dns_resolver: DnsResolver,
         protocols: BTreeSet<ProbeProto>,
-        ip_mapped_addrs: Option<IpMappedAddrs>,
+        ip_mapped_addrs: Option<IpMappedAddresses>,
     ) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(32);
         let addr = Addr {
@@ -200,8 +200,8 @@ struct Actor {
     /// Protocols we should attempt to create probes for, if we have the correct
     /// configuration for that protocol.
     protocols: BTreeSet<ProbeProto>,
-    /// Optional [`IpMappedAddrs`] used to enable QAD in iroh
-    ip_mapped_addrs: Option<IpMappedAddrs>,
+    /// Optional [`IpMappedAddresses`] used to enable QAD in iroh
+    ip_mapped_addrs: Option<IpMappedAddresses>,
 }
 
 impl Actor {
@@ -720,7 +720,7 @@ async fn run_probe(
     net_report: net_report::Addr,
     pinger: Pinger,
     dns_resolver: DnsResolver,
-    ip_mapped_addrs: Option<IpMappedAddrs>,
+    ip_mapped_addrs: Option<IpMappedAddresses>,
 ) -> Result<ProbeReport, ProbeError> {
     if !probe.delay().is_zero() {
         trace!("delaying probe");
@@ -908,9 +908,12 @@ async fn run_stun_probe(
     }
 }
 
-fn maybe_to_mapped_addr(ip_mapped_addrs: Option<IpMappedAddrs>, addr: SocketAddr) -> SocketAddr {
+fn maybe_to_mapped_addr(
+    ip_mapped_addrs: Option<IpMappedAddresses>,
+    addr: SocketAddr,
+) -> SocketAddr {
     if let Some(ip_mapped_addrs) = ip_mapped_addrs.as_ref() {
-        return ip_mapped_addrs.add(addr).socket_addr();
+        return ip_mapped_addrs.get_or_register(addr).socket_addr();
     }
     addr
 }
@@ -921,7 +924,7 @@ async fn run_quic_probe(
     url: RelayUrl,
     relay_addr: SocketAddr,
     probe: Probe,
-    ip_mapped_addrs: Option<IpMappedAddrs>,
+    ip_mapped_addrs: Option<IpMappedAddresses>,
 ) -> Result<ProbeReport, ProbeError> {
     match probe.proto() {
         ProbeProto::QuicIpv4 => debug_assert!(relay_addr.is_ipv4()),
@@ -1070,7 +1073,7 @@ fn get_port(relay_node: &RelayNode, proto: &ProbeProto) -> Result<u16> {
 /// different results.  Obviously IPv4 vs IPv6 but a [`RelayNode`] may also have disabled
 /// some protocols.
 ///
-/// If the protocol is `QuicIpv4` or `QuicIpv6`, and `IpMappedAddrs` is not `None`, we
+/// If the protocol is `QuicIpv4` or `QuicIpv6`, and `IpMappedAddresses` is not `None`, we
 /// assume that we are running this net report with `iroh`, and need to provide mapped
 /// addresses to the probe in order for it to function in the specialize iroh-quinn
 /// endpoint that expects mapped addresses.

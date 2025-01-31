@@ -177,10 +177,8 @@ pub(crate) mod server {
             }
         };
         debug!("established");
-        tracing::warn!("QAD SERVER - CONN ACCEPTED");
         // wait for the client to close the connection
         let connection_err = connection.closed().await;
-        tracing::warn!("QAD SERVER - CONN CLOSED");
         match connection_err {
             quinn::ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. })
                 if error_code == QUIC_ADDR_DISC_CLOSE_CODE =>
@@ -251,7 +249,6 @@ impl QuicClient {
         //         Ok((addr, latency))
         //     }
 
-        tracing::warn!("QAD CLIENT: WAIT FOR ADDRESS");
         let res = match external_addresses.wait_for(|addr| addr.is_some()).await {
             Ok(res) => res,
             Err(err) => {
@@ -267,7 +264,6 @@ impl QuicClient {
         let latency = conn.rtt() / 2;
         // gracefully close the connections
         conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-        tracing::warn!("QAD CLIENT: GRACEFULLY CLOSED");
         Ok((observed_addr, latency))
     }
 }
