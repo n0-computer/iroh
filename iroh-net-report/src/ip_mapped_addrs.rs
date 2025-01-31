@@ -85,7 +85,11 @@ pub struct IpMappedAddresses(Arc<std::sync::Mutex<Inner>>);
 #[derive(Debug, Default)]
 pub struct Inner {
     by_mapped_addr: BTreeMap<IpMappedAddr, SocketAddr>,
-    by_socket_addr: BTreeMap<SocketAddr, IpMappedAddr>,
+    /// Because [`SocketAddrV6`] contains extra fields besides the IP
+    /// address and port (ie, flow_info and scope_id), the a [`SocketAddrV6`]
+    /// with the same IP addr and port might Hash to something different.
+    /// So to get a hashable key for the map, we are using `(IpAddr, u6)`.
+    by_ip_port: BTreeMap<(IpAddr, u16), IpMappedAddr>,
 }
 
 impl IpMappedAddresses {
@@ -100,21 +104,23 @@ impl IpMappedAddresses {
     /// associated [`IpMappedAddr`].
     ///
     /// Otherwise a new [`IpMappedAddr`] is generated for it and returned.
-    pub fn get_or_register(&self, ip_addr: SocketAddr) -> IpMappedAddr {
+    pub fn get_or_register(&self, socket_addr: SocketAddr) -> IpMappedAddr {
+        let ip_port = (socket_addr.ip(), socket_addr.port());
         let mut inner = self.0.lock().expect("poisoned");
-        if let Some(mapped_addr) = inner.by_socket_addr.get(&ip_addr) {
+        if let Some(mapped_addr) = inner.by_ip_port.get(&ip_port) {
             return *mapped_addr;
         }
         let ip_mapped_addr = IpMappedAddr::generate();
-        inner.by_mapped_addr.insert(ip_mapped_addr, ip_addr);
-        inner.by_socket_addr.insert(ip_addr, ip_mapped_addr);
+        inner.by_mapped_addr.insert(ip_mapped_addr, socket_addr);
+        inner.by_ip_port.insert(ip_port, ip_mapped_addr);
         ip_mapped_addr
     }
 
     /// Returns the [`IpMappedAddr`] for the given [`SocketAddr`].
-    pub fn get_mapped_addr(&self, ip_addr: &SocketAddr) -> Option<IpMappedAddr> {
+    pub fn get_mapped_addr(&self, socket_addr: &SocketAddr) -> Option<IpMappedAddr> {
+        let ip_port = (socket_addr.ip(), socket_addr.port());
         let inner = self.0.lock().expect("poisoned");
-        inner.by_socket_addr.get(ip_addr).copied()
+        inner.by_ip_port.get(&ip_port).copied()
     }
 
     /// Returns the [`SocketAddr`] for the given [`IpMappedAddr`].
