@@ -12,12 +12,11 @@
 //!  * clients sends `FrameType::SendPacket`
 //!  * server then sends `FrameType::RecvPacket` to recipient
 
-use anyhow::{bail, ensure};
 use bytes::{BufMut, Bytes};
-use iroh_base::{PublicKey, SecretKey, Signature};
+use iroh_base::{PublicKey, SecretKey, Signature, SignatureError};
 #[cfg(feature = "server")]
 use n0_future::time::Duration;
-use n0_future::{Sink, SinkExt};
+use n0_future::{time, Sink, SinkExt};
 #[cfg(any(test, feature = "server"))]
 use n0_future::{Stream, StreamExt};
 use postcard::experimental::max_size::MaxSize;
@@ -74,7 +73,7 @@ const NOT_PREFERRED: u8 = 0u8;
 /// length of the remaining frame (not including the initial 5 bytes)
 #[derive(Debug, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::FromPrimitive, Clone, Copy)]
 #[repr(u8)]
-pub(crate) enum FrameType {
+pub enum FrameType {
     /// magic + 32b pub key + 24B nonce + bytes
     ClientInfo = 2,
     /// 32B dest pub key + packet bytes
@@ -110,6 +109,7 @@ pub(crate) enum FrameType {
     ///
     /// Handled on the `[relay::Client]`, but currently never sent on the `[relay::Server]`
     Restarting = 15,
+    /// Unknown frame type
     #[num_enum(default)]
     Unknown = 255,
 }
@@ -126,6 +126,32 @@ pub(crate) struct ClientInfo {
     pub(crate) version: usize,
 }
 
+/// Protocol related errors.
+#[allow(missing_docs)]
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error("unexpected frame: got {got}, expected {expected}")]
+    UnexpectedFrame { got: FrameType, expected: FrameType },
+    #[error(transparent)]
+    SerDe(#[from] postcard::Error),
+    #[error("timeout")]
+    Timeout(#[from] time::Elapsed),
+    #[error(transparent)]
+    InvalidSignature(#[from] SignatureError),
+    #[error(transparent)]
+    ConnSend(#[from] ConnSendError),
+    #[error("Too few bytes")]
+    TooSmall,
+    #[error("Frame is too large, has {0} bytes")]
+    FrameTooLarge(usize),
+    #[error("Invalid frame encoding")]
+    InvalidFrame,
+    #[error("Invalid frame type: {0}")]
+    InvalidFrameType(FrameType),
+}
+
 /// Writes complete frame, errors if it is unable to write within the given `timeout`.
 /// Ignores the timeout if `None`
 ///
@@ -135,7 +161,7 @@ pub(crate) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
     mut writer: S,
     frame: Frame,
     timeout: Option<Duration>,
-) -> anyhow::Result<()> {
+) -> Result<(), Error> {
     if let Some(duration) = timeout {
         tokio::time::timeout(duration, writer.send(frame)).await??;
     } else {
@@ -153,7 +179,7 @@ pub(crate) async fn send_client_key<S: Sink<Frame, Error = ConnSendError> + Unpi
     mut writer: S,
     client_secret_key: &SecretKey,
     client_info: &ClientInfo,
-) -> anyhow::Result<()> {
+) -> Result<(), Error> {
     let msg = postcard::to_stdvec(client_info)?;
     let signature = client_secret_key.sign(&msg);
 
@@ -171,10 +197,12 @@ pub(crate) async fn send_client_key<S: Sink<Frame, Error = ConnSendError> + Unpi
 /// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
 #[cfg(any(test, feature = "server"))]
-pub(crate) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
+pub(crate) async fn recv_client_key<E, S: Stream<Item = Result<Frame, E>> + Unpin>(
     stream: S,
-) -> anyhow::Result<(PublicKey, ClientInfo)> {
-    use anyhow::Context;
+) -> Result<(PublicKey, ClientInfo), E>
+where
+    E: From<Error>,
+{
     // the client is untrusted at this point, limit the input size even smaller than our usual
     // maximum frame size, and give a timeout
 
@@ -184,8 +212,7 @@ pub(crate) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
         recv_frame(FrameType::ClientInfo, stream),
     )
     .await
-    .context("recv_frame timeout")?
-    .context("recv_frame")?;
+    .map_err(Error::from)??;
 
     if let Frame::ClientInfo {
         client_public_key,
@@ -195,11 +222,16 @@ pub(crate) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
     {
         client_public_key
             .verify(&message, &signature)
-            .context("invalid signature")?;
-        let info: ClientInfo = postcard::from_bytes(&message).context("deserialization")?;
+            .map_err(Error::from)?;
+
+        let info: ClientInfo = postcard::from_bytes(&message).map_err(Error::from)?;
         Ok((client_public_key, info))
     } else {
-        anyhow::bail!("expected FrameType::ClientInfo");
+        Err(Error::UnexpectedFrame {
+            got: buf.typ(),
+            expected: FrameType::ClientInfo,
+        }
+        .into())
     }
 }
 
@@ -314,9 +346,9 @@ impl Frame {
     /// Tries to decode a frame received over websockets.
     ///
     /// Specifically, bytes received from a binary websocket message frame.
-    pub(crate) fn decode_from_ws_msg(bytes: Bytes, cache: &KeyCache) -> anyhow::Result<Self> {
+    pub(crate) fn decode_from_ws_msg(bytes: Bytes, cache: &KeyCache) -> Result<Self, Error> {
         if bytes.is_empty() {
-            bail!("error parsing relay::codec::Frame: too few bytes (0)");
+            return Err(Error::TooSmall);
         }
         let typ = FrameType::from(bytes[0]);
         let frame = Self::from_bytes(typ, bytes.slice(1..), cache)?;
@@ -384,18 +416,15 @@ impl Frame {
         }
     }
 
-    fn from_bytes(frame_type: FrameType, content: Bytes, cache: &KeyCache) -> anyhow::Result<Self> {
+    fn from_bytes(frame_type: FrameType, content: Bytes, cache: &KeyCache) -> Result<Self, Error> {
         let res = match frame_type {
             FrameType::ClientInfo => {
-                ensure!(
-                    content.len() >= PublicKey::LENGTH + Signature::BYTE_SIZE + MAGIC.len(),
-                    "invalid client info frame length: {}",
-                    content.len()
-                );
-                ensure!(
-                    &content[..MAGIC.len()] == MAGIC.as_bytes(),
-                    "invalid client info frame magic"
-                );
+                if content.len() < PublicKey::LENGTH + Signature::BYTE_SIZE + MAGIC.len() {
+                    return Err(Error::InvalidFrame);
+                }
+                if &content[..MAGIC.len()] != MAGIC.as_bytes() {
+                    return Err(Error::InvalidFrame);
+                }
 
                 let start = MAGIC.len();
                 let client_public_key =
@@ -412,84 +441,88 @@ impl Frame {
                 }
             }
             FrameType::SendPacket => {
-                ensure!(
-                    content.len() >= PublicKey::LENGTH,
-                    "invalid send packet frame length: {}",
-                    content.len()
-                );
+                if content.len() < PublicKey::LENGTH {
+                    return Err(Error::InvalidFrame);
+                }
                 let packet_len = content.len() - PublicKey::LENGTH;
-                ensure!(
-                    packet_len <= MAX_PACKET_SIZE,
-                    "data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
-                );
+                if packet_len > MAX_PACKET_SIZE {
+                    return Err(Error::FrameTooLarge(packet_len));
+                }
+
                 let dst_key = cache.key_from_slice(&content[..PublicKey::LENGTH])?;
                 let packet = content.slice(PublicKey::LENGTH..);
                 Self::SendPacket { dst_key, packet }
             }
             FrameType::RecvPacket => {
-                ensure!(
-                    content.len() >= PublicKey::LENGTH,
-                    "invalid recv packet frame length: {}",
-                    content.len()
-                );
+                if content.len() < PublicKey::LENGTH {
+                    return Err(Error::InvalidFrame);
+                }
+
                 let packet_len = content.len() - PublicKey::LENGTH;
-                ensure!(
-                    packet_len <= MAX_PACKET_SIZE,
-                    "data packet longer ({packet_len}) than max of {MAX_PACKET_SIZE}"
-                );
+                if packet_len > MAX_PACKET_SIZE {
+                    return Err(Error::FrameTooLarge(packet_len));
+                }
+
                 let src_key = cache.key_from_slice(&content[..PublicKey::LENGTH])?;
                 let content = content.slice(PublicKey::LENGTH..);
                 Self::RecvPacket { src_key, content }
             }
             FrameType::KeepAlive => {
-                anyhow::ensure!(content.is_empty(), "invalid keep alive frame length");
+                if !content.is_empty() {
+                    return Err(Error::InvalidFrame);
+                }
                 Self::KeepAlive
             }
             FrameType::NotePreferred => {
-                anyhow::ensure!(content.len() == 1, "invalid note preferred frame length");
+                if content.len() != 1 {
+                    return Err(Error::InvalidFrame);
+                }
                 let preferred = match content[0] {
                     PREFERRED => true,
                     NOT_PREFERRED => false,
-                    _ => anyhow::bail!("invalid note preferred frame content"),
+                    _ => return Err(Error::InvalidFrame),
                 };
                 Self::NotePreferred { preferred }
             }
             FrameType::PeerGone => {
-                anyhow::ensure!(
-                    content.len() == PublicKey::LENGTH,
-                    "invalid peer gone frame length"
-                );
+                if content.len() != PublicKey::LENGTH {
+                    return Err(Error::InvalidFrame);
+                }
                 let peer = cache.key_from_slice(&content[..32])?;
                 Self::NodeGone { node_id: peer }
             }
             FrameType::Ping => {
-                anyhow::ensure!(content.len() == 8, "invalid ping frame length");
+                if content.len() != 8 {
+                    return Err(Error::InvalidFrame);
+                }
                 let mut data = [0u8; 8];
                 data.copy_from_slice(&content[..8]);
                 Self::Ping { data }
             }
             FrameType::Pong => {
-                anyhow::ensure!(content.len() == 8, "invalid pong frame length");
+                if content.len() != 8 {
+                    return Err(Error::InvalidFrame);
+                }
                 let mut data = [0u8; 8];
                 data.copy_from_slice(&content[..8]);
                 Self::Pong { data }
             }
             FrameType::Health => Self::Health { problem: content },
             FrameType::Restarting => {
-                ensure!(
-                    content.len() == 4 + 4,
-                    "invalid restarting frame length: {}",
-                    content.len()
-                );
-                let reconnect_in = u32::from_be_bytes(content[..4].try_into()?);
-                let try_for = u32::from_be_bytes(content[4..].try_into()?);
+                if content.len() != 4 + 4 {
+                    return Err(Error::InvalidFrame);
+                }
+                let reconnect_in =
+                    u32::from_be_bytes(content[..4].try_into().map_err(|_| Error::InvalidFrame)?);
+                let try_for =
+                    u32::from_be_bytes(content[4..].try_into().map_err(|_| Error::InvalidFrame)?);
                 Self::Restarting {
                     reconnect_in,
                     try_for,
                 }
             }
             _ => {
-                anyhow::bail!("invalid frame type: {:?}", frame_type);
+                return Err(Error::InvalidFrameType(frame_type));
             }
         };
         Ok(res)
@@ -513,7 +546,7 @@ mod framing {
 
     impl Decoder for RelayCodec {
         type Item = Frame;
-        type Error = anyhow::Error;
+        type Error = Error;
 
         fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
             // Need at least 5 bytes
@@ -535,7 +568,7 @@ mod framing {
             };
 
             if frame_len > MAX_FRAME_SIZE {
-                anyhow::bail!("Frame of length {} is too large.", frame_len);
+                return Err(Error::FrameTooLarge(frame_len));
             }
 
             if src.len() < HEADER_LEN + frame_len {
@@ -582,35 +615,44 @@ mod framing {
 /// Receives the next frame and matches the frame type. If the correct type is found returns the content,
 /// otherwise an error.
 #[cfg(any(test, feature = "server"))]
-pub(crate) async fn recv_frame<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
+pub(crate) async fn recv_frame<E, S: Stream<Item = Result<Frame, E>> + Unpin>(
     frame_type: FrameType,
     mut stream: S,
-) -> anyhow::Result<Frame> {
+) -> Result<Frame, E>
+where
+    Error: Into<E>,
+{
     match stream.next().await {
         Some(Ok(frame)) => {
-            ensure!(
-                frame_type == frame.typ(),
-                "expected frame {}, found {}",
-                frame_type,
-                frame.typ()
-            );
+            if frame_type != frame.typ() {
+                return Err(Error::UnexpectedFrame {
+                    got: frame.typ(),
+                    expected: frame_type,
+                }
+                .into());
+            }
             Ok(frame)
         }
         Some(Err(err)) => Err(err),
-        None => bail!("EOF: unexpected stream end, expected frame {}", frame_type),
+        None => Err(Error::from(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "expected frame".to_string(),
+        ))
+        .into()),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use data_encoding::HEXLOWER;
+    use testresult::TestResult;
     use tokio_util::codec::{FramedRead, FramedWrite};
 
     use super::*;
 
     #[tokio::test]
     #[cfg(feature = "server")]
-    async fn test_basic_read_write() -> anyhow::Result<()> {
+    async fn test_basic_read_write() -> TestResult {
         let (reader, writer) = tokio::io::duplex(1024);
         let mut reader = FramedRead::new(reader, RelayCodec::test());
         let mut writer = FramedWrite::new(writer, RelayCodec::test());
@@ -630,7 +672,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_send_recv_client_key() -> anyhow::Result<()> {
+    async fn test_send_recv_client_key() -> TestResult {
         let (reader, writer) = tokio::io::duplex(1024);
         let mut reader = FramedRead::new(reader, RelayCodec::test());
         let mut writer =
@@ -649,7 +691,7 @@ mod tests {
     }
 
     #[test]
-    fn test_frame_snapshot() -> anyhow::Result<()> {
+    fn test_frame_snapshot() -> TestResult {
         let client_key = SecretKey::from_bytes(&[42u8; 32]);
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,

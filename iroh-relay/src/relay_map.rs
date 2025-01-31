@@ -2,9 +2,9 @@
 
 use std::{collections::BTreeMap, fmt, sync::Arc};
 
-use anyhow::{ensure, Result};
 use iroh_base::RelayUrl;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use crate::defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT};
 
@@ -88,14 +88,17 @@ impl RelayMap {
     }
 
     /// Constructs the [`RelayMap`] from an iterator of [`RelayNode`]s.
-    pub fn from_nodes<I: Into<Arc<RelayNode>>>(value: impl IntoIterator<Item = I>) -> Result<Self> {
+    pub fn from_nodes<I: Into<Arc<RelayNode>>>(value: impl IntoIterator<Item = I>) -> Self {
         let mut map = BTreeMap::new();
         for node in value.into_iter() {
             let node = node.into();
-            ensure!(!map.contains_key(&node.url), "Duplicate node url");
+            if map.contains_key(&node.url) {
+                warn!("Duplicate node url: {}, skipping", node.url);
+                continue;
+            }
             map.insert(node.url.clone(), node);
         }
-        Ok(RelayMap { nodes: map.into() })
+        RelayMap { nodes: map.into() }
     }
 }
 
