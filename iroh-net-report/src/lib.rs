@@ -33,10 +33,12 @@ use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 mod defaults;
 mod dns;
+mod ip_mapped_addrs;
 mod metrics;
 mod ping;
 mod reportgen;
 
+pub use ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddresses, MAPPED_ADDR_PORT};
 pub use metrics::Metrics;
 use reportgen::ProbeProto;
 pub use reportgen::QuicConfig;
@@ -348,8 +350,12 @@ impl Client {
     ///
     /// This starts a connected actor in the background.  Once the client is dropped it will
     /// stop running.
-    pub fn new(port_mapper: Option<portmapper::Client>, dns_resolver: DnsResolver) -> Result<Self> {
-        let mut actor = Actor::new(port_mapper, dns_resolver)?;
+    pub fn new(
+        port_mapper: Option<portmapper::Client>,
+        dns_resolver: DnsResolver,
+        ip_mapped_addrs: Option<IpMappedAddresses>,
+    ) -> Result<Self> {
+        let mut actor = Actor::new(port_mapper, dns_resolver, ip_mapped_addrs)?;
         let addr = actor.addr();
         let task = task::spawn(
             async move { actor.run().await }.instrument(info_span!("net_report.actor")),
@@ -566,6 +572,9 @@ struct Actor {
 
     /// The DNS resolver to use for probes that need to perform DNS lookups
     dns_resolver: DnsResolver,
+
+    /// The [`IpMappedAddresses`] that allows you to do QAD in iroh
+    ip_mapped_addrs: Option<IpMappedAddresses>,
 }
 
 impl Actor {
@@ -573,7 +582,11 @@ impl Actor {
     ///
     /// This does not start the actor, see [`Actor::run`] for this.  You should not
     /// normally create this directly but rather create a [`Client`].
-    fn new(port_mapper: Option<portmapper::Client>, dns_resolver: DnsResolver) -> Result<Self> {
+    fn new(
+        port_mapper: Option<portmapper::Client>,
+        dns_resolver: DnsResolver,
+        ip_mapped_addrs: Option<IpMappedAddresses>,
+    ) -> Result<Self> {
         // TODO: consider an instrumented flume channel so we have metrics.
         let (sender, receiver) = mpsc::channel(32);
         Ok(Self {
@@ -584,6 +597,7 @@ impl Actor {
             in_flight_stun_requests: Default::default(),
             current_report_run: None,
             dns_resolver,
+            ip_mapped_addrs,
         })
     }
 
@@ -644,6 +658,7 @@ impl Actor {
             quic_config,
             ..
         } = opts;
+        trace!("Attempting probes for protocols {protocols:#?}");
         if self.current_report_run.is_some() {
             response_tx
                 .send(Err(anyhow!(
@@ -686,6 +701,7 @@ impl Actor {
             quic_config,
             self.dns_resolver.clone(),
             protocols,
+            self.ip_mapped_addrs.clone(),
         );
 
         self.current_report_run = Some(ReportRun {
@@ -1133,7 +1149,7 @@ mod tests {
             stun_utils::serve("127.0.0.1".parse().unwrap()).await?;
 
         let resolver = crate::dns::tests::resolver();
-        let mut client = Client::new(None, resolver.clone())?;
+        let mut client = Client::new(None, resolver.clone(), None)?;
         let dm = stun_utils::relay_map_of([stun_addr].into_iter());
 
         // Note that the ProbePlan will change with each iteration.
@@ -1181,7 +1197,7 @@ mod tests {
 
         // Now create a client and generate a report.
         let resolver = crate::dns::tests::resolver();
-        let mut client = Client::new(None, resolver.clone())?;
+        let mut client = Client::new(None, resolver.clone(), None)?;
 
         let r = client.get_report(dm, None, None, None).await?;
         let mut r: Report = (*r).clone();
@@ -1384,7 +1400,7 @@ mod tests {
         let resolver = crate::dns::tests::resolver();
         for mut tt in tests {
             println!("test: {}", tt.name);
-            let mut actor = Actor::new(None, resolver.clone()).unwrap();
+            let mut actor = Actor::new(None, resolver.clone(), None).unwrap();
             for s in &mut tt.steps {
                 // trigger the timer
                 tokio::time::advance(Duration::from_secs(s.after)).await;
@@ -1419,7 +1435,7 @@ mod tests {
         dbg!(&dm);
 
         let resolver = crate::dns::tests::resolver().clone();
-        let mut client = Client::new(None, resolver)?;
+        let mut client = Client::new(None, resolver, None)?;
 
         // Set up an external socket to send STUN requests from, this will be discovered as
         // our public socket address by STUN.  We send back any packets received on this

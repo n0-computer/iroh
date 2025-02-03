@@ -27,7 +27,7 @@ use super::{
 use crate::endpoint::PathSelection;
 use crate::{
     disco::{self, SendAddr},
-    magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, HEARTBEAT_INTERVAL},
+    magicsock::{ActorMessage, MagicsockMetrics, NodeIdMappedAddr, HEARTBEAT_INTERVAL},
     watchable::{Watchable, Watcher},
 };
 
@@ -106,7 +106,7 @@ pub(super) struct NodeState {
     /// [`NodeMap`]: super::NodeMap
     id: usize,
     /// The UDP address used on the QUIC-layer to address this node.
-    quic_mapped_addr: QuicMappedAddr,
+    quic_mapped_addr: NodeIdMappedAddr,
     /// The global identifier for this endpoint.
     node_id: NodeId,
     /// The last time we pinged all endpoints.
@@ -159,7 +159,7 @@ pub(super) struct Options {
 
 impl NodeState {
     pub(super) fn new(id: usize, options: Options) -> Self {
-        let quic_mapped_addr = QuicMappedAddr::generate();
+        let quic_mapped_addr = NodeIdMappedAddr::generate();
 
         if options.relay_url.is_some() {
             // we potentially have a relay connection to the node
@@ -194,7 +194,7 @@ impl NodeState {
         &self.node_id
     }
 
-    pub(super) fn quic_mapped_addr(&self) -> &QuicMappedAddr {
+    pub(super) fn quic_mapped_addr(&self) -> &NodeIdMappedAddr {
         &self.quic_mapped_addr
     }
 
@@ -1489,7 +1489,7 @@ mod tests {
             (
                 NodeState {
                     id: 0,
-                    quic_mapped_addr: QuicMappedAddr::generate(),
+                    quic_mapped_addr: NodeIdMappedAddr::generate(),
                     node_id: key.public(),
                     last_full_ping: None,
                     relay_url: None,
@@ -1519,7 +1519,7 @@ mod tests {
             let key = SecretKey::generate(rand::thread_rng());
             NodeState {
                 id: 1,
-                quic_mapped_addr: QuicMappedAddr::generate(),
+                quic_mapped_addr: NodeIdMappedAddr::generate(),
                 node_id: key.public(),
                 last_full_ping: None,
                 relay_url: relay_and_state(key.public(), send_addr.clone()),
@@ -1540,7 +1540,7 @@ mod tests {
             let key = SecretKey::generate(rand::thread_rng());
             NodeState {
                 id: 2,
-                quic_mapped_addr: QuicMappedAddr::generate(),
+                quic_mapped_addr: NodeIdMappedAddr::generate(),
                 node_id: key.public(),
                 last_full_ping: None,
                 relay_url: Some((
@@ -1584,7 +1584,7 @@ mod tests {
             (
                 NodeState {
                     id: 3,
-                    quic_mapped_addr: QuicMappedAddr::generate(),
+                    quic_mapped_addr: NodeIdMappedAddr::generate(),
                     node_id: key.public(),
                     last_full_ping: None,
                     relay_url: relay_and_state(key.public(), send_addr.clone()),

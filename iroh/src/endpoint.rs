@@ -34,7 +34,7 @@ use crate::{
         dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
     },
     dns::{default_resolver, DnsResolver},
-    magicsock::{self, Handle, QuicMappedAddr},
+    magicsock::{self, Handle, NodeIdMappedAddr},
     tls,
     watchable::Watcher,
 };
@@ -165,6 +165,8 @@ impl Builder {
             1 => Some(discovery.into_iter().next().expect("checked length")),
             _ => Some(Box::new(ConcurrentDiscovery::from_services(discovery))),
         };
+        let server_config = static_config.create_server_config(self.alpn_protocols)?;
+
         let msock_opts = magicsock::Options {
             addr_v4: self.addr_v4,
             addr_v6: self.addr_v6,
@@ -174,12 +176,13 @@ impl Builder {
             discovery,
             proxy_url: self.proxy_url,
             dns_resolver,
+            server_config,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: self.path_selection,
         };
-        Endpoint::bind(static_config, msock_opts, self.alpn_protocols).await
+        Endpoint::bind(static_config, msock_opts).await
     }
 
     // # The very common methods everyone basically needs.
@@ -516,7 +519,6 @@ pub fn make_server_config(
 #[derive(Clone, Debug)]
 pub struct Endpoint {
     msock: Handle,
-    endpoint: quinn::Endpoint,
     rtt_actor: Arc<rtt_actor::RttHandle>,
     static_config: Arc<StaticConfig>,
 }
@@ -538,38 +540,16 @@ impl Endpoint {
     /// This is for internal use, the public interface is the [`Builder`] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
     #[instrument("ep", skip_all, fields(me = %static_config.secret_key.public().fmt_short()))]
-    async fn bind(
-        static_config: StaticConfig,
-        msock_opts: magicsock::Options,
-        initial_alpns: Vec<Vec<u8>>,
-    ) -> Result<Self> {
+    async fn bind(static_config: StaticConfig, msock_opts: magicsock::Options) -> Result<Self> {
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
         trace!("created magicsock");
-
-        let server_config = static_config.create_server_config(initial_alpns)?;
-
-        let mut endpoint_config = quinn::EndpointConfig::default();
-        // Setting this to false means that quinn will ignore packets that have the QUIC fixed bit
-        // set to 0. The fixed bit is the 3rd bit of the first byte of a packet.
-        // For performance reasons and to not rewrite buffers we pass non-QUIC UDP packets straight
-        // through to quinn. We set the first byte of the packet to zero, which makes quinn ignore
-        // the packet if grease_quic_bit is set to false.
-        endpoint_config.grease_quic_bit(false);
-
-        let endpoint = quinn::Endpoint::new_with_abstract_socket(
-            endpoint_config,
-            Some(server_config),
-            Arc::new(msock.clone()),
-            Arc::new(quinn::TokioRuntime),
-        )?;
-        trace!("created quinn endpoint");
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
-        Ok(Self {
-            msock,
-            endpoint,
+        let ep = Self {
+            msock: msock.clone(),
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
             static_config: Arc::new(static_config),
-        })
+        };
+        Ok(ep)
     }
 
     /// Sets the list of accepted ALPN protocols.
@@ -578,7 +558,7 @@ impl Endpoint {
     /// Note that this *overrides* the current list of ALPNs.
     pub fn set_alpns(&self, alpns: Vec<Vec<u8>>) -> Result<()> {
         let server_config = self.static_config.create_server_config(alpns)?;
-        self.endpoint.set_server_config(Some(server_config));
+        self.msock.endpoint().set_server_config(Some(server_config));
         Ok(())
     }
 
@@ -679,7 +659,7 @@ impl Endpoint {
         &self,
         node_id: NodeId,
         alpn: &[u8],
-        addr: QuicMappedAddr,
+        addr: NodeIdMappedAddr,
         transport_config: Arc<TransportConfig>,
     ) -> Result<Connection> {
         debug!("Attempting connection...");
@@ -697,9 +677,10 @@ impl Endpoint {
         };
 
         // TODO: We'd eventually want to replace "localhost" with something that makes more sense.
-        let connect = self
-            .endpoint
-            .connect_with(client_config, addr.0, "localhost")?;
+        let connect =
+            self.msock
+                .endpoint()
+                .connect_with(client_config, addr.socket_addr(), "localhost")?;
 
         let connection = connect
             .await
@@ -728,7 +709,7 @@ impl Endpoint {
     /// [`Endpoint::close`].
     pub fn accept(&self) -> Accept<'_> {
         Accept {
-            inner: self.endpoint.accept(),
+            inner: self.msock.endpoint().accept(),
             ep: self.clone(),
         }
     }
@@ -1023,10 +1004,6 @@ impl Endpoint {
             return;
         }
 
-        tracing::debug!("Closing connections");
-        self.endpoint.close(0u16.into(), b"");
-        self.endpoint.wait_idle().await;
-
         tracing::debug!("Connections closed");
         self.msock.close().await;
     }
@@ -1054,7 +1031,7 @@ impl Endpoint {
     async fn get_mapping_addr_and_maybe_start_discovery(
         &self,
         node_addr: NodeAddr,
-    ) -> Result<(QuicMappedAddr, Option<DiscoveryTask>)> {
+    ) -> Result<(NodeIdMappedAddr, Option<DiscoveryTask>)> {
         let node_id = node_addr.node_id;
 
         // Only return a mapped addr if we have some way of dialing this node, in other
@@ -1106,7 +1083,7 @@ impl Endpoint {
     }
     #[cfg(test)]
     pub(crate) fn endpoint(&self) -> &quinn::Endpoint {
-        &self.endpoint
+        self.msock.endpoint()
     }
 }
 
