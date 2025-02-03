@@ -564,7 +564,10 @@ impl Endpoint {
 
     // # Methods for establishing connectivity.
 
-    /// Connects to a remote [`Endpoint`].
+    /// Starts a connection attempt with a remote [`Endpoint`].
+    ///
+    /// Returned future resolves to a [`Connecting`], which can be further processed until
+    /// a [`Connection`] by awaiting.
     ///
     /// A value that can be converted into a [`NodeAddr`] is required. This can be either a
     /// [`NodeAddr`], a [`NodeId`] or a [`iroh_base::ticket::NodeTicket`].
@@ -591,10 +594,13 @@ impl Endpoint {
             .await
     }
 
-    /// Connects to a remote [`Endpoint`] using a custom [`TransportConfig`].
+    /// Starts a connection attempt with a remote [`Endpoint`].
     ///
-    /// Like [`Endpoint::connect`], but allows providing a custom for the connection.  See
-    /// the docs of [`Endpoint::connect`] for details.
+    /// Returned future resolves to a [`Connecting`], which can be further processed until
+    /// a [`Connection`] by awaiting.
+    ///
+    /// Like [`Endpoint::connect`], but allows providing a custom transport config for the connection.
+    /// See the docs of [`Endpoint::connect`] for details.
     ///
     /// Please be aware that changing some settings may have adverse effects on establishing
     /// and maintaining direct connections.  Carefully test settings you use and consider
