@@ -812,6 +812,7 @@ mod tests {
     use iroh_base::{NodeId, SecretKey};
     use n0_future::{FutureExt, SinkExt};
     use testresult::TestResult;
+    use tracing_test::traced_test;
 
     use super::*;
     use crate::{
@@ -856,8 +857,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_no_services() {
-        let _guard = iroh_test::logging::setup();
         let mut server = Server::spawn(ServerConfig::<(), ()>::default())
             .await
             .unwrap();
@@ -869,8 +870,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_conflicting_bind() {
-        let _guard = iroh_test::logging::setup();
         let mut server = Server::spawn(ServerConfig::<(), ()> {
             relay: Some(RelayConfig {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 1234).into(),
@@ -893,8 +894,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_root_handler() {
-        let _guard = iroh_test::logging::setup();
         let server = spawn_local_relay().await.unwrap();
         let url = format!("http://{}", server.http_addr().unwrap());
 
@@ -905,8 +906,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_captive_portal_service() {
-        let _guard = iroh_test::logging::setup();
         let server = spawn_local_relay().await.unwrap();
         let url = format!("http://{}/generate_204", server.http_addr().unwrap());
         let challenge = "123az__.";
@@ -926,8 +927,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_relay_client_legacy_route() {
-        let _guard = iroh_test::logging::setup();
         let server = spawn_local_relay().await.unwrap();
         // We're testing the legacy endpoint at `/derp`
         let endpoint_url = format!("http://{}/derp", server.http_addr().unwrap());
@@ -944,8 +945,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_relay_clients_both_relay() -> TestResult<()> {
-        let _guard = iroh_test::logging::setup();
         let server = spawn_local_relay().await.unwrap();
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse().unwrap();
@@ -996,8 +997,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_relay_clients_both_websockets() -> TestResult<()> {
-        let _guard = iroh_test::logging::setup();
         let server = spawn_local_relay().await?;
 
         let relay_url = format!("http://{}", server.http_addr().unwrap());
@@ -1058,8 +1059,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_relay_clients_websocket_and_relay() -> TestResult<()> {
-        let _guard = iroh_test::logging::setup();
         let server = spawn_local_relay().await.unwrap();
 
         let relay_url = format!("http://{}", server.http_addr().unwrap());
@@ -1114,8 +1115,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_stun() {
-        let _guard = iroh_test::logging::setup();
         let server = Server::spawn(ServerConfig::<(), ()> {
             relay: None,
             stun: Some(StunConfig {
@@ -1146,9 +1147,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_relay_access_control() -> Result<()> {
-        let _guard = iroh_test::logging::setup();
-
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
 

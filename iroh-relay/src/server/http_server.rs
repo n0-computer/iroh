@@ -706,7 +706,7 @@ mod tests {
     use n0_future::{SinkExt, StreamExt};
     use reqwest::Url;
     use tracing::info;
-    use tracing_subscriber::{prelude::*, EnvFilter};
+    use tracing_test::traced_test;
 
     use super::*;
     use crate::client::{
@@ -740,9 +740,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_http_clients_and_server() -> Result<()> {
-        let _guard = iroh_test::logging::setup();
-
         let a_key = SecretKey::generate(rand::thread_rng());
         let b_key = SecretKey::generate(rand::thread_rng());
 
@@ -846,9 +845,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_https_clients_and_server() -> Result<()> {
-        let _logging = iroh_test::logging::setup();
-
         let a_key = SecretKey::generate(rand::thread_rng());
         let b_key = SecretKey::generate(rand::thread_rng());
 
@@ -929,9 +927,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_server_basic() -> Result<()> {
-        let _guard = iroh_test::logging::setup();
-
         info!("Create the server.");
         let service = RelayService::new(
             Default::default(),
@@ -1019,12 +1016,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_replace_client() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
-
         info!("Create the server.");
         let service = RelayService::new(
             Default::default(),

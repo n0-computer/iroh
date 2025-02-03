@@ -187,6 +187,8 @@ pub(crate) mod tests {
         sync::{atomic::AtomicUsize, OnceLock},
     };
 
+    use tracing_test::traced_test;
+
     use super::*;
 
     static DNS_RESOLVER: OnceLock<TokioResolver> = OnceLock::new();
@@ -243,8 +245,8 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn stagger_basic() {
-        let _logging = iroh_test::logging::setup();
         const CALL_RESULTS: &[Result<u8, u8>] = &[Err(2), Ok(3), Ok(5), Ok(7)];
         static DONE_CALL: AtomicUsize = AtomicUsize::new(0);
         let f = || {

@@ -404,12 +404,13 @@ mod tests {
         use iroh_base::SecretKey;
         use n0_future::StreamExt;
         use testresult::TestResult;
+        use tracing_test::traced_test;
 
         use super::super::*;
 
         #[tokio::test]
+        #[traced_test]
         async fn local_swarm_discovery_publish_resolve() -> TestResult {
-            let _guard = iroh_test::logging::setup();
             let (_, discovery_a) = make_discoverer()?;
             let (node_id_b, discovery_b) = make_discoverer()?;
 
@@ -441,9 +442,8 @@ mod tests {
         }
 
         #[tokio::test]
+        #[traced_test]
         async fn local_swarm_discovery_subscribe() -> TestResult {
-            let _guard = iroh_test::logging::setup();
-
             let num_nodes = 5;
             let mut node_ids = BTreeSet::new();
             let mut discoverers = vec![];

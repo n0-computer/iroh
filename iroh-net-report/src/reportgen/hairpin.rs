@@ -181,10 +181,12 @@ mod tests {
     use bytes::BytesMut;
     use tokio::sync::mpsc;
     use tracing::info;
+    use tracing_test::traced_test;
 
     use super::*;
 
     #[tokio::test]
+    #[traced_test]
     async fn test_hairpin_success() {
         for i in 0..100 {
             let now = Instant::now();
@@ -194,13 +196,12 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_hairpin_failure() {
         test_hairpin(false).await;
     }
 
     async fn test_hairpin(hairpinning_works: bool) {
-        let _guard = iroh_test::logging::setup();
-
         // Setup fake net_report and reportstate actors, hairpinning interacts with them.
         let (net_report_tx, mut net_report_rx) = mpsc::channel(32);
         let net_report_addr = net_report::Addr {
@@ -275,9 +276,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_client_drop() {
-        let _guard = iroh_test::logging::setup();
-
         // Setup fake net_report and reportstate actors, hairpinning interacts with them.
         let (net_report_tx, _net_report_rx) = mpsc::channel(32);
         let net_report_addr = net_report::Addr {

@@ -1728,6 +1728,7 @@ mod tests {
     use n0_future::StreamExt;
     use rand::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
+    use tracing_test::traced_test;
 
     use super::*;
     use crate::test_utils::{run_relay_server, run_relay_server_with};
@@ -1735,8 +1736,8 @@ mod tests {
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
     #[tokio::test]
+    #[traced_test]
     async fn test_connect_self() {
-        let _guard = iroh_test::logging::setup();
         let ep = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -1755,8 +1756,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn endpoint_connect_close() {
-        let _guard = iroh_test::logging::setup();
         let (relay_map, relay_url, _guard) = run_relay_server().await.unwrap();
         let server_secret_key = SecretKey::generate(rand::thread_rng());
         let server_peer_id = server_secret_key.public();
@@ -1849,9 +1850,8 @@ mod tests {
 
     /// Test that peers are properly restored
     #[tokio::test]
+    #[traced_test]
     async fn restore_peers() {
-        let _guard = iroh_test::logging::setup();
-
         let secret_key = SecretKey::generate(rand::thread_rng());
 
         /// Create an endpoint for the test.
@@ -1903,8 +1903,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn endpoint_relay_connect_loop() {
-        let _logging_guard = iroh_test::logging::setup();
         let start = Instant::now();
         let n_clients = 5;
         let n_chunks_per_client = 2;
@@ -2010,8 +2010,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn endpoint_bidi_send_recv() {
-        let _logging_guard = iroh_test::logging::setup();
         let ep1 = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled)
@@ -2100,9 +2100,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn endpoint_conn_type_stream() {
         const TIMEOUT: Duration = std::time::Duration::from_secs(15);
-        let _logging_guard = iroh_test::logging::setup();
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await.unwrap();
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let ep1_secret_key = SecretKey::generate(&mut rng);
@@ -2184,8 +2184,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_direct_addresses_no_stun_relay() {
-        let _guard = iroh_test::logging::setup();
         let (relay_map, _, _guard) = run_relay_server_with(None, false).await.unwrap();
 
         let ep = Endpoint::builder()

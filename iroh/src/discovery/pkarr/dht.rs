@@ -410,13 +410,14 @@ mod tests {
     use iroh_base::RelayUrl;
     use pkarr::mainline::dht::DhtSettings;
     use testresult::TestResult;
+    use tracing_test::traced_test;
 
     use super::*;
 
     #[tokio::test]
     #[ignore = "flaky"]
+    #[traced_test]
     async fn dht_discovery_smoke() -> TestResult {
-        let _logging_guard = iroh_test::logging::setup();
         let ep = crate::Endpoint::builder().bind().await?;
         let secret = ep.secret_key().clone();
         let testnet = pkarr::mainline::dht::Testnet::new(2);

@@ -566,6 +566,7 @@ fn sort_relays<'a>(
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
+    use tracing_test::traced_test;
 
     use super::*;
     use crate::{test_utils, RelayLatencies};
@@ -796,8 +797,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_plan_with_report() {
-        let _logging = iroh_test::logging::setup();
         let (_servers, relay_map) = test_utils::relay_map(2).await;
         let relay_node_1 = relay_map.nodes().next().unwrap().clone();
         let relay_node_2 = relay_map.nodes().nth(1).unwrap().clone();
@@ -988,8 +989,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_relay_sort_two_latencies() {
-        let _logging = iroh_test::logging::setup();
         let (_servers, relay_map) = test_utils::relay_map(2).await;
         let r1 = relay_map.nodes().next().unwrap();
         let r2 = relay_map.nodes().nth(1).unwrap();
@@ -1007,8 +1008,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_relay_sort_equal_latencies() {
-        let _logging = iroh_test::logging::setup();
         let (_servers, relay_map) = test_utils::relay_map(2).await;
         let r1 = relay_map.nodes().next().unwrap();
         let r2 = relay_map.nodes().nth(1).unwrap();
@@ -1049,8 +1050,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_relay_sort_no_latency() {
-        let _logging = iroh_test::logging::setup();
         let (_servers, relay_map) = test_utils::relay_map(2).await;
         let r1 = relay_map.nodes().next().unwrap();
         let r2 = relay_map.nodes().nth(1).unwrap();

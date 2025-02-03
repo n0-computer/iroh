@@ -446,6 +446,7 @@ mod tests {
     use rand::Rng;
     use testresult::TestResult;
     use tokio_util::task::AbortOnDropHandle;
+    use tracing_test::traced_test;
 
     use super::*;
     use crate::RelayMode;
@@ -563,8 +564,8 @@ mod tests {
 
     /// This is a smoke test for our discovery mechanism.
     #[tokio::test]
+    #[traced_test]
     async fn endpoint_discovery_simple_shared() -> anyhow::Result<()> {
-        let _guard = iroh_test::logging::setup();
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -585,8 +586,8 @@ mod tests {
 
     /// This test adds an empty discovery which provides no addresses.
     #[tokio::test]
+    #[traced_test]
     async fn endpoint_discovery_combined_with_empty() -> anyhow::Result<()> {
-        let _guard = iroh_test::logging::setup();
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -616,8 +617,8 @@ mod tests {
     /// This is to make sure that as long as one of the discoveries returns a working address, we
     /// will connect successfully.
     #[tokio::test]
+    #[traced_test]
     async fn endpoint_discovery_combined_with_empty_and_wrong() -> anyhow::Result<()> {
-        let _guard = iroh_test::logging::setup();
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -644,8 +645,8 @@ mod tests {
 
     /// This test only has the "lying" discovery. It is here to make sure that this actually fails.
     #[tokio::test]
+    #[traced_test]
     async fn endpoint_discovery_combined_wrong_only() -> anyhow::Result<()> {
-        let _guard = iroh_test::logging::setup();
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -669,8 +670,8 @@ mod tests {
     /// This test first adds a wrong address manually (e.g. from an outdated&node_id ticket).
     /// Connect should still succeed because the discovery service will be invoked (after a delay).
     #[tokio::test]
+    #[traced_test]
     async fn endpoint_discovery_with_wrong_existing_addr() -> anyhow::Result<()> {
-        let _guard = iroh_test::logging::setup();
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -759,6 +760,7 @@ mod test_dns_pkarr {
     use iroh_relay::RelayMap;
     use n0_future::time::Duration;
     use tokio_util::task::AbortOnDropHandle;
+    use tracing_test::traced_test;
 
     use crate::{
         discovery::pkarr::PkarrPublisher,
@@ -774,9 +776,8 @@ mod test_dns_pkarr {
     const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
 
     #[tokio::test]
+    #[traced_test]
     async fn dns_resolve() -> Result<()> {
-        let _logging_guard = iroh_test::logging::setup();
-
         let origin = "testdns.example".to_string();
         let state = State::new(origin.clone());
         let (nameserver, _dns_drop_guard) = run_dns_server(state.clone()).await?;
@@ -799,9 +800,8 @@ mod test_dns_pkarr {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn pkarr_publish_dns_resolve() -> Result<()> {
-        let _logging_guard = iroh_test::logging::setup();
-
         let origin = "testdns.example".to_string();
 
         let dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone()).await?;
@@ -832,9 +832,8 @@ mod test_dns_pkarr {
     const TEST_ALPN: &[u8] = b"TEST";
 
     #[tokio::test]
+    #[traced_test]
     async fn pkarr_publish_dns_discover() -> Result<()> {
-        let _logging_guard = iroh_test::logging::setup();
-
         let dns_pkarr_server = DnsPkarrServer::run().await?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 

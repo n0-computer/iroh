@@ -34,6 +34,7 @@ mod tests {
     };
     use pkarr::{PkarrClient, SignedPacket};
     use testresult::TestResult;
+    use tracing_test::traced_test;
     use url::Url;
 
     use crate::{
@@ -45,8 +46,8 @@ mod tests {
     };
 
     #[tokio::test]
+    #[traced_test]
     async fn pkarr_publish_dns_resolve() -> Result<()> {
-        iroh_test::logging::setup_multithreaded();
         let (server, nameserver, http_url) = Server::spawn_for_tests().await?;
         let pkarr_relay_url = {
             let mut url = http_url.clone();
@@ -158,8 +159,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn integration_smoke() -> Result<()> {
-        iroh_test::logging::setup_multithreaded();
         let (server, nameserver, http_url) = Server::spawn_for_tests().await?;
 
         let pkarr_relay = {
@@ -190,8 +191,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn store_eviction() -> TestResult<()> {
-        iroh_test::logging::setup_multithreaded();
         let options = ZoneStoreOptions {
             eviction: Duration::from_millis(100),
             eviction_interval: Duration::from_millis(100),
@@ -220,9 +221,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn integration_mainline() -> Result<()> {
-        iroh_test::logging::setup_multithreaded();
-
         // run a mainline testnet
         let testnet = pkarr::mainline::dht::Testnet::new(5);
         let bootstrap = testnet.bootstrap.clone();
