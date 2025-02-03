@@ -135,9 +135,10 @@ impl<'de> Deserialize<'de> for NodeTicket {
 mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
+    use data_encoding::HEXLOWER;
+
     use super::*;
     use crate::key::{PublicKey, SecretKey};
-    use data_encoding::HEXLOWER;
 
     fn make_ticket() -> NodeTicket {
         let peer = SecretKey::generate(&mut rand::thread_rng()).public();
