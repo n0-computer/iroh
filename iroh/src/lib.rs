@@ -256,5 +256,3 @@ pub use iroh_relay::{RelayMap, RelayNode};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
-
-pub use self::tls::Authentication as TlsAuthentication;
