@@ -208,7 +208,8 @@
 <a href="#207" id="207">207</a>
 <a href="#208" id="208">208</a>
 <a href="#209" id="209">209</a>
-<a href="#210" id="210">210</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tickets for nodes.
+<a href="#210" id="210">210</a>
+<a href="#211" id="211">211</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tickets for nodes.
 
 </span><span class="kw">use </span>std::str::FromStr;
 
@@ -345,9 +346,10 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::net::{Ipv4Addr, SocketAddr};
 
+    <span class="kw">use </span>data_encoding::HEXLOWER;
+
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
-    <span class="kw">use </span>data_encoding::HEXLOWER;
 
     <span class="kw">fn </span>make_ticket() -&gt; NodeTicket {
         <span class="kw">let </span>peer = SecretKey::generate(<span class="kw-2">&amp;mut </span>rand::thread_rng()).public();
