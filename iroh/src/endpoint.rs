@@ -586,7 +586,7 @@ impl Endpoint {
     /// The `alpn`, or application-level protocol identifier, is also required. The remote
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
-    pub async fn connect(&self, node_addr: impl Into<NodeAddr>, alpn: &[u8]) -> Result<Connection> {
+    pub async fn connect(&self, node_addr: impl Into<NodeAddr>, alpn: &[u8]) -> Result<Connecting> {
         self.connect_with(node_addr, alpn, self.static_config.transport_config.clone())
             .await
     }
@@ -604,7 +604,7 @@ impl Endpoint {
         node_addr: impl Into<NodeAddr>,
         alpn: &[u8],
         transport_config: Arc<TransportConfig>,
-    ) -> Result<Connection> {
+    ) -> Result<Connecting> {
         let node_addr: NodeAddr = node_addr.into();
         tracing::Span::current().record("remote", node_addr.node_id.fmt_short());
         // Connecting to ourselves is not supported.
@@ -661,7 +661,7 @@ impl Endpoint {
         alpn: &[u8],
         addr: NodeIdMappedAddr,
         transport_config: Arc<TransportConfig>,
-    ) -> Result<Connection> {
+    ) -> Result<Connecting> {
         debug!("Attempting connection...");
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
@@ -682,21 +682,10 @@ impl Endpoint {
                 .endpoint()
                 .connect_with(client_config, addr.socket_addr(), "localhost")?;
 
-        let connection = connect
-            .await
-            .context("failed connecting to remote endpoint")?;
-
-        let rtt_msg = RttMessage::NewConnection {
-            connection: connection.weak_handle(),
-            conn_type_changes: self.conn_type(node_id)?.stream(),
-            node_id,
-        };
-        if let Err(err) = self.rtt_actor.msg_tx.send(rtt_msg).await {
-            // If this actor is dead, that's not great but we can still function.
-            warn!("rtt-actor not reachable: {err:#}");
-        }
-        debug!("Connection established");
-        Ok(Connection { inner: connection })
+        Ok(Connecting {
+            inner: connect,
+            ep: self.clone(),
+        })
     }
 
     /// Accepts an incoming connection on the endpoint.
@@ -1808,7 +1797,12 @@ mod tests {
                     .unwrap();
                 info!("client connecting");
                 let node_addr = NodeAddr::new(server_peer_id).with_relay_url(relay_url);
-                let conn = ep.connect(node_addr, TEST_ALPN).await.unwrap();
+                let conn = ep
+                    .connect(node_addr, TEST_ALPN)
+                    .await
+                    .unwrap()
+                    .await
+                    .unwrap();
                 let mut stream = conn.open_uni().await.unwrap();
 
                 // First write is accepted by server.  We need this bit of synchronisation
@@ -1970,7 +1964,12 @@ mod tests {
                 info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "client bound");
                 let node_addr = NodeAddr::new(server_node_id).with_relay_url(relay_url);
                 info!(to = ?node_addr, "client connecting");
-                let conn = ep.connect(node_addr, TEST_ALPN).await.unwrap();
+                let conn = ep
+                    .connect(node_addr, TEST_ALPN)
+                    .await
+                    .unwrap()
+                    .await
+                    .unwrap();
                 info!("client connected");
                 let (mut send, mut recv) = conn.open_bi().await.unwrap();
 
@@ -2027,7 +2026,7 @@ mod tests {
         eprintln!("node id 2 {ep2_nodeid}");
 
         async fn connect_hello(ep: Endpoint, dst: NodeAddr) {
-            let conn = ep.connect(dst, TEST_ALPN).await.unwrap();
+            let conn = ep.connect(dst, TEST_ALPN).await.unwrap().await.unwrap();
             let (mut send, mut recv) = conn.open_bi().await.unwrap();
             info!("sending hello");
             send.write_all(b"hello").await.unwrap();
@@ -2154,7 +2153,11 @@ mod tests {
         };
 
         let ep2_side = async move {
-            ep2.connect(ep1_nodeaddr, TEST_ALPN).await.unwrap();
+            ep2.connect(ep1_nodeaddr, TEST_ALPN)
+                .await
+                .unwrap()
+                .await
+                .unwrap();
             handle_direct_conn(&ep2, ep1_nodeid).await
         };
 

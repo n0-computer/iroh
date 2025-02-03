@@ -120,6 +120,8 @@ pub async fn connect_client(
     let connection = endpoint
         .connect(server_addr, ALPN)
         .await
+        .context("unable to connect")?
+        .await
         .context("unable to connect")?;
     trace!("connected");
 

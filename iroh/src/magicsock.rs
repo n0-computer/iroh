@@ -3336,6 +3336,8 @@ mod tests {
             .endpoint
             .connect(dest, ALPN)
             .await
+            .context("[sender] connecting")?
+            .await
             .context("[sender] connect")?;
 
         info!("opening bi");
@@ -3485,6 +3487,7 @@ mod tests {
         let conn = m1
             .endpoint
             .connect(m2.endpoint.node_addr().await?, ALPN)
+            .await?
             .await?;
         println!("Closing first conn");
         conn.close(0u32.into(), b"bye lolz");
