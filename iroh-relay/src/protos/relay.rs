@@ -604,6 +604,7 @@ pub(crate) async fn recv_frame<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
 
 #[cfg(test)]
 mod tests {
+    use data_encoding::HEXLOWER;
     use tokio_util::codec::{FramedRead, FramedWrite};
 
     use super::*;
@@ -726,10 +727,17 @@ mod tests {
 
         for (frame, expected_hex) in frames {
             let bytes = frame.encode_for_ws_msg();
-            // To regenerate the hexdumps:
-            // let hexdump = iroh_test::hexdump::print_hexdump(bytes, []);
-            // println!("{hexdump}");
-            let expected_bytes = iroh_test::hexdump::parse_hexdump(expected_hex)?;
+            let stripped: Vec<u8> = expected_hex
+                .chars()
+                .filter_map(|s| {
+                    if s.is_ascii_whitespace() {
+                        None
+                    } else {
+                        Some(s as u8)
+                    }
+                })
+                .collect();
+            let expected_bytes = HEXLOWER.decode(&stripped).unwrap();
             assert_eq!(bytes, expected_bytes);
         }
 

@@ -2055,7 +2055,6 @@ dependencies = [
  "iroh-quinn-proto",
  "iroh-quinn-udp",
  "iroh-relay",
- "iroh-test 0.31.0",
  "n0-future",
  "netdev",
  "netwatch",
@@ -2101,7 +2100,6 @@ dependencies = [
  "derive_more",
  "ed25519-dalek",
  "getrandom",
- "iroh-test 0.28.0",
  "postcard",
  "proptest",
  "rand",
@@ -2153,7 +2151,6 @@ dependencies = [
  "humantime-serde",
  "iroh",
  "iroh-metrics",
- "iroh-test 0.31.0",
  "lru",
  "n0-future",
  "pkarr",
@@ -2215,7 +2212,6 @@ dependencies = [
  "iroh-metrics",
  "iroh-quinn",
  "iroh-relay",
- "iroh-test 0.31.0",
  "n0-future",
  "netwatch",
  "portmapper",
@@ -2311,7 +2307,6 @@ dependencies = [
  "iroh-metrics",
  "iroh-quinn",
  "iroh-quinn-proto",
- "iroh-test 0.31.0",
  "lru",
  "n0-future",
  "num_enum",
@@ -2346,25 +2341,6 @@ dependencies = [
  "tracing-test",
  "url",
  "webpki-roots",
-]
-
-[[package]]
-name = "iroh-test"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f909a839e5aafd4c4ca473e6e143bacdd6a8483385e64186cacfa62e91f4081d"
-dependencies = [
- "anyhow",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "iroh-test"
-version = "0.31.0"
-dependencies = [
- "anyhow",
 ]
 
 [[package]]

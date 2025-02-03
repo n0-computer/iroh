@@ -350,7 +350,7 @@ fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
 
 #[cfg(test)]
 mod tests {
-    use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
+    use data_encoding::HEXLOWER;
 
     use super::*;
 
@@ -360,10 +360,10 @@ mod tests {
             PublicKey::from_str("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
                 .unwrap();
         let bytes = postcard::to_stdvec(&public_key).unwrap();
-        let expected =
-            parse_hexdump("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
-                .unwrap();
-        assert_eq_hex!(bytes, expected);
+        let expected = HEXLOWER
+            .decode(b"ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
+            .unwrap();
+        assert_eq!(bytes, expected);
     }
 
     #[test]

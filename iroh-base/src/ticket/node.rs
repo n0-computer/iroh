@@ -135,10 +135,9 @@ impl<'de> Deserialize<'de> for NodeTicket {
 mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
-    use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
-
     use super::*;
     use crate::key::{PublicKey, SecretKey};
+    use data_encoding::HEXLOWER;
 
     fn make_ticket() -> NodeTicket {
         let peer = SecretKey::generate(&mut rand::thread_rng()).public();
@@ -188,15 +187,24 @@ mod tests {
                     .as_bytes(),
             )
             .unwrap();
-        let expected = parse_hexdump("
-            00 # variant
-            ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6 # node id, 32 bytes, see above
-            01 # relay url present
-            10 687474703a2f2f646572702e6d652e2f # relay url, 16 bytes, see above
-            01 # one direct address
-            00 # ipv4
-            7f000001 8008 # address, see above
-        ").unwrap();
-        assert_eq_hex!(base32, expected);
+        let expected = [
+            // variant
+            "00",
+            // node id, 32 bytes, see above
+            "ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6",
+            // relay url present
+            "01",
+            // relay url, 16 bytes, see above
+            "10",
+            "687474703a2f2f646572702e6d652e2f",
+            // one direct address
+            "01",
+            // ipv4
+            "00",
+            // address, see above
+            "7f0000018008",
+        ];
+        let expected = HEXLOWER.decode(expected.concat().as_bytes()).unwrap();
+        assert_eq!(base32, expected);
     }
 }
