@@ -3138,7 +3138,6 @@ impl NetInfo {
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
-    use iroh_test::CallOnDrop;
     use rand::RngCore;
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
@@ -3215,7 +3214,7 @@ mod tests {
     ///
     /// When the returned drop guard is dropped, the tasks doing this updating are stopped.
     #[instrument(skip_all)]
-    async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<CallOnDrop> {
+    async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<Vec<AbortOnDropHandle<()>>> {
         /// Registers endpoint addresses of a node to all other nodes.
         fn update_direct_addrs(
             stacks: &[MagicStack],
@@ -3239,22 +3238,19 @@ mod tests {
 
         // For each node, start a task which monitors its local endpoints and registers them
         // with the other nodes as local endpoints become known.
-        let mut tasks = JoinSet::new();
+        let mut tasks = Vec::new();
         for (my_idx, m) in stacks.iter().enumerate() {
             let m = m.clone();
             let stacks = stacks.clone();
-            tasks.spawn(async move {
+            tasks.push(AbortOnDropHandle::new(tokio::task::spawn(async move {
                 let me = m.endpoint.node_id().fmt_short();
                 let mut stream = m.endpoint.direct_addresses().stream().filter_map(|i| i);
                 while let Some(new_eps) = stream.next().await {
                     info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, new_eps);
                     update_direct_addrs(&stacks, my_idx, new_eps);
                 }
-            });
+            })));
         }
-        let guard = CallOnDrop::new(move || {
-            tasks.abort_all();
-        });
 
         // Wait for all nodes to be registered with each other.
         time::timeout(Duration::from_secs(10), async move {
@@ -3279,7 +3275,7 @@ mod tests {
         .await
         .context("failed to connect nodes")?;
         info!("all nodes meshed");
-        Ok(guard)
+        Ok(tasks)
     }
 
     #[instrument(skip_all, fields(me = %ep.endpoint.node_id().fmt_short()))]
@@ -3534,9 +3530,7 @@ mod tests {
                     time::sleep(offset()).await;
                 }
             });
-            CallOnDrop::new(move || {
-                task.abort();
-            })
+            AbortOnDropHandle::new(task)
         };
 
         for i in 0..rounds {
@@ -3563,9 +3557,7 @@ mod tests {
                     time::sleep(offset()).await;
                 }
             });
-            CallOnDrop::new(move || {
-                task.abort();
-            })
+            AbortOnDropHandle::new(task)
         };
 
         for i in 0..rounds {
@@ -3593,9 +3585,7 @@ mod tests {
                 m2.endpoint.magic_sock().force_network_change(true).await;
                 time::sleep(offset()).await;
             });
-            CallOnDrop::new(move || {
-                task.abort();
-            })
+            AbortOnDropHandle::new(task)
         };
 
         for i in 0..rounds {

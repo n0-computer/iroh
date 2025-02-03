@@ -1724,7 +1724,6 @@ mod tests {
 
     use std::time::Instant;
 
-    use iroh_test::CallOnDrop;
     use n0_future::StreamExt;
     use rand::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
@@ -1952,10 +1951,6 @@ mod tests {
                 .instrument(error_span!("server")),
             )
         };
-        let abort_handle = server.abort_handle();
-        let _server_guard = CallOnDrop::new(move || {
-            abort_handle.abort();
-        });
 
         for i in 0..n_clients {
             let round_start = Instant::now();
@@ -2166,17 +2161,7 @@ mod tests {
         };
 
         let res_ep1 = tokio::spawn(tokio::time::timeout(TIMEOUT, ep1_side));
-
-        let ep1_abort_handle = res_ep1.abort_handle();
-        let _ep1_guard = CallOnDrop::new(move || {
-            ep1_abort_handle.abort();
-        });
-
         let res_ep2 = tokio::spawn(tokio::time::timeout(TIMEOUT, ep2_side));
-        let ep2_abort_handle = res_ep2.abort_handle();
-        let _ep2_guard = CallOnDrop::new(move || {
-            ep2_abort_handle.abort();
-        });
 
         let (r1, r2) = tokio::try_join!(res_ep1, res_ep2).unwrap();
         r1.expect("ep1 timeout").unwrap();
