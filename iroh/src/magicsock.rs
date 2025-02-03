@@ -3214,7 +3214,7 @@ mod tests {
     ///
     /// When the returned drop guard is dropped, the tasks doing this updating are stopped.
     #[instrument(skip_all)]
-    async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<Vec<AbortOnDropHandle<()>>> {
+    async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<JoinSet<()>> {
         /// Registers endpoint addresses of a node to all other nodes.
         fn update_direct_addrs(
             stacks: &[MagicStack],
@@ -3238,18 +3238,18 @@ mod tests {
 
         // For each node, start a task which monitors its local endpoints and registers them
         // with the other nodes as local endpoints become known.
-        let mut tasks = Vec::new();
+        let mut tasks = JoinSet::new();
         for (my_idx, m) in stacks.iter().enumerate() {
             let m = m.clone();
             let stacks = stacks.clone();
-            tasks.push(AbortOnDropHandle::new(tokio::task::spawn(async move {
+            tasks.spawn(async move {
                 let me = m.endpoint.node_id().fmt_short();
                 let mut stream = m.endpoint.direct_addresses().stream().filter_map(|i| i);
                 while let Some(new_eps) = stream.next().await {
                     info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, new_eps);
                     update_direct_addrs(&stacks, my_idx, new_eps);
                 }
-            })));
+            });
         }
 
         // Wait for all nodes to be registered with each other.
