@@ -408,7 +408,9 @@
 <a href="#407" id="407">407</a>
 <a href="#408" id="408">408</a>
 <a href="#409" id="409">409</a>
-<a href="#410" id="410">410</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#410" id="410">410</a>
+<a href="#411" id="411">411</a>
+<a href="#412" id="412">412</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -420,13 +422,14 @@
 };
 
 <span class="kw">use </span>conn::Conn;
-<span class="kw">use </span>connect_relay::DnsError;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">use </span>connect_relay::DnsError;
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>hickory_resolver::TokioResolver <span class="kw">as </span>DnsResolver;
 <span class="kw">use </span>iroh_base::{RelayUrl, SecretKey};
 <span class="kw">use </span>n0_future::{
     split::{split, SplitSink, SplitStream},
-    Sink, Stream,
+    time, Sink, Stream,
 };
 <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 </span><span class="kw">use </span>tracing::warn;
@@ -462,7 +465,8 @@
     </span>InvalidWebsocketUrl(Url),
     <span class="attr">#[error(transparent)]
     </span>Websocket(<span class="attr">#[from] </span>tokio_tungstenite_wasm::Error),
-    <span class="attr">#[error(transparent)]
+    <span class="attr">#[cfg(not(wasm_browser))]
+    #[error(transparent)]
     </span>Dns(<span class="attr">#[from] </span>DnsError),
     <span class="attr">#[error(transparent)]
     </span>Hyper(<span class="attr">#[from] </span>hyper::Error),
@@ -477,7 +481,7 @@
     <span class="attr">#[error(transparent)]
     </span>Io(<span class="attr">#[from] </span>std::io::Error),
     <span class="attr">#[error(<span class="string">"Timeout"</span>)]
-    </span>Timeout(<span class="attr">#[from] </span>tokio::time::error::Elapsed),
+    </span>Timeout(<span class="attr">#[from] </span>time::Elapsed),
     <span class="attr">#[error(transparent)]
     </span>Http(<span class="attr">#[from] </span>hyper::http::Error),
     <span class="attr">#[error(<span class="string">"Unexpected frame received {0}"</span>)]
