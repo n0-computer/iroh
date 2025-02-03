@@ -217,7 +217,7 @@
 </span><span class="kw">pub struct </span>Inner {
     by_mapped_addr: BTreeMap&lt;IpMappedAddr, SocketAddr&gt;,
     <span class="doccomment">/// Because [`std::net::SocketAddrV6`] contains extra fields besides the IP
-    /// address and port (ie, flow_info and scope_id), the a [`SocketAddrV6`]
+    /// address and port (ie, flow_info and scope_id), the a [`std::net::SocketAddrV6`]
     /// with the same IP addr and port might Hash to something different.
     /// So to get a hashable key for the map, we are using `(IpAddr, u6)`.
     </span>by_ip_port: BTreeMap&lt;(IpAddr, u16), IpMappedAddr&gt;,
