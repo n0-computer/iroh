@@ -7618,7 +7618,7 @@
     ///
     /// When the returned drop guard is dropped, the tasks doing this updating are stopped.
     </span><span class="attr">#[instrument(skip_all)]
-    </span><span class="kw">async fn </span>mesh_stacks(stacks: Vec&lt;MagicStack&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;AbortOnDropHandle&lt;()&gt;&gt;&gt; {
+    </span><span class="kw">async fn </span>mesh_stacks(stacks: Vec&lt;MagicStack&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;JoinSet&lt;()&gt;&gt; {
         <span class="doccomment">/// Registers endpoint addresses of a node to all other nodes.
         </span><span class="kw">fn </span>update_direct_addrs(
             stacks: <span class="kw-2">&amp;</span>[MagicStack],
@@ -7642,18 +7642,18 @@
 
         <span class="comment">// For each node, start a task which monitors its local endpoints and registers them
         // with the other nodes as local endpoints become known.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>tasks = Vec::new();
+        </span><span class="kw">let </span><span class="kw-2">mut </span>tasks = JoinSet::new();
         <span class="kw">for </span>(my_idx, m) <span class="kw">in </span>stacks.iter().enumerate() {
             <span class="kw">let </span>m = m.clone();
             <span class="kw">let </span>stacks = stacks.clone();
-            tasks.push(AbortOnDropHandle::new(tokio::task::spawn(<span class="kw">async move </span>{
+            tasks.spawn(<span class="kw">async move </span>{
                 <span class="kw">let </span>me = m.endpoint.node_id().fmt_short();
                 <span class="kw">let </span><span class="kw-2">mut </span>stream = m.endpoint.direct_addresses().stream().filter_map(|i| i);
                 <span class="kw">while let </span><span class="prelude-val">Some</span>(new_eps) = stream.next().<span class="kw">await </span>{
                     <span class="macro">info!</span>(%me, <span class="string">"conn{} endpoints update: {:?}"</span>, my_idx + <span class="number">1</span>, new_eps);
                     update_direct_addrs(<span class="kw-2">&amp;</span>stacks, my_idx, new_eps);
                 }
-            })));
+            });
         }
 
         <span class="comment">// Wait for all nodes to be registered with each other.
