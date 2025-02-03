@@ -1356,12 +1356,13 @@ mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use testresult::TestResult;
+    use tracing_test::traced_test;
 
     use super::{super::test_utils, *};
 
     #[tokio::test]
+    #[traced_test]
     async fn test_update_report_stun_working() {
-        let _logging = iroh_test::logging::setup();
         let (_server_a, relay_a) = test_utils::relay().await;
         let (_server_b, relay_b) = test_utils::relay().await;
 
@@ -1446,8 +1447,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_update_report_icmp() {
-        let _logging = iroh_test::logging::setup();
         let (_server_a, relay_a) = test_utils::relay().await;
         let (_server_b, relay_b) = test_utils::relay().await;
 
@@ -1556,8 +1557,8 @@ mod tests {
     //
     // TODO: Not sure what about IPv6 pings using sysctl.
     #[tokio::test]
+    #[traced_test]
     async fn test_icmpk_probe() {
-        let _logging_guard = iroh_test::logging::setup();
         let pinger = Pinger::new();
         let (server, node) = test_utils::relay().await;
         let addr = server.stun_addr().expect("test relay serves stun");
@@ -1607,7 +1608,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_measure_https_latency() -> TestResult {
-        let _logging_guard = iroh_test::logging::setup();
         let (server, relay) = test_utils::relay().await;
         let dns_resolver = crate::dns::tests::resolver();
         tracing::info!(relay_url = ?relay.url , "RELAY_URL");
@@ -1626,8 +1626,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_quic_probe() -> TestResult {
-        let _logging_guard = iroh_test::logging::setup();
         let (server, relay) = test_utils::relay().await;
         let client_config = iroh_relay::client::make_dangerous_client_config();
         let ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))?;

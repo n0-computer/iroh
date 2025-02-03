@@ -383,14 +383,16 @@ async fn stagger_call<T, F: Fn() -> Fut, Fut: Future<Output = Result<T>>>(
 pub(crate) mod tests {
     use std::sync::atomic::AtomicUsize;
 
+    use tracing_test::traced_test;
+
     use super::*;
     use crate::defaults::staging::NA_RELAY_HOSTNAME;
     const TIMEOUT: Duration = Duration::from_secs(5);
     const STAGGERING_DELAYS: &[u64] = &[200, 300];
 
     #[tokio::test]
+    #[traced_test]
     async fn test_dns_lookup_ipv4_ipv6() {
-        let _logging = iroh_test::logging::setup();
         let resolver = default_resolver();
         let res: Vec<_> = resolver
             .lookup_ipv4_ipv6_staggered(NA_RELAY_HOSTNAME, TIMEOUT, STAGGERING_DELAYS)
@@ -402,8 +404,8 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn stagger_basic() {
-        let _logging = iroh_test::logging::setup();
         const CALL_RESULTS: &[Result<u8, u8>] = &[Err(2), Ok(3), Ok(5), Ok(7)];
         static DONE_CALL: AtomicUsize = AtomicUsize::new(0);
         let f = || {

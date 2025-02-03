@@ -559,6 +559,7 @@ mod tests {
     use testresult::TestResult;
     use tokio_util::codec::Framed;
     use tracing::info;
+    use tracing_test::traced_test;
 
     use super::*;
     use crate::{
@@ -567,9 +568,8 @@ mod tests {
     };
 
     #[tokio::test]
+    #[traced_test]
     async fn test_client_actor_basic() -> Result<()> {
-        let _logging = iroh_test::logging::setup();
-
         let (send_queue_s, send_queue_r) = mpsc::channel(10);
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
@@ -678,9 +678,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_rate_limit() -> TestResult {
-        let _logging = iroh_test::logging::setup();
-
         const LIMIT: u32 = 50;
         const MAX_FRAMES: u32 = 100;
 

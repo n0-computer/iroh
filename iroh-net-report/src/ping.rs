@@ -124,14 +124,14 @@ mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use tracing::error;
+    use tracing_test::traced_test;
 
     use super::*;
 
     #[tokio::test]
     #[ignore] // Doesn't work in CI
+    #[traced_test]
     async fn test_ping_google() -> Result<()> {
-        let _guard = iroh_test::logging::setup();
-
         // Public DNS addrs from google based on
         // https://developers.google.com/speed/public-dns/docs/using
 
@@ -159,9 +159,8 @@ mod tests {
 
     // See net_report::reportgen::tests::test_icmp_probe_eu_relay for permissions to ping.
     #[tokio::test]
+    #[traced_test]
     async fn test_ping_localhost() {
-        let _guard = iroh_test::logging::setup();
-
         let pinger = Pinger::new();
 
         match pinger.send(Ipv4Addr::LOCALHOST.into(), b"data").await {

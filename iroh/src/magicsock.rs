@@ -3138,9 +3138,9 @@ impl NetInfo {
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
-    use iroh_test::CallOnDrop;
     use rand::RngCore;
     use tokio_util::task::AbortOnDropHandle;
+    use tracing_test::traced_test;
 
     use super::*;
     use crate::{
@@ -3214,7 +3214,7 @@ mod tests {
     ///
     /// When the returned drop guard is dropped, the tasks doing this updating are stopped.
     #[instrument(skip_all)]
-    async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<CallOnDrop> {
+    async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<JoinSet<()>> {
         /// Registers endpoint addresses of a node to all other nodes.
         fn update_direct_addrs(
             stacks: &[MagicStack],
@@ -3251,9 +3251,6 @@ mod tests {
                 }
             });
         }
-        let guard = CallOnDrop::new(move || {
-            tasks.abort_all();
-        });
 
         // Wait for all nodes to be registered with each other.
         time::timeout(Duration::from_secs(10), async move {
@@ -3278,7 +3275,7 @@ mod tests {
         .await
         .context("failed to connect nodes")?;
         info!("all nodes meshed");
-        Ok(guard)
+        Ok(tasks)
     }
 
     #[instrument(skip_all, fields(me = %ep.endpoint.node_id().fmt_short()))]
@@ -3426,9 +3423,8 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[traced_test]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
-        iroh_test::logging::setup_multithreaded();
-
         let m1 = MagicStack::new(RelayMode::Disabled).await?;
         let m2 = MagicStack::new(RelayMode::Disabled).await?;
 
@@ -3462,9 +3458,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_regression_network_change_rebind_wakes_connection_driver(
     ) -> testresult::TestResult {
-        let _ = iroh_test::logging::setup();
         let m1 = MagicStack::new(RelayMode::Disabled).await?;
         let m2 = MagicStack::new(RelayMode::Disabled).await?;
 
@@ -3501,6 +3497,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[traced_test]
     async fn test_two_devices_roundtrip_network_change() -> Result<()> {
         time::timeout(
             Duration::from_secs(90),
@@ -3512,8 +3509,6 @@ mod tests {
     /// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
     /// with (simulated) network changes.
     async fn test_two_devices_roundtrip_network_change_impl() -> Result<()> {
-        iroh_test::logging::setup_multithreaded();
-
         let m1 = MagicStack::new(RelayMode::Disabled).await?;
         let m2 = MagicStack::new(RelayMode::Disabled).await?;
 
@@ -3535,9 +3530,7 @@ mod tests {
                     time::sleep(offset()).await;
                 }
             });
-            CallOnDrop::new(move || {
-                task.abort();
-            })
+            AbortOnDropHandle::new(task)
         };
 
         for i in 0..rounds {
@@ -3564,9 +3557,7 @@ mod tests {
                     time::sleep(offset()).await;
                 }
             });
-            CallOnDrop::new(move || {
-                task.abort();
-            })
+            AbortOnDropHandle::new(task)
         };
 
         for i in 0..rounds {
@@ -3594,9 +3585,7 @@ mod tests {
                 m2.endpoint.magic_sock().force_network_change(true).await;
                 time::sleep(offset()).await;
             });
-            CallOnDrop::new(move || {
-                task.abort();
-            })
+            AbortOnDropHandle::new(task)
         };
 
         for i in 0..rounds {
@@ -3616,8 +3605,8 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[traced_test]
     async fn test_two_devices_setup_teardown() -> Result<()> {
-        iroh_test::logging::setup_multithreaded();
         for i in 0..10 {
             println!("-- round {i}");
             println!("setting up magic stack");
@@ -3639,9 +3628,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_two_devices_roundtrip_quinn_raw() -> Result<()> {
-        let _guard = iroh_test::logging::setup();
-
         let make_conn = |addr: SocketAddr| -> anyhow::Result<quinn::Endpoint> {
             let key = SecretKey::generate(rand::thread_rng());
             let conn = std::net::UdpSocket::bind(addr)?;
@@ -3788,9 +3776,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_two_devices_roundtrip_quinn_rebinding_conn() -> Result<()> {
-        let _guard = iroh_test::logging::setup();
-
         fn make_conn(addr: SocketAddr) -> anyhow::Result<quinn::Endpoint> {
             let key = SecretKey::generate(rand::thread_rng());
             let conn = UdpConn::bind(addr)?;
@@ -3981,8 +3968,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_local_endpoints() {
-        let _guard = iroh_test::logging::setup();
         let ms = Handle::new(Default::default()).await.unwrap();
 
         // See if we can get endpoints.
@@ -4105,11 +4092,10 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_try_send_no_send_addr() {
         // Regression test: if there is no send_addr we should keep being able to use the
         // Endpoint.
-        let _guard = iroh_test::logging::setup();
-
         let secret_key_1 = SecretKey::from_bytes(&[1u8; 32]);
         let secret_key_2 = SecretKey::from_bytes(&[2u8; 32]);
         let node_id_2 = secret_key_2.public();
@@ -4196,11 +4182,10 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_try_send_no_udp_addr_or_relay_url() {
         // This specifically tests the `if udp_addr.is_none() && relay_url.is_none()`
         // behaviour of MagicSock::try_send.
-        let _logging_guard = iroh_test::logging::setup();
-
         let secret_key_1 = SecretKey::from_bytes(&[1u8; 32]);
         let secret_key_2 = SecretKey::from_bytes(&[2u8; 32]);
         let node_id_2 = secret_key_2.public();

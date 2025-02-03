@@ -136,6 +136,7 @@ mod tests {
     use netwatch::IpFamily;
     use tokio::sync::mpsc;
     use tracing::{info_span, Instrument};
+    use tracing_test::traced_test;
 
     use super::*;
     use crate::tls;
@@ -160,14 +161,14 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_rebinding_conn_send_recv_ipv4() -> Result<()> {
-        let _guard = iroh_test::logging::setup();
         rebinding_conn_send_recv(IpFamily::V4).await
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_rebinding_conn_send_recv_ipv6() -> Result<()> {
-        let _guard = iroh_test::logging::setup();
         if !net_report::os_has_ipv6() {
             return Ok(());
         }

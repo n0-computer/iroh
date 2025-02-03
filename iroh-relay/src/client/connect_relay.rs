@@ -369,13 +369,13 @@ mod tests {
     use std::str::FromStr;
 
     use anyhow::Result;
+    use tracing_test::traced_test;
 
     use super::*;
 
     #[test]
+    #[traced_test]
     fn test_host_header_value() -> Result<()> {
-        let _guard = iroh_test::logging::setup();
-
         let cases = [
             (
                 "https://euw1-1.relay.iroh.network.",

@@ -1200,6 +1200,7 @@ mod tests {
     use testresult::TestResult;
     use tokio_util::task::AbortOnDropHandle;
     use tracing::info;
+    use tracing_test::traced_test;
 
     use super::*;
     use crate::test_utils;
@@ -1360,8 +1361,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_active_relay_reconnect() -> TestResult {
-        let _guard = iroh_test::logging::setup();
         let (_relay_map, relay_url, _server) = test_utils::run_relay_server().await?;
         let (peer_node, _echo_node_task) = start_echo_node(relay_url.clone());
 
@@ -1447,8 +1448,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_active_relay_inactive() -> TestResult {
-        let _guard = iroh_test::logging::setup();
         let (_relay_map, relay_url, _server) = test_utils::run_relay_server().await?;
 
         let secret_key = SecretKey::from_bytes(&[1u8; 32]);

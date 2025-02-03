@@ -61,11 +61,11 @@ z32 = "1.1.1"
 criterion = "0.5.1"
 hickory-resolver = "=0.25.0-alpha.4"
 iroh = { path = "../iroh" }
-iroh-test = { path = "../iroh-test" }
 pkarr = { version = "2.3.1", features = ["rand"] }
 rand = "0.8"
 rand_chacha = "0.3.1"
 testresult = "0.4.1"
+tracing-test = "0.2.5"
 
 [[bench]]
 name = "write"

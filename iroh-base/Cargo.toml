@@ -29,7 +29,6 @@ thiserror = { version = "2", optional = true }
 getrandom = { version = "0.2", default-features = false, optional = true }
 
 [dev-dependencies]
-iroh-test = "0.28.0"
 postcard = { version = "1", features = ["use-std"] }
 proptest = "1.0.0"
 rand = "0.8"

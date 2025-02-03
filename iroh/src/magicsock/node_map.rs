@@ -698,6 +698,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use iroh_base::SecretKey;
+    use tracing_test::traced_test;
 
     use super::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, *};
 
@@ -715,9 +716,8 @@ mod tests {
 
     /// Test persisting and loading of known nodes.
     #[tokio::test]
+    #[traced_test]
     async fn restore_from_vec() {
-        let _guard = iroh_test::logging::setup();
-
         let node_map = NodeMap::default();
 
         let mut rng = rand::thread_rng();
@@ -781,9 +781,8 @@ mod tests {
     }
 
     #[test]
+    #[traced_test]
     fn test_prune_direct_addresses() {
-        let _guard = iroh_test::logging::setup();
-
         let node_map = NodeMap::default();
         let public_key = SecretKey::generate(rand::thread_rng()).public();
         let id = node_map

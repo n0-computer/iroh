@@ -132,7 +132,6 @@ This repository contains a workspace of crates:
 - `iroh`: The core library for hole-punching & communicating with relays.
 - `iroh-relay`: The relay server implementation. This is the code we run in production (and you can, too!).
 - `iroh-base`: Common types like `Hash`, key types or `RelayUrl`.
-- `iroh-test`: Test utilities.
 - `iroh-dns-server`: DNS server implementation powering the `n0_discovery` for NodeIds, running at dns.iroh.link.
 - `iroh-net-report`: Analyzes your host's networking ability & NAT.
 

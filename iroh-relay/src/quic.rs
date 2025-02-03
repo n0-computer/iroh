@@ -272,16 +272,17 @@ impl QuicClient {
 mod tests {
     use std::net::Ipv4Addr;
 
+    use tracing_test::traced_test;
+
     use super::{
         server::{QuicConfig, QuicServer},
         *,
     };
 
     #[tokio::test]
+    #[traced_test]
     async fn quic_endpoint_basic() -> anyhow::Result<()> {
         let host: Ipv4Addr = "127.0.0.1".parse()?;
-        let _guard = iroh_test::logging::setup();
-
         // create a server config with self signed certificates
         let (_, server_config) = super::super::server::testing::self_signed_tls_certs_and_config();
         let bind_addr = SocketAddr::new(host.into(), 0);
