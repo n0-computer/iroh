@@ -1789,9 +1789,9 @@ impl Handle {
     /// This will not wait for the [`quinn::Endpoint`] to drain connections.
     ///
     /// To ensure no data is lost, design protocols so that the last *sender*
-    /// of data in the protocol calls [`Connection::closed`], and `await`s until
+    /// of data in the protocol calls [`crate::endpoint::Connection::closed`], and `await`s until
     /// it receives a "close" message from the *receiver*. Once the *receiver*
-    /// gets the last data in the protocol, it should call [`Connection::close`]
+    /// gets the last data in the protocol, it should call [`crate::endpoint::Connection::close`]
     /// to inform the *sender* that all data has been received.
     #[instrument(skip_all, fields(me = %self.msock.me))]
     pub(crate) async fn close(&self) {
