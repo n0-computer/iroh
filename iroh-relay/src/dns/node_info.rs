@@ -205,9 +205,7 @@ impl NodeInfo {
 /// Takes a [`hickory_resolver::proto::rr::Name`] DNS name and expects the first label to be
 /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
 /// subsequent labels.
-pub(crate) fn node_id_from_hickory_name(
-    name: &hickory_resolver::proto::rr::Name,
-) -> Option<NodeId> {
+pub fn node_id_from_hickory_name(name: &hickory_resolver::proto::rr::Name) -> Option<NodeId> {
     if name.num_labels() < 2 {
         return None;
     }
@@ -260,7 +258,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
 
     async fn lookup(resolver: &DnsResolver, name: Name) -> Result<Self> {
         let name = ensure_iroh_txt_label(name)?;
-        let lookup = resolver.txt_lookup(name).await?;
+        let lookup = resolver.lookup_txt(name).await?;
         let attrs = Self::from_hickory_lookup(lookup)?;
         Ok(attrs)
     }

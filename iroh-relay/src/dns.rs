@@ -8,11 +8,14 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use hickory_resolver::{lookup::TxtLookup, IntoName, ResolveError, Resolver, TokioResolver};
+use iroh_base::{NodeAddr, NodeId};
 use n0_future::{
     time::{self, Duration},
     StreamExt,
 };
 use url::Url;
+
+pub mod node_info;
 
 /// The DNS resolver used throughout `iroh`.
 #[derive(Debug, Clone)]
@@ -55,7 +58,7 @@ impl DnsResolver {
         let mut config = hickory_resolver::config::ResolverConfig::new();
         let nameserver_config = hickory_resolver::config::NameServerConfig::new(
             nameserver,
-            hickory_proto::xfer::Protocol::Udp,
+            hickory_resolver::proto::xfer::Protocol::Udp,
         );
         config.add_name_server(nameserver_config);
         DnsResolver(Resolver::tokio(config, Default::default()))
@@ -67,7 +70,7 @@ impl DnsResolver {
     }
 
     /// Lookup a TXT record.
-    pub async fn txt_lookup(&self, query: impl IntoName) -> Result<TxtLookup, ResolveError> {
+    pub async fn lookup_txt(&self, query: impl IntoName) -> Result<TxtLookup, ResolveError> {
         self.0.txt_lookup(query).await
     }
 
@@ -194,6 +197,52 @@ impl DnsResolver {
         let f = || self.lookup_ipv4_ipv6(host.clone(), timeout);
         stagger_call(f, delays_ms).await
     }
+
+    /// Looks up node info by [`NodeId`] and origin domain name.
+    pub async fn lookup_node_by_id(&self, node_id: &NodeId, origin: &str) -> Result<NodeAddr> {
+        let attrs =
+            node_info::TxtAttrs::<node_info::IrohAttr>::lookup_by_id(self, node_id, origin).await?;
+        let info: node_info::NodeInfo = attrs.into();
+        Ok(info.into())
+    }
+
+    /// Looks up node info by DNS name.
+    pub async fn lookup_node_by_domain_name(&self, name: &str) -> Result<NodeAddr> {
+        let attrs = node_info::TxtAttrs::<node_info::IrohAttr>::lookup_by_name(self, name).await?;
+        let info: node_info::NodeInfo = attrs.into();
+        Ok(info.into())
+    }
+
+    /// Looks up node info by DNS name in a staggered fashion.
+    ///
+    /// From the moment this function is called, each lookup is scheduled after the delays in
+    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
+    /// at T+0ms, T+200ms and T+300ms. The result of the first successful call is returned, or a
+    /// summary of all errors otherwise.
+    pub async fn lookup_node_by_domain_name_staggered(
+        &self,
+        name: &str,
+        delays_ms: &[u64],
+    ) -> Result<NodeAddr> {
+        let f = || self.lookup_node_by_domain_name(name);
+        stagger_call(f, delays_ms).await
+    }
+
+    /// Looks up node info by [`NodeId`] and origin domain name.
+    ///
+    /// From the moment this function is called, each lookup is scheduled after the delays in
+    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
+    /// at T+0ms, T+200ms and T+300ms. The result of the first successful call is returned, or a
+    /// summary of all errors otherwise.
+    pub async fn lookup_node_by_id_staggered(
+        &self,
+        node_id: &NodeId,
+        origin: &str,
+        delays_ms: &[u64],
+    ) -> Result<NodeAddr> {
+        let f = || self.lookup_node_by_id(node_id, origin);
+        stagger_call(f, delays_ms).await
+    }
 }
 
 /// Deprecated IPv6 site-local anycast addresses still configured by windows.
@@ -233,8 +282,7 @@ impl<A: Iterator<Item = IpAddr>, B: Iterator<Item = IpAddr>> Iterator for Lookup
 ///
 /// The first call is performed immediately. The first call to succeed generates an Ok result
 /// ignoring any previous error. If all calls fail, an error summarizing all errors is returned.
-// TODO: Should likely not be public, but it is also used in iroh::dns::ResolverExt.
-pub async fn stagger_call<T, F: Fn() -> Fut, Fut: Future<Output = Result<T>>>(
+async fn stagger_call<T, F: Fn() -> Fut, Fut: Future<Output = Result<T>>>(
     f: F,
     delays_ms: &[u64],
 ) -> Result<T> {
@@ -266,4 +314,31 @@ pub async fn stagger_call<T, F: Fn() -> Fut, Fut: Future<Output = Result<T>>>(
             summary
         })
     )
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use std::sync::atomic::AtomicUsize;
+
+    use tracing_test::traced_test;
+
+    use super::*;
+
+    #[tokio::test]
+    #[traced_test]
+    async fn stagger_basic() {
+        const CALL_RESULTS: &[Result<u8, u8>] = &[Err(2), Ok(3), Ok(5), Ok(7)];
+        static DONE_CALL: AtomicUsize = AtomicUsize::new(0);
+        let f = || {
+            let r_pos = DONE_CALL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            async move {
+                tracing::info!(r_pos, "call");
+                CALL_RESULTS[r_pos].map_err(|e| anyhow::anyhow!("{e}"))
+            }
+        };
+
+        let delays = [1000, 15];
+        let result = stagger_call(f, &delays).await.unwrap();
+        assert_eq!(result, 5)
+    }
 }

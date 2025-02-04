@@ -22,14 +22,9 @@ mod tests {
     };
 
     use anyhow::Result;
-    use hickory_resolver::{
-        config::{NameServerConfig, ResolverConfig},
-        Resolver,
-    };
-    use hickory_server::proto::xfer::Protocol;
     use iroh::{
         discovery::pkarr::PkarrRelayClient,
-        dns::{node_info::NodeInfo, DnsResolver, ResolverExt},
+        dns::{node_info::NodeInfo, DnsResolver},
         SecretKey,
     };
     use pkarr::{PkarrClient, SignedPacket};
@@ -122,25 +117,25 @@ mod tests {
 
         // resolve root record
         let name = Name::from_utf8(format!("{pubkey}."))?;
-        let res = resolver.txt_lookup(name).await?;
+        let res = resolver.lookup_txt(name).await?;
         let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi0".to_string()]);
 
         // resolve level one record
         let name = Name::from_utf8(format!("_hello.{pubkey}."))?;
-        let res = resolver.txt_lookup(name).await?;
+        let res = resolver.lookup_txt(name).await?;
         let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi1".to_string()]);
 
         // resolve level two record
         let name = Name::from_utf8(format!("_hello.world.{pubkey}."))?;
-        let res = resolver.txt_lookup(name).await?;
+        let res = resolver.lookup_txt(name).await?;
         let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi2".to_string()]);
 
         // resolve multiple records for same name
         let name = Name::from_utf8(format!("multiple.{pubkey}."))?;
-        let res = resolver.txt_lookup(name).await?;
+        let res = resolver.lookup_txt(name).await?;
         let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi3".to_string(), "hi4".to_string()]);
 
@@ -183,7 +178,7 @@ mod tests {
         pkarr.publish(&signed_packet).await?;
 
         let resolver = test_resolver(nameserver);
-        let res = resolver.lookup_by_id(&node_id, origin).await?;
+        let res = resolver.lookup_node_by_id(&node_id, origin).await?;
 
         assert_eq!(res.node_id, node_id);
         assert_eq!(res.relay_url.map(Url::from), Some(relay_url));
@@ -254,7 +249,7 @@ mod tests {
 
         // resolve via DNS from our server, which will lookup from our DHT
         let resolver = test_resolver(nameserver);
-        let res = resolver.lookup_by_id(&node_id, origin).await?;
+        let res = resolver.lookup_node_by_id(&node_id, origin).await?;
 
         assert_eq!(res.node_id, node_id);
         assert_eq!(res.relay_url.map(Url::from), Some(relay_url));

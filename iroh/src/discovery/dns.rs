@@ -6,7 +6,6 @@ use n0_future::boxed::BoxStream;
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
-    dns::ResolverExt,
     endpoint::force_staging_infra,
     Endpoint,
 };
@@ -73,7 +72,7 @@ impl Discovery for DnsDiscovery {
         let origin_domain = self.origin_domain.clone();
         let fut = async move {
             let node_addr = resolver
-                .lookup_by_id_staggered(&node_id, &origin_domain, DNS_STAGGERING_MS)
+                .lookup_node_by_id_staggered(&node_id, &origin_domain, DNS_STAGGERING_MS)
                 .await?;
             Ok(DiscoveryItem {
                 node_addr,
