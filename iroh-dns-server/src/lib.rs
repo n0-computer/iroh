@@ -268,7 +268,7 @@ mod tests {
         let mut config = ResolverConfig::new();
         let nameserver_config = NameServerConfig::new(nameserver, Protocol::Udp);
         config.add_name_server(nameserver_config);
-        Resolver::tokio(config, Default::default())
+        DnsResolver::from_tokio_resolver(Resolver::tokio(config, Default::default()))
     }
 
     fn random_signed_packet() -> Result<SignedPacket> {

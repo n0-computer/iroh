@@ -1,15 +1,32 @@
+//! DNS resolver
+
 use std::{
+    fmt::Write,
+    future::Future,
     net::{IpAddr, Ipv6Addr},
     sync::OnceLock,
 };
 
-use anyhow::Result;
-use hickory_resolver::{Resolver, TokioResolver};
+use anyhow::{bail, Context, Result};
+use hickory_resolver::{IntoName, Resolver, TokioResolver};
+use n0_future::{
+    time::{self, Duration},
+    StreamExt,
+};
+use url::Url;
 
-/// The DNS resolver type used throughout `iroh`.
-pub(crate) type DnsResolver = TokioResolver;
+/// The DNS resolver used throughout `iroh`.
+#[derive(Debug, Clone, derive_more::Deref)]
+pub struct DnsResolver(TokioResolver);
 
-static DNS_RESOLVER: OnceLock<TokioResolver> = OnceLock::new();
+impl DnsResolver {
+    /// Create a new `DnsResolver` from a [`TokioResolver`].
+    pub fn from_tokio_resolver(resolver: TokioResolver) -> Self {
+        Self(resolver)
+    }
+}
+
+static DNS_RESOLVER: OnceLock<DnsResolver> = OnceLock::new();
 
 /// Get a reference to the default DNS resolver.
 ///
@@ -38,7 +55,7 @@ const WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS: [IpAddr; 3] = [
 /// We first try to read the system's resolver from `/etc/resolv.conf`.
 /// This does not work at least on some Androids, therefore we fallback
 /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
-fn create_default_resolver() -> Result<TokioResolver> {
+fn create_default_resolver() -> Result<DnsResolver> {
     let (system_config, mut options) =
         hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
 
@@ -57,9 +74,192 @@ fn create_default_resolver() -> Result<TokioResolver> {
         }
     }
 
-    // see [`ResolverExt::lookup_ipv4_ipv6`] for info on why we avoid `LookupIpStrategy::Ipv4AndIpv6`
+    // see [`DnsResolver::lookup_ipv4_ipv6`] for info on why we avoid `LookupIpStrategy::Ipv4AndIpv6`
     options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
 
     let resolver = Resolver::tokio(config, options);
-    Ok(resolver)
+    Ok(DnsResolver(resolver))
+}
+
+impl DnsResolver {
+    /// Perform an ipv4 lookup with a timeout.
+    pub async fn lookup_ipv4<N: IntoName>(
+        &self,
+        host: N,
+        timeout: Duration,
+    ) -> Result<impl Iterator<Item = IpAddr>> {
+        let addrs = time::timeout(timeout, self.ipv4_lookup(host)).await??;
+        Ok(addrs.into_iter().map(|ip| IpAddr::V4(ip.0)))
+    }
+
+    /// Perform an ipv6 lookup with a timeout.
+    pub async fn lookup_ipv6<N: IntoName>(
+        &self,
+        host: N,
+        timeout: Duration,
+    ) -> Result<impl Iterator<Item = IpAddr>> {
+        let addrs = time::timeout(timeout, self.ipv6_lookup(host)).await??;
+        Ok(addrs.into_iter().map(|ip| IpAddr::V6(ip.0)))
+    }
+
+    /// Resolve IPv4 and IPv6 in parallel iwith a timeout.
+    ///
+    /// `LookupIpStrategy::Ipv4AndIpv6` will wait for ipv6 resolution timeout, even if it is
+    /// not usable on the stack, so we manually query both lookups concurrently and time them out
+    /// individually.
+    pub async fn lookup_ipv4_ipv6<N: IntoName + Clone>(
+        &self,
+        host: N,
+        timeout: Duration,
+    ) -> Result<impl Iterator<Item = IpAddr>> {
+        let res = tokio::join!(
+            self.lookup_ipv4(host.clone(), timeout),
+            self.lookup_ipv6(host, timeout)
+        );
+
+        match res {
+            (Ok(ipv4), Ok(ipv6)) => Ok(LookupIter::Both(ipv4.chain(ipv6))),
+            (Ok(ipv4), Err(_)) => Ok(LookupIter::Ipv4(ipv4)),
+            (Err(_), Ok(ipv6)) => Ok(LookupIter::Ipv6(ipv6)),
+            (Err(ipv4_err), Err(ipv6_err)) => {
+                bail!("Ipv4: {:?}, Ipv6: {:?}", ipv4_err, ipv6_err)
+            }
+        }
+    }
+
+    /// Resolve a hostname from a URL to an IP address.
+    pub async fn resolve_host(
+        &self,
+        url: &Url,
+        prefer_ipv6: bool,
+        timeout: Duration,
+    ) -> Result<IpAddr> {
+        let host = url.host().context("Invalid URL")?;
+        match host {
+            url::Host::Domain(domain) => {
+                // Need to do a DNS lookup
+                let lookup = tokio::join!(
+                    self.lookup_ipv4(domain, timeout),
+                    self.lookup_ipv6(domain, timeout)
+                );
+                let (v4, v6) = match lookup {
+                    (Err(ipv4_err), Err(ipv6_err)) => {
+                        bail!("Ipv4: {ipv4_err:?}, Ipv6: {ipv6_err:?}");
+                    }
+                    (Err(_), Ok(mut v6)) => (None, v6.next()),
+                    (Ok(mut v4), Err(_)) => (v4.next(), None),
+                    (Ok(mut v4), Ok(mut v6)) => (v4.next(), v6.next()),
+                };
+                if prefer_ipv6 { v6.or(v4) } else { v4.or(v6) }.context("No response")
+            }
+            url::Host::Ipv4(ip) => Ok(IpAddr::V4(ip)),
+            url::Host::Ipv6(ip) => Ok(IpAddr::V6(ip)),
+        }
+    }
+
+    /// Perform an ipv4 lookup with a timeout in a staggered fashion.
+    ///
+    /// From the moment this function is called, each lookup is scheduled after the delays in
+    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
+    /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied to each call individually. The
+    /// result of the first successful call is returned, or a summary of all errors otherwise.
+    pub async fn lookup_ipv4_staggered<N: IntoName + Clone>(
+        &self,
+        host: N,
+        timeout: Duration,
+        delays_ms: &[u64],
+    ) -> Result<impl Iterator<Item = IpAddr>> {
+        let f = || self.lookup_ipv4(host.clone(), timeout);
+        stagger_call(f, delays_ms).await
+    }
+
+    /// Perform an ipv6 lookup with a timeout in a staggered fashion.
+    ///
+    /// From the moment this function is called, each lookup is scheduled after the delays in
+    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
+    /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied to each call individually. The
+    /// result of the first successful call is returned, or a summary of all errors otherwise.
+    pub async fn lookup_ipv6_staggered<N: IntoName + Clone>(
+        &self,
+        host: N,
+        timeout: Duration,
+        delays_ms: &[u64],
+    ) -> Result<impl Iterator<Item = IpAddr>> {
+        let f = || self.lookup_ipv6(host.clone(), timeout);
+        stagger_call(f, delays_ms).await
+    }
+
+    /// Race an ipv4 and ipv6 lookup with a timeout in a staggered fashion.
+    ///
+    /// From the moment this function is called, each lookup is scheduled after the delays in
+    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
+    /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied as stated in
+    /// [`Self::lookup_ipv4_ipv6`]. The result of the first successful call is returned, or a
+    /// summary of all errors otherwise.
+    pub async fn lookup_ipv4_ipv6_staggered<N: IntoName + Clone>(
+        &self,
+        host: N,
+        timeout: Duration,
+        delays_ms: &[u64],
+    ) -> Result<impl Iterator<Item = IpAddr>> {
+        let f = || self.lookup_ipv4_ipv6(host.clone(), timeout);
+        stagger_call(f, delays_ms).await
+    }
+}
+
+/// Helper enum to give a unified type to the iterators of [`ResolverExt::lookup_ipv4_ipv6`].
+enum LookupIter<A, B> {
+    Ipv4(A),
+    Ipv6(B),
+    Both(std::iter::Chain<A, B>),
+}
+
+impl<A: Iterator<Item = IpAddr>, B: Iterator<Item = IpAddr>> Iterator for LookupIter<A, B> {
+    type Item = IpAddr;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            LookupIter::Ipv4(iter) => iter.next(),
+            LookupIter::Ipv6(iter) => iter.next(),
+            LookupIter::Both(iter) => iter.next(),
+        }
+    }
+}
+
+/// Staggers calls to the future F with the given delays.
+///
+/// The first call is performed immediately. The first call to succeed generates an Ok result
+/// ignoring any previous error. If all calls fail, an error summarizing all errors is returned.
+pub async fn stagger_call<T, F: Fn() -> Fut, Fut: Future<Output = Result<T>>>(
+    f: F,
+    delays_ms: &[u64],
+) -> Result<T> {
+    let mut calls = n0_future::FuturesUnorderedBounded::new(delays_ms.len() + 1);
+    // NOTE: we add the 0 delay here to have a uniform set of futures. This is more performant than
+    // using alternatives that allow futures of different types.
+    for delay in std::iter::once(&0u64).chain(delays_ms) {
+        let delay = Duration::from_millis(*delay);
+        let fut = f();
+        let staggered_fut = async move {
+            time::sleep(delay).await;
+            fut.await
+        };
+        calls.push(staggered_fut)
+    }
+
+    let mut errors = vec![];
+    while let Some(call_result) = calls.next().await {
+        match call_result {
+            Ok(t) => return Ok(t),
+            Err(e) => errors.push(e),
+        }
+    }
+
+    bail!(
+        "no calls succeed: [ {}]",
+        errors.into_iter().fold(String::new(), |mut summary, e| {
+            write!(summary, "{e} ").expect("infallible");
+            summary
+        })
+    )
 }

@@ -44,8 +44,7 @@ mod key_cache;
 mod relay_map;
 pub(crate) use key_cache::KeyCache;
 
-#[cfg(test)]
-mod dns;
+pub mod dns;
 
 pub use protos::relay::MAX_PACKET_SIZE;
 

@@ -202,8 +202,8 @@ pub(crate) mod dns_server {
             op::{header::MessageType, Message},
             serialize::binary::BinDecodable,
         },
-        TokioResolver,
     };
+    use iroh_relay::dns::DnsResolver;
     use n0_future::future::Boxed as BoxFuture;
     use tokio::{net::UdpSocket, sync::oneshot};
     use tracing::{debug, error, warn};
@@ -259,13 +259,13 @@ pub(crate) mod dns_server {
     }
 
     /// Create a DNS resolver with a single nameserver.
-    pub fn create_dns_resolver(nameserver: SocketAddr) -> Result<TokioResolver> {
+    pub fn create_dns_resolver(nameserver: SocketAddr) -> Result<DnsResolver> {
         let mut config = hickory_resolver::config::ResolverConfig::new();
         let nameserver_config =
             NameServerConfig::new(nameserver, hickory_resolver::proto::xfer::Protocol::Udp);
         config.add_name_server(nameserver_config);
         let resolver = hickory_resolver::Resolver::tokio(config, Default::default());
-        Ok(resolver)
+        Ok(DnsResolver::from_tokio_resolver(resolver))
     }
 
     struct TestDnsServer<R> {

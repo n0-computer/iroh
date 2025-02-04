@@ -26,12 +26,12 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context as _, Result};
-use hickory_resolver::TokioResolver as DnsResolver;
 use iroh_base::RelayUrl;
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
 use iroh_relay::{
     defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT},
+    dns::DnsResolver,
     http::RELAY_PROBE_PATH,
     protos::stun,
     RelayMap, RelayNode,
@@ -50,7 +50,8 @@ use url::Host;
 use crate::Metrics;
 use crate::{
     self as net_report,
-    dns::ResolverExt,
+    defaults::timeouts::DNS_TIMEOUT,
+    dns::DNS_STAGGERING_MS,
     ip_mapped_addrs::IpMappedAddresses,
     ping::{PingError, Pinger},
     Report,
@@ -1004,7 +1005,7 @@ async fn check_captive_portal(
         // Ideally we would try to resolve **both** IPv4 and IPv6 rather than purely race
         // them.  But our resolver doesn't support that yet.
         let addrs: Vec<_> = dns_resolver
-            .lookup_ipv4_ipv6_staggered(domain)
+            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
             .await?
             .map(|ipaddr| SocketAddr::new(ipaddr, 0))
             .collect();
@@ -1111,7 +1112,10 @@ async fn relay_lookup_ipv4_staggered(
     match relay.url.host() {
         Some(url::Host::Domain(hostname)) => {
             debug!(%hostname, "Performing DNS A lookup for relay addr");
-            match dns_resolver.lookup_ipv4_staggered(hostname).await {
+            match dns_resolver
+                .lookup_ipv4_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
+                .await
+            {
                 Ok(mut addrs) => addrs
                     .next()
                     .map(|ip| ip.to_canonical())
@@ -1137,7 +1141,10 @@ async fn relay_lookup_ipv6_staggered(
     match relay.url.host() {
         Some(url::Host::Domain(hostname)) => {
             debug!(%hostname, "Performing DNS AAAA lookup for relay addr");
-            match dns_resolver.lookup_ipv6_staggered(hostname).await {
+            match dns_resolver
+                .lookup_ipv6_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
+                .await
+            {
                 Ok(mut addrs) => addrs
                     .next()
                     .map(|ip| ip.to_canonical())
@@ -1219,7 +1226,7 @@ async fn measure_https_latency(
         // but staggered for reliability.  Ideally this tries to resolve **both** IPv4 and
         // IPv6 though.  But our resolver does not have a function for that yet.
         let addrs: Vec<_> = dns_resolver
-            .lookup_ipv4_ipv6_staggered(domain)
+            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
             .await?
             .map(|ipaddr| SocketAddr::new(ipaddr, 0))
             .collect();
