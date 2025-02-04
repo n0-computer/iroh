@@ -216,7 +216,7 @@ const WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS: [IpAddr; 3] = [
     IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 3)),
 ];
 
-/// Helper enum to give a unified type to the iterators of [`ResolverExt::lookup_ipv4_ipv6`].
+/// Helper enum to give a unified type to the iterators of [`DnsResolver::lookup_ipv4_ipv6`].
 enum LookupIter<A, B> {
     Ipv4(A),
     Ipv6(B),
