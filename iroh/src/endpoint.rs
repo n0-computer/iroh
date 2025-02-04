@@ -991,10 +991,13 @@ impl Endpoint {
     /// of `0` and an empty reason.  Though it is best practice to close those
     /// explicitly before with a custom error code and reason.
     ///
-    /// It will then make a best effort to wait for all close notifications to be
-    /// acknowledged by the peers, re-transmitting them if needed. This ensures the
-    /// peers are aware of the closed connections instead of having to wait for a timeout
-    /// on the connection. Once all connections are closed or timed out, the magic socket is closed.
+    /// This will not wait for the [`quinn::Endpoint`] to drain connections.
+    ///
+    /// To ensure no data is lost, design protocols so that the last *sender*
+    /// of data in the protocol calls [`Connection::closed`], and `await`s until
+    /// it receives a "close" message from the *receiver*. Once the *receiver*
+    /// gets the last data in the protocol, it should call [`Connection::close`]
+    /// to inform the *sender* that all data has been received.
     ///
     /// Be aware however that the underlying UDP sockets are only closed
     /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
@@ -1393,21 +1396,16 @@ impl Connection {
     ///
     /// # Gracefully closing a connection
     ///
-    /// Only the peer last receiving application data can be certain that all data is
-    /// delivered. The only reliable action it can then take is to close the connection,
-    /// potentially with a custom error code. The delivery of the final CONNECTION_CLOSE
-    /// frame is very likely if both endpoints stay online long enough, calling
-    /// [`Endpoint::close`] will wait to provide sufficient time. Otherwise, the remote peer
-    /// will time out the connection, provided that the idle timeout is not disabled.
+    /// Only the peer last **receiving** application data can be certain that all data is
+    /// delivered.
     ///
-    /// The sending side can not guarantee all stream data is delivered to the remote
-    /// application. It only knows the data is delivered to the QUIC stack of the remote
-    /// endpoint. Once the local side sends a CONNECTION_CLOSE frame in response to calling
-    /// [`close`] the remote endpoint may drop any data it received but is as yet
-    /// undelivered to the application, including data that was acknowledged as received to
-    /// the local endpoint.
+    /// To communicate to the last **sender** of the application data that all the data was received, we recommend designing protocols that follow this pattern:
     ///
-    /// [`close`]: Connection::close
+    /// 1) The **sender** sends the last data. It then calls [`Connection::closed`]. This will wait until it receives a CONNECTION_CLOSE frame from the other side.
+    /// 2) The **receiver** receives the last data. It then calls [`Connection::close`] and provides an error_code and/or reason.
+    /// 3) The **sender** checks that the error_code is the expected error code.
+    ///
+    /// If the `close`/`closed` dance is not done, or is interrupted at any point, the connection will eventually time out, provided that the idle timeout is not disabled.
     #[inline]
     pub fn close(&self, error_code: VarInt, reason: &[u8]) {
         self.inner.close(error_code, reason)
