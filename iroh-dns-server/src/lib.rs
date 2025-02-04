@@ -45,6 +45,8 @@ mod tests {
         ZoneStore,
     };
 
+    const DNS_TIMEOUT: Duration = Duration::from_secs(1);
+
     #[tokio::test]
     #[traced_test]
     async fn pkarr_publish_dns_resolve() -> Result<()> {
@@ -144,14 +146,14 @@ mod tests {
 
         // resolve A record
         let name = Name::from_utf8(format!("{pubkey}."))?;
-        let res = resolver.ipv4_lookup(name).await?;
-        let records = res.iter().map(|t| t.0).collect::<Vec<_>>();
+        let res = resolver.lookup_ipv4(name, DNS_TIMEOUT).await?;
+        let records = res.collect::<Vec<_>>();
         assert_eq!(records, vec![Ipv4Addr::LOCALHOST]);
 
         // resolve AAAA record
         let name = Name::from_utf8(format!("foo.bar.baz.{pubkey}."))?;
-        let res = resolver.ipv6_lookup(name).await?;
-        let records = res.iter().map(|t| t.0).collect::<Vec<_>>();
+        let res = resolver.lookup_ipv6(name, DNS_TIMEOUT).await?;
+        let records = res.collect::<Vec<_>>();
         assert_eq!(records, vec![Ipv6Addr::LOCALHOST]);
 
         server.shutdown().await?;
