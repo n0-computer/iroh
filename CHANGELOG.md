@@ -2,7 +2,41 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.31.0](https://github.com/n0-computer/iroh/compare/v0.30.0..0.31.0) - 2025-01-14
+## [0.32.0](https://github.com/n0-computer/iroh/compare/v0.31.0..0.32.0) - 2025-02-04
+
+### ⛰️  Features
+
+- *(iroh)* Allow customising the TransportConfig for connections ([#3111](https://github.com/n0-computer/iroh/issues/3111)) - ([2b92db4](https://github.com/n0-computer/iroh/commit/2b92db44b5f740229de8801a3bc626025f14fff4))
+- *(iroh)* [**breaking**] Wrap the Connection struct so we own the type ([#3110](https://github.com/n0-computer/iroh/issues/3110)) - ([2e61ff2](https://github.com/n0-computer/iroh/commit/2e61ff2c9aae6a13f1aa574684ed5a2798c3fb4a))
+- *(iroh)* [**breaking**] Remove access to local and remote IP addresses ([#3148](https://github.com/n0-computer/iroh/issues/3148)) - ([08bd2a1](https://github.com/n0-computer/iroh/commit/08bd2a1e52b2e0d0815cbfe0abdb311d2980b817))
+- *(iroh-relay)* Make the client side of `iroh-relay` compile & run in browsers ([#3119](https://github.com/n0-computer/iroh/issues/3119)) - ([03e3e3c](https://github.com/n0-computer/iroh/commit/03e3e3cc2cef7cb4cb9dd332b4a8a8531dd4a4e0))
+- [**breaking**] Add QUIC Address Discovery to iroh ([#3049](https://github.com/n0-computer/iroh/issues/3049)) - ([243a04a](https://github.com/n0-computer/iroh/commit/243a04abf61620965b62b6c0863eefc4617cedfc))
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Remove `quinn::Endpoint::wait_idle` from `iroh::Endpoint::close` process ([#3165](https://github.com/n0-computer/iroh/issues/3165)) - ([a1d21c6](https://github.com/n0-computer/iroh/commit/a1d21c673d3449a31a32262bb5453c4ec8ce6bd5))
+- *(iroh-net-report)* Only add QUIC ipv6 probes if we have an ipv6 interface ([#3133](https://github.com/n0-computer/iroh/issues/3133)) - ([9275d22](https://github.com/n0-computer/iroh/commit/9275d22dea6c14a1a2090be1985fd97a7de4801d))
+- *(iroh-relay)* Fix client actors not closing ([#3134](https://github.com/n0-computer/iroh/issues/3134)) - ([e5bbbe1](https://github.com/n0-computer/iroh/commit/e5bbbe1c3c1275a61ea81b5f24a64001d133d6f1))
+- Handle invalid input length when parsing a node id ([#3155](https://github.com/n0-computer/iroh/issues/3155)) - ([a8d058f](https://github.com/n0-computer/iroh/commit/a8d058fb1558741537521912d60199730482acbe))
+
+### 🚜 Refactor
+
+- *(iroh)* Replace `timer` module with `AbortOnDropHandle` and sleep ([#3141](https://github.com/n0-computer/iroh/issues/3141)) - ([43e9805](https://github.com/n0-computer/iroh/commit/43e9805fc329df3d1d081922e843ecd397e0ebeb))
+- Use `n0-future` in favor of `futures-*` libraries and `tokio::{spawn,task,time}` ([#3156](https://github.com/n0-computer/iroh/issues/3156)) - ([617fa50](https://github.com/n0-computer/iroh/commit/617fa500a0d9113dca683321ed793a3e3a3af2bc))
+- [**breaking**] Remove iroh-test crate ([#3162](https://github.com/n0-computer/iroh/issues/3162)) - ([7b6884f](https://github.com/n0-computer/iroh/commit/7b6884f8444d80665c048f9d4961defea713581d))
+- Cleaning up unnecessary logs ([#3164](https://github.com/n0-computer/iroh/issues/3164)) - ([9a75d14](https://github.com/n0-computer/iroh/commit/9a75d14211e38dac2bcc4549ee8b982bb919e0aa))
+
+### 📚 Documentation
+
+- Fix typos in README ([#3144](https://github.com/n0-computer/iroh/issues/3144)) - ([c532de3](https://github.com/n0-computer/iroh/commit/c532de35c03aed13f82deaccf5d4e5e83bddee7a))
+
+### ⚙️ Miscellaneous Tasks
+
+- Remove individual repo project tracking ([#3135](https://github.com/n0-computer/iroh/issues/3135)) - ([eadc76b](https://github.com/n0-computer/iroh/commit/eadc76b51522f79b7afe05e48981f9b1ea045980))
+- New project syncing setup ([#3136](https://github.com/n0-computer/iroh/issues/3136)) - ([96e6220](https://github.com/n0-computer/iroh/commit/96e622039e1dd7337fd935348a866eee708a1090))
+- Update broken echo.rs link ([#3151](https://github.com/n0-computer/iroh/issues/3151)) - ([e049965](https://github.com/n0-computer/iroh/commit/e049965bd238e78d3a33b90a16077472377c860e))
+
+## [0.31.0](https://github.com/n0-computer/iroh/compare/v0.30.0..v0.31.0) - 2025-01-14
 
 ### ⛰️  Features
 
@@ -58,6 +92,7 @@ All notable changes to iroh will be documented in this file.
 - Bug Report issue template ([#3085](https://github.com/n0-computer/iroh/issues/3085)) - ([60ba9ac](https://github.com/n0-computer/iroh/commit/60ba9ac75f81f8dcd4c49a5606ae96cc86cdbd3b))
 - Use variable to construct URL ([#3122](https://github.com/n0-computer/iroh/issues/3122)) - ([3891778](https://github.com/n0-computer/iroh/commit/3891778af99f373f34c5d684489d06392bf6cd4e))
 - Upgrade `portmapper` and `netwatch` deps ([#3127](https://github.com/n0-computer/iroh/issues/3127)) - ([7ba6321](https://github.com/n0-computer/iroh/commit/7ba63218b282641ab2f8065773992362ddaf44c2))
+- Release - ([87e25f9](https://github.com/n0-computer/iroh/commit/87e25f961b6e1e287658f387d95ef34414e7a1a9))
 
 ## [0.30.0](https://github.com/n0-computer/iroh/compare/v0.29.0..v0.30.0) - 2024-12-16
 
