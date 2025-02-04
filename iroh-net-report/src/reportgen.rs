@@ -1619,7 +1619,7 @@ mod tests {
         let dns_resolver = crate::dns::tests::resolver();
         tracing::info!(relay_url = ?relay.url , "RELAY_URL");
         let (latency, ip) =
-            measure_https_latency(dns_resolver, &relay, server.certificates()).await?;
+            measure_https_latency(&dns_resolver, &relay, server.certificates()).await?;
 
         assert!(latency > Duration::ZERO);
 

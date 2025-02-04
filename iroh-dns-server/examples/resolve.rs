@@ -1,11 +1,4 @@
-use std::net::SocketAddr;
-
 use clap::{Parser, ValueEnum};
-use hickory_resolver::{
-    config::{NameServerConfig, ResolverConfig},
-    proto::xfer::Protocol,
-    Resolver,
-};
 use iroh::{
     discovery::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
     dns::{node_info::TxtAttrs, DnsResolver},
@@ -46,16 +39,10 @@ enum Command {
 async fn main() -> anyhow::Result<()> {
     let args = Cli::parse();
     let (resolver, origin) = match args.env {
-        Env::Staging => (
-            iroh::dns::default_resolver().clone(),
-            N0_DNS_NODE_ORIGIN_STAGING,
-        ),
-        Env::Prod => (
-            iroh::dns::default_resolver().clone(),
-            N0_DNS_NODE_ORIGIN_PROD,
-        ),
+        Env::Staging => (DnsResolver::new_with_defaults(), N0_DNS_NODE_ORIGIN_STAGING),
+        Env::Prod => (DnsResolver::new_with_defaults(), N0_DNS_NODE_ORIGIN_PROD),
         Env::Dev => (
-            resolver_with_nameserver(LOCALHOST_DNS.parse()?),
+            DnsResolver::new_with_single_nameserver(LOCALHOST_DNS.parse()?),
             EXAMPLE_ORIGIN,
         ),
     };
@@ -74,11 +61,4 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
-}
-
-fn resolver_with_nameserver(nameserver: SocketAddr) -> DnsResolver {
-    let mut config = ResolverConfig::new();
-    let nameserver_config = NameServerConfig::new(nameserver, Protocol::Udp);
-    config.add_name_server(nameserver_config);
-    DnsResolver::from_tokio_resolver(Resolver::tokio(config, Default::default()))
 }

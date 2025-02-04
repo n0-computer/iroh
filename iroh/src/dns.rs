@@ -12,12 +12,7 @@ use n0_future::Future;
 
 pub mod node_info;
 
-pub use iroh_relay::dns::{default_resolver, DnsResolver};
-
-/// Get the DNS resolver used within iroh.
-pub fn resolver() -> &'static DnsResolver {
-    default_resolver()
-}
+pub use iroh_relay::dns::DnsResolver;
 
 /// Extension trait to [`DnsResolver`].
 pub trait ResolverExt {
@@ -112,7 +107,7 @@ pub(crate) mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_dns_lookup_ipv4_ipv6() {
-        let resolver = default_resolver();
+        let resolver = DnsResolver::new_with_defaults();
         let res: Vec<_> = resolver
             .lookup_ipv4_ipv6_staggered(NA_RELAY_HOSTNAME, TIMEOUT, STAGGERING_DELAYS)
             .await

@@ -33,7 +33,7 @@ use crate::{
     discovery::{
         dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
     },
-    dns::{default_resolver, DnsResolver},
+    dns::DnsResolver,
     magicsock::{self, Handle, NodeIdMappedAddr},
     tls,
     watchable::Watcher,
@@ -154,7 +154,7 @@ impl Builder {
         };
         let dns_resolver = self
             .dns_resolver
-            .unwrap_or_else(|| default_resolver().clone());
+            .unwrap_or_else(|| DnsResolver::new_with_defaults());
         let discovery = self
             .discovery
             .into_iter()

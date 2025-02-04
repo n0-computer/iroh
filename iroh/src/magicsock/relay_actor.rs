@@ -1256,7 +1256,7 @@ mod tests {
             relay_datagrams_recv,
             connection_opts: RelayConnectionOptions {
                 secret_key,
-                dns_resolver: crate::dns::default_resolver().clone(),
+                dns_resolver: crate::dns::DnsResolver::new_with_defaults(),
                 proxy_url: None,
                 prefer_ipv6: Arc::new(AtomicBool::new(true)),
                 insecure_skip_cert_verify: true,

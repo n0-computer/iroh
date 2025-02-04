@@ -3,10 +3,10 @@ pub(crate) const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use iroh_relay::dns::{default_resolver, DnsResolver};
+    use iroh_relay::dns::DnsResolver;
 
     /// Get a DNS resolver suitable for testing.
-    pub fn resolver() -> &'static DnsResolver {
-        default_resolver()
+    pub fn resolver() -> DnsResolver {
+        DnsResolver::new_with_defaults()
     }
 }

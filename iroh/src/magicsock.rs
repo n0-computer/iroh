@@ -140,6 +140,7 @@ pub(crate) struct Options {
     pub(crate) path_selection: PathSelection,
 }
 
+#[cfg(test)]
 impl Default for Options {
     fn default() -> Self {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
@@ -152,7 +153,7 @@ impl Default for Options {
             node_map: None,
             discovery: None,
             proxy_url: None,
-            dns_resolver: crate::dns::default_resolver().clone(),
+            dns_resolver: crate::dns::DnsResolver::new_with_defaults(),
             server_config,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -163,6 +164,7 @@ impl Default for Options {
 }
 
 /// Generate a server config with no ALPNS and a default transport configuration
+#[cfg(test)]
 fn make_default_server_config(secret_key: &SecretKey) -> ServerConfig {
     let quic_server_config = crate::tls::make_server_config(secret_key, vec![], false)
         .expect("should generate valid config");
@@ -4025,6 +4027,7 @@ mod tests {
             Arc::new(quinn::TransportConfig::default()),
             true,
         )?;
+        let dns_resolver = crate::dns::DnsResolver::new_with_defaults();
         let opts = Options {
             addr_v4: None,
             addr_v6: None,
@@ -4032,7 +4035,7 @@ mod tests {
             relay_map: RelayMap::empty(),
             node_map: None,
             discovery: None,
-            dns_resolver: crate::dns::default_resolver().clone(),
+            dns_resolver,
             proxy_url: None,
             server_config,
             insecure_skip_relay_cert_verify: true,

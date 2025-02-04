@@ -3,8 +3,7 @@
 use std::{
     fmt::Write,
     future::Future,
-    net::{IpAddr, Ipv6Addr},
-    sync::OnceLock,
+    net::{IpAddr, Ipv6Addr, SocketAddr},
 };
 
 use anyhow::{bail, Context, Result};
@@ -14,17 +13,6 @@ use n0_future::{
     StreamExt,
 };
 use url::Url;
-
-static DNS_RESOLVER: OnceLock<DnsResolver> = OnceLock::new();
-
-/// Get a reference to the default DNS resolver.
-///
-/// The default resolver can be cheaply cloned and is shared throughout the running process.
-/// It is configured to use the system's DNS configuration.
-pub fn default_resolver() -> &'static DnsResolver {
-    DNS_RESOLVER
-        .get_or_init(|| DnsResolver::new_with_defaults().expect("unable to create DNS resolver"))
-}
 
 /// The DNS resolver used throughout `iroh`.
 #[derive(Debug, Clone)]
@@ -36,7 +24,7 @@ impl DnsResolver {
     /// We first try to read the system's resolver from `/etc/resolv.conf`.
     /// This does not work at least on some Androids, therefore we fallback
     /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
-    pub fn new_with_defaults() -> Result<Self> {
+    pub fn new_with_defaults() -> Self {
         let (system_config, mut options) =
             hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
 
@@ -59,7 +47,18 @@ impl DnsResolver {
         options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
 
         let resolver = Resolver::tokio(config, options);
-        Ok(DnsResolver(resolver))
+        DnsResolver(resolver)
+    }
+
+    /// Create a new DNS resolver configured with a single UDP DNS nameserver.
+    pub fn new_with_single_nameserver(nameserver: SocketAddr) -> Self {
+        let mut config = hickory_resolver::config::ResolverConfig::new();
+        let nameserver_config = hickory_resolver::config::NameServerConfig::new(
+            nameserver,
+            hickory_proto::xfer::Protocol::Udp,
+        );
+        config.add_name_server(nameserver_config);
+        DnsResolver::from_tokio_resolver(Resolver::tokio(config, Default::default()))
     }
 
     /// Create a new `DnsResolver` from a [`TokioResolver`].
