@@ -58,12 +58,7 @@ impl DnsResolver {
             hickory_proto::xfer::Protocol::Udp,
         );
         config.add_name_server(nameserver_config);
-        DnsResolver::from_tokio_resolver(Resolver::tokio(config, Default::default()))
-    }
-
-    /// Create a new `DnsResolver` from a [`TokioResolver`].
-    pub fn from_tokio_resolver(resolver: TokioResolver) -> Self {
-        Self(resolver)
+        DnsResolver(Resolver::tokio(config, Default::default()))
     }
 
     /// Removes all entries from the cache.

@@ -3,7 +3,6 @@ use std::net::Ipv4Addr;
 
 use anyhow::Result;
 pub use dns_and_pkarr_servers::DnsPkarrServer;
-pub use dns_server::create_dns_resolver;
 use iroh_base::RelayUrl;
 use iroh_relay::{
     server::{
@@ -117,7 +116,7 @@ pub(crate) mod dns_and_pkarr_servers {
     use iroh_base::{NodeId, SecretKey};
     use url::Url;
 
-    use super::{create_dns_resolver, CleanupDropGuard};
+    use super::CleanupDropGuard;
     use crate::{
         discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
         dns::DnsResolver,
@@ -177,7 +176,7 @@ pub(crate) mod dns_and_pkarr_servers {
 
         /// Create a [`DnsResolver`] configured to use the test DNS server.
         pub fn dns_resolver(&self) -> DnsResolver {
-            create_dns_resolver(self.nameserver).expect("failed to create DNS resolver")
+            DnsResolver::new_with_single_nameserver(self.nameserver)
         }
 
         /// Wait until a Pkarr announce for a node is published to the server.
@@ -196,14 +195,10 @@ pub(crate) mod dns_server {
     };
 
     use anyhow::{ensure, Result};
-    use hickory_resolver::{
-        config::NameServerConfig,
-        proto::{
-            op::{header::MessageType, Message},
-            serialize::binary::BinDecodable,
-        },
+    use hickory_resolver::proto::{
+        op::{header::MessageType, Message},
+        serialize::binary::BinDecodable,
     };
-    use iroh_relay::dns::DnsResolver;
     use n0_future::future::Boxed as BoxFuture;
     use tokio::{net::UdpSocket, sync::oneshot};
     use tracing::{debug, error, warn};
@@ -256,16 +251,6 @@ pub(crate) mod dns_server {
             }
         });
         Ok((bound_addr, CleanupDropGuard(tx)))
-    }
-
-    /// Create a DNS resolver with a single nameserver.
-    pub fn create_dns_resolver(nameserver: SocketAddr) -> Result<DnsResolver> {
-        let mut config = hickory_resolver::config::ResolverConfig::new();
-        let nameserver_config =
-            NameServerConfig::new(nameserver, hickory_resolver::proto::xfer::Protocol::Udp);
-        config.add_name_server(nameserver_config);
-        let resolver = hickory_resolver::Resolver::tokio(config, Default::default());
-        Ok(DnsResolver::from_tokio_resolver(resolver))
     }
 
     struct TestDnsServer<R> {
