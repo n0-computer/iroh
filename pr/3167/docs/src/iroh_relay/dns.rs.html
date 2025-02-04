@@ -491,7 +491,7 @@
     IpAddr::V6(Ipv6Addr::new(<span class="number">0xfec0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0xffff</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">3</span>)),
 ];
 
-<span class="doccomment">/// Helper enum to give a unified type to the iterators of [`ResolverExt::lookup_ipv4_ipv6`].
+<span class="doccomment">/// Helper enum to give a unified type to the iterators of [`DnsResolver::lookup_ipv4_ipv6`].
 </span><span class="kw">enum </span>LookupIter&lt;A, B&gt; {
     Ipv4(A),
     Ipv6(B),
