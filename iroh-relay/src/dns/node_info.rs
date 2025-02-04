@@ -28,9 +28,9 @@
 //! [Pkarr]: https://app.pkarr.org
 //! [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
 //! [RFC1464]: https://www.rfc-editor.org/rfc/rfc1464
-//! [`RelayUrl`]: crate::RelayUrl
-//! [`N0_DNS_NODE_ORIGIN_PROD`]: crate::discovery::dns::N0_DNS_NODE_ORIGIN_PROD
-//! [`N0_DNS_NODE_ORIGIN_STAGING`]: crate::discovery::dns::N0_DNS_NODE_ORIGIN_STAGING
+//! [`RelayUrl`]: iroh_base::RelayUrl
+//! [`N0_DNS_NODE_ORIGIN_PROD`]: crate::dns::N0_DNS_NODE_ORIGIN_PROD
+//! [`N0_DNS_NODE_ORIGIN_STAGING`]: crate::dns::N0_DNS_NODE_ORIGIN_STAGING
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -58,7 +58,7 @@ pub const IROH_TXT_NAME: &str = "_iroh";
     Debug, strum::Display, strum::AsRefStr, strum::EnumString, Hash, Eq, PartialEq, Ord, PartialOrd,
 )]
 #[strum(serialize_all = "kebab-case")]
-pub enum IrohAttr {
+pub(super) enum IrohAttr {
     /// URL of home relay.
     Relay,
     /// Direct address.
@@ -225,7 +225,7 @@ pub fn node_id_from_hickory_name(name: &hickory_resolver::proto::rr::Name) -> Op
 /// all attributes. Can also be used with an enum, if it implements [`FromStr`] and
 /// [`Display`].
 #[derive(Debug)]
-pub struct TxtAttrs<T> {
+pub(super) struct TxtAttrs<T> {
     node_id: NodeId,
     attrs: BTreeMap<T, Vec<String>>,
 }

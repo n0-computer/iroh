@@ -1,8 +1,10 @@
 //! This module exports a DNS resolver, which is also the default resolver used in the
 //! [`crate::Endpoint`] if no custom resolver is configured.
 //!
-//! It also exports [`ResolverExt`]: A extension trait over [`DnsResolver`] to perform DNS queries
-//! by ipv4, ipv6, name and node_id. See the [`node_info`] module documentation for details on how
+//! The resolver provides methods to resolve domain names to ipv4 and ipv6 addresses,
+//! and to resolve node ids to node addresses.
+//!
+//! See the [`node_info`] module documentation for details on how
 //! iroh node records are structured.
 
 pub use iroh_relay::dns::{node_info, DnsResolver};

@@ -17,6 +17,11 @@ use url::Url;
 
 pub mod node_info;
 
+/// The n0 testing DNS node origin, for production.
+pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
+/// The n0 testing DNS node origin, for testing.
+pub const N0_DNS_NODE_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
+
 /// The DNS resolver used throughout `iroh`.
 #[derive(Debug, Clone)]
 pub struct DnsResolver(TokioResolver);
@@ -242,6 +247,12 @@ impl DnsResolver {
     ) -> Result<NodeAddr> {
         let f = || self.lookup_node_by_id(node_id, origin);
         stagger_call(f, delays_ms).await
+    }
+}
+
+impl From<TokioResolver> for DnsResolver {
+    fn from(resolver: TokioResolver) -> Self {
+        DnsResolver(resolver)
     }
 }
 

@@ -1,7 +1,7 @@
 use clap::{Parser, ValueEnum};
 use iroh::{
     discovery::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
-    dns::{node_info::TxtAttrs, DnsResolver},
+    dns::DnsResolver,
     NodeId,
 };
 
@@ -47,18 +47,15 @@ async fn main() -> anyhow::Result<()> {
         ),
     };
     let resolved = match args.command {
-        Command::Node { node_id } => {
-            TxtAttrs::<String>::lookup_by_id(&resolver, &node_id, origin).await?
-        }
-        Command::Domain { domain } => {
-            TxtAttrs::<String>::lookup_by_name(&resolver, &domain).await?
-        }
+        Command::Node { node_id } => resolver.lookup_node_by_id(&node_id, origin).await?,
+        Command::Domain { domain } => resolver.lookup_node_by_domain_name(&domain).await?,
     };
-    println!("resolved node {}", resolved.node_id());
-    for (key, values) in resolved.attrs() {
-        for value in values {
-            println!("    {key}={value}");
-        }
+    println!("resolved node {}", resolved.node_id);
+    if let Some(url) = resolved.relay_url {
+        println!("    relay={url}")
+    }
+    for addr in resolved.direct_addresses {
+        println!("    addr={addr}")
     }
     Ok(())
 }

@@ -10,10 +10,7 @@ use crate::{
     Endpoint,
 };
 
-/// The n0 testing DNS node origin, for production.
-pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
-/// The n0 testing DNS node origin, for testing.
-pub const N0_DNS_NODE_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
+pub use iroh_relay::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
 
 const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 
