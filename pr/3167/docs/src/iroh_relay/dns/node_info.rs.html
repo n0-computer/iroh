@@ -539,9 +539,7 @@
 <a href="#538" id="538">538</a>
 <a href="#539" id="539">539</a>
 <a href="#540" id="540">540</a>
-<a href="#541" id="541">541</a>
-<a href="#542" id="542">542</a>
-<a href="#543" id="543">543</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#541" id="541">541</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -975,9 +973,7 @@
     <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
     <span class="kw">use </span>testresult::TestResult;
 
-    <span class="kw">use </span><span class="kw">crate</span>::dns::node_info::NodeIdExt;
-
-    <span class="kw">use </span><span class="kw">super</span>::NodeInfo;
+    <span class="kw">use super</span>::{NodeIdExt, NodeInfo};
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>txt_attr_roundtrip() {

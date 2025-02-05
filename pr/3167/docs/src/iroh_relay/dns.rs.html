@@ -400,7 +400,7 @@
 <a href="#399" id="399">399</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS resolver
 
 </span><span class="kw">use </span>std::{
-    fmt::Write,
+    fmt::{<span class="self">self</span>, Write},
     future::Future,
     net::{IpAddr, Ipv6Addr, SocketAddr},
 };
@@ -678,7 +678,7 @@
     <span class="kw">type </span>IntoIter = Box&lt;<span class="kw">dyn </span>Iterator&lt;Item = TXT&gt;&gt;;
 
     <span class="kw">fn </span>into_iter(<span class="self">self</span>) -&gt; <span class="self">Self</span>::IntoIter {
-        Box::new(<span class="self">self</span>.<span class="number">0</span>.into_iter().map(|txt| TXT(txt)))
+        Box::new(<span class="self">self</span>.<span class="number">0</span>.into_iter().map(TXT))
     }
 }
 
@@ -693,9 +693,9 @@
     }
 }
 
-<span class="kw">impl </span>ToString <span class="kw">for </span>TXT {
-    <span class="kw">fn </span>to_string(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; String {
-        <span class="self">self</span>.<span class="number">0</span>.to_string()
+<span class="kw">impl </span>fmt::Display <span class="kw">for </span>TXT {
+    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; fmt::Result {
+        <span class="macro">write!</span>(f, <span class="string">"{}"</span>, <span class="self">self</span>.<span class="number">0</span>)
     }
 }
 
