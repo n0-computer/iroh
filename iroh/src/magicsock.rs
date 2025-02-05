@@ -1809,19 +1809,12 @@ impl Handle {
     /// Only the first close does anything. Any later closes return nil.
     /// Polling the socket ([`AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`]
     /// indefinitely after this call.
-    ///
-    /// This will not wait for the [`quinn::Endpoint`] to drain connections.
-    ///
-    /// To ensure no data is lost, design protocols so that the last *sender*
-    /// of data in the protocol calls [`crate::endpoint::Connection::closed`], and `await`s until
-    /// it receives a "close" message from the *receiver*. Once the *receiver*
-    /// gets the last data in the protocol, it should call [`crate::endpoint::Connection::close`]
-    /// to inform the *sender* that all data has been received.
     #[instrument(skip_all, fields(me = %self.msock.me))]
     pub(crate) async fn close(&self) {
         trace!("magicsock closing...");
         // Initiate closing all connections, and refuse future connections.
         self.endpoint.close(0u16.into(), b"");
+        self.endpoint.wait_idle().await;
 
         if self.msock.is_closed() {
             return;
