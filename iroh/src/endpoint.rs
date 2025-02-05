@@ -587,10 +587,21 @@ impl Endpoint {
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
     pub async fn connect(&self, node_addr: impl Into<NodeAddr>, alpn: &[u8]) -> Result<Connection> {
+        let node_addr = node_addr.into();
+        let remote = node_addr.node_id;
         let connecting = self
             .connect_with_opts(node_addr, alpn, Default::default())
             .await?;
-        Ok(connecting.await?)
+        let conn = connecting
+            .await
+            .context("failed connecting to remote endpoint")?;
+        debug!(
+            me = %self.node_id().fmt_short(),
+            remote = %remote.fmt_short(),
+            alpn = %String::from_utf8_lossy(alpn),
+            "Connection established."
+        );
+        Ok(conn)
     }
 
     /// Starts a connection attempt with a remote [`Endpoint`].
@@ -607,6 +618,7 @@ impl Endpoint {
     ///    **Note:** Please be aware that changing transport config settings may have adverse effects on
     ///    establishing and maintaining direct connections.  Carefully test settings you use and
     ///    consider this currently as still rather experimental.
+    #[instrument(name = "connect", skip_all)]
     pub async fn connect_with_opts(
         &self,
         node_addr: impl Into<NodeAddr>,
@@ -614,7 +626,12 @@ impl Endpoint {
         options: ConnectOptions,
     ) -> Result<Connecting> {
         let node_addr: NodeAddr = node_addr.into();
-        tracing::Span::current().record("remote", node_addr.node_id.fmt_short());
+
+        let span = tracing::Span::current();
+        span.record("me", self.node_id().fmt_short());
+        span.record("remote", node_addr.node_id.fmt_short());
+        span.record("alpn", String::from_utf8_lossy(alpn).to_string());
+
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
             bail!(
@@ -643,10 +660,7 @@ impl Endpoint {
                 )
             })?;
 
-        debug!(
-            "connecting to {}: (via {} - {:?})",
-            node_id, addr, direct_addresses
-        );
+        debug!("connecting via {addr} - {direct_addresses:?}",);
 
         let transport_config = options
             .transport_config
@@ -654,26 +668,7 @@ impl Endpoint {
 
         // Start connecting via quinn. This will time out after 10 seconds if no reachable
         // address is available.
-        self.connect_quinn(node_id, alpn, addr, transport_config)
-            .await
-    }
 
-    #[instrument(
-        name = "connect",
-        skip_all,
-        fields(
-            me = %self.node_id().fmt_short(),
-            remote_node = node_id.fmt_short(),
-            alpn = %String::from_utf8_lossy(alpn),
-        )
-    )]
-    async fn connect_quinn(
-        &self,
-        node_id: NodeId,
-        alpn: &[u8],
-        addr: NodeIdMappedAddr,
-        transport_config: Arc<TransportConfig>,
-    ) -> Result<Connecting> {
         debug!("Attempting connection...");
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
@@ -1745,8 +1740,9 @@ mod tests {
 
     use std::time::Instant;
 
-    use n0_future::StreamExt;
+    use n0_future::{task::AbortOnDropHandle, StreamExt};
     use rand::SeedableRng;
+    use testresult::TestResult;
     use tracing::{error_span, info, info_span, Instrument};
     use tracing_test::traced_test;
 
@@ -2206,5 +2202,84 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_connect_with_opts_0rtt() -> TestResult {
+        let ep1 = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+        let ep2 = Endpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+
+        let node_addr = ep2.node_addr().await?;
+
+        let server = ep2.clone();
+        let server_task = AbortOnDropHandle::new(tokio::spawn(async move {
+            while let Some(incoming) = server.accept().await {
+                let connecting = incoming.accept()?;
+                let conn = match connecting.into_0rtt() {
+                    Ok((conn, _)) => {
+                        info!("0rtt accepted");
+                        conn
+                    }
+                    Err(connecting) => {
+                        info!("0rtt denied");
+                        connecting.await?
+                    }
+                };
+                let mut recv = conn.accept_uni().await?;
+                let _ = recv.read_to_end(1_000).await?;
+
+                let mut send = conn.open_uni().await?;
+                send.write_all(b"thank you").await?;
+                send.finish()?;
+
+                // Gracefully close the connection
+                conn.closed().await;
+            }
+            anyhow::Ok(())
+        }));
+
+        let conn = ep1
+            .connect_with_opts(node_addr.clone(), TEST_ALPN, ConnectOptions::new())
+            .await?
+            .into_0rtt()
+            .err()
+            .expect("0rtt doesn't have keys on first connection yet")
+            .await?;
+
+        let mut send = conn.open_uni().await?;
+        send.write_all(b"hello").await?;
+        send.finish()?;
+        let mut recv = conn.accept_uni().await?;
+        recv.read_to_end(1_000).await?;
+        conn.close(0u32.into(), b"thx");
+
+        let (conn, zero_rtt_accepted) = ep1
+            .connect_with_opts(node_addr, TEST_ALPN, ConnectOptions::new())
+            .await?
+            .into_0rtt()
+            .map_err(|_| ())
+            .expect("0rtt works the second time due to cached keys");
+
+        let mut send = conn.open_uni().await?;
+        send.write_all(b"hello").await?;
+        send.finish()?;
+        assert!(zero_rtt_accepted.await);
+        let mut recv = conn.accept_uni().await?;
+        recv.read_to_end(1_000).await?;
+        conn.close(0u32.into(), b"thx");
+
+        ep1.close().await;
+        drop(server_task);
+        ep2.close().await;
+
+        Ok(())
     }
 }
