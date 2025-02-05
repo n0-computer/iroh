@@ -2208,7 +2208,82 @@
 <a href="#2207" id="2207">2207</a>
 <a href="#2208" id="2208">2208</a>
 <a href="#2209" id="2209">2209</a>
-<a href="#2210" id="2210">2210</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2210" id="2210">2210</a>
+<a href="#2211" id="2211">2211</a>
+<a href="#2212" id="2212">2212</a>
+<a href="#2213" id="2213">2213</a>
+<a href="#2214" id="2214">2214</a>
+<a href="#2215" id="2215">2215</a>
+<a href="#2216" id="2216">2216</a>
+<a href="#2217" id="2217">2217</a>
+<a href="#2218" id="2218">2218</a>
+<a href="#2219" id="2219">2219</a>
+<a href="#2220" id="2220">2220</a>
+<a href="#2221" id="2221">2221</a>
+<a href="#2222" id="2222">2222</a>
+<a href="#2223" id="2223">2223</a>
+<a href="#2224" id="2224">2224</a>
+<a href="#2225" id="2225">2225</a>
+<a href="#2226" id="2226">2226</a>
+<a href="#2227" id="2227">2227</a>
+<a href="#2228" id="2228">2228</a>
+<a href="#2229" id="2229">2229</a>
+<a href="#2230" id="2230">2230</a>
+<a href="#2231" id="2231">2231</a>
+<a href="#2232" id="2232">2232</a>
+<a href="#2233" id="2233">2233</a>
+<a href="#2234" id="2234">2234</a>
+<a href="#2235" id="2235">2235</a>
+<a href="#2236" id="2236">2236</a>
+<a href="#2237" id="2237">2237</a>
+<a href="#2238" id="2238">2238</a>
+<a href="#2239" id="2239">2239</a>
+<a href="#2240" id="2240">2240</a>
+<a href="#2241" id="2241">2241</a>
+<a href="#2242" id="2242">2242</a>
+<a href="#2243" id="2243">2243</a>
+<a href="#2244" id="2244">2244</a>
+<a href="#2245" id="2245">2245</a>
+<a href="#2246" id="2246">2246</a>
+<a href="#2247" id="2247">2247</a>
+<a href="#2248" id="2248">2248</a>
+<a href="#2249" id="2249">2249</a>
+<a href="#2250" id="2250">2250</a>
+<a href="#2251" id="2251">2251</a>
+<a href="#2252" id="2252">2252</a>
+<a href="#2253" id="2253">2253</a>
+<a href="#2254" id="2254">2254</a>
+<a href="#2255" id="2255">2255</a>
+<a href="#2256" id="2256">2256</a>
+<a href="#2257" id="2257">2257</a>
+<a href="#2258" id="2258">2258</a>
+<a href="#2259" id="2259">2259</a>
+<a href="#2260" id="2260">2260</a>
+<a href="#2261" id="2261">2261</a>
+<a href="#2262" id="2262">2262</a>
+<a href="#2263" id="2263">2263</a>
+<a href="#2264" id="2264">2264</a>
+<a href="#2265" id="2265">2265</a>
+<a href="#2266" id="2266">2266</a>
+<a href="#2267" id="2267">2267</a>
+<a href="#2268" id="2268">2268</a>
+<a href="#2269" id="2269">2269</a>
+<a href="#2270" id="2270">2270</a>
+<a href="#2271" id="2271">2271</a>
+<a href="#2272" id="2272">2272</a>
+<a href="#2273" id="2273">2273</a>
+<a href="#2274" id="2274">2274</a>
+<a href="#2275" id="2275">2275</a>
+<a href="#2276" id="2276">2276</a>
+<a href="#2277" id="2277">2277</a>
+<a href="#2278" id="2278">2278</a>
+<a href="#2279" id="2279">2279</a>
+<a href="#2280" id="2280">2280</a>
+<a href="#2281" id="2281">2281</a>
+<a href="#2282" id="2282">2282</a>
+<a href="#2283" id="2283">2283</a>
+<a href="#2284" id="2284">2284</a>
+<a href="#2285" id="2285">2285</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2797,10 +2872,21 @@
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
     </span><span class="kw">pub async fn </span>connect(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: <span class="kw">impl </span>Into&lt;NodeAddr&gt;, alpn: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;Connection&gt; {
+        <span class="kw">let </span>node_addr = node_addr.into();
+        <span class="kw">let </span>remote = node_addr.node_id;
         <span class="kw">let </span>connecting = <span class="self">self
             </span>.connect_with_opts(node_addr, alpn, Default::default())
             .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(connecting.<span class="kw">await</span><span class="question-mark">?</span>)
+        <span class="kw">let </span>conn = connecting
+            .<span class="kw">await
+            </span>.context(<span class="string">"failed connecting to remote endpoint"</span>)<span class="question-mark">?</span>;
+        <span class="macro">debug!</span>(
+            me = %<span class="self">self</span>.node_id().fmt_short(),
+            remote = %remote.fmt_short(),
+            alpn = %String::from_utf8_lossy(alpn),
+            <span class="string">"Connection established."
+        </span>);
+        <span class="prelude-val">Ok</span>(conn)
     }
 
     <span class="doccomment">/// Starts a connection attempt with a remote [`Endpoint`].
@@ -2817,6 +2903,7 @@
     ///    **Note:** Please be aware that changing transport config settings may have adverse effects on
     ///    establishing and maintaining direct connections.  Carefully test settings you use and
     ///    consider this currently as still rather experimental.
+    </span><span class="attr">#[instrument(name = <span class="string">"connect"</span>, skip_all)]
     </span><span class="kw">pub async fn </span>connect_with_opts(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_addr: <span class="kw">impl </span>Into&lt;NodeAddr&gt;,
@@ -2824,7 +2911,12 @@
         options: ConnectOptions,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;Connecting&gt; {
         <span class="kw">let </span>node_addr: NodeAddr = node_addr.into();
-        tracing::Span::current().record(<span class="string">"remote"</span>, node_addr.node_id.fmt_short());
+
+        <span class="kw">let </span>span = tracing::Span::current();
+        span.record(<span class="string">"me"</span>, <span class="self">self</span>.node_id().fmt_short());
+        span.record(<span class="string">"remote"</span>, node_addr.node_id.fmt_short());
+        span.record(<span class="string">"alpn"</span>, String::from_utf8_lossy(alpn).to_string());
+
         <span class="comment">// Connecting to ourselves is not supported.
         </span><span class="kw">if </span>node_addr.node_id == <span class="self">self</span>.node_id() {
             <span class="macro">bail!</span>(
@@ -2853,10 +2945,7 @@
                 )
             })<span class="question-mark">?</span>;
 
-        <span class="macro">debug!</span>(
-            <span class="string">"connecting to {}: (via {} - {:?})"</span>,
-            node_id, addr, direct_addresses
-        );
+        <span class="macro">debug!</span>(<span class="string">"connecting via {addr} - {direct_addresses:?}"</span>,);
 
         <span class="kw">let </span>transport_config = options
             .transport_config
@@ -2864,27 +2953,8 @@
 
         <span class="comment">// Start connecting via quinn. This will time out after 10 seconds if no reachable
         // address is available.
-        </span><span class="self">self</span>.connect_quinn(node_id, alpn, addr, transport_config)
-            .<span class="kw">await
-    </span>}
 
-    <span class="attr">#[instrument(
-        name = <span class="string">"connect"</span>,
-        skip_all,
-        fields(
-            me = %<span class="self">self</span>.node_id().fmt_short(),
-            remote_node = node_id.fmt_short(),
-            alpn = %String::from_utf8_lossy(alpn),
-        )
-    )]
-    </span><span class="kw">async fn </span>connect_quinn(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        node_id: NodeId,
-        alpn: <span class="kw-2">&amp;</span>[u8],
-        addr: NodeIdMappedAddr,
-        transport_config: Arc&lt;TransportConfig&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;Connecting&gt; {
-        <span class="macro">debug!</span>(<span class="string">"Attempting connection..."</span>);
+        </span><span class="macro">debug!</span>(<span class="string">"Attempting connection..."</span>);
         <span class="kw">let </span>client_config = {
             <span class="kw">let </span>alpn_protocols = <span class="macro">vec!</span>[alpn.to_vec()];
             <span class="kw">let </span>quic_client_config = tls::make_client_config(
@@ -3955,8 +4025,9 @@
 
     <span class="kw">use </span>std::time::Instant;
 
-    <span class="kw">use </span>n0_future::StreamExt;
+    <span class="kw">use </span>n0_future::{task::AbortOnDropHandle, StreamExt};
     <span class="kw">use </span>rand::SeedableRng;
+    <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tracing::{error_span, info, info_span, Instrument};
     <span class="kw">use </span>tracing_test::traced_test;
 
@@ -4416,6 +4487,85 @@
             .<span class="kw">await
             </span>.unwrap()
             .unwrap();
+    }
+
+    <span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>test_connect_with_opts_0rtt() -&gt; TestResult {
+        <span class="kw">let </span>ep1 = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>ep2 = Endpoint::builder()
+            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>node_addr = ep2.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>server = ep2.clone();
+        <span class="kw">let </span>server_task = AbortOnDropHandle::new(tokio::spawn(<span class="kw">async move </span>{
+            <span class="kw">while let </span><span class="prelude-val">Some</span>(incoming) = server.accept().<span class="kw">await </span>{
+                <span class="kw">let </span>connecting = incoming.accept()<span class="question-mark">?</span>;
+                <span class="kw">let </span>conn = <span class="kw">match </span>connecting.into_0rtt() {
+                    <span class="prelude-val">Ok</span>((conn, <span class="kw">_</span>)) =&gt; {
+                        <span class="macro">info!</span>(<span class="string">"0rtt accepted"</span>);
+                        conn
+                    }
+                    <span class="prelude-val">Err</span>(connecting) =&gt; {
+                        <span class="macro">info!</span>(<span class="string">"0rtt denied"</span>);
+                        connecting.<span class="kw">await</span><span class="question-mark">?
+                    </span>}
+                };
+                <span class="kw">let </span><span class="kw-2">mut </span>recv = conn.accept_uni().<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="kw">let _ </span>= recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+
+                <span class="kw">let </span><span class="kw-2">mut </span>send = conn.open_uni().<span class="kw">await</span><span class="question-mark">?</span>;
+                send.write_all(<span class="string">b"thank you"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+                send.finish()<span class="question-mark">?</span>;
+
+                <span class="comment">// Gracefully close the connection
+                </span>conn.closed().<span class="kw">await</span>;
+            }
+            anyhow::Ok(())
+        }));
+
+        <span class="kw">let </span>conn = ep1
+            .connect_with_opts(node_addr.clone(), TEST_ALPN, ConnectOptions::new())
+            .<span class="kw">await</span><span class="question-mark">?
+            </span>.into_0rtt()
+            .err()
+            .expect(<span class="string">"0rtt doesn't have keys on first connection yet"</span>)
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span><span class="kw-2">mut </span>send = conn.open_uni().<span class="kw">await</span><span class="question-mark">?</span>;
+        send.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        send.finish()<span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>recv = conn.accept_uni().<span class="kw">await</span><span class="question-mark">?</span>;
+        recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"thx"</span>);
+
+        <span class="kw">let </span>(conn, zero_rtt_accepted) = ep1
+            .connect_with_opts(node_addr, TEST_ALPN, ConnectOptions::new())
+            .<span class="kw">await</span><span class="question-mark">?
+            </span>.into_0rtt()
+            .map_err(|<span class="kw">_</span>| ())
+            .expect(<span class="string">"0rtt works the second time due to cached keys"</span>);
+
+        <span class="kw">let </span><span class="kw-2">mut </span>send = conn.open_uni().<span class="kw">await</span><span class="question-mark">?</span>;
+        send.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        send.finish()<span class="question-mark">?</span>;
+        <span class="macro">assert!</span>(zero_rtt_accepted.<span class="kw">await</span>);
+        <span class="kw">let </span><span class="kw-2">mut </span>recv = conn.accept_uni().<span class="kw">await</span><span class="question-mark">?</span>;
+        recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"thx"</span>);
+
+        ep1.close().<span class="kw">await</span>;
+        drop(server_task);
+        ep2.close().<span class="kw">await</span>;
+
+        <span class="prelude-val">Ok</span>(())
     }
 }
 </code></pre></div></section></main></body></html>
