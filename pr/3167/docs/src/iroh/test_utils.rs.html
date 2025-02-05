@@ -479,7 +479,8 @@
 <a href="#478" id="478">478</a>
 <a href="#479" id="479">479</a>
 <a href="#480" id="480">480</a>
-<a href="#481" id="481">481</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
+<a href="#481" id="481">481</a>
+<a href="#482" id="482">482</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
 <span class="kw">use </span>anyhow::Result;
@@ -854,7 +855,7 @@
     <span class="kw">use </span>pkarr::SignedPacket;
 
     <span class="kw">use crate</span>::{
-        dns::node_info::{node_id_from_hickory_name, NodeInfo},
+        dns::node_info::{node_id_from_domain_name, NodeInfo},
         test_utils::dns_server::QueryHandler,
     };
 
@@ -930,7 +931,8 @@
             ttl: u32,
         ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
             <span class="kw">for </span>query <span class="kw">in </span>query.queries() {
-                <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = node_id_from_hickory_name(query.name()) <span class="kw">else </span>{
+                <span class="kw">let </span>domain_name = query.name().to_string();
+                <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = node_id_from_domain_name(<span class="kw-2">&amp;</span>domain_name) <span class="kw">else </span>{
                     <span class="kw">continue</span>;
                 };
 

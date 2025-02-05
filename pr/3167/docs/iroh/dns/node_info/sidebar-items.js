@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["IROH_TXT_NAME"],"fn":["from_z32","node_id_from_hickory_name","to_z32"],"struct":["NodeInfo"]};
+window.SIDEBAR_ITEMS = {"constant":["IROH_TXT_NAME"],"fn":["from_z32","node_id_from_domain_name","to_z32"],"struct":["NodeInfo"]};
