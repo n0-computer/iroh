@@ -15,11 +15,11 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>tests {
-    <span class="kw">use </span>iroh_relay::dns::{default_resolver, DnsResolver};
+    <span class="kw">use </span>iroh_relay::dns::DnsResolver;
 
     <span class="doccomment">/// Get a DNS resolver suitable for testing.
-    </span><span class="kw">pub fn </span>resolver() -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>DnsResolver {
-        default_resolver()
+    </span><span class="kw">pub fn </span>resolver() -&gt; DnsResolver {
+        DnsResolver::new_with_defaults()
     }
 }
 </code></pre></div></section></main></body></html>

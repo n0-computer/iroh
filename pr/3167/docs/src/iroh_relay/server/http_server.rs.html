@@ -1961,9 +1961,9 @@
 
     <span class="kw">async fn </span>create_test_client(key: SecretKey, server_url: Url) -&gt; <span class="prelude-ty">Result</span>&lt;(PublicKey, Client)&gt; {
         <span class="kw">let </span>public_key = key.public();
-        <span class="kw">let </span>dns_resolver = <span class="kw">crate</span>::dns::default_resolver();
-        <span class="kw">let </span>client = ClientBuilder::new(server_url, key, dns_resolver.clone())
-            .insecure_skip_cert_verify(<span class="bool-val">true</span>);
+        <span class="kw">let </span>dns_resolver = <span class="kw">crate</span>::dns::DnsResolver::new_with_defaults();
+        <span class="kw">let </span>client =
+            ClientBuilder::new(server_url, key, dns_resolver).insecure_skip_cert_verify(<span class="bool-val">true</span>);
         <span class="kw">let </span>client = client.connect().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>((public_key, client))

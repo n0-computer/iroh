@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["default_resolver","resolver"],"mod":["node_info"],"struct":["DnsResolver"],"trait":["ResolverExt"]};
+window.SIDEBAR_ITEMS = {"mod":["node_info"],"struct":["DnsResolver"]};

@@ -479,27 +479,11 @@
 <a href="#478" id="478">478</a>
 <a href="#479" id="479">479</a>
 <a href="#480" id="480">480</a>
-<a href="#481" id="481">481</a>
-<a href="#482" id="482">482</a>
-<a href="#483" id="483">483</a>
-<a href="#484" id="484">484</a>
-<a href="#485" id="485">485</a>
-<a href="#486" id="486">486</a>
-<a href="#487" id="487">487</a>
-<a href="#488" id="488">488</a>
-<a href="#489" id="489">489</a>
-<a href="#490" id="490">490</a>
-<a href="#491" id="491">491</a>
-<a href="#492" id="492">492</a>
-<a href="#493" id="493">493</a>
-<a href="#494" id="494">494</a>
-<a href="#495" id="495">495</a>
-<a href="#496" id="496">496</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
+<a href="#481" id="481">481</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">pub use </span>dns_and_pkarr_servers::DnsPkarrServer;
-<span class="kw">pub use </span>dns_server::create_dns_resolver;
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="kw">use </span>iroh_relay::{
     server::{
@@ -613,7 +597,7 @@
     <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
     <span class="kw">use </span>url::Url;
 
-    <span class="kw">use super</span>::{create_dns_resolver, CleanupDropGuard};
+    <span class="kw">use </span><span class="kw">super</span>::CleanupDropGuard;
     <span class="kw">use crate</span>::{
         discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
         dns::DnsResolver,
@@ -673,7 +657,7 @@
 
         <span class="doccomment">/// Create a [`DnsResolver`] configured to use the test DNS server.
         </span><span class="kw">pub fn </span>dns_resolver(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DnsResolver {
-            create_dns_resolver(<span class="self">self</span>.nameserver).expect(<span class="string">"failed to create DNS resolver"</span>)
+            DnsResolver::new_with_single_nameserver(<span class="self">self</span>.nameserver)
         }
 
         <span class="doccomment">/// Wait until a Pkarr announce for a node is published to the server.
@@ -692,14 +676,10 @@
     };
 
     <span class="kw">use </span>anyhow::{ensure, <span class="prelude-ty">Result</span>};
-    <span class="kw">use </span>hickory_resolver::{
-        config::NameServerConfig,
-        proto::{
-            op::{header::MessageType, Message},
-            serialize::binary::BinDecodable,
-        },
+    <span class="kw">use </span>hickory_resolver::proto::{
+        op::{header::MessageType, Message},
+        serialize::binary::BinDecodable,
     };
-    <span class="kw">use </span>iroh_relay::dns::DnsResolver;
     <span class="kw">use </span>n0_future::future::Boxed <span class="kw">as </span>BoxFuture;
     <span class="kw">use </span>tokio::{net::UdpSocket, sync::oneshot};
     <span class="kw">use </span>tracing::{debug, error, warn};
@@ -752,16 +732,6 @@
             }
         });
         <span class="prelude-val">Ok</span>((bound_addr, CleanupDropGuard(tx)))
-    }
-
-    <span class="doccomment">/// Create a DNS resolver with a single nameserver.
-    </span><span class="kw">pub fn </span>create_dns_resolver(nameserver: SocketAddr) -&gt; <span class="prelude-ty">Result</span>&lt;DnsResolver&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>config = hickory_resolver::config::ResolverConfig::new();
-        <span class="kw">let </span>nameserver_config =
-            NameServerConfig::new(nameserver, hickory_resolver::proto::xfer::Protocol::Udp);
-        config.add_name_server(nameserver_config);
-        <span class="kw">let </span>resolver = hickory_resolver::Resolver::tokio(config, Default::default());
-        <span class="prelude-val">Ok</span>(DnsResolver::from_tokio_resolver(resolver))
     }
 
     <span class="kw">struct </span>TestDnsServer&lt;R&gt; {

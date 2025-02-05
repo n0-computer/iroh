@@ -2803,7 +2803,7 @@
             relay_datagrams_recv,
             connection_opts: RelayConnectionOptions {
                 secret_key,
-                dns_resolver: <span class="kw">crate</span>::dns::default_resolver().clone(),
+                dns_resolver: <span class="kw">crate</span>::dns::DnsResolver::new_with_defaults(),
                 proxy_url: <span class="prelude-val">None</span>,
                 prefer_ipv6: Arc::new(AtomicBool::new(<span class="bool-val">true</span>)),
                 insecure_skip_cert_verify: <span class="bool-val">true</span>,

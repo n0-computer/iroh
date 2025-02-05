@@ -2220,7 +2220,7 @@
     discovery::{
         dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
     },
-    dns::{default_resolver, DnsResolver},
+    dns::DnsResolver,
     magicsock::{<span class="self">self</span>, Handle, NodeIdMappedAddr},
     tls,
     watchable::Watcher,
@@ -2341,7 +2341,7 @@
         };
         <span class="kw">let </span>dns_resolver = <span class="self">self
             </span>.dns_resolver
-            .unwrap_or_else(|| default_resolver().clone());
+            .unwrap_or_else(|| DnsResolver::new_with_defaults());
         <span class="kw">let </span>discovery = <span class="self">self
             </span>.discovery
             .into_iter()

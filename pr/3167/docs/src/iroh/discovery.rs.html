@@ -1648,11 +1648,9 @@
 
     <span class="kw">use crate</span>::{
         discovery::pkarr::PkarrPublisher,
-        dns::{node_info::NodeInfo, ResolverExt},
+        dns::{node_info::NodeInfo, DnsResolver},
         test_utils::{
-            dns_server::{create_dns_resolver, run_dns_server},
-            pkarr_dns_state::State,
-            run_relay_server, DnsPkarrServer,
+            dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server, DnsPkarrServer,
         },
         Endpoint, RelayMode,
     };
@@ -1675,8 +1673,10 @@
         <span class="kw">let </span>signed_packet = node_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
         state.upsert(signed_packet)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>resolver = create_dns_resolver(nameserver)<span class="question-mark">?</span>;
-        <span class="kw">let </span>resolved = resolver.lookup_by_id(<span class="kw-2">&amp;</span>node_info.node_id, <span class="kw-2">&amp;</span>origin).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>resolver = DnsResolver::new_with_single_nameserver(nameserver);
+        <span class="kw">let </span>resolved = resolver
+            .lookup_node_by_id(<span class="kw-2">&amp;</span>node_info.node_id, <span class="kw-2">&amp;</span>origin)
+            .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">assert_eq!</span>(resolved, node_info.into());
 
@@ -1695,13 +1695,13 @@
 
         <span class="kw">let </span>relay_url = <span class="prelude-val">Some</span>(<span class="string">"https://relay.example"</span>.parse().unwrap());
 
-        <span class="kw">let </span>resolver = create_dns_resolver(dns_pkarr_server.nameserver)<span class="question-mark">?</span>;
+        <span class="kw">let </span>resolver = DnsResolver::new_with_single_nameserver(dns_pkarr_server.nameserver);
         <span class="kw">let </span>publisher = PkarrPublisher::new(secret_key, dns_pkarr_server.pkarr_url.clone());
         <span class="comment">// does not block, update happens in background task
         </span>publisher.update_addr_info(relay_url.as_ref(), <span class="kw-2">&amp;</span>Default::default());
         <span class="comment">// wait until our shared state received the update from pkarr publishing
         </span>dns_pkarr_server.on_node(<span class="kw-2">&amp;</span>node_id, PUBLISH_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>resolved = resolver.lookup_by_id(<span class="kw-2">&amp;</span>node_id, <span class="kw-2">&amp;</span>origin).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>resolved = resolver.lookup_node_by_id(<span class="kw-2">&amp;</span>node_id, <span class="kw-2">&amp;</span>origin).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>expected = NodeAddr {
             node_id,

@@ -34,227 +34,33 @@
 <a href="#33" id="33">33</a>
 <a href="#34" id="34">34</a>
 <a href="#35" id="35">35</a>
-<a href="#36" id="36">36</a>
-<a href="#37" id="37">37</a>
-<a href="#38" id="38">38</a>
-<a href="#39" id="39">39</a>
-<a href="#40" id="40">40</a>
-<a href="#41" id="41">41</a>
-<a href="#42" id="42">42</a>
-<a href="#43" id="43">43</a>
-<a href="#44" id="44">44</a>
-<a href="#45" id="45">45</a>
-<a href="#46" id="46">46</a>
-<a href="#47" id="47">47</a>
-<a href="#48" id="48">48</a>
-<a href="#49" id="49">49</a>
-<a href="#50" id="50">50</a>
-<a href="#51" id="51">51</a>
-<a href="#52" id="52">52</a>
-<a href="#53" id="53">53</a>
-<a href="#54" id="54">54</a>
-<a href="#55" id="55">55</a>
-<a href="#56" id="56">56</a>
-<a href="#57" id="57">57</a>
-<a href="#58" id="58">58</a>
-<a href="#59" id="59">59</a>
-<a href="#60" id="60">60</a>
-<a href="#61" id="61">61</a>
-<a href="#62" id="62">62</a>
-<a href="#63" id="63">63</a>
-<a href="#64" id="64">64</a>
-<a href="#65" id="65">65</a>
-<a href="#66" id="66">66</a>
-<a href="#67" id="67">67</a>
-<a href="#68" id="68">68</a>
-<a href="#69" id="69">69</a>
-<a href="#70" id="70">70</a>
-<a href="#71" id="71">71</a>
-<a href="#72" id="72">72</a>
-<a href="#73" id="73">73</a>
-<a href="#74" id="74">74</a>
-<a href="#75" id="75">75</a>
-<a href="#76" id="76">76</a>
-<a href="#77" id="77">77</a>
-<a href="#78" id="78">78</a>
-<a href="#79" id="79">79</a>
-<a href="#80" id="80">80</a>
-<a href="#81" id="81">81</a>
-<a href="#82" id="82">82</a>
-<a href="#83" id="83">83</a>
-<a href="#84" id="84">84</a>
-<a href="#85" id="85">85</a>
-<a href="#86" id="86">86</a>
-<a href="#87" id="87">87</a>
-<a href="#88" id="88">88</a>
-<a href="#89" id="89">89</a>
-<a href="#90" id="90">90</a>
-<a href="#91" id="91">91</a>
-<a href="#92" id="92">92</a>
-<a href="#93" id="93">93</a>
-<a href="#94" id="94">94</a>
-<a href="#95" id="95">95</a>
-<a href="#96" id="96">96</a>
-<a href="#97" id="97">97</a>
-<a href="#98" id="98">98</a>
-<a href="#99" id="99">99</a>
-<a href="#100" id="100">100</a>
-<a href="#101" id="101">101</a>
-<a href="#102" id="102">102</a>
-<a href="#103" id="103">103</a>
-<a href="#104" id="104">104</a>
-<a href="#105" id="105">105</a>
-<a href="#106" id="106">106</a>
-<a href="#107" id="107">107</a>
-<a href="#108" id="108">108</a>
-<a href="#109" id="109">109</a>
-<a href="#110" id="110">110</a>
-<a href="#111" id="111">111</a>
-<a href="#112" id="112">112</a>
-<a href="#113" id="113">113</a>
-<a href="#114" id="114">114</a>
-<a href="#115" id="115">115</a>
-<a href="#116" id="116">116</a>
-<a href="#117" id="117">117</a>
-<a href="#118" id="118">118</a>
-<a href="#119" id="119">119</a>
-<a href="#120" id="120">120</a>
-<a href="#121" id="121">121</a>
-<a href="#122" id="122">122</a>
-<a href="#123" id="123">123</a>
-<a href="#124" id="124">124</a>
-<a href="#125" id="125">125</a>
-<a href="#126" id="126">126</a>
-<a href="#127" id="127">127</a>
-<a href="#128" id="128">128</a>
-<a href="#129" id="129">129</a>
-<a href="#130" id="130">130</a>
-<a href="#131" id="131">131</a>
-<a href="#132" id="132">132</a>
-<a href="#133" id="133">133</a>
-<a href="#134" id="134">134</a>
-<a href="#135" id="135">135</a>
-<a href="#136" id="136">136</a>
-<a href="#137" id="137">137</a>
-<a href="#138" id="138">138</a>
-<a href="#139" id="139">139</a>
-<a href="#140" id="140">140</a>
-<a href="#141" id="141">141</a>
-<a href="#142" id="142">142</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module exports a DNS resolver, which is also the default resolver used in the
+<a href="#36" id="36">36</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module exports a DNS resolver, which is also the default resolver used in the
 //! [`crate::Endpoint`] if no custom resolver is configured.
 //!
-//! It also exports [`ResolverExt`]: A extension trait over [`DnsResolver`] to perform DNS queries
-//! by ipv4, ipv6, name and node_id. See the [`node_info`] module documentation for details on how
+//! The resolver provides methods to resolve domain names to ipv4 and ipv6 addresses,
+//! and to resolve node ids to node addresses.
+//!
+//! See the [`node_info`] module documentation for details on how
 //! iroh node records are structured.
 
-</span><span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>iroh_base::{NodeAddr, NodeId};
-<span class="kw">use </span>iroh_relay::dns::stagger_call;
-<span class="kw">use </span>n0_future::Future;
-
-<span class="kw">pub mod </span>node_info;
-
-<span class="kw">pub use </span>iroh_relay::dns::{default_resolver, DnsResolver};
-
-<span class="doccomment">/// Get the DNS resolver used within iroh.
-</span><span class="kw">pub fn </span>resolver() -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>DnsResolver {
-    default_resolver()
-}
-
-<span class="doccomment">/// Extension trait to [`DnsResolver`].
-</span><span class="kw">pub trait </span>ResolverExt {
-    <span class="doccomment">/// Looks up node info by DNS name.
-    </span><span class="kw">fn </span>lookup_by_name(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;NodeAddr&gt;&gt;;
-
-    <span class="doccomment">/// Looks up node info by [`NodeId`] and origin domain name.
-    </span><span class="kw">fn </span>lookup_by_id(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        node_id: <span class="kw-2">&amp;</span>NodeId,
-        origin: <span class="kw-2">&amp;</span>str,
-    ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;NodeAddr&gt;&gt;;
-
-    <span class="doccomment">/// Looks up node info by DNS name in a staggered fashion.
-    ///
-    /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
-    /// at T+0ms, T+200ms and T+300ms. The result of the first successful call is returned, or a
-    /// summary of all errors otherwise.
-    </span><span class="kw">fn </span>lookup_by_name_staggered(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        name: <span class="kw-2">&amp;</span>str,
-        delays_ms: <span class="kw-2">&amp;</span>[u64],
-    ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;NodeAddr&gt;&gt;;
-
-    <span class="doccomment">/// Looks up node info by [`NodeId`] and origin domain name.
-    ///
-    /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
-    /// at T+0ms, T+200ms and T+300ms. The result of the first successful call is returned, or a
-    /// summary of all errors otherwise.
-    </span><span class="kw">fn </span>lookup_by_id_staggered(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        node_id: <span class="kw-2">&amp;</span>NodeId,
-        origin: <span class="kw-2">&amp;</span>str,
-        delays_ms: <span class="kw-2">&amp;</span>[u64],
-    ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;NodeAddr&gt;&gt;;
-}
-
-<span class="kw">impl </span>ResolverExt <span class="kw">for </span>DnsResolver {
-    <span class="kw">async fn </span>lookup_by_name(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;NodeAddr&gt; {
-        <span class="kw">let </span>attrs = node_info::TxtAttrs::&lt;node_info::IrohAttr&gt;::lookup_by_name(<span class="self">self</span>, name).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>info: node_info::NodeInfo = attrs.into();
-        <span class="prelude-val">Ok</span>(info.into())
-    }
-
-    <span class="kw">async fn </span>lookup_by_id(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: <span class="kw-2">&amp;</span>NodeId, origin: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;NodeAddr&gt; {
-        <span class="kw">let </span>attrs =
-            node_info::TxtAttrs::&lt;node_info::IrohAttr&gt;::lookup_by_id(<span class="self">self</span>, node_id, origin).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>info: node_info::NodeInfo = attrs.into();
-        <span class="prelude-val">Ok</span>(info.into())
-    }
-    <span class="doccomment">/// Looks up node info by DNS name in a staggered fashion.
-    ///
-    /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
-    /// at T+0ms, T+200ms and T+300ms. The result of the first successful call is returned, or a
-    /// summary of all errors otherwise.
-    </span><span class="kw">async fn </span>lookup_by_name_staggered(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>str, delays_ms: <span class="kw-2">&amp;</span>[u64]) -&gt; <span class="prelude-ty">Result</span>&lt;NodeAddr&gt; {
-        <span class="kw">let </span>f = || <span class="self">self</span>.lookup_by_name(name);
-        stagger_call(f, delays_ms).<span class="kw">await
-    </span>}
-
-    <span class="doccomment">/// Looks up node info by [`NodeId`] and origin domain name.
-    ///
-    /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
-    /// at T+0ms, T+200ms and T+300ms. The result of the first successful call is returned, or a
-    /// summary of all errors otherwise.
-    </span><span class="kw">async fn </span>lookup_by_id_staggered(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        node_id: <span class="kw-2">&amp;</span>NodeId,
-        origin: <span class="kw-2">&amp;</span>str,
-        delays_ms: <span class="kw-2">&amp;</span>[u64],
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;NodeAddr&gt; {
-        <span class="kw">let </span>f = || <span class="self">self</span>.lookup_by_id(node_id, origin);
-        stagger_call(f, delays_ms).<span class="kw">await
-    </span>}
-}
+</span><span class="kw">pub use </span>iroh_relay::dns::{node_info, DnsResolver};
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>tests {
-    <span class="kw">use </span>std::{sync::atomic::AtomicUsize, time::Duration};
+    <span class="kw">use </span>std::time::Duration;
 
     <span class="kw">use </span>tracing_test::traced_test;
 
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">super</span>::DnsResolver;
     <span class="kw">use </span><span class="kw">crate</span>::defaults::staging::NA_RELAY_HOSTNAME;
+
     <span class="kw">const </span>TIMEOUT: Duration = Duration::from_secs(<span class="number">5</span>);
     <span class="kw">const </span>STAGGERING_DELAYS: <span class="kw-2">&amp;</span>[u64] = <span class="kw-2">&amp;</span>[<span class="number">200</span>, <span class="number">300</span>];
 
     <span class="attr">#[tokio::test]
     #[traced_test]
     </span><span class="kw">async fn </span>test_dns_lookup_ipv4_ipv6() {
-        <span class="kw">let </span>resolver = default_resolver();
+        <span class="kw">let </span>resolver = DnsResolver::new_with_defaults();
         <span class="kw">let </span>res: Vec&lt;<span class="kw">_</span>&gt; = resolver
             .lookup_ipv4_ipv6_staggered(NA_RELAY_HOSTNAME, TIMEOUT, STAGGERING_DELAYS)
             .<span class="kw">await
@@ -262,24 +68,6 @@
             .collect();
         <span class="macro">assert!</span>(!res.is_empty());
         <span class="macro">dbg!</span>(res);
-    }
-
-    <span class="attr">#[tokio::test]
-    #[traced_test]
-    </span><span class="kw">async fn </span>stagger_basic() {
-        <span class="kw">const </span>CALL_RESULTS: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Result</span>&lt;u8, u8&gt;] = <span class="kw-2">&amp;</span>[<span class="prelude-val">Err</span>(<span class="number">2</span>), <span class="prelude-val">Ok</span>(<span class="number">3</span>), <span class="prelude-val">Ok</span>(<span class="number">5</span>), <span class="prelude-val">Ok</span>(<span class="number">7</span>)];
-        <span class="kw">static </span>DONE_CALL: AtomicUsize = AtomicUsize::new(<span class="number">0</span>);
-        <span class="kw">let </span>f = || {
-            <span class="kw">let </span>r_pos = DONE_CALL.fetch_add(<span class="number">1</span>, std::sync::atomic::Ordering::Relaxed);
-            <span class="kw">async move </span>{
-                <span class="macro">tracing::info!</span>(r_pos, <span class="string">"call"</span>);
-                CALL_RESULTS[r_pos].map_err(|e| <span class="macro">anyhow::anyhow!</span>(<span class="string">"{e}"</span>))
-            }
-        };
-
-        <span class="kw">let </span>delays = [<span class="number">1000</span>, <span class="number">15</span>];
-        <span class="kw">let </span>result = stagger_call(f, <span class="kw-2">&amp;</span>delays).<span class="kw">await</span>.unwrap();
-        <span class="macro">assert_eq!</span>(result, <span class="number">5</span>)
     }
 }
 </code></pre></div></section></main></body></html>
