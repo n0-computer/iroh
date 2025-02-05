@@ -2023,7 +2023,7 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "0.32.0"
+version = "0.32.1"
 dependencies = [
  "aead",
  "anyhow",
