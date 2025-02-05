@@ -217,7 +217,7 @@ impl Default for Reports {
 ///
 /// Use [`Options::stun_v4`], [`Options::stun_v6`], and [`Options::quic_config`]
 /// to enable STUN over IPv4, STUN over IPv6, and QUIC address discovery.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Options {
     /// Socket to send IPv4 STUN probes from.
     ///
