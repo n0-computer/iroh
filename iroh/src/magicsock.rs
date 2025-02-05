@@ -153,7 +153,7 @@ impl Default for Options {
             node_map: None,
             discovery: None,
             proxy_url: None,
-            dns_resolver: crate::dns::DnsResolver::new_with_defaults(),
+            dns_resolver: crate::dns::DnsResolver::new(),
             server_config,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -4027,7 +4027,7 @@ mod tests {
             Arc::new(quinn::TransportConfig::default()),
             true,
         )?;
-        let dns_resolver = crate::dns::DnsResolver::new_with_defaults();
+        let dns_resolver = crate::dns::DnsResolver::new();
         let opts = Options {
             addr_v4: None,
             addr_v6: None,

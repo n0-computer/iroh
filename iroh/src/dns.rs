@@ -24,7 +24,7 @@ pub(crate) mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_dns_lookup_ipv4_ipv6() {
-        let resolver = DnsResolver::new_with_defaults();
+        let resolver = DnsResolver::new();
         let res: Vec<_> = resolver
             .lookup_ipv4_ipv6_staggered(NA_RELAY_HOSTNAME, TIMEOUT, STAGGERING_DELAYS)
             .await

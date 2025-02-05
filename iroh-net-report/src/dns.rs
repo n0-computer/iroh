@@ -7,6 +7,6 @@ pub(crate) mod tests {
 
     /// Get a DNS resolver suitable for testing.
     pub fn resolver() -> DnsResolver {
-        DnsResolver::new_with_defaults()
+        DnsResolver::new()
     }
 }

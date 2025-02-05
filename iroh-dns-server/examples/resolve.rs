@@ -39,8 +39,8 @@ enum Command {
 async fn main() -> anyhow::Result<()> {
     let args = Cli::parse();
     let (resolver, origin) = match args.env {
-        Env::Staging => (DnsResolver::new_with_defaults(), N0_DNS_NODE_ORIGIN_STAGING),
-        Env::Prod => (DnsResolver::new_with_defaults(), N0_DNS_NODE_ORIGIN_PROD),
+        Env::Staging => (DnsResolver::new(), N0_DNS_NODE_ORIGIN_STAGING),
+        Env::Prod => (DnsResolver::new(), N0_DNS_NODE_ORIGIN_PROD),
         Env::Dev => (
             DnsResolver::new_with_single_nameserver(LOCALHOST_DNS.parse()?),
             EXAMPLE_ORIGIN,

@@ -32,7 +32,7 @@ impl DnsResolver {
     /// We first try to read the system's resolver from `/etc/resolv.conf`.
     /// This does not work at least on some Androids, therefore we fallback
     /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
-    pub fn new_with_defaults() -> Self {
+    pub fn new() -> Self {
         let (system_config, mut options) =
             hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
 
@@ -247,6 +247,12 @@ impl DnsResolver {
     ) -> Result<NodeAddr> {
         let f = || self.lookup_node_by_id(node_id, origin);
         stagger_call(f, delays_ms).await
+    }
+}
+
+impl Default for DnsResolver {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

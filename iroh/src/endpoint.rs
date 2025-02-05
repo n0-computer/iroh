@@ -152,9 +152,7 @@ impl Builder {
             keylog: self.keylog,
             secret_key: secret_key.clone(),
         };
-        let dns_resolver = self
-            .dns_resolver
-            .unwrap_or_else(DnsResolver::new_with_defaults);
+        let dns_resolver = self.dns_resolver.unwrap_or_else(DnsResolver::new);
         let discovery = self
             .discovery
             .into_iter()
