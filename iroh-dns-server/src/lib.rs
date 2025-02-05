@@ -117,26 +117,26 @@ mod tests {
 
         // resolve root record
         let name = Name::from_utf8(format!("{pubkey}."))?;
-        let res = resolver.lookup_txt(name).await?;
-        let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi0".to_string()]);
 
         // resolve level one record
         let name = Name::from_utf8(format!("_hello.{pubkey}."))?;
-        let res = resolver.lookup_txt(name).await?;
-        let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi1".to_string()]);
 
         // resolve level two record
         let name = Name::from_utf8(format!("_hello.world.{pubkey}."))?;
-        let res = resolver.lookup_txt(name).await?;
-        let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi2".to_string()]);
 
         // resolve multiple records for same name
         let name = Name::from_utf8(format!("multiple.{pubkey}."))?;
-        let res = resolver.lookup_txt(name).await?;
-        let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi3".to_string(), "hi4".to_string()]);
 
         // resolve A record
@@ -262,7 +262,7 @@ mod tests {
     }
 
     fn test_resolver(nameserver: SocketAddr) -> DnsResolver {
-        DnsResolver::new_with_single_nameserver(nameserver)
+        DnsResolver::with_single_nameserver(nameserver)
     }
 
     fn random_signed_packet() -> Result<SignedPacket> {

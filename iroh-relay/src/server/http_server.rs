@@ -709,10 +709,13 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::client::{
-        conn::{Conn, ReceivedMessage, SendMessage},
-        streams::MaybeTlsStreamChained,
-        Client, ClientBuilder,
+    use crate::{
+        client::{
+            conn::{Conn, ReceivedMessage, SendMessage},
+            streams::MaybeTlsStreamChained,
+            Client, ClientBuilder,
+        },
+        dns::DnsResolver,
     };
 
     pub(crate) fn make_tls_config() -> TlsConfig {
@@ -811,9 +814,8 @@ mod tests {
 
     async fn create_test_client(key: SecretKey, server_url: Url) -> Result<(PublicKey, Client)> {
         let public_key = key.public();
-        let dns_resolver = crate::dns::DnsResolver::new();
         let client =
-            ClientBuilder::new(server_url, key, dns_resolver).insecure_skip_cert_verify(true);
+            ClientBuilder::new(server_url, key, DnsResolver::new()).insecure_skip_cert_verify(true);
         let client = client.connect().await?;
 
         Ok((public_key, client))

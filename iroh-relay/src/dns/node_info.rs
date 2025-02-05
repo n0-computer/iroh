@@ -46,7 +46,7 @@ use iroh_base::{NodeAddr, NodeId, SecretKey};
 use tracing::warn;
 use url::Url;
 
-use crate::dns::DnsResolver;
+use crate::{defaults::timeouts::DNS_TIMEOUT, dns::DnsResolver};
 
 /// The DNS name for the iroh TXT record.
 pub const IROH_TXT_NAME: &str = "_iroh";
@@ -166,8 +166,8 @@ impl NodeInfo {
     }
 
     /// Parses a [`NodeInfo`] from a TXT records lookup.
-    pub fn from_hickory_lookup(lookup: hickory_resolver::lookup::TxtLookup) -> Result<Self> {
-        let attrs = TxtAttrs::from_hickory_lookup(lookup)?;
+    pub fn from_txt_lookup(lookup: super::TxtLookup) -> Result<Self> {
+        let attrs = TxtAttrs::from_txt_lookup(lookup)?;
         Ok(attrs.into())
     }
 
@@ -232,7 +232,7 @@ pub(super) struct TxtAttrs<T> {
 
 impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     /// Creates [`TxtAttrs`] from a node id and an iterator of key-value pairs.
-    pub fn from_parts(node_id: NodeId, pairs: impl Iterator<Item = (T, String)>) -> Self {
+    pub(super) fn from_parts(node_id: NodeId, pairs: impl Iterator<Item = (T, String)>) -> Self {
         let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
         for (k, v) in pairs {
             attrs.entry(k).or_default().push(v);
@@ -241,7 +241,10 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Creates [`TxtAttrs`] from a node id and an iterator of "{key}={value}" strings.
-    pub fn from_strings(node_id: NodeId, strings: impl Iterator<Item = String>) -> Result<Self> {
+    pub(super) fn from_strings(
+        node_id: NodeId,
+        strings: impl Iterator<Item = String>,
+    ) -> Result<Self> {
         let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
         for s in strings {
             let mut parts = s.split('=');
@@ -258,13 +261,13 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
 
     async fn lookup(resolver: &DnsResolver, name: Name) -> Result<Self> {
         let name = ensure_iroh_txt_label(name)?;
-        let lookup = resolver.lookup_txt(name).await?;
-        let attrs = Self::from_hickory_lookup(lookup)?;
+        let lookup = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        let attrs = Self::from_txt_lookup(lookup)?;
         Ok(attrs)
     }
 
     /// Looks up attributes by [`NodeId`] and origin domain.
-    pub async fn lookup_by_id(
+    pub(super) async fn lookup_by_id(
         resolver: &DnsResolver,
         node_id: &NodeId,
         origin: &str,
@@ -274,23 +277,23 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Looks up attributes by DNS name.
-    pub async fn lookup_by_name(resolver: &DnsResolver, name: &str) -> Result<Self> {
+    pub(super) async fn lookup_by_name(resolver: &DnsResolver, name: &str) -> Result<Self> {
         let name = Name::from_str(name)?;
         TxtAttrs::lookup(resolver, name).await
     }
 
     /// Returns the parsed attributes.
-    pub fn attrs(&self) -> &BTreeMap<T, Vec<String>> {
+    pub(super) fn attrs(&self) -> &BTreeMap<T, Vec<String>> {
         &self.attrs
     }
 
     /// Returns the node id.
-    pub fn node_id(&self) -> NodeId {
+    pub(super) fn node_id(&self) -> NodeId {
         self.node_id
     }
 
     /// Parses a [`pkarr::SignedPacket`].
-    pub fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
+    pub(super) fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
         use pkarr::dns::{
             rdata::RData,
             {self},
@@ -313,11 +316,11 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Parses a TXT records lookup.
-    pub fn from_hickory_lookup(lookup: hickory_resolver::lookup::TxtLookup) -> Result<Self> {
-        let queried_node_id = node_id_from_hickory_name(lookup.query().name())
+    pub(super) fn from_txt_lookup(lookup: super::TxtLookup) -> Result<Self> {
+        let queried_node_id = node_id_from_hickory_name(lookup.0.query().name())
             .ok_or_else(|| anyhow!("invalid DNS answer: not a query for _iroh.z32encodedpubkey"))?;
 
-        let strings = lookup.as_lookup().record_iter().filter_map(|record| {
+        let strings = lookup.0.as_lookup().record_iter().filter_map(|record| {
             match node_id_from_hickory_name(record.name()) {
                 // Filter out only TXT record answers that match the node_id we searched for.
                 Some(n) if n == queried_node_id => match record.data().as_txt() {
@@ -360,7 +363,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Converts to a list of [`hickory_resolver::proto::rr::Record`] resource records.
-    pub fn to_hickory_records(
+    pub(super) fn to_hickory_records(
         &self,
         origin: &str,
         ttl: u32,
@@ -379,7 +382,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     /// Creates a [`pkarr::SignedPacket`]
     ///
     /// This constructs a DNS packet and signs it with a [`SecretKey`].
-    pub fn to_pkarr_signed_packet(
+    pub(super) fn to_pkarr_signed_packet(
         &self,
         secret_key: &SecretKey,
         ttl: u32,
@@ -529,8 +532,9 @@ mod tests {
             ),
         ];
         let lookup = Lookup::new_with_max_ttl(query, Arc::new(records));
+        let lookup = hickory_resolver::lookup::TxtLookup::from(lookup);
 
-        let node_info = NodeInfo::from_hickory_lookup(lookup.into())?;
+        let node_info = NodeInfo::from_txt_lookup(lookup.into())?;
         assert_eq!(
             node_info,
             NodeInfo {

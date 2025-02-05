@@ -42,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
         Env::Staging => (DnsResolver::new(), N0_DNS_NODE_ORIGIN_STAGING),
         Env::Prod => (DnsResolver::new(), N0_DNS_NODE_ORIGIN_PROD),
         Env::Dev => (
-            DnsResolver::new_with_single_nameserver(LOCALHOST_DNS.parse()?),
+            DnsResolver::with_single_nameserver(LOCALHOST_DNS.parse()?),
             EXAMPLE_ORIGIN,
         ),
     };

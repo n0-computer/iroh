@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use hickory_resolver::{lookup::TxtLookup, IntoName, ResolveError, Resolver, TokioResolver};
+use hickory_resolver::{IntoName, Resolver, TokioResolver};
 use iroh_base::{NodeAddr, NodeId};
 use n0_future::{
     time::{self, Duration},
@@ -59,7 +59,7 @@ impl DnsResolver {
     }
 
     /// Create a new DNS resolver configured with a single UDP DNS nameserver.
-    pub fn new_with_single_nameserver(nameserver: SocketAddr) -> Self {
+    pub fn with_single_nameserver(nameserver: SocketAddr) -> Self {
         let mut config = hickory_resolver::config::ResolverConfig::new();
         let nameserver_config = hickory_resolver::config::NameServerConfig::new(
             nameserver,
@@ -75,8 +75,9 @@ impl DnsResolver {
     }
 
     /// Lookup a TXT record.
-    pub async fn lookup_txt(&self, query: impl IntoName) -> Result<TxtLookup, ResolveError> {
-        self.0.txt_lookup(query).await
+    pub async fn lookup_txt(&self, query: impl IntoName, timeout: Duration) -> Result<TxtLookup> {
+        let res = time::timeout(timeout, self.0.txt_lookup(query)).await??;
+        Ok(TxtLookup(res))
     }
 
     /// Perform an ipv4 lookup with a timeout.
@@ -259,6 +260,43 @@ impl Default for DnsResolver {
 impl From<TokioResolver> for DnsResolver {
     fn from(resolver: TokioResolver) -> Self {
         DnsResolver(resolver)
+    }
+}
+
+/// TXT records returned from [`DnsResolver::lookup_txt`]
+#[derive(Debug, Clone)]
+pub struct TxtLookup(pub(self) hickory_resolver::lookup::TxtLookup);
+
+impl From<hickory_resolver::lookup::TxtLookup> for TxtLookup {
+    fn from(value: hickory_resolver::lookup::TxtLookup) -> Self {
+        Self(value)
+    }
+}
+
+impl IntoIterator for TxtLookup {
+    type Item = TXT;
+
+    type IntoIter = Box<dyn Iterator<Item = TXT>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Box::new(self.0.into_iter().map(|txt| TXT(txt)))
+    }
+}
+
+/// Record data for a TXT record
+#[derive(Debug, Clone)]
+pub struct TXT(hickory_proto::rr::rdata::TXT);
+
+impl TXT {
+    /// Returns the raw character strings of this TXT record.
+    pub fn txt_data(&self) -> &[Box<[u8]>] {
+        self.0.txt_data()
+    }
+}
+
+impl ToString for TXT {
+    fn to_string(&self) -> String {
+        self.0.to_string()
     }
 }
 

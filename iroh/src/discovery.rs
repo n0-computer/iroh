@@ -789,7 +789,7 @@ mod test_dns_pkarr {
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
         state.upsert(signed_packet)?;
 
-        let resolver = DnsResolver::new_with_single_nameserver(nameserver);
+        let resolver = DnsResolver::with_single_nameserver(nameserver);
         let resolved = resolver
             .lookup_node_by_id(&node_info.node_id, &origin)
             .await?;
@@ -811,7 +811,7 @@ mod test_dns_pkarr {
 
         let relay_url = Some("https://relay.example".parse().unwrap());
 
-        let resolver = DnsResolver::new_with_single_nameserver(dns_pkarr_server.nameserver);
+        let resolver = DnsResolver::with_single_nameserver(dns_pkarr_server.nameserver);
         let publisher = PkarrPublisher::new(secret_key, dns_pkarr_server.pkarr_url.clone());
         // does not block, update happens in background task
         publisher.update_addr_info(relay_url.as_ref(), &Default::default());
