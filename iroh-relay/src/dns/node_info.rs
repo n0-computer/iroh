@@ -432,9 +432,7 @@ mod tests {
     use iroh_base::{NodeId, SecretKey};
     use testresult::TestResult;
 
-    use crate::dns::node_info::NodeIdExt;
-
-    use super::NodeInfo;
+    use super::{NodeIdExt, NodeInfo};
 
     #[test]
     fn txt_attr_roundtrip() {

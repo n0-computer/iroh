@@ -119,7 +119,7 @@ pub(crate) struct Options {
 
     /// A DNS resolver to use for resolving relay URLs.
     ///
-    /// You can use [`crate::dns::DnsResolver::new_with_defaults`] for a resolver
+    /// You can use [`crate::dns::DnsResolver::new`] for a resolver
     /// that uses the system's DNS configuration.
     pub(crate) dns_resolver: DnsResolver,
 

@@ -1,7 +1,7 @@
 //! DNS resolver
 
 use std::{
-    fmt::Write,
+    fmt::{self, Write},
     future::Future,
     net::{IpAddr, Ipv6Addr, SocketAddr},
 };
@@ -279,7 +279,7 @@ impl IntoIterator for TxtLookup {
     type IntoIter = Box<dyn Iterator<Item = TXT>>;
 
     fn into_iter(self) -> Self::IntoIter {
-        Box::new(self.0.into_iter().map(|txt| TXT(txt)))
+        Box::new(self.0.into_iter().map(TXT))
     }
 }
 
@@ -294,9 +294,9 @@ impl TXT {
     }
 }
 
-impl ToString for TXT {
-    fn to_string(&self) -> String {
-        self.0.to_string()
+impl fmt::Display for TXT {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
