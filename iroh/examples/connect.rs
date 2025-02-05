@@ -74,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Attempt to connect, over the given ALPN.
     // Returns a Quinn connection.
-    let conn = endpoint.connect(addr, EXAMPLE_ALPN).await?.await?;
+    let conn = endpoint.connect(addr, EXAMPLE_ALPN).await?;
     info!("connected");
 
     // Use the Quinn API to send and recv content.

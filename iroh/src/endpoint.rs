@@ -564,10 +564,7 @@ impl Endpoint {
 
     // # Methods for establishing connectivity.
 
-    /// Starts a connection attempt with a remote [`Endpoint`].
-    ///
-    /// Returned future resolves to a [`Connecting`], which can be further processed until
-    /// a [`Connection`] by awaiting.
+    /// Connects to a remote [`Endpoint`].
     ///
     /// A value that can be converted into a [`NodeAddr`] is required. This can be either a
     /// [`NodeAddr`], a [`NodeId`] or a [`iroh_base::ticket::NodeTicket`].
@@ -589,27 +586,32 @@ impl Endpoint {
     /// The `alpn`, or application-level protocol identifier, is also required. The remote
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
-    pub async fn connect(&self, node_addr: impl Into<NodeAddr>, alpn: &[u8]) -> Result<Connecting> {
-        self.connect_with(node_addr, alpn, self.static_config.transport_config.clone())
-            .await
+    pub async fn connect(&self, node_addr: impl Into<NodeAddr>, alpn: &[u8]) -> Result<Connection> {
+        let connecting = self
+            .connect_with_opts(node_addr, alpn, Default::default())
+            .await?;
+        Ok(connecting.await?)
     }
 
     /// Starts a connection attempt with a remote [`Endpoint`].
     ///
-    /// Returned future resolves to a [`Connecting`], which can be further processed until
-    /// a [`Connection`] by awaiting.
-    ///
-    /// Like [`Endpoint::connect`], but allows providing a custom transport config for the connection.
-    /// See the docs of [`Endpoint::connect`] for details.
-    ///
-    /// Please be aware that changing some settings may have adverse effects on establishing
-    /// and maintaining direct connections.  Carefully test settings you use and consider
-    /// this currently as still rather experimental.
-    pub async fn connect_with(
+    /// Like [`Endpoint::connect`] (see also its docs for general details), but allows for a more
+    /// advanced connection setup with more customization in two aspects:
+    /// 1. The returned future resolves to a [`Connecting`], which can be further processed into
+    ///    a [`Connection`] by awaiting, or alternatively allows connecting with 0RTT via
+    ///    [`Connecting::into_0rtt`].
+    ///    **Note:** Please read the documentation for `into_0rtt` carefully to assess
+    ///    security concerns.
+    /// 2. The [`TransportConfig`] for the connection can be modified via the provided
+    ///    [`ConnectOptions`].
+    ///    **Note:** Please be aware that changing transport config settings may have adverse effects on
+    ///    establishing and maintaining direct connections.  Carefully test settings you use and
+    ///    consider this currently as still rather experimental.
+    pub async fn connect_with_opts(
         &self,
         node_addr: impl Into<NodeAddr>,
         alpn: &[u8],
-        transport_config: Arc<TransportConfig>,
+        options: ConnectOptions,
     ) -> Result<Connecting> {
         let node_addr: NodeAddr = node_addr.into();
         tracing::Span::current().record("remote", node_addr.node_id.fmt_short());
@@ -645,6 +647,10 @@ impl Endpoint {
             "connecting to {}: (via {} - {:?})",
             node_id, addr, direct_addresses
         );
+
+        let transport_config = options
+            .transport_config
+            .unwrap_or(self.static_config.transport_config.clone());
 
         // Start connecting via quinn. This will time out after 10 seconds if no reachable
         // address is available.
@@ -1082,6 +1088,28 @@ impl Endpoint {
     #[cfg(test)]
     pub(crate) fn endpoint(&self) -> &quinn::Endpoint {
         self.msock.endpoint()
+    }
+}
+
+/// Options for the [`Endpoint::connect_with_opts`] function.
+#[derive(Default, Debug, Clone)]
+pub struct ConnectOptions {
+    transport_config: Option<Arc<TransportConfig>>,
+}
+
+impl ConnectOptions {
+    /// Initializes new connection options.
+    ///
+    /// By default, the connection will use the same options
+    /// as [`Endpoint::connect`], e.g. a default [`TransportConfig`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the QUIC transport config options for this connection.
+    pub fn with_transport_config(mut self, transport_config: Arc<TransportConfig>) -> Self {
+        self.transport_config = Some(transport_config);
+        self
     }
 }
 
@@ -1803,12 +1831,7 @@ mod tests {
                     .unwrap();
                 info!("client connecting");
                 let node_addr = NodeAddr::new(server_peer_id).with_relay_url(relay_url);
-                let conn = ep
-                    .connect(node_addr, TEST_ALPN)
-                    .await
-                    .unwrap()
-                    .await
-                    .unwrap();
+                let conn = ep.connect(node_addr, TEST_ALPN).await.unwrap();
                 let mut stream = conn.open_uni().await.unwrap();
 
                 // First write is accepted by server.  We need this bit of synchronisation
@@ -1970,12 +1993,7 @@ mod tests {
                 info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "client bound");
                 let node_addr = NodeAddr::new(server_node_id).with_relay_url(relay_url);
                 info!(to = ?node_addr, "client connecting");
-                let conn = ep
-                    .connect(node_addr, TEST_ALPN)
-                    .await
-                    .unwrap()
-                    .await
-                    .unwrap();
+                let conn = ep.connect(node_addr, TEST_ALPN).await.unwrap();
                 info!("client connected");
                 let (mut send, mut recv) = conn.open_bi().await.unwrap();
 
@@ -2032,7 +2050,7 @@ mod tests {
         eprintln!("node id 2 {ep2_nodeid}");
 
         async fn connect_hello(ep: Endpoint, dst: NodeAddr) {
-            let conn = ep.connect(dst, TEST_ALPN).await.unwrap().await.unwrap();
+            let conn = ep.connect(dst, TEST_ALPN).await.unwrap();
             let (mut send, mut recv) = conn.open_bi().await.unwrap();
             info!("sending hello");
             send.write_all(b"hello").await.unwrap();
@@ -2159,11 +2177,7 @@ mod tests {
         };
 
         let ep2_side = async move {
-            ep2.connect(ep1_nodeaddr, TEST_ALPN)
-                .await
-                .unwrap()
-                .await
-                .unwrap();
+            ep2.connect(ep1_nodeaddr, TEST_ALPN).await.unwrap();
             handle_direct_conn(&ep2, ep1_nodeid).await
         };
 

@@ -67,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Attempt to connect, over the given ALPN.
     // Returns a QUIC connection.
-    let conn = endpoint.connect(addr, EXAMPLE_ALPN).await?.await?;
+    let conn = endpoint.connect(addr, EXAMPLE_ALPN).await?;
     info!("connected");
 
     // Send a datagram over the connection.
