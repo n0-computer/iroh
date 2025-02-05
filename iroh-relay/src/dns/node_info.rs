@@ -65,21 +65,31 @@ pub(super) enum IrohAttr {
     Addr,
 }
 
-/// Encodes a [`NodeId`] in [`z-base-32`] encoding.
-///
-/// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
-pub fn to_z32(node_id: &NodeId) -> String {
-    z32::encode(node_id.as_bytes())
+/// Extension methods for [`NodeId`] to encode to and decode from [`z32`],
+/// which is the encoding used in [`pkarr`] domain names.
+pub trait NodeIdExt {
+    /// Encodes a [`NodeId`] in [`z-base-32`] encoding.
+    ///
+    /// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
+    fn to_z32(&self) -> String;
+
+    /// Parses a [`NodeId`] from [`z-base-32`] encoding.
+    ///
+    /// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
+    fn from_z32(s: &str) -> Result<NodeId>;
 }
 
-/// Parses a [`NodeId`] from [`z-base-32`] encoding.
-///
-/// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
-pub fn from_z32(s: &str) -> Result<NodeId> {
-    let bytes = z32::decode(s.as_bytes()).map_err(|_| anyhow!("invalid z32"))?;
-    let bytes: &[u8; 32] = &bytes.try_into().map_err(|_| anyhow!("not 32 bytes long"))?;
-    let node_id = NodeId::from_bytes(bytes)?;
-    Ok(node_id)
+impl NodeIdExt for NodeId {
+    fn to_z32(&self) -> String {
+        z32::encode(self.as_bytes())
+    }
+
+    fn from_z32(s: &str) -> Result<NodeId> {
+        let bytes = z32::decode(s.as_bytes()).map_err(|_| anyhow!("invalid z32"))?;
+        let bytes: &[u8; 32] = &bytes.try_into().map_err(|_| anyhow!("not 32 bytes long"))?;
+        let node_id = NodeId::from_bytes(bytes)?;
+        Ok(node_id)
+    }
 }
 
 /// Information about the iroh node contained in an [`IROH_TXT_NAME`] TXT resource record.
@@ -188,34 +198,10 @@ impl NodeInfo {
         self.to_attrs().to_pkarr_signed_packet(secret_key, ttl)
     }
 
-    /// Converts into a [`hickory_resolver::proto::rr::Record`] DNS record.
-    pub fn to_hickory_records(
-        &self,
-        origin: &str,
-        ttl: u32,
-    ) -> Result<impl Iterator<Item = hickory_resolver::proto::rr::Record> + 'static> {
-        let attrs = self.to_attrs();
-        let records = attrs.to_hickory_records(origin, ttl)?;
-        Ok(records.collect::<Vec<_>>().into_iter())
+    /// Converts into a list of `{key}={value}` strings.
+    pub fn to_txt_strings(&self) -> Vec<String> {
+        self.to_attrs().to_txt_strings().collect()
     }
-}
-
-/// Parses a [`NodeId`] from a DNS domain name.
-///
-/// Splits the domain name into labels on each dot. Expects the first label to be
-/// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
-/// subsequent labels.
-///
-/// Returns a [`NodeId`] if parsed successfully, otherwise `None`.
-pub fn node_id_from_domain_name(name: &str) -> Option<NodeId> {
-    let mut labels = name.split(".");
-    let label = labels.next()?;
-    if label != IROH_TXT_NAME {
-        return None;
-    }
-    let label = labels.next()?;
-    let node_id = from_z32(label).ok()?;
-    Some(node_id)
 }
 
 /// Parses a [`NodeId`] from iroh DNS name.
@@ -223,9 +209,7 @@ pub fn node_id_from_domain_name(name: &str) -> Option<NodeId> {
 /// Takes a [`hickory_resolver::proto::rr::Name`] DNS name and expects the first label to be
 /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
 /// subsequent labels.
-pub(super) fn node_id_from_hickory_name(
-    name: &hickory_resolver::proto::rr::Name,
-) -> Option<NodeId> {
+fn node_id_from_hickory_name(name: &hickory_resolver::proto::rr::Name) -> Option<NodeId> {
     if name.num_labels() < 2 {
         return None;
     }
@@ -235,7 +219,7 @@ pub(super) fn node_id_from_hickory_name(
         return None;
     }
     let label = std::str::from_utf8(labels.next().expect("num_labels checked")).ok()?;
-    let node_id = from_z32(label).ok()?;
+    let node_id = NodeId::from_z32(label).ok()?;
     Some(node_id)
 }
 
@@ -382,23 +366,6 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
             .flat_map(move |(k, vs)| vs.iter().map(move |v| format!("{k}={v}")))
     }
 
-    /// Converts to a list of [`hickory_resolver::proto::rr::Record`] resource records.
-    pub(super) fn to_hickory_records(
-        &self,
-        origin: &str,
-        ttl: u32,
-    ) -> Result<impl Iterator<Item = hickory_resolver::proto::rr::Record> + '_> {
-        use hickory_resolver::proto::rr;
-        let name = format!("{}.{}.{}", IROH_TXT_NAME, to_z32(&self.node_id), origin);
-        let name = rr::Name::from_utf8(name)?;
-        let records = self.to_txt_strings().map(move |s| {
-            let txt = rr::rdata::TXT::new(vec![s]);
-            let rdata = rr::RData::TXT(txt);
-            rr::Record::from_rdata(name.clone(), ttl, rdata)
-        });
-        Ok(records)
-    }
-
     /// Creates a [`pkarr::SignedPacket`]
     ///
     /// This constructs a DNS packet and signs it with a [`SecretKey`].
@@ -442,7 +409,7 @@ fn ensure_iroh_txt_label(name: Name) -> Result<Name, ProtoError> {
 }
 
 fn node_domain(node_id: &NodeId, origin: &str) -> Result<Name> {
-    let domain = format!("{}.{}", to_z32(node_id), origin);
+    let domain = format!("{}.{}", NodeId::to_z32(node_id), origin);
     let domain = Name::from_str(&domain)?;
     Ok(domain)
 }
@@ -465,8 +432,9 @@ mod tests {
     use iroh_base::{NodeId, SecretKey};
     use testresult::TestResult;
 
+    use crate::dns::node_info::NodeIdExt;
+
     use super::NodeInfo;
-    use crate::dns::node_info::{node_id_from_domain_name, to_z32};
 
     #[test]
     fn txt_attr_roundtrip() {
@@ -525,10 +493,11 @@ mod tests {
             Record::from_rdata(
                 Name::from_utf8(format!(
                     "_iroh.{}.dns.iroh.link.",
-                    to_z32(&NodeId::from_str(
+                    NodeId::from_str(
                         // Another NodeId
                         "a55f26132e5e43de834d534332f66a20d480c3e50a13a312a071adea6569981e"
-                    )?)
+                    )?
+                    .to_z32()
                 ))?,
                 30,
                 RData::TXT(TXT::new(vec![
@@ -569,16 +538,6 @@ mod tests {
             }
         );
 
-        Ok(())
-    }
-
-    #[test]
-    fn test_node_id_from_domain_name() -> TestResult {
-        let name = "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.";
-        let node_id = node_id_from_domain_name(name);
-        let expected =
-            NodeId::from_str("1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18")?;
-        assert_eq!(node_id, Some(expected));
         Ok(())
     }
 }

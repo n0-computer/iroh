@@ -373,7 +373,7 @@ pub(crate) mod pkarr_dns_state {
     use pkarr::SignedPacket;
 
     use crate::{
-        dns::node_info::{node_id_from_domain_name, NodeInfo},
+        dns::node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME},
         test_utils::dns_server::QueryHandler,
     };
 
@@ -457,7 +457,7 @@ pub(crate) mod pkarr_dns_state {
                 self.get(&node_id, |packet| {
                     if let Some(packet) = packet {
                         let node_info = NodeInfo::from_pkarr_signed_packet(packet)?;
-                        for record in node_info.to_hickory_records(&self.origin, ttl)? {
+                        for record in node_info_to_hickory_records(&node_info, &self.origin, ttl)? {
                             reply.add_answer(record);
                         }
                     }
@@ -477,6 +477,69 @@ pub(crate) mod pkarr_dns_state {
             const TTL: u32 = 30;
             let res = self.resolve_dns(query, reply, TTL);
             std::future::ready(res)
+        }
+    }
+
+    /// Parses a [`NodeId`] from a DNS domain name.
+    ///
+    /// Splits the domain name into labels on each dot. Expects the first label to be
+    /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
+    /// subsequent labels.
+    ///
+    /// Returns a [`NodeId`] if parsed successfully, otherwise `None`.
+    fn node_id_from_domain_name(name: &str) -> Option<NodeId> {
+        let mut labels = name.split(".");
+        let label = labels.next()?;
+        if label != IROH_TXT_NAME {
+            return None;
+        }
+        let label = labels.next()?;
+        let node_id = NodeId::from_z32(label).ok()?;
+        Some(node_id)
+    }
+
+    /// Converts a [`NodeInfo`]into a [`hickory_resolver::proto::rr::Record`] DNS record.
+    fn node_info_to_hickory_records(
+        node_info: &NodeInfo,
+        origin: &str,
+        ttl: u32,
+    ) -> Result<impl Iterator<Item = hickory_resolver::proto::rr::Record> + 'static> {
+        let txt_strings = node_info.to_txt_strings();
+        let records = to_hickory_records(txt_strings, node_info.node_id, origin, ttl)?;
+        Ok(records.collect::<Vec<_>>().into_iter())
+    }
+
+    /// Converts to a list of [`hickory_resolver::proto::rr::Record`] resource records.
+    fn to_hickory_records(
+        txt_strings: Vec<String>,
+        node_id: NodeId,
+        origin: &str,
+        ttl: u32,
+    ) -> Result<impl Iterator<Item = hickory_resolver::proto::rr::Record> + '_> {
+        use hickory_resolver::proto::rr;
+        let name = format!("{}.{}.{}", IROH_TXT_NAME, node_id.to_z32(), origin);
+        let name = rr::Name::from_utf8(name)?;
+        let records = txt_strings.into_iter().map(move |s| {
+            let txt = rr::rdata::TXT::new(vec![s]);
+            let rdata = rr::RData::TXT(txt);
+            rr::Record::from_rdata(name.clone(), ttl, rdata)
+        });
+        Ok(records)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use iroh_base::NodeId;
+        use testresult::TestResult;
+
+        #[test]
+        fn test_node_id_from_domain_name() -> TestResult {
+            let name = "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.";
+            let node_id = super::node_id_from_domain_name(name);
+            let expected: NodeId =
+                "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18".parse()?;
+            assert_eq!(node_id, Some(expected));
+            Ok(())
         }
     }
 }

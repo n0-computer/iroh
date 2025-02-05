@@ -265,7 +265,7 @@ impl From<TokioResolver> for DnsResolver {
 
 /// TXT records returned from [`DnsResolver::lookup_txt`]
 #[derive(Debug, Clone)]
-pub struct TxtLookup(pub(self) hickory_resolver::lookup::TxtLookup);
+pub struct TxtLookup(hickory_resolver::lookup::TxtLookup);
 
 impl From<hickory_resolver::lookup::TxtLookup> for TxtLookup {
     fn from(value: hickory_resolver::lookup::TxtLookup) -> Self {
