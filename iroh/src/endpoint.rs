@@ -2513,4 +2513,43 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn graceful_close() -> testresult::TestResult {
+        let client = Endpoint::builder().bind().await?;
+        let server = Endpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .await?;
+        let server_addr = server.node_addr().await?;
+        let server_task = tokio::spawn(async move {
+            let incoming = server.accept().await.unwrap();
+            let conn = incoming.await?;
+            let (mut send, mut recv) = conn.accept_bi().await?;
+            let msg = recv.read_to_end(1_000).await?;
+            send.write_all(&msg).await?;
+            send.finish()?;
+            let close_reason = conn.closed().await;
+            testresult::TestResult::Ok(close_reason)
+        });
+
+        let conn = client.connect(server_addr, TEST_ALPN).await?;
+        let (mut send, mut recv) = conn.open_bi().await?;
+        send.write_all(b"Hello, world!").await?;
+        send.finish()?;
+        recv.read_to_end(1_000).await?;
+        conn.close(42u32.into(), b"thanks, bye!");
+        client.close().await;
+
+        let close_err = server_task.await??;
+        let ConnectionError::ApplicationClosed(app_close) = close_err else {
+            panic!("Unexpected close reason: {close_err:?}");
+        };
+
+        assert_eq!(app_close.error_code, 42u32.into());
+        assert_eq!(app_close.reason.as_ref(), b"thanks, bye!");
+
+        Ok(())
+    }
 }
