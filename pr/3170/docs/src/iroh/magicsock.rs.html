@@ -4397,10 +4397,7 @@
 <a href="#4396" id="4396">4396</a>
 <a href="#4397" id="4397">4397</a>
 <a href="#4398" id="4398">4398</a>
-<a href="#4399" id="4399">4399</a>
-<a href="#4400" id="4400">4400</a>
-<a href="#4401" id="4401">4401</a>
-<a href="#4402" id="4402">4402</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4399" id="4399">4399</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -6187,19 +6184,12 @@
     /// Only the first close does anything. Any later closes return nil.
     /// Polling the socket ([`AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`]
     /// indefinitely after this call.
-    ///
-    /// This will not wait for the [`quinn::Endpoint`] to drain connections.
-    ///
-    /// To ensure no data is lost, design protocols so that the last *sender*
-    /// of data in the protocol calls [`crate::endpoint::Connection::closed`], and `await`s until
-    /// it receives a "close" message from the *receiver*. Once the *receiver*
-    /// gets the last data in the protocol, it should call [`crate::endpoint::Connection::close`]
-    /// to inform the *sender* that all data has been received.
     </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.msock.me))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="macro">trace!</span>(<span class="string">"magicsock closing..."</span>);
         <span class="comment">// Initiate closing all connections, and refuse future connections.
         </span><span class="self">self</span>.endpoint.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
+        <span class="self">self</span>.endpoint.wait_idle().<span class="kw">await</span>;
 
         <span class="kw">if </span><span class="self">self</span>.msock.is_closed() {
             <span class="kw">return</span>;
@@ -7011,9 +7001,13 @@
         <span class="comment">// create a client config for the endpoint to use for QUIC address discovery
         </span><span class="kw">let </span>root_store =
             rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        <span class="kw">let </span>client_config = rustls::ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
+        <span class="kw">let </span>client_config = rustls::client::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect(<span class="string">"ring supports these"</span>)
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
         <span class="kw">let </span>quic_config = <span class="prelude-val">Some</span>(QuicConfig {
             ep: <span class="self">self</span>.qad_endpoint.clone(),
             client_config,
