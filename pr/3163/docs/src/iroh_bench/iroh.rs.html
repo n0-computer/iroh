@@ -295,9 +295,7 @@
 <a href="#294" id="294">294</a>
 <a href="#295" id="295">295</a>
 <a href="#296" id="296">296</a>
-<a href="#297" id="297">297</a>
-<a href="#298" id="298">298</a>
-<a href="#299" id="299">299</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#297" id="297">297</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::SocketAddr,
     time::{Duration, Instant},
 };
@@ -419,8 +417,6 @@
     </span><span class="kw">let </span>connection = endpoint
         .connect(server_addr, ALPN)
         .<span class="kw">await
-        </span>.context(<span class="string">"unable to connect"</span>)<span class="question-mark">?
-        </span>.<span class="kw">await
         </span>.context(<span class="string">"unable to connect"</span>)<span class="question-mark">?</span>;
     <span class="macro">trace!</span>(<span class="string">"connected"</span>);
 

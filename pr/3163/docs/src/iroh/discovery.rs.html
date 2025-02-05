@@ -1546,7 +1546,7 @@
         <span class="kw">let </span>ep1_addr = NodeAddr::new(ep1.node_id());
         <span class="comment">// wait for out address to be updated and thus published at least once
         </span>ep1.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>res = ep2.connect(ep1_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>.<span class="kw">await</span>;
+        <span class="kw">let </span>res = ep2.connect(ep1_addr, TEST_ALPN).<span class="kw">await</span>;
         <span class="macro">assert!</span>(res.is_err());
         <span class="prelude-val">Ok</span>(())
     }
