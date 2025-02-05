@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use iroh_base::NodeId;
+pub use iroh_relay::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
 use n0_future::boxed::BoxStream;
 
 use crate::{
@@ -9,8 +10,6 @@ use crate::{
     endpoint::force_staging_infra,
     Endpoint,
 };
-
-pub use iroh_relay::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
 
 const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 
