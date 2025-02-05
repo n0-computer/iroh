@@ -537,7 +537,7 @@
     }
 
     <span class="kw">fn </span>test_resolver(nameserver: SocketAddr) -&gt; DnsResolver {
-        DnsResolver::with_single_nameserver(nameserver)
+        DnsResolver::with_nameserver(nameserver)
     }
 
     <span class="kw">fn </span>random_signed_packet() -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket&gt; {
