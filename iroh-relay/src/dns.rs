@@ -59,7 +59,7 @@ impl DnsResolver {
     }
 
     /// Create a new DNS resolver configured with a single UDP DNS nameserver.
-    pub fn with_single_nameserver(nameserver: SocketAddr) -> Self {
+    pub fn with_nameserver(nameserver: SocketAddr) -> Self {
         let mut config = hickory_resolver::config::ResolverConfig::new();
         let nameserver_config = hickory_resolver::config::NameServerConfig::new(
             nameserver,

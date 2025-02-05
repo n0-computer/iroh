@@ -262,7 +262,7 @@ mod tests {
     }
 
     fn test_resolver(nameserver: SocketAddr) -> DnsResolver {
-        DnsResolver::with_single_nameserver(nameserver)
+        DnsResolver::with_nameserver(nameserver)
     }
 
     fn random_signed_packet() -> Result<SignedPacket> {

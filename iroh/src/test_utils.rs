@@ -176,7 +176,7 @@ pub(crate) mod dns_and_pkarr_servers {
 
         /// Create a [`DnsResolver`] configured to use the test DNS server.
         pub fn dns_resolver(&self) -> DnsResolver {
-            DnsResolver::with_single_nameserver(self.nameserver)
+            DnsResolver::with_nameserver(self.nameserver)
         }
 
         /// Wait until a Pkarr announce for a node is published to the server.
