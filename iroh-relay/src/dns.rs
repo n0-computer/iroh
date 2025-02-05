@@ -285,7 +285,7 @@ impl IntoIterator for TxtLookup {
 
 /// Record data for a TXT record
 #[derive(Debug, Clone)]
-pub struct TXT(hickory_proto::rr::rdata::TXT);
+pub struct TXT(hickory_resolver::proto::rr::rdata::TXT);
 
 impl TXT {
     /// Returns the raw character strings of this TXT record.
