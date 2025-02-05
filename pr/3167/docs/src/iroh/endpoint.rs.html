@@ -2341,7 +2341,7 @@
         };
         <span class="kw">let </span>dns_resolver = <span class="self">self
             </span>.dns_resolver
-            .unwrap_or_else(|| DnsResolver::new_with_defaults());
+            .unwrap_or_else(DnsResolver::new_with_defaults);
         <span class="kw">let </span>discovery = <span class="self">self
             </span>.discovery
             .into_iter()

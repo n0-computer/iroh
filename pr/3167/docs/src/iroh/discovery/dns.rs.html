@@ -80,11 +80,11 @@
 <a href="#79" id="79">79</a>
 <a href="#80" id="80">80</a>
 <a href="#81" id="81">81</a>
-<a href="#82" id="82">82</a>
-<a href="#83" id="83">83</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS node discovery for iroh
+<a href="#82" id="82">82</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS node discovery for iroh
 
 </span><span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>iroh_base::NodeId;
+<span class="kw">pub use </span>iroh_relay::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
 <span class="kw">use </span>n0_future::boxed::BoxStream;
 
 <span class="kw">use crate</span>::{
@@ -92,8 +92,6 @@
     endpoint::force_staging_infra,
     Endpoint,
 };
-
-<span class="kw">pub use </span>iroh_relay::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
 
 <span class="kw">const </span>DNS_STAGGERING_MS: <span class="kw-2">&amp;</span>[u64] = <span class="kw-2">&amp;</span>[<span class="number">200</span>, <span class="number">300</span>];
 
