@@ -2609,9 +2609,13 @@ impl Actor {
         // create a client config for the endpoint to use for QUIC address discovery
         let root_store =
             rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        let client_config = rustls::ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
+        let client_config = rustls::client::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("ring supports these")
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
         let quic_config = Some(QuicConfig {
             ep: self.qad_endpoint.clone(),
             client_config,
