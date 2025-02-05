@@ -1673,7 +1673,7 @@
         <span class="kw">let </span>signed_packet = node_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
         state.upsert(signed_packet)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>resolver = DnsResolver::new_with_single_nameserver(nameserver);
+        <span class="kw">let </span>resolver = DnsResolver::with_single_nameserver(nameserver);
         <span class="kw">let </span>resolved = resolver
             .lookup_node_by_id(<span class="kw-2">&amp;</span>node_info.node_id, <span class="kw-2">&amp;</span>origin)
             .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1695,7 +1695,7 @@
 
         <span class="kw">let </span>relay_url = <span class="prelude-val">Some</span>(<span class="string">"https://relay.example"</span>.parse().unwrap());
 
-        <span class="kw">let </span>resolver = DnsResolver::new_with_single_nameserver(dns_pkarr_server.nameserver);
+        <span class="kw">let </span>resolver = DnsResolver::with_single_nameserver(dns_pkarr_server.nameserver);
         <span class="kw">let </span>publisher = PkarrPublisher::new(secret_key, dns_pkarr_server.pkarr_url.clone());
         <span class="comment">// does not block, update happens in background task
         </span>publisher.update_addr_info(relay_url.as_ref(), <span class="kw-2">&amp;</span>Default::default());

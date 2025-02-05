@@ -548,7 +548,11 @@
 <a href="#547" id="547">547</a>
 <a href="#548" id="548">548</a>
 <a href="#549" id="549">549</a>
-<a href="#550" id="550">550</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#550" id="550">550</a>
+<a href="#551" id="551">551</a>
+<a href="#552" id="552">552</a>
+<a href="#553" id="553">553</a>
+<a href="#554" id="554">554</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -596,7 +600,7 @@
 <span class="kw">use </span>tracing::warn;
 <span class="kw">use </span>url::Url;
 
-<span class="kw">use </span><span class="kw">crate</span>::dns::DnsResolver;
+<span class="kw">use crate</span>::{defaults::timeouts::DNS_TIMEOUT, dns::DnsResolver};
 
 <span class="doccomment">/// The DNS name for the iroh TXT record.
 </span><span class="kw">pub const </span>IROH_TXT_NAME: <span class="kw-2">&amp;</span>str = <span class="string">"_iroh"</span>;
@@ -716,8 +720,8 @@
     }
 
     <span class="doccomment">/// Parses a [`NodeInfo`] from a TXT records lookup.
-    </span><span class="kw">pub fn </span>from_hickory_lookup(lookup: hickory_resolver::lookup::TxtLookup) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>attrs = TxtAttrs::from_hickory_lookup(lookup)<span class="question-mark">?</span>;
+    </span><span class="kw">pub fn </span>from_txt_lookup(lookup: <span class="kw">super</span>::TxtLookup) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">let </span>attrs = TxtAttrs::from_txt_lookup(lookup)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(attrs.into())
     }
 
@@ -782,7 +786,7 @@
 
 <span class="kw">impl</span>&lt;T: FromStr + Display + Hash + Ord&gt; TxtAttrs&lt;T&gt; {
     <span class="doccomment">/// Creates [`TxtAttrs`] from a node id and an iterator of key-value pairs.
-    </span><span class="kw">pub fn </span>from_parts(node_id: NodeId, pairs: <span class="kw">impl </span>Iterator&lt;Item = (T, String)&gt;) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>from_parts(node_id: NodeId, pairs: <span class="kw">impl </span>Iterator&lt;Item = (T, String)&gt;) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>attrs: BTreeMap&lt;T, Vec&lt;String&gt;&gt; = BTreeMap::new();
         <span class="kw">for </span>(k, v) <span class="kw">in </span>pairs {
             attrs.entry(k).or_default().push(v);
@@ -791,7 +795,10 @@
     }
 
     <span class="doccomment">/// Creates [`TxtAttrs`] from a node id and an iterator of "{key}={value}" strings.
-    </span><span class="kw">pub fn </span>from_strings(node_id: NodeId, strings: <span class="kw">impl </span>Iterator&lt;Item = String&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>from_strings(
+        node_id: NodeId,
+        strings: <span class="kw">impl </span>Iterator&lt;Item = String&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>attrs: BTreeMap&lt;T, Vec&lt;String&gt;&gt; = BTreeMap::new();
         <span class="kw">for </span>s <span class="kw">in </span>strings {
             <span class="kw">let </span><span class="kw-2">mut </span>parts = s.split(<span class="string">'='</span>);
@@ -808,13 +815,13 @@
 
     <span class="kw">async fn </span>lookup(resolver: <span class="kw-2">&amp;</span>DnsResolver, name: Name) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>name = ensure_iroh_txt_label(name)<span class="question-mark">?</span>;
-        <span class="kw">let </span>lookup = resolver.lookup_txt(name).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>attrs = <span class="self">Self</span>::from_hickory_lookup(lookup)<span class="question-mark">?</span>;
+        <span class="kw">let </span>lookup = resolver.lookup_txt(name, DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>attrs = <span class="self">Self</span>::from_txt_lookup(lookup)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(attrs)
     }
 
     <span class="doccomment">/// Looks up attributes by [`NodeId`] and origin domain.
-    </span><span class="kw">pub async fn </span>lookup_by_id(
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>lookup_by_id(
         resolver: <span class="kw-2">&amp;</span>DnsResolver,
         node_id: <span class="kw-2">&amp;</span>NodeId,
         origin: <span class="kw-2">&amp;</span>str,
@@ -824,23 +831,23 @@
     </span>}
 
     <span class="doccomment">/// Looks up attributes by DNS name.
-    </span><span class="kw">pub async fn </span>lookup_by_name(resolver: <span class="kw-2">&amp;</span>DnsResolver, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>lookup_by_name(resolver: <span class="kw-2">&amp;</span>DnsResolver, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>name = Name::from_str(name)<span class="question-mark">?</span>;
         TxtAttrs::lookup(resolver, name).<span class="kw">await
     </span>}
 
     <span class="doccomment">/// Returns the parsed attributes.
-    </span><span class="kw">pub fn </span>attrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>BTreeMap&lt;T, Vec&lt;String&gt;&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>attrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>BTreeMap&lt;T, Vec&lt;String&gt;&gt; {
         <span class="kw-2">&amp;</span><span class="self">self</span>.attrs
     }
 
     <span class="doccomment">/// Returns the node id.
-    </span><span class="kw">pub fn </span>node_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeId {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>node_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeId {
         <span class="self">self</span>.node_id
     }
 
     <span class="doccomment">/// Parses a [`pkarr::SignedPacket`].
-    </span><span class="kw">pub fn </span>from_pkarr_signed_packet(packet: <span class="kw-2">&amp;</span>pkarr::SignedPacket) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>from_pkarr_signed_packet(packet: <span class="kw-2">&amp;</span>pkarr::SignedPacket) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">use </span>pkarr::dns::{
             rdata::RData,
             {<span class="self">self</span>},
@@ -863,11 +870,11 @@
     }
 
     <span class="doccomment">/// Parses a TXT records lookup.
-    </span><span class="kw">pub fn </span>from_hickory_lookup(lookup: hickory_resolver::lookup::TxtLookup) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>queried_node_id = node_id_from_hickory_name(lookup.query().name())
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>from_txt_lookup(lookup: <span class="kw">super</span>::TxtLookup) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">let </span>queried_node_id = node_id_from_hickory_name(lookup.<span class="number">0</span>.query().name())
             .ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"invalid DNS answer: not a query for _iroh.z32encodedpubkey"</span>))<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>strings = lookup.as_lookup().record_iter().filter_map(|record| {
+        <span class="kw">let </span>strings = lookup.<span class="number">0</span>.as_lookup().record_iter().filter_map(|record| {
             <span class="kw">match </span>node_id_from_hickory_name(record.name()) {
                 <span class="comment">// Filter out only TXT record answers that match the node_id we searched for.
                 </span><span class="prelude-val">Some</span>(n) <span class="kw">if </span>n == queried_node_id =&gt; <span class="kw">match </span>record.data().as_txt() {
@@ -910,7 +917,7 @@
     }
 
     <span class="doccomment">/// Converts to a list of [`hickory_resolver::proto::rr::Record`] resource records.
-    </span><span class="kw">pub fn </span>to_hickory_records(
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>to_hickory_records(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         origin: <span class="kw-2">&amp;</span>str,
         ttl: u32,
@@ -929,7 +936,7 @@
     <span class="doccomment">/// Creates a [`pkarr::SignedPacket`]
     ///
     /// This constructs a DNS packet and signs it with a [`SecretKey`].
-    </span><span class="kw">pub fn </span>to_pkarr_signed_packet(
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>to_pkarr_signed_packet(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         secret_key: <span class="kw-2">&amp;</span>SecretKey,
         ttl: u32,
@@ -1079,8 +1086,9 @@
             ),
         ];
         <span class="kw">let </span>lookup = Lookup::new_with_max_ttl(query, Arc::new(records));
+        <span class="kw">let </span>lookup = hickory_resolver::lookup::TxtLookup::from(lookup);
 
-        <span class="kw">let </span>node_info = NodeInfo::from_hickory_lookup(lookup.into())<span class="question-mark">?</span>;
+        <span class="kw">let </span>node_info = NodeInfo::from_txt_lookup(lookup.into())<span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(
             node_info,
             NodeInfo {

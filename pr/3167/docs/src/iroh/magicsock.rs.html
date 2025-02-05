@@ -4403,7 +4403,8 @@
 <a href="#4402" id="4402">4402</a>
 <a href="#4403" id="4403">4403</a>
 <a href="#4404" id="4404">4404</a>
-<a href="#4405" id="4405">4405</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4405" id="4405">4405</a>
+<a href="#4406" id="4406">4406</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4558,7 +4559,7 @@
             node_map: <span class="prelude-val">None</span>,
             discovery: <span class="prelude-val">None</span>,
             proxy_url: <span class="prelude-val">None</span>,
-            dns_resolver: <span class="kw">crate</span>::dns::DnsResolver::new_with_defaults(),
+            dns_resolver: DnsResolver::new(),
             server_config,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
@@ -7550,6 +7551,7 @@
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{
         defaults::staging::{<span class="self">self</span>, EU_RELAY_HOSTNAME},
+        dns::DnsResolver,
         tls, Endpoint, RelayMode,
     };
 
@@ -8432,7 +8434,7 @@
             Arc::new(quinn::TransportConfig::default()),
             <span class="bool-val">true</span>,
         )<span class="question-mark">?</span>;
-        <span class="kw">let </span>dns_resolver = <span class="kw">crate</span>::dns::DnsResolver::new_with_defaults();
+        <span class="kw">let </span>dns_resolver = DnsResolver::new();
         <span class="kw">let </span>opts = Options {
             addr_v4: <span class="prelude-val">None</span>,
             addr_v6: <span class="prelude-val">None</span>,

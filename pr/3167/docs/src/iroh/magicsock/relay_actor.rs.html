@@ -2750,7 +2750,7 @@
     <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::test_utils;
+    <span class="kw">use crate</span>::{dns::DnsResolver, test_utils};
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_packetize_iter() {
@@ -2803,7 +2803,7 @@
             relay_datagrams_recv,
             connection_opts: RelayConnectionOptions {
                 secret_key,
-                dns_resolver: <span class="kw">crate</span>::dns::DnsResolver::new_with_defaults(),
+                dns_resolver: DnsResolver::new(),
                 proxy_url: <span class="prelude-val">None</span>,
                 prefer_ipv6: Arc::new(AtomicBool::new(<span class="bool-val">true</span>)),
                 insecure_skip_cert_verify: <span class="bool-val">true</span>,

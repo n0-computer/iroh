@@ -60,7 +60,7 @@
     <span class="attr">#[tokio::test]
     #[traced_test]
     </span><span class="kw">async fn </span>test_dns_lookup_ipv4_ipv6() {
-        <span class="kw">let </span>resolver = DnsResolver::new_with_defaults();
+        <span class="kw">let </span>resolver = DnsResolver::new();
         <span class="kw">let </span>res: Vec&lt;<span class="kw">_</span>&gt; = resolver
             .lookup_ipv4_ipv6_staggered(NA_RELAY_HOSTNAME, TIMEOUT, STAGGERING_DELAYS)
             .<span class="kw">await

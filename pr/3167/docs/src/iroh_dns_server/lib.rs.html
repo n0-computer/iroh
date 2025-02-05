@@ -392,26 +392,26 @@
 
         <span class="comment">// resolve root record
         </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"{pubkey}."</span>))<span class="question-mark">?</span>;
-        <span class="kw">let </span>res = resolver.lookup_txt(name).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>records = res.iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+        <span class="kw">let </span>res = resolver.lookup_txt(name, DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>records = res.into_iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="macro">assert_eq!</span>(records, <span class="macro">vec!</span>[<span class="string">"hi0"</span>.to_string()]);
 
         <span class="comment">// resolve level one record
         </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"_hello.{pubkey}."</span>))<span class="question-mark">?</span>;
-        <span class="kw">let </span>res = resolver.lookup_txt(name).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>records = res.iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+        <span class="kw">let </span>res = resolver.lookup_txt(name, DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>records = res.into_iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="macro">assert_eq!</span>(records, <span class="macro">vec!</span>[<span class="string">"hi1"</span>.to_string()]);
 
         <span class="comment">// resolve level two record
         </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"_hello.world.{pubkey}."</span>))<span class="question-mark">?</span>;
-        <span class="kw">let </span>res = resolver.lookup_txt(name).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>records = res.iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+        <span class="kw">let </span>res = resolver.lookup_txt(name, DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>records = res.into_iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="macro">assert_eq!</span>(records, <span class="macro">vec!</span>[<span class="string">"hi2"</span>.to_string()]);
 
         <span class="comment">// resolve multiple records for same name
         </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"multiple.{pubkey}."</span>))<span class="question-mark">?</span>;
-        <span class="kw">let </span>res = resolver.lookup_txt(name).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>records = res.iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+        <span class="kw">let </span>res = resolver.lookup_txt(name, DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>records = res.into_iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="macro">assert_eq!</span>(records, <span class="macro">vec!</span>[<span class="string">"hi3"</span>.to_string(), <span class="string">"hi4"</span>.to_string()]);
 
         <span class="comment">// resolve A record
@@ -537,7 +537,7 @@
     }
 
     <span class="kw">fn </span>test_resolver(nameserver: SocketAddr) -&gt; DnsResolver {
-        DnsResolver::new_with_single_nameserver(nameserver)
+        DnsResolver::with_single_nameserver(nameserver)
     }
 
     <span class="kw">fn </span>random_signed_packet() -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket&gt; {

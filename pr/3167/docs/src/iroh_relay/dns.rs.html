@@ -353,7 +353,51 @@
 <a href="#352" id="352">352</a>
 <a href="#353" id="353">353</a>
 <a href="#354" id="354">354</a>
-<a href="#355" id="355">355</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS resolver
+<a href="#355" id="355">355</a>
+<a href="#356" id="356">356</a>
+<a href="#357" id="357">357</a>
+<a href="#358" id="358">358</a>
+<a href="#359" id="359">359</a>
+<a href="#360" id="360">360</a>
+<a href="#361" id="361">361</a>
+<a href="#362" id="362">362</a>
+<a href="#363" id="363">363</a>
+<a href="#364" id="364">364</a>
+<a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
+<a href="#377" id="377">377</a>
+<a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a>
+<a href="#382" id="382">382</a>
+<a href="#383" id="383">383</a>
+<a href="#384" id="384">384</a>
+<a href="#385" id="385">385</a>
+<a href="#386" id="386">386</a>
+<a href="#387" id="387">387</a>
+<a href="#388" id="388">388</a>
+<a href="#389" id="389">389</a>
+<a href="#390" id="390">390</a>
+<a href="#391" id="391">391</a>
+<a href="#392" id="392">392</a>
+<a href="#393" id="393">393</a>
+<a href="#394" id="394">394</a>
+<a href="#395" id="395">395</a>
+<a href="#396" id="396">396</a>
+<a href="#397" id="397">397</a>
+<a href="#398" id="398">398</a>
+<a href="#399" id="399">399</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS resolver
 
 </span><span class="kw">use </span>std::{
     fmt::Write,
@@ -362,7 +406,7 @@
 };
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>hickory_resolver::{lookup::TxtLookup, IntoName, ResolveError, Resolver, TokioResolver};
+<span class="kw">use </span>hickory_resolver::{IntoName, Resolver, TokioResolver};
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId};
 <span class="kw">use </span>n0_future::{
     time::{<span class="self">self</span>, Duration},
@@ -387,7 +431,7 @@
     /// We first try to read the system's resolver from `/etc/resolv.conf`.
     /// This does not work at least on some Androids, therefore we fallback
     /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
-    </span><span class="kw">pub fn </span>new_with_defaults() -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>(system_config, <span class="kw-2">mut </span>options) =
             hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
 
@@ -414,7 +458,7 @@
     }
 
     <span class="doccomment">/// Create a new DNS resolver configured with a single UDP DNS nameserver.
-    </span><span class="kw">pub fn </span>new_with_single_nameserver(nameserver: SocketAddr) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>with_single_nameserver(nameserver: SocketAddr) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>config = hickory_resolver::config::ResolverConfig::new();
         <span class="kw">let </span>nameserver_config = hickory_resolver::config::NameServerConfig::new(
             nameserver,
@@ -430,9 +474,10 @@
     }
 
     <span class="doccomment">/// Lookup a TXT record.
-    </span><span class="kw">pub async fn </span>lookup_txt(<span class="kw-2">&amp;</span><span class="self">self</span>, query: <span class="kw">impl </span>IntoName) -&gt; <span class="prelude-ty">Result</span>&lt;TxtLookup, ResolveError&gt; {
-        <span class="self">self</span>.<span class="number">0</span>.txt_lookup(query).<span class="kw">await
-    </span>}
+    </span><span class="kw">pub async fn </span>lookup_txt(<span class="kw-2">&amp;</span><span class="self">self</span>, query: <span class="kw">impl </span>IntoName, timeout: Duration) -&gt; <span class="prelude-ty">Result</span>&lt;TxtLookup&gt; {
+        <span class="kw">let </span>res = time::timeout(timeout, <span class="self">self</span>.<span class="number">0</span>.txt_lookup(query)).<span class="kw">await</span><span class="question-mark">??</span>;
+        <span class="prelude-val">Ok</span>(TxtLookup(res))
+    }
 
     <span class="doccomment">/// Perform an ipv4 lookup with a timeout.
     </span><span class="kw">pub async fn </span>lookup_ipv4&lt;N: IntoName&gt;(
@@ -605,9 +650,52 @@
     </span>}
 }
 
+<span class="kw">impl </span>Default <span class="kw">for </span>DnsResolver {
+    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>::new()
+    }
+}
+
 <span class="kw">impl </span>From&lt;TokioResolver&gt; <span class="kw">for </span>DnsResolver {
     <span class="kw">fn </span>from(resolver: TokioResolver) -&gt; <span class="self">Self </span>{
         DnsResolver(resolver)
+    }
+}
+
+<span class="doccomment">/// TXT records returned from [`DnsResolver::lookup_txt`]
+</span><span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">pub struct </span>TxtLookup(<span class="kw">pub</span>(<span class="self">self</span>) hickory_resolver::lookup::TxtLookup);
+
+<span class="kw">impl </span>From&lt;hickory_resolver::lookup::TxtLookup&gt; <span class="kw">for </span>TxtLookup {
+    <span class="kw">fn </span>from(value: hickory_resolver::lookup::TxtLookup) -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>(value)
+    }
+}
+
+<span class="kw">impl </span>IntoIterator <span class="kw">for </span>TxtLookup {
+    <span class="kw">type </span>Item = TXT;
+
+    <span class="kw">type </span>IntoIter = Box&lt;<span class="kw">dyn </span>Iterator&lt;Item = TXT&gt;&gt;;
+
+    <span class="kw">fn </span>into_iter(<span class="self">self</span>) -&gt; <span class="self">Self</span>::IntoIter {
+        Box::new(<span class="self">self</span>.<span class="number">0</span>.into_iter().map(|txt| TXT(txt)))
+    }
+}
+
+<span class="doccomment">/// Record data for a TXT record
+</span><span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">pub struct </span>TXT(hickory_proto::rr::rdata::TXT);
+
+<span class="kw">impl </span>TXT {
+    <span class="doccomment">/// Returns the raw character strings of this TXT record.
+    </span><span class="kw">pub fn </span>txt_data(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[Box&lt;[u8]&gt;] {
+        <span class="self">self</span>.<span class="number">0</span>.txt_data()
+    }
+}
+
+<span class="kw">impl </span>ToString <span class="kw">for </span>TXT {
+    <span class="kw">fn </span>to_string(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; String {
+        <span class="self">self</span>.<span class="number">0</span>.to_string()
     }
 }
 

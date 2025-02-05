@@ -2184,9 +2184,7 @@
 <a href="#2183" id="2183">2183</a>
 <a href="#2184" id="2184">2184</a>
 <a href="#2185" id="2185">2185</a>
-<a href="#2186" id="2186">2186</a>
-<a href="#2187" id="2187">2187</a>
-<a href="#2188" id="2188">2188</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2186" id="2186">2186</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2340,9 +2338,7 @@
             keylog: <span class="self">self</span>.keylog,
             secret_key: secret_key.clone(),
         };
-        <span class="kw">let </span>dns_resolver = <span class="self">self
-            </span>.dns_resolver
-            .unwrap_or_else(DnsResolver::new_with_defaults);
+        <span class="kw">let </span>dns_resolver = <span class="self">self</span>.dns_resolver.unwrap_or_default();
         <span class="kw">let </span>discovery = <span class="self">self
             </span>.discovery
             .into_iter()

@@ -657,7 +657,7 @@
 
         <span class="doccomment">/// Create a [`DnsResolver`] configured to use the test DNS server.
         </span><span class="kw">pub fn </span>dns_resolver(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DnsResolver {
-            DnsResolver::new_with_single_nameserver(<span class="self">self</span>.nameserver)
+            DnsResolver::with_single_nameserver(<span class="self">self</span>.nameserver)
         }
 
         <span class="doccomment">/// Wait until a Pkarr announce for a node is published to the server.
