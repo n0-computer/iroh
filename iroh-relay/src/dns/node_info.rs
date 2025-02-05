@@ -200,12 +200,32 @@ impl NodeInfo {
     }
 }
 
+/// Parses a [`NodeId`] from a DNS domain name.
+///
+/// Splits the domain name into labels on each dot. Expects the first label to be
+/// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
+/// subsequent labels.
+///
+/// Returns a [`NodeId`] if parsed successfully, otherwise `None`.
+pub fn node_id_from_domain_name(name: &str) -> Option<NodeId> {
+    let mut labels = name.split(".");
+    let label = labels.next()?;
+    if label != IROH_TXT_NAME {
+        return None;
+    }
+    let label = labels.next()?;
+    let node_id = from_z32(label).ok()?;
+    Some(node_id)
+}
+
 /// Parses a [`NodeId`] from iroh DNS name.
 ///
 /// Takes a [`hickory_resolver::proto::rr::Name`] DNS name and expects the first label to be
 /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
 /// subsequent labels.
-pub fn node_id_from_hickory_name(name: &hickory_resolver::proto::rr::Name) -> Option<NodeId> {
+pub(super) fn node_id_from_hickory_name(
+    name: &hickory_resolver::proto::rr::Name,
+) -> Option<NodeId> {
     if name.num_labels() < 2 {
         return None;
     }
@@ -446,7 +466,7 @@ mod tests {
     use testresult::TestResult;
 
     use super::NodeInfo;
-    use crate::dns::node_info::to_z32;
+    use crate::dns::node_info::{node_id_from_domain_name, to_z32};
 
     #[test]
     fn txt_attr_roundtrip() {
@@ -549,6 +569,16 @@ mod tests {
             }
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_node_id_from_domain_name() -> TestResult {
+        let name = "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.";
+        let node_id = node_id_from_domain_name(name);
+        let expected =
+            NodeId::from_str("1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18")?;
+        assert_eq!(node_id, Some(expected));
         Ok(())
     }
 }

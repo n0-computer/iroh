@@ -373,7 +373,7 @@ pub(crate) mod pkarr_dns_state {
     use pkarr::SignedPacket;
 
     use crate::{
-        dns::node_info::{node_id_from_hickory_name, NodeInfo},
+        dns::node_info::{node_id_from_domain_name, NodeInfo},
         test_utils::dns_server::QueryHandler,
     };
 
@@ -449,7 +449,8 @@ pub(crate) mod pkarr_dns_state {
             ttl: u32,
         ) -> Result<()> {
             for query in query.queries() {
-                let Some(node_id) = node_id_from_hickory_name(query.name()) else {
+                let domain_name = query.name().to_string();
+                let Some(node_id) = node_id_from_domain_name(&domain_name) else {
                     continue;
                 };
 
