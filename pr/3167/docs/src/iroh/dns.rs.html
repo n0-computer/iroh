@@ -34,7 +34,9 @@
 <a href="#33" id="33">33</a>
 <a href="#34" id="34">34</a>
 <a href="#35" id="35">35</a>
-<a href="#36" id="36">36</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module exports a DNS resolver, which is also the default resolver used in the
+<a href="#36" id="36">36</a>
+<a href="#37" id="37">37</a>
+<a href="#38" id="38">38</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module exports a DNS resolver, which is also the default resolver used in the
 //! [`crate::Endpoint`] if no custom resolver is configured.
 //!
 //! The resolver provides methods to resolve domain names to ipv4 and ipv6 addresses,
@@ -43,7 +45,9 @@
 //! See the [`node_info`] module documentation for details on how
 //! iroh node records are structured.
 
-</span><span class="kw">pub use </span>iroh_relay::dns::{node_info, DnsResolver};
+</span><span class="kw">pub use </span>iroh_relay::dns::{
+    node_info, DnsResolver, N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING,
+};
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>tests {

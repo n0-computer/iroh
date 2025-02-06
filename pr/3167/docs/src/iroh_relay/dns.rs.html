@@ -397,7 +397,10 @@
 <a href="#396" id="396">396</a>
 <a href="#397" id="397">397</a>
 <a href="#398" id="398">398</a>
-<a href="#399" id="399">399</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS resolver
+<a href="#399" id="399">399</a>
+<a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS resolver
 
 </span><span class="kw">use </span>std::{
     fmt::{<span class="self">self</span>, Write},
@@ -604,6 +607,9 @@
     </span>}
 
     <span class="doccomment">/// Looks up node info by [`NodeId`] and origin domain name.
+    ///
+    /// To lookup nodes that published their node info to the DNS servers run by n0,
+    /// pass [`N0_DNS_NODE_ORIGIN_PROD`] as `origin`.
     </span><span class="kw">pub async fn </span>lookup_node_by_id(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: <span class="kw-2">&amp;</span>NodeId, origin: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;NodeAddr&gt; {
         <span class="kw">let </span>attrs =
             node_info::TxtAttrs::&lt;node_info::IrohAttr&gt;::lookup_by_id(<span class="self">self</span>, node_id, origin).<span class="kw">await</span><span class="question-mark">?</span>;

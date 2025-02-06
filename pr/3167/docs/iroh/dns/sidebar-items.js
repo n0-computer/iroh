@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["node_info"],"struct":["DnsResolver"]};
+window.SIDEBAR_ITEMS = {"constant":["N0_DNS_NODE_ORIGIN_PROD","N0_DNS_NODE_ORIGIN_STAGING"],"mod":["node_info"],"struct":["DnsResolver"]};
