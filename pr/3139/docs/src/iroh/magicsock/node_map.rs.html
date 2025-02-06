@@ -882,7 +882,9 @@
 <a href="#881" id="881">881</a>
 <a href="#882" id="882">882</a>
 <a href="#883" id="883">883</a>
-<a href="#884" id="884">884</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#884" id="884">884</a>
+<a href="#885" id="885">885</a>
+<a href="#886" id="886">886</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -901,7 +903,7 @@
     node_state::{NodeState, Options, PingHandled},
 };
 <span class="kw">use super</span>::{
-    metrics::Metrics <span class="kw">as </span>MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
+    metrics::Metrics <span class="kw">as </span>MagicsockMetrics, ActorMessage, DiscoMessageSource, NodeIdMappedAddr,
 };
 <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 </span><span class="kw">use </span><span class="kw">crate</span>::endpoint::PathSelection;
@@ -929,7 +931,7 @@
 /// - The node's ID in this map, only useful if you know the ID from an insert or lookup.
 ///   This is static and never changes.
 ///
-/// - The [`QuicMappedAddr`] which internally identifies the node to the QUIC stack.  This
+/// - The [`NodeIdMappedAddr`] which internally identifies the node to the QUIC stack.  This
 ///   is static and never changes.
 ///
 /// - The nodes's public key, aka `PublicKey` or "node_key".  This is static and never changes,
@@ -938,7 +940,7 @@
 /// - A public socket address on which they are reachable on the internet, known as ip-port.
 ///   These come and go as the node moves around on the internet
 ///
-/// An index of nodeInfos by node key, QuicMappedAddr, and discovered ip:port endpoints.
+/// An index of nodeInfos by node key, NodeIdMappedAddr, and discovered ip:port endpoints.
 </span><span class="attr">#[derive(Default, Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>NodeMap {
     inner: Mutex&lt;NodeMapInner&gt;,
@@ -948,7 +950,7 @@
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>NodeMapInner {
     by_node_key: HashMap&lt;NodeId, usize&gt;,
     by_ip_port: HashMap&lt;IpPort, usize&gt;,
-    by_quic_mapped_addr: HashMap&lt;QuicMappedAddr, usize&gt;,
+    by_quic_mapped_addr: HashMap&lt;NodeIdMappedAddr, usize&gt;,
     by_id: HashMap&lt;usize, NodeState&gt;,
     next_id: usize,
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
@@ -963,7 +965,7 @@
 </span><span class="kw">enum </span>NodeStateKey {
     Idx(usize),
     NodeId(NodeId),
-    QuicMappedAddr(QuicMappedAddr),
+    NodeIdMappedAddr(NodeIdMappedAddr),
     IpPort(IpPort),
 }
 
@@ -1042,11 +1044,14 @@
         <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).node_count()
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>receive_udp(<span class="kw-2">&amp;</span><span class="self">self</span>, udp_addr: SocketAddr) -&gt; <span class="prelude-ty">Option</span>&lt;(PublicKey, QuicMappedAddr)&gt; {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>receive_udp(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        udp_addr: SocketAddr,
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;(PublicKey, NodeIdMappedAddr)&gt; {
         <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).receive_udp(udp_addr)
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>receive_relay(<span class="kw-2">&amp;</span><span class="self">self</span>, relay_url: <span class="kw-2">&amp;</span>RelayUrl, src: NodeId) -&gt; QuicMappedAddr {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>receive_relay(<span class="kw-2">&amp;</span><span class="self">self</span>, relay_url: <span class="kw-2">&amp;</span>RelayUrl, src: NodeId) -&gt; NodeIdMappedAddr {
         <span class="self">self</span>.inner
             .lock()
             .expect(<span class="string">"poisoned"</span>)
@@ -1085,7 +1090,7 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>get_quic_mapped_addr_for_node_key(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_key: NodeId,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;QuicMappedAddr&gt; {
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;NodeIdMappedAddr&gt; {
         <span class="self">self</span>.inner
             .lock()
             .expect(<span class="string">"poisoned"</span>)
@@ -1129,7 +1134,7 @@
     <span class="attr">#[allow(clippy::type_complexity)]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>get_send_addrs(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        addr: QuicMappedAddr,
+        addr: NodeIdMappedAddr,
         have_ipv6: bool,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;(
         PublicKey,
@@ -1138,7 +1143,7 @@
         Vec&lt;PingAction&gt;,
     )&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>);
-        <span class="kw">let </span>ep = inner.get_mut(NodeStateKey::QuicMappedAddr(addr))<span class="question-mark">?</span>;
+        <span class="kw">let </span>ep = inner.get_mut(NodeStateKey::NodeIdMappedAddr(addr))<span class="question-mark">?</span>;
         <span class="kw">let </span>public_key = <span class="kw-2">*</span>ep.public_key();
         <span class="macro">trace!</span>(dest = %addr, node_id = %public_key.fmt_short(), <span class="string">"dst mapped to NodeId"</span>);
         <span class="kw">let </span>(udp_addr, relay_url, msgs) = ep.get_send_addrs(have_ipv6);
@@ -1288,7 +1293,7 @@
         <span class="kw">match </span>id {
             NodeStateKey::Idx(id) =&gt; <span class="prelude-val">Some</span>(id),
             NodeStateKey::NodeId(node_key) =&gt; <span class="self">self</span>.by_node_key.get(<span class="kw-2">&amp;</span>node_key).copied(),
-            NodeStateKey::QuicMappedAddr(addr) =&gt; <span class="self">self</span>.by_quic_mapped_addr.get(<span class="kw-2">&amp;</span>addr).copied(),
+            NodeStateKey::NodeIdMappedAddr(addr) =&gt; <span class="self">self</span>.by_quic_mapped_addr.get(<span class="kw-2">&amp;</span>addr).copied(),
             NodeStateKey::IpPort(ipp) =&gt; <span class="self">self</span>.by_ip_port.get(<span class="kw-2">&amp;</span>ipp).copied(),
         }
     }
@@ -1319,10 +1324,10 @@
     }
 
     <span class="doccomment">/// Marks the node we believe to be at `ipp` as recently used.
-    </span><span class="kw">fn </span>receive_udp(<span class="kw-2">&amp;mut </span><span class="self">self</span>, udp_addr: SocketAddr) -&gt; <span class="prelude-ty">Option</span>&lt;(NodeId, QuicMappedAddr)&gt; {
+    </span><span class="kw">fn </span>receive_udp(<span class="kw-2">&amp;mut </span><span class="self">self</span>, udp_addr: SocketAddr) -&gt; <span class="prelude-ty">Option</span>&lt;(NodeId, NodeIdMappedAddr)&gt; {
         <span class="kw">let </span>ip_port: IpPort = udp_addr.into();
         <span class="kw">let </span><span class="prelude-val">Some</span>(node_state) = <span class="self">self</span>.get_mut(NodeStateKey::IpPort(ip_port)) <span class="kw">else </span>{
-            <span class="macro">info!</span>(src=%udp_addr, <span class="string">"receive_udp: no node_state found for addr, ignore"</span>);
+            <span class="macro">trace!</span>(src=%udp_addr, <span class="string">"receive_udp: no node_state found for addr, ignore"</span>);
             <span class="kw">return </span><span class="prelude-val">None</span>;
         };
         node_state.receive_udp(ip_port, Instant::now());
@@ -1330,7 +1335,7 @@
     }
 
     <span class="attr">#[instrument(skip_all, fields(src = %src.fmt_short()))]
-    </span><span class="kw">fn </span>receive_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, relay_url: <span class="kw-2">&amp;</span>RelayUrl, src: NodeId) -&gt; QuicMappedAddr {
+    </span><span class="kw">fn </span>receive_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, relay_url: <span class="kw-2">&amp;</span>RelayUrl, src: NodeId) -&gt; NodeIdMappedAddr {
         <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
         </span><span class="kw">let </span>path_selection = <span class="self">self</span>.path_selection;
         <span class="kw">let </span>node_state = <span class="self">self</span>.get_or_insert_with(NodeStateKey::NodeId(src), || {
@@ -1579,6 +1584,7 @@
     <span class="kw">use </span>std::net::Ipv4Addr;
 
     <span class="kw">use </span>iroh_base::SecretKey;
+    <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, <span class="kw-2">*</span>};
 
@@ -1596,9 +1602,8 @@
 
     <span class="doccomment">/// Test persisting and loading of known nodes.
     </span><span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>restore_from_vec() {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
-
         <span class="kw">let </span>node_map = NodeMap::default();
 
         <span class="kw">let </span><span class="kw-2">mut </span>rng = rand::thread_rng();
@@ -1662,9 +1667,8 @@
     }
 
     <span class="attr">#[test]
+    #[traced_test]
     </span><span class="kw">fn </span>test_prune_direct_addresses() {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
-
         <span class="kw">let </span>node_map = NodeMap::default();
         <span class="kw">let </span>public_key = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>id = node_map

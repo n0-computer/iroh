@@ -260,7 +260,9 @@
 <a href="#259" id="259">259</a>
 <a href="#260" id="260">260</a>
 <a href="#261" id="261">261</a>
-<a href="#262" id="262">262</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt::Write, net::IpAddr};
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt::Write, net::IpAddr};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>hickory_resolver::{IntoName, TokioResolver};
@@ -449,6 +451,8 @@
         sync::{atomic::AtomicUsize, OnceLock},
     };
 
+    <span class="kw">use </span>tracing_test::traced_test;
+
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="kw">static </span>DNS_RESOLVER: OnceLock&lt;TokioResolver&gt; = OnceLock::new();
@@ -505,8 +509,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>stagger_basic() {
-        <span class="kw">let </span>_logging = iroh_test::logging::setup();
         <span class="kw">const </span>CALL_RESULTS: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Result</span>&lt;u8, u8&gt;] = <span class="kw-2">&amp;</span>[<span class="prelude-val">Err</span>(<span class="number">2</span>), <span class="prelude-val">Ok</span>(<span class="number">3</span>), <span class="prelude-val">Ok</span>(<span class="number">5</span>), <span class="prelude-val">Ok</span>(<span class="number">7</span>)];
         <span class="kw">static </span>DONE_CALL: AtomicUsize = AtomicUsize::new(<span class="number">0</span>);
         <span class="kw">let </span>f = || {

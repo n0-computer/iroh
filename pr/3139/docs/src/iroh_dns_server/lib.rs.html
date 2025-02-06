@@ -315,6 +315,7 @@
     };
     <span class="kw">use </span>pkarr::{PkarrClient, SignedPacket};
     <span class="kw">use </span>testresult::TestResult;
+    <span class="kw">use </span>tracing_test::traced_test;
     <span class="kw">use </span>url::Url;
 
     <span class="kw">use crate</span>::{
@@ -326,8 +327,8 @@
     };
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>pkarr_publish_dns_resolve() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        iroh_test::logging::setup_multithreaded();
         <span class="kw">let </span>(server, nameserver, http_url) = Server::spawn_for_tests().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>pkarr_relay_url = {
             <span class="kw">let </span><span class="kw-2">mut </span>url = http_url.clone();
@@ -439,8 +440,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>integration_smoke() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        iroh_test::logging::setup_multithreaded();
         <span class="kw">let </span>(server, nameserver, http_url) = Server::spawn_for_tests().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>pkarr_relay = {
@@ -471,8 +472,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>store_eviction() -&gt; TestResult&lt;()&gt; {
-        iroh_test::logging::setup_multithreaded();
         <span class="kw">let </span>options = ZoneStoreOptions {
             eviction: Duration::from_millis(<span class="number">100</span>),
             eviction_interval: Duration::from_millis(<span class="number">100</span>),
@@ -501,9 +502,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>integration_mainline() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        iroh_test::logging::setup_multithreaded();
-
         <span class="comment">// run a mainline testnet
         </span><span class="kw">let </span>testnet = pkarr::mainline::dht::Testnet::new(<span class="number">5</span>);
         <span class="kw">let </span>bootstrap = testnet.bootstrap.clone();

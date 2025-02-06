@@ -861,7 +861,15 @@
 <a href="#860" id="860">860</a>
 <a href="#861" id="861">861</a>
 <a href="#862" id="862">862</a>
-<a href="#863" id="863">863</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
+<a href="#863" id="863">863</a>
+<a href="#864" id="864">864</a>
+<a href="#865" id="865">865</a>
+<a href="#866" id="866">866</a>
+<a href="#867" id="867">867</a>
+<a href="#868" id="868">868</a>
+<a href="#869" id="869">869</a>
+<a href="#870" id="870">870</a>
+<a href="#871" id="871">871</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
 //!
 //! Protocol flow:
 //!
@@ -1467,6 +1475,7 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
+    <span class="kw">use </span>data_encoding::HEXLOWER;
     <span class="kw">use </span>tokio_util::codec::{FramedRead, FramedWrite};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
@@ -1589,10 +1598,17 @@
 
         <span class="kw">for </span>(frame, expected_hex) <span class="kw">in </span>frames {
             <span class="kw">let </span>bytes = frame.encode_for_ws_msg();
-            <span class="comment">// To regenerate the hexdumps:
-            // let hexdump = iroh_test::hexdump::print_hexdump(bytes, []);
-            // println!("{hexdump}");
-            </span><span class="kw">let </span>expected_bytes = iroh_test::hexdump::parse_hexdump(expected_hex)<span class="question-mark">?</span>;
+            <span class="kw">let </span>stripped: Vec&lt;u8&gt; = expected_hex
+                .chars()
+                .filter_map(|s| {
+                    <span class="kw">if </span>s.is_ascii_whitespace() {
+                        <span class="prelude-val">None
+                    </span>} <span class="kw">else </span>{
+                        <span class="prelude-val">Some</span>(s <span class="kw">as </span>u8)
+                    }
+                })
+                .collect();
+            <span class="kw">let </span>expected_bytes = HEXLOWER.decode(<span class="kw-2">&amp;</span>stripped).unwrap();
             <span class="macro">assert_eq!</span>(bytes, expected_bytes);
         }
 

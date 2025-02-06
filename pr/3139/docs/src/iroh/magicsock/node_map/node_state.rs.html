@@ -1768,7 +1768,7 @@
 </span><span class="kw">use </span><span class="kw">crate</span>::endpoint::PathSelection;
 <span class="kw">use crate</span>::{
     disco::{<span class="self">self</span>, SendAddr},
-    magicsock::{ActorMessage, MagicsockMetrics, QuicMappedAddr, HEARTBEAT_INTERVAL},
+    magicsock::{ActorMessage, MagicsockMetrics, NodeIdMappedAddr, HEARTBEAT_INTERVAL},
     watchable::{Watchable, Watcher},
 };
 
@@ -1847,7 +1847,7 @@
     /// [`NodeMap`]: super::NodeMap
     </span>id: usize,
     <span class="doccomment">/// The UDP address used on the QUIC-layer to address this node.
-    </span>quic_mapped_addr: QuicMappedAddr,
+    </span>quic_mapped_addr: NodeIdMappedAddr,
     <span class="doccomment">/// The global identifier for this endpoint.
     </span>node_id: NodeId,
     <span class="doccomment">/// The last time we pinged all endpoints.
@@ -1900,7 +1900,7 @@
 
 <span class="kw">impl </span>NodeState {
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(id: usize, options: Options) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>quic_mapped_addr = QuicMappedAddr::generate();
+        <span class="kw">let </span>quic_mapped_addr = NodeIdMappedAddr::generate();
 
         <span class="kw">if </span>options.relay_url.is_some() {
             <span class="comment">// we potentially have a relay connection to the node
@@ -1935,7 +1935,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>.node_id
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>quic_mapped_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>QuicMappedAddr {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>quic_mapped_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>NodeIdMappedAddr {
         <span class="kw-2">&amp;</span><span class="self">self</span>.quic_mapped_addr
     }
 
@@ -3230,7 +3230,7 @@
             (
                 NodeState {
                     id: <span class="number">0</span>,
-                    quic_mapped_addr: QuicMappedAddr::generate(),
+                    quic_mapped_addr: NodeIdMappedAddr::generate(),
                     node_id: key.public(),
                     last_full_ping: <span class="prelude-val">None</span>,
                     relay_url: <span class="prelude-val">None</span>,
@@ -3260,7 +3260,7 @@
             </span><span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
             NodeState {
                 id: <span class="number">1</span>,
-                quic_mapped_addr: QuicMappedAddr::generate(),
+                quic_mapped_addr: NodeIdMappedAddr::generate(),
                 node_id: key.public(),
                 last_full_ping: <span class="prelude-val">None</span>,
                 relay_url: relay_and_state(key.public(), send_addr.clone()),
@@ -3281,7 +3281,7 @@
             </span><span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
             NodeState {
                 id: <span class="number">2</span>,
-                quic_mapped_addr: QuicMappedAddr::generate(),
+                quic_mapped_addr: NodeIdMappedAddr::generate(),
                 node_id: key.public(),
                 last_full_ping: <span class="prelude-val">None</span>,
                 relay_url: <span class="prelude-val">Some</span>((
@@ -3325,7 +3325,7 @@
             (
                 NodeState {
                     id: <span class="number">3</span>,
-                    quic_mapped_addr: QuicMappedAddr::generate(),
+                    quic_mapped_addr: NodeIdMappedAddr::generate(),
                     node_id: key.public(),
                     last_full_ping: <span class="prelude-val">None</span>,
                     relay_url: relay_and_state(key.public(), send_addr.clone()),

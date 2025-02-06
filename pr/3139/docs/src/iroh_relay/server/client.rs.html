@@ -740,8 +740,7 @@
 <a href="#739" id="739">739</a>
 <a href="#740" id="740">740</a>
 <a href="#741" id="741">741</a>
-<a href="#742" id="742">742</a>
-<a href="#743" id="743">743</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#742" id="742">742</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
@@ -1302,6 +1301,7 @@
     <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tokio_util::codec::Framed;
     <span class="kw">use </span>tracing::info;
+    <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{
@@ -1310,9 +1310,8 @@
     };
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_client_actor_basic() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>_logging = iroh_test::logging::setup();
-
         <span class="kw">let </span>(send_queue_s, send_queue_r) = mpsc::channel(<span class="number">10</span>);
         <span class="kw">let </span>(disco_send_queue_s, disco_send_queue_r) = mpsc::channel(<span class="number">10</span>);
         <span class="kw">let </span>(peer_gone_s, peer_gone_r) = mpsc::channel(<span class="number">10</span>);
@@ -1421,9 +1420,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_rate_limit() -&gt; TestResult {
-        <span class="kw">let </span>_logging = iroh_test::logging::setup();
-
         <span class="kw">const </span>LIMIT: u32 = <span class="number">50</span>;
         <span class="kw">const </span>MAX_FRAMES: u32 = <span class="number">100</span>;
 

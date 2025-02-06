@@ -2051,6 +2051,7 @@
     <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
     <span class="kw">use </span>n0_future::{FutureExt, SinkExt};
     <span class="kw">use </span>testresult::TestResult;
+    <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{
@@ -2095,8 +2096,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_no_services() {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span><span class="kw-2">mut </span>server = Server::spawn(ServerConfig::&lt;(), ()&gt;::default())
             .<span class="kw">await
             </span>.unwrap();
@@ -2108,8 +2109,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_conflicting_bind() {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span><span class="kw-2">mut </span>server = Server::spawn(ServerConfig::&lt;(), ()&gt; {
             relay: <span class="prelude-val">Some</span>(RelayConfig {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">1234</span>).into(),
@@ -2132,8 +2133,8 @@
     </span>}
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_root_handler() {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
         <span class="kw">let </span>url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
 
@@ -2144,8 +2145,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_captive_portal_service() {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
         <span class="kw">let </span>url = <span class="macro">format!</span>(<span class="string">"http://{}/generate_204"</span>, server.http_addr().unwrap());
         <span class="kw">let </span>challenge = <span class="string">"123az__."</span>;
@@ -2165,8 +2166,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_relay_client_legacy_route() {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
         <span class="comment">// We're testing the legacy endpoint at `/derp`
         </span><span class="kw">let </span>endpoint_url = <span class="macro">format!</span>(<span class="string">"http://{}/derp"</span>, server.http_addr().unwrap());
@@ -2183,8 +2184,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_relay_clients_both_relay() -&gt; TestResult&lt;()&gt; {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
         <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
         <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse().unwrap();
@@ -2235,8 +2236,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_relay_clients_both_websockets() -&gt; TestResult&lt;()&gt; {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
@@ -2297,8 +2298,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_relay_clients_websocket_and_relay() -&gt; TestResult&lt;()&gt; {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
 
         <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
@@ -2353,8 +2354,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_stun() {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>server = Server::spawn(ServerConfig::&lt;(), ()&gt; {
             relay: <span class="prelude-val">None</span>,
             stun: <span class="prelude-val">Some</span>(StunConfig {
@@ -2385,9 +2386,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_relay_access_control() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
-
         <span class="kw">let </span>a_secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>a_key = a_secret_key.public();
 

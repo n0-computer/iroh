@@ -1515,7 +1515,24 @@
 <a href="#1514" id="1514">1514</a>
 <a href="#1515" id="1515">1515</a>
 <a href="#1516" id="1516">1516</a>
-<a href="#1517" id="1517">1517</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1517" id="1517">1517</a>
+<a href="#1518" id="1518">1518</a>
+<a href="#1519" id="1519">1519</a>
+<a href="#1520" id="1520">1520</a>
+<a href="#1521" id="1521">1521</a>
+<a href="#1522" id="1522">1522</a>
+<a href="#1523" id="1523">1523</a>
+<a href="#1524" id="1524">1524</a>
+<a href="#1525" id="1525">1525</a>
+<a href="#1526" id="1526">1526</a>
+<a href="#1527" id="1527">1527</a>
+<a href="#1528" id="1528">1528</a>
+<a href="#1529" id="1529">1529</a>
+<a href="#1530" id="1530">1530</a>
+<a href="#1531" id="1531">1531</a>
+<a href="#1532" id="1532">1532</a>
+<a href="#1533" id="1533">1533</a>
+<a href="#1534" id="1534">1534</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -1553,11 +1570,15 @@
 <span class="kw">mod </span>defaults;
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">mod </span>dns;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">mod </span>ip_mapped_addrs;
 <span class="kw">mod </span>metrics;
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">mod </span>ping;
 <span class="kw">mod </span>reportgen;
 
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">pub use </span>ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddresses, MAPPED_ADDR_PORT};
 <span class="kw">pub use </span>metrics::Metrics;
 <span class="kw">use </span>reportgen::ProbeProto;
 <span class="kw">pub use </span>reportgen::QuicConfig;
@@ -1737,7 +1758,7 @@
 ///
 /// Use [`Options::stun_v4`], [`Options::stun_v6`], and [`Options::quic_config`]
 /// to enable STUN over IPv4, STUN over IPv6, and QUIC address discovery.
-</span><span class="attr">#[derive(Debug)]
+</span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>Options {
     <span class="doccomment">/// Socket to send IPv4 STUN probes from.
     ///
@@ -1898,12 +1919,15 @@
     </span><span class="kw">pub fn </span>new(
         <span class="attr">#[cfg(not(wasm_browser))] </span>port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;,
         <span class="attr">#[cfg(not(wasm_browser))] </span>dns_resolver: DnsResolver,
+        <span class="attr">#[cfg(not(wasm_browser))] </span>ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>actor = Actor::new(
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>port_mapper,
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>dns_resolver,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>ip_mapped_addrs,
         )<span class="question-mark">?</span>;
         <span class="kw">let </span>addr = actor.addr();
         <span class="kw">let </span>task = task::spawn(
@@ -2126,6 +2150,10 @@
     <span class="doccomment">/// The DNS resolver to use for probes that need to perform DNS lookups
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>dns_resolver: DnsResolver,
+
+    <span class="doccomment">/// The [`IpMappedAddresses`] that allows you to do QAD in iroh
+    </span><span class="attr">#[cfg(not(wasm_browser))]
+    </span>ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
 }
 
 <span class="kw">impl </span>Actor {
@@ -2136,6 +2164,7 @@
     </span><span class="kw">fn </span>new(
         <span class="attr">#[cfg(not(wasm_browser))] </span>port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;,
         <span class="attr">#[cfg(not(wasm_browser))] </span>dns_resolver: DnsResolver,
+        <span class="attr">#[cfg(not(wasm_browser))] </span>ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="comment">// TODO: consider an instrumented flume channel so we have metrics.
         </span><span class="kw">let </span>(sender, receiver) = mpsc::channel(<span class="number">32</span>);
@@ -2149,6 +2178,8 @@
             current_report_run: <span class="prelude-val">None</span>,
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>dns_resolver,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>ip_mapped_addrs,
         })
     }
 
@@ -2210,6 +2241,7 @@
             quic_config,
             ..
         } = opts;
+        <span class="macro">trace!</span>(<span class="string">"Attempting probes for protocols {protocols:#?}"</span>);
         <span class="kw">if </span><span class="self">self</span>.current_report_run.is_some() {
             response_tx
                 .send(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(
@@ -2257,6 +2289,8 @@
             <span class="attr">#[cfg(not(wasm_browser))]
             </span><span class="self">self</span>.dns_resolver.clone(),
             protocols,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span><span class="self">self</span>.ip_mapped_addrs.clone(),
         );
 
         <span class="self">self</span>.current_report_run = <span class="prelude-val">Some</span>(ReportRun {
@@ -2562,6 +2596,7 @@
     <span class="kw">use </span>netwatch::IpFamily;
     <span class="kw">use </span>tokio_util::sync::CancellationToken;
     <span class="kw">use </span>tracing::info;
+    <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{ping::Pinger, stun_utils::bind_local_stun_socket};
@@ -2699,13 +2734,13 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_basic() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>(stun_addr, stun_stats, _cleanup_guard) =
             stun_utils::serve(<span class="string">"127.0.0.1"</span>.parse().unwrap()).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::tests::resolver();
-        <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(<span class="prelude-val">None</span>, resolver.clone())<span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(<span class="prelude-val">None</span>, resolver.clone(), <span class="prelude-val">None</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>dm = stun_utils::relay_map_of([stun_addr].into_iter());
 
         <span class="comment">// Note that the ProbePlan will change with each iteration.
@@ -2742,9 +2777,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_udp_blocked() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
-
         <span class="comment">// Create a "STUN server", which will never respond to anything.  This is how UDP to
         // the STUN server being blocked will look like from the client's perspective.
         </span><span class="kw">let </span>blackhole = tokio::net::UdpSocket::bind(<span class="string">"127.0.0.1:0"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2753,7 +2787,7 @@
 
         <span class="comment">// Now create a client and generate a report.
         </span><span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::tests::resolver();
-        <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(<span class="prelude-val">None</span>, resolver.clone())<span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(<span class="prelude-val">None</span>, resolver.clone(), <span class="prelude-val">None</span>)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>r = client.get_report(dm, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>r: Report = (<span class="kw-2">*</span>r).clone();
@@ -2956,7 +2990,7 @@
         <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::tests::resolver();
         <span class="kw">for </span><span class="kw-2">mut </span>tt <span class="kw">in </span>tests {
             <span class="macro">println!</span>(<span class="string">"test: {}"</span>, tt.name);
-            <span class="kw">let </span><span class="kw-2">mut </span>actor = Actor::new(<span class="prelude-val">None</span>, resolver.clone()).unwrap();
+            <span class="kw">let </span><span class="kw-2">mut </span>actor = Actor::new(<span class="prelude-val">None</span>, resolver.clone(), <span class="prelude-val">None</span>).unwrap();
             <span class="kw">for </span>s <span class="kw">in </span><span class="kw-2">&amp;mut </span>tt.steps {
                 <span class="comment">// trigger the timer
                 </span>tokio::time::advance(Duration::from_secs(s.after)).<span class="kw">await</span>;
@@ -2991,7 +3025,7 @@
         <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>dm);
 
         <span class="kw">let </span>resolver = <span class="kw">crate</span>::dns::tests::resolver().clone();
-        <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(<span class="prelude-val">None</span>, resolver)<span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(<span class="prelude-val">None</span>, resolver, <span class="prelude-val">None</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// Set up an external socket to send STUN requests from, this will be discovered as
         // our public socket address by STUN.  We send back any packets received on this

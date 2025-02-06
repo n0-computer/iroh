@@ -419,7 +419,9 @@
 <a href="#418" id="418">418</a>
 <a href="#419" id="419">419</a>
 <a href="#420" id="420">420</a>
-<a href="#421" id="421">421</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module exports a DNS resolver, which is also the default resolver used in the
+<a href="#421" id="421">421</a>
+<a href="#422" id="422">422</a>
+<a href="#423" id="423">423</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module exports a DNS resolver, which is also the default resolver used in the
 //! [`crate::Endpoint`] if no custom resolver is configured.
 //!
 //! It also exports [`ResolverExt`]: A extension trait over [`DnsResolver`] to perform DNS queries
@@ -804,14 +806,16 @@
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>tests {
     <span class="kw">use </span>std::sync::atomic::AtomicUsize;
 
+    <span class="kw">use </span>tracing_test::traced_test;
+
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span><span class="kw">crate</span>::defaults::staging::NA_RELAY_HOSTNAME;
     <span class="kw">const </span>TIMEOUT: Duration = Duration::from_secs(<span class="number">5</span>);
     <span class="kw">const </span>STAGGERING_DELAYS: <span class="kw-2">&amp;</span>[u64] = <span class="kw-2">&amp;</span>[<span class="number">200</span>, <span class="number">300</span>];
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_dns_lookup_ipv4_ipv6() {
-        <span class="kw">let </span>_logging = iroh_test::logging::setup();
         <span class="kw">let </span>resolver = default_resolver();
         <span class="kw">let </span>res: Vec&lt;<span class="kw">_</span>&gt; = resolver
             .lookup_ipv4_ipv6_staggered(NA_RELAY_HOSTNAME, TIMEOUT, STAGGERING_DELAYS)
@@ -823,8 +827,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>stagger_basic() {
-        <span class="kw">let </span>_logging = iroh_test::logging::setup();
         <span class="kw">const </span>CALL_RESULTS: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Result</span>&lt;u8, u8&gt;] = <span class="kw-2">&amp;</span>[<span class="prelude-val">Err</span>(<span class="number">2</span>), <span class="prelude-val">Ok</span>(<span class="number">3</span>), <span class="prelude-val">Ok</span>(<span class="number">5</span>), <span class="prelude-val">Ok</span>(<span class="number">7</span>)];
         <span class="kw">static </span>DONE_CALL: AtomicUsize = AtomicUsize::new(<span class="number">0</span>);
         <span class="kw">let </span>f = || {

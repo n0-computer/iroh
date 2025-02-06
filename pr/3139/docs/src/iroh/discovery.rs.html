@@ -882,8 +882,7 @@
 <a href="#881" id="881">881</a>
 <a href="#882" id="882">882</a>
 <a href="#883" id="883">883</a>
-<a href="#884" id="884">884</a>
-<a href="#885" id="885">885</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#884" id="884">884</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1331,6 +1330,7 @@
     <span class="kw">use </span>rand::Rng;
     <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
+    <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span><span class="kw">crate</span>::RelayMode;
@@ -1448,8 +1448,8 @@
 
     <span class="doccomment">/// This is a smoke test for our discovery mechanism.
     </span><span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>endpoint_discovery_simple_shared() -&gt; anyhow::Result&lt;()&gt; {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
         <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate(rand::thread_rng());
@@ -1470,8 +1470,8 @@
 
     <span class="doccomment">/// This test adds an empty discovery which provides no addresses.
     </span><span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>endpoint_discovery_combined_with_empty() -&gt; anyhow::Result&lt;()&gt; {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
         <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate(rand::thread_rng());
@@ -1501,8 +1501,8 @@
     /// This is to make sure that as long as one of the discoveries returns a working address, we
     /// will connect successfully.
     </span><span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>endpoint_discovery_combined_with_empty_and_wrong() -&gt; anyhow::Result&lt;()&gt; {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
         <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate(rand::thread_rng());
@@ -1529,8 +1529,8 @@
 
     <span class="doccomment">/// This test only has the "lying" discovery. It is here to make sure that this actually fails.
     </span><span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>endpoint_discovery_combined_wrong_only() -&gt; anyhow::Result&lt;()&gt; {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
         <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate(rand::thread_rng());
@@ -1554,8 +1554,8 @@
     <span class="doccomment">/// This test first adds a wrong address manually (e.g. from an outdated&amp;node_id ticket).
     /// Connect should still succeed because the discovery service will be invoked (after a delay).
     </span><span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>endpoint_discovery_with_wrong_existing_addr() -&gt; anyhow::Result&lt;()&gt; {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
         <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate(rand::thread_rng());
@@ -1644,6 +1644,7 @@
     <span class="kw">use </span>iroh_relay::RelayMap;
     <span class="kw">use </span>n0_future::time::Duration;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
+    <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use crate</span>::{
         discovery::pkarr::PkarrPublisher,
@@ -1659,9 +1660,8 @@
     <span class="kw">const </span>PUBLISH_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>dns_resolve() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>_logging_guard = iroh_test::logging::setup();
-
         <span class="kw">let </span>origin = <span class="string">"testdns.example"</span>.to_string();
         <span class="kw">let </span>state = State::new(origin.clone());
         <span class="kw">let </span>(nameserver, _dns_drop_guard) = run_dns_server(state.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1684,9 +1684,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>pkarr_publish_dns_resolve() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>_logging_guard = iroh_test::logging::setup();
-
         <span class="kw">let </span>origin = <span class="string">"testdns.example"</span>.to_string();
 
         <span class="kw">let </span>dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1717,9 +1716,8 @@
     <span class="kw">const </span>TEST_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"TEST"</span>;
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>pkarr_publish_dns_discover() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>_logging_guard = iroh_test::logging::setup();
-
         <span class="kw">let </span>dns_pkarr_server = DnsPkarrServer::run().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
 
