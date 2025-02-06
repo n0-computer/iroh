@@ -34,6 +34,7 @@ pub fn make_client_config(
     secret_key: &SecretKey,
     remote_peer_id: Option<PublicKey>,
     alpn_protocols: Vec<Vec<u8>>,
+    session_store: Option<Arc<dyn rustls::client::ClientSessionStore>>,
     keylog: bool,
 ) -> Result<QuicClientConfig, CreateConfigError> {
     let (certificate, secret_key) = certificate::generate(secret_key)?;
@@ -54,6 +55,11 @@ pub fn make_client_config(
     ))
     .with_client_cert_resolver(cert_resolver);
     crypto.alpn_protocols = alpn_protocols;
+
+    if let Some(store) = session_store {
+        crypto.resumption = rustls::client::Resumption::store(store);
+        crypto.enable_early_data = true;
+    }
     if keylog {
         warn!("enabling SSLKEYLOGFILE for TLS pre-master keys");
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
@@ -91,6 +97,7 @@ pub fn make_server_config(
         warn!("enabling SSLKEYLOGFILE for TLS pre-master keys");
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
+    crypto.max_early_data_size = u32::MAX; // must be u32::MAX or 0 (the default). Any other value panics with QUIC
     let config = crypto.try_into()?;
     Ok(config)
 }

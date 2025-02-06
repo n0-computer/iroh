@@ -154,7 +154,8 @@ mod tests {
             Arc::new(quinn::TokioRuntime),
         )?;
 
-        let quic_client_config = tls::make_client_config(&key, None, vec![ALPN.to_vec()], false)?;
+        let quic_client_config =
+            tls::make_client_config(&key, None, vec![ALPN.to_vec()], None, false)?;
         let client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         quic_ep.set_default_client_config(client_config);
         Ok((quic_ep, key))

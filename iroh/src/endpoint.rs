@@ -521,6 +521,7 @@ pub struct Endpoint {
     msock: Handle,
     rtt_actor: Arc<rtt_actor::RttHandle>,
     static_config: Arc<StaticConfig>,
+    session_store: Arc<dyn rustls::client::ClientSessionStore>,
 }
 
 impl Endpoint {
@@ -544,10 +545,81 @@ impl Endpoint {
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
         trace!("created magicsock");
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
+
+        #[derive(Debug, Default)]
+        struct SessionStore {
+            session_values: std::sync::Mutex<
+                std::collections::HashMap<
+                    webpki::types::ServerName<'static>,
+                    rustls::client::Tls13ClientSessionValue,
+                >,
+            >,
+            kx_hints: std::sync::Mutex<
+                std::collections::HashMap<webpki::types::ServerName<'static>, rustls::NamedGroup>,
+            >,
+        }
+
+        impl rustls::client::ClientSessionStore for SessionStore {
+            fn set_kx_hint(
+                &self,
+                server_name: webpki::types::ServerName<'static>,
+                group: rustls::NamedGroup,
+            ) {
+                tracing::warn!(?server_name, ?group, "set_kx_hint");
+                self.kx_hints.lock().unwrap().insert(server_name, group);
+            }
+
+            fn kx_hint(
+                &self,
+                server_name: &webpki::types::ServerName<'_>,
+            ) -> Option<rustls::NamedGroup> {
+                tracing::warn!(?server_name, "kx_hint");
+                self.kx_hints.lock().unwrap().get(server_name).cloned()
+            }
+
+            fn set_tls12_session(
+                &self,
+                _server_name: webpki::types::ServerName<'static>,
+                _value: rustls::client::Tls12ClientSessionValue,
+            ) {
+            }
+
+            fn tls12_session(
+                &self,
+                _server_name: &webpki::types::ServerName<'_>,
+            ) -> Option<rustls::client::Tls12ClientSessionValue> {
+                None
+            }
+
+            fn remove_tls12_session(&self, _server_name: &webpki::types::ServerName<'static>) {}
+
+            fn insert_tls13_ticket(
+                &self,
+                server_name: webpki::types::ServerName<'static>,
+                value: rustls::client::Tls13ClientSessionValue,
+            ) {
+                tracing::warn!(?server_name, ?value, "insert_tls13_ticket");
+                self.session_values
+                    .lock()
+                    .unwrap()
+                    .insert(server_name, value);
+            }
+
+            fn take_tls13_ticket(
+                &self,
+                server_name: &webpki::types::ServerName<'static>,
+            ) -> Option<rustls::client::Tls13ClientSessionValue> {
+                tracing::warn!(?server_name, "take_tls13_ticket");
+                self.session_values.lock().unwrap().remove(server_name)
+            }
+        }
+
+        let session_store = SessionStore::default();
         let ep = Self {
             msock: msock.clone(),
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
             static_config: Arc::new(static_config),
+            session_store: Arc::new(session_store),
         };
         Ok(ep)
     }
@@ -676,6 +748,7 @@ impl Endpoint {
                 &self.static_config.secret_key,
                 Some(node_id),
                 alpn_protocols,
+                Some(self.session_store.clone()),
                 self.static_config.keylog,
             )?;
             let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
@@ -692,6 +765,7 @@ impl Endpoint {
         Ok(Connecting {
             inner: connect,
             ep: self.clone(),
+            remote_node_id: Some(node_id),
         })
     }
 
@@ -1156,6 +1230,7 @@ impl Incoming {
         self.inner.accept().map(|conn| Connecting {
             inner: conn,
             ep: self.ep,
+            remote_node_id: None,
         })
     }
 
@@ -1173,6 +1248,7 @@ impl Incoming {
             .map(|conn| Connecting {
                 inner: conn,
                 ep: self.ep,
+                remote_node_id: None,
             })
     }
 
@@ -1223,6 +1299,7 @@ impl IntoFuture for Incoming {
         IncomingFuture {
             inner: self.inner.into_future(),
             ep: self.ep,
+            remote_node_id: None,
         }
     }
 }
@@ -1234,6 +1311,7 @@ pub struct IncomingFuture {
     #[pin]
     inner: quinn::IncomingFuture,
     ep: Endpoint,
+    remote_node_id: Option<NodeId>,
 }
 
 impl Future for IncomingFuture {
@@ -1246,7 +1324,7 @@ impl Future for IncomingFuture {
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
                 let conn = Connection { inner };
-                try_send_rtt_msg(&conn, this.ep);
+                try_send_rtt_msg(&conn, this.ep, *this.remote_node_id);
                 Poll::Ready(Ok(conn))
             }
         }
@@ -1260,6 +1338,7 @@ pub struct Connecting {
     #[pin]
     inner: quinn::Connecting,
     ep: Endpoint,
+    remote_node_id: Option<NodeId>,
 }
 
 impl Connecting {
@@ -1268,10 +1347,14 @@ impl Connecting {
         match self.inner.into_0rtt() {
             Ok((inner, zrtt_accepted)) => {
                 let conn = Connection { inner };
-                try_send_rtt_msg(&conn, &self.ep);
+                try_send_rtt_msg(&conn, &self.ep, self.remote_node_id);
                 Ok((conn, zrtt_accepted))
             }
-            Err(inner) => Err(Self { inner, ep: self.ep }),
+            Err(inner) => Err(Self {
+                inner,
+                ep: self.ep,
+                remote_node_id: self.remote_node_id,
+            }),
         }
     }
 
@@ -1305,7 +1388,7 @@ impl Future for Connecting {
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
                 let conn = Connection { inner };
-                try_send_rtt_msg(&conn, this.ep);
+                try_send_rtt_msg(&conn, this.ep, *this.remote_node_id);
                 Poll::Ready(Ok(conn))
             }
         }
@@ -1619,9 +1702,9 @@ impl Connection {
 ///
 /// If we can't notify the actor that will impact performance a little, but we can still
 /// function.
-fn try_send_rtt_msg(conn: &Connection, magic_ep: &Endpoint) {
+fn try_send_rtt_msg(conn: &Connection, magic_ep: &Endpoint, remote_node_id: Option<NodeId>) {
     // If we can't notify the rtt-actor that's not great but not critical.
-    let Ok(node_id) = conn.remote_node_id() else {
+    let Some(node_id) = remote_node_id.or_else(|| conn.remote_node_id().ok()) else {
         warn!(?conn, "failed to get remote node id");
         return;
     };
