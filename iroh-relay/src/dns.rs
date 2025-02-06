@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use hickory_resolver::{IntoName, Resolver, TokioResolver};
+use hickory_resolver::{Resolver, TokioResolver};
 use iroh_base::{NodeAddr, NodeId};
 use n0_future::{
     time::{self, Duration},
@@ -75,27 +75,30 @@ impl DnsResolver {
     }
 
     /// Lookup a TXT record.
-    pub async fn lookup_txt(&self, query: impl IntoName, timeout: Duration) -> Result<TxtLookup> {
-        let res = time::timeout(timeout, self.0.txt_lookup(query)).await??;
+    pub async fn lookup_txt(&self, host: impl ToString, timeout: Duration) -> Result<TxtLookup> {
+        let host = host.to_string();
+        let res = time::timeout(timeout, self.0.txt_lookup(host)).await??;
         Ok(TxtLookup(res))
     }
 
     /// Perform an ipv4 lookup with a timeout.
-    pub async fn lookup_ipv4<N: IntoName>(
+    pub async fn lookup_ipv4(
         &self,
-        host: N,
+        host: impl ToString,
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr>> {
+        let host = host.to_string();
         let addrs = time::timeout(timeout, self.0.ipv4_lookup(host)).await??;
         Ok(addrs.into_iter().map(|ip| IpAddr::V4(ip.0)))
     }
 
     /// Perform an ipv6 lookup with a timeout.
-    pub async fn lookup_ipv6<N: IntoName>(
+    pub async fn lookup_ipv6(
         &self,
-        host: N,
+        host: impl ToString,
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr>> {
+        let host = host.to_string();
         let addrs = time::timeout(timeout, self.0.ipv6_lookup(host)).await??;
         Ok(addrs.into_iter().map(|ip| IpAddr::V6(ip.0)))
     }
@@ -105,11 +108,12 @@ impl DnsResolver {
     /// `LookupIpStrategy::Ipv4AndIpv6` will wait for ipv6 resolution timeout, even if it is
     /// not usable on the stack, so we manually query both lookups concurrently and time them out
     /// individually.
-    pub async fn lookup_ipv4_ipv6<N: IntoName + Clone>(
+    pub async fn lookup_ipv4_ipv6(
         &self,
-        host: N,
+        host: impl ToString,
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr>> {
+        let host = host.to_string();
         let res = tokio::join!(
             self.lookup_ipv4(host.clone(), timeout),
             self.lookup_ipv6(host, timeout)
@@ -161,12 +165,13 @@ impl DnsResolver {
     /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
     /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied to each call individually. The
     /// result of the first successful call is returned, or a summary of all errors otherwise.
-    pub async fn lookup_ipv4_staggered<N: IntoName + Clone>(
+    pub async fn lookup_ipv4_staggered(
         &self,
-        host: N,
+        host: impl ToString,
         timeout: Duration,
         delays_ms: &[u64],
     ) -> Result<impl Iterator<Item = IpAddr>> {
+        let host = host.to_string();
         let f = || self.lookup_ipv4(host.clone(), timeout);
         stagger_call(f, delays_ms).await
     }
@@ -177,12 +182,13 @@ impl DnsResolver {
     /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
     /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied to each call individually. The
     /// result of the first successful call is returned, or a summary of all errors otherwise.
-    pub async fn lookup_ipv6_staggered<N: IntoName + Clone>(
+    pub async fn lookup_ipv6_staggered(
         &self,
-        host: N,
+        host: impl ToString,
         timeout: Duration,
         delays_ms: &[u64],
     ) -> Result<impl Iterator<Item = IpAddr>> {
+        let host = host.to_string();
         let f = || self.lookup_ipv6(host.clone(), timeout);
         stagger_call(f, delays_ms).await
     }
@@ -194,12 +200,13 @@ impl DnsResolver {
     /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied as stated in
     /// [`Self::lookup_ipv4_ipv6`]. The result of the first successful call is returned, or a
     /// summary of all errors otherwise.
-    pub async fn lookup_ipv4_ipv6_staggered<N: IntoName + Clone>(
+    pub async fn lookup_ipv4_ipv6_staggered(
         &self,
-        host: N,
+        host: impl ToString,
         timeout: Duration,
         delays_ms: &[u64],
     ) -> Result<impl Iterator<Item = IpAddr>> {
+        let host = host.to_string();
         let f = || self.lookup_ipv4_ipv6(host.clone(), timeout);
         stagger_call(f, delays_ms).await
     }
