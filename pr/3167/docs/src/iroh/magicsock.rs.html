@@ -6152,6 +6152,28 @@
         <span class="kw">let </span>inner2 = inner.clone();
         <span class="kw">let </span>network_monitor = netmon::Monitor::new().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>qad_endpoint = endpoint.clone();
+
+        <span class="comment">// create a client config for the endpoint to use for QUIC address discovery
+        </span><span class="kw">let </span>root_store =
+            rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        <span class="kw">let </span>client_config = rustls::client::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect(<span class="string">"ring supports these"</span>)
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+        <span class="kw">let </span>quic_config = <span class="prelude-val">Some</span>(QuicConfig {
+            ep: qad_endpoint,
+            client_config,
+            ipv4: <span class="bool-val">true</span>,
+            ipv6: pconn6_sock.is_some(),
+        });
+        <span class="kw">let </span>net_report_config = net_report::Options::default()
+            .stun_v4(<span class="prelude-val">Some</span>(pconn4_sock.clone()))
+            .stun_v6(pconn6_sock.clone())
+            .quic_config(quic_config);
+
         actor_tasks.spawn(
             <span class="kw">async move </span>{
                 <span class="kw">let </span>actor = Actor {
@@ -6168,7 +6190,7 @@
                     no_v4_send: <span class="bool-val">false</span>,
                     net_reporter,
                     network_monitor,
-                    qad_endpoint,
+                    net_report_config,
                 };
 
                 <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = actor.run().<span class="kw">await </span>{
@@ -6584,6 +6606,9 @@
     </span>pconn4: Arc&lt;UdpSocket&gt;,
     pconn6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
 
+    <span class="doccomment">/// Configuration for net report
+    </span>net_report_config: net_report::Options,
+
     <span class="doccomment">/// The NAT-PMP/PCP/UPnP prober/client, for requesting port mappings from NAT devices.
     </span>port_mapper: portmapper::Client,
 
@@ -6596,11 +6621,6 @@
     </span>net_reporter: net_report::Client,
 
     network_monitor: netmon::Monitor,
-
-    <span class="doccomment">/// The internal quinn::Endpoint
-    ///
-    /// Needed for Quic Address Discovery
-    </span>qad_endpoint: quinn::Endpoint,
 }
 
 <span class="kw">impl </span>Actor {
@@ -7014,27 +7034,7 @@
         }
 
         <span class="kw">let </span>relay_map = <span class="self">self</span>.msock.relay_map.clone();
-        <span class="kw">let </span><span class="kw-2">mut </span>opts = net_report::Options::default()
-            .stun_v4(<span class="prelude-val">Some</span>(<span class="self">self</span>.pconn4.clone()))
-            .stun_v6(<span class="self">self</span>.pconn6.clone());
-
-        <span class="comment">// create a client config for the endpoint to use for QUIC address discovery
-        </span><span class="kw">let </span>root_store =
-            rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        <span class="kw">let </span>client_config = rustls::client::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()
-        .expect(<span class="string">"ring supports these"</span>)
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-        <span class="kw">let </span>quic_config = <span class="prelude-val">Some</span>(QuicConfig {
-            ep: <span class="self">self</span>.qad_endpoint.clone(),
-            client_config,
-            ipv4: <span class="bool-val">true</span>,
-            ipv6: <span class="self">self</span>.pconn6.is_some(),
-        });
-        opts = opts.quic_config(quic_config);
+        <span class="kw">let </span>opts = <span class="self">self</span>.net_report_config.clone();
 
         <span class="macro">debug!</span>(<span class="string">"requesting net_report report"</span>);
         <span class="kw">match </span><span class="self">self</span>.net_reporter.get_report_channel(relay_map, opts).<span class="kw">await </span>{

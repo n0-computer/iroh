@@ -400,7 +400,14 @@
 <a href="#399" id="399">399</a>
 <a href="#400" id="400">400</a>
 <a href="#401" id="401">401</a>
-<a href="#402" id="402">402</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS resolver
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS resolver
 
 </span><span class="kw">use </span>std::{
     fmt::{<span class="self">self</span>, Write},
@@ -409,7 +416,7 @@
 };
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>hickory_resolver::{IntoName, Resolver, TokioResolver};
+<span class="kw">use </span>hickory_resolver::{Resolver, TokioResolver};
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId};
 <span class="kw">use </span>n0_future::{
     time::{<span class="self">self</span>, Duration},
@@ -477,27 +484,30 @@
     }
 
     <span class="doccomment">/// Lookup a TXT record.
-    </span><span class="kw">pub async fn </span>lookup_txt(<span class="kw-2">&amp;</span><span class="self">self</span>, query: <span class="kw">impl </span>IntoName, timeout: Duration) -&gt; <span class="prelude-ty">Result</span>&lt;TxtLookup&gt; {
-        <span class="kw">let </span>res = time::timeout(timeout, <span class="self">self</span>.<span class="number">0</span>.txt_lookup(query)).<span class="kw">await</span><span class="question-mark">??</span>;
+    </span><span class="kw">pub async fn </span>lookup_txt(<span class="kw-2">&amp;</span><span class="self">self</span>, host: <span class="kw">impl </span>ToString, timeout: Duration) -&gt; <span class="prelude-ty">Result</span>&lt;TxtLookup&gt; {
+        <span class="kw">let </span>host = host.to_string();
+        <span class="kw">let </span>res = time::timeout(timeout, <span class="self">self</span>.<span class="number">0</span>.txt_lookup(host)).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(TxtLookup(res))
     }
 
     <span class="doccomment">/// Perform an ipv4 lookup with a timeout.
-    </span><span class="kw">pub async fn </span>lookup_ipv4&lt;N: IntoName&gt;(
+    </span><span class="kw">pub async fn </span>lookup_ipv4(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        host: N,
+        host: <span class="kw">impl </span>ToString,
         timeout: Duration,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;&gt; {
+        <span class="kw">let </span>host = host.to_string();
         <span class="kw">let </span>addrs = time::timeout(timeout, <span class="self">self</span>.<span class="number">0</span>.ipv4_lookup(host)).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(addrs.into_iter().map(|ip| IpAddr::V4(ip.<span class="number">0</span>)))
     }
 
     <span class="doccomment">/// Perform an ipv6 lookup with a timeout.
-    </span><span class="kw">pub async fn </span>lookup_ipv6&lt;N: IntoName&gt;(
+    </span><span class="kw">pub async fn </span>lookup_ipv6(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        host: N,
+        host: <span class="kw">impl </span>ToString,
         timeout: Duration,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;&gt; {
+        <span class="kw">let </span>host = host.to_string();
         <span class="kw">let </span>addrs = time::timeout(timeout, <span class="self">self</span>.<span class="number">0</span>.ipv6_lookup(host)).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(addrs.into_iter().map(|ip| IpAddr::V6(ip.<span class="number">0</span>)))
     }
@@ -507,11 +517,12 @@
     /// `LookupIpStrategy::Ipv4AndIpv6` will wait for ipv6 resolution timeout, even if it is
     /// not usable on the stack, so we manually query both lookups concurrently and time them out
     /// individually.
-    </span><span class="kw">pub async fn </span>lookup_ipv4_ipv6&lt;N: IntoName + Clone&gt;(
+    </span><span class="kw">pub async fn </span>lookup_ipv4_ipv6(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        host: N,
+        host: <span class="kw">impl </span>ToString,
         timeout: Duration,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;&gt; {
+        <span class="kw">let </span>host = host.to_string();
         <span class="kw">let </span>res = <span class="macro">tokio::join!</span>(
             <span class="self">self</span>.lookup_ipv4(host.clone(), timeout),
             <span class="self">self</span>.lookup_ipv6(host, timeout)
@@ -563,12 +574,13 @@
     /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
     /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied to each call individually. The
     /// result of the first successful call is returned, or a summary of all errors otherwise.
-    </span><span class="kw">pub async fn </span>lookup_ipv4_staggered&lt;N: IntoName + Clone&gt;(
+    </span><span class="kw">pub async fn </span>lookup_ipv4_staggered(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        host: N,
+        host: <span class="kw">impl </span>ToString,
         timeout: Duration,
         delays_ms: <span class="kw-2">&amp;</span>[u64],
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;&gt; {
+        <span class="kw">let </span>host = host.to_string();
         <span class="kw">let </span>f = || <span class="self">self</span>.lookup_ipv4(host.clone(), timeout);
         stagger_call(f, delays_ms).<span class="kw">await
     </span>}
@@ -579,12 +591,13 @@
     /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
     /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied to each call individually. The
     /// result of the first successful call is returned, or a summary of all errors otherwise.
-    </span><span class="kw">pub async fn </span>lookup_ipv6_staggered&lt;N: IntoName + Clone&gt;(
+    </span><span class="kw">pub async fn </span>lookup_ipv6_staggered(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        host: N,
+        host: <span class="kw">impl </span>ToString,
         timeout: Duration,
         delays_ms: <span class="kw-2">&amp;</span>[u64],
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;&gt; {
+        <span class="kw">let </span>host = host.to_string();
         <span class="kw">let </span>f = || <span class="self">self</span>.lookup_ipv6(host.clone(), timeout);
         stagger_call(f, delays_ms).<span class="kw">await
     </span>}
@@ -596,12 +609,13 @@
     /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied as stated in
     /// [`Self::lookup_ipv4_ipv6`]. The result of the first successful call is returned, or a
     /// summary of all errors otherwise.
-    </span><span class="kw">pub async fn </span>lookup_ipv4_ipv6_staggered&lt;N: IntoName + Clone&gt;(
+    </span><span class="kw">pub async fn </span>lookup_ipv4_ipv6_staggered(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        host: N,
+        host: <span class="kw">impl </span>ToString,
         timeout: Duration,
         delays_ms: <span class="kw-2">&amp;</span>[u64],
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;&gt; {
+        <span class="kw">let </span>host = host.to_string();
         <span class="kw">let </span>f = || <span class="self">self</span>.lookup_ipv4_ipv6(host.clone(), timeout);
         stagger_call(f, delays_ms).<span class="kw">await
     </span>}
