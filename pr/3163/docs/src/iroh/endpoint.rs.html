@@ -2283,7 +2283,90 @@
 <a href="#2282" id="2282">2282</a>
 <a href="#2283" id="2283">2283</a>
 <a href="#2284" id="2284">2284</a>
-<a href="#2285" id="2285">2285</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2285" id="2285">2285</a>
+<a href="#2286" id="2286">2286</a>
+<a href="#2287" id="2287">2287</a>
+<a href="#2288" id="2288">2288</a>
+<a href="#2289" id="2289">2289</a>
+<a href="#2290" id="2290">2290</a>
+<a href="#2291" id="2291">2291</a>
+<a href="#2292" id="2292">2292</a>
+<a href="#2293" id="2293">2293</a>
+<a href="#2294" id="2294">2294</a>
+<a href="#2295" id="2295">2295</a>
+<a href="#2296" id="2296">2296</a>
+<a href="#2297" id="2297">2297</a>
+<a href="#2298" id="2298">2298</a>
+<a href="#2299" id="2299">2299</a>
+<a href="#2300" id="2300">2300</a>
+<a href="#2301" id="2301">2301</a>
+<a href="#2302" id="2302">2302</a>
+<a href="#2303" id="2303">2303</a>
+<a href="#2304" id="2304">2304</a>
+<a href="#2305" id="2305">2305</a>
+<a href="#2306" id="2306">2306</a>
+<a href="#2307" id="2307">2307</a>
+<a href="#2308" id="2308">2308</a>
+<a href="#2309" id="2309">2309</a>
+<a href="#2310" id="2310">2310</a>
+<a href="#2311" id="2311">2311</a>
+<a href="#2312" id="2312">2312</a>
+<a href="#2313" id="2313">2313</a>
+<a href="#2314" id="2314">2314</a>
+<a href="#2315" id="2315">2315</a>
+<a href="#2316" id="2316">2316</a>
+<a href="#2317" id="2317">2317</a>
+<a href="#2318" id="2318">2318</a>
+<a href="#2319" id="2319">2319</a>
+<a href="#2320" id="2320">2320</a>
+<a href="#2321" id="2321">2321</a>
+<a href="#2322" id="2322">2322</a>
+<a href="#2323" id="2323">2323</a>
+<a href="#2324" id="2324">2324</a>
+<a href="#2325" id="2325">2325</a>
+<a href="#2326" id="2326">2326</a>
+<a href="#2327" id="2327">2327</a>
+<a href="#2328" id="2328">2328</a>
+<a href="#2329" id="2329">2329</a>
+<a href="#2330" id="2330">2330</a>
+<a href="#2331" id="2331">2331</a>
+<a href="#2332" id="2332">2332</a>
+<a href="#2333" id="2333">2333</a>
+<a href="#2334" id="2334">2334</a>
+<a href="#2335" id="2335">2335</a>
+<a href="#2336" id="2336">2336</a>
+<a href="#2337" id="2337">2337</a>
+<a href="#2338" id="2338">2338</a>
+<a href="#2339" id="2339">2339</a>
+<a href="#2340" id="2340">2340</a>
+<a href="#2341" id="2341">2341</a>
+<a href="#2342" id="2342">2342</a>
+<a href="#2343" id="2343">2343</a>
+<a href="#2344" id="2344">2344</a>
+<a href="#2345" id="2345">2345</a>
+<a href="#2346" id="2346">2346</a>
+<a href="#2347" id="2347">2347</a>
+<a href="#2348" id="2348">2348</a>
+<a href="#2349" id="2349">2349</a>
+<a href="#2350" id="2350">2350</a>
+<a href="#2351" id="2351">2351</a>
+<a href="#2352" id="2352">2352</a>
+<a href="#2353" id="2353">2353</a>
+<a href="#2354" id="2354">2354</a>
+<a href="#2355" id="2355">2355</a>
+<a href="#2356" id="2356">2356</a>
+<a href="#2357" id="2357">2357</a>
+<a href="#2358" id="2358">2358</a>
+<a href="#2359" id="2359">2359</a>
+<a href="#2360" id="2360">2360</a>
+<a href="#2361" id="2361">2361</a>
+<a href="#2362" id="2362">2362</a>
+<a href="#2363" id="2363">2363</a>
+<a href="#2364" id="2364">2364</a>
+<a href="#2365" id="2365">2365</a>
+<a href="#2366" id="2366">2366</a>
+<a href="#2367" id="2367">2367</a>
+<a href="#2368" id="2368">2368</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2806,6 +2889,7 @@
     msock: Handle,
     rtt_actor: Arc&lt;rtt_actor::RttHandle&gt;,
     static_config: Arc&lt;StaticConfig&gt;,
+    session_store: Arc&lt;<span class="kw">dyn </span>rustls::client::ClientSessionStore&gt;,
 }
 
 <span class="kw">impl </span>Endpoint {
@@ -2829,10 +2913,81 @@
         <span class="kw">let </span>msock = magicsock::MagicSock::spawn(msock_opts).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">trace!</span>(<span class="string">"created magicsock"</span>);
         <span class="macro">debug!</span>(version = <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>), <span class="string">"iroh Endpoint created"</span>);
+
+        <span class="attr">#[derive(Debug, Default)]
+        </span><span class="kw">struct </span>SessionStore {
+            session_values: std::sync::Mutex&lt;
+                std::collections::HashMap&lt;
+                    webpki::types::ServerName&lt;<span class="lifetime">'static</span>&gt;,
+                    rustls::client::Tls13ClientSessionValue,
+                &gt;,
+            &gt;,
+            kx_hints: std::sync::Mutex&lt;
+                std::collections::HashMap&lt;webpki::types::ServerName&lt;<span class="lifetime">'static</span>&gt;, rustls::NamedGroup&gt;,
+            &gt;,
+        }
+
+        <span class="kw">impl </span>rustls::client::ClientSessionStore <span class="kw">for </span>SessionStore {
+            <span class="kw">fn </span>set_kx_hint(
+                <span class="kw-2">&amp;</span><span class="self">self</span>,
+                server_name: webpki::types::ServerName&lt;<span class="lifetime">'static</span>&gt;,
+                group: rustls::NamedGroup,
+            ) {
+                <span class="macro">tracing::warn!</span>(<span class="question-mark">?</span>server_name, <span class="question-mark">?</span>group, <span class="string">"set_kx_hint"</span>);
+                <span class="self">self</span>.kx_hints.lock().unwrap().insert(server_name, group);
+            }
+
+            <span class="kw">fn </span>kx_hint(
+                <span class="kw-2">&amp;</span><span class="self">self</span>,
+                server_name: <span class="kw-2">&amp;</span>webpki::types::ServerName&lt;<span class="lifetime">'_</span>&gt;,
+            ) -&gt; <span class="prelude-ty">Option</span>&lt;rustls::NamedGroup&gt; {
+                <span class="macro">tracing::warn!</span>(<span class="question-mark">?</span>server_name, <span class="string">"kx_hint"</span>);
+                <span class="self">self</span>.kx_hints.lock().unwrap().get(server_name).cloned()
+            }
+
+            <span class="kw">fn </span>set_tls12_session(
+                <span class="kw-2">&amp;</span><span class="self">self</span>,
+                _server_name: webpki::types::ServerName&lt;<span class="lifetime">'static</span>&gt;,
+                _value: rustls::client::Tls12ClientSessionValue,
+            ) {
+            }
+
+            <span class="kw">fn </span>tls12_session(
+                <span class="kw-2">&amp;</span><span class="self">self</span>,
+                _server_name: <span class="kw-2">&amp;</span>webpki::types::ServerName&lt;<span class="lifetime">'_</span>&gt;,
+            ) -&gt; <span class="prelude-ty">Option</span>&lt;rustls::client::Tls12ClientSessionValue&gt; {
+                <span class="prelude-val">None
+            </span>}
+
+            <span class="kw">fn </span>remove_tls12_session(<span class="kw-2">&amp;</span><span class="self">self</span>, _server_name: <span class="kw-2">&amp;</span>webpki::types::ServerName&lt;<span class="lifetime">'static</span>&gt;) {}
+
+            <span class="kw">fn </span>insert_tls13_ticket(
+                <span class="kw-2">&amp;</span><span class="self">self</span>,
+                server_name: webpki::types::ServerName&lt;<span class="lifetime">'static</span>&gt;,
+                value: rustls::client::Tls13ClientSessionValue,
+            ) {
+                <span class="macro">tracing::warn!</span>(<span class="question-mark">?</span>server_name, <span class="question-mark">?</span>value, <span class="string">"insert_tls13_ticket"</span>);
+                <span class="self">self</span>.session_values
+                    .lock()
+                    .unwrap()
+                    .insert(server_name, value);
+            }
+
+            <span class="kw">fn </span>take_tls13_ticket(
+                <span class="kw-2">&amp;</span><span class="self">self</span>,
+                server_name: <span class="kw-2">&amp;</span>webpki::types::ServerName&lt;<span class="lifetime">'static</span>&gt;,
+            ) -&gt; <span class="prelude-ty">Option</span>&lt;rustls::client::Tls13ClientSessionValue&gt; {
+                <span class="macro">tracing::warn!</span>(<span class="question-mark">?</span>server_name, <span class="string">"take_tls13_ticket"</span>);
+                <span class="self">self</span>.session_values.lock().unwrap().remove(server_name)
+            }
+        }
+
+        <span class="kw">let </span>session_store = SessionStore::default();
         <span class="kw">let </span>ep = <span class="self">Self </span>{
             msock: msock.clone(),
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
             static_config: Arc::new(static_config),
+            session_store: Arc::new(session_store),
         };
         <span class="prelude-val">Ok</span>(ep)
     }
@@ -2961,6 +3116,7 @@
                 <span class="kw-2">&amp;</span><span class="self">self</span>.static_config.secret_key,
                 <span class="prelude-val">Some</span>(node_id),
                 alpn_protocols,
+                <span class="prelude-val">Some</span>(<span class="self">self</span>.session_store.clone()),
                 <span class="self">self</span>.static_config.keylog,
             )<span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
@@ -2977,6 +3133,7 @@
         <span class="prelude-val">Ok</span>(Connecting {
             inner: connect,
             ep: <span class="self">self</span>.clone(),
+            remote_node_id: <span class="prelude-val">Some</span>(node_id),
         })
     }
 
@@ -3441,6 +3598,7 @@
         <span class="self">self</span>.inner.accept().map(|conn| Connecting {
             inner: conn,
             ep: <span class="self">self</span>.ep,
+            remote_node_id: <span class="prelude-val">None</span>,
         })
     }
 
@@ -3458,6 +3616,7 @@
             .map(|conn| Connecting {
                 inner: conn,
                 ep: <span class="self">self</span>.ep,
+                remote_node_id: <span class="prelude-val">None</span>,
             })
     }
 
@@ -3508,6 +3667,7 @@
         IncomingFuture {
             inner: <span class="self">self</span>.inner.into_future(),
             ep: <span class="self">self</span>.ep,
+            remote_node_id: <span class="prelude-val">None</span>,
         }
     }
 }
@@ -3519,6 +3679,7 @@
     <span class="attr">#[pin]
     </span>inner: quinn::IncomingFuture,
     ep: Endpoint,
+    remote_node_id: <span class="prelude-ty">Option</span>&lt;NodeId&gt;,
 }
 
 <span class="kw">impl </span>Future <span class="kw">for </span>IncomingFuture {
@@ -3531,7 +3692,7 @@
             Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(err)),
             Poll::Ready(<span class="prelude-val">Ok</span>(inner)) =&gt; {
                 <span class="kw">let </span>conn = Connection { inner };
-                try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, this.ep);
+                try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, this.ep, <span class="kw-2">*</span>this.remote_node_id);
                 Poll::Ready(<span class="prelude-val">Ok</span>(conn))
             }
         }
@@ -3545,6 +3706,7 @@
     <span class="attr">#[pin]
     </span>inner: quinn::Connecting,
     ep: Endpoint,
+    remote_node_id: <span class="prelude-ty">Option</span>&lt;NodeId&gt;,
 }
 
 <span class="kw">impl </span>Connecting {
@@ -3553,10 +3715,14 @@
         <span class="kw">match </span><span class="self">self</span>.inner.into_0rtt() {
             <span class="prelude-val">Ok</span>((inner, zrtt_accepted)) =&gt; {
                 <span class="kw">let </span>conn = Connection { inner };
-                try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, <span class="kw-2">&amp;</span><span class="self">self</span>.ep);
+                try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, <span class="kw-2">&amp;</span><span class="self">self</span>.ep, <span class="self">self</span>.remote_node_id);
                 <span class="prelude-val">Ok</span>((conn, zrtt_accepted))
             }
-            <span class="prelude-val">Err</span>(inner) =&gt; <span class="prelude-val">Err</span>(<span class="self">Self </span>{ inner, ep: <span class="self">self</span>.ep }),
+            <span class="prelude-val">Err</span>(inner) =&gt; <span class="prelude-val">Err</span>(<span class="self">Self </span>{
+                inner,
+                ep: <span class="self">self</span>.ep,
+                remote_node_id: <span class="self">self</span>.remote_node_id,
+            }),
         }
     }
 
@@ -3590,7 +3756,7 @@
             Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(err)),
             Poll::Ready(<span class="prelude-val">Ok</span>(inner)) =&gt; {
                 <span class="kw">let </span>conn = Connection { inner };
-                try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, this.ep);
+                try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, this.ep, <span class="kw-2">*</span>this.remote_node_id);
                 Poll::Ready(<span class="prelude-val">Ok</span>(conn))
             }
         }
@@ -3904,9 +4070,9 @@
 ///
 /// If we can't notify the actor that will impact performance a little, but we can still
 /// function.
-</span><span class="kw">fn </span>try_send_rtt_msg(conn: <span class="kw-2">&amp;</span>Connection, magic_ep: <span class="kw-2">&amp;</span>Endpoint) {
+</span><span class="kw">fn </span>try_send_rtt_msg(conn: <span class="kw-2">&amp;</span>Connection, magic_ep: <span class="kw-2">&amp;</span>Endpoint, remote_node_id: <span class="prelude-ty">Option</span>&lt;NodeId&gt;) {
     <span class="comment">// If we can't notify the rtt-actor that's not great but not critical.
-    </span><span class="kw">let </span><span class="prelude-val">Ok</span>(node_id) = conn.remote_node_id() <span class="kw">else </span>{
+    </span><span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = remote_node_id.or_else(|| conn.remote_node_id().ok()) <span class="kw">else </span>{
         <span class="macro">warn!</span>(<span class="question-mark">?</span>conn, <span class="string">"failed to get remote node id"</span>);
         <span class="kw">return</span>;
     };
