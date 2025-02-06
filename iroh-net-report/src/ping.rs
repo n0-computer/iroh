@@ -128,35 +128,6 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test]
-    #[ignore] // Doesn't work in CI
-    #[traced_test]
-    async fn test_ping_google() -> Result<()> {
-        // Public DNS addrs from google based on
-        // https://developers.google.com/speed/public-dns/docs/using
-
-        let pinger = Pinger::new();
-
-        // IPv4
-        let dur = pinger.send("8.8.8.8".parse()?, &[1u8; 8]).await?;
-        assert!(!dur.is_zero());
-
-        // IPv6
-        match pinger
-            .send("2001:4860:4860:0:0:0:0:8888".parse()?, &[1u8; 8])
-            .await
-        {
-            Ok(dur) => {
-                assert!(!dur.is_zero());
-            }
-            Err(err) => {
-                tracing::error!("IPv6 is not available: {:?}", err);
-            }
-        }
-
-        Ok(())
-    }
-
     // See net_report::reportgen::tests::test_icmp_probe_eu_relay for permissions to ping.
     #[tokio::test]
     #[traced_test]
