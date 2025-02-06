@@ -21,22 +21,29 @@ use bytes::Bytes;
 use iroh_base::RelayUrl;
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
-use iroh_relay::{dns::DnsResolver, protos::stun, RelayMap};
+#[cfg(not(wasm_browser))]
+use iroh_relay::dns::DnsResolver;
+use iroh_relay::{protos::stun, RelayMap};
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{Duration, Instant},
 };
+#[cfg(not(wasm_browser))]
 use netwatch::UdpSocket;
 use tokio::sync::{self, mpsc, oneshot};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 mod defaults;
+#[cfg(not(wasm_browser))]
 mod dns;
+#[cfg(not(wasm_browser))]
 mod ip_mapped_addrs;
 mod metrics;
+#[cfg(not(wasm_browser))]
 mod ping;
 mod reportgen;
 
+#[cfg(not(wasm_browser))]
 pub use ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddresses, MAPPED_ADDR_PORT};
 pub use metrics::Metrics;
 use reportgen::ProbeProto;
@@ -87,6 +94,7 @@ pub struct Report {
     /// public IP address (on IPv4).
     pub hair_pinning: Option<bool>,
     /// Probe indicating the presence of port mapping protocols on the LAN.
+    #[cfg(not(wasm_browser))]
     pub portmap_probe: Option<portmapper::ProbeOutput>,
     /// `None` for unknown
     pub preferred_relay: Option<RelayUrl>,
@@ -225,6 +233,7 @@ pub struct Options {
     /// other packets from in the magicsocket (`MagicSock`).
     ///
     /// If not provided, STUN probes will not be sent over IPv4.
+    #[cfg(not(wasm_browser))]
     stun_sock_v4: Option<Arc<UdpSocket>>,
     /// Socket to send IPv6 STUN probes from.
     ///
@@ -233,18 +242,22 @@ pub struct Options {
     /// other packets from in the magicsocket (`MagicSock`).
     ///
     /// If not provided, STUN probes will not be sent over IPv6.
+    #[cfg(not(wasm_browser))]
     stun_sock_v6: Option<Arc<UdpSocket>>,
     /// The configuration needed to launch QUIC address discovery probes.
     ///
     /// If not provided, will not run QUIC address discovery.
+    #[cfg(not(wasm_browser))]
     quic_config: Option<QuicConfig>,
     /// Enable icmp_v4 probes
     ///
     /// On by default
+    #[cfg(not(wasm_browser))]
     icmp_v4: bool,
     /// Enable icmp_v6 probes
     ///
     /// On by default
+    #[cfg(not(wasm_browser))]
     icmp_v6: bool,
     /// Enable https probes
     ///
@@ -255,10 +268,15 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            #[cfg(not(wasm_browser))]
             stun_sock_v4: None,
+            #[cfg(not(wasm_browser))]
             stun_sock_v6: None,
+            #[cfg(not(wasm_browser))]
             quic_config: None,
+            #[cfg(not(wasm_browser))]
             icmp_v4: true,
+            #[cfg(not(wasm_browser))]
             icmp_v6: true,
             https: true,
         }
@@ -269,40 +287,50 @@ impl Options {
     /// Create an [`Options`] that disables all probes
     pub fn disabled() -> Self {
         Self {
+            #[cfg(not(wasm_browser))]
             stun_sock_v4: None,
+            #[cfg(not(wasm_browser))]
             stun_sock_v6: None,
+            #[cfg(not(wasm_browser))]
             quic_config: None,
+            #[cfg(not(wasm_browser))]
             icmp_v4: false,
+            #[cfg(not(wasm_browser))]
             icmp_v6: false,
             https: false,
         }
     }
 
     /// Set the ipv4 stun socket and enable ipv4 stun probes
+    #[cfg(not(wasm_browser))]
     pub fn stun_v4(mut self, sock: Option<Arc<UdpSocket>>) -> Self {
         self.stun_sock_v4 = sock;
         self
     }
 
     /// Set the ipv6 stun socket and enable ipv6 stun probes
+    #[cfg(not(wasm_browser))]
     pub fn stun_v6(mut self, sock: Option<Arc<UdpSocket>>) -> Self {
         self.stun_sock_v6 = sock;
         self
     }
 
     /// Enable quic probes
+    #[cfg(not(wasm_browser))]
     pub fn quic_config(mut self, quic_config: Option<QuicConfig>) -> Self {
         self.quic_config = quic_config;
         self
     }
 
     /// Enable or disable icmp_v4 probe
+    #[cfg(not(wasm_browser))]
     pub fn icmp_v4(mut self, enable: bool) -> Self {
         self.icmp_v4 = enable;
         self
     }
 
     /// Enable or disable icmp_v6 probe
+    #[cfg(not(wasm_browser))]
     pub fn icmp_v6(mut self, enable: bool) -> Self {
         self.icmp_v6 = enable;
         self
@@ -317,12 +345,15 @@ impl Options {
     /// Turn the options into set of valid protocols
     fn to_protocols(&self) -> BTreeSet<ProbeProto> {
         let mut protocols = BTreeSet::new();
+        #[cfg(not(wasm_browser))]
         if self.stun_sock_v4.is_some() {
             protocols.insert(ProbeProto::StunIpv4);
         }
+        #[cfg(not(wasm_browser))]
         if self.stun_sock_v6.is_some() {
             protocols.insert(ProbeProto::StunIpv6);
         }
+        #[cfg(not(wasm_browser))]
         if let Some(ref quic) = self.quic_config {
             if quic.ipv4 {
                 protocols.insert(ProbeProto::QuicIpv4);
@@ -331,9 +362,11 @@ impl Options {
                 protocols.insert(ProbeProto::QuicIpv6);
             }
         }
+        #[cfg(not(wasm_browser))]
         if self.icmp_v4 {
             protocols.insert(ProbeProto::IcmpV4);
         }
+        #[cfg(not(wasm_browser))]
         if self.icmp_v6 {
             protocols.insert(ProbeProto::IcmpV6);
         }
@@ -350,11 +383,18 @@ impl Client {
     /// This starts a connected actor in the background.  Once the client is dropped it will
     /// stop running.
     pub fn new(
-        port_mapper: Option<portmapper::Client>,
-        dns_resolver: DnsResolver,
-        ip_mapped_addrs: Option<IpMappedAddresses>,
+        #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
+        #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
+        #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
     ) -> Result<Self> {
-        let mut actor = Actor::new(port_mapper, dns_resolver, ip_mapped_addrs)?;
+        let mut actor = Actor::new(
+            #[cfg(not(wasm_browser))]
+            port_mapper,
+            #[cfg(not(wasm_browser))]
+            dns_resolver,
+            #[cfg(not(wasm_browser))]
+            ip_mapped_addrs,
+        )?;
         let addr = actor.addr();
         let task = task::spawn(
             async move { actor.run().await }.instrument(info_span!("net_report.actor")),
@@ -399,14 +439,17 @@ impl Client {
     pub async fn get_report(
         &mut self,
         relay_map: RelayMap,
-        stun_sock_v4: Option<Arc<UdpSocket>>,
-        stun_sock_v6: Option<Arc<UdpSocket>>,
-        quic_config: Option<QuicConfig>,
+        #[cfg(not(wasm_browser))] stun_sock_v4: Option<Arc<UdpSocket>>,
+        #[cfg(not(wasm_browser))] stun_sock_v6: Option<Arc<UdpSocket>>,
+        #[cfg(not(wasm_browser))] quic_config: Option<QuicConfig>,
     ) -> Result<Arc<Report>> {
+        #[cfg(not(wasm_browser))]
         let opts = Options::default()
             .stun_v4(stun_sock_v4)
             .stun_v6(stun_sock_v6)
             .quic_config(quic_config);
+        #[cfg(wasm_browser)]
+        let opts = Options::default();
         let rx = self.get_report_channel(relay_map.clone(), opts).await?;
         match rx.await {
             Ok(res) => res,
@@ -559,6 +602,7 @@ struct Actor {
     ///
     /// The port mapper is responsible for talking to routers via UPnP and the like to try
     /// and open ports.
+    #[cfg(not(wasm_browser))]
     port_mapper: Option<portmapper::Client>,
 
     // Actor state.
@@ -570,9 +614,11 @@ struct Actor {
     current_report_run: Option<ReportRun>,
 
     /// The DNS resolver to use for probes that need to perform DNS lookups
+    #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
 
     /// The [`IpMappedAddresses`] that allows you to do QAD in iroh
+    #[cfg(not(wasm_browser))]
     ip_mapped_addrs: Option<IpMappedAddresses>,
 }
 
@@ -582,9 +628,9 @@ impl Actor {
     /// This does not start the actor, see [`Actor::run`] for this.  You should not
     /// normally create this directly but rather create a [`Client`].
     fn new(
-        port_mapper: Option<portmapper::Client>,
-        dns_resolver: DnsResolver,
-        ip_mapped_addrs: Option<IpMappedAddresses>,
+        #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
+        #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
+        #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
     ) -> Result<Self> {
         // TODO: consider an instrumented flume channel so we have metrics.
         let (sender, receiver) = mpsc::channel(32);
@@ -592,10 +638,13 @@ impl Actor {
             receiver,
             sender,
             reports: Default::default(),
+            #[cfg(not(wasm_browser))]
             port_mapper,
             in_flight_stun_requests: Default::default(),
             current_report_run: None,
+            #[cfg(not(wasm_browser))]
             dns_resolver,
+            #[cfg(not(wasm_browser))]
             ip_mapped_addrs,
         })
     }
@@ -651,6 +700,7 @@ impl Actor {
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     ) {
         let protocols = opts.to_protocols();
+        #[cfg(not(wasm_browser))]
         let Options {
             stun_sock_v4,
             stun_sock_v6,
@@ -693,13 +743,19 @@ impl Actor {
         let actor = reportgen::Client::new(
             self.addr(),
             self.reports.last.clone(),
+            #[cfg(not(wasm_browser))]
             self.port_mapper.clone(),
             relay_map,
+            #[cfg(not(wasm_browser))]
             stun_sock_v4,
+            #[cfg(not(wasm_browser))]
             stun_sock_v6,
+            #[cfg(not(wasm_browser))]
             quic_config,
+            #[cfg(not(wasm_browser))]
             self.dns_resolver.clone(),
             protocols,
+            #[cfg(not(wasm_browser))]
             self.ip_mapped_addrs.clone(),
         );
 
@@ -876,6 +932,7 @@ struct ReportRun {
 }
 
 /// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
+#[cfg(not(wasm_browser))]
 pub fn os_has_ipv6() -> bool {
     UdpSocket::bind_local_v6(0).is_ok()
 }
