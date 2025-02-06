@@ -1740,6 +1740,28 @@ impl Handle {
         let inner2 = inner.clone();
         let network_monitor = netmon::Monitor::new().await?;
         let qad_endpoint = endpoint.clone();
+
+        // create a client config for the endpoint to use for QUIC address discovery
+        let root_store =
+            rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let client_config = rustls::client::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("ring supports these")
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+        let quic_config = Some(QuicConfig {
+            ep: qad_endpoint,
+            client_config,
+            ipv4: true,
+            ipv6: pconn6_sock.is_some(),
+        });
+        let net_report_config = net_report::Options::default()
+            .stun_v4(Some(pconn4_sock.clone()))
+            .stun_v6(pconn6_sock.clone())
+            .quic_config(quic_config);
+
         actor_tasks.spawn(
             async move {
                 let actor = Actor {
@@ -1756,7 +1778,7 @@ impl Handle {
                     no_v4_send: false,
                     net_reporter,
                     network_monitor,
-                    qad_endpoint,
+                    net_report_config,
                 };
 
                 if let Err(err) = actor.run().await {
@@ -2172,6 +2194,9 @@ struct Actor {
     pconn4: Arc<UdpSocket>,
     pconn6: Option<Arc<UdpSocket>>,
 
+    /// Configuration for net report
+    net_report_config: net_report::Options,
+
     /// The NAT-PMP/PCP/UPnP prober/client, for requesting port mappings from NAT devices.
     port_mapper: portmapper::Client,
 
@@ -2184,11 +2209,6 @@ struct Actor {
     net_reporter: net_report::Client,
 
     network_monitor: netmon::Monitor,
-
-    /// The internal quinn::Endpoint
-    ///
-    /// Needed for Quic Address Discovery
-    qad_endpoint: quinn::Endpoint,
 }
 
 impl Actor {
@@ -2602,27 +2622,7 @@ impl Actor {
         }
 
         let relay_map = self.msock.relay_map.clone();
-        let mut opts = net_report::Options::default()
-            .stun_v4(Some(self.pconn4.clone()))
-            .stun_v6(self.pconn6.clone());
-
-        // create a client config for the endpoint to use for QUIC address discovery
-        let root_store =
-            rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        let client_config = rustls::client::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()
-        .expect("ring supports these")
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-        let quic_config = Some(QuicConfig {
-            ep: self.qad_endpoint.clone(),
-            client_config,
-            ipv4: true,
-            ipv6: self.pconn6.is_some(),
-        });
-        opts = opts.quic_config(quic_config);
+        let opts = self.net_report_config.clone();
 
         debug!("requesting net_report report");
         match self.net_reporter.get_report_channel(relay_map, opts).await {
