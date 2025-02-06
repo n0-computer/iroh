@@ -205,6 +205,9 @@ impl DnsResolver {
     }
 
     /// Looks up node info by [`NodeId`] and origin domain name.
+    ///
+    /// To lookup nodes that published their node info to the DNS servers run by n0,
+    /// pass [`N0_DNS_NODE_ORIGIN_PROD`] as `origin`.
     pub async fn lookup_node_by_id(&self, node_id: &NodeId, origin: &str) -> Result<NodeAddr> {
         let attrs =
             node_info::TxtAttrs::<node_info::IrohAttr>::lookup_by_id(self, node_id, origin).await?;
