@@ -32,6 +32,7 @@ iroh-metrics = { version = "0.31", default-features = false }
 n0-future = "0.1.2"
 num_enum = "0.7"
 pin-project = "1"
+pkarr = { version = "2", default-features = false }
 postcard = { version = "1", default-features = false, features = [
     "alloc",
     "use-std",
@@ -45,6 +46,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1", features = ["derive", "rc"] }
+strum = { version = "0.26", features = ["derive"] }
 stun-rs = "0.1.5"
 thiserror = "2"
 tokio = { version = "1", features = [
@@ -65,6 +67,7 @@ webpki = { package = "rustls-webpki", version = "0.102" }
 webpki-roots = "0.26"
 data-encoding = "2.6.0"
 lru = "0.12"
+z32 = "1.0.3"
 
 # server feature
 clap = { version = "4", features = ["derive"], optional = true }

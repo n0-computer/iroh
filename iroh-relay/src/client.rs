@@ -11,8 +11,6 @@ use std::{
 
 use anyhow::{anyhow, bail, Result};
 use conn::Conn;
-#[cfg(not(wasm_browser))]
-use hickory_resolver::TokioResolver as DnsResolver;
 use iroh_base::{RelayUrl, SecretKey};
 use n0_future::{
     split::{split, SplitSink, SplitStream},
@@ -24,6 +22,8 @@ use tracing::{debug, event, trace, Level};
 use url::Url;
 
 pub use self::conn::{ConnSendError, ReceivedMessage, SendMessage};
+#[cfg(not(wasm_browser))]
+use crate::dns::DnsResolver;
 use crate::{
     http::{Protocol, RELAY_PATH},
     KeyCache,
