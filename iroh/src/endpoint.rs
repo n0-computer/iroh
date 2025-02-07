@@ -1823,7 +1823,7 @@ mod tests {
 
     use std::time::Instant;
 
-    use n0_future::{task::AbortOnDropHandle, StreamExt};
+    use n0_future::StreamExt;
     use rand::SeedableRng;
     use testresult::TestResult;
     use tracing::{error_span, info, info_span, Instrument};
@@ -2290,78 +2290,105 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_connect_with_opts_0rtt() -> TestResult {
-        let ep1 = Endpoint::builder()
+        async fn spawn_server() -> Result<Endpoint> {
+            let server = Endpoint::builder()
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .relay_mode(RelayMode::Disabled)
+                .bind()
+                .await?;
+
+            // Gets aborted via the endpoint closing causing an `Err`
+            tokio::spawn({
+                let server = server.clone();
+                async move {
+                    while let Some(incoming) = server.accept().await {
+                        let connecting = incoming.accept()?;
+                        let conn = match connecting.into_0rtt() {
+                            Ok((conn, _)) => {
+                                info!("0rtt accepted");
+                                conn
+                            }
+                            Err(connecting) => {
+                                info!("0rtt denied");
+                                connecting.await?
+                            }
+                        };
+                        let mut recv = conn.accept_uni().await?;
+                        let _ = recv.read_to_end(1_000).await?;
+
+                        let mut send = conn.open_uni().await?;
+                        send.write_all(b"thank you").await?;
+                        send.finish()?;
+
+                        // Gracefully close the connection
+                        conn.closed().await;
+                    }
+                    anyhow::Ok(())
+                }
+            });
+
+            Ok(server)
+        }
+
+        async fn connect_client_expect_0rtt_err(
+            client: &Endpoint,
+            server_addr: NodeAddr,
+        ) -> Result<()> {
+            let conn = client
+                .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
+                .await?
+                .into_0rtt()
+                .err()
+                .expect("0rtt doesn't have keys on first connection yet")
+                .await?;
+
+            let mut send = conn.open_uni().await?;
+            send.write_all(b"hello").await?;
+            send.finish()?;
+            let mut recv = conn.accept_uni().await?;
+            recv.read_to_end(1_000).await?;
+            conn.close(0u32.into(), b"thx");
+            Ok(())
+        }
+
+        async fn connect_client_expect_0rtt_ok(
+            client: &Endpoint,
+            server_addr: NodeAddr,
+        ) -> Result<()> {
+            let (conn, zero_rtt_accepted) = client
+                .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
+                .await?
+                .into_0rtt()
+                .map_err(|_| "0rtt failed")
+                .unwrap();
+
+            let mut send = conn.open_uni().await?;
+            send.write_all(b"hello").await?;
+            send.finish()?;
+            assert!(zero_rtt_accepted.await);
+            let mut recv = conn.accept_uni().await?;
+            recv.read_to_end(1_000).await?;
+            conn.close(0u32.into(), b"thx");
+            Ok(())
+        }
+
+        let client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
-        let ep2 = Endpoint::builder()
-            .alpns(vec![TEST_ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled)
-            .bind()
-            .await?;
+        let server = spawn_server().await?;
 
-        let node_addr = ep2.node_addr().await?;
+        connect_client_expect_0rtt_err(&client, server.node_addr().await?).await?;
 
-        let server = ep2.clone();
-        let server_task = AbortOnDropHandle::new(tokio::spawn(async move {
-            while let Some(incoming) = server.accept().await {
-                let connecting = incoming.accept()?;
-                let conn = match connecting.into_0rtt() {
-                    Ok((conn, _)) => {
-                        info!("0rtt accepted");
-                        conn
-                    }
-                    Err(connecting) => {
-                        info!("0rtt denied");
-                        connecting.await?
-                    }
-                };
-                let mut recv = conn.accept_uni().await?;
-                let _ = recv.read_to_end(1_000).await?;
+        // spawning another server should not hinder us from establishing a 0rtt connection later:
+        let another = spawn_server().await?;
+        connect_client_expect_0rtt_err(&client, another.node_addr().await?).await?;
+        another.close().await;
 
-                let mut send = conn.open_uni().await?;
-                send.write_all(b"thank you").await?;
-                send.finish()?;
+        connect_client_expect_0rtt_ok(&client, server.node_addr().await?).await?;
 
-                // Gracefully close the connection
-                conn.closed().await;
-            }
-            anyhow::Ok(())
-        }));
-
-        let conn = ep1
-            .connect_with_opts(node_addr.clone(), TEST_ALPN, ConnectOptions::new())
-            .await?
-            .into_0rtt()
-            .err()
-            .expect("0rtt doesn't have keys on first connection yet")
-            .await?;
-
-        let mut send = conn.open_uni().await?;
-        send.write_all(b"hello").await?;
-        send.finish()?;
-        let mut recv = conn.accept_uni().await?;
-        recv.read_to_end(1_000).await?;
-        conn.close(0u32.into(), b"thx");
-
-        let (conn, zero_rtt_accepted) = ep1
-            .connect_with_opts(node_addr, TEST_ALPN, ConnectOptions::new())
-            .await?
-            .into_0rtt()
-            .map_err(|_| ())
-            .expect("0rtt works the second time due to cached keys");
-
-        let mut send = conn.open_uni().await?;
-        send.write_all(b"hello").await?;
-        send.finish()?;
-        assert!(zero_rtt_accepted.await);
-        let mut recv = conn.accept_uni().await?;
-        recv.read_to_end(1_000).await?;
-        conn.close(0u32.into(), b"thx");
-
-        ep1.close().await;
-        drop(server_task);
-        ep2.close().await;
+        client.close().await;
+        server.close().await;
 
         Ok(())
     }
