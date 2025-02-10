@@ -497,7 +497,9 @@
 <a href="#496" id="496">496</a>
 <a href="#497" id="497">497</a>
 <a href="#498" id="498">498</a>
-<a href="#499" id="499">499</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
+<a href="#499" id="499">499</a>
+<a href="#500" id="500">500</a>
+<a href="#501" id="501">501</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
 //!
@@ -880,7 +882,8 @@
     }
 }
 
-<span class="doccomment">/// Limit
+<span class="doccomment">/// Wraps an existing protocol, limiting its access,
+/// based on the provided function.
 </span><span class="attr">#[derive(derive_more::Debug, Clone)]
 </span><span class="kw">pub struct </span>AccessLimit&lt;P: ProtocolHandler + Clone&gt; {
     proto: P,
@@ -890,6 +893,9 @@
 
 <span class="kw">impl</span>&lt;P: ProtocolHandler + Clone&gt; AccessLimit&lt;P&gt; {
     <span class="doccomment">/// Create a new `AccessLimit`.
+    ///
+    /// The function should return `true` for nodes that are allowed to
+    /// connect, and `false` otherwise.
     </span><span class="kw">pub fn </span>new&lt;F&gt;(proto: P, limiter: F) -&gt; <span class="self">Self
     </span><span class="kw">where
         </span>F: Fn(NodeId) -&gt; bool + Send + Sync + <span class="lifetime">'static</span>,
@@ -907,12 +913,10 @@
     }
 
     <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
-        <span class="macro">println!</span>(<span class="string">"accepting limiter"</span>);
         <span class="kw">let </span>this = <span class="self">self</span>.clone();
         Box::pin(<span class="kw">async move </span>{
             <span class="kw">let </span>remote = conn.remote_node_id()<span class="question-mark">?</span>;
             <span class="kw">let </span>is_allowed = (this.limiter)(remote);
-            <span class="macro">dbg!</span>(is_allowed);
             <span class="kw">if </span>!is_allowed {
                 conn.close(<span class="number">0u32</span>.into(), <span class="string">b"not allowed"</span>);
                 <span class="macro">anyhow::bail!</span>(<span class="string">"not allowed"</span>);
