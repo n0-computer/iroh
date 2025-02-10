@@ -99,8 +99,8 @@
 <span class="kw">mod </span>relay_map;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>key_cache::KeyCache;
 
-<span class="attr">#[cfg(test)]
-</span><span class="kw">mod </span>dns;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">pub mod </span>dns;
 
 <span class="kw">pub use </span>protos::relay::MAX_PACKET_SIZE;
 

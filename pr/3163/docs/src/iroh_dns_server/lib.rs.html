@@ -273,13 +273,7 @@
 <a href="#272" id="272">272</a>
 <a href="#273" id="273">273</a>
 <a href="#274" id="274">274</a>
-<a href="#275" id="275">275</a>
-<a href="#276" id="276">276</a>
-<a href="#277" id="277">277</a>
-<a href="#278" id="278">278</a>
-<a href="#279" id="279">279</a>
-<a href="#280" id="280">280</a>
-<a href="#281" id="281">281</a></pre></div><pre class="rust"><code><span class="doccomment">//! A DNS server and pkarr relay
+<a href="#275" id="275">275</a></pre></div><pre class="rust"><code><span class="doccomment">//! A DNS server and pkarr relay
 
 </span><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
@@ -303,14 +297,9 @@
     };
 
     <span class="kw">use </span>anyhow::Result;
-    <span class="kw">use </span>hickory_resolver::{
-        config::{NameServerConfig, ResolverConfig},
-        Resolver,
-    };
-    <span class="kw">use </span>hickory_server::proto::xfer::Protocol;
     <span class="kw">use </span>iroh::{
         discovery::pkarr::PkarrRelayClient,
-        dns::{node_info::NodeInfo, DnsResolver, ResolverExt},
+        dns::{node_info::NodeInfo, DnsResolver},
         SecretKey,
     };
     <span class="kw">use </span>pkarr::{PkarrClient, SignedPacket};
@@ -325,6 +314,8 @@
         util::PublicKeyBytes,
         ZoneStore,
     };
+
+    <span class="kw">const </span>DNS_TIMEOUT: Duration = Duration::from_secs(<span class="number">1</span>);
 
     <span class="attr">#[tokio::test]
     #[traced_test]
@@ -401,38 +392,38 @@
 
         <span class="comment">// resolve root record
         </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"{pubkey}."</span>))<span class="question-mark">?</span>;
-        <span class="kw">let </span>res = resolver.txt_lookup(name).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>records = res.iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+        <span class="kw">let </span>res = resolver.lookup_txt(name, DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>records = res.into_iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="macro">assert_eq!</span>(records, <span class="macro">vec!</span>[<span class="string">"hi0"</span>.to_string()]);
 
         <span class="comment">// resolve level one record
         </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"_hello.{pubkey}."</span>))<span class="question-mark">?</span>;
-        <span class="kw">let </span>res = resolver.txt_lookup(name).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>records = res.iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+        <span class="kw">let </span>res = resolver.lookup_txt(name, DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>records = res.into_iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="macro">assert_eq!</span>(records, <span class="macro">vec!</span>[<span class="string">"hi1"</span>.to_string()]);
 
         <span class="comment">// resolve level two record
         </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"_hello.world.{pubkey}."</span>))<span class="question-mark">?</span>;
-        <span class="kw">let </span>res = resolver.txt_lookup(name).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>records = res.iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+        <span class="kw">let </span>res = resolver.lookup_txt(name, DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>records = res.into_iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="macro">assert_eq!</span>(records, <span class="macro">vec!</span>[<span class="string">"hi2"</span>.to_string()]);
 
         <span class="comment">// resolve multiple records for same name
         </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"multiple.{pubkey}."</span>))<span class="question-mark">?</span>;
-        <span class="kw">let </span>res = resolver.txt_lookup(name).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>records = res.iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+        <span class="kw">let </span>res = resolver.lookup_txt(name, DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>records = res.into_iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="macro">assert_eq!</span>(records, <span class="macro">vec!</span>[<span class="string">"hi3"</span>.to_string(), <span class="string">"hi4"</span>.to_string()]);
 
         <span class="comment">// resolve A record
         </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"{pubkey}."</span>))<span class="question-mark">?</span>;
-        <span class="kw">let </span>res = resolver.ipv4_lookup(name).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>records = res.iter().map(|t| t.<span class="number">0</span>).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+        <span class="kw">let </span>res = resolver.lookup_ipv4(name, DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>records = res.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="macro">assert_eq!</span>(records, <span class="macro">vec!</span>[Ipv4Addr::LOCALHOST]);
 
         <span class="comment">// resolve AAAA record
         </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"foo.bar.baz.{pubkey}."</span>))<span class="question-mark">?</span>;
-        <span class="kw">let </span>res = resolver.ipv6_lookup(name).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>records = res.iter().map(|t| t.<span class="number">0</span>).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+        <span class="kw">let </span>res = resolver.lookup_ipv6(name, DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>records = res.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="macro">assert_eq!</span>(records, <span class="macro">vec!</span>[Ipv6Addr::LOCALHOST]);
 
         server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -462,7 +453,7 @@
         pkarr.publish(<span class="kw-2">&amp;</span>signed_packet).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>resolver = test_resolver(nameserver);
-        <span class="kw">let </span>res = resolver.lookup_by_id(<span class="kw-2">&amp;</span>node_id, origin).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>res = resolver.lookup_node_by_id(<span class="kw-2">&amp;</span>node_id, origin).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">assert_eq!</span>(res.node_id, node_id);
         <span class="macro">assert_eq!</span>(res.relay_url.map(Url::from), <span class="prelude-val">Some</span>(relay_url));
@@ -533,7 +524,7 @@
 
         <span class="comment">// resolve via DNS from our server, which will lookup from our DHT
         </span><span class="kw">let </span>resolver = test_resolver(nameserver);
-        <span class="kw">let </span>res = resolver.lookup_by_id(<span class="kw-2">&amp;</span>node_id, origin).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>res = resolver.lookup_node_by_id(<span class="kw-2">&amp;</span>node_id, origin).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">assert_eq!</span>(res.node_id, node_id);
         <span class="macro">assert_eq!</span>(res.relay_url.map(Url::from), <span class="prelude-val">Some</span>(relay_url));
@@ -546,10 +537,7 @@
     }
 
     <span class="kw">fn </span>test_resolver(nameserver: SocketAddr) -&gt; DnsResolver {
-        <span class="kw">let </span><span class="kw-2">mut </span>config = ResolverConfig::new();
-        <span class="kw">let </span>nameserver_config = NameServerConfig::new(nameserver, Protocol::Udp);
-        config.add_name_server(nameserver_config);
-        Resolver::tokio(config, Default::default())
+        DnsResolver::with_nameserver(nameserver)
     }
 
     <span class="kw">fn </span>random_signed_packet() -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket&gt; {

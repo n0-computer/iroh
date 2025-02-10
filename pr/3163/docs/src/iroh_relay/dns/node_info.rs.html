@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/dns/node_info.rs`."><title>node_info.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../../../static.files/src-script-56102188.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/dns/</div>node_info.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh-relay/src/dns/node_info.rs`."><title>node_info.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="iroh_relay" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../../../static.files/src-script-56102188.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh_relay/dns/</div>node_info.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
 <a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
@@ -539,16 +539,7 @@
 <a href="#538" id="538">538</a>
 <a href="#539" id="539">539</a>
 <a href="#540" id="540">540</a>
-<a href="#541" id="541">541</a>
-<a href="#542" id="542">542</a>
-<a href="#543" id="543">543</a>
-<a href="#544" id="544">544</a>
-<a href="#545" id="545">545</a>
-<a href="#546" id="546">546</a>
-<a href="#547" id="547">547</a>
-<a href="#548" id="548">548</a>
-<a href="#549" id="549">549</a>
-<a href="#550" id="550">550</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#541" id="541">541</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -578,9 +569,9 @@
 //! [Pkarr]: https://app.pkarr.org
 //! [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
 //! [RFC1464]: https://www.rfc-editor.org/rfc/rfc1464
-//! [`RelayUrl`]: crate::RelayUrl
-//! [`N0_DNS_NODE_ORIGIN_PROD`]: crate::discovery::dns::N0_DNS_NODE_ORIGIN_PROD
-//! [`N0_DNS_NODE_ORIGIN_STAGING`]: crate::discovery::dns::N0_DNS_NODE_ORIGIN_STAGING
+//! [`RelayUrl`]: iroh_base::RelayUrl
+//! [`N0_DNS_NODE_ORIGIN_PROD`]: crate::dns::N0_DNS_NODE_ORIGIN_PROD
+//! [`N0_DNS_NODE_ORIGIN_STAGING`]: crate::dns::N0_DNS_NODE_ORIGIN_STAGING
 
 </span><span class="kw">use </span>std::{
     collections::{BTreeMap, BTreeSet},
@@ -591,10 +582,12 @@
 };
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>hickory_resolver::{proto::ProtoError, Name, TokioResolver};
+<span class="kw">use </span>hickory_resolver::{proto::ProtoError, Name};
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, SecretKey};
 <span class="kw">use </span>tracing::warn;
 <span class="kw">use </span>url::Url;
+
+<span class="kw">use crate</span>::{defaults::timeouts::DNS_TIMEOUT, dns::DnsResolver};
 
 <span class="doccomment">/// The DNS name for the iroh TXT record.
 </span><span class="kw">pub const </span>IROH_TXT_NAME: <span class="kw-2">&amp;</span>str = <span class="string">"_iroh"</span>;
@@ -606,28 +599,38 @@
     Debug, strum::Display, strum::AsRefStr, strum::EnumString, Hash, Eq, PartialEq, Ord, PartialOrd,
 )]
 #[strum(serialize_all = <span class="string">"kebab-case"</span>)]
-</span><span class="kw">pub enum </span>IrohAttr {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>IrohAttr {
     <span class="doccomment">/// URL of home relay.
     </span>Relay,
     <span class="doccomment">/// Direct address.
     </span>Addr,
 }
 
-<span class="doccomment">/// Encodes a [`NodeId`] in [`z-base-32`] encoding.
-///
-/// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
-</span><span class="kw">pub fn </span>to_z32(node_id: <span class="kw-2">&amp;</span>NodeId) -&gt; String {
-    z32::encode(node_id.as_bytes())
+<span class="doccomment">/// Extension methods for [`NodeId`] to encode to and decode from [`z32`],
+/// which is the encoding used in [`pkarr`] domain names.
+</span><span class="kw">pub trait </span>NodeIdExt {
+    <span class="doccomment">/// Encodes a [`NodeId`] in [`z-base-32`] encoding.
+    ///
+    /// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
+    </span><span class="kw">fn </span>to_z32(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; String;
+
+    <span class="doccomment">/// Parses a [`NodeId`] from [`z-base-32`] encoding.
+    ///
+    /// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
+    </span><span class="kw">fn </span>from_z32(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;NodeId&gt;;
 }
 
-<span class="doccomment">/// Parses a [`NodeId`] from [`z-base-32`] encoding.
-///
-/// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
-</span><span class="kw">pub fn </span>from_z32(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;NodeId&gt; {
-    <span class="kw">let </span>bytes = z32::decode(s.as_bytes()).map_err(|<span class="kw">_</span>| <span class="macro">anyhow!</span>(<span class="string">"invalid z32"</span>))<span class="question-mark">?</span>;
-    <span class="kw">let </span>bytes: <span class="kw-2">&amp;</span>[u8; <span class="number">32</span>] = <span class="kw-2">&amp;</span>bytes.try_into().map_err(|<span class="kw">_</span>| <span class="macro">anyhow!</span>(<span class="string">"not 32 bytes long"</span>))<span class="question-mark">?</span>;
-    <span class="kw">let </span>node_id = NodeId::from_bytes(bytes)<span class="question-mark">?</span>;
-    <span class="prelude-val">Ok</span>(node_id)
+<span class="kw">impl </span>NodeIdExt <span class="kw">for </span>NodeId {
+    <span class="kw">fn </span>to_z32(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; String {
+        z32::encode(<span class="self">self</span>.as_bytes())
+    }
+
+    <span class="kw">fn </span>from_z32(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;NodeId&gt; {
+        <span class="kw">let </span>bytes = z32::decode(s.as_bytes()).map_err(|<span class="kw">_</span>| <span class="macro">anyhow!</span>(<span class="string">"invalid z32"</span>))<span class="question-mark">?</span>;
+        <span class="kw">let </span>bytes: <span class="kw-2">&amp;</span>[u8; <span class="number">32</span>] = <span class="kw-2">&amp;</span>bytes.try_into().map_err(|<span class="kw">_</span>| <span class="macro">anyhow!</span>(<span class="string">"not 32 bytes long"</span>))<span class="question-mark">?</span>;
+        <span class="kw">let </span>node_id = NodeId::from_bytes(bytes)<span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(node_id)
+    }
 }
 
 <span class="doccomment">/// Information about the iroh node contained in an [`IROH_TXT_NAME`] TXT resource record.
@@ -714,8 +717,8 @@
     }
 
     <span class="doccomment">/// Parses a [`NodeInfo`] from a TXT records lookup.
-    </span><span class="kw">pub fn </span>from_hickory_lookup(lookup: hickory_resolver::lookup::TxtLookup) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>attrs = TxtAttrs::from_hickory_lookup(lookup)<span class="question-mark">?</span>;
+    </span><span class="kw">pub fn </span>from_txt_lookup(lookup: <span class="kw">super</span>::TxtLookup) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">let </span>attrs = TxtAttrs::from_txt_lookup(lookup)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(attrs.into())
     }
 
@@ -736,15 +739,9 @@
         <span class="self">self</span>.to_attrs().to_pkarr_signed_packet(secret_key, ttl)
     }
 
-    <span class="doccomment">/// Converts into a [`hickory_resolver::proto::rr::Record`] DNS record.
-    </span><span class="kw">pub fn </span>to_hickory_records(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        origin: <span class="kw-2">&amp;</span>str,
-        ttl: u32,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = hickory_resolver::proto::rr::Record&gt; + <span class="lifetime">'static</span>&gt; {
-        <span class="kw">let </span>attrs = <span class="self">self</span>.to_attrs();
-        <span class="kw">let </span>records = attrs.to_hickory_records(origin, ttl)<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(records.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().into_iter())
+    <span class="doccomment">/// Converts into a list of `{key}={value}` strings.
+    </span><span class="kw">pub fn </span>to_txt_strings(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;String&gt; {
+        <span class="self">self</span>.to_attrs().to_txt_strings().collect()
     }
 }
 
@@ -753,9 +750,7 @@
 /// Takes a [`hickory_resolver::proto::rr::Name`] DNS name and expects the first label to be
 /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
 /// subsequent labels.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>node_id_from_hickory_name(
-    name: <span class="kw-2">&amp;</span>hickory_resolver::proto::rr::Name,
-) -&gt; <span class="prelude-ty">Option</span>&lt;NodeId&gt; {
+</span><span class="kw">fn </span>node_id_from_hickory_name(name: <span class="kw-2">&amp;</span>hickory_resolver::proto::rr::Name) -&gt; <span class="prelude-ty">Option</span>&lt;NodeId&gt; {
     <span class="kw">if </span>name.num_labels() &lt; <span class="number">2 </span>{
         <span class="kw">return </span><span class="prelude-val">None</span>;
     }
@@ -765,7 +760,7 @@
         <span class="kw">return </span><span class="prelude-val">None</span>;
     }
     <span class="kw">let </span>label = std::str::from_utf8(labels.next().expect(<span class="string">"num_labels checked"</span>)).ok()<span class="question-mark">?</span>;
-    <span class="kw">let </span>node_id = from_z32(label).ok()<span class="question-mark">?</span>;
+    <span class="kw">let </span>node_id = NodeId::from_z32(label).ok()<span class="question-mark">?</span>;
     <span class="prelude-val">Some</span>(node_id)
 }
 
@@ -775,14 +770,14 @@
 /// all attributes. Can also be used with an enum, if it implements [`FromStr`] and
 /// [`Display`].
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>TxtAttrs&lt;T&gt; {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>TxtAttrs&lt;T&gt; {
     node_id: NodeId,
     attrs: BTreeMap&lt;T, Vec&lt;String&gt;&gt;,
 }
 
 <span class="kw">impl</span>&lt;T: FromStr + Display + Hash + Ord&gt; TxtAttrs&lt;T&gt; {
     <span class="doccomment">/// Creates [`TxtAttrs`] from a node id and an iterator of key-value pairs.
-    </span><span class="kw">pub fn </span>from_parts(node_id: NodeId, pairs: <span class="kw">impl </span>Iterator&lt;Item = (T, String)&gt;) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>from_parts(node_id: NodeId, pairs: <span class="kw">impl </span>Iterator&lt;Item = (T, String)&gt;) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>attrs: BTreeMap&lt;T, Vec&lt;String&gt;&gt; = BTreeMap::new();
         <span class="kw">for </span>(k, v) <span class="kw">in </span>pairs {
             attrs.entry(k).or_default().push(v);
@@ -791,7 +786,10 @@
     }
 
     <span class="doccomment">/// Creates [`TxtAttrs`] from a node id and an iterator of "{key}={value}" strings.
-    </span><span class="kw">pub fn </span>from_strings(node_id: NodeId, strings: <span class="kw">impl </span>Iterator&lt;Item = String&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>from_strings(
+        node_id: NodeId,
+        strings: <span class="kw">impl </span>Iterator&lt;Item = String&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>attrs: BTreeMap&lt;T, Vec&lt;String&gt;&gt; = BTreeMap::new();
         <span class="kw">for </span>s <span class="kw">in </span>strings {
             <span class="kw">let </span><span class="kw-2">mut </span>parts = s.split(<span class="string">'='</span>);
@@ -806,16 +804,16 @@
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{ attrs, node_id })
     }
 
-    <span class="kw">async fn </span>lookup(resolver: <span class="kw-2">&amp;</span>TokioResolver, name: Name) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    <span class="kw">async fn </span>lookup(resolver: <span class="kw-2">&amp;</span>DnsResolver, name: Name) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>name = ensure_iroh_txt_label(name)<span class="question-mark">?</span>;
-        <span class="kw">let </span>lookup = resolver.txt_lookup(name).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>attrs = <span class="self">Self</span>::from_hickory_lookup(lookup)<span class="question-mark">?</span>;
+        <span class="kw">let </span>lookup = resolver.lookup_txt(name, DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>attrs = <span class="self">Self</span>::from_txt_lookup(lookup)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(attrs)
     }
 
     <span class="doccomment">/// Looks up attributes by [`NodeId`] and origin domain.
-    </span><span class="kw">pub async fn </span>lookup_by_id(
-        resolver: <span class="kw-2">&amp;</span>TokioResolver,
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>lookup_by_id(
+        resolver: <span class="kw-2">&amp;</span>DnsResolver,
         node_id: <span class="kw-2">&amp;</span>NodeId,
         origin: <span class="kw-2">&amp;</span>str,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
@@ -824,23 +822,23 @@
     </span>}
 
     <span class="doccomment">/// Looks up attributes by DNS name.
-    </span><span class="kw">pub async fn </span>lookup_by_name(resolver: <span class="kw-2">&amp;</span>TokioResolver, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>lookup_by_name(resolver: <span class="kw-2">&amp;</span>DnsResolver, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>name = Name::from_str(name)<span class="question-mark">?</span>;
         TxtAttrs::lookup(resolver, name).<span class="kw">await
     </span>}
 
     <span class="doccomment">/// Returns the parsed attributes.
-    </span><span class="kw">pub fn </span>attrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>BTreeMap&lt;T, Vec&lt;String&gt;&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>attrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>BTreeMap&lt;T, Vec&lt;String&gt;&gt; {
         <span class="kw-2">&amp;</span><span class="self">self</span>.attrs
     }
 
     <span class="doccomment">/// Returns the node id.
-    </span><span class="kw">pub fn </span>node_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeId {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>node_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeId {
         <span class="self">self</span>.node_id
     }
 
     <span class="doccomment">/// Parses a [`pkarr::SignedPacket`].
-    </span><span class="kw">pub fn </span>from_pkarr_signed_packet(packet: <span class="kw-2">&amp;</span>pkarr::SignedPacket) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>from_pkarr_signed_packet(packet: <span class="kw-2">&amp;</span>pkarr::SignedPacket) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">use </span>pkarr::dns::{
             rdata::RData,
             {<span class="self">self</span>},
@@ -863,11 +861,11 @@
     }
 
     <span class="doccomment">/// Parses a TXT records lookup.
-    </span><span class="kw">pub fn </span>from_hickory_lookup(lookup: hickory_resolver::lookup::TxtLookup) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>queried_node_id = node_id_from_hickory_name(lookup.query().name())
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>from_txt_lookup(lookup: <span class="kw">super</span>::TxtLookup) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">let </span>queried_node_id = node_id_from_hickory_name(lookup.<span class="number">0</span>.query().name())
             .ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"invalid DNS answer: not a query for _iroh.z32encodedpubkey"</span>))<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>strings = lookup.as_lookup().record_iter().filter_map(|record| {
+        <span class="kw">let </span>strings = lookup.<span class="number">0</span>.as_lookup().record_iter().filter_map(|record| {
             <span class="kw">match </span>node_id_from_hickory_name(record.name()) {
                 <span class="comment">// Filter out only TXT record answers that match the node_id we searched for.
                 </span><span class="prelude-val">Some</span>(n) <span class="kw">if </span>n == queried_node_id =&gt; <span class="kw">match </span>record.data().as_txt() {
@@ -909,27 +907,10 @@
             .flat_map(<span class="kw">move </span>|(k, vs)| vs.iter().map(<span class="kw">move </span>|v| <span class="macro">format!</span>(<span class="string">"{k}={v}"</span>)))
     }
 
-    <span class="doccomment">/// Converts to a list of [`hickory_resolver::proto::rr::Record`] resource records.
-    </span><span class="kw">pub fn </span>to_hickory_records(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        origin: <span class="kw-2">&amp;</span>str,
-        ttl: u32,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = hickory_resolver::proto::rr::Record&gt; + <span class="lifetime">'_</span>&gt; {
-        <span class="kw">use </span>hickory_resolver::proto::rr;
-        <span class="kw">let </span>name = <span class="macro">format!</span>(<span class="string">"{}.{}.{}"</span>, IROH_TXT_NAME, to_z32(<span class="kw-2">&amp;</span><span class="self">self</span>.node_id), origin);
-        <span class="kw">let </span>name = rr::Name::from_utf8(name)<span class="question-mark">?</span>;
-        <span class="kw">let </span>records = <span class="self">self</span>.to_txt_strings().map(<span class="kw">move </span>|s| {
-            <span class="kw">let </span>txt = rr::rdata::TXT::new(<span class="macro">vec!</span>[s]);
-            <span class="kw">let </span>rdata = rr::RData::TXT(txt);
-            rr::Record::from_rdata(name.clone(), ttl, rdata)
-        });
-        <span class="prelude-val">Ok</span>(records)
-    }
-
     <span class="doccomment">/// Creates a [`pkarr::SignedPacket`]
     ///
     /// This constructs a DNS packet and signs it with a [`SecretKey`].
-    </span><span class="kw">pub fn </span>to_pkarr_signed_packet(
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>to_pkarr_signed_packet(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         secret_key: <span class="kw-2">&amp;</span>SecretKey,
         ttl: u32,
@@ -969,7 +950,7 @@
 }
 
 <span class="kw">fn </span>node_domain(node_id: <span class="kw-2">&amp;</span>NodeId, origin: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;Name&gt; {
-    <span class="kw">let </span>domain = <span class="macro">format!</span>(<span class="string">"{}.{}"</span>, to_z32(node_id), origin);
+    <span class="kw">let </span>domain = <span class="macro">format!</span>(<span class="string">"{}.{}"</span>, NodeId::to_z32(node_id), origin);
     <span class="kw">let </span>domain = Name::from_str(<span class="kw-2">&amp;</span>domain)<span class="question-mark">?</span>;
     <span class="prelude-val">Ok</span>(domain)
 }
@@ -992,8 +973,7 @@
     <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
     <span class="kw">use </span>testresult::TestResult;
 
-    <span class="kw">use </span><span class="kw">super</span>::NodeInfo;
-    <span class="kw">use </span><span class="kw">crate</span>::dns::node_info::to_z32;
+    <span class="kw">use super</span>::{NodeIdExt, NodeInfo};
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>txt_attr_roundtrip() {
@@ -1052,10 +1032,11 @@
             </span>Record::from_rdata(
                 Name::from_utf8(<span class="macro">format!</span>(
                     <span class="string">"_iroh.{}.dns.iroh.link."</span>,
-                    to_z32(<span class="kw-2">&amp;</span>NodeId::from_str(
+                    NodeId::from_str(
                         <span class="comment">// Another NodeId
                         </span><span class="string">"a55f26132e5e43de834d534332f66a20d480c3e50a13a312a071adea6569981e"
-                    </span>)<span class="question-mark">?</span>)
+                    </span>)<span class="question-mark">?
+                    </span>.to_z32()
                 ))<span class="question-mark">?</span>,
                 <span class="number">30</span>,
                 RData::TXT(TXT::new(<span class="macro">vec!</span>[
@@ -1079,8 +1060,9 @@
             ),
         ];
         <span class="kw">let </span>lookup = Lookup::new_with_max_ttl(query, Arc::new(records));
+        <span class="kw">let </span>lookup = hickory_resolver::lookup::TxtLookup::from(lookup);
 
-        <span class="kw">let </span>node_info = NodeInfo::from_hickory_lookup(lookup.into())<span class="question-mark">?</span>;
+        <span class="kw">let </span>node_info = NodeInfo::from_txt_lookup(lookup.into())<span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(
             node_info,
             NodeInfo {
