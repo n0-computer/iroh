@@ -407,9 +407,7 @@
 <a href="#406" id="406">406</a>
 <a href="#407" id="407">407</a>
 <a href="#408" id="408">408</a>
-<a href="#409" id="409">409</a>
-<a href="#410" id="410">410</a>
-<a href="#411" id="411">411</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
+<a href="#409" id="409">409</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
 //! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
@@ -469,14 +467,12 @@
 <span class="kw">use </span>url::Url;
 
 <span class="kw">use crate</span>::{
-    discovery::{Discovery, DiscoveryItem},
+    discovery::{Discovery, DiscoveryData, DiscoveryItem},
     dns::node_info::NodeInfo,
     endpoint::force_staging_infra,
     watchable::{Disconnected, Watchable, Watcher},
     Endpoint,
 };
-
-<span class="kw">use </span><span class="kw">super</span>::DiscoveryData;
 
 <span class="attr">#[cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)]
 </span><span class="kw">pub mod </span>dht;

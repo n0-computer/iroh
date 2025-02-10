@@ -490,9 +490,7 @@
 <a href="#489" id="489">489</a>
 <a href="#490" id="490">490</a>
 <a href="#491" id="491">491</a>
-<a href="#492" id="492">492</a>
-<a href="#493" id="493">493</a>
-<a href="#494" id="494">494</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
+<a href="#492" id="492">492</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
@@ -542,12 +540,10 @@
 <span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{
-    discovery::{Discovery, DiscoveryItem},
+    discovery::{Discovery, DiscoveryData, DiscoveryItem},
     watchable::Watchable,
     Endpoint,
 };
-
-<span class="kw">use </span><span class="kw">super</span>::DiscoveryData;
 
 <span class="doccomment">/// The n0 local swarm node discovery name
 </span><span class="kw">const </span>N0_LOCAL_SWARM: <span class="kw-2">&amp;</span>str = <span class="string">"iroh.local.swarm"</span>;
