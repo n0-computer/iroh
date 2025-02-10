@@ -496,14 +496,15 @@
 <a href="#495" id="495">495</a>
 <a href="#496" id="496">496</a>
 <a href="#497" id="497">497</a>
-<a href="#498" id="498">498</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
+<a href="#498" id="498">498</a>
+<a href="#499" id="499">499</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
 //!
 //! ```no_run
 //! # use anyhow::Result;
 //! # use futures_lite::future::Boxed as BoxedFuture;
-//! # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
+//! # use iroh::{endpoint::Connection, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
 //! #
 //! # async fn test_compile() -&gt; Result&lt;()&gt; {
 //! let endpoint = Endpoint::builder().discovery_n0().bind().await?;
@@ -520,9 +521,8 @@
 //! struct Echo;
 //!
 //! impl ProtocolHandler for Echo {
-//!     fn accept(&amp;self, connecting: Connecting) -&gt; BoxedFuture&lt;Result&lt;()&gt;&gt; {
+//!     fn accept(&amp;self, connection: Connection) -&gt; BoxedFuture&lt;Result&lt;()&gt;&gt; {
 //!         Box::pin(async move {
-//!             let connection = connecting.await?;
 //!             let (mut send, mut recv) = connection.accept_bi().await?;
 //!
 //!             // Echo any bytes received back directly.
@@ -612,9 +612,9 @@
 /// [`crate::protocol::RouterBuilder::accept`].
 </span><span class="kw">pub trait </span>ProtocolHandler: Send + Sync + std::fmt::Debug + <span class="lifetime">'static </span>{
     <span class="doccomment">/// Optional interception point to handle the `Connecting` state.
-    </span><span class="kw">fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;Connection&gt;&gt; {
+    </span><span class="kw">fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, connecting: Connecting) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;Connection&gt;&gt; {
         Box::pin(<span class="kw">async move </span>{
-            <span class="kw">let </span>conn = conn.<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>conn = connecting.<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="prelude-val">Ok</span>(conn)
         })
     }
@@ -622,7 +622,7 @@
     <span class="doccomment">/// Handle an incoming connection.
     ///
     /// This runs on a freshly spawned tokio task so this can be long-running.
-    </span><span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;;
+    </span><span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;;
 
     <span class="doccomment">/// Called when the node shuts down.
     </span><span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxFuture&lt;()&gt; {
@@ -634,6 +634,7 @@
     <span class="kw">fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;Connection&gt;&gt; {
         <span class="self">self</span>.as_ref().on_connecting(conn)
     }
+
     <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
         <span class="self">self</span>.as_ref().accept(conn)
     }
@@ -647,6 +648,7 @@
     <span class="kw">fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;Connection&gt;&gt; {
         <span class="self">self</span>.as_ref().on_connecting(conn)
     }
+
     <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
         <span class="self">self</span>.as_ref().accept(conn)
     }
