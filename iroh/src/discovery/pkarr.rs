@@ -58,14 +58,12 @@ use tracing::{debug, error_span, info, warn, Instrument};
 use url::Url;
 
 use crate::{
-    discovery::{Discovery, DiscoveryItem},
+    discovery::{Discovery, DiscoveryData, DiscoveryItem},
     dns::node_info::NodeInfo,
     endpoint::force_staging_infra,
     watchable::{Disconnected, Watchable, Watcher},
     Endpoint,
 };
-
-use super::DiscoveryData;
 
 #[cfg(feature = "discovery-pkarr-dht")]
 pub mod dht;

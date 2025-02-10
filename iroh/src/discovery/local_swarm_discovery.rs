@@ -48,12 +48,10 @@ use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::{
-    discovery::{Discovery, DiscoveryItem},
+    discovery::{Discovery, DiscoveryData, DiscoveryItem},
     watchable::Watchable,
     Endpoint,
 };
-
-use super::DiscoveryData;
 
 /// The n0 local swarm node discovery name
 const N0_LOCAL_SWARM: &str = "iroh.local.swarm";
