@@ -1064,7 +1064,8 @@
 <a href="#1063" id="1063">1063</a>
 <a href="#1064" id="1064">1064</a>
 <a href="#1065" id="1065">1065</a>
-<a href="#1066" id="1066">1066</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay probes.
+<a href="#1066" id="1066">1066</a>
+<a href="#1067" id="1067">1067</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay probes.
 //!
 //! All the probes try and establish the latency to the relay servers.  Preferably the STUN
 //! probes work and we also learn about our public IP addresses and ports.  But fallback
@@ -1632,6 +1633,7 @@
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>pretty_assertions::assert_eq;
+    <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{test_utils, RelayLatencies};
@@ -1862,8 +1864,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_plan_with_report() {
-        <span class="kw">let </span>_logging = iroh_test::logging::setup();
         <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
         <span class="kw">let </span>relay_node_1 = relay_map.nodes().next().unwrap().clone();
         <span class="kw">let </span>relay_node_2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap().clone();
@@ -2054,8 +2056,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_relay_sort_two_latencies() {
-        <span class="kw">let </span>_logging = iroh_test::logging::setup();
         <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
         <span class="kw">let </span>r1 = relay_map.nodes().next().unwrap();
         <span class="kw">let </span>r2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
@@ -2073,8 +2075,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_relay_sort_equal_latencies() {
-        <span class="kw">let </span>_logging = iroh_test::logging::setup();
         <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
         <span class="kw">let </span>r1 = relay_map.nodes().next().unwrap();
         <span class="kw">let </span>r2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
@@ -2115,8 +2117,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_relay_sort_no_latency() {
-        <span class="kw">let </span>_logging = iroh_test::logging::setup();
         <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
         <span class="kw">let </span>r1 = relay_map.nodes().next().unwrap();
         <span class="kw">let </span>r2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();

@@ -1,2 +1,2 @@
-window.ALL_CRATES = ["bulk","iroh","iroh_base","iroh_bench","iroh_dns_server","iroh_net_report","iroh_relay","iroh_test"];
-//{"start":21,"fragment_lengths":[6,7,12,13,18,18,13,12]}
+window.ALL_CRATES = ["bulk","iroh","iroh_base","iroh_bench","iroh_dns_server","iroh_net_report","iroh_relay"];
+//{"start":21,"fragment_lengths":[6,7,12,13,18,18,13]}

@@ -487,10 +487,12 @@
     <span class="kw">use </span>bytes::BytesMut;
     <span class="kw">use </span>tokio::sync::mpsc;
     <span class="kw">use </span>tracing::info;
+    <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_hairpin_success() {
         <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">100 </span>{
             <span class="kw">let </span>now = Instant::now();
@@ -500,13 +502,12 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_hairpin_failure() {
         test_hairpin(<span class="bool-val">false</span>).<span class="kw">await</span>;
     }
 
     <span class="kw">async fn </span>test_hairpin(hairpinning_works: bool) {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
-
         <span class="comment">// Setup fake net_report and reportstate actors, hairpinning interacts with them.
         </span><span class="kw">let </span>(net_report_tx, <span class="kw-2">mut </span>net_report_rx) = mpsc::channel(<span class="number">32</span>);
         <span class="kw">let </span>net_report_addr = net_report::Addr {
@@ -581,9 +582,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_client_drop() {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
-
         <span class="comment">// Setup fake net_report and reportstate actors, hairpinning interacts with them.
         </span><span class="kw">let </span>(net_report_tx, _net_report_rx) = mpsc::channel(<span class="number">32</span>);
         <span class="kw">let </span>net_report_addr = net_report::Addr {

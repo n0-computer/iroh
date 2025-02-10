@@ -893,12 +893,13 @@
         <span class="kw">use </span>iroh_base::SecretKey;
         <span class="kw">use </span>n0_future::StreamExt;
         <span class="kw">use </span>testresult::TestResult;
+        <span class="kw">use </span>tracing_test::traced_test;
 
         <span class="kw">use </span><span class="kw">super</span>::<span class="kw">super</span>::<span class="kw-2">*</span>;
 
         <span class="attr">#[tokio::test]
+        #[traced_test]
         </span><span class="kw">async fn </span>local_swarm_discovery_publish_resolve() -&gt; TestResult {
-            <span class="kw">let </span>_guard = iroh_test::logging::setup();
             <span class="kw">let </span>(<span class="kw">_</span>, discovery_a) = make_discoverer()<span class="question-mark">?</span>;
             <span class="kw">let </span>(node_id_b, discovery_b) = make_discoverer()<span class="question-mark">?</span>;
 
@@ -930,9 +931,8 @@
         }
 
         <span class="attr">#[tokio::test]
+        #[traced_test]
         </span><span class="kw">async fn </span>local_swarm_discovery_subscribe() -&gt; TestResult {
-            <span class="kw">let </span>_guard = iroh_test::logging::setup();
-
             <span class="kw">let </span>num_nodes = <span class="number">5</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>node_ids = BTreeSet::new();
             <span class="kw">let </span><span class="kw-2">mut </span>discoverers = <span class="macro">vec!</span>[];

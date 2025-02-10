@@ -312,7 +312,8 @@
 <a href="#311" id="311">311</a>
 <a href="#312" id="312">312</a>
 <a href="#313" id="313">313</a>
-<a href="#314" id="314">314</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
 
@@ -586,16 +587,17 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::net::Ipv4Addr;
 
+    <span class="kw">use </span>tracing_test::traced_test;
+
     <span class="kw">use super</span>::{
         server::{QuicConfig, QuicServer},
         <span class="kw-2">*</span>,
     };
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>quic_endpoint_basic() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>host: Ipv4Addr = <span class="string">"127.0.0.1"</span>.parse()<span class="question-mark">?</span>;
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
-
         <span class="comment">// create a server config with self signed certificates
         </span><span class="kw">let </span>(<span class="kw">_</span>, server_config) = <span class="kw">super</span>::<span class="kw">super</span>::server::testing::self_signed_tls_certs_and_config();
         <span class="kw">let </span>bind_addr = SocketAddr::new(host.into(), <span class="number">0</span>);

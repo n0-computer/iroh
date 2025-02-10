@@ -754,7 +754,7 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
+    <span class="kw">use </span>data_encoding::HEXLOWER;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
@@ -764,10 +764,10 @@
             PublicKey::from_str(<span class="string">"ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6"</span>)
                 .unwrap();
         <span class="kw">let </span>bytes = postcard::to_stdvec(<span class="kw-2">&amp;</span>public_key).unwrap();
-        <span class="kw">let </span>expected =
-            parse_hexdump(<span class="string">"ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6"</span>)
-                .unwrap();
-        <span class="macro">assert_eq_hex!</span>(bytes, expected);
+        <span class="kw">let </span>expected = HEXLOWER
+            .decode(<span class="string">b"ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6"</span>)
+            .unwrap();
+        <span class="macro">assert_eq!</span>(bytes, expected);
     }
 
     <span class="attr">#[test]

@@ -462,7 +462,8 @@
 <a href="#461" id="461">461</a>
 <a href="#462" id="462">462</a>
 <a href="#463" id="463">463</a>
-<a href="#464" id="464">464</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
+<a href="#464" id="464">464</a>
+<a href="#465" id="465">465</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
 //!
 //! This module contains pkarr-based node discovery for iroh which can use both pkarr
 //! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
@@ -874,13 +875,14 @@
     <span class="kw">use </span>iroh_base::RelayUrl;
     <span class="kw">use </span>pkarr::mainline::dht::DhtSettings;
     <span class="kw">use </span>testresult::TestResult;
+    <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="attr">#[tokio::test]
     #[ignore = <span class="string">"flaky"</span>]
+    #[traced_test]
     </span><span class="kw">async fn </span>dht_discovery_smoke() -&gt; TestResult {
-        <span class="kw">let </span>_logging_guard = iroh_test::logging::setup();
         <span class="kw">let </span>ep = <span class="kw">crate</span>::Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>secret = ep.secret_key().clone();
         <span class="kw">let </span>testnet = pkarr::mainline::dht::Testnet::new(<span class="number">2</span>);

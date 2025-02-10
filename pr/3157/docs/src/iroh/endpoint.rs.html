@@ -2184,48 +2184,7 @@
 <a href="#2183" id="2183">2183</a>
 <a href="#2184" id="2184">2184</a>
 <a href="#2185" id="2185">2185</a>
-<a href="#2186" id="2186">2186</a>
-<a href="#2187" id="2187">2187</a>
-<a href="#2188" id="2188">2188</a>
-<a href="#2189" id="2189">2189</a>
-<a href="#2190" id="2190">2190</a>
-<a href="#2191" id="2191">2191</a>
-<a href="#2192" id="2192">2192</a>
-<a href="#2193" id="2193">2193</a>
-<a href="#2194" id="2194">2194</a>
-<a href="#2195" id="2195">2195</a>
-<a href="#2196" id="2196">2196</a>
-<a href="#2197" id="2197">2197</a>
-<a href="#2198" id="2198">2198</a>
-<a href="#2199" id="2199">2199</a>
-<a href="#2200" id="2200">2200</a>
-<a href="#2201" id="2201">2201</a>
-<a href="#2202" id="2202">2202</a>
-<a href="#2203" id="2203">2203</a>
-<a href="#2204" id="2204">2204</a>
-<a href="#2205" id="2205">2205</a>
-<a href="#2206" id="2206">2206</a>
-<a href="#2207" id="2207">2207</a>
-<a href="#2208" id="2208">2208</a>
-<a href="#2209" id="2209">2209</a>
-<a href="#2210" id="2210">2210</a>
-<a href="#2211" id="2211">2211</a>
-<a href="#2212" id="2212">2212</a>
-<a href="#2213" id="2213">2213</a>
-<a href="#2214" id="2214">2214</a>
-<a href="#2215" id="2215">2215</a>
-<a href="#2216" id="2216">2216</a>
-<a href="#2217" id="2217">2217</a>
-<a href="#2218" id="2218">2218</a>
-<a href="#2219" id="2219">2219</a>
-<a href="#2220" id="2220">2220</a>
-<a href="#2221" id="2221">2221</a>
-<a href="#2222" id="2222">2222</a>
-<a href="#2223" id="2223">2223</a>
-<a href="#2224" id="2224">2224</a>
-<a href="#2225" id="2225">2225</a>
-<a href="#2226" id="2226">2226</a>
-<a href="#2227" id="2227">2227</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2186" id="2186">2186</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2260,8 +2219,8 @@
     discovery::{
         dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
     },
-    dns::{default_resolver, DnsResolver},
-    magicsock::{<span class="self">self</span>, Handle, QuicMappedAddr},
+    dns::DnsResolver,
+    magicsock::{<span class="self">self</span>, Handle, NodeIdMappedAddr},
     tls,
     watchable::Watcher,
 };
@@ -2379,9 +2338,7 @@
             keylog: <span class="self">self</span>.keylog,
             secret_key: secret_key.clone(),
         };
-        <span class="kw">let </span>dns_resolver = <span class="self">self
-            </span>.dns_resolver
-            .unwrap_or_else(|| default_resolver().clone());
+        <span class="kw">let </span>dns_resolver = <span class="self">self</span>.dns_resolver.unwrap_or_default();
         <span class="kw">let </span>discovery = <span class="self">self
             </span>.discovery
             .into_iter()
@@ -2392,6 +2349,8 @@
             <span class="number">1 </span>=&gt; <span class="prelude-val">Some</span>(discovery.into_iter().next().expect(<span class="string">"checked length"</span>)),
             <span class="kw">_ </span>=&gt; <span class="prelude-val">Some</span>(Box::new(ConcurrentDiscovery::from_services(discovery))),
         };
+        <span class="kw">let </span>server_config = static_config.create_server_config(<span class="self">self</span>.alpn_protocols)<span class="question-mark">?</span>;
+
         <span class="kw">let </span>msock_opts = magicsock::Options {
             addr_v4: <span class="self">self</span>.addr_v4,
             addr_v6: <span class="self">self</span>.addr_v6,
@@ -2401,12 +2360,13 @@
             discovery,
             proxy_url: <span class="self">self</span>.proxy_url,
             dns_resolver,
+            server_config,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="self">self</span>.insecure_skip_relay_cert_verify,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>path_selection: <span class="self">self</span>.path_selection,
         };
-        Endpoint::bind(static_config, msock_opts, <span class="self">self</span>.alpn_protocols).<span class="kw">await
+        Endpoint::bind(static_config, msock_opts).<span class="kw">await
     </span>}
 
     <span class="comment">// # The very common methods everyone basically needs.
@@ -2622,9 +2582,10 @@
     /// The DNS resolver is used to resolve relay hostnames, and node addresses if
     /// [`crate::discovery::dns::DnsDiscovery`] is configured.
     ///
-    /// By default, all endpoints share a DNS resolver, which is configured to use the
+    /// By default, a new DNS resolver is created which is configured to use the
     /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
-    /// here to use a differently configured DNS resolver for this endpoint.
+    /// here to use a differently configured DNS resolver for this endpoint, or to share
+    /// a [`DnsResolver`] between multiple endpoints.
     </span><span class="kw">pub fn </span>dns_resolver(<span class="kw-2">mut </span><span class="self">self</span>, dns_resolver: DnsResolver) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.dns_resolver = <span class="prelude-val">Some</span>(dns_resolver);
         <span class="self">self
@@ -2743,7 +2704,6 @@
 </span><span class="attr">#[derive(Clone, Debug)]
 </span><span class="kw">pub struct </span>Endpoint {
     msock: Handle,
-    endpoint: quinn::Endpoint,
     rtt_actor: Arc&lt;rtt_actor::RttHandle&gt;,
     static_config: Arc&lt;StaticConfig&gt;,
 }
@@ -2765,38 +2725,16 @@
     /// This is for internal use, the public interface is the [`Builder`] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
     </span><span class="attr">#[instrument(<span class="string">"ep"</span>, skip_all, fields(me = %static_config.secret_key.public().fmt_short()))]
-    </span><span class="kw">async fn </span>bind(
-        static_config: StaticConfig,
-        msock_opts: magicsock::Options,
-        initial_alpns: Vec&lt;Vec&lt;u8&gt;&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">async fn </span>bind(static_config: StaticConfig, msock_opts: magicsock::Options) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>msock = magicsock::MagicSock::spawn(msock_opts).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">trace!</span>(<span class="string">"created magicsock"</span>);
-
-        <span class="kw">let </span>server_config = static_config.create_server_config(initial_alpns)<span class="question-mark">?</span>;
-
-        <span class="kw">let </span><span class="kw-2">mut </span>endpoint_config = quinn::EndpointConfig::default();
-        <span class="comment">// Setting this to false means that quinn will ignore packets that have the QUIC fixed bit
-        // set to 0. The fixed bit is the 3rd bit of the first byte of a packet.
-        // For performance reasons and to not rewrite buffers we pass non-QUIC UDP packets straight
-        // through to quinn. We set the first byte of the packet to zero, which makes quinn ignore
-        // the packet if grease_quic_bit is set to false.
-        </span>endpoint_config.grease_quic_bit(<span class="bool-val">false</span>);
-
-        <span class="kw">let </span>endpoint = quinn::Endpoint::new_with_abstract_socket(
-            endpoint_config,
-            <span class="prelude-val">Some</span>(server_config),
-            Arc::new(msock.clone()),
-            Arc::new(quinn::TokioRuntime),
-        )<span class="question-mark">?</span>;
-        <span class="macro">trace!</span>(<span class="string">"created quinn endpoint"</span>);
         <span class="macro">debug!</span>(version = <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>), <span class="string">"iroh Endpoint created"</span>);
-        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-            msock,
-            endpoint,
+        <span class="kw">let </span>ep = <span class="self">Self </span>{
+            msock: msock.clone(),
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
             static_config: Arc::new(static_config),
-        })
+        };
+        <span class="prelude-val">Ok</span>(ep)
     }
 
     <span class="doccomment">/// Sets the list of accepted ALPN protocols.
@@ -2805,7 +2743,7 @@
     /// Note that this *overrides* the current list of ALPNs.
     </span><span class="kw">pub fn </span>set_alpns(<span class="kw-2">&amp;</span><span class="self">self</span>, alpns: Vec&lt;Vec&lt;u8&gt;&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>server_config = <span class="self">self</span>.static_config.create_server_config(alpns)<span class="question-mark">?</span>;
-        <span class="self">self</span>.endpoint.set_server_config(<span class="prelude-val">Some</span>(server_config));
+        <span class="self">self</span>.msock.endpoint().set_server_config(<span class="prelude-val">Some</span>(server_config));
         <span class="prelude-val">Ok</span>(())
     }
 
@@ -2906,7 +2844,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_id: NodeId,
         alpn: <span class="kw-2">&amp;</span>[u8],
-        addr: QuicMappedAddr,
+        addr: NodeIdMappedAddr,
         transport_config: Arc&lt;TransportConfig&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;Connection&gt; {
         <span class="macro">debug!</span>(<span class="string">"Attempting connection..."</span>);
@@ -2924,9 +2862,10 @@
         };
 
         <span class="comment">// TODO: We'd eventually want to replace "localhost" with something that makes more sense.
-        </span><span class="kw">let </span>connect = <span class="self">self
-            </span>.endpoint
-            .connect_with(client_config, addr.<span class="number">0</span>, <span class="string">"localhost"</span>)<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>connect =
+            <span class="self">self</span>.msock
+                .endpoint()
+                .connect_with(client_config, addr.socket_addr(), <span class="string">"localhost"</span>)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>connection = connect
             .<span class="kw">await
@@ -2955,7 +2894,7 @@
     /// [`Endpoint::close`].
     </span><span class="kw">pub fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Accept&lt;<span class="lifetime">'_</span>&gt; {
         Accept {
-            inner: <span class="self">self</span>.endpoint.accept(),
+            inner: <span class="self">self</span>.msock.endpoint().accept(),
             ep: <span class="self">self</span>.clone(),
         }
     }
@@ -3237,10 +3176,13 @@
     /// of `0` and an empty reason.  Though it is best practice to close those
     /// explicitly before with a custom error code and reason.
     ///
-    /// It will then make a best effort to wait for all close notifications to be
-    /// acknowledged by the peers, re-transmitting them if needed. This ensures the
-    /// peers are aware of the closed connections instead of having to wait for a timeout
-    /// on the connection. Once all connections are closed or timed out, the magic socket is closed.
+    /// This will not wait for the [`quinn::Endpoint`] to drain connections.
+    ///
+    /// To ensure no data is lost, design protocols so that the last *sender*
+    /// of data in the protocol calls [`Connection::closed`], and `await`s until
+    /// it receives a "close" message from the *receiver*. Once the *receiver*
+    /// gets the last data in the protocol, it should call [`Connection::close`]
+    /// to inform the *sender* that all data has been received.
     ///
     /// Be aware however that the underlying UDP sockets are only closed
     /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
@@ -3249,10 +3191,6 @@
         <span class="kw">if </span><span class="self">self</span>.is_closed() {
             <span class="kw">return</span>;
         }
-
-        <span class="macro">tracing::debug!</span>(<span class="string">"Closing connections"</span>);
-        <span class="self">self</span>.endpoint.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
-        <span class="self">self</span>.endpoint.wait_idle().<span class="kw">await</span>;
 
         <span class="macro">tracing::debug!</span>(<span class="string">"Connections closed"</span>);
         <span class="self">self</span>.msock.close().<span class="kw">await</span>;
@@ -3281,7 +3219,7 @@
     </span><span class="kw">async fn </span>get_mapping_addr_and_maybe_start_discovery(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_addr: NodeAddr,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(QuicMappedAddr, <span class="prelude-ty">Option</span>&lt;DiscoveryTask&gt;)&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(NodeIdMappedAddr, <span class="prelude-ty">Option</span>&lt;DiscoveryTask&gt;)&gt; {
         <span class="kw">let </span>node_id = node_addr.node_id;
 
         <span class="comment">// Only return a mapped addr if we have some way of dialing this node, in other
@@ -3333,7 +3271,7 @@
     }
     <span class="attr">#[cfg(test)]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>endpoint(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>quinn::Endpoint {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.endpoint
+        <span class="self">self</span>.msock.endpoint()
     }
 }
 
@@ -3643,21 +3581,16 @@
     ///
     /// # Gracefully closing a connection
     ///
-    /// Only the peer last receiving application data can be certain that all data is
-    /// delivered. The only reliable action it can then take is to close the connection,
-    /// potentially with a custom error code. The delivery of the final CONNECTION_CLOSE
-    /// frame is very likely if both endpoints stay online long enough, calling
-    /// [`Endpoint::close`] will wait to provide sufficient time. Otherwise, the remote peer
-    /// will time out the connection, provided that the idle timeout is not disabled.
+    /// Only the peer last **receiving** application data can be certain that all data is
+    /// delivered.
     ///
-    /// The sending side can not guarantee all stream data is delivered to the remote
-    /// application. It only knows the data is delivered to the QUIC stack of the remote
-    /// endpoint. Once the local side sends a CONNECTION_CLOSE frame in response to calling
-    /// [`close`] the remote endpoint may drop any data it received but is as yet
-    /// undelivered to the application, including data that was acknowledged as received to
-    /// the local endpoint.
+    /// To communicate to the last **sender** of the application data that all the data was received, we recommend designing protocols that follow this pattern:
     ///
-    /// [`close`]: Connection::close
+    /// 1) The **sender** sends the last data. It then calls [`Connection::closed`]. This will wait until it receives a CONNECTION_CLOSE frame from the other side.
+    /// 2) The **receiver** receives the last data. It then calls [`Connection::close`] and provides an error_code and/or reason.
+    /// 3) The **sender** checks that the error_code is the expected error code.
+    ///
+    /// If the `close`/`closed` dance is not done, or is interrupted at any point, the connection will eventually time out, provided that the idle timeout is not disabled.
     </span><span class="attr">#[inline]
     </span><span class="kw">pub fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>, error_code: VarInt, reason: <span class="kw-2">&amp;</span>[u8]) {
         <span class="self">self</span>.inner.close(error_code, reason)
@@ -3974,10 +3907,10 @@
 
     <span class="kw">use </span>std::time::Instant;
 
-    <span class="kw">use </span>iroh_test::CallOnDrop;
     <span class="kw">use </span>n0_future::StreamExt;
     <span class="kw">use </span>rand::SeedableRng;
     <span class="kw">use </span>tracing::{error_span, info, info_span, Instrument};
+    <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span><span class="kw">crate</span>::test_utils::{run_relay_server, run_relay_server_with};
@@ -3985,8 +3918,8 @@
     <span class="kw">const </span>TEST_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/iroh/test"</span>;
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_connect_self() {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>ep = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .bind()
@@ -4005,8 +3938,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>endpoint_connect_close() {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>(relay_map, relay_url, _guard) = run_relay_server().<span class="kw">await</span>.unwrap();
         <span class="kw">let </span>server_secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>server_peer_id = server_secret_key.public();
@@ -4099,9 +4032,8 @@
 
     <span class="doccomment">/// Test that peers are properly restored
     </span><span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>restore_peers() {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
-
         <span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
 
         <span class="doccomment">/// Create an endpoint for the test.
@@ -4153,8 +4085,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>endpoint_relay_connect_loop() {
-        <span class="kw">let </span>_logging_guard = iroh_test::logging::setup();
         <span class="kw">let </span>start = Instant::now();
         <span class="kw">let </span>n_clients = <span class="number">5</span>;
         <span class="kw">let </span>n_chunks_per_client = <span class="number">2</span>;
@@ -4202,10 +4134,6 @@
                 .instrument(<span class="macro">error_span!</span>(<span class="string">"server"</span>)),
             )
         };
-        <span class="kw">let </span>abort_handle = server.abort_handle();
-        <span class="kw">let </span>_server_guard = CallOnDrop::new(<span class="kw">move </span>|| {
-            abort_handle.abort();
-        });
 
         <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..n_clients {
             <span class="kw">let </span>round_start = Instant::now();
@@ -4260,8 +4188,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>endpoint_bidi_send_recv() {
-        <span class="kw">let </span>_logging_guard = iroh_test::logging::setup();
         <span class="kw">let </span>ep1 = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled)
@@ -4350,9 +4278,9 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>endpoint_conn_type_stream() {
         <span class="kw">const </span>TIMEOUT: Duration = std::time::Duration::from_secs(<span class="number">15</span>);
-        <span class="kw">let </span>_logging_guard = iroh_test::logging::setup();
         <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span>.unwrap();
         <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
         <span class="kw">let </span>ep1_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
@@ -4416,17 +4344,7 @@
         </span>};
 
         <span class="kw">let </span>res_ep1 = tokio::spawn(tokio::time::timeout(TIMEOUT, ep1_side));
-
-        <span class="kw">let </span>ep1_abort_handle = res_ep1.abort_handle();
-        <span class="kw">let </span>_ep1_guard = CallOnDrop::new(<span class="kw">move </span>|| {
-            ep1_abort_handle.abort();
-        });
-
         <span class="kw">let </span>res_ep2 = tokio::spawn(tokio::time::timeout(TIMEOUT, ep2_side));
-        <span class="kw">let </span>ep2_abort_handle = res_ep2.abort_handle();
-        <span class="kw">let </span>_ep2_guard = CallOnDrop::new(<span class="kw">move </span>|| {
-            ep2_abort_handle.abort();
-        });
 
         <span class="kw">let </span>(r1, r2) = <span class="macro">tokio::try_join!</span>(res_ep1, res_ep2).unwrap();
         r1.expect(<span class="string">"ep1 timeout"</span>).unwrap();
@@ -4434,8 +4352,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_direct_addresses_no_stun_relay() {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>(relay_map, <span class="kw">_</span>, _guard) = run_relay_server_with(<span class="prelude-val">None</span>, <span class="bool-val">false</span>).<span class="kw">await</span>.unwrap();
 
         <span class="kw">let </span>ep = Endpoint::builder()

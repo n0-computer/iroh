@@ -1618,7 +1618,63 @@
 <a href="#1617" id="1617">1617</a>
 <a href="#1618" id="1618">1618</a>
 <a href="#1619" id="1619">1619</a>
-<a href="#1620" id="1620">1620</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1620" id="1620">1620</a>
+<a href="#1621" id="1621">1621</a>
+<a href="#1622" id="1622">1622</a>
+<a href="#1623" id="1623">1623</a>
+<a href="#1624" id="1624">1624</a>
+<a href="#1625" id="1625">1625</a>
+<a href="#1626" id="1626">1626</a>
+<a href="#1627" id="1627">1627</a>
+<a href="#1628" id="1628">1628</a>
+<a href="#1629" id="1629">1629</a>
+<a href="#1630" id="1630">1630</a>
+<a href="#1631" id="1631">1631</a>
+<a href="#1632" id="1632">1632</a>
+<a href="#1633" id="1633">1633</a>
+<a href="#1634" id="1634">1634</a>
+<a href="#1635" id="1635">1635</a>
+<a href="#1636" id="1636">1636</a>
+<a href="#1637" id="1637">1637</a>
+<a href="#1638" id="1638">1638</a>
+<a href="#1639" id="1639">1639</a>
+<a href="#1640" id="1640">1640</a>
+<a href="#1641" id="1641">1641</a>
+<a href="#1642" id="1642">1642</a>
+<a href="#1643" id="1643">1643</a>
+<a href="#1644" id="1644">1644</a>
+<a href="#1645" id="1645">1645</a>
+<a href="#1646" id="1646">1646</a>
+<a href="#1647" id="1647">1647</a>
+<a href="#1648" id="1648">1648</a>
+<a href="#1649" id="1649">1649</a>
+<a href="#1650" id="1650">1650</a>
+<a href="#1651" id="1651">1651</a>
+<a href="#1652" id="1652">1652</a>
+<a href="#1653" id="1653">1653</a>
+<a href="#1654" id="1654">1654</a>
+<a href="#1655" id="1655">1655</a>
+<a href="#1656" id="1656">1656</a>
+<a href="#1657" id="1657">1657</a>
+<a href="#1658" id="1658">1658</a>
+<a href="#1659" id="1659">1659</a>
+<a href="#1660" id="1660">1660</a>
+<a href="#1661" id="1661">1661</a>
+<a href="#1662" id="1662">1662</a>
+<a href="#1663" id="1663">1663</a>
+<a href="#1664" id="1664">1664</a>
+<a href="#1665" id="1665">1665</a>
+<a href="#1666" id="1666">1666</a>
+<a href="#1667" id="1667">1667</a>
+<a href="#1668" id="1668">1668</a>
+<a href="#1669" id="1669">1669</a>
+<a href="#1670" id="1670">1670</a>
+<a href="#1671" id="1671">1671</a>
+<a href="#1672" id="1672">1672</a>
+<a href="#1673" id="1673">1673</a>
+<a href="#1674" id="1674">1674</a>
+<a href="#1675" id="1675">1675</a>
+<a href="#1676" id="1676">1676</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1646,12 +1702,12 @@
 };
 
 <span class="kw">use </span>anyhow::{anyhow, bail, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>hickory_resolver::TokioResolver <span class="kw">as </span>DnsResolver;
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>iroh_relay::{
     defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT},
+    dns::DnsResolver,
     http::RELAY_PROBE_PATH,
     protos::stun,
     RelayMap, RelayNode,
@@ -1670,7 +1726,9 @@
 </span><span class="kw">use </span><span class="kw">crate</span>::Metrics;
 <span class="kw">use crate</span>::{
     <span class="self">self </span><span class="kw">as </span>net_report,
-    dns::ResolverExt,
+    defaults::timeouts::DNS_TIMEOUT,
+    dns::DNS_STAGGERING_MS,
+    ip_mapped_addrs::IpMappedAddresses,
     ping::{PingError, Pinger},
     Report,
 };
@@ -1712,6 +1770,7 @@
         quic_config: <span class="prelude-ty">Option</span>&lt;QuicConfig&gt;,
         dns_resolver: DnsResolver,
         protocols: BTreeSet&lt;ProbeProto&gt;,
+        ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>(msg_tx, msg_rx) = mpsc::channel(<span class="number">32</span>);
         <span class="kw">let </span>addr = Addr {
@@ -1732,6 +1791,7 @@
             outstanding_tasks: OutstandingTasks::default(),
             dns_resolver,
             protocols,
+            ip_mapped_addrs,
         };
         <span class="kw">let </span>task =
             task::spawn(<span class="kw">async move </span>{ actor.run().<span class="kw">await </span>}.instrument(<span class="macro">info_span!</span>(<span class="string">"reportgen.actor"</span>)));
@@ -1817,6 +1877,8 @@
     <span class="doccomment">/// Protocols we should attempt to create probes for, if we have the correct
     /// configuration for that protocol.
     </span>protocols: BTreeSet&lt;ProbeProto&gt;,
+    <span class="doccomment">/// Optional [`IpMappedAddresses`] used to enable QAD in iroh
+    </span>ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
 }
 
 <span class="kw">impl </span>Actor {
@@ -2186,6 +2248,7 @@
                 <span class="kw">let </span>net_report = <span class="self">self</span>.net_report.clone();
                 <span class="kw">let </span>pinger = pinger.clone();
                 <span class="kw">let </span>dns_resolver = <span class="self">self</span>.dns_resolver.clone();
+                <span class="kw">let </span>ip_mapped_addrs = <span class="self">self</span>.ip_mapped_addrs.clone();
 
                 set.spawn(
                     run_probe(
@@ -2198,6 +2261,7 @@
                         net_report,
                         pinger,
                         dns_resolver,
+                        ip_mapped_addrs,
                     )
                     .instrument(<span class="macro">debug_span!</span>(<span class="string">"run_probe"</span>, %probe)),
                 );
@@ -2333,6 +2397,7 @@
     net_report: net_report::Addr,
     pinger: Pinger,
     dns_resolver: DnsResolver,
+    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeError&gt; {
     <span class="kw">if </span>!probe.delay().is_zero() {
         <span class="macro">trace!</span>(<span class="string">"delaying probe"</span>);
@@ -2420,7 +2485,8 @@
             <span class="kw">let </span>url = node.url.clone();
             <span class="kw">match </span>quic_config {
                 <span class="prelude-val">Some</span>(quic_config) =&gt; {
-                    result = run_quic_probe(quic_config, url, relay_addr, probe).<span class="kw">await</span><span class="question-mark">?</span>;
+                    result = run_quic_probe(quic_config, url, relay_addr, probe, ip_mapped_addrs)
+                        .<span class="kw">await</span><span class="question-mark">?</span>;
                 }
                 <span class="prelude-val">None </span>=&gt; {
                     <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeError::AbortSet(
@@ -2519,18 +2585,30 @@
     }
 }
 
+<span class="kw">fn </span>maybe_to_mapped_addr(
+    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
+    addr: SocketAddr,
+) -&gt; SocketAddr {
+    <span class="kw">if let </span><span class="prelude-val">Some</span>(ip_mapped_addrs) = ip_mapped_addrs.as_ref() {
+        <span class="kw">return </span>ip_mapped_addrs.get_or_register(addr).socket_addr();
+    }
+    addr
+}
+
 <span class="doccomment">/// Run a QUIC address discovery probe.
 </span><span class="kw">async fn </span>run_quic_probe(
     quic_config: QuicConfig,
     url: RelayUrl,
     relay_addr: SocketAddr,
     probe: Probe,
+    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeError&gt; {
     <span class="kw">match </span>probe.proto() {
         ProbeProto::QuicIpv4 =&gt; <span class="macro">debug_assert!</span>(relay_addr.is_ipv4()),
         ProbeProto::QuicIpv6 =&gt; <span class="macro">debug_assert!</span>(relay_addr.is_ipv6()),
         <span class="kw">_ </span>=&gt; <span class="macro">debug_assert!</span>(<span class="bool-val">false</span>, <span class="string">"wrong probe"</span>),
     }
+    <span class="kw">let </span>relay_addr = maybe_to_mapped_addr(ip_mapped_addrs, relay_addr);
     <span class="kw">let </span>host = <span class="kw">match </span>url.host_str() {
         <span class="prelude-val">Some</span>(host) =&gt; host,
         <span class="prelude-val">None </span>=&gt; {
@@ -2603,7 +2681,7 @@
         // Ideally we would try to resolve **both** IPv4 and IPv6 rather than purely race
         // them.  But our resolver doesn't support that yet.
         </span><span class="kw">let </span>addrs: Vec&lt;<span class="kw">_</span>&gt; = dns_resolver
-            .lookup_ipv4_ipv6_staggered(domain)
+            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
             .<span class="kw">await</span><span class="question-mark">?
             </span>.map(|ipaddr| SocketAddr::new(ipaddr, <span class="number">0</span>))
             .collect();
@@ -2671,6 +2749,11 @@
 /// *proto* specifies the protocol of the probe.  Depending on the protocol we may return
 /// different results.  Obviously IPv4 vs IPv6 but a [`RelayNode`] may also have disabled
 /// some protocols.
+///
+/// If the protocol is `QuicIpv4` or `QuicIpv6`, and `IpMappedAddresses` is not `None`, we
+/// assume that we are running this net report with `iroh`, and need to provide mapped
+/// addresses to the probe in order for it to function in the specialize iroh-quinn
+/// endpoint that expects mapped addresses.
 </span><span class="kw">async fn </span>get_relay_addr(
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     relay_node: <span class="kw-2">&amp;</span>RelayNode,
@@ -2683,44 +2766,72 @@
 
     <span class="kw">match </span>proto {
         ProbeProto::StunIpv4 | ProbeProto::IcmpV4 | ProbeProto::QuicIpv4 =&gt; {
-            <span class="kw">match </span>relay_node.url.host() {
-                <span class="prelude-val">Some</span>(url::Host::Domain(hostname)) =&gt; {
-                    <span class="macro">debug!</span>(<span class="question-mark">?</span>proto, %hostname, <span class="string">"Performing DNS A lookup for relay addr"</span>);
-                    <span class="kw">match </span>dns_resolver.lookup_ipv4_staggered(hostname).<span class="kw">await </span>{
-                        <span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>addrs) =&gt; addrs
-                            .next()
-                            .map(|ip| ip.to_canonical())
-                            .map(|addr| SocketAddr::new(addr, port))
-                            .ok_or(<span class="macro">anyhow!</span>(<span class="string">"No suitable relay addr found"</span>)),
-                        <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err.context(<span class="string">"No suitable relay addr found"</span>)),
-                    }
-                }
-                <span class="prelude-val">Some</span>(url::Host::Ipv4(addr)) =&gt; <span class="prelude-val">Ok</span>(SocketAddr::new(addr.into(), port)),
-                <span class="prelude-val">Some</span>(url::Host::Ipv6(_addr)) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No suitable relay addr found"</span>)),
-                <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No valid hostname in RelayUrl"</span>)),
-            }
-        }
+            relay_lookup_ipv4_staggered(dns_resolver, relay_node, port).<span class="kw">await
+        </span>}
 
         ProbeProto::StunIpv6 | ProbeProto::IcmpV6 | ProbeProto::QuicIpv6 =&gt; {
-            <span class="kw">match </span>relay_node.url.host() {
-                <span class="prelude-val">Some</span>(url::Host::Domain(hostname)) =&gt; {
-                    <span class="macro">debug!</span>(<span class="question-mark">?</span>proto, %hostname, <span class="string">"Performing DNS AAAA lookup for relay addr"</span>);
-                    <span class="kw">match </span>dns_resolver.lookup_ipv6_staggered(hostname).<span class="kw">await </span>{
-                        <span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>addrs) =&gt; addrs
-                            .next()
-                            .map(|ip| ip.to_canonical())
-                            .map(|addr| SocketAddr::new(addr, port))
-                            .ok_or(<span class="macro">anyhow!</span>(<span class="string">"No suitable relay addr found"</span>)),
-                        <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err.context(<span class="string">"No suitable relay addr found"</span>)),
-                    }
-                }
-                <span class="prelude-val">Some</span>(url::Host::Ipv4(_addr)) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No suitable relay addr found"</span>)),
-                <span class="prelude-val">Some</span>(url::Host::Ipv6(addr)) =&gt; <span class="prelude-val">Ok</span>(SocketAddr::new(addr.into(), port)),
-                <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No valid hostname in RelayUrl"</span>)),
-            }
-        }
+            relay_lookup_ipv6_staggered(dns_resolver, relay_node, port).<span class="kw">await
+        </span>}
 
         ProbeProto::Https =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Not implemented"</span>)),
+    }
+}
+
+<span class="doccomment">/// Do a staggared ipv4 DNS lookup based on [`RelayNode`]
+///
+/// `port` is combined with the resolved [`std::net::Ipv4Addr`] to return a [`SocketAddr`]
+</span><span class="kw">async fn </span>relay_lookup_ipv4_staggered(
+    dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
+    relay: <span class="kw-2">&amp;</span>RelayNode,
+    port: u16,
+) -&gt; <span class="prelude-ty">Result</span>&lt;SocketAddr&gt; {
+    <span class="kw">match </span>relay.url.host() {
+        <span class="prelude-val">Some</span>(url::Host::Domain(hostname)) =&gt; {
+            <span class="macro">debug!</span>(%hostname, <span class="string">"Performing DNS A lookup for relay addr"</span>);
+            <span class="kw">match </span>dns_resolver
+                .lookup_ipv4_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
+                .<span class="kw">await
+            </span>{
+                <span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>addrs) =&gt; addrs
+                    .next()
+                    .map(|ip| ip.to_canonical())
+                    .map(|addr| SocketAddr::new(addr, port))
+                    .ok_or(<span class="macro">anyhow!</span>(<span class="string">"No suitable relay addr found"</span>)),
+                <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err.context(<span class="string">"No suitable relay addr found"</span>)),
+            }
+        }
+        <span class="prelude-val">Some</span>(url::Host::Ipv4(addr)) =&gt; <span class="prelude-val">Ok</span>(SocketAddr::new(addr.into(), port)),
+        <span class="prelude-val">Some</span>(url::Host::Ipv6(_addr)) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No suitable relay addr found"</span>)),
+        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No valid hostname in RelayUrl"</span>)),
+    }
+}
+
+<span class="doccomment">/// Do a staggared ipv6 DNS lookup based on [`RelayNode`]
+///
+/// `port` is combined with the resolved [`std::net::Ipv6Addr`] to return a [`SocketAddr`]
+</span><span class="kw">async fn </span>relay_lookup_ipv6_staggered(
+    dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
+    relay: <span class="kw-2">&amp;</span>RelayNode,
+    port: u16,
+) -&gt; <span class="prelude-ty">Result</span>&lt;SocketAddr&gt; {
+    <span class="kw">match </span>relay.url.host() {
+        <span class="prelude-val">Some</span>(url::Host::Domain(hostname)) =&gt; {
+            <span class="macro">debug!</span>(%hostname, <span class="string">"Performing DNS AAAA lookup for relay addr"</span>);
+            <span class="kw">match </span>dns_resolver
+                .lookup_ipv6_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
+                .<span class="kw">await
+            </span>{
+                <span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>addrs) =&gt; addrs
+                    .next()
+                    .map(|ip| ip.to_canonical())
+                    .map(|addr| SocketAddr::new(addr, port))
+                    .ok_or(<span class="macro">anyhow!</span>(<span class="string">"No suitable relay addr found"</span>)),
+                <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err.context(<span class="string">"No suitable relay addr found"</span>)),
+            }
+        }
+        <span class="prelude-val">Some</span>(url::Host::Ipv4(_addr)) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No suitable relay addr found"</span>)),
+        <span class="prelude-val">Some</span>(url::Host::Ipv6(addr)) =&gt; <span class="prelude-val">Ok</span>(SocketAddr::new(addr.into(), port)),
+        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No valid hostname in RelayUrl"</span>)),
     }
 }
 
@@ -2791,7 +2902,7 @@
         // but staggered for reliability.  Ideally this tries to resolve **both** IPv4 and
         // IPv6 though.  But our resolver does not have a function for that yet.
         </span><span class="kw">let </span>addrs: Vec&lt;<span class="kw">_</span>&gt; = dns_resolver
-            .lookup_ipv4_ipv6_staggered(domain)
+            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
             .<span class="kw">await</span><span class="question-mark">?
             </span>.map(|ipaddr| SocketAddr::new(ipaddr, <span class="number">0</span>))
             .collect();
@@ -2928,12 +3039,13 @@
     <span class="kw">use </span>std::net::{Ipv4Addr, Ipv6Addr};
 
     <span class="kw">use </span>testresult::TestResult;
+    <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::{<span class="kw">super</span>::test_utils, <span class="kw-2">*</span>};
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_update_report_stun_working() {
-        <span class="kw">let </span>_logging = iroh_test::logging::setup();
         <span class="kw">let </span>(_server_a, relay_a) = test_utils::relay().<span class="kw">await</span>;
         <span class="kw">let </span>(_server_b, relay_b) = test_utils::relay().<span class="kw">await</span>;
 
@@ -3018,8 +3130,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_update_report_icmp() {
-        <span class="kw">let </span>_logging = iroh_test::logging::setup();
         <span class="kw">let </span>(_server_a, relay_a) = test_utils::relay().<span class="kw">await</span>;
         <span class="kw">let </span>(_server_b, relay_b) = test_utils::relay().<span class="kw">await</span>;
 
@@ -3128,8 +3240,8 @@
     //
     // TODO: Not sure what about IPv6 pings using sysctl.
     </span><span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_icmpk_probe() {
-        <span class="kw">let </span>_logging_guard = iroh_test::logging::setup();
         <span class="kw">let </span>pinger = Pinger::new();
         <span class="kw">let </span>(server, node) = test_utils::relay().<span class="kw">await</span>;
         <span class="kw">let </span>addr = server.stun_addr().expect(<span class="string">"test relay serves stun"</span>);
@@ -3179,12 +3291,11 @@
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_measure_https_latency() -&gt; TestResult {
-        <span class="kw">let </span>_logging_guard = iroh_test::logging::setup();
         <span class="kw">let </span>(server, relay) = test_utils::relay().<span class="kw">await</span>;
         <span class="kw">let </span>dns_resolver = <span class="kw">crate</span>::dns::tests::resolver();
         <span class="macro">tracing::info!</span>(relay_url = <span class="question-mark">?</span>relay.url , <span class="string">"RELAY_URL"</span>);
         <span class="kw">let </span>(latency, ip) =
-            measure_https_latency(dns_resolver, <span class="kw-2">&amp;</span>relay, server.certificates()).<span class="kw">await</span><span class="question-mark">?</span>;
+            measure_https_latency(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>relay, server.certificates()).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">assert!</span>(latency &gt; Duration::ZERO);
 
@@ -3198,8 +3309,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_quic_probe() -&gt; TestResult {
-        <span class="kw">let </span>_logging_guard = iroh_test::logging::setup();
         <span class="kw">let </span>(server, relay) = test_utils::relay().<span class="kw">await</span>;
         <span class="kw">let </span>client_config = iroh_relay::client::make_dangerous_client_config();
         <span class="kw">let </span>ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>))<span class="question-mark">?</span>;
@@ -3221,6 +3332,7 @@
             url,
             (Ipv4Addr::LOCALHOST, port).into(),
             probe,
+            <span class="prelude-val">None</span>,
         )
         .<span class="kw">await
         </span>{
