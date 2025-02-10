@@ -5,7 +5,7 @@
 //! ```no_run
 //! # use anyhow::Result;
 //! # use futures_lite::future::Boxed as BoxedFuture;
-//! # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
+//! # use iroh::{endpoint::Connection, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
 //! #
 //! # async fn test_compile() -> Result<()> {
 //! let endpoint = Endpoint::builder().discovery_n0().bind().await?;
@@ -22,9 +22,8 @@
 //! struct Echo;
 //!
 //! impl ProtocolHandler for Echo {
-//!     fn accept(&self, connecting: Connecting) -> BoxedFuture<Result<()>> {
+//!     fn accept(&self, connection: Connection) -> BoxedFuture<Result<()>> {
 //!         Box::pin(async move {
-//!             let connection = connecting.await?;
 //!             let (mut send, mut recv) = connection.accept_bi().await?;
 //!
 //!             // Echo any bytes received back directly.
@@ -114,9 +113,9 @@ pub struct RouterBuilder {
 /// [`crate::protocol::RouterBuilder::accept`].
 pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     /// Optional interception point to handle the `Connecting` state.
-    fn on_connecting(&self, conn: Connecting) -> BoxFuture<Result<Connection>> {
+    fn on_connecting(&self, connecting: Connecting) -> BoxFuture<Result<Connection>> {
         Box::pin(async move {
-            let conn = conn.await?;
+            let conn = connecting.await?;
             Ok(conn)
         })
     }
@@ -124,7 +123,7 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     /// Handle an incoming connection.
     ///
     /// This runs on a freshly spawned tokio task so this can be long-running.
-    fn accept(&self, conn: Connection) -> BoxFuture<Result<()>>;
+    fn accept(&self, connection: Connection) -> BoxFuture<Result<()>>;
 
     /// Called when the node shuts down.
     fn shutdown(&self) -> BoxFuture<()> {
@@ -136,6 +135,7 @@ impl<T: ProtocolHandler> ProtocolHandler for Arc<T> {
     fn on_connecting(&self, conn: Connecting) -> BoxFuture<Result<Connection>> {
         self.as_ref().on_connecting(conn)
     }
+
     fn accept(&self, conn: Connection) -> BoxFuture<Result<()>> {
         self.as_ref().accept(conn)
     }
@@ -149,6 +149,7 @@ impl<T: ProtocolHandler> ProtocolHandler for Box<T> {
     fn on_connecting(&self, conn: Connecting) -> BoxFuture<Result<Connection>> {
         self.as_ref().on_connecting(conn)
     }
+
     fn accept(&self, conn: Connection) -> BoxFuture<Result<()>> {
         self.as_ref().accept(conn)
     }
