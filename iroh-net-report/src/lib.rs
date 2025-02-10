@@ -18,11 +18,10 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
-use hickory_resolver::TokioResolver as DnsResolver;
 use iroh_base::RelayUrl;
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
-use iroh_relay::{protos::stun, RelayMap};
+use iroh_relay::{dns::DnsResolver, protos::stun, RelayMap};
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{Duration, Instant},
@@ -217,7 +216,7 @@ impl Default for Reports {
 ///
 /// Use [`Options::stun_v4`], [`Options::stun_v6`], and [`Options::quic_config`]
 /// to enable STUN over IPv4, STUN over IPv6, and QUIC address discovery.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Options {
     /// Socket to send IPv4 STUN probes from.
     ///

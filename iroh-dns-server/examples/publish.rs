@@ -7,7 +7,7 @@ use iroh::{
         dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
         pkarr::{PkarrRelayClient, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
     },
-    dns::node_info::{to_z32, NodeInfo, IROH_TXT_NAME},
+    dns::node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME},
     NodeId, SecretKey,
 };
 use url::Url;
@@ -117,5 +117,5 @@ async fn main() -> Result<()> {
 }
 
 fn fmt_domain(node_id: &NodeId, origin: &str) -> String {
-    format!("{}.{}.{}", IROH_TXT_NAME, to_z32(node_id), origin)
+    format!("{}.{}.{}", IROH_TXT_NAME, node_id.to_z32(), origin)
 }

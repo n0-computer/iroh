@@ -2023,7 +2023,7 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "0.32.0"
+version = "0.32.1"
 dependencies = [
  "aead",
  "anyhow",
@@ -2311,6 +2311,7 @@ dependencies = [
  "n0-future",
  "num_enum",
  "pin-project",
+ "pkarr",
  "postcard",
  "proptest",
  "rand",
@@ -2326,6 +2327,7 @@ dependencies = [
  "rustls-webpki",
  "serde",
  "serde_json",
+ "strum",
  "stun-rs",
  "testresult",
  "thiserror 2.0.11",
@@ -2341,6 +2343,7 @@ dependencies = [
  "tracing-test",
  "url",
  "webpki-roots",
+ "z32",
 ]
 
 [[package]]

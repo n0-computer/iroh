@@ -2,7 +2,13 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.32.0](https://github.com/n0-computer/iroh/compare/v0.31.0..0.32.0) - 2025-02-04
+## [0.32.1](https://github.com/n0-computer/iroh/compare/v0.32.0..0.32.1) - 2025-02-05
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Ensure passing a crpyto provider to rustls clients ([#3169](https://github.com/n0-computer/iroh/issues/3169)) - ([34c10bc](https://github.com/n0-computer/iroh/commit/34c10bc5d86937c0b23e9c4c4e8acc1d0e6ff438))
+
+## [0.32.0](https://github.com/n0-computer/iroh/compare/v0.31.0..v0.32.0) - 2025-02-04
 
 ### ⛰️  Features
 
@@ -35,6 +41,7 @@ All notable changes to iroh will be documented in this file.
 - Remove individual repo project tracking ([#3135](https://github.com/n0-computer/iroh/issues/3135)) - ([eadc76b](https://github.com/n0-computer/iroh/commit/eadc76b51522f79b7afe05e48981f9b1ea045980))
 - New project syncing setup ([#3136](https://github.com/n0-computer/iroh/issues/3136)) - ([96e6220](https://github.com/n0-computer/iroh/commit/96e622039e1dd7337fd935348a866eee708a1090))
 - Update broken echo.rs link ([#3151](https://github.com/n0-computer/iroh/issues/3151)) - ([e049965](https://github.com/n0-computer/iroh/commit/e049965bd238e78d3a33b90a16077472377c860e))
+- Release - ([fa66d88](https://github.com/n0-computer/iroh/commit/fa66d883a2e95fab6e3c664ad33a947364bdb4e0))
 
 ## [0.31.0](https://github.com/n0-computer/iroh/compare/v0.30.0..v0.31.0) - 2025-01-14
 
@@ -1581,7 +1588,7 @@ All notable changes to iroh will be documented in this file.
 ### 🧪 Testing
 
 - *(flaky)* Add timeouts to gossip smoke test ([#1364](https://github.com/n0-computer/iroh/issues/1364)) - ([28b1d14](https://github.com/n0-computer/iroh/commit/28b1d14bcb0fc8db6bab193822de2dff9bd927f7))
-- *(iroh)* Only use flat db when enabled  - ([5bc9c04](https://github.com/n0-computer/iroh/commit/5bc9c0472a6d55c3cae450ca7bc9a270a72c20aa))
+- *(iroh)* Only use flat db when enabled - ([5bc9c04](https://github.com/n0-computer/iroh/commit/5bc9c0472a6d55c3cae450ca7bc9a270a72c20aa))
 - *(iroh-net)* Ignore MagicEndpoint test again ([#1300](https://github.com/n0-computer/iroh/issues/1300)) - ([c6314ff](https://github.com/n0-computer/iroh/commit/c6314ff5fe2d1e743bcba704146fb098b9ad360b))
 - Introduce iroh-test with common logging infrastructure ([#1365](https://github.com/n0-computer/iroh/issues/1365)) - ([411e20b](https://github.com/n0-computer/iroh/commit/411e20b68f7d977d8a7c84c07bd2882cfd68a7fa))
 
@@ -1641,7 +1648,7 @@ All notable changes to iroh will be documented in this file.
 - `hp::derp::http::server::Server`  & TLS in the derper! ([#1077](https://github.com/n0-computer/iroh/issues/1077)) - ([6f40e14](https://github.com/n0-computer/iroh/commit/6f40e14e26b2313998db9f75f0bc979cc6abe47e))
 - Allow node to accept different ALPNs - ([34e02d0](https://github.com/n0-computer/iroh/commit/34e02d02baa9100bb13b58fadb76aa06856541be))
 - Derp mesh network & derper cli & config cleanup ([#1130](https://github.com/n0-computer/iroh/issues/1130)) - ([3dca612](https://github.com/n0-computer/iroh/commit/3dca6125064044907bc7da9dc19fe5a26e12567a))
-- Add MagicEndpoint to iroh-net  - ([4597cb3](https://github.com/n0-computer/iroh/commit/4597cb36e0be5ffcb5ae21a42e4a37648d455aad))
+- Add MagicEndpoint to iroh-net - ([4597cb3](https://github.com/n0-computer/iroh/commit/4597cb36e0be5ffcb5ae21a42e4a37648d455aad))
 - Make get-ticket just a way to use get ([#1168](https://github.com/n0-computer/iroh/issues/1168)) - ([2291ef4](https://github.com/n0-computer/iroh/commit/2291ef4f9b1885b440b6b993b9c81205a20549b5))
 - Impl From<Url> for DerpMap - ([01641a7](https://github.com/n0-computer/iroh/commit/01641a7c3bf869c71c1949eeadfc7acd97c25e68))
 - Specify a DERP region for the peer you are trying to connect to ([#1222](https://github.com/n0-computer/iroh/issues/1222)) - ([456f963](https://github.com/n0-computer/iroh/commit/456f96305954a23299d02ed65b8838ba168232e1))
@@ -1659,7 +1666,7 @@ All notable changes to iroh will be documented in this file.
 - *(derp)* Filter DNS results by address family ([#1227](https://github.com/n0-computer/iroh/issues/1227)) - ([b6f9df3](https://github.com/n0-computer/iroh/commit/b6f9df3bdd12f7f6d1840ab0427583c6658d2364))
 - *(derper)* Small derper fixes ([#1083](https://github.com/n0-computer/iroh/issues/1083)) - ([4fb925a](https://github.com/n0-computer/iroh/commit/4fb925ae865ed7ee291b454aad9cf9f732765ba4))
 - *(iroh)* Error when path does not exist ([#1146](https://github.com/n0-computer/iroh/issues/1146)) - ([c1b674f](https://github.com/n0-computer/iroh/commit/c1b674f9edc80e720291802b15f869378abf81cf))
-- *(iroh)* Pass derp-map on get-options  - ([b7fd889](https://github.com/n0-computer/iroh/commit/b7fd889e7806feeb941c0f611bbb3aa33a718b40))
+- *(iroh)* Pass derp-map on get-options - ([b7fd889](https://github.com/n0-computer/iroh/commit/b7fd889e7806feeb941c0f611bbb3aa33a718b40))
 - *(iroh-net)* Allow derp only connections to upgrade - ([25b35a3](https://github.com/n0-computer/iroh/commit/25b35a3c8e828ed1c11b1b5286508d8c90e00ba5))
 - *(iroh-net)* Better logic for initial derp connection - ([6e6b97e](https://github.com/n0-computer/iroh/commit/6e6b97eb90d2e68098145468774cfc1a7d4f45e0))
 - *(iroh-net)* No * deps - ([b1ff368](https://github.com/n0-computer/iroh/commit/b1ff36885be7dbcffbed86b84982867cdf54f654))
@@ -1755,7 +1762,7 @@ All notable changes to iroh will be documented in this file.
 
 ### 🧪 Testing
 
-- *(derp)* Fix test  - ([10782be](https://github.com/n0-computer/iroh/commit/10782befb3512a874215a8f43d1f221737f231b8))
+- *(derp)* Fix test - ([10782be](https://github.com/n0-computer/iroh/commit/10782befb3512a874215a8f43d1f221737f231b8))
 - *(ipv6)* Do not run IPv6 tests if the host doesn't support IPv6 ([#1059](https://github.com/n0-computer/iroh/issues/1059)) - ([e27cc77](https://github.com/n0-computer/iroh/commit/e27cc774b081d0fcf6a7f79cf0ddae127854a14d))
 - *(iroh-net)* Disable flaky MagicEndpoint tests ([#1184](https://github.com/n0-computer/iroh/issues/1184)) - ([6fa891a](https://github.com/n0-computer/iroh/commit/6fa891ad72258d3fab2f558d40e8ad12529483e6))
 - *(netcheck)* Assume udp packets get lost ([#1094](https://github.com/n0-computer/iroh/issues/1094)) - ([daa7c0c](https://github.com/n0-computer/iroh/commit/daa7c0cc83debbc570672baa21d005bf5a69e920))

@@ -764,11 +764,9 @@ mod test_dns_pkarr {
 
     use crate::{
         discovery::pkarr::PkarrPublisher,
-        dns::{node_info::NodeInfo, ResolverExt},
+        dns::{node_info::NodeInfo, DnsResolver},
         test_utils::{
-            dns_server::{create_dns_resolver, run_dns_server},
-            pkarr_dns_state::State,
-            run_relay_server, DnsPkarrServer,
+            dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server, DnsPkarrServer,
         },
         Endpoint, RelayMode,
     };
@@ -791,8 +789,10 @@ mod test_dns_pkarr {
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
         state.upsert(signed_packet)?;
 
-        let resolver = create_dns_resolver(nameserver)?;
-        let resolved = resolver.lookup_by_id(&node_info.node_id, &origin).await?;
+        let resolver = DnsResolver::with_nameserver(nameserver);
+        let resolved = resolver
+            .lookup_node_by_id(&node_info.node_id, &origin)
+            .await?;
 
         assert_eq!(resolved, node_info.into());
 
@@ -811,13 +811,13 @@ mod test_dns_pkarr {
 
         let relay_url = Some("https://relay.example".parse().unwrap());
 
-        let resolver = create_dns_resolver(dns_pkarr_server.nameserver)?;
+        let resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
         let publisher = PkarrPublisher::new(secret_key, dns_pkarr_server.pkarr_url.clone());
         // does not block, update happens in background task
         publisher.update_addr_info(relay_url.as_ref(), &Default::default());
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server.on_node(&node_id, PUBLISH_TIMEOUT).await?;
-        let resolved = resolver.lookup_by_id(&node_id, &origin).await?;
+        let resolved = resolver.lookup_node_by_id(&node_id, &origin).await?;
 
         let expected = NodeAddr {
             node_id,

@@ -33,7 +33,7 @@ use crate::{
     discovery::{
         dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
     },
-    dns::{default_resolver, DnsResolver},
+    dns::DnsResolver,
     magicsock::{self, Handle, NodeIdMappedAddr},
     tls,
     watchable::Watcher,
@@ -152,9 +152,7 @@ impl Builder {
             keylog: self.keylog,
             secret_key: secret_key.clone(),
         };
-        let dns_resolver = self
-            .dns_resolver
-            .unwrap_or_else(|| default_resolver().clone());
+        let dns_resolver = self.dns_resolver.unwrap_or_default();
         let discovery = self
             .discovery
             .into_iter()
@@ -398,9 +396,10 @@ impl Builder {
     /// The DNS resolver is used to resolve relay hostnames, and node addresses if
     /// [`crate::discovery::dns::DnsDiscovery`] is configured.
     ///
-    /// By default, all endpoints share a DNS resolver, which is configured to use the
+    /// By default, a new DNS resolver is created which is configured to use the
     /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
-    /// here to use a differently configured DNS resolver for this endpoint.
+    /// here to use a differently configured DNS resolver for this endpoint, or to share
+    /// a [`DnsResolver`] between multiple endpoints.
     pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
         self.dns_resolver = Some(dns_resolver);
         self
