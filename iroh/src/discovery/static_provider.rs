@@ -22,7 +22,7 @@ use n0_future::{
     time::SystemTime,
 };
 
-use super::{Discovery, DiscoveryItem};
+use super::{Discovery, DiscoveryData, DiscoveryItem};
 
 /// A static node discovery to manually add node addressing information.
 ///
@@ -202,7 +202,7 @@ impl StaticProvider {
 }
 
 impl Discovery for StaticProvider {
-    fn publish(&self, _url: Option<&RelayUrl>, _addrs: &BTreeSet<SocketAddr>) {}
+    fn publish(&self, _data: &DiscoveryData) {}
 
     fn resolve(
         &self,

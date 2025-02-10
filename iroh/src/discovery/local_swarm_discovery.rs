@@ -53,6 +53,8 @@ use crate::{
     Endpoint,
 };
 
+use super::DiscoveryData;
+
 /// The n0 local swarm node discovery name
 const N0_LOCAL_SWARM: &str = "iroh.local.swarm";
 
@@ -376,9 +378,12 @@ impl Discovery for LocalSwarmDiscovery {
         Some(Box::pin(stream.flatten_stream()))
     }
 
-    fn publish(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
+    fn publish(&self, data: &DiscoveryData) {
         self.local_addrs
-            .set(Some((url.cloned(), addrs.clone())))
+            .set(Some((
+                data.relay_url().cloned(),
+                data.direct_addrs().clone(),
+            )))
             .ok();
     }
 
@@ -415,7 +420,7 @@ mod tests {
             let (node_id_b, discovery_b) = make_discoverer()?;
 
             // make addr info for discoverer b
-            let addr_info = (None, BTreeSet::from(["0.0.0.0:11111".parse()?]));
+            let addr_info = DiscoveryData::new(None, BTreeSet::from(["0.0.0.0:11111".parse()?]));
 
             // pass in endpoint, this is never used
             let ep = crate::endpoint::Builder::default().bind().await?;
@@ -426,17 +431,17 @@ mod tests {
 
             tracing::debug!(?node_id_b, "Discovering node id b");
             // publish discovery_b's address
-            discovery_b.publish(addr_info.0.as_ref(), &addr_info.1);
+            discovery_b.publish(&addr_info);
             let s1_res = tokio::time::timeout(Duration::from_secs(5), s1.next())
                 .await?
                 .unwrap()?;
             let s2_res = tokio::time::timeout(Duration::from_secs(5), s2.next())
                 .await?
                 .unwrap()?;
-            assert_eq!(s1_res.node_addr.relay_url, addr_info.0);
-            assert_eq!(s1_res.node_addr.direct_addresses, addr_info.1);
-            assert_eq!(s2_res.node_addr.relay_url, addr_info.0);
-            assert_eq!(s2_res.node_addr.direct_addresses, addr_info.1);
+            assert_eq!(s1_res.node_addr.relay_url.as_ref(), addr_info.relay_url());
+            assert_eq!(&s1_res.node_addr.direct_addresses, addr_info.direct_addrs());
+            assert_eq!(s2_res.node_addr.relay_url.as_ref(), addr_info.relay_url());
+            assert_eq!(&s2_res.node_addr.direct_addresses, addr_info.direct_addrs());
 
             Ok(())
         }
@@ -449,12 +454,12 @@ mod tests {
             let mut discoverers = vec![];
 
             let (_, discovery) = make_discoverer()?;
-            let addr_info = (None, BTreeSet::from(["0.0.0.0:11111".parse()?]));
+            let addr_info = DiscoveryData::new(None, BTreeSet::from(["0.0.0.0:11111".parse()?]));
 
             for _ in 0..num_nodes {
                 let (node_id, discovery) = make_discoverer()?;
                 node_ids.insert(node_id);
-                discovery.publish(addr_info.0.as_ref(), &addr_info.1);
+                discovery.publish(&addr_info);
                 discoverers.push(discovery);
             }
 

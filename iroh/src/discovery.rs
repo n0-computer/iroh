@@ -149,7 +149,7 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     ///
     /// This will be called from a tokio task, so it is safe to spawn new tasks.
     /// These tasks will be run on the runtime of the [`super::Endpoint`].
-    fn publish(&self, _url: Option<&RelayUrl>, _addrs: &BTreeSet<SocketAddr>) {}
+    fn publish(&self, _data: &DiscoveryData) {}
 
     /// Resolves the [`DiscoveryItem`] for the given [`NodeId`].
     ///
@@ -191,6 +191,63 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
 }
 
 impl<T: Discovery> Discovery for Arc<T> {}
+
+/// The information that can be published about a node in discovery services.
+#[derive(Debug, Clone, Default)]
+pub struct DiscoveryData {
+    relay_url: Option<RelayUrl>,
+    direct_addresses: BTreeSet<SocketAddr>,
+}
+
+impl DiscoveryData {
+    /// Creates a new [`DiscoveryData`] with a relay URL and a set of direct addresses.
+    pub fn new(relay_url: Option<RelayUrl>, direct_addresses: BTreeSet<SocketAddr>) -> Self {
+        Self {
+            relay_url,
+            direct_addresses,
+        }
+    }
+
+    /// Sets the relay URL.
+    pub fn with_relay_url(mut self, relay_url: RelayUrl) -> Self {
+        self.relay_url = Some(relay_url);
+        self
+    }
+
+    /// Sets the direct addresses.
+    pub fn with_direct_addrs(mut self, direct_addrs: BTreeSet<SocketAddr>) -> Self {
+        self.direct_addresses = direct_addrs;
+        self
+    }
+
+    /// Returns the relay URL.
+    pub fn relay_url(&self) -> Option<&RelayUrl> {
+        self.relay_url.as_ref()
+    }
+
+    /// Returns the direct addresses.
+    pub fn direct_addrs(&self) -> &BTreeSet<SocketAddr> {
+        &self.direct_addresses
+    }
+
+    /// Converts into a [`NodeAddr`].
+    pub fn into_node_addr(self, node_id: NodeId) -> NodeAddr {
+        NodeAddr {
+            node_id,
+            relay_url: self.relay_url,
+            direct_addresses: self.direct_addresses,
+        }
+    }
+}
+
+impl From<NodeAddr> for DiscoveryData {
+    fn from(node_addr: NodeAddr) -> Self {
+        Self {
+            relay_url: node_addr.relay_url,
+            direct_addresses: node_addr.direct_addresses,
+        }
+    }
+}
 
 /// The results returned from [`Discovery::resolve`].
 #[derive(Debug, Clone)]
@@ -244,9 +301,9 @@ where
 }
 
 impl Discovery for ConcurrentDiscovery {
-    fn publish(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
+    fn publish(&self, data: &DiscoveryData) {
         for service in &self.services {
-            service.publish(url, addrs);
+            service.publish(data);
         }
     }
 
@@ -451,7 +508,7 @@ mod tests {
     use super::*;
     use crate::RelayMode;
 
-    type InfoStore = HashMap<NodeId, (Option<RelayUrl>, BTreeSet<SocketAddr>, u64)>;
+    type InfoStore = HashMap<NodeId, (DiscoveryData, u64)>;
 
     #[derive(Debug, Clone, Default)]
     struct TestDiscoveryShared {
@@ -490,7 +547,7 @@ mod tests {
     }
 
     impl Discovery for TestDiscovery {
-        fn publish(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
+        fn publish(&self, data: &DiscoveryData) {
             if !self.publish {
                 return;
             }
@@ -499,7 +556,7 @@ mod tests {
                 .nodes
                 .lock()
                 .unwrap()
-                .insert(self.node_id, (url.cloned(), addrs.clone(), now));
+                .insert(self.node_id, (data.clone(), now));
         }
 
         fn resolve(
@@ -514,17 +571,15 @@ mod tests {
                     let port: u16 = rand::thread_rng().gen_range(10_000..20_000);
                     // "240.0.0.0/4" is reserved and unreachable
                     let addr: SocketAddr = format!("240.0.0.1:{port}").parse().unwrap();
-                    Some((None, BTreeSet::from([addr]), ts))
+                    let data = DiscoveryData::new(None, BTreeSet::from([addr]));
+                    Some((data, ts))
                 }
             };
             let stream = match addr_info {
-                Some((url, addrs, ts)) => {
+                Some((data, ts)) => {
+                    let node_addr = data.into_node_addr(node_id);
                     let item = DiscoveryItem {
-                        node_addr: NodeAddr {
-                            node_id,
-                            relay_url: url,
-                            direct_addresses: addrs,
-                        },
+                        node_addr,
                         provenance: "test-disco",
                         last_updated: Some(ts),
                     };
@@ -549,7 +604,7 @@ mod tests {
     #[derive(Debug)]
     struct EmptyDiscovery;
     impl Discovery for EmptyDiscovery {
-        fn publish(&self, _url: Option<&RelayUrl>, _addrs: &BTreeSet<SocketAddr>) {}
+        fn publish(&self, _data: &DiscoveryData) {}
 
         fn resolve(
             &self,
@@ -763,7 +818,7 @@ mod test_dns_pkarr {
     use tracing_test::traced_test;
 
     use crate::{
-        discovery::pkarr::PkarrPublisher,
+        discovery::{pkarr::PkarrPublisher, DiscoveryData},
         dns::{node_info::NodeInfo, DnsResolver},
         test_utils::{
             dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server, DnsPkarrServer,
@@ -813,8 +868,9 @@ mod test_dns_pkarr {
 
         let resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
         let publisher = PkarrPublisher::new(secret_key, dns_pkarr_server.pkarr_url.clone());
+        let data = DiscoveryData::new(relay_url.clone(), Default::default());
         // does not block, update happens in background task
-        publisher.update_addr_info(relay_url.as_ref(), &Default::default());
+        publisher.update_addr_info(&data);
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server.on_node(&node_id, PUBLISH_TIMEOUT).await?;
         let resolved = resolver.lookup_node_by_id(&node_id, &origin).await?;

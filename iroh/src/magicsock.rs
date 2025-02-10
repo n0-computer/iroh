@@ -69,7 +69,7 @@ use crate::endpoint::PathSelection;
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, CallMeMaybe, SendAddr},
-    discovery::{Discovery, DiscoveryItem},
+    discovery::{Discovery, DiscoveryData, DiscoveryItem},
     dns::DnsResolver,
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     watchable::{Watchable, Watcher},
@@ -1479,7 +1479,10 @@ impl MagicSock {
     /// Called whenever our addresses or home relay node changes.
     fn publish_my_addr(&self) {
         if let Some(ref discovery) = self.discovery {
-            discovery.publish(self.my_relay().as_ref(), &self.direct_addrs.sockaddrs());
+            let relay_url = self.my_relay();
+            let direct_addrs = self.direct_addrs.sockaddrs();
+            let data = DiscoveryData::new(relay_url, direct_addrs);
+            discovery.publish(&data);
         }
     }
 }

@@ -5,14 +5,10 @@
 //! overview of pkarr.
 //!
 //! [pkarr module]: super
-use std::{
-    collections::BTreeSet,
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
+use iroh_base::{NodeAddr, NodeId, SecretKey};
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -29,7 +25,7 @@ use url::Url;
 use crate::{
     discovery::{
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
-        Discovery, DiscoveryItem,
+        Discovery, DiscoveryData, DiscoveryItem,
     },
     dns::node_info::NodeInfo,
     Endpoint,
@@ -352,17 +348,17 @@ impl DhtDiscovery {
 }
 
 impl Discovery for DhtDiscovery {
-    fn publish(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
+    fn publish(&self, data: &DiscoveryData) {
         let Some(keypair) = &self.0.secret_key else {
             tracing::debug!("no keypair set, not publishing");
             return;
         };
-        tracing::debug!("publishing {:?}, {:?}", url, addrs);
+        tracing::debug!("publishing {data:?}");
         let info = NodeInfo {
             node_id: keypair.public(),
-            relay_url: url.cloned().map(Url::from),
+            relay_url: data.relay_url().cloned().map(Url::from),
             direct_addresses: if self.0.include_direct_addresses {
-                addrs.clone()
+                data.direct_addrs().clone()
             } else {
                 Default::default()
             },
@@ -436,7 +432,8 @@ mod tests {
             .build()?;
         let relay_url: RelayUrl = Url::parse("https://example.com")?.into();
 
-        discovery.publish(Some(&relay_url), &Default::default());
+        let data = DiscoveryData::default().with_relay_url(relay_url.clone());
+        discovery.publish(&data);
 
         // publish is fire and forget, so we have no way to wait until it is done.
         tokio::time::timeout(Duration::from_secs(30), async move {

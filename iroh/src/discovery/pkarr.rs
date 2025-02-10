@@ -44,10 +44,10 @@
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
 //! [`DhtDiscovery`]: dht::DhtDiscovery
 
-use std::{collections::BTreeSet, net::SocketAddr, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
-use iroh_base::{NodeId, RelayUrl, SecretKey};
+use iroh_base::{NodeId, SecretKey};
 use n0_future::{
     boxed::BoxStream,
     task::{self, AbortOnDropHandle},
@@ -64,6 +64,8 @@ use crate::{
     watchable::{Disconnected, Watchable, Watcher},
     Endpoint,
 };
+
+use super::DiscoveryData;
 
 #[cfg(feature = "discovery-pkarr-dht")]
 pub mod dht;
@@ -193,13 +195,13 @@ impl PkarrPublisher {
     /// Publishes the addressing information about this node to a pkarr relay.
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
-    pub fn update_addr_info(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
-        let (relay_url, direct_addresses) = if let Some(relay_url) = url {
+    pub fn update_addr_info(&self, data: &DiscoveryData) {
+        let (relay_url, direct_addresses) = if let Some(relay_url) = data.relay_url() {
             // Only publish relay url, and no direct addrs
             let url = relay_url.clone();
             (Some(url.into()), Default::default())
         } else {
-            (None, addrs.clone())
+            (None, data.direct_addrs().clone())
         };
         let info = NodeInfo::new(self.node_id, relay_url, direct_addresses);
         self.watchable.set(Some(info)).ok();
@@ -207,8 +209,8 @@ impl PkarrPublisher {
 }
 
 impl Discovery for PkarrPublisher {
-    fn publish(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
-        self.update_addr_info(url, addrs);
+    fn publish(&self, data: &DiscoveryData) {
+        self.update_addr_info(data);
     }
 }
 
