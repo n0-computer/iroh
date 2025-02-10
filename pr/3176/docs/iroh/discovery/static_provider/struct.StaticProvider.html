@@ -28,8 +28,8 @@ retract node addressing information that is otherwise out-of-band to iroh.</p>
         relay_url: <span class="prelude-val">Some</span>(<span class="string">"https://example.com"</span>.parse()<span class="question-mark">?</span>),
         direct_addresses: Default::default(),
     },
-    <span class="prelude-val">None
-</span>);
+    <span class="prelude-val">None</span>,
+);
 </code></pre></div>
 </div></details><h2 id="implementations" class="section-header">Implementations<a href="#implementations" class="anchor">§</a></h2><div id="implementations-list"><details class="toggle implementors-toggle" open><summary><section id="impl-StaticProvider" class="impl"><a class="src rightside" href="../../../src/iroh/discovery/static_provider.rs.html#87-221">Source</a><a href="#impl-StaticProvider" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.StaticProvider.html" title="struct iroh::discovery::static_provider::StaticProvider">StaticProvider</a></h3></section></summary><div class="impl-items"><details class="toggle" open><summary><section id="associatedconstant.PROVENANCE" class="associatedconstant"><a class="src rightside" href="../../../src/iroh/discovery/static_provider.rs.html#94">Source</a><h4 class="code-header">pub const <a href="#associatedconstant.PROVENANCE" class="constant">PROVENANCE</a>: &amp;'static <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.str.html">str</a> = &quot;static_discovery&quot;</h4></section></summary><div class="docblock"><p>The provenance string for this discovery implementation.</p>
 <p>This is mostly used for debugging information and allows understanding the origin of
