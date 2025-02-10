@@ -381,7 +381,8 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
     }
 }
 
-/// Limit
+/// Wraps an existing protocol, limiting its access,
+/// based on the provided function.
 #[derive(derive_more::Debug, Clone)]
 pub struct AccessLimit<P: ProtocolHandler + Clone> {
     proto: P,
@@ -391,6 +392,9 @@ pub struct AccessLimit<P: ProtocolHandler + Clone> {
 
 impl<P: ProtocolHandler + Clone> AccessLimit<P> {
     /// Create a new `AccessLimit`.
+    ///
+    /// The function should return `true` for nodes that are allowed to
+    /// connect, and `false` otherwise.
     pub fn new<F>(proto: P, limiter: F) -> Self
     where
         F: Fn(NodeId) -> bool + Send + Sync + 'static,
@@ -408,12 +412,10 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
     }
 
     fn accept(&self, conn: Connection) -> BoxFuture<Result<()>> {
-        println!("accepting limiter");
         let this = self.clone();
         Box::pin(async move {
             let remote = conn.remote_node_id()?;
             let is_allowed = (this.limiter)(remote);
-            dbg!(is_allowed);
             if !is_allowed {
                 conn.close(0u32.into(), b"not allowed");
                 anyhow::bail!("not allowed");
