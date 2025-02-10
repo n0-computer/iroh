@@ -825,7 +825,7 @@
         (
             NodeAddr {
                 node_id: <span class="self">self</span>.node_id,
-                relay_url: <span class="self">self</span>.relay_url.map(|url| RelayUrl::from(url)),
+                relay_url: <span class="self">self</span>.relay_url.map(RelayUrl::from),
                 direct_addresses: <span class="self">self</span>.direct_addresses,
             },
             <span class="self">self</span>.user_data,
@@ -884,7 +884,7 @@
 <span class="kw">impl </span>TryFrom&lt;String&gt; <span class="kw">for </span>UserData {
     <span class="kw">type </span>Error = MaxLengthExceededError;
     <span class="kw">fn </span>try_from(value: String) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
-        <span class="kw">if </span>value.as_bytes().len() &gt; USER_DATA_MAX_LENGTH {
+        <span class="kw">if </span>value.len() &gt; USER_DATA_MAX_LENGTH {
             <span class="prelude-val">Err</span>(MaxLengthExceededError)
         } <span class="kw">else </span>{
             <span class="prelude-val">Ok</span>(<span class="self">Self</span>(value))
@@ -896,7 +896,7 @@
     <span class="kw">type </span><span class="prelude-val">Err </span>= MaxLengthExceededError;
 
     <span class="kw">fn </span>from_str(s: <span class="kw-2">&amp;</span>str) -&gt; std::result::Result&lt;<span class="self">Self</span>, <span class="self">Self</span>::Err&gt; {
-        <span class="kw">if </span>s.as_bytes().len() &gt; USER_DATA_MAX_LENGTH {
+        <span class="kw">if </span>s.len() &gt; USER_DATA_MAX_LENGTH {
             <span class="prelude-val">Err</span>(MaxLengthExceededError)
         } <span class="kw">else </span>{
             <span class="prelude-val">Ok</span>(<span class="self">Self</span>(s.to_string()))
