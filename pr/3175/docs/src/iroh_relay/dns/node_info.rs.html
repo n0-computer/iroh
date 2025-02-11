@@ -539,7 +539,54 @@
 <a href="#538" id="538">538</a>
 <a href="#539" id="539">539</a>
 <a href="#540" id="540">540</a>
-<a href="#541" id="541">541</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#541" id="541">541</a>
+<a href="#542" id="542">542</a>
+<a href="#543" id="543">543</a>
+<a href="#544" id="544">544</a>
+<a href="#545" id="545">545</a>
+<a href="#546" id="546">546</a>
+<a href="#547" id="547">547</a>
+<a href="#548" id="548">548</a>
+<a href="#549" id="549">549</a>
+<a href="#550" id="550">550</a>
+<a href="#551" id="551">551</a>
+<a href="#552" id="552">552</a>
+<a href="#553" id="553">553</a>
+<a href="#554" id="554">554</a>
+<a href="#555" id="555">555</a>
+<a href="#556" id="556">556</a>
+<a href="#557" id="557">557</a>
+<a href="#558" id="558">558</a>
+<a href="#559" id="559">559</a>
+<a href="#560" id="560">560</a>
+<a href="#561" id="561">561</a>
+<a href="#562" id="562">562</a>
+<a href="#563" id="563">563</a>
+<a href="#564" id="564">564</a>
+<a href="#565" id="565">565</a>
+<a href="#566" id="566">566</a>
+<a href="#567" id="567">567</a>
+<a href="#568" id="568">568</a>
+<a href="#569" id="569">569</a>
+<a href="#570" id="570">570</a>
+<a href="#571" id="571">571</a>
+<a href="#572" id="572">572</a>
+<a href="#573" id="573">573</a>
+<a href="#574" id="574">574</a>
+<a href="#575" id="575">575</a>
+<a href="#576" id="576">576</a>
+<a href="#577" id="577">577</a>
+<a href="#578" id="578">578</a>
+<a href="#579" id="579">579</a>
+<a href="#580" id="580">580</a>
+<a href="#581" id="581">581</a>
+<a href="#582" id="582">582</a>
+<a href="#583" id="583">583</a>
+<a href="#584" id="584">584</a>
+<a href="#585" id="585">585</a>
+<a href="#586" id="586">586</a>
+<a href="#587" id="587">587</a>
+<a href="#588" id="588">588</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -583,7 +630,7 @@
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>hickory_resolver::{proto::ProtoError, Name};
-<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, SecretKey};
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 <span class="kw">use </span>tracing::warn;
 <span class="kw">use </span>url::Url;
 
@@ -591,20 +638,6 @@
 
 <span class="doccomment">/// The DNS name for the iroh TXT record.
 </span><span class="kw">pub const </span>IROH_TXT_NAME: <span class="kw-2">&amp;</span>str = <span class="string">"_iroh"</span>;
-
-<span class="doccomment">/// The attributes supported by iroh for [`IROH_TXT_NAME`] DNS resource records.
-///
-/// The resource record uses the lower-case names.
-</span><span class="attr">#[derive(
-    Debug, strum::Display, strum::AsRefStr, strum::EnumString, Hash, Eq, PartialEq, Ord, PartialOrd,
-)]
-#[strum(serialize_all = <span class="string">"kebab-case"</span>)]
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>IrohAttr {
-    <span class="doccomment">/// URL of home relay.
-    </span>Relay,
-    <span class="doccomment">/// Direct address.
-    </span>Addr,
-}
 
 <span class="doccomment">/// Extension methods for [`NodeId`] to encode to and decode from [`z32`],
 /// which is the encoding used in [`pkarr`] domain names.
@@ -633,16 +666,75 @@
     }
 }
 
+<span class="doccomment">/// The information that can be published about a node in discovery services.
+</span><span class="attr">#[derive(Debug, Clone, Default, Eq, PartialEq)]
+</span><span class="kw">pub struct </span>NodeData {
+    relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
+    direct_addresses: BTreeSet&lt;SocketAddr&gt;,
+}
+
+<span class="kw">impl </span>NodeData {
+    <span class="doccomment">/// Creates a new [`NodeData`] with a relay URL and a set of direct addresses.
+    </span><span class="kw">pub fn </span>new(relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;, direct_addresses: BTreeSet&lt;SocketAddr&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            relay_url,
+            direct_addresses,
+        }
+    }
+
+    <span class="doccomment">/// Sets the relay URL.
+    </span><span class="kw">pub fn </span>with_relay_url(<span class="kw-2">mut </span><span class="self">self</span>, relay_url: <span class="kw">impl </span>Into&lt;RelayUrl&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.relay_url = <span class="prelude-val">Some</span>(relay_url.into());
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Sets the direct addresses.
+    </span><span class="kw">pub fn </span>with_direct_addrs(<span class="kw-2">mut </span><span class="self">self</span>, direct_addrs: BTreeSet&lt;SocketAddr&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.direct_addresses = direct_addrs;
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Returns the relay URL.
+    </span><span class="kw">pub fn </span>relay_url(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt; {
+        <span class="self">self</span>.relay_url.as_ref()
+    }
+
+    <span class="doccomment">/// Returns the direct addresses.
+    </span><span class="kw">pub fn </span>direct_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt; {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.direct_addresses
+    }
+
+    <span class="doccomment">/// Removes all direct addresses.
+    </span><span class="kw">pub fn </span>clear_direct_addresses(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="self">self</span>.direct_addresses = Default::default();
+    }
+
+    <span class="doccomment">/// Converts into a [`NodeAddr`].
+    </span><span class="kw">pub fn </span>into_node_addr(<span class="self">self</span>, node_id: NodeId) -&gt; NodeAddr {
+        NodeAddr {
+            node_id,
+            relay_url: <span class="self">self</span>.relay_url,
+            direct_addresses: <span class="self">self</span>.direct_addresses,
+        }
+    }
+}
+
+<span class="kw">impl </span>From&lt;NodeAddr&gt; <span class="kw">for </span>NodeData {
+    <span class="kw">fn </span>from(node_addr: NodeAddr) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            relay_url: node_addr.relay_url,
+            direct_addresses: node_addr.direct_addresses,
+        }
+    }
+}
+
 <span class="doccomment">/// Information about the iroh node contained in an [`IROH_TXT_NAME`] TXT resource record.
 </span><span class="attr">#[derive(derive_more::Debug, Clone, Eq, PartialEq)]
 </span><span class="kw">pub struct </span>NodeInfo {
     <span class="doccomment">/// The [`NodeId`].
     </span><span class="kw">pub </span>node_id: NodeId,
-    <span class="doccomment">/// The advertised home relay server.
-    </span><span class="attr">#[debug(<span class="string">"{:?}"</span>, <span class="self">self</span>.relay_url.as_ref().map(|s| s.to_string()))]
-    </span><span class="kw">pub </span>relay_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
-    <span class="doccomment">/// Any direct addresses.
-    </span><span class="kw">pub </span>direct_addresses: BTreeSet&lt;SocketAddr&gt;,
+    <span class="doccomment">/// The information published about the node.
+    </span><span class="kw">pub </span>data: NodeData,
 }
 
 <span class="kw">impl </span>From&lt;TxtAttrs&lt;IrohAttr&gt;&gt; <span class="kw">for </span>NodeInfo {
@@ -667,49 +759,24 @@
             .flatten()
             .filter_map(|s| SocketAddr::from_str(s).ok())
             .collect();
-        <span class="self">Self </span>{
-            node_id,
-            relay_url,
+        <span class="kw">let </span>data = NodeData {
+            relay_url: relay_url.map(Into::into),
             direct_addresses,
-        }
-    }
-}
-
-<span class="kw">impl </span>From&lt;<span class="kw-2">&amp;</span>NodeInfo&gt; <span class="kw">for </span>TxtAttrs&lt;IrohAttr&gt; {
-    <span class="kw">fn </span>from(info: <span class="kw-2">&amp;</span>NodeInfo) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span><span class="kw-2">mut </span>attrs = <span class="macro">vec!</span>[];
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(relay_url) = <span class="kw-2">&amp;</span>info.relay_url {
-            attrs.push((IrohAttr::Relay, relay_url.to_string()));
-        }
-        <span class="kw">for </span>addr <span class="kw">in </span><span class="kw-2">&amp;</span>info.direct_addresses {
-            attrs.push((IrohAttr::Addr, addr.to_string()));
-        }
-        <span class="self">Self</span>::from_parts(info.node_id, attrs.into_iter())
+        };
+        <span class="self">Self </span>{ node_id, data }
     }
 }
 
 <span class="kw">impl </span>From&lt;NodeInfo&gt; <span class="kw">for </span>NodeAddr {
     <span class="kw">fn </span>from(value: NodeInfo) -&gt; <span class="self">Self </span>{
-        NodeAddr {
-            node_id: value.node_id,
-            relay_url: value.relay_url.map(Into::into),
-            direct_addresses: value.direct_addresses,
-        }
+        value.data.into_node_addr(value.node_id)
     }
 }
 
 <span class="kw">impl </span>NodeInfo {
     <span class="doccomment">/// Creates a new [`NodeInfo`] from its parts.
-    </span><span class="kw">pub fn </span>new(
-        node_id: NodeId,
-        relay_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
-        direct_addresses: BTreeSet&lt;SocketAddr&gt;,
-    ) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            node_id,
-            relay_url,
-            direct_addresses,
-        }
+    </span><span class="kw">pub fn </span>new(node_id: NodeId, data: NodeData) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{ node_id, data }
     }
 
     <span class="kw">fn </span>to_attrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; TxtAttrs&lt;IrohAttr&gt; {
@@ -764,6 +831,20 @@
     <span class="prelude-val">Some</span>(node_id)
 }
 
+<span class="doccomment">/// The attributes supported by iroh for [`IROH_TXT_NAME`] DNS resource records.
+///
+/// The resource record uses the lower-case names.
+</span><span class="attr">#[derive(
+    Debug, strum::Display, strum::AsRefStr, strum::EnumString, Hash, Eq, PartialEq, Ord, PartialOrd,
+)]
+#[strum(serialize_all = <span class="string">"kebab-case"</span>)]
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>IrohAttr {
+    <span class="doccomment">/// URL of home relay.
+    </span>Relay,
+    <span class="doccomment">/// Direct address.
+    </span>Addr,
+}
+
 <span class="doccomment">/// Attributes parsed from [`IROH_TXT_NAME`] TXT records.
 ///
 /// This struct is generic over the key type. When using with [`String`], this will parse
@@ -773,6 +854,19 @@
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>TxtAttrs&lt;T&gt; {
     node_id: NodeId,
     attrs: BTreeMap&lt;T, Vec&lt;String&gt;&gt;,
+}
+
+<span class="kw">impl </span>From&lt;<span class="kw-2">&amp;</span>NodeInfo&gt; <span class="kw">for </span>TxtAttrs&lt;IrohAttr&gt; {
+    <span class="kw">fn </span>from(info: <span class="kw-2">&amp;</span>NodeInfo) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span><span class="kw-2">mut </span>attrs = <span class="macro">vec!</span>[];
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(relay_url) = <span class="kw-2">&amp;</span>info.data.relay_url {
+            attrs.push((IrohAttr::Relay, relay_url.to_string()));
+        }
+        <span class="kw">for </span>addr <span class="kw">in </span><span class="kw-2">&amp;</span>info.data.direct_addresses {
+            attrs.push((IrohAttr::Addr, addr.to_string()));
+        }
+        <span class="self">Self</span>::from_parts(info.node_id, attrs.into_iter())
+    }
 }
 
 <span class="kw">impl</span>&lt;T: FromStr + Display + Hash + Ord&gt; TxtAttrs&lt;T&gt; {
@@ -973,17 +1067,18 @@
     <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
     <span class="kw">use </span>testresult::TestResult;
 
-    <span class="kw">use super</span>::{NodeIdExt, NodeInfo};
+    <span class="kw">use super</span>::{NodeData, NodeIdExt, NodeInfo};
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>txt_attr_roundtrip() {
-        <span class="kw">let </span>expected = NodeInfo {
-            node_id: <span class="string">"vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
-                </span>.parse()
-                .unwrap(),
-            relay_url: <span class="prelude-val">Some</span>(<span class="string">"https://example.com"</span>.parse().unwrap()),
-            direct_addresses: [<span class="string">"127.0.0.1:1234"</span>.parse().unwrap()].into_iter().collect(),
-        };
+        <span class="kw">let </span>node_data = NodeData::new(
+            <span class="prelude-val">Some</span>(<span class="string">"https://example.com"</span>.parse().unwrap()),
+            [<span class="string">"127.0.0.1:1234"</span>.parse().unwrap()].into_iter().collect(),
+        );
+        <span class="kw">let </span>node_id = <span class="string">"vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
+            </span>.parse()
+            .unwrap();
+        <span class="kw">let </span>expected = NodeInfo::new(node_id, node_data);
         <span class="kw">let </span>attrs = expected.to_attrs();
         <span class="kw">let </span>actual = NodeInfo::from(<span class="kw-2">&amp;</span>attrs);
         <span class="macro">assert_eq!</span>(expected, actual);
@@ -993,11 +1088,11 @@
     </span><span class="kw">fn </span>signed_packet_roundtrip() {
         <span class="kw">let </span>secret_key =
             SecretKey::from_str(<span class="string">"vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"</span>).unwrap();
-        <span class="kw">let </span>expected = NodeInfo {
-            node_id: secret_key.public(),
-            relay_url: <span class="prelude-val">Some</span>(<span class="string">"https://example.com"</span>.parse().unwrap()),
-            direct_addresses: [<span class="string">"127.0.0.1:1234"</span>.parse().unwrap()].into_iter().collect(),
-        };
+        <span class="kw">let </span>node_data = NodeData::new(
+            <span class="prelude-val">Some</span>(<span class="string">"https://example.com"</span>.parse().unwrap()),
+            [<span class="string">"127.0.0.1:1234"</span>.parse().unwrap()].into_iter().collect(),
+        );
+        <span class="kw">let </span>expected = NodeInfo::new(secret_key.public(), node_data);
         <span class="kw">let </span>packet = expected.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>).unwrap();
         <span class="kw">let </span>actual = NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>packet).unwrap();
         <span class="macro">assert_eq!</span>(expected, actual);
@@ -1063,19 +1158,18 @@
         <span class="kw">let </span>lookup = hickory_resolver::lookup::TxtLookup::from(lookup);
 
         <span class="kw">let </span>node_info = NodeInfo::from_txt_lookup(lookup.into())<span class="question-mark">?</span>;
-        <span class="macro">assert_eq!</span>(
-            node_info,
-            NodeInfo {
-                node_id: NodeId::from_str(
-                    <span class="string">"1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18"
-                </span>)<span class="question-mark">?</span>,
-                relay_url: <span class="prelude-val">Some</span>(<span class="string">"https://euw1-1.relay.iroh.network./"</span>.parse()<span class="question-mark">?</span>),
-                direct_addresses: BTreeSet::from([
+        <span class="kw">let </span>expected_node_info = NodeInfo::new(
+            NodeId::from_str(<span class="string">"1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18"</span>)
+                .unwrap(),
+            NodeData::new(
+                <span class="prelude-val">Some</span>(<span class="string">"https://euw1-1.relay.iroh.network./"</span>.parse()<span class="question-mark">?</span>),
+                BTreeSet::from([
                     <span class="string">"192.168.96.145:60165"</span>.parse()<span class="question-mark">?</span>,
                     <span class="string">"213.208.157.87:60165"</span>.parse()<span class="question-mark">?</span>,
-                ])
-            }
+                ]),
+            ),
         );
+        <span class="macro">assert_eq!</span>(node_info, expected_node_info);
 
         <span class="prelude-val">Ok</span>(())
     }
