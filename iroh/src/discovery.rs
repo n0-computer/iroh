@@ -471,7 +471,7 @@ impl DiscoveryTask {
             match stream.next().await {
                 Some(Ok(r)) => {
                     let provenance = r.provenance;
-                    let node_addr = r.into_node_addr();
+                    let node_addr = r.to_node_addr();
                     if node_addr.is_empty() {
                         debug!(%provenance, "empty address found");
                         continue;
@@ -481,6 +481,7 @@ impl DiscoveryTask {
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
                     }
+                    ep.discovery_subscribers().send(r);
                 }
                 Some(Err(err)) => {
                     warn!(?err, "discovery service produced error");
@@ -499,6 +500,26 @@ impl DiscoveryTask {
 impl Drop for DiscoveryTask {
     fn drop(&mut self) {
         self.task.abort();
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct DiscoverySubscribers {
+    inner: tokio::sync::broadcast::Sender<DiscoveryItem>,
+}
+
+impl DiscoverySubscribers {
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: tokio::sync::broadcast::Sender::new(1024),
+        }
+    }
+    pub(crate) fn subscribe(&self) -> tokio::sync::broadcast::Receiver<DiscoveryItem> {
+        self.inner.subscribe()
+    }
+
+    pub(crate) fn send(&self, item: DiscoveryItem) {
+        self.inner.send(item).ok();
     }
 }
 

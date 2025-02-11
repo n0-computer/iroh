@@ -32,7 +32,8 @@ use url::Url;
 
 use crate::{
     discovery::{
-        dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
+        dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem,
+        DiscoverySubscribers, DiscoveryTask,
     },
     dns::DnsResolver,
     magicsock::{self, Handle, NodeIdMappedAddr},
@@ -952,6 +953,13 @@ impl Endpoint {
         self.msock.list_remote_infos().into_iter()
     }
 
+    /// Returns a stream that yield all items from node discovery, both active and passive.
+    pub fn watch_discovery(&self) -> impl n0_future::Stream<Item = DiscoveryItem> {
+        use n0_future::StreamExt;
+        let recv = self.msock.discovery_subscribers.subscribe();
+        tokio_stream::wrappers::BroadcastStream::new(recv).filter_map(|item| item.ok())
+    }
+
     // # Methods for less common getters.
     //
     // Partially they return things passed into the builder.
@@ -1125,6 +1133,10 @@ impl Endpoint {
                 }
             }
         }
+    }
+
+    pub(crate) fn discovery_subscribers(&self) -> &DiscoverySubscribers {
+        &self.msock.discovery_subscribers
     }
 
     #[cfg(test)]
