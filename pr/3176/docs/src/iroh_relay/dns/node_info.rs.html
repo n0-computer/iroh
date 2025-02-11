@@ -674,7 +674,14 @@
 <a href="#673" id="673">673</a>
 <a href="#674" id="674">674</a>
 <a href="#675" id="675">675</a>
-<a href="#676" id="676">676</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#676" id="676">676</a>
+<a href="#677" id="677">677</a>
+<a href="#678" id="678">678</a>
+<a href="#679" id="679">679</a>
+<a href="#680" id="680">680</a>
+<a href="#681" id="681">681</a>
+<a href="#682" id="682">682</a>
+<a href="#683" id="683">683</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -755,6 +762,13 @@
 }
 
 <span class="doccomment">/// The information that can be published about a node in discovery services.
+///
+/// This includes an optional [`RelayUrl`], a set of direct addresses, and the optional
+/// [`UserData`], a string that can be set by applications and is not parsed or used by iroh
+/// itself.
+///
+/// The fields are not public, but there are setter and getter functions for all fields
+/// contained in the struct.
 </span><span class="attr">#[derive(Debug, Clone, Default, Eq, PartialEq)]
 </span><span class="kw">pub struct </span>NodeData {
     relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
