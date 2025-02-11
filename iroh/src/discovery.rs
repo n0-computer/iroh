@@ -850,35 +850,36 @@ mod tests {
             new_endpoint(secret, disco).await
         };
 
-        let stream = ep1.discovery_stream();
+        let mut stream = ep1.discovery_stream();
 
         // wait for ep2 node addr to be updated and connect from ep1 -> discovery via resolve
         ep2.node_addr().await?;
         let _ = ep1.connect(ep2.node_id(), TEST_ALPN).await?;
 
-        // inject item into discovery via subscribe
-        let passive_addr = SecretKey::generate(rand::thread_rng()).public();
+        let item = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("timeout")
+            .expect("stream closed")
+            .expect("stream lagged");
+        assert_eq!(item.node_addr.node_id, ep2.node_id());
+        assert_eq!(item.provenance, "test-disco");
+
+        // inject item into discovery passively
+        let passive_node_id = SecretKey::generate(rand::thread_rng()).public();
         let passive_item = DiscoveryItem {
-            node_addr: NodeAddr::from(passive_addr),
+            node_addr: NodeAddr::from(passive_node_id),
             provenance: "test-disco-passive",
             last_updated: None,
         };
         disco_shared.send_passive(passive_item.clone());
 
-        let discovered = stream.take(2).collect::<Vec<_>>().await;
-        assert_eq!(discovered.len(), 2);
-        let discovered_active = discovered
-            .iter()
-            .map(|item| item.as_ref().expect("unexpected lag"))
-            .find(|x| x.provenance == "test-disco")
-            .unwrap();
-        assert_eq!(discovered_active.node_addr.node_id, ep2.node_id());
-        let discovered_passive = discovered
-            .iter()
-            .map(|item| item.as_ref().expect("unexpected lag"))
-            .find(|x| x.provenance == "test-disco-passive")
-            .unwrap();
-        assert_eq!(discovered_passive.node_addr, passive_item.node_addr);
+        let item = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("timeout")
+            .expect("stream closed")
+            .expect("stream lagged");
+        assert_eq!(item.node_addr.node_id, passive_node_id);
+        assert_eq!(item.provenance, "test-disco-passive");
 
         Ok(())
     }
