@@ -42,7 +42,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use hickory_resolver::{proto::ProtoError, Name};
-use iroh_base::{NodeAddr, NodeId, SecretKey};
+use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use tracing::warn;
 use url::Url;
 
@@ -50,20 +50,6 @@ use crate::{defaults::timeouts::DNS_TIMEOUT, dns::DnsResolver};
 
 /// The DNS name for the iroh TXT record.
 pub const IROH_TXT_NAME: &str = "_iroh";
-
-/// The attributes supported by iroh for [`IROH_TXT_NAME`] DNS resource records.
-///
-/// The resource record uses the lower-case names.
-#[derive(
-    Debug, strum::Display, strum::AsRefStr, strum::EnumString, Hash, Eq, PartialEq, Ord, PartialOrd,
-)]
-#[strum(serialize_all = "kebab-case")]
-pub(super) enum IrohAttr {
-    /// URL of home relay.
-    Relay,
-    /// Direct address.
-    Addr,
-}
 
 /// Extension methods for [`NodeId`] to encode to and decode from [`z32`],
 /// which is the encoding used in [`pkarr`] domain names.
@@ -92,16 +78,75 @@ impl NodeIdExt for NodeId {
     }
 }
 
+/// The information that can be published about a node in discovery services.
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct NodeData {
+    relay_url: Option<RelayUrl>,
+    direct_addresses: BTreeSet<SocketAddr>,
+}
+
+impl NodeData {
+    /// Creates a new [`DiscoveryData`] with a relay URL and a set of direct addresses.
+    pub fn new(relay_url: Option<RelayUrl>, direct_addresses: BTreeSet<SocketAddr>) -> Self {
+        Self {
+            relay_url,
+            direct_addresses,
+        }
+    }
+
+    /// Sets the relay URL.
+    pub fn with_relay_url(mut self, relay_url: impl Into<RelayUrl>) -> Self {
+        self.relay_url = Some(relay_url.into());
+        self
+    }
+
+    /// Sets the direct addresses.
+    pub fn with_direct_addrs(mut self, direct_addrs: BTreeSet<SocketAddr>) -> Self {
+        self.direct_addresses = direct_addrs;
+        self
+    }
+
+    /// Returns the relay URL.
+    pub fn relay_url(&self) -> Option<&RelayUrl> {
+        self.relay_url.as_ref()
+    }
+
+    /// Returns the direct addresses.
+    pub fn direct_addrs(&self) -> &BTreeSet<SocketAddr> {
+        &self.direct_addresses
+    }
+
+    /// Removes all direct addresses.
+    pub fn clear_direct_addresses(&mut self) {
+        self.direct_addresses = Default::default();
+    }
+
+    /// Converts into a [`NodeAddr`].
+    pub fn into_node_addr(self, node_id: NodeId) -> NodeAddr {
+        NodeAddr {
+            node_id,
+            relay_url: self.relay_url,
+            direct_addresses: self.direct_addresses,
+        }
+    }
+}
+
+impl From<NodeAddr> for NodeData {
+    fn from(node_addr: NodeAddr) -> Self {
+        Self {
+            relay_url: node_addr.relay_url,
+            direct_addresses: node_addr.direct_addresses,
+        }
+    }
+}
+
 /// Information about the iroh node contained in an [`IROH_TXT_NAME`] TXT resource record.
 #[derive(derive_more::Debug, Clone, Eq, PartialEq)]
 pub struct NodeInfo {
     /// The [`NodeId`].
     pub node_id: NodeId,
-    /// The advertised home relay server.
-    #[debug("{:?}", self.relay_url.as_ref().map(|s| s.to_string()))]
-    pub relay_url: Option<Url>,
-    /// Any direct addresses.
-    pub direct_addresses: BTreeSet<SocketAddr>,
+    /// The information published about the node.
+    pub data: NodeData,
 }
 
 impl From<TxtAttrs<IrohAttr>> for NodeInfo {
@@ -126,49 +171,24 @@ impl From<&TxtAttrs<IrohAttr>> for NodeInfo {
             .flatten()
             .filter_map(|s| SocketAddr::from_str(s).ok())
             .collect();
-        Self {
-            node_id,
-            relay_url,
+        let data = NodeData {
+            relay_url: relay_url.map(Into::into),
             direct_addresses,
-        }
-    }
-}
-
-impl From<&NodeInfo> for TxtAttrs<IrohAttr> {
-    fn from(info: &NodeInfo) -> Self {
-        let mut attrs = vec![];
-        if let Some(relay_url) = &info.relay_url {
-            attrs.push((IrohAttr::Relay, relay_url.to_string()));
-        }
-        for addr in &info.direct_addresses {
-            attrs.push((IrohAttr::Addr, addr.to_string()));
-        }
-        Self::from_parts(info.node_id, attrs.into_iter())
+        };
+        Self { node_id, data }
     }
 }
 
 impl From<NodeInfo> for NodeAddr {
     fn from(value: NodeInfo) -> Self {
-        NodeAddr {
-            node_id: value.node_id,
-            relay_url: value.relay_url.map(Into::into),
-            direct_addresses: value.direct_addresses,
-        }
+        value.data.into_node_addr(value.node_id)
     }
 }
 
 impl NodeInfo {
     /// Creates a new [`NodeInfo`] from its parts.
-    pub fn new(
-        node_id: NodeId,
-        relay_url: Option<Url>,
-        direct_addresses: BTreeSet<SocketAddr>,
-    ) -> Self {
-        Self {
-            node_id,
-            relay_url,
-            direct_addresses,
-        }
+    pub fn new(node_id: NodeId, data: NodeData) -> Self {
+        Self { node_id, data }
     }
 
     fn to_attrs(&self) -> TxtAttrs<IrohAttr> {
@@ -223,6 +243,20 @@ fn node_id_from_hickory_name(name: &hickory_resolver::proto::rr::Name) -> Option
     Some(node_id)
 }
 
+/// The attributes supported by iroh for [`IROH_TXT_NAME`] DNS resource records.
+///
+/// The resource record uses the lower-case names.
+#[derive(
+    Debug, strum::Display, strum::AsRefStr, strum::EnumString, Hash, Eq, PartialEq, Ord, PartialOrd,
+)]
+#[strum(serialize_all = "kebab-case")]
+pub(super) enum IrohAttr {
+    /// URL of home relay.
+    Relay,
+    /// Direct address.
+    Addr,
+}
+
 /// Attributes parsed from [`IROH_TXT_NAME`] TXT records.
 ///
 /// This struct is generic over the key type. When using with [`String`], this will parse
@@ -232,6 +266,19 @@ fn node_id_from_hickory_name(name: &hickory_resolver::proto::rr::Name) -> Option
 pub(super) struct TxtAttrs<T> {
     node_id: NodeId,
     attrs: BTreeMap<T, Vec<String>>,
+}
+
+impl From<&NodeInfo> for TxtAttrs<IrohAttr> {
+    fn from(info: &NodeInfo) -> Self {
+        let mut attrs = vec![];
+        if let Some(relay_url) = &info.data.relay_url {
+            attrs.push((IrohAttr::Relay, relay_url.to_string()));
+        }
+        for addr in &info.data.direct_addresses {
+            attrs.push((IrohAttr::Addr, addr.to_string()));
+        }
+        Self::from_parts(info.node_id, attrs.into_iter())
+    }
 }
 
 impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
@@ -432,17 +479,18 @@ mod tests {
     use iroh_base::{NodeId, SecretKey};
     use testresult::TestResult;
 
-    use super::{NodeIdExt, NodeInfo};
+    use super::{NodeData, NodeIdExt, NodeInfo};
 
     #[test]
     fn txt_attr_roundtrip() {
-        let expected = NodeInfo {
-            node_id: "vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
-                .parse()
-                .unwrap(),
-            relay_url: Some("https://example.com".parse().unwrap()),
-            direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
-        };
+        let node_data = NodeData::new(
+            Some("https://example.com".parse().unwrap()),
+            ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
+        );
+        let node_id = "vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
+            .parse()
+            .unwrap();
+        let expected = NodeInfo::new(node_id, node_data);
         let attrs = expected.to_attrs();
         let actual = NodeInfo::from(&attrs);
         assert_eq!(expected, actual);
@@ -452,11 +500,11 @@ mod tests {
     fn signed_packet_roundtrip() {
         let secret_key =
             SecretKey::from_str("vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia").unwrap();
-        let expected = NodeInfo {
-            node_id: secret_key.public(),
-            relay_url: Some("https://example.com".parse().unwrap()),
-            direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
-        };
+        let node_data = NodeData::new(
+            Some("https://example.com".parse().unwrap()),
+            ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
+        );
+        let expected = NodeInfo::new(secret_key.public(), node_data);
         let packet = expected.to_pkarr_signed_packet(&secret_key, 30).unwrap();
         let actual = NodeInfo::from_pkarr_signed_packet(&packet).unwrap();
         assert_eq!(expected, actual);
@@ -522,19 +570,18 @@ mod tests {
         let lookup = hickory_resolver::lookup::TxtLookup::from(lookup);
 
         let node_info = NodeInfo::from_txt_lookup(lookup.into())?;
-        assert_eq!(
-            node_info,
-            NodeInfo {
-                node_id: NodeId::from_str(
-                    "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18"
-                )?,
-                relay_url: Some("https://euw1-1.relay.iroh.network./".parse()?),
-                direct_addresses: BTreeSet::from([
+        let expected_node_info = NodeInfo::new(
+            NodeId::from_str("1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18")
+                .unwrap(),
+            NodeData::new(
+                Some("https://euw1-1.relay.iroh.network./".parse()?),
+                BTreeSet::from([
                     "192.168.96.145:60165".parse()?,
                     "213.208.157.87:60165".parse()?,
-                ])
-            }
+                ]),
+            ),
         );
+        assert_eq!(node_info, expected_node_info);
 
         Ok(())
     }

@@ -48,7 +48,7 @@ use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::{
-    discovery::{Discovery, DiscoveryData, DiscoveryItem},
+    discovery::{Discovery, DiscoveryItem, NodeData},
     watchable::Watchable,
     Endpoint,
 };
@@ -376,7 +376,7 @@ impl Discovery for LocalSwarmDiscovery {
         Some(Box::pin(stream.flatten_stream()))
     }
 
-    fn publish(&self, data: &DiscoveryData) {
+    fn publish(&self, data: &NodeData) {
         self.local_addrs
             .set(Some((
                 data.relay_url().cloned(),
@@ -418,7 +418,7 @@ mod tests {
             let (node_id_b, discovery_b) = make_discoverer()?;
 
             // make addr info for discoverer b
-            let addr_info = DiscoveryData::new(None, BTreeSet::from(["0.0.0.0:11111".parse()?]));
+            let addr_info = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse()?]));
 
             // pass in endpoint, this is never used
             let ep = crate::endpoint::Builder::default().bind().await?;
@@ -452,7 +452,7 @@ mod tests {
             let mut discoverers = vec![];
 
             let (_, discovery) = make_discoverer()?;
-            let addr_info = DiscoveryData::new(None, BTreeSet::from(["0.0.0.0:11111".parse()?]));
+            let addr_info = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse()?]));
 
             for _ in 0..num_nodes {
                 let (node_id, discovery) = make_discoverer()?;

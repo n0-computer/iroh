@@ -22,7 +22,7 @@ use n0_future::{
     time::SystemTime,
 };
 
-use super::{Discovery, DiscoveryData, DiscoveryItem};
+use super::{Discovery, DiscoveryItem, NodeData};
 
 /// A static node discovery to manually add node addressing information.
 ///
@@ -202,7 +202,7 @@ impl StaticProvider {
 }
 
 impl Discovery for StaticProvider {
-    fn publish(&self, _data: &DiscoveryData) {}
+    fn publish(&self, _data: &NodeData) {}
 
     fn resolve(
         &self,

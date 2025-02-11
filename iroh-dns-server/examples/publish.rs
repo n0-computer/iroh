@@ -6,6 +6,7 @@ use iroh::{
     discovery::{
         dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
         pkarr::{PkarrRelayClient, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
+        NodeData,
     },
     dns::node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME},
     NodeId, SecretKey,
@@ -77,7 +78,8 @@ async fn main() -> Result<()> {
     println!("publish to {pkarr_relay} ...");
 
     let pkarr = PkarrRelayClient::new(pkarr_relay);
-    let node_info = NodeInfo::new(node_id, Some(args.relay_url), Default::default());
+    let data = NodeData::default().with_relay_url(args.relay_url);
+    let node_info = NodeInfo::new(node_id, data);
     let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
     pkarr.publish(&signed_packet).await?;
 

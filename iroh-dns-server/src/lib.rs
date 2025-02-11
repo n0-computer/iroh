@@ -23,7 +23,7 @@ mod tests {
 
     use anyhow::Result;
     use iroh::{
-        discovery::pkarr::PkarrRelayClient,
+        discovery::{pkarr::PkarrRelayClient, NodeData},
         dns::{node_info::NodeInfo, DnsResolver},
         SecretKey,
     };
@@ -170,9 +170,10 @@ mod tests {
 
         let secret_key = SecretKey::generate(rand::thread_rng());
         let node_id = secret_key.public();
-        let relay_url: Url = "https://relay.example.".parse()?;
         let pkarr = PkarrRelayClient::new(pkarr_relay);
-        let node_info = NodeInfo::new(node_id, Some(relay_url.clone()), Default::default());
+        let relay_url: Url = "https://relay.example.".parse()?;
+        let node_data = NodeData::default().with_relay_url(relay_url.clone());
+        let node_info = NodeInfo::new(node_id, node_data);
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
 
         pkarr.publish(&signed_packet).await?;
@@ -235,7 +236,8 @@ mod tests {
         let secret_key = SecretKey::generate(rand::thread_rng());
         let node_id = secret_key.public();
         let relay_url: Url = "https://relay.example.".parse()?;
-        let node_info = NodeInfo::new(node_id, Some(relay_url.clone()), Default::default());
+        let node_data = NodeData::default().with_relay_url(relay_url.clone());
+        let node_info = NodeInfo::new(node_id, node_data);
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
 
         // publish the signed packet to our DHT
@@ -269,7 +271,8 @@ mod tests {
         let secret_key = SecretKey::generate(rand::thread_rng());
         let node_id = secret_key.public();
         let relay_url: Url = "https://relay.example.".parse()?;
-        let node_info = NodeInfo::new(node_id, Some(relay_url.clone()), Default::default());
+        let node_data = NodeData::default().with_relay_url(relay_url.clone());
+        let node_info = NodeInfo::new(node_id, node_data);
         node_info.to_pkarr_signed_packet(&secret_key, 30)
     }
 }
