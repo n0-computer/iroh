@@ -19,7 +19,7 @@ workspace = true
 anyhow = "1"
 bytes = "1.7"
 derive_more = { version = "1.0.0", features = ["display"] }
-hickory-resolver = "=0.25.0-alpha.4"
+hickory-resolver = "=0.25.0-alpha.5"
 iroh-base = { version = "0.32.0", path = "../iroh-base", default-features = false, features = ["relay"] }
 iroh-metrics = { version = "0.31", default-features = false }
 iroh-relay = { version = "0.32", path = "../iroh-relay" }
