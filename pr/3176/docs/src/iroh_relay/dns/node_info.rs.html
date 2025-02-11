@@ -990,7 +990,7 @@
     }
 
     <span class="doccomment">/// Converts into a [`NodeAddr`] and optional [`UserData`].
-    </span><span class="kw">pub fn </span>into_parts(<span class="self">self</span>) -&gt; (NodeAddr, <span class="prelude-ty">Option</span>&lt;UserData&gt;) {
+    </span><span class="kw">pub fn </span>into_node_addr_and_user_data(<span class="self">self</span>) -&gt; (NodeAddr, <span class="prelude-ty">Option</span>&lt;UserData&gt;) {
         (
             NodeAddr {
                 node_id: <span class="self">self</span>.node_id,

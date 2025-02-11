@@ -1780,7 +1780,7 @@
             relay_url,
             direct_addresses: Default::default(),
         };
-        <span class="kw">let </span>(resolved_addr, resolved_user_data) = resolved.into_parts();
+        <span class="kw">let </span>(resolved_addr, resolved_user_data) = resolved.into_node_addr_and_user_data();
 
         <span class="macro">assert_eq!</span>(resolved_addr, expected);
         <span class="macro">assert_eq!</span>(resolved_user_data, <span class="prelude-val">Some</span>(user_data));

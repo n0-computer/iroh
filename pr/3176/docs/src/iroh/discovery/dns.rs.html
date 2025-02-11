@@ -154,7 +154,7 @@
             <span class="kw">let </span>node_info = resolver
                 .lookup_node_by_id_staggered(<span class="kw-2">&amp;</span>node_id, <span class="kw-2">&amp;</span>origin_domain, DNS_STAGGERING_MS)
                 .<span class="kw">await</span><span class="question-mark">?</span>;
-            <span class="kw">let </span>(node_addr, user_data) = node_info.into_parts();
+            <span class="kw">let </span>(node_addr, user_data) = node_info.into_node_addr_and_user_data();
             <span class="prelude-val">Ok</span>(DiscoveryItem {
                 node_addr,
                 user_data,
