@@ -79,6 +79,11 @@ impl NodeIdExt for NodeId {
 }
 
 /// The information that can be published about a node in discovery services.
+///
+/// This includes an optional [`RelayUrl`] and a set of direct addresses.
+///
+/// The fields are not public, but there are setter and getter functions for all fields
+/// contained in the struct.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct NodeData {
     relay_url: Option<RelayUrl>,
