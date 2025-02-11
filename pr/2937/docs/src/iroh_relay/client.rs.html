@@ -381,8 +381,6 @@
 
 <span class="kw">use </span>anyhow::{anyhow, bail, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>conn::Conn;
-<span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span>hickory_resolver::TokioResolver <span class="kw">as </span>DnsResolver;
 <span class="kw">use </span>iroh_base::{RelayUrl, SecretKey};
 <span class="kw">use </span>n0_future::{
     split::{split, SplitSink, SplitStream},
@@ -394,6 +392,8 @@
 <span class="kw">use </span>url::Url;
 
 <span class="kw">pub use </span><span class="self">self</span>::conn::{ConnSendError, ReceivedMessage, SendMessage};
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">use </span><span class="kw">crate</span>::dns::DnsResolver;
 <span class="kw">use crate</span>::{
     http::{Protocol, RELAY_PATH},
     KeyCache,

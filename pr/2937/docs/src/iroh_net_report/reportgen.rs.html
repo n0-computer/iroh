@@ -1667,7 +1667,14 @@
 <a href="#1666" id="1666">1666</a>
 <a href="#1667" id="1667">1667</a>
 <a href="#1668" id="1668">1668</a>
-<a href="#1669" id="1669">1669</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1669" id="1669">1669</a>
+<a href="#1670" id="1670">1670</a>
+<a href="#1671" id="1671">1671</a>
+<a href="#1672" id="1672">1672</a>
+<a href="#1673" id="1673">1673</a>
+<a href="#1674" id="1674">1674</a>
+<a href="#1675" id="1675">1675</a>
+<a href="#1676" id="1676">1676</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1695,12 +1702,12 @@
 };
 
 <span class="kw">use </span>anyhow::{anyhow, bail, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>hickory_resolver::TokioResolver <span class="kw">as </span>DnsResolver;
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>iroh_relay::{
     defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT},
+    dns::DnsResolver,
     http::RELAY_PROBE_PATH,
     protos::stun,
     RelayMap, RelayNode,
@@ -1719,7 +1726,8 @@
 </span><span class="kw">use </span><span class="kw">crate</span>::Metrics;
 <span class="kw">use crate</span>::{
     <span class="self">self </span><span class="kw">as </span>net_report,
-    dns::ResolverExt,
+    defaults::timeouts::DNS_TIMEOUT,
+    dns::DNS_STAGGERING_MS,
     ip_mapped_addrs::IpMappedAddresses,
     ping::{PingError, Pinger},
     Report,
@@ -2673,7 +2681,7 @@
         // Ideally we would try to resolve **both** IPv4 and IPv6 rather than purely race
         // them.  But our resolver doesn't support that yet.
         </span><span class="kw">let </span>addrs: Vec&lt;<span class="kw">_</span>&gt; = dns_resolver
-            .lookup_ipv4_ipv6_staggered(domain)
+            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
             .<span class="kw">await</span><span class="question-mark">?
             </span>.map(|ipaddr| SocketAddr::new(ipaddr, <span class="number">0</span>))
             .collect();
@@ -2780,7 +2788,10 @@
     <span class="kw">match </span>relay.url.host() {
         <span class="prelude-val">Some</span>(url::Host::Domain(hostname)) =&gt; {
             <span class="macro">debug!</span>(%hostname, <span class="string">"Performing DNS A lookup for relay addr"</span>);
-            <span class="kw">match </span>dns_resolver.lookup_ipv4_staggered(hostname).<span class="kw">await </span>{
+            <span class="kw">match </span>dns_resolver
+                .lookup_ipv4_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
+                .<span class="kw">await
+            </span>{
                 <span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>addrs) =&gt; addrs
                     .next()
                     .map(|ip| ip.to_canonical())
@@ -2806,7 +2817,10 @@
     <span class="kw">match </span>relay.url.host() {
         <span class="prelude-val">Some</span>(url::Host::Domain(hostname)) =&gt; {
             <span class="macro">debug!</span>(%hostname, <span class="string">"Performing DNS AAAA lookup for relay addr"</span>);
-            <span class="kw">match </span>dns_resolver.lookup_ipv6_staggered(hostname).<span class="kw">await </span>{
+            <span class="kw">match </span>dns_resolver
+                .lookup_ipv6_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
+                .<span class="kw">await
+            </span>{
                 <span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>addrs) =&gt; addrs
                     .next()
                     .map(|ip| ip.to_canonical())
@@ -2888,7 +2902,7 @@
         // but staggered for reliability.  Ideally this tries to resolve **both** IPv4 and
         // IPv6 though.  But our resolver does not have a function for that yet.
         </span><span class="kw">let </span>addrs: Vec&lt;<span class="kw">_</span>&gt; = dns_resolver
-            .lookup_ipv4_ipv6_staggered(domain)
+            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
             .<span class="kw">await</span><span class="question-mark">?
             </span>.map(|ipaddr| SocketAddr::new(ipaddr, <span class="number">0</span>))
             .collect();
@@ -3281,7 +3295,7 @@
         <span class="kw">let </span>dns_resolver = <span class="kw">crate</span>::dns::tests::resolver();
         <span class="macro">tracing::info!</span>(relay_url = <span class="question-mark">?</span>relay.url , <span class="string">"RELAY_URL"</span>);
         <span class="kw">let </span>(latency, ip) =
-            measure_https_latency(dns_resolver, <span class="kw-2">&amp;</span>relay, server.certificates()).<span class="kw">await</span><span class="question-mark">?</span>;
+            measure_https_latency(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>relay, server.certificates()).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">assert!</span>(latency &gt; Duration::ZERO);
 

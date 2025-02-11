@@ -4444,7 +4444,22 @@
 <a href="#4443" id="4443">4443</a>
 <a href="#4444" id="4444">4444</a>
 <a href="#4445" id="4445">4445</a>
-<a href="#4446" id="4446">4446</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4446" id="4446">4446</a>
+<a href="#4447" id="4447">4447</a>
+<a href="#4448" id="4448">4448</a>
+<a href="#4449" id="4449">4449</a>
+<a href="#4450" id="4450">4450</a>
+<a href="#4451" id="4451">4451</a>
+<a href="#4452" id="4452">4452</a>
+<a href="#4453" id="4453">4453</a>
+<a href="#4454" id="4454">4454</a>
+<a href="#4455" id="4455">4455</a>
+<a href="#4456" id="4456">4456</a>
+<a href="#4457" id="4457">4457</a>
+<a href="#4458" id="4458">4458</a>
+<a href="#4459" id="4459">4459</a>
+<a href="#4460" id="4460">4460</a>
+<a href="#4461" id="4461">4461</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4565,8 +4580,8 @@
 
     <span class="doccomment">/// A DNS resolver to use for resolving relay URLs.
     ///
-    /// You can use [`crate::dns::default_resolver`] for a resolver that uses the system's DNS
-    /// configuration.
+    /// You can use [`crate::dns::DnsResolver::new`] for a resolver
+    /// that uses the system's DNS configuration.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) dns_resolver: DnsResolver,
 
     <span class="doccomment">/// Proxy configuration.
@@ -4586,7 +4601,8 @@
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) path_selection: PathSelection,
 }
 
-<span class="kw">impl </span>Default <span class="kw">for </span>Options {
+<span class="attr">#[cfg(test)]
+</span><span class="kw">impl </span>Default <span class="kw">for </span>Options {
     <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>secret_key = SecretKey::generate(rand::rngs::OsRng);
         <span class="comment">// TODO: make configurable
@@ -4600,7 +4616,7 @@
             node_map: <span class="prelude-val">None</span>,
             discovery: <span class="prelude-val">None</span>,
             proxy_url: <span class="prelude-val">None</span>,
-            dns_resolver: <span class="kw">crate</span>::dns::default_resolver().clone(),
+            dns_resolver: DnsResolver::new(),
             server_config,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
@@ -4611,6 +4627,7 @@
 }
 
 <span class="doccomment">/// Generate a server config with no ALPNS and a default transport configuration
+</span><span class="attr">#[cfg(test)]
 </span><span class="kw">fn </span>make_default_server_config(
     secret_key: <span class="kw-2">&amp;</span>SecretKey,
     tls_auth: <span class="kw">crate</span>::tls::Authentication,
@@ -6192,6 +6209,28 @@
         <span class="kw">let </span>inner2 = inner.clone();
         <span class="kw">let </span>network_monitor = netmon::Monitor::new().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>qad_endpoint = endpoint.clone();
+
+        <span class="comment">// create a client config for the endpoint to use for QUIC address discovery
+        </span><span class="kw">let </span>root_store =
+            rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        <span class="kw">let </span>client_config = rustls::client::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect(<span class="string">"ring supports these"</span>)
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+        <span class="kw">let </span>quic_config = <span class="prelude-val">Some</span>(QuicConfig {
+            ep: qad_endpoint,
+            client_config,
+            ipv4: <span class="bool-val">true</span>,
+            ipv6: pconn6_sock.is_some(),
+        });
+        <span class="kw">let </span>net_report_config = net_report::Options::default()
+            .stun_v4(<span class="prelude-val">Some</span>(pconn4_sock.clone()))
+            .stun_v6(pconn6_sock.clone())
+            .quic_config(quic_config);
+
         actor_tasks.spawn(
             <span class="kw">async move </span>{
                 <span class="kw">let </span>actor = Actor {
@@ -6208,7 +6247,7 @@
                     no_v4_send: <span class="bool-val">false</span>,
                     net_reporter,
                     network_monitor,
-                    qad_endpoint,
+                    net_report_config,
                 };
 
                 <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = actor.run().<span class="kw">await </span>{
@@ -6237,12 +6276,19 @@
     /// Only the first close does anything. Any later closes return nil.
     /// Polling the socket ([`AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`]
     /// indefinitely after this call.
+    ///
+    /// This will not wait for the [`quinn::Endpoint`] to drain connections.
+    ///
+    /// To ensure no data is lost, design protocols so that the last *sender*
+    /// of data in the protocol calls [`crate::endpoint::Connection::closed`], and `await`s until
+    /// it receives a "close" message from the *receiver*. Once the *receiver*
+    /// gets the last data in the protocol, it should call [`crate::endpoint::Connection::close`]
+    /// to inform the *sender* that all data has been received.
     </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.msock.me))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="macro">trace!</span>(<span class="string">"magicsock closing..."</span>);
         <span class="comment">// Initiate closing all connections, and refuse future connections.
         </span><span class="self">self</span>.endpoint.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
-        <span class="self">self</span>.endpoint.wait_idle().<span class="kw">await</span>;
 
         <span class="kw">if </span><span class="self">self</span>.msock.is_closed() {
             <span class="kw">return</span>;
@@ -6617,6 +6663,9 @@
     </span>pconn4: Arc&lt;UdpSocket&gt;,
     pconn6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
 
+    <span class="doccomment">/// Configuration for net report
+    </span>net_report_config: net_report::Options,
+
     <span class="doccomment">/// The NAT-PMP/PCP/UPnP prober/client, for requesting port mappings from NAT devices.
     </span>port_mapper: portmapper::Client,
 
@@ -6629,11 +6678,6 @@
     </span>net_reporter: net_report::Client,
 
     network_monitor: netmon::Monitor,
-
-    <span class="doccomment">/// The internal quinn::Endpoint
-    ///
-    /// Needed for Quic Address Discovery
-    </span>qad_endpoint: quinn::Endpoint,
 }
 
 <span class="kw">impl </span>Actor {
@@ -7047,23 +7091,7 @@
         }
 
         <span class="kw">let </span>relay_map = <span class="self">self</span>.msock.relay_map.clone();
-        <span class="kw">let </span><span class="kw-2">mut </span>opts = net_report::Options::default()
-            .stun_v4(<span class="prelude-val">Some</span>(<span class="self">self</span>.pconn4.clone()))
-            .stun_v6(<span class="self">self</span>.pconn6.clone());
-
-        <span class="comment">// create a client config for the endpoint to use for QUIC address discovery
-        </span><span class="kw">let </span>root_store =
-            rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        <span class="kw">let </span>client_config = rustls::ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
-        <span class="kw">let </span>quic_config = <span class="prelude-val">Some</span>(QuicConfig {
-            ep: <span class="self">self</span>.qad_endpoint.clone(),
-            client_config,
-            ipv4: <span class="bool-val">true</span>,
-            ipv6: <span class="self">self</span>.pconn6.is_some(),
-        });
-        opts = opts.quic_config(quic_config);
+        <span class="kw">let </span>opts = <span class="self">self</span>.net_report_config.clone();
 
         <span class="macro">debug!</span>(<span class="string">"requesting net_report report"</span>);
         <span class="kw">match </span><span class="self">self</span>.net_reporter.get_report_channel(relay_map, opts).<span class="kw">await </span>{
@@ -7588,6 +7616,7 @@
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{
         defaults::staging::{<span class="self">self</span>, EU_RELAY_HOSTNAME},
+        dns::DnsResolver,
         tls, Endpoint, RelayMode,
     };
 
@@ -8492,6 +8521,7 @@
             Arc::new(quinn::TransportConfig::default()),
             <span class="bool-val">true</span>,
         )<span class="question-mark">?</span>;
+        <span class="kw">let </span>dns_resolver = DnsResolver::new();
         <span class="kw">let </span>opts = Options {
             addr_v4: <span class="prelude-val">None</span>,
             addr_v6: <span class="prelude-val">None</span>,
@@ -8499,7 +8529,7 @@
             relay_map: RelayMap::empty(),
             node_map: <span class="prelude-val">None</span>,
             discovery: <span class="prelude-val">None</span>,
-            dns_resolver: <span class="kw">crate</span>::dns::default_resolver().clone(),
+            dns_resolver,
             proxy_url: <span class="prelude-val">None</span>,
             server_config,
             insecure_skip_relay_cert_verify: <span class="bool-val">true</span>,

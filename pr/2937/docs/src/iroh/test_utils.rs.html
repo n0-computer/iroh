@@ -495,12 +495,60 @@
 <a href="#494" id="494">494</a>
 <a href="#495" id="495">495</a>
 <a href="#496" id="496">496</a>
-<a href="#497" id="497">497</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
+<a href="#497" id="497">497</a>
+<a href="#498" id="498">498</a>
+<a href="#499" id="499">499</a>
+<a href="#500" id="500">500</a>
+<a href="#501" id="501">501</a>
+<a href="#502" id="502">502</a>
+<a href="#503" id="503">503</a>
+<a href="#504" id="504">504</a>
+<a href="#505" id="505">505</a>
+<a href="#506" id="506">506</a>
+<a href="#507" id="507">507</a>
+<a href="#508" id="508">508</a>
+<a href="#509" id="509">509</a>
+<a href="#510" id="510">510</a>
+<a href="#511" id="511">511</a>
+<a href="#512" id="512">512</a>
+<a href="#513" id="513">513</a>
+<a href="#514" id="514">514</a>
+<a href="#515" id="515">515</a>
+<a href="#516" id="516">516</a>
+<a href="#517" id="517">517</a>
+<a href="#518" id="518">518</a>
+<a href="#519" id="519">519</a>
+<a href="#520" id="520">520</a>
+<a href="#521" id="521">521</a>
+<a href="#522" id="522">522</a>
+<a href="#523" id="523">523</a>
+<a href="#524" id="524">524</a>
+<a href="#525" id="525">525</a>
+<a href="#526" id="526">526</a>
+<a href="#527" id="527">527</a>
+<a href="#528" id="528">528</a>
+<a href="#529" id="529">529</a>
+<a href="#530" id="530">530</a>
+<a href="#531" id="531">531</a>
+<a href="#532" id="532">532</a>
+<a href="#533" id="533">533</a>
+<a href="#534" id="534">534</a>
+<a href="#535" id="535">535</a>
+<a href="#536" id="536">536</a>
+<a href="#537" id="537">537</a>
+<a href="#538" id="538">538</a>
+<a href="#539" id="539">539</a>
+<a href="#540" id="540">540</a>
+<a href="#541" id="541">541</a>
+<a href="#542" id="542">542</a>
+<a href="#543" id="543">543</a>
+<a href="#544" id="544">544</a>
+<a href="#545" id="545">545</a>
+<a href="#546" id="546">546</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">pub use </span>dns_and_pkarr_servers::DnsPkarrServer;
-<span class="kw">pub use </span>dns_server::create_dns_resolver;
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="kw">use </span>iroh_relay::{
     server::{
@@ -615,7 +663,7 @@
     <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
     <span class="kw">use </span>url::Url;
 
-    <span class="kw">use super</span>::{create_dns_resolver, CleanupDropGuard};
+    <span class="kw">use </span><span class="kw">super</span>::CleanupDropGuard;
     <span class="kw">use crate</span>::{
         discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
         dns::DnsResolver,
@@ -675,7 +723,7 @@
 
         <span class="doccomment">/// Create a [`DnsResolver`] configured to use the test DNS server.
         </span><span class="kw">pub fn </span>dns_resolver(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DnsResolver {
-            create_dns_resolver(<span class="self">self</span>.nameserver).expect(<span class="string">"failed to create DNS resolver"</span>)
+            DnsResolver::with_nameserver(<span class="self">self</span>.nameserver)
         }
 
         <span class="doccomment">/// Wait until a Pkarr announce for a node is published to the server.
@@ -694,13 +742,9 @@
     };
 
     <span class="kw">use </span>anyhow::{ensure, <span class="prelude-ty">Result</span>};
-    <span class="kw">use </span>hickory_resolver::{
-        config::NameServerConfig,
-        proto::{
-            op::{header::MessageType, Message},
-            serialize::binary::BinDecodable,
-        },
-        TokioResolver,
+    <span class="kw">use </span>hickory_resolver::proto::{
+        op::{header::MessageType, Message},
+        serialize::binary::BinDecodable,
     };
     <span class="kw">use </span>n0_future::future::Boxed <span class="kw">as </span>BoxFuture;
     <span class="kw">use </span>tokio::{net::UdpSocket, sync::oneshot};
@@ -754,16 +798,6 @@
             }
         });
         <span class="prelude-val">Ok</span>((bound_addr, CleanupDropGuard(tx)))
-    }
-
-    <span class="doccomment">/// Create a DNS resolver with a single nameserver.
-    </span><span class="kw">pub fn </span>create_dns_resolver(nameserver: SocketAddr) -&gt; <span class="prelude-ty">Result</span>&lt;TokioResolver&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>config = hickory_resolver::config::ResolverConfig::new();
-        <span class="kw">let </span>nameserver_config =
-            NameServerConfig::new(nameserver, hickory_resolver::proto::xfer::Protocol::Udp);
-        config.add_name_server(nameserver_config);
-        <span class="kw">let </span>resolver = hickory_resolver::Resolver::tokio(config, Default::default());
-        <span class="prelude-val">Ok</span>(resolver)
     }
 
     <span class="kw">struct </span>TestDnsServer&lt;R&gt; {
@@ -886,7 +920,7 @@
     <span class="kw">use </span>pkarr::SignedPacket;
 
     <span class="kw">use crate</span>::{
-        dns::node_info::{node_id_from_hickory_name, NodeInfo},
+        dns::node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME},
         test_utils::dns_server::QueryHandler,
     };
 
@@ -962,14 +996,15 @@
             ttl: u32,
         ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
             <span class="kw">for </span>query <span class="kw">in </span>query.queries() {
-                <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = node_id_from_hickory_name(query.name()) <span class="kw">else </span>{
+                <span class="kw">let </span>domain_name = query.name().to_string();
+                <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = node_id_from_domain_name(<span class="kw-2">&amp;</span>domain_name) <span class="kw">else </span>{
                     <span class="kw">continue</span>;
                 };
 
                 <span class="self">self</span>.get(<span class="kw-2">&amp;</span>node_id, |packet| {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(packet) = packet {
                         <span class="kw">let </span>node_info = NodeInfo::from_pkarr_signed_packet(packet)<span class="question-mark">?</span>;
-                        <span class="kw">for </span>record <span class="kw">in </span>node_info.to_hickory_records(<span class="kw-2">&amp;</span><span class="self">self</span>.origin, ttl)<span class="question-mark">? </span>{
+                        <span class="kw">for </span>record <span class="kw">in </span>node_info_to_hickory_records(<span class="kw-2">&amp;</span>node_info, <span class="kw-2">&amp;</span><span class="self">self</span>.origin, ttl)<span class="question-mark">? </span>{
                             reply.add_answer(record);
                         }
                     }
@@ -989,6 +1024,69 @@
             <span class="kw">const </span>TTL: u32 = <span class="number">30</span>;
             <span class="kw">let </span>res = <span class="self">self</span>.resolve_dns(query, reply, TTL);
             std::future::ready(res)
+        }
+    }
+
+    <span class="doccomment">/// Parses a [`NodeId`] from a DNS domain name.
+    ///
+    /// Splits the domain name into labels on each dot. Expects the first label to be
+    /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
+    /// subsequent labels.
+    ///
+    /// Returns a [`NodeId`] if parsed successfully, otherwise `None`.
+    </span><span class="kw">fn </span>node_id_from_domain_name(name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;NodeId&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>labels = name.split(<span class="string">"."</span>);
+        <span class="kw">let </span>label = labels.next()<span class="question-mark">?</span>;
+        <span class="kw">if </span>label != IROH_TXT_NAME {
+            <span class="kw">return </span><span class="prelude-val">None</span>;
+        }
+        <span class="kw">let </span>label = labels.next()<span class="question-mark">?</span>;
+        <span class="kw">let </span>node_id = NodeId::from_z32(label).ok()<span class="question-mark">?</span>;
+        <span class="prelude-val">Some</span>(node_id)
+    }
+
+    <span class="doccomment">/// Converts a [`NodeInfo`]into a [`hickory_resolver::proto::rr::Record`] DNS record.
+    </span><span class="kw">fn </span>node_info_to_hickory_records(
+        node_info: <span class="kw-2">&amp;</span>NodeInfo,
+        origin: <span class="kw-2">&amp;</span>str,
+        ttl: u32,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = hickory_resolver::proto::rr::Record&gt; + <span class="lifetime">'static</span>&gt; {
+        <span class="kw">let </span>txt_strings = node_info.to_txt_strings();
+        <span class="kw">let </span>records = to_hickory_records(txt_strings, node_info.node_id, origin, ttl)<span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(records.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().into_iter())
+    }
+
+    <span class="doccomment">/// Converts to a list of [`hickory_resolver::proto::rr::Record`] resource records.
+    </span><span class="kw">fn </span>to_hickory_records(
+        txt_strings: Vec&lt;String&gt;,
+        node_id: NodeId,
+        origin: <span class="kw-2">&amp;</span>str,
+        ttl: u32,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = hickory_resolver::proto::rr::Record&gt; + <span class="lifetime">'_</span>&gt; {
+        <span class="kw">use </span>hickory_resolver::proto::rr;
+        <span class="kw">let </span>name = <span class="macro">format!</span>(<span class="string">"{}.{}.{}"</span>, IROH_TXT_NAME, node_id.to_z32(), origin);
+        <span class="kw">let </span>name = rr::Name::from_utf8(name)<span class="question-mark">?</span>;
+        <span class="kw">let </span>records = txt_strings.into_iter().map(<span class="kw">move </span>|s| {
+            <span class="kw">let </span>txt = rr::rdata::TXT::new(<span class="macro">vec!</span>[s]);
+            <span class="kw">let </span>rdata = rr::RData::TXT(txt);
+            rr::Record::from_rdata(name.clone(), ttl, rdata)
+        });
+        <span class="prelude-val">Ok</span>(records)
+    }
+
+    <span class="attr">#[cfg(test)]
+    </span><span class="kw">mod </span>tests {
+        <span class="kw">use </span>iroh_base::NodeId;
+        <span class="kw">use </span>testresult::TestResult;
+
+        <span class="attr">#[test]
+        </span><span class="kw">fn </span>test_node_id_from_domain_name() -&gt; TestResult {
+            <span class="kw">let </span>name = <span class="string">"_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link."</span>;
+            <span class="kw">let </span>node_id = <span class="kw">super</span>::node_id_from_domain_name(name);
+            <span class="kw">let </span>expected: NodeId =
+                <span class="string">"1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18"</span>.parse()<span class="question-mark">?</span>;
+            <span class="macro">assert_eq!</span>(node_id, <span class="prelude-val">Some</span>(expected));
+            <span class="prelude-val">Ok</span>(())
         }
     }
 }
