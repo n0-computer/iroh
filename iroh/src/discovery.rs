@@ -482,6 +482,7 @@ impl DiscoveryTask {
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
                     }
+                    // Send the discovery item to the subscribers of the discovery broadcast stream.
                     ep.discovery_subscribers().send(r);
                 }
                 Some(Err(err)) => {
@@ -506,15 +507,15 @@ impl Drop for DiscoveryTask {
 
 /// Error returned when a discovery watch stream lagged too far behind.
 ///
-/// The stream returned from [`Endpoint::watch_discovery`] yields this error
+/// The stream returned from [`Endpoint::discovery_stream`] yields this error
 /// if the loop in which the stream is processed cannot keep up with the emitted
 /// discovery events. Attempting to read the next item from the channel afterwards
-/// will return the oldest discovery event that is still retained.
+/// will return the oldest [`DiscoveryItem`] that is still retained.
 ///
 /// Includes the number of skipped messages.
 #[derive(Debug, thiserror::Error)]
 #[error("channel lagged by {0}")]
-pub struct Lagged(u64);
+pub struct Lagged(pub u64);
 
 #[derive(Clone, Debug)]
 pub(super) struct DiscoverySubscribers {
@@ -533,11 +534,9 @@ impl DiscoverySubscribers {
     }
 
     pub(crate) fn subscribe(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> {
+        use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
         let recv = self.inner.subscribe();
-        tokio_stream::wrappers::BroadcastStream::new(recv).map_err(|err| {
-            let tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n) = err;
-            Lagged(n)
-        })
+        BroadcastStream::new(recv).map_err(|BroadcastStreamRecvError::Lagged(n)| Lagged(n))
     }
 
     pub(crate) fn send(&self, item: DiscoveryItem) {

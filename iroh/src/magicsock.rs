@@ -2354,6 +2354,7 @@ impl Actor {
                         let node_addr = discovery_item.to_node_addr();
                         warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
                     }
+                    // Send the discovery item to the subscribers of the discovery broadcast stream.
                     self.msock.discovery_subscribers.send(discovery_item);
                 }
             }
