@@ -16,7 +16,7 @@
 - [ ] Documentation updates following the [style guide](https://rust-lang.github.io/rfcs/1574-more-api-documentation-conventions.html#appendix-a-full-conventions-text), if relevant.
 - [ ] Tests if relevant.
 - [ ] All breaking changes documented.
-  - [ ] Document or create PRs for how these changes will effect downstream dependencies. The major ones are:
+  - [ ] Open an issue or PR on any affected downstream dependency repos. The major ones are:
     - [ ] `quic-rpc`
     - [ ] `iroh-gossip`
     - [ ] `iroh-blobs`
