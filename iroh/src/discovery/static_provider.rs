@@ -11,12 +11,11 @@
 //! [`NodeTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.NodeTicket
 
 use std::{
-    collections::{btree_map::Entry, BTreeMap, BTreeSet},
-    net::SocketAddr,
+    collections::{btree_map::Entry, BTreeMap},
     sync::{Arc, RwLock},
 };
 
-use iroh_base::{NodeAddr, NodeId, RelayUrl};
+use iroh_base::{NodeAddr, NodeId};
 use n0_future::{
     stream::{self, StreamExt},
     time::SystemTime,
@@ -74,8 +73,7 @@ pub struct StaticProvider {
 
 #[derive(Debug)]
 struct NodeInfo {
-    relay_url: Option<RelayUrl>,
-    direct_addresses: BTreeSet<SocketAddr>,
+    data: NodeData,
     last_updated: SystemTime,
 }
 
@@ -133,21 +131,12 @@ impl StaticProvider {
     /// This will completely overwrite any existing info for the node.
     pub fn set_node_addr(&self, info: impl Into<NodeAddr>) -> Option<NodeAddr> {
         let last_updated = SystemTime::now();
-        let info: NodeAddr = info.into();
+        let node_addr: NodeAddr = info.into();
+        let node_id = node_addr.node_id;
+        let data: NodeData = node_addr.into();
         let mut guard = self.nodes.write().expect("poisoned");
-        let previous = guard.insert(
-            info.node_id,
-            NodeInfo {
-                relay_url: info.relay_url,
-                direct_addresses: info.direct_addresses,
-                last_updated,
-            },
-        );
-        previous.map(|x| NodeAddr {
-            node_id: info.node_id,
-            relay_url: x.relay_url,
-            direct_addresses: x.direct_addresses,
-        })
+        let previous = guard.insert(node_id, NodeInfo { data, last_updated });
+        previous.map(|x| x.data.into_node_addr(node_id))
     }
 
     /// Augments node addressing information for the given node ID.
@@ -156,20 +145,22 @@ impl StaticProvider {
     /// provider.  Any new direct addresses are added to those already present while the
     /// relay URL is overwritten.
     pub fn add_node_addr(&self, info: impl Into<NodeAddr>) {
-        let info: NodeAddr = info.into();
+        let node_addr: NodeAddr = info.into();
         let last_updated = SystemTime::now();
         let mut guard = self.nodes.write().expect("poisoned");
-        match guard.entry(info.node_id) {
+        match guard.entry(node_addr.node_id) {
             Entry::Occupied(mut entry) => {
                 let existing = entry.get_mut();
-                existing.direct_addresses.extend(info.direct_addresses);
-                existing.relay_url = info.relay_url;
+                existing
+                    .data
+                    .direct_addresses
+                    .extend(node_addr.direct_addresses);
+                existing.data.relay_url = node_addr.relay_url;
                 existing.last_updated = last_updated;
             }
             Entry::Vacant(entry) => {
                 entry.insert(NodeInfo {
-                    relay_url: info.relay_url,
-                    direct_addresses: info.direct_addresses,
+                    data: NodeData::from(node_addr),
                     last_updated,
                 });
             }
@@ -180,11 +171,7 @@ impl StaticProvider {
     pub fn get_node_addr(&self, node_id: NodeId) -> Option<NodeAddr> {
         let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id)?;
-        Some(NodeAddr {
-            node_id,
-            relay_url: info.relay_url.clone(),
-            direct_addresses: info.direct_addresses.clone(),
-        })
+        Some(info.data.clone().into_node_addr(node_id))
     }
 
     /// Removes all node addressing information for the given node ID.
@@ -193,11 +180,7 @@ impl StaticProvider {
     pub fn remove_node_addr(&self, node_id: NodeId) -> Option<NodeAddr> {
         let mut guard = self.nodes.write().expect("poisoned");
         let info = guard.remove(&node_id)?;
-        Some(NodeAddr {
-            node_id,
-            relay_url: info.relay_url,
-            direct_addresses: info.direct_addresses,
-        })
+        Some(info.data.into_node_addr(node_id))
     }
 }
 
@@ -212,22 +195,18 @@ impl Discovery for StaticProvider {
         let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id);
         match info {
-            Some(addr_info) => {
-                let item = DiscoveryItem {
-                    node_addr: NodeAddr {
-                        node_id,
-                        relay_url: addr_info.relay_url.clone(),
-                        direct_addresses: addr_info.direct_addresses.clone(),
-                    },
-                    provenance: Self::PROVENANCE,
-                    last_updated: Some(
-                        addr_info
-                            .last_updated
-                            .duration_since(SystemTime::UNIX_EPOCH)
-                            .expect("time drift")
-                            .as_micros() as u64,
-                    ),
-                };
+            Some(node_info) => {
+                let last_updated = node_info
+                    .last_updated
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .expect("time drift")
+                    .as_micros() as u64;
+                let item = DiscoveryItem::from_node_data(
+                    node_id,
+                    node_info.data.clone(),
+                    Self::PROVENANCE,
+                    Some(last_updated),
+                );
                 Some(stream::iter(Some(Ok(item))).boxed())
             }
             None => None,

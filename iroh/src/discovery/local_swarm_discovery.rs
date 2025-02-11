@@ -379,8 +379,8 @@ impl Discovery for LocalSwarmDiscovery {
     fn publish(&self, data: &NodeData) {
         self.local_addrs
             .set(Some((
-                data.relay_url().cloned(),
-                data.direct_addrs().clone(),
+                data.relay_url.clone(),
+                data.direct_addresses.clone(),
             )))
             .ok();
     }
@@ -436,10 +436,16 @@ mod tests {
             let s2_res = tokio::time::timeout(Duration::from_secs(5), s2.next())
                 .await?
                 .unwrap()?;
-            assert_eq!(s1_res.node_addr.relay_url.as_ref(), addr_info.relay_url());
-            assert_eq!(&s1_res.node_addr.direct_addresses, addr_info.direct_addrs());
-            assert_eq!(s2_res.node_addr.relay_url.as_ref(), addr_info.relay_url());
-            assert_eq!(&s2_res.node_addr.direct_addresses, addr_info.direct_addrs());
+            assert_eq!(s1_res.node_addr.relay_url, addr_info.relay_url);
+            assert_eq!(
+                s1_res.node_addr.direct_addresses,
+                addr_info.direct_addresses
+            );
+            assert_eq!(s2_res.node_addr.relay_url, addr_info.relay_url);
+            assert_eq!(
+                s2_res.node_addr.direct_addresses,
+                addr_info.direct_addresses
+            );
 
             Ok(())
         }

@@ -223,6 +223,21 @@ impl DiscoveryItem {
             last_updated,
         }
     }
+
+    /// Creates a new [`DiscoveryItem`] from a [`NodeData`].
+    pub fn from_node_data(
+        node_id: NodeId,
+        node_data: NodeData,
+        provenance: &'static str,
+        last_updated: Option<u64>,
+    ) -> Self {
+        let node_addr = node_data.into_node_addr(node_id);
+        Self {
+            node_addr,
+            provenance,
+            last_updated,
+        }
+    }
 }
 
 /// A discovery service that combines multiple discovery sources.
@@ -537,12 +552,7 @@ mod tests {
             };
             let stream = match addr_info {
                 Some((data, ts)) => {
-                    let node_addr = data.into_node_addr(node_id);
-                    let item = DiscoveryItem {
-                        node_addr,
-                        provenance: "test-disco",
-                        last_updated: Some(ts),
-                    };
+                    let item = DiscoveryItem::from_node_data(node_id, data, "test-disco", Some(ts));
                     let delay = self.delay;
                     let fut = async move {
                         time::sleep(delay).await;

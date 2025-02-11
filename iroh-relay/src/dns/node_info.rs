@@ -85,9 +85,12 @@ impl NodeIdExt for NodeId {
 /// The fields are not public, but there are setter and getter functions for all fields
 /// contained in the struct.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct NodeData {
-    relay_url: Option<RelayUrl>,
-    direct_addresses: BTreeSet<SocketAddr>,
+    /// URL of the home relay of this node.
+    pub relay_url: Option<RelayUrl>,
+    /// Direct addresses where this node can be reached.
+    pub direct_addresses: BTreeSet<SocketAddr>,
 }
 
 impl NodeData {
@@ -109,16 +112,6 @@ impl NodeData {
     pub fn with_direct_addrs(mut self, direct_addrs: BTreeSet<SocketAddr>) -> Self {
         self.direct_addresses = direct_addrs;
         self
-    }
-
-    /// Returns the relay URL.
-    pub fn relay_url(&self) -> Option<&RelayUrl> {
-        self.relay_url.as_ref()
-    }
-
-    /// Returns the direct addresses.
-    pub fn direct_addrs(&self) -> &BTreeSet<SocketAddr> {
-        &self.direct_addresses
     }
 
     /// Removes all direct addresses.
