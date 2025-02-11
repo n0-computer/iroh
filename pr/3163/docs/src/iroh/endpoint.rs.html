@@ -2366,33 +2366,7 @@
 <a href="#2365" id="2365">2365</a>
 <a href="#2366" id="2366">2366</a>
 <a href="#2367" id="2367">2367</a>
-<a href="#2368" id="2368">2368</a>
-<a href="#2369" id="2369">2369</a>
-<a href="#2370" id="2370">2370</a>
-<a href="#2371" id="2371">2371</a>
-<a href="#2372" id="2372">2372</a>
-<a href="#2373" id="2373">2373</a>
-<a href="#2374" id="2374">2374</a>
-<a href="#2375" id="2375">2375</a>
-<a href="#2376" id="2376">2376</a>
-<a href="#2377" id="2377">2377</a>
-<a href="#2378" id="2378">2378</a>
-<a href="#2379" id="2379">2379</a>
-<a href="#2380" id="2380">2380</a>
-<a href="#2381" id="2381">2381</a>
-<a href="#2382" id="2382">2382</a>
-<a href="#2383" id="2383">2383</a>
-<a href="#2384" id="2384">2384</a>
-<a href="#2385" id="2385">2385</a>
-<a href="#2386" id="2386">2386</a>
-<a href="#2387" id="2387">2387</a>
-<a href="#2388" id="2388">2388</a>
-<a href="#2389" id="2389">2389</a>
-<a href="#2390" id="2390">2390</a>
-<a href="#2391" id="2391">2391</a>
-<a href="#2392" id="2392">2392</a>
-<a href="#2393" id="2393">2393</a>
-<a href="#2394" id="2394">2394</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2368" id="2368">2368</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2416,6 +2390,7 @@
 };
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>data_encoding::BASE32_DNSSEC;
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_relay::RelayMap;
 <span class="kw">use </span>n0_future::time::Duration;
@@ -2441,7 +2416,7 @@
     ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
     ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError, RetryError,
     SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId, TransportConfig, VarInt,
-    WeakConnectionHandle, WriteError, ZeroRttAccepted,
+    WeakConnectionHandle, WriteError,
 };
 <span class="kw">pub use </span>quinn_proto::{
     congestion::{Controller, ControllerFactory},
@@ -2939,80 +2914,16 @@
         <span class="macro">trace!</span>(<span class="string">"created magicsock"</span>);
         <span class="macro">debug!</span>(version = <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>), <span class="string">"iroh Endpoint created"</span>);
 
-        <span class="attr">#[derive(Debug, Default)]
-        </span><span class="kw">struct </span>SessionStore {
-            session_values: std::sync::Mutex&lt;
-                std::collections::HashMap&lt;
-                    webpki::types::ServerName&lt;<span class="lifetime">'static</span>&gt;,
-                    rustls::client::Tls13ClientSessionValue,
-                &gt;,
-            &gt;,
-            kx_hints: std::sync::Mutex&lt;
-                std::collections::HashMap&lt;webpki::types::ServerName&lt;<span class="lifetime">'static</span>&gt;, rustls::NamedGroup&gt;,
-            &gt;,
-        }
-
-        <span class="kw">impl </span>rustls::client::ClientSessionStore <span class="kw">for </span>SessionStore {
-            <span class="kw">fn </span>set_kx_hint(
-                <span class="kw-2">&amp;</span><span class="self">self</span>,
-                server_name: webpki::types::ServerName&lt;<span class="lifetime">'static</span>&gt;,
-                group: rustls::NamedGroup,
-            ) {
-                <span class="macro">tracing::warn!</span>(<span class="question-mark">?</span>server_name, <span class="question-mark">?</span>group, <span class="string">"set_kx_hint"</span>);
-                <span class="self">self</span>.kx_hints.lock().unwrap().insert(server_name, group);
-            }
-
-            <span class="kw">fn </span>kx_hint(
-                <span class="kw-2">&amp;</span><span class="self">self</span>,
-                server_name: <span class="kw-2">&amp;</span>webpki::types::ServerName&lt;<span class="lifetime">'_</span>&gt;,
-            ) -&gt; <span class="prelude-ty">Option</span>&lt;rustls::NamedGroup&gt; {
-                <span class="macro">tracing::warn!</span>(<span class="question-mark">?</span>server_name, <span class="string">"kx_hint"</span>);
-                <span class="self">self</span>.kx_hints.lock().unwrap().get(server_name).cloned()
-            }
-
-            <span class="kw">fn </span>set_tls12_session(
-                <span class="kw-2">&amp;</span><span class="self">self</span>,
-                _server_name: webpki::types::ServerName&lt;<span class="lifetime">'static</span>&gt;,
-                _value: rustls::client::Tls12ClientSessionValue,
-            ) {
-            }
-
-            <span class="kw">fn </span>tls12_session(
-                <span class="kw-2">&amp;</span><span class="self">self</span>,
-                _server_name: <span class="kw-2">&amp;</span>webpki::types::ServerName&lt;<span class="lifetime">'_</span>&gt;,
-            ) -&gt; <span class="prelude-ty">Option</span>&lt;rustls::client::Tls12ClientSessionValue&gt; {
-                <span class="prelude-val">None
-            </span>}
-
-            <span class="kw">fn </span>remove_tls12_session(<span class="kw-2">&amp;</span><span class="self">self</span>, _server_name: <span class="kw-2">&amp;</span>webpki::types::ServerName&lt;<span class="lifetime">'static</span>&gt;) {}
-
-            <span class="kw">fn </span>insert_tls13_ticket(
-                <span class="kw-2">&amp;</span><span class="self">self</span>,
-                server_name: webpki::types::ServerName&lt;<span class="lifetime">'static</span>&gt;,
-                value: rustls::client::Tls13ClientSessionValue,
-            ) {
-                <span class="macro">tracing::warn!</span>(<span class="question-mark">?</span>server_name, <span class="question-mark">?</span>value, <span class="string">"insert_tls13_ticket"</span>);
-                <span class="self">self</span>.session_values
-                    .lock()
-                    .unwrap()
-                    .insert(server_name, value);
-            }
-
-            <span class="kw">fn </span>take_tls13_ticket(
-                <span class="kw-2">&amp;</span><span class="self">self</span>,
-                server_name: <span class="kw-2">&amp;</span>webpki::types::ServerName&lt;<span class="lifetime">'static</span>&gt;,
-            ) -&gt; <span class="prelude-ty">Option</span>&lt;rustls::client::Tls13ClientSessionValue&gt; {
-                <span class="macro">tracing::warn!</span>(<span class="question-mark">?</span>server_name, <span class="string">"take_tls13_ticket"</span>);
-                <span class="self">self</span>.session_values.lock().unwrap().remove(server_name)
-            }
-        }
-
-        <span class="kw">let </span>session_store = SessionStore::default();
         <span class="kw">let </span>ep = <span class="self">Self </span>{
             msock: msock.clone(),
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
             static_config: Arc::new(static_config),
-            session_store: Arc::new(session_store),
+            <span class="comment">// 8 tickets per remote endpoint, 32 different endpoints
+            // ~200 bytes per session + certificates (which are ~387 bytes)
+            // So 8 * 32 * (200 + 387) = 150.272 bytes, assuming pointers to certificates
+            // are never aliased pointers (they're Arc'ed).
+            // I think 150KB is an acceptable default upper limit for such a cache.
+            </span>session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(<span class="number">8 </span>* <span class="number">32</span>)),
         };
         <span class="prelude-val">Ok</span>(ep)
     }
@@ -3149,16 +3060,17 @@
             client_config
         };
 
-        <span class="comment">// TODO: We'd eventually want to replace "localhost" with something that makes more sense.
-        </span><span class="kw">let </span>connect =
+        <span class="kw">let </span>server_name = <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{}.iroh.invalid"</span>, BASE32_DNSSEC.encode(node_id.as_bytes()));
+        <span class="kw">let </span>connect =
             <span class="self">self</span>.msock
                 .endpoint()
-                .connect_with(client_config, addr.socket_addr(), <span class="string">"localhost"</span>)<span class="question-mark">?</span>;
+                .connect_with(client_config, addr.socket_addr(), server_name)<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(Connecting {
             inner: connect,
             ep: <span class="self">self</span>.clone(),
             remote_node_id: <span class="prelude-val">Some</span>(node_id),
+            _discovery_drop_guard,
         })
     }
 
@@ -3624,6 +3536,7 @@
             inner: conn,
             ep: <span class="self">self</span>.ep,
             remote_node_id: <span class="prelude-val">None</span>,
+            _discovery_drop_guard: <span class="prelude-val">None</span>,
         })
     }
 
@@ -3642,6 +3555,7 @@
                 inner: conn,
                 ep: <span class="self">self</span>.ep,
                 remote_node_id: <span class="prelude-val">None</span>,
+                _discovery_drop_guard: <span class="prelude-val">None</span>,
             })
     }
 
@@ -3725,13 +3639,16 @@
 }
 
 <span class="doccomment">/// In-progress connection attempt future
-</span><span class="attr">#[derive(Debug)]
+</span><span class="attr">#[derive(derive_more::Debug)]
 #[pin_project]
 </span><span class="kw">pub struct </span>Connecting {
     <span class="attr">#[pin]
     </span>inner: quinn::Connecting,
     ep: Endpoint,
     remote_node_id: <span class="prelude-ty">Option</span>&lt;NodeId&gt;,
+    <span class="doccomment">/// We run discovery as long as we haven't established a connection yet.
+    </span><span class="attr">#[debug(<span class="string">"Option&lt;DiscoveryTask&gt;"</span>)]
+    </span>_discovery_drop_guard: <span class="prelude-ty">Option</span>&lt;DiscoveryTask&gt;,
 }
 
 <span class="kw">impl </span>Connecting {
@@ -3740,6 +3657,10 @@
         <span class="kw">match </span><span class="self">self</span>.inner.into_0rtt() {
             <span class="prelude-val">Ok</span>((inner, zrtt_accepted)) =&gt; {
                 <span class="kw">let </span>conn = Connection { inner };
+                <span class="kw">let </span>zrtt_accepted = ZeroRttAccepted {
+                    inner: zrtt_accepted,
+                    _discovery_drop_guard: <span class="self">self</span>._discovery_drop_guard,
+                };
                 try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, <span class="kw-2">&amp;</span><span class="self">self</span>.ep, <span class="self">self</span>.remote_node_id);
                 <span class="prelude-val">Ok</span>((conn, zrtt_accepted))
             }
@@ -3747,6 +3668,7 @@
                 inner,
                 ep: <span class="self">self</span>.ep,
                 remote_node_id: <span class="self">self</span>.remote_node_id,
+                _discovery_drop_guard: <span class="self">self</span>._discovery_drop_guard,
             }),
         }
     }
@@ -3785,6 +3707,31 @@
                 Poll::Ready(<span class="prelude-val">Ok</span>(conn))
             }
         }
+    }
+}
+
+<span class="doccomment">/// Future that completes when a connection is fully established
+///
+/// For clients, the resulting value indicates if 0-RTT was accepted. For servers, the resulting
+/// value is meaningless.
+</span><span class="attr">#[derive(derive_more::Debug)]
+#[debug(<span class="string">"ZeroRttAccepted"</span>)]
+</span><span class="kw">pub struct </span>ZeroRttAccepted {
+    inner: quinn::ZeroRttAccepted,
+    <span class="doccomment">/// When we call `Connecting::into_0rtt`, we don't want to stop discovery, so we transfer the task
+    /// to this future.
+    /// When `quinn::ZeroRttAccepted` resolves, we've successfully received data from the remote.
+    /// Thus, that's the right time to drop discovery to preserve the behaviour similar to
+    /// `Connecting` -&gt; `Connection` without 0-RTT.
+    /// Should we eventually decide to keep the discovery task alive for the duration of the whole
+    /// `Connection`, then this task should be transferred to the `Connection` instead of here.
+    </span>_discovery_drop_guard: <span class="prelude-ty">Option</span>&lt;DiscoveryTask&gt;,
+}
+
+<span class="kw">impl </span>Future <span class="kw">for </span>ZeroRttAccepted {
+    <span class="kw">type </span>Output = bool;
+    <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
+        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner).poll(cx)
     }
 }
 
@@ -4773,7 +4720,8 @@
 
         connect_client_expect_0rtt_err(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="comment">// spawning another server should not hinder us from establishing a 0rtt connection later:
+        <span class="comment">// connecting with another endpoint should not interfere with our
+        // TLS session ticket cache for the first endpoint:
         </span><span class="kw">let </span>another = spawn_server().<span class="kw">await</span><span class="question-mark">?</span>;
         connect_client_expect_0rtt_err(<span class="kw-2">&amp;</span>client, another.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         another.close().<span class="kw">await</span>;
