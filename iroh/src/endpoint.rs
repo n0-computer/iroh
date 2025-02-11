@@ -606,7 +606,6 @@ impl Endpoint {
         transport_config: Arc<TransportConfig>,
     ) -> Result<Connection> {
         let node_addr: NodeAddr = node_addr.into();
-        tracing::Span::current().record("remote", node_addr.node_id.fmt_short());
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
             bail!(
@@ -651,7 +650,7 @@ impl Endpoint {
         skip_all,
         fields(
             me = %self.node_id().fmt_short(),
-            remote_node = node_id.fmt_short(),
+            remote = node_id.fmt_short(),
             alpn = %String::from_utf8_lossy(alpn),
         )
     )]
