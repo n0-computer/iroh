@@ -817,6 +817,7 @@ mod tests {
     use super::*;
     use crate::{
         client::{conn::ReceivedMessage, ClientBuilder, SendMessage},
+        dns::DnsResolver,
         http::{Protocol, HTTP_UPGRADE_PROTOCOL},
     };
 
@@ -854,6 +855,10 @@ mod tests {
             return res.context("stream finished")?;
         }
         panic!("failed to send and recv message");
+    }
+
+    fn dns_resolver() -> DnsResolver {
+        DnsResolver::new()
     }
 
     #[tokio::test]
@@ -954,7 +959,7 @@ mod tests {
         // set up client a
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
-        let resolver = crate::dns::default_resolver().clone();
+        let resolver = dns_resolver();
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
             .connect()
             .await?;
@@ -1007,7 +1012,7 @@ mod tests {
         // set up client a
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
-        let resolver = crate::dns::default_resolver();
+        let resolver = dns_resolver();
         info!("client a build & connect");
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
             .protocol(Protocol::Websocket)
@@ -1069,7 +1074,7 @@ mod tests {
         // set up client a
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
-        let resolver = crate::dns::default_resolver().clone();
+        let resolver = dns_resolver();
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
             .connect()
             .await?;
@@ -1077,7 +1082,7 @@ mod tests {
         // set up client b
         let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
-        let resolver = crate::dns::default_resolver().clone();
+        let resolver = dns_resolver();
         let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver)
             .protocol(Protocol::Websocket) // Use websockets
             .connect()
@@ -1181,7 +1186,7 @@ mod tests {
         let relay_url: RelayUrl = relay_url.parse()?;
 
         // set up client a
-        let resolver = crate::dns::default_resolver().clone();
+        let resolver = dns_resolver();
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
             .connect()
             .await?;
@@ -1205,7 +1210,7 @@ mod tests {
         let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
 
-        let resolver = crate::dns::default_resolver().clone();
+        let resolver = dns_resolver();
         let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver)
             .connect()
             .await?;
@@ -1214,7 +1219,7 @@ mod tests {
         let c_secret_key = SecretKey::generate(rand::thread_rng());
         let c_key = c_secret_key.public();
 
-        let resolver = crate::dns::default_resolver().clone();
+        let resolver = dns_resolver();
         let mut client_c = ClientBuilder::new(relay_url.clone(), c_secret_key, resolver)
             .connect()
             .await?;

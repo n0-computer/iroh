@@ -13,8 +13,6 @@
 
 // Based on tailscale/derp/derphttp/derphttp_client.go
 
-use std::{future::Future, net::IpAddr};
-
 use anyhow::Context;
 use bytes::Bytes;
 use data_encoding::BASE64URL;
@@ -163,7 +161,7 @@ impl ClientBuilder {
         let prefer_ipv6 = self.prefer_ipv6();
         let dst_ip = self
             .dns_resolver
-            .resolve_host(&self.url, prefer_ipv6)
+            .resolve_host(&self.url, prefer_ipv6, DNS_TIMEOUT)
             .await?;
 
         let port = url_port(&self.url).ok_or_else(|| anyhow!("Missing URL port"))?;
@@ -195,7 +193,7 @@ impl ClientBuilder {
         let prefer_ipv6 = self.prefer_ipv6();
         let proxy_ip = self
             .dns_resolver
-            .resolve_host(&proxy_url, prefer_ipv6)
+            .resolve_host(&proxy_url, prefer_ipv6, DNS_TIMEOUT)
             .await?;
 
         let proxy_port = url_port(&proxy_url).ok_or_else(|| anyhow!("Missing proxy url port"))?;
@@ -314,53 +312,6 @@ fn url_port(url: &Url) -> Option<u16> {
         "http" => Some(80),
         "https" => Some(443),
         _ => None,
-    }
-}
-
-trait DnsExt {
-    fn lookup_ipv4<N: hickory_resolver::IntoName>(
-        &self,
-        host: N,
-    ) -> impl Future<Output = Result<Option<IpAddr>>>;
-
-    fn lookup_ipv6<N: hickory_resolver::IntoName>(
-        &self,
-        host: N,
-    ) -> impl Future<Output = Result<Option<IpAddr>>>;
-
-    fn resolve_host(&self, url: &Url, prefer_ipv6: bool) -> impl Future<Output = Result<IpAddr>>;
-}
-
-impl DnsExt for DnsResolver {
-    async fn lookup_ipv4<N: hickory_resolver::IntoName>(&self, host: N) -> Result<Option<IpAddr>> {
-        let addrs = tokio::time::timeout(DNS_TIMEOUT, self.ipv4_lookup(host)).await??;
-        Ok(addrs.into_iter().next().map(|ip| IpAddr::V4(ip.0)))
-    }
-
-    async fn lookup_ipv6<N: hickory_resolver::IntoName>(&self, host: N) -> Result<Option<IpAddr>> {
-        let addrs = tokio::time::timeout(DNS_TIMEOUT, self.ipv6_lookup(host)).await??;
-        Ok(addrs.into_iter().next().map(|ip| IpAddr::V6(ip.0)))
-    }
-
-    async fn resolve_host(&self, url: &Url, prefer_ipv6: bool) -> Result<IpAddr> {
-        let host = url.host().context("Invalid URL")?;
-        match host {
-            url::Host::Domain(domain) => {
-                // Need to do a DNS lookup
-                let lookup = tokio::join!(self.lookup_ipv4(domain), self.lookup_ipv6(domain));
-                let (v4, v6) = match lookup {
-                    (Err(ipv4_err), Err(ipv6_err)) => {
-                        bail!("Ipv4: {ipv4_err:?}, Ipv6: {ipv6_err:?}");
-                    }
-                    (Err(_), Ok(v6)) => (None, v6),
-                    (Ok(v4), Err(_)) => (v4, None),
-                    (Ok(v4), Ok(v6)) => (v4, v6),
-                };
-                if prefer_ipv6 { v6.or(v4) } else { v4.or(v6) }.context("No response")
-            }
-            url::Host::Ipv4(ip) => Ok(IpAddr::V4(ip)),
-            url::Host::Ipv6(ip) => Ok(IpAddr::V6(ip)),
-        }
     }
 }
 

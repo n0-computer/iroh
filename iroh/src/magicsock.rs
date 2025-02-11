@@ -119,8 +119,8 @@ pub(crate) struct Options {
 
     /// A DNS resolver to use for resolving relay URLs.
     ///
-    /// You can use [`crate::dns::default_resolver`] for a resolver that uses the system's DNS
-    /// configuration.
+    /// You can use [`crate::dns::DnsResolver::new`] for a resolver
+    /// that uses the system's DNS configuration.
     pub(crate) dns_resolver: DnsResolver,
 
     /// Proxy configuration.
@@ -140,6 +140,7 @@ pub(crate) struct Options {
     pub(crate) path_selection: PathSelection,
 }
 
+#[cfg(test)]
 impl Default for Options {
     fn default() -> Self {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
@@ -152,7 +153,7 @@ impl Default for Options {
             node_map: None,
             discovery: None,
             proxy_url: None,
-            dns_resolver: crate::dns::default_resolver().clone(),
+            dns_resolver: DnsResolver::new(),
             server_config,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -163,6 +164,7 @@ impl Default for Options {
 }
 
 /// Generate a server config with no ALPNS and a default transport configuration
+#[cfg(test)]
 fn make_default_server_config(secret_key: &SecretKey) -> ServerConfig {
     let quic_server_config = crate::tls::make_server_config(secret_key, vec![], false)
         .expect("should generate valid config");
@@ -1740,6 +1742,28 @@ impl Handle {
         let inner2 = inner.clone();
         let network_monitor = netmon::Monitor::new().await?;
         let qad_endpoint = endpoint.clone();
+
+        // create a client config for the endpoint to use for QUIC address discovery
+        let root_store =
+            rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let client_config = rustls::client::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("ring supports these")
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+        let quic_config = Some(QuicConfig {
+            ep: qad_endpoint,
+            client_config,
+            ipv4: true,
+            ipv6: pconn6_sock.is_some(),
+        });
+        let net_report_config = net_report::Options::default()
+            .stun_v4(Some(pconn4_sock.clone()))
+            .stun_v6(pconn6_sock.clone())
+            .quic_config(quic_config);
+
         actor_tasks.spawn(
             async move {
                 let actor = Actor {
@@ -1756,7 +1780,7 @@ impl Handle {
                     no_v4_send: false,
                     net_reporter,
                     network_monitor,
-                    qad_endpoint,
+                    net_report_config,
                 };
 
                 if let Err(err) = actor.run().await {
@@ -2172,6 +2196,9 @@ struct Actor {
     pconn4: Arc<UdpSocket>,
     pconn6: Option<Arc<UdpSocket>>,
 
+    /// Configuration for net report
+    net_report_config: net_report::Options,
+
     /// The NAT-PMP/PCP/UPnP prober/client, for requesting port mappings from NAT devices.
     port_mapper: portmapper::Client,
 
@@ -2184,11 +2211,6 @@ struct Actor {
     net_reporter: net_report::Client,
 
     network_monitor: netmon::Monitor,
-
-    /// The internal quinn::Endpoint
-    ///
-    /// Needed for Quic Address Discovery
-    qad_endpoint: quinn::Endpoint,
 }
 
 impl Actor {
@@ -2602,27 +2624,7 @@ impl Actor {
         }
 
         let relay_map = self.msock.relay_map.clone();
-        let mut opts = net_report::Options::default()
-            .stun_v4(Some(self.pconn4.clone()))
-            .stun_v6(self.pconn6.clone());
-
-        // create a client config for the endpoint to use for QUIC address discovery
-        let root_store =
-            rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        let client_config = rustls::client::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()
-        .expect("ring supports these")
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-        let quic_config = Some(QuicConfig {
-            ep: self.qad_endpoint.clone(),
-            client_config,
-            ipv4: true,
-            ipv6: self.pconn6.is_some(),
-        });
-        opts = opts.quic_config(quic_config);
+        let opts = self.net_report_config.clone();
 
         debug!("requesting net_report report");
         match self.net_reporter.get_report_channel(relay_map, opts).await {
@@ -3147,6 +3149,7 @@ mod tests {
     use super::*;
     use crate::{
         defaults::staging::{self, EU_RELAY_HOSTNAME},
+        dns::DnsResolver,
         tls, Endpoint, RelayMode,
     };
 
@@ -4029,6 +4032,7 @@ mod tests {
             Arc::new(quinn::TransportConfig::default()),
             true,
         )?;
+        let dns_resolver = DnsResolver::new();
         let opts = Options {
             addr_v4: None,
             addr_v6: None,
@@ -4036,7 +4040,7 @@ mod tests {
             relay_map: RelayMap::empty(),
             node_map: None,
             discovery: None,
-            dns_resolver: crate::dns::default_resolver().clone(),
+            dns_resolver,
             proxy_url: None,
             server_config,
             insecure_skip_relay_cert_verify: true,

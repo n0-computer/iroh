@@ -22,14 +22,9 @@ mod tests {
     };
 
     use anyhow::Result;
-    use hickory_resolver::{
-        config::{NameServerConfig, ResolverConfig},
-        Resolver,
-    };
-    use hickory_server::proto::xfer::Protocol;
     use iroh::{
         discovery::pkarr::PkarrRelayClient,
-        dns::{node_info::NodeInfo, DnsResolver, ResolverExt},
+        dns::{node_info::NodeInfo, DnsResolver},
         SecretKey,
     };
     use pkarr::{PkarrClient, SignedPacket};
@@ -44,6 +39,8 @@ mod tests {
         util::PublicKeyBytes,
         ZoneStore,
     };
+
+    const DNS_TIMEOUT: Duration = Duration::from_secs(1);
 
     #[tokio::test]
     #[traced_test]
@@ -120,38 +117,38 @@ mod tests {
 
         // resolve root record
         let name = Name::from_utf8(format!("{pubkey}."))?;
-        let res = resolver.txt_lookup(name).await?;
-        let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi0".to_string()]);
 
         // resolve level one record
         let name = Name::from_utf8(format!("_hello.{pubkey}."))?;
-        let res = resolver.txt_lookup(name).await?;
-        let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi1".to_string()]);
 
         // resolve level two record
         let name = Name::from_utf8(format!("_hello.world.{pubkey}."))?;
-        let res = resolver.txt_lookup(name).await?;
-        let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi2".to_string()]);
 
         // resolve multiple records for same name
         let name = Name::from_utf8(format!("multiple.{pubkey}."))?;
-        let res = resolver.txt_lookup(name).await?;
-        let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi3".to_string(), "hi4".to_string()]);
 
         // resolve A record
         let name = Name::from_utf8(format!("{pubkey}."))?;
-        let res = resolver.ipv4_lookup(name).await?;
-        let records = res.iter().map(|t| t.0).collect::<Vec<_>>();
+        let res = resolver.lookup_ipv4(name, DNS_TIMEOUT).await?;
+        let records = res.collect::<Vec<_>>();
         assert_eq!(records, vec![Ipv4Addr::LOCALHOST]);
 
         // resolve AAAA record
         let name = Name::from_utf8(format!("foo.bar.baz.{pubkey}."))?;
-        let res = resolver.ipv6_lookup(name).await?;
-        let records = res.iter().map(|t| t.0).collect::<Vec<_>>();
+        let res = resolver.lookup_ipv6(name, DNS_TIMEOUT).await?;
+        let records = res.collect::<Vec<_>>();
         assert_eq!(records, vec![Ipv6Addr::LOCALHOST]);
 
         server.shutdown().await?;
@@ -181,7 +178,7 @@ mod tests {
         pkarr.publish(&signed_packet).await?;
 
         let resolver = test_resolver(nameserver);
-        let res = resolver.lookup_by_id(&node_id, origin).await?;
+        let res = resolver.lookup_node_by_id(&node_id, origin).await?;
 
         assert_eq!(res.node_id, node_id);
         assert_eq!(res.relay_url.map(Url::from), Some(relay_url));
@@ -252,7 +249,7 @@ mod tests {
 
         // resolve via DNS from our server, which will lookup from our DHT
         let resolver = test_resolver(nameserver);
-        let res = resolver.lookup_by_id(&node_id, origin).await?;
+        let res = resolver.lookup_node_by_id(&node_id, origin).await?;
 
         assert_eq!(res.node_id, node_id);
         assert_eq!(res.relay_url.map(Url::from), Some(relay_url));
@@ -265,10 +262,7 @@ mod tests {
     }
 
     fn test_resolver(nameserver: SocketAddr) -> DnsResolver {
-        let mut config = ResolverConfig::new();
-        let nameserver_config = NameServerConfig::new(nameserver, Protocol::Udp);
-        config.add_name_server(nameserver_config);
-        Resolver::tokio(config, Default::default())
+        DnsResolver::with_nameserver(nameserver)
     }
 
     fn random_signed_packet() -> Result<SignedPacket> {
