@@ -626,7 +626,11 @@ impl Endpoint {
     ///    **Note:** Please be aware that changing transport config settings may have adverse effects on
     ///    establishing and maintaining direct connections.  Carefully test settings you use and
     ///    consider this currently as still rather experimental.
-    #[instrument(name = "connect", skip_all)]
+    #[instrument(name = "connect", skip_all, fields(
+        me = self.node_id().fmt_short(),
+        remote = tracing::field::Empty,
+        alpn = String::from_utf8_lossy(alpn).to_string(),
+    ))]
     pub async fn connect_with_opts(
         &self,
         node_addr: impl Into<NodeAddr>,
@@ -634,11 +638,7 @@ impl Endpoint {
         options: ConnectOptions,
     ) -> Result<Connecting> {
         let node_addr: NodeAddr = node_addr.into();
-
-        let span = tracing::Span::current();
-        span.record("me", self.node_id().fmt_short());
-        span.record("remote", node_addr.node_id.fmt_short());
-        span.record("alpn", String::from_utf8_lossy(alpn).to_string());
+        tracing::Span::current().record("remote", node_addr.node_id.fmt_short());
 
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
