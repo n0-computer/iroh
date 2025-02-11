@@ -22,6 +22,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
+use data_encoding::BASE32_DNSSEC;
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use n0_future::time::Duration;
@@ -545,80 +546,16 @@ impl Endpoint {
         trace!("created magicsock");
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
 
-        #[derive(Debug, Default)]
-        struct SessionStore {
-            session_values: std::sync::Mutex<
-                std::collections::HashMap<
-                    webpki::types::ServerName<'static>,
-                    rustls::client::Tls13ClientSessionValue,
-                >,
-            >,
-            kx_hints: std::sync::Mutex<
-                std::collections::HashMap<webpki::types::ServerName<'static>, rustls::NamedGroup>,
-            >,
-        }
-
-        impl rustls::client::ClientSessionStore for SessionStore {
-            fn set_kx_hint(
-                &self,
-                server_name: webpki::types::ServerName<'static>,
-                group: rustls::NamedGroup,
-            ) {
-                tracing::warn!(?server_name, ?group, "set_kx_hint");
-                self.kx_hints.lock().unwrap().insert(server_name, group);
-            }
-
-            fn kx_hint(
-                &self,
-                server_name: &webpki::types::ServerName<'_>,
-            ) -> Option<rustls::NamedGroup> {
-                tracing::warn!(?server_name, "kx_hint");
-                self.kx_hints.lock().unwrap().get(server_name).cloned()
-            }
-
-            fn set_tls12_session(
-                &self,
-                _server_name: webpki::types::ServerName<'static>,
-                _value: rustls::client::Tls12ClientSessionValue,
-            ) {
-            }
-
-            fn tls12_session(
-                &self,
-                _server_name: &webpki::types::ServerName<'_>,
-            ) -> Option<rustls::client::Tls12ClientSessionValue> {
-                None
-            }
-
-            fn remove_tls12_session(&self, _server_name: &webpki::types::ServerName<'static>) {}
-
-            fn insert_tls13_ticket(
-                &self,
-                server_name: webpki::types::ServerName<'static>,
-                value: rustls::client::Tls13ClientSessionValue,
-            ) {
-                tracing::warn!(?server_name, ?value, "insert_tls13_ticket");
-                self.session_values
-                    .lock()
-                    .unwrap()
-                    .insert(server_name, value);
-            }
-
-            fn take_tls13_ticket(
-                &self,
-                server_name: &webpki::types::ServerName<'static>,
-            ) -> Option<rustls::client::Tls13ClientSessionValue> {
-                tracing::warn!(?server_name, "take_tls13_ticket");
-                self.session_values.lock().unwrap().remove(server_name)
-            }
-        }
-
-        let session_store = SessionStore::default();
         let ep = Self {
             msock: msock.clone(),
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
             static_config: Arc::new(static_config),
-            session_store: Arc::new(session_store),
+            // 8 tickets per remote endpoint, 32 different endpoints
+            // ~200 bytes per session + certificates (which are ~387 bytes)
+            // So 8 * 32 * (200 + 387) = 150.272 bytes, assuming pointers to certificates
+            // are never aliased pointers (they're Arc'ed).
+            // I think 150KB is an acceptable default upper limit for such a cache.
+            session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(8 * 32)),
         };
         Ok(ep)
     }
@@ -755,11 +692,11 @@ impl Endpoint {
             client_config
         };
 
-        // TODO: We'd eventually want to replace "localhost" with something that makes more sense.
+        let server_name = &format!("{}.iroh.invalid", BASE32_DNSSEC.encode(node_id.as_bytes()));
         let connect =
             self.msock
                 .endpoint()
-                .connect_with(client_config, addr.socket_addr(), "localhost")?;
+                .connect_with(client_config, addr.socket_addr(), server_name)?;
 
         Ok(Connecting {
             inner: connect,
