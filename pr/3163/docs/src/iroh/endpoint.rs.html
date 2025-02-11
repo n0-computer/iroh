@@ -2370,13 +2370,7 @@
 <a href="#2369" id="2369">2369</a>
 <a href="#2370" id="2370">2370</a>
 <a href="#2371" id="2371">2371</a>
-<a href="#2372" id="2372">2372</a>
-<a href="#2373" id="2373">2373</a>
-<a href="#2374" id="2374">2374</a>
-<a href="#2375" id="2375">2375</a>
-<a href="#2376" id="2376">2376</a>
-<a href="#2377" id="2377">2377</a>
-<a href="#2378" id="2378">2378</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2372" id="2372">2372</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3616,7 +3610,6 @@
         IncomingFuture {
             inner: <span class="self">self</span>.inner.into_future(),
             ep: <span class="self">self</span>.ep,
-            remote_node_id: <span class="prelude-val">None</span>,
         }
     }
 }
@@ -3628,7 +3621,6 @@
     <span class="attr">#[pin]
     </span>inner: quinn::IncomingFuture,
     ep: Endpoint,
-    remote_node_id: <span class="prelude-ty">Option</span>&lt;NodeId&gt;,
 }
 
 <span class="kw">impl </span>Future <span class="kw">for </span>IncomingFuture {
@@ -3641,7 +3633,7 @@
             Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(err)),
             Poll::Ready(<span class="prelude-val">Ok</span>(inner)) =&gt; {
                 <span class="kw">let </span>conn = Connection { inner };
-                try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, this.ep, <span class="kw-2">*</span>this.remote_node_id);
+                try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, this.ep, <span class="prelude-val">None</span>);
                 Poll::Ready(<span class="prelude-val">Ok</span>(conn))
             }
         }
@@ -4059,10 +4051,6 @@
 /// If we can't notify the actor that will impact performance a little, but we can still
 /// function.
 </span><span class="kw">fn </span>try_send_rtt_msg(conn: <span class="kw-2">&amp;</span>Connection, magic_ep: <span class="kw-2">&amp;</span>Endpoint, remote_node_id: <span class="prelude-ty">Option</span>&lt;NodeId&gt;) {
-    <span class="kw">match </span>(remote_node_id, conn.remote_node_id().ok()) {
-        (<span class="prelude-val">Some</span>(x), <span class="prelude-val">None</span>) =&gt; <span class="macro">panic!</span>(<span class="string">"Ah - I thought I would've been able to remove this"</span>),
-        <span class="kw">_ </span>=&gt; {}
-    };
     <span class="comment">// If we can't notify the rtt-actor that's not great but not critical.
     </span><span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = remote_node_id.or_else(|| conn.remote_node_id().ok()) <span class="kw">else </span>{
         <span class="macro">warn!</span>(<span class="question-mark">?</span>conn, <span class="string">"failed to get remote node id"</span>);
