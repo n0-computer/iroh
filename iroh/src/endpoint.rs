@@ -48,7 +48,7 @@ pub use quinn::{
     ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
     ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError, RetryError,
     SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId, TransportConfig, VarInt,
-    WeakConnectionHandle, WriteError, ZeroRttAccepted,
+    WeakConnectionHandle, WriteError,
 };
 pub use quinn_proto::{
     congestion::{Controller, ControllerFactory},
@@ -702,6 +702,7 @@ impl Endpoint {
             inner: connect,
             ep: self.clone(),
             remote_node_id: Some(node_id),
+            _discovery_drop_guard,
         })
     }
 
@@ -1167,6 +1168,7 @@ impl Incoming {
             inner: conn,
             ep: self.ep,
             remote_node_id: None,
+            _discovery_drop_guard: None,
         })
     }
 
@@ -1185,6 +1187,7 @@ impl Incoming {
                 inner: conn,
                 ep: self.ep,
                 remote_node_id: None,
+                _discovery_drop_guard: None,
             })
     }
 
@@ -1268,13 +1271,16 @@ impl Future for IncomingFuture {
 }
 
 /// In-progress connection attempt future
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 #[pin_project]
 pub struct Connecting {
     #[pin]
     inner: quinn::Connecting,
     ep: Endpoint,
     remote_node_id: Option<NodeId>,
+    /// We run discovery as long as we haven't established a connection yet.
+    #[debug("Option<DiscoveryTask>")]
+    _discovery_drop_guard: Option<DiscoveryTask>,
 }
 
 impl Connecting {
@@ -1283,6 +1289,10 @@ impl Connecting {
         match self.inner.into_0rtt() {
             Ok((inner, zrtt_accepted)) => {
                 let conn = Connection { inner };
+                let zrtt_accepted = ZeroRttAccepted {
+                    inner: zrtt_accepted,
+                    _discovery_drop_guard: self._discovery_drop_guard,
+                };
                 try_send_rtt_msg(&conn, &self.ep, self.remote_node_id);
                 Ok((conn, zrtt_accepted))
             }
@@ -1290,6 +1300,7 @@ impl Connecting {
                 inner,
                 ep: self.ep,
                 remote_node_id: self.remote_node_id,
+                _discovery_drop_guard: self._discovery_drop_guard,
             }),
         }
     }
@@ -1328,6 +1339,31 @@ impl Future for Connecting {
                 Poll::Ready(Ok(conn))
             }
         }
+    }
+}
+
+/// Future that completes when a connection is fully established
+///
+/// For clients, the resulting value indicates if 0-RTT was accepted. For servers, the resulting
+/// value is meaningless.
+#[derive(derive_more::Debug)]
+#[debug("ZeroRttAccepted")]
+pub struct ZeroRttAccepted {
+    inner: quinn::ZeroRttAccepted,
+    /// When we call `Connecting::into_0rtt`, we don't want to stop discovery, so we transfer the task
+    /// to this future.
+    /// When `quinn::ZeroRttAccepted` resolves, we've successfully received data from the remote.
+    /// Thus, that's the right time to drop discovery to preserve the behaviour similar to
+    /// `Connecting` -> `Connection` without 0-RTT.
+    /// Should we eventually decide to keep the discovery task alive for the duration of the whole
+    /// `Connection`, then this task should be transferred to the `Connection` instead of here.
+    _discovery_drop_guard: Option<DiscoveryTask>,
+}
+
+impl Future for ZeroRttAccepted {
+    type Output = bool;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.inner).poll(cx)
     }
 }
 
@@ -2316,7 +2352,8 @@ mod tests {
 
         connect_client_expect_0rtt_err(&client, server.node_addr().await?).await?;
 
-        // spawning another server should not hinder us from establishing a 0rtt connection later:
+        // connecting with another endpoint should not interfere with our
+        // TLS session ticket cache for the first endpoint:
         let another = spawn_server().await?;
         connect_client_expect_0rtt_err(&client, another.node_addr().await?).await?;
         another.close().await;
