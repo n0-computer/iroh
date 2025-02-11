@@ -2369,8 +2369,7 @@
 <a href="#2368" id="2368">2368</a>
 <a href="#2369" id="2369">2369</a>
 <a href="#2370" id="2370">2370</a>
-<a href="#2371" id="2371">2371</a>
-<a href="#2372" id="2372">2372</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2371" id="2371">2371</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2998,7 +2997,11 @@
     ///    **Note:** Please be aware that changing transport config settings may have adverse effects on
     ///    establishing and maintaining direct connections.  Carefully test settings you use and
     ///    consider this currently as still rather experimental.
-    </span><span class="attr">#[instrument(name = <span class="string">"connect"</span>, skip_all)]
+    </span><span class="attr">#[instrument(name = <span class="string">"connect"</span>, skip_all, fields(
+        me = <span class="self">self</span>.node_id().fmt_short(),
+        remote = tracing::field::Empty,
+        alpn = String::from_utf8_lossy(alpn).to_string(),
+    ))]
     </span><span class="kw">pub async fn </span>connect_with_opts(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_addr: <span class="kw">impl </span>Into&lt;NodeAddr&gt;,
@@ -3006,11 +3009,7 @@
         options: ConnectOptions,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;Connecting&gt; {
         <span class="kw">let </span>node_addr: NodeAddr = node_addr.into();
-
-        <span class="kw">let </span>span = tracing::Span::current();
-        span.record(<span class="string">"me"</span>, <span class="self">self</span>.node_id().fmt_short());
-        span.record(<span class="string">"remote"</span>, node_addr.node_id.fmt_short());
-        span.record(<span class="string">"alpn"</span>, String::from_utf8_lossy(alpn).to_string());
+        tracing::Span::current().record(<span class="string">"remote"</span>, node_addr.node_id.fmt_short());
 
         <span class="comment">// Connecting to ourselves is not supported.
         </span><span class="kw">if </span>node_addr.node_id == <span class="self">self</span>.node_id() {
@@ -4686,8 +4685,7 @@
                 .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
                 .<span class="kw">await</span><span class="question-mark">?
                 </span>.into_0rtt()
-                .err()
-                .expect(<span class="string">"0rtt doesn't have keys on first connection yet"</span>)
+                .expect_err(<span class="string">"0rtt doesn't have keys on first connection yet"</span>)
                 .<span class="kw">await</span><span class="question-mark">?</span>;
 
             <span class="kw">let </span><span class="kw-2">mut </span>send = conn.open_uni().<span class="kw">await</span><span class="question-mark">?</span>;
