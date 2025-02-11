@@ -86,7 +86,7 @@ pub struct NodeData {
 }
 
 impl NodeData {
-    /// Creates a new [`DiscoveryData`] with a relay URL and a set of direct addresses.
+    /// Creates a new [`NodeData`] with a relay URL and a set of direct addresses.
     pub fn new(relay_url: Option<RelayUrl>, direct_addresses: BTreeSet<SocketAddr>) -> Self {
         Self {
             relay_url,
