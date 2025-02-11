@@ -545,9 +545,19 @@ mod tests {
 
     type InfoStore = HashMap<NodeId, (NodeData, u64)>;
 
-    #[derive(Debug, Clone, Default)]
+    #[derive(Debug, Clone)]
     struct TestDiscoveryShared {
         nodes: Arc<Mutex<InfoStore>>,
+        watchers: tokio::sync::broadcast::Sender<DiscoveryItem>,
+    }
+
+    impl Default for TestDiscoveryShared {
+        fn default() -> Self {
+            Self {
+                nodes: Default::default(),
+                watchers: tokio::sync::broadcast::Sender::new(1024),
+            }
+        }
     }
 
     impl TestDiscoveryShared {
@@ -569,6 +579,10 @@ mod tests {
                 resolve_wrong: true,
                 delay: Duration::from_millis(100),
             }
+        }
+
+        pub fn send_passive(&self, item: DiscoveryItem) {
+            self.watchers.send(item).ok();
         }
     }
 
@@ -631,6 +645,13 @@ mod tests {
                 None => n0_future::stream::empty().boxed(),
             };
             Some(stream)
+        }
+
+        fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+            let recv = self.shared.watchers.subscribe();
+            let stream =
+                tokio_stream::wrappers::BroadcastStream::new(recv).filter_map(|item| item.ok());
+            Some(Box::pin(stream))
         }
     }
 
@@ -787,6 +808,52 @@ mod tests {
             direct_addresses: BTreeSet::from(["240.0.0.1:1000".parse().unwrap()]),
         };
         let _conn = ep2.connect(ep1_wrong_addr, TEST_ALPN).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn endpoint_discovery_watch() -> anyhow::Result<()> {
+        let disco_shared = TestDiscoveryShared::default();
+        let (ep1, _guard1) = {
+            let secret = SecretKey::generate(rand::thread_rng());
+            let disco = disco_shared.create_discovery(secret.public());
+            new_endpoint(secret, disco).await
+        };
+        let (ep2, _guard2) = {
+            let secret = SecretKey::generate(rand::thread_rng());
+            let disco = disco_shared.create_discovery(secret.public());
+            new_endpoint(secret, disco).await
+        };
+
+        let stream = ep1.watch_discovery();
+
+        // wait for ep2 node addr to be updated and connect from ep1 -> discovery via resolve
+        ep2.node_addr().await?;
+        let _ = ep1.connect(ep2.node_id(), TEST_ALPN).await?;
+
+        // inject item into discovery via subscribe
+        let passive_addr = SecretKey::generate(rand::thread_rng()).public();
+        let passive_item = DiscoveryItem {
+            node_addr: NodeAddr::from(passive_addr),
+            provenance: "test-disco-passive",
+            last_updated: None,
+        };
+        disco_shared.send_passive(passive_item.clone());
+
+        let discovered = stream.take(2).collect::<Vec<_>>().await;
+        assert_eq!(discovered.len(), 2);
+        let discovered_active = discovered
+            .iter()
+            .find(|x| x.provenance == "test-disco")
+            .unwrap();
+        assert_eq!(discovered_active.node_addr.node_id, ep2.node_id());
+        let discovered_passive = discovered
+            .iter()
+            .find(|x| x.provenance == "test-disco-passive")
+            .unwrap();
+        assert_eq!(discovered_passive.node_addr, passive_item.node_addr);
+
         Ok(())
     }
 
