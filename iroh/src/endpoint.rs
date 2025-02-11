@@ -151,7 +151,7 @@ impl Default for Builder {
             addr_v6: None,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: PathSelection::default(),
-            tls_auth: tls::Authentication::X509,
+            tls_auth: tls::Authentication::RawPublicKey,
         }
     }
 }
@@ -748,7 +748,7 @@ impl Endpoint {
         );
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
-            let quic_client_config = tls::Authentication::X509.make_client_config(
+            let quic_client_config = self.static_config.tls_auth.make_client_config(
                 &self.static_config.secret_key,
                 Some(node_id),
                 alpn_protocols,
@@ -1417,7 +1417,10 @@ impl Future for IncomingFuture {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn = Connection { inner };
+                let conn = Connection {
+                    inner,
+                    tls_auth: this.ep.static_config.tls_auth,
+                };
                 try_send_rtt_msg(&conn, this.ep, None);
                 Poll::Ready(Ok(conn))
             }
@@ -1487,7 +1490,10 @@ impl Connecting {
     pub fn into_0rtt(self) -> Result<(Connection, ZeroRttAccepted), Self> {
         match self.inner.into_0rtt() {
             Ok((inner, zrtt_accepted)) => {
-                let conn = Connection { inner };
+                let conn = Connection {
+                    inner,
+                    tls_auth: self.ep.static_config.tls_auth,
+                };
                 let zrtt_accepted = ZeroRttAccepted {
                     inner: zrtt_accepted,
                     _discovery_drop_guard: self._discovery_drop_guard,
@@ -1539,7 +1545,10 @@ impl Future for Connecting {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn = Connection { inner };
+                let conn = Connection {
+                    inner,
+                    tls_auth: this.ep.static_config.tls_auth,
+                };
                 try_send_rtt_msg(&conn, this.ep, *this.remote_node_id);
                 Poll::Ready(Ok(conn))
             }
@@ -1588,9 +1597,9 @@ impl Future for ZeroRttAccepted {
 // This has repr(transparent) as it opens the door to potentially allow casting it to a
 // quinn::Connection in the future.  Right now however that'd be iroh_quinn::Connection.
 #[derive(Debug, Clone)]
-#[repr(transparent)]
 pub struct Connection {
     inner: quinn::Connection,
+    tls_auth: tls::Authentication,
 }
 
 impl Connection {
@@ -1820,8 +1829,17 @@ impl Connection {
                             certs.len()
                         );
                     }
-                    let cert = tls::certificate::parse(&certs[0])?;
-                    Ok(cert.peer_id())
+
+                    match self.tls_auth {
+                        tls::Authentication::X509 => {
+                            let cert = tls::certificate::parse(&certs[0])?;
+                            Ok(cert.peer_id())
+                        }
+                        tls::Authentication::RawPublicKey => {
+                            let peer_id = NodeId::from_public_der(&certs[0])?;
+                            Ok(peer_id)
+                        }
+                    }
                 }
                 Err(_) => bail!("invalid peer certificate"),
             },
@@ -2288,19 +2306,36 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_bidi_send_recv() {
+    async fn endpoint_bidi_send_recv_x509() {
+        endpoint_bidi_send_recv(tls::Authentication::X509).await
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn endpoint_bidi_send_recv_raw_public_key() {
+        endpoint_bidi_send_recv(tls::Authentication::RawPublicKey).await
+    }
+
+    async fn endpoint_bidi_send_recv(auth: tls::Authentication) {
         let ep1 = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled)
-            .bind()
-            .await
-            .unwrap();
+            .relay_mode(RelayMode::Disabled);
+
+        let ep1 = match auth {
+            tls::Authentication::X509 => ep1.tls_x509(),
+            tls::Authentication::RawPublicKey => ep1.tls_raw_public_keys(),
+        };
+        let ep1 = ep1.bind().await.unwrap();
         let ep2 = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled)
-            .bind()
-            .await
-            .unwrap();
+            .relay_mode(RelayMode::Disabled);
+
+        let ep2 = match auth {
+            tls::Authentication::X509 => ep2.tls_x509(),
+            tls::Authentication::RawPublicKey => ep2.tls_raw_public_keys(),
+        };
+        let ep2 = ep2.bind().await.unwrap();
+
         let ep1_nodeaddr = ep1.node_addr().await.unwrap();
         let ep2_nodeaddr = ep2.node_addr().await.unwrap();
         ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();
