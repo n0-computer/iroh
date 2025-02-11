@@ -135,7 +135,7 @@ pub mod static_provider;
 /// looked up by other nodes.
 ///
 /// The published addressing information can include both a [`RelayUrl`] and/or direct
-/// addresses.
+/// addresses. See [`NodeData`] for details.
 ///
 /// To allow for discovery, the [`super::Endpoint`] will call `publish` whenever
 /// discovery information changes. If a discovery mechanism requires a periodic
@@ -143,7 +143,7 @@ pub mod static_provider;
 ///
 /// [`RelayUrl`]: crate::RelayUrl
 pub trait Discovery: std::fmt::Debug + Send + Sync {
-    /// Publishes the given [`RelayUrl`] and direct addreesses to the discovery mechanism.
+    /// Publishes the given [`NodeData`] to the discovery mechanism.
     ///
     /// This is fire and forget, since the [`Endpoint`] can not wait for successful
     /// publishing. If publishing is async, the implementation should start it's own task.
