@@ -2314,8 +2314,7 @@ mod tests {
                 .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
                 .await?
                 .into_0rtt()
-                .err()
-                .expect("0rtt doesn't have keys on first connection yet")
+                .expect_err("0rtt doesn't have keys on first connection yet")
                 .await?;
 
             let mut send = conn.open_uni().await?;
