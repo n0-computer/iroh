@@ -4456,10 +4456,7 @@
 <a href="#4455" id="4455">4455</a>
 <a href="#4456" id="4456">4456</a>
 <a href="#4457" id="4457">4457</a>
-<a href="#4458" id="4458">4458</a>
-<a href="#4459" id="4459">4459</a>
-<a href="#4460" id="4460">4460</a>
-<a href="#4461" id="4461">4461</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4458" id="4458">4458</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4599,45 +4596,6 @@
     <span class="doccomment">/// Configuration for what path selection to use
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) path_selection: PathSelection,
-}
-
-<span class="attr">#[cfg(test)]
-</span><span class="kw">impl </span>Default <span class="kw">for </span>Options {
-    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>secret_key = SecretKey::generate(rand::rngs::OsRng);
-        <span class="comment">// TODO: make configurable
-        </span><span class="kw">let </span>tls_auth = <span class="kw">crate</span>::tls::Authentication::X509;
-        <span class="kw">let </span>server_config = make_default_server_config(<span class="kw-2">&amp;</span>secret_key, tls_auth);
-        Options {
-            addr_v4: <span class="prelude-val">None</span>,
-            addr_v6: <span class="prelude-val">None</span>,
-            secret_key,
-            relay_map: RelayMap::empty(),
-            node_map: <span class="prelude-val">None</span>,
-            discovery: <span class="prelude-val">None</span>,
-            proxy_url: <span class="prelude-val">None</span>,
-            dns_resolver: DnsResolver::new(),
-            server_config,
-            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-            </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
-            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-            </span>path_selection: PathSelection::default(),
-        }
-    }
-}
-
-<span class="doccomment">/// Generate a server config with no ALPNS and a default transport configuration
-</span><span class="attr">#[cfg(test)]
-</span><span class="kw">fn </span>make_default_server_config(
-    secret_key: <span class="kw-2">&amp;</span>SecretKey,
-    tls_auth: <span class="kw">crate</span>::tls::Authentication,
-) -&gt; ServerConfig {
-    <span class="kw">let </span>quic_server_config = tls_auth
-        .make_server_config(secret_key, <span class="macro">vec!</span>[], <span class="bool-val">false</span>)
-        .expect(<span class="string">"should generate valid config"</span>);
-    <span class="kw">let </span><span class="kw-2">mut </span>server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
-    server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
-    server_config
 }
 
 <span class="doccomment">/// Contents of a relay message. Use a SmallVec to avoid allocations for the very
@@ -7622,6 +7580,42 @@
 
     <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/test/1"</span>;
 
+    <span class="kw">impl </span>Default <span class="kw">for </span>Options {
+        <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+            <span class="kw">let </span>secret_key = SecretKey::generate(rand::rngs::OsRng);
+            <span class="kw">let </span>tls_auth = <span class="kw">crate</span>::tls::Authentication::RawPublicKey;
+            <span class="kw">let </span>server_config = make_default_server_config(<span class="kw-2">&amp;</span>secret_key, tls_auth);
+            Options {
+                addr_v4: <span class="prelude-val">None</span>,
+                addr_v6: <span class="prelude-val">None</span>,
+                secret_key,
+                relay_map: RelayMap::empty(),
+                node_map: <span class="prelude-val">None</span>,
+                discovery: <span class="prelude-val">None</span>,
+                proxy_url: <span class="prelude-val">None</span>,
+                dns_resolver: DnsResolver::new(),
+                server_config,
+                <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+                </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
+                <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+                </span>path_selection: PathSelection::default(),
+            }
+        }
+    }
+
+    <span class="doccomment">/// Generate a server config with no ALPNS and a default transport configuration
+    </span><span class="kw">fn </span>make_default_server_config(
+        secret_key: <span class="kw-2">&amp;</span>SecretKey,
+        tls_auth: <span class="kw">crate</span>::tls::Authentication,
+    ) -&gt; ServerConfig {
+        <span class="kw">let </span>quic_server_config = tls_auth
+            .make_server_config(secret_key, <span class="macro">vec!</span>[], <span class="bool-val">false</span>)
+            .expect(<span class="string">"should generate valid config"</span>);
+        <span class="kw">let </span><span class="kw-2">mut </span>server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
+        server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
+        server_config
+    }
+
     <span class="kw">impl </span>MagicSock {
         <span class="attr">#[track_caller]
         </span><span class="kw">pub fn </span>add_test_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: NodeAddr) {
@@ -8295,7 +8289,7 @@
             <span class="prelude-val">Ok</span>(quic_ep)
         }
 
-        <span class="kw">let </span>tls_auth = tls::Authentication::X509;
+        <span class="kw">let </span>tls_auth = tls::Authentication::RawPublicKey;
         <span class="kw">let </span>m1 = make_conn(<span class="string">"127.0.0.1:7770"</span>.parse().unwrap(), tls_auth)<span class="question-mark">?</span>;
         <span class="kw">let </span>m2 = make_conn(<span class="string">"127.0.0.1:7771"</span>.parse().unwrap(), tls_auth)<span class="question-mark">?</span>;
 
@@ -8595,7 +8589,7 @@
         <span class="comment">// Regression test: if there is no send_addr we should keep being able to use the
         // Endpoint.
 
-        </span><span class="kw">let </span>tls_auth = tls::Authentication::X509;
+        </span><span class="kw">let </span>tls_auth = tls::Authentication::RawPublicKey;
 
         <span class="kw">let </span>secret_key_1 = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
         <span class="kw">let </span>secret_key_2 = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">2u8</span>; <span class="number">32</span>]);
@@ -8696,7 +8690,7 @@
         <span class="comment">// This specifically tests the `if udp_addr.is_none() &amp;&amp; relay_url.is_none()`
         // behaviour of MagicSock::try_send.
 
-        </span><span class="kw">let </span>tls_auth = tls::Authentication::X509;
+        </span><span class="kw">let </span>tls_auth = tls::Authentication::RawPublicKey;
 
         <span class="kw">let </span>secret_key_1 = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
         <span class="kw">let </span>secret_key_2 = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">2u8</span>; <span class="number">32</span>]);

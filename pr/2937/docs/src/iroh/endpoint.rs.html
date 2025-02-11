@@ -2202,7 +2202,45 @@
 <a href="#2201" id="2201">2201</a>
 <a href="#2202" id="2202">2202</a>
 <a href="#2203" id="2203">2203</a>
-<a href="#2204" id="2204">2204</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2204" id="2204">2204</a>
+<a href="#2205" id="2205">2205</a>
+<a href="#2206" id="2206">2206</a>
+<a href="#2207" id="2207">2207</a>
+<a href="#2208" id="2208">2208</a>
+<a href="#2209" id="2209">2209</a>
+<a href="#2210" id="2210">2210</a>
+<a href="#2211" id="2211">2211</a>
+<a href="#2212" id="2212">2212</a>
+<a href="#2213" id="2213">2213</a>
+<a href="#2214" id="2214">2214</a>
+<a href="#2215" id="2215">2215</a>
+<a href="#2216" id="2216">2216</a>
+<a href="#2217" id="2217">2217</a>
+<a href="#2218" id="2218">2218</a>
+<a href="#2219" id="2219">2219</a>
+<a href="#2220" id="2220">2220</a>
+<a href="#2221" id="2221">2221</a>
+<a href="#2222" id="2222">2222</a>
+<a href="#2223" id="2223">2223</a>
+<a href="#2224" id="2224">2224</a>
+<a href="#2225" id="2225">2225</a>
+<a href="#2226" id="2226">2226</a>
+<a href="#2227" id="2227">2227</a>
+<a href="#2228" id="2228">2228</a>
+<a href="#2229" id="2229">2229</a>
+<a href="#2230" id="2230">2230</a>
+<a href="#2231" id="2231">2231</a>
+<a href="#2232" id="2232">2232</a>
+<a href="#2233" id="2233">2233</a>
+<a href="#2234" id="2234">2234</a>
+<a href="#2235" id="2235">2235</a>
+<a href="#2236" id="2236">2236</a>
+<a href="#2237" id="2237">2237</a>
+<a href="#2238" id="2238">2238</a>
+<a href="#2239" id="2239">2239</a>
+<a href="#2240" id="2240">2240</a>
+<a href="#2241" id="2241">2241</a>
+<a href="#2242" id="2242">2242</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2336,7 +2374,7 @@
             addr_v6: <span class="prelude-val">None</span>,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>path_selection: PathSelection::default(),
-            tls_auth: tls::Authentication::X509,
+            tls_auth: tls::Authentication::RawPublicKey,
         }
     }
 }
@@ -2886,7 +2924,7 @@
         <span class="macro">debug!</span>(<span class="string">"Attempting connection..."</span>);
         <span class="kw">let </span>client_config = {
             <span class="kw">let </span>alpn_protocols = <span class="macro">vec!</span>[alpn.to_vec()];
-            <span class="kw">let </span>quic_client_config = tls::Authentication::X509.make_client_config(
+            <span class="kw">let </span>quic_client_config = <span class="self">self</span>.static_config.tls_auth.make_client_config(
                 <span class="kw-2">&amp;</span><span class="self">self</span>.static_config.secret_key,
                 <span class="prelude-val">Some</span>(node_id),
                 alpn_protocols,
@@ -2917,7 +2955,10 @@
             </span><span class="macro">warn!</span>(<span class="string">"rtt-actor not reachable: {err:#}"</span>);
         }
         <span class="macro">debug!</span>(<span class="string">"Connection established"</span>);
-        <span class="prelude-val">Ok</span>(Connection { inner: connection })
+        <span class="prelude-val">Ok</span>(Connection {
+            inner: connection,
+            tls_auth: <span class="self">self</span>.static_config.tls_auth,
+        })
     }
 
     <span class="doccomment">/// Accepts an incoming connection on the endpoint.
@@ -3448,7 +3489,10 @@
             Poll::Pending =&gt; Poll::Pending,
             Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(err)),
             Poll::Ready(<span class="prelude-val">Ok</span>(inner)) =&gt; {
-                <span class="kw">let </span>conn = Connection { inner };
+                <span class="kw">let </span>conn = Connection {
+                    inner,
+                    tls_auth: this.ep.static_config.tls_auth,
+                };
                 try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, this.ep);
                 Poll::Ready(<span class="prelude-val">Ok</span>(conn))
             }
@@ -3470,7 +3514,10 @@
     </span><span class="kw">pub fn </span>into_0rtt(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(Connection, ZeroRttAccepted), <span class="self">Self</span>&gt; {
         <span class="kw">match </span><span class="self">self</span>.inner.into_0rtt() {
             <span class="prelude-val">Ok</span>((inner, zrtt_accepted)) =&gt; {
-                <span class="kw">let </span>conn = Connection { inner };
+                <span class="kw">let </span>conn = Connection {
+                    inner,
+                    tls_auth: <span class="self">self</span>.ep.static_config.tls_auth,
+                };
                 try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, <span class="kw-2">&amp;</span><span class="self">self</span>.ep);
                 <span class="prelude-val">Ok</span>((conn, zrtt_accepted))
             }
@@ -3507,7 +3554,10 @@
             Poll::Pending =&gt; Poll::Pending,
             Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(err)),
             Poll::Ready(<span class="prelude-val">Ok</span>(inner)) =&gt; {
-                <span class="kw">let </span>conn = Connection { inner };
+                <span class="kw">let </span>conn = Connection {
+                    inner,
+                    tls_auth: this.ep.static_config.tls_auth,
+                };
                 try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, this.ep);
                 Poll::Ready(<span class="prelude-val">Ok</span>(conn))
             }
@@ -3531,9 +3581,9 @@
 </span><span class="comment">// This has repr(transparent) as it opens the door to potentially allow casting it to a
 // quinn::Connection in the future.  Right now however that'd be iroh_quinn::Connection.
 </span><span class="attr">#[derive(Debug, Clone)]
-#[repr(transparent)]
 </span><span class="kw">pub struct </span>Connection {
     inner: quinn::Connection,
+    tls_auth: tls::Authentication,
 }
 
 <span class="kw">impl </span>Connection {
@@ -3758,8 +3808,17 @@
                             certs.len()
                         );
                     }
-                    <span class="kw">let </span>cert = tls::certificate::parse(<span class="kw-2">&amp;</span>certs[<span class="number">0</span>])<span class="question-mark">?</span>;
-                    <span class="prelude-val">Ok</span>(cert.peer_id())
+
+                    <span class="kw">match </span><span class="self">self</span>.tls_auth {
+                        tls::Authentication::X509 =&gt; {
+                            <span class="kw">let </span>cert = tls::certificate::parse(<span class="kw-2">&amp;</span>certs[<span class="number">0</span>])<span class="question-mark">?</span>;
+                            <span class="prelude-val">Ok</span>(cert.peer_id())
+                        }
+                        tls::Authentication::RawPublicKey =&gt; {
+                            <span class="kw">let </span>peer_id = NodeId::from_public_der(<span class="kw-2">&amp;</span>certs[<span class="number">0</span>])<span class="question-mark">?</span>;
+                            <span class="prelude-val">Ok</span>(peer_id)
+                        }
+                    }
                 }
                 <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="macro">bail!</span>(<span class="string">"invalid peer certificate"</span>),
             },
@@ -4225,19 +4284,36 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_bidi_send_recv() {
+    </span><span class="kw">async fn </span>endpoint_bidi_send_recv_x509() {
+        endpoint_bidi_send_recv(tls::Authentication::X509).<span class="kw">await
+    </span>}
+
+    <span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>endpoint_bidi_send_recv_raw_public_key() {
+        endpoint_bidi_send_recv(tls::Authentication::RawPublicKey).<span class="kw">await
+    </span>}
+
+    <span class="kw">async fn </span>endpoint_bidi_send_recv(auth: tls::Authentication) {
         <span class="kw">let </span>ep1 = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled)
-            .bind()
-            .<span class="kw">await
-            </span>.unwrap();
+            .relay_mode(RelayMode::Disabled);
+
+        <span class="kw">let </span>ep1 = <span class="kw">match </span>auth {
+            tls::Authentication::X509 =&gt; ep1.tls_x509(),
+            tls::Authentication::RawPublicKey =&gt; ep1.tls_raw_public_keys(),
+        };
+        <span class="kw">let </span>ep1 = ep1.bind().<span class="kw">await</span>.unwrap();
         <span class="kw">let </span>ep2 = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled)
-            .bind()
-            .<span class="kw">await
-            </span>.unwrap();
+            .relay_mode(RelayMode::Disabled);
+
+        <span class="kw">let </span>ep2 = <span class="kw">match </span>auth {
+            tls::Authentication::X509 =&gt; ep2.tls_x509(),
+            tls::Authentication::RawPublicKey =&gt; ep2.tls_raw_public_keys(),
+        };
+        <span class="kw">let </span>ep2 = ep2.bind().<span class="kw">await</span>.unwrap();
+
         <span class="kw">let </span>ep1_nodeaddr = ep1.node_addr().<span class="kw">await</span>.unwrap();
         <span class="kw">let </span>ep2_nodeaddr = ep2.node_addr().<span class="kw">await</span>.unwrap();
         ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();

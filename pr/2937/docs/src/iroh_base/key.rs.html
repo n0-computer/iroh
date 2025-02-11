@@ -421,7 +421,13 @@
 <a href="#420" id="420">420</a>
 <a href="#421" id="421">421</a>
 <a href="#422" id="422">422</a>
-<a href="#423" id="423">423</a></pre></div><pre class="rust"><code><span class="doccomment">//! Cryptographic key handling for `iroh`.
+<a href="#423" id="423">423</a>
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a></pre></div><pre class="rust"><code><span class="doccomment">//! Cryptographic key handling for `iroh`.
 
 </span><span class="kw">use </span>std::{
     borrow::Borrow,
@@ -434,7 +440,7 @@
 <span class="kw">use </span>curve25519_dalek::edwards::CompressedEdwardsY;
 <span class="kw">pub use </span>ed25519_dalek::Signature;
 <span class="kw">use </span>ed25519_dalek::{
-    pkcs8::{spki::der::zeroize::Zeroizing, EncodePrivateKey, EncodePublicKey},
+    pkcs8::{spki::der::zeroize::Zeroizing, DecodePublicKey, EncodePrivateKey, EncodePublicKey},
     SignatureError, SigningKey, VerifyingKey,
 };
 <span class="kw">use </span>rand_core::CryptoRngCore;
@@ -531,6 +537,12 @@
         <span class="kw">let </span>key = <span class="self">self</span>.public();
         key.to_public_key_pem(LineEnding::default())
             .expect(<span class="string">"key is valid"</span>)
+    }
+
+    <span class="doccomment">/// Deserialize the pem bytes
+    </span><span class="kw">pub fn </span>from_public_der(der: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ed25519_dalek::pkcs8::spki::Error&gt; {
+        <span class="kw">let </span>key = VerifyingKey::from_public_key_der(der)<span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(key.into())
     }
 
     <span class="doccomment">/// Construct a `PublicKey` from a slice of bytes.
