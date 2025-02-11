@@ -900,7 +900,17 @@
 <a href="#899" id="899">899</a>
 <a href="#900" id="900">900</a>
 <a href="#901" id="901">901</a>
-<a href="#902" id="902">902</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#902" id="902">902</a>
+<a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a>
+<a href="#906" id="906">906</a>
+<a href="#907" id="907">907</a>
+<a href="#908" id="908">908</a>
+<a href="#909" id="909">909</a>
+<a href="#910" id="910">910</a>
+<a href="#911" id="911">911</a>
+<a href="#912" id="912">912</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1119,6 +1129,21 @@
         last_updated: <span class="prelude-ty">Option</span>&lt;u64&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>node_addr = node_info.into();
+        <span class="self">Self </span>{
+            node_addr,
+            provenance,
+            last_updated,
+        }
+    }
+
+    <span class="doccomment">/// Creates a new [`DiscoveryItem`] from a [`NodeData`].
+    </span><span class="kw">pub fn </span>from_node_data(
+        node_id: NodeId,
+        node_data: NodeData,
+        provenance: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+        last_updated: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+    ) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>node_addr = node_data.into_node_addr(node_id);
         <span class="self">Self </span>{
             node_addr,
             provenance,
@@ -1439,12 +1464,7 @@
             };
             <span class="kw">let </span>stream = <span class="kw">match </span>addr_info {
                 <span class="prelude-val">Some</span>((data, ts)) =&gt; {
-                    <span class="kw">let </span>node_addr = data.into_node_addr(node_id);
-                    <span class="kw">let </span>item = DiscoveryItem {
-                        node_addr,
-                        provenance: <span class="string">"test-disco"</span>,
-                        last_updated: <span class="prelude-val">Some</span>(ts),
-                    };
+                    <span class="kw">let </span>item = DiscoveryItem::from_node_data(node_id, data, <span class="string">"test-disco"</span>, <span class="prelude-val">Some</span>(ts));
                     <span class="kw">let </span>delay = <span class="self">self</span>.delay;
                     <span class="kw">let </span>fut = <span class="kw">async move </span>{
                         time::sleep(delay).<span class="kw">await</span>;

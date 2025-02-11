@@ -584,14 +584,7 @@
 <a href="#583" id="583">583</a>
 <a href="#584" id="584">584</a>
 <a href="#585" id="585">585</a>
-<a href="#586" id="586">586</a>
-<a href="#587" id="587">587</a>
-<a href="#588" id="588">588</a>
-<a href="#589" id="589">589</a>
-<a href="#590" id="590">590</a>
-<a href="#591" id="591">591</a>
-<a href="#592" id="592">592</a>
-<a href="#593" id="593">593</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#586" id="586">586</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -678,9 +671,12 @@
 /// The fields are not public, but there are setter and getter functions for all fields
 /// contained in the struct.
 </span><span class="attr">#[derive(Debug, Clone, Default, Eq, PartialEq)]
+#[non_exhaustive]
 </span><span class="kw">pub struct </span>NodeData {
-    relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
-    direct_addresses: BTreeSet&lt;SocketAddr&gt;,
+    <span class="doccomment">/// URL of the home relay of this node.
+    </span><span class="kw">pub </span>relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
+    <span class="doccomment">/// Direct addresses where this node can be reached.
+    </span><span class="kw">pub </span>direct_addresses: BTreeSet&lt;SocketAddr&gt;,
 }
 
 <span class="kw">impl </span>NodeData {
@@ -703,16 +699,6 @@
         <span class="self">self</span>.direct_addresses = direct_addrs;
         <span class="self">self
     </span>}
-
-    <span class="doccomment">/// Returns the relay URL.
-    </span><span class="kw">pub fn </span>relay_url(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt; {
-        <span class="self">self</span>.relay_url.as_ref()
-    }
-
-    <span class="doccomment">/// Returns the direct addresses.
-    </span><span class="kw">pub fn </span>direct_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt; {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.direct_addresses
-    }
 
     <span class="doccomment">/// Removes all direct addresses.
     </span><span class="kw">pub fn </span>clear_direct_addresses(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {

@@ -490,7 +490,13 @@
 <a href="#489" id="489">489</a>
 <a href="#490" id="490">490</a>
 <a href="#491" id="491">491</a>
-<a href="#492" id="492">492</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
+<a href="#492" id="492">492</a>
+<a href="#493" id="493">493</a>
+<a href="#494" id="494">494</a>
+<a href="#495" id="495">495</a>
+<a href="#496" id="496">496</a>
+<a href="#497" id="497">497</a>
+<a href="#498" id="498">498</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
@@ -871,8 +877,8 @@
     <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>NodeData) {
         <span class="self">self</span>.local_addrs
             .set(<span class="prelude-val">Some</span>((
-                data.relay_url().cloned(),
-                data.direct_addrs().clone(),
+                data.relay_url.clone(),
+                data.direct_addresses.clone(),
             )))
             .ok();
     }
@@ -928,10 +934,16 @@
             <span class="kw">let </span>s2_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s2.next())
                 .<span class="kw">await</span><span class="question-mark">?
                 </span>.unwrap()<span class="question-mark">?</span>;
-            <span class="macro">assert_eq!</span>(s1_res.node_addr.relay_url.as_ref(), addr_info.relay_url());
-            <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>s1_res.node_addr.direct_addresses, addr_info.direct_addrs());
-            <span class="macro">assert_eq!</span>(s2_res.node_addr.relay_url.as_ref(), addr_info.relay_url());
-            <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>s2_res.node_addr.direct_addresses, addr_info.direct_addrs());
+            <span class="macro">assert_eq!</span>(s1_res.node_addr.relay_url, addr_info.relay_url);
+            <span class="macro">assert_eq!</span>(
+                s1_res.node_addr.direct_addresses,
+                addr_info.direct_addresses
+            );
+            <span class="macro">assert_eq!</span>(s2_res.node_addr.relay_url, addr_info.relay_url);
+            <span class="macro">assert_eq!</span>(
+                s2_res.node_addr.direct_addresses,
+                addr_info.direct_addresses
+            );
 
             <span class="prelude-val">Ok</span>(())
         }
