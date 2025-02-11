@@ -909,7 +909,17 @@
 <a href="#908" id="908">908</a>
 <a href="#909" id="909">909</a>
 <a href="#910" id="910">910</a>
-<a href="#911" id="911">911</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#911" id="911">911</a>
+<a href="#912" id="912">912</a>
+<a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
+<a href="#916" id="916">916</a>
+<a href="#917" id="917">917</a>
+<a href="#918" id="918">918</a>
+<a href="#919" id="919">919</a>
+<a href="#920" id="920">920</a>
+<a href="#921" id="921">921</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1136,6 +1146,22 @@
             provenance,
             last_updated,
             user_data: <span class="prelude-val">None</span>,
+        }
+    }
+
+    <span class="doccomment">/// Creates a new [`DiscoveryItem`] from a [`NodeData`].
+    </span><span class="kw">pub fn </span>from_node_data(
+        node_id: NodeId,
+        node_data: NodeData,
+        provenance: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+        last_updated: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+    ) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>(node_addr, user_data) = node_data.into_node_addr_and_user_data(node_id);
+        <span class="self">Self </span>{
+            node_addr,
+            provenance,
+            last_updated,
+            user_data,
         }
     }
 }
@@ -1452,13 +1478,7 @@
             };
             <span class="kw">let </span>stream = <span class="kw">match </span>addr_info {
                 <span class="prelude-val">Some</span>((data, ts)) =&gt; {
-                    <span class="kw">let </span>node_addr = data.into_node_addr(node_id);
-                    <span class="kw">let </span>item = DiscoveryItem {
-                        node_addr,
-                        provenance: <span class="string">"test-disco"</span>,
-                        last_updated: <span class="prelude-val">Some</span>(ts),
-                        user_data: <span class="prelude-val">None</span>,
-                    };
+                    <span class="kw">let </span>item = DiscoveryItem::from_node_data(node_id, data, <span class="string">"test-disco"</span>, <span class="prelude-val">Some</span>(ts));
                     <span class="kw">let </span>delay = <span class="self">self</span>.delay;
                     <span class="kw">let </span>fut = <span class="kw">async move </span>{
                         time::sleep(delay).<span class="kw">await</span>;
@@ -1747,8 +1767,8 @@
         <span class="kw">let </span>resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
         <span class="kw">let </span>publisher = PkarrPublisher::new(secret_key, dns_pkarr_server.pkarr_url.clone());
         <span class="kw">let </span>user_data: UserData = <span class="string">"foobar"</span>.parse().unwrap();
-        <span class="kw">let </span>data =
-            NodeData::new(relay_url.clone(), Default::default()).with_user_data(user_data.clone());
+        <span class="kw">let </span>data = NodeData::new(relay_url.clone(), Default::default())
+            .with_user_data(<span class="prelude-val">Some</span>(user_data.clone()));
         <span class="comment">// does not block, update happens in background task
         </span>publisher.update_addr_info(<span class="kw-2">&amp;</span>data);
         <span class="comment">// wait until our shared state received the update from pkarr publishing

@@ -681,7 +681,8 @@
 <a href="#680" id="680">680</a>
 <a href="#681" id="681">681</a>
 <a href="#682" id="682">682</a>
-<a href="#683" id="683">683</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#683" id="683">683</a>
+<a href="#684" id="684">684</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -770,10 +771,14 @@
 /// The fields are not public, but there are setter and getter functions for all fields
 /// contained in the struct.
 </span><span class="attr">#[derive(Debug, Clone, Default, Eq, PartialEq)]
+#[non_exhaustive]
 </span><span class="kw">pub struct </span>NodeData {
-    relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
-    direct_addresses: BTreeSet&lt;SocketAddr&gt;,
-    user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;,
+    <span class="doccomment">/// URL of the home relay of this node.
+    </span><span class="kw">pub </span>relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
+    <span class="doccomment">/// Direct addresses where this node can be reached.
+    </span><span class="kw">pub </span>direct_addresses: BTreeSet&lt;SocketAddr&gt;,
+    <span class="doccomment">/// Optional user-defined [`UserData`] for this node.
+    </span><span class="kw">pub </span>user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;,
 }
 
 <span class="kw">impl </span>NodeData {
@@ -799,25 +804,10 @@
     </span>}
 
     <span class="doccomment">/// Sets the user data.
-    </span><span class="kw">pub fn </span>with_user_data(<span class="kw-2">mut </span><span class="self">self</span>, user_data: UserData) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.user_data = <span class="prelude-val">Some</span>(user_data);
+    </span><span class="kw">pub fn </span>with_user_data(<span class="kw-2">mut </span><span class="self">self</span>, user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.user_data = user_data;
         <span class="self">self
     </span>}
-
-    <span class="doccomment">/// Returns the relay URL.
-    </span><span class="kw">pub fn </span>relay_url(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt; {
-        <span class="self">self</span>.relay_url.as_ref()
-    }
-
-    <span class="doccomment">/// Returns the direct addresses.
-    </span><span class="kw">pub fn </span>direct_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt; {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.direct_addresses
-    }
-
-    <span class="doccomment">/// Returns the user data.
-    </span><span class="kw">pub fn </span>user_data(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>UserData&gt; {
-        <span class="self">self</span>.user_data.as_ref()
-    }
 
     <span class="doccomment">/// Removes all direct addresses.
     </span><span class="kw">pub fn </span>clear_direct_addresses(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
@@ -831,6 +821,18 @@
             relay_url: <span class="self">self</span>.relay_url,
             direct_addresses: <span class="self">self</span>.direct_addresses,
         }
+    }
+
+    <span class="doccomment">/// Converts into a [`NodeAddr`] and [`UserData`].
+    </span><span class="kw">pub fn </span>into_node_addr_and_user_data(<span class="self">self</span>, node_id: NodeId) -&gt; (NodeAddr, <span class="prelude-ty">Option</span>&lt;UserData&gt;) {
+        (
+            NodeAddr {
+                node_id,
+                relay_url: <span class="self">self</span>.relay_url,
+                direct_addresses: <span class="self">self</span>.direct_addresses,
+            },
+            <span class="self">self</span>.user_data,
+        )
     }
 }
 
