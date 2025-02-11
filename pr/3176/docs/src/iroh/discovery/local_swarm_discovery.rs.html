@@ -504,8 +504,7 @@
 <a href="#503" id="503">503</a>
 <a href="#504" id="504">504</a>
 <a href="#505" id="505">505</a>
-<a href="#506" id="506">506</a>
-<a href="#507" id="507">507</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
+<a href="#506" id="506">506</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
@@ -673,7 +672,6 @@
                         msg
                     }
                     <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(data)) = addrs_change.updated() =&gt; {
-                        <span class="macro">println!</span>(<span class="string">"PUBLISH {data:?}"</span>);
                         <span class="macro">tracing::trace!</span>(<span class="question-mark">?</span>data, <span class="string">"LocalSwarmDiscovery address changed"</span>);
                         discovery.remove_all();
                         <span class="kw">let </span>addrs =
