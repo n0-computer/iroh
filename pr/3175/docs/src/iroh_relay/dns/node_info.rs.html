@@ -586,7 +586,12 @@
 <a href="#585" id="585">585</a>
 <a href="#586" id="586">586</a>
 <a href="#587" id="587">587</a>
-<a href="#588" id="588">588</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#588" id="588">588</a>
+<a href="#589" id="589">589</a>
+<a href="#590" id="590">590</a>
+<a href="#591" id="591">591</a>
+<a href="#592" id="592">592</a>
+<a href="#593" id="593">593</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -667,6 +672,11 @@
 }
 
 <span class="doccomment">/// The information that can be published about a node in discovery services.
+///
+/// This includes an optional [`RelayUrl`] and a set of direct addresses.
+///
+/// The fields are not public, but there are setter and getter functions for all fields
+/// contained in the struct.
 </span><span class="attr">#[derive(Debug, Clone, Default, Eq, PartialEq)]
 </span><span class="kw">pub struct </span>NodeData {
     relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
