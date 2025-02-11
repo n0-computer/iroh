@@ -554,7 +554,7 @@
 <span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{
-    discovery::{Discovery, DiscoveryData, DiscoveryItem},
+    discovery::{Discovery, DiscoveryItem, NodeData},
     watchable::Watchable,
     Endpoint,
 };
@@ -581,7 +581,7 @@
     </span>handle: AbortOnDropHandle&lt;()&gt;,
     sender: mpsc::Sender&lt;Message&gt;,
     <span class="doccomment">/// When `local_addrs` changes, we re-publish our info.
-    </span>local_addrs: Watchable&lt;<span class="prelude-ty">Option</span>&lt;DiscoveryData&gt;&gt;,
+    </span>local_addrs: Watchable&lt;<span class="prelude-ty">Option</span>&lt;NodeData&gt;&gt;,
 }
 
 <span class="attr">#[derive(Debug)]
@@ -654,7 +654,7 @@
             <span class="kw-2">&amp;</span>rt,
         )<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>local_addrs: Watchable&lt;<span class="prelude-ty">Option</span>&lt;DiscoveryData&gt;&gt; = Watchable::default();
+        <span class="kw">let </span>local_addrs: Watchable&lt;<span class="prelude-ty">Option</span>&lt;NodeData&gt;&gt; = Watchable::default();
         <span class="kw">let </span><span class="kw-2">mut </span>addrs_change = local_addrs.watch();
         <span class="kw">let </span>discovery_fut = <span class="kw">async move </span>{
             <span class="kw">let </span><span class="kw-2">mut </span>node_addrs: HashMap&lt;PublicKey, Peer&gt; = HashMap::default();
@@ -893,7 +893,7 @@
         <span class="prelude-val">Some</span>(Box::pin(stream.flatten_stream()))
     }
 
-    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>DiscoveryData) {
+    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>NodeData) {
         <span class="self">self</span>.local_addrs.set(<span class="prelude-val">Some</span>(data.clone())).ok();
     }
 
@@ -932,9 +932,9 @@
 
             <span class="comment">// make addr info for discoverer b
             </span><span class="kw">let </span>user_data: UserData = <span class="string">"foobar"</span>.parse()<span class="question-mark">?</span>;
-            <span class="kw">let </span>addr_info = DiscoveryData::new(<span class="prelude-val">None</span>, BTreeSet::from([<span class="string">"0.0.0.0:11111"</span>.parse()<span class="question-mark">?</span>]))
+            <span class="kw">let </span>node_data = NodeData::new(<span class="prelude-val">None</span>, BTreeSet::from([<span class="string">"0.0.0.0:11111"</span>.parse()<span class="question-mark">?</span>]))
                 .with_user_data(user_data.clone());
-            <span class="macro">println!</span>(<span class="string">"info {addr_info:?}"</span>);
+            <span class="macro">println!</span>(<span class="string">"info {node_data:?}"</span>);
 
             <span class="comment">// pass in endpoint, this is never used
             </span><span class="kw">let </span>ep = <span class="kw">crate</span>::endpoint::Builder::default().bind().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -945,18 +945,18 @@
 
             <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>node_id_b, <span class="string">"Discovering node id b"</span>);
             <span class="comment">// publish discovery_b's address
-            </span>discovery_b.publish(<span class="kw-2">&amp;</span>addr_info);
+            </span>discovery_b.publish(<span class="kw-2">&amp;</span>node_data);
             <span class="kw">let </span>s1_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s1.next())
                 .<span class="kw">await</span><span class="question-mark">?
                 </span>.unwrap()<span class="question-mark">?</span>;
             <span class="kw">let </span>s2_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s2.next())
                 .<span class="kw">await</span><span class="question-mark">?
                 </span>.unwrap()<span class="question-mark">?</span>;
-            <span class="macro">assert_eq!</span>(s1_res.node_addr.relay_url.as_ref(), addr_info.relay_url());
-            <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>s1_res.node_addr.direct_addresses, addr_info.direct_addrs());
+            <span class="macro">assert_eq!</span>(s1_res.node_addr.relay_url.as_ref(), node_data.relay_url());
+            <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>s1_res.node_addr.direct_addresses, node_data.direct_addrs());
             <span class="macro">assert_eq!</span>(s1_res.user_data.as_ref(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>user_data));
-            <span class="macro">assert_eq!</span>(s2_res.node_addr.relay_url.as_ref(), addr_info.relay_url());
-            <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>s2_res.node_addr.direct_addresses, addr_info.direct_addrs());
+            <span class="macro">assert_eq!</span>(s2_res.node_addr.relay_url.as_ref(), node_data.relay_url());
+            <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>s2_res.node_addr.direct_addresses, node_data.direct_addrs());
             <span class="macro">assert_eq!</span>(s2_res.user_data.as_ref(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>user_data));
 
             <span class="prelude-val">Ok</span>(())
@@ -970,7 +970,7 @@
             <span class="kw">let </span><span class="kw-2">mut </span>discoverers = <span class="macro">vec!</span>[];
 
             <span class="kw">let </span>(<span class="kw">_</span>, discovery) = make_discoverer()<span class="question-mark">?</span>;
-            <span class="kw">let </span>addr_info = DiscoveryData::new(<span class="prelude-val">None</span>, BTreeSet::from([<span class="string">"0.0.0.0:11111"</span>.parse()<span class="question-mark">?</span>]));
+            <span class="kw">let </span>addr_info = NodeData::new(<span class="prelude-val">None</span>, BTreeSet::from([<span class="string">"0.0.0.0:11111"</span>.parse()<span class="question-mark">?</span>]));
 
             <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..num_nodes {
                 <span class="kw">let </span>(node_id, discovery) = make_discoverer()<span class="question-mark">?</span>;

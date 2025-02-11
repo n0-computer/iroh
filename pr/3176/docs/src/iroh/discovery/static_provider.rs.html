@@ -328,7 +328,7 @@
     time::SystemTime,
 };
 
-<span class="kw">use super</span>::{Discovery, DiscoveryData, DiscoveryItem};
+<span class="kw">use super</span>::{Discovery, DiscoveryItem, NodeData};
 
 <span class="doccomment">/// A static node discovery to manually add node addressing information.
 ///
@@ -526,7 +526,7 @@
 }
 
 <span class="kw">impl </span>Discovery <span class="kw">for </span>StaticProvider {
-    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, _data: <span class="kw-2">&amp;</span>DiscoveryData) {}
+    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, _data: <span class="kw-2">&amp;</span>NodeData) {}
 
     <span class="kw">fn </span>resolve(
         <span class="kw-2">&amp;</span><span class="self">self</span>,

@@ -4482,7 +4482,7 @@
 <span class="kw">use crate</span>::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{<span class="self">self</span>, CallMeMaybe, SendAddr},
-    discovery::{Discovery, DiscoveryData, DiscoveryItem},
+    discovery::{Discovery, DiscoveryItem, NodeData},
     dns::DnsResolver,
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     watchable::{Watchable, Watcher},
@@ -5894,7 +5894,7 @@
         <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>discovery) = <span class="self">self</span>.discovery {
             <span class="kw">let </span>relay_url = <span class="self">self</span>.my_relay();
             <span class="kw">let </span>direct_addrs = <span class="self">self</span>.direct_addrs.sockaddrs();
-            <span class="kw">let </span>data = DiscoveryData::new(relay_url, direct_addrs);
+            <span class="kw">let </span>data = NodeData::new(relay_url, direct_addrs);
             discovery.publish(<span class="kw-2">&amp;</span>data);
         }
     }

@@ -454,16 +454,7 @@
 <a href="#453" id="453">453</a>
 <a href="#454" id="454">454</a>
 <a href="#455" id="455">455</a>
-<a href="#456" id="456">456</a>
-<a href="#457" id="457">457</a>
-<a href="#458" id="458">458</a>
-<a href="#459" id="459">459</a>
-<a href="#460" id="460">460</a>
-<a href="#461" id="461">461</a>
-<a href="#462" id="462">462</a>
-<a href="#463" id="463">463</a>
-<a href="#464" id="464">464</a>
-<a href="#465" id="465">465</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
+<a href="#456" id="456">456</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
 //!
 //! This module contains pkarr-based node discovery for iroh which can use both pkarr
 //! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
@@ -490,7 +481,7 @@
 <span class="kw">use crate</span>::{
     discovery::{
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
-        Discovery, DiscoveryData, DiscoveryItem,
+        Discovery, DiscoveryItem, NodeData,
     },
     dns::node_info::NodeInfo,
     Endpoint,
@@ -599,14 +590,10 @@
         <span class="kw">match </span>maybe_packet {
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(signed_packet)) =&gt; <span class="kw">match </span>NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet) {
                 <span class="prelude-val">Ok</span>(node_info) =&gt; {
-                    <span class="kw">let </span>node_addr: NodeAddr = node_info.into();
-                    <span class="macro">tracing::info!</span>(<span class="string">"discovered node info from DHT {:?}"</span>, node_addr);
-                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(DiscoveryItem {
-                        node_addr,
-                        provenance: <span class="string">"mainline"</span>,
-                        last_updated: <span class="prelude-val">None</span>,
-                        user_data: <span class="prelude-val">None</span>,
-                    }))
+                    <span class="macro">tracing::info!</span>(<span class="string">"discovered node info from DHT {:?}"</span>, <span class="kw-2">&amp;</span>node_info);
+                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(DiscoveryItem::from_node_info(
+                        node_info, <span class="string">"mainline"</span>, <span class="prelude-val">None</span>,
+                    )))
                 }
                 <span class="prelude-val">Err</span>(_err) =&gt; {
                     <span class="macro">tracing::debug!</span>(<span class="string">"failed to parse signed packet as node info"</span>);
@@ -815,22 +802,17 @@
 }
 
 <span class="kw">impl </span>Discovery <span class="kw">for </span>DhtDiscovery {
-    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>DiscoveryData) {
+    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>NodeData) {
         <span class="kw">let </span><span class="prelude-val">Some</span>(keypair) = <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>.secret_key <span class="kw">else </span>{
             <span class="macro">tracing::debug!</span>(<span class="string">"no keypair set, not publishing"</span>);
             <span class="kw">return</span>;
         };
         <span class="macro">tracing::debug!</span>(<span class="string">"publishing {data:?}"</span>);
-        <span class="kw">let </span>info = NodeInfo {
-            node_id: keypair.public(),
-            relay_url: data.relay_url().cloned().map(Url::from),
-            direct_addresses: <span class="kw">if </span><span class="self">self</span>.<span class="number">0</span>.include_direct_addresses {
-                data.direct_addrs().clone()
-            } <span class="kw">else </span>{
-                Default::default()
-            },
-            user_data: <span class="prelude-val">None</span>,
-        };
+        <span class="kw">let </span><span class="kw-2">mut </span>data = data.clone();
+        <span class="kw">if </span>!<span class="self">self</span>.<span class="number">0</span>.include_direct_addresses {
+            data.clear_direct_addresses();
+        }
+        <span class="kw">let </span>info = NodeInfo::new(keypair.public(), data);
         <span class="kw">let </span><span class="prelude-val">Ok</span>(signed_packet) = info.to_pkarr_signed_packet(keypair, <span class="self">self</span>.<span class="number">0</span>.ttl) <span class="kw">else </span>{
             <span class="macro">tracing::warn!</span>(<span class="string">"failed to create signed packet"</span>);
             <span class="kw">return</span>;
@@ -900,7 +882,7 @@
             .build()<span class="question-mark">?</span>;
         <span class="kw">let </span>relay_url: RelayUrl = Url::parse(<span class="string">"https://example.com"</span>)<span class="question-mark">?</span>.into();
 
-        <span class="kw">let </span>data = DiscoveryData::default().with_relay_url(relay_url.clone());
+        <span class="kw">let </span>data = NodeData::default().with_relay_url(relay_url.clone());
         discovery.publish(<span class="kw-2">&amp;</span>data);
 
         <span class="comment">// publish is fire and forget, so we have no way to wait until it is done.
