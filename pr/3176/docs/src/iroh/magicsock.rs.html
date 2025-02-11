@@ -4411,7 +4411,32 @@
 <a href="#4410" id="4410">4410</a>
 <a href="#4411" id="4411">4411</a>
 <a href="#4412" id="4412">4412</a>
-<a href="#4413" id="4413">4413</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4413" id="4413">4413</a>
+<a href="#4414" id="4414">4414</a>
+<a href="#4415" id="4415">4415</a>
+<a href="#4416" id="4416">4416</a>
+<a href="#4417" id="4417">4417</a>
+<a href="#4418" id="4418">4418</a>
+<a href="#4419" id="4419">4419</a>
+<a href="#4420" id="4420">4420</a>
+<a href="#4421" id="4421">4421</a>
+<a href="#4422" id="4422">4422</a>
+<a href="#4423" id="4423">4423</a>
+<a href="#4424" id="4424">4424</a>
+<a href="#4425" id="4425">4425</a>
+<a href="#4426" id="4426">4426</a>
+<a href="#4427" id="4427">4427</a>
+<a href="#4428" id="4428">4428</a>
+<a href="#4429" id="4429">4429</a>
+<a href="#4430" id="4430">4430</a>
+<a href="#4431" id="4431">4431</a>
+<a href="#4432" id="4432">4432</a>
+<a href="#4433" id="4433">4433</a>
+<a href="#4434" id="4434">4434</a>
+<a href="#4435" id="4435">4435</a>
+<a href="#4436" id="4436">4436</a>
+<a href="#4437" id="4437">4437</a>
+<a href="#4438" id="4438">4438</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4482,7 +4507,7 @@
 <span class="kw">use crate</span>::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{<span class="self">self</span>, CallMeMaybe, SendAddr},
-    discovery::{Discovery, DiscoveryItem, NodeData},
+    discovery::{Discovery, DiscoveryItem, NodeData, UserData},
     dns::DnsResolver,
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     watchable::{Watchable, Watcher},
@@ -4530,6 +4555,9 @@
     <span class="doccomment">/// Optional node discovery mechanism.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) discovery: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt;,
 
+    <span class="doccomment">/// Optional user-defined discovery data.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) discovery_user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;,
+
     <span class="doccomment">/// A DNS resolver to use for resolving relay URLs.
     ///
     /// You can use [`crate::dns::DnsResolver::new`] for a resolver
@@ -4565,6 +4593,7 @@
             relay_map: RelayMap::empty(),
             node_map: <span class="prelude-val">None</span>,
             discovery: <span class="prelude-val">None</span>,
+            discovery_user_data: <span class="prelude-val">None</span>,
             proxy_url: <span class="prelude-val">None</span>,
             dns_resolver: DnsResolver::new(),
             server_config,
@@ -4674,6 +4703,9 @@
 
     <span class="doccomment">/// Optional discovery service
     </span>discovery: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt;,
+
+    <span class="doccomment">/// Optional user-defined discover data.
+    </span>discovery_user_data: RwLock&lt;<span class="prelude-ty">Option</span>&lt;UserData&gt;&gt;,
 
     <span class="doccomment">/// Our discovered direct addresses.
     </span>direct_addrs: DiscoveredDirectAddrs,
@@ -4837,6 +4869,16 @@
     <span class="doccomment">/// Reference to optional discovery service
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>discovery(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="kw">dyn </span>Discovery&gt; {
         <span class="self">self</span>.discovery.as_ref().map(Box::as_ref)
+    }
+
+    <span class="doccomment">/// Updates the user-defined discovery data for this node.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>set_user_data_for_discovery(<span class="kw-2">&amp;</span><span class="self">self</span>, user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;) {
+        <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.discovery_user_data.write().expect(<span class="string">"lock poisened"</span>);
+        <span class="kw">if </span><span class="kw-2">*</span>guard != user_data {
+            <span class="kw-2">*</span>guard = user_data;
+            drop(guard);
+            <span class="self">self</span>.publish_my_addr();
+        }
     }
 
     <span class="doccomment">/// Call to notify the system of potential network changes.
@@ -5894,7 +5936,12 @@
         <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>discovery) = <span class="self">self</span>.discovery {
             <span class="kw">let </span>relay_url = <span class="self">self</span>.my_relay();
             <span class="kw">let </span>direct_addrs = <span class="self">self</span>.direct_addrs.sockaddrs();
-            <span class="kw">let </span>data = NodeData::new(relay_url, direct_addrs);
+            <span class="kw">let </span>user_data = <span class="self">self
+                </span>.discovery_user_data
+                .read()
+                .expect(<span class="string">"lock poisened"</span>)
+                .clone();
+            <span class="kw">let </span>data = NodeData::new(relay_url, direct_addrs).with_user_data(user_data);
             discovery.publish(<span class="kw-2">&amp;</span>data);
         }
     }
@@ -6037,6 +6084,7 @@
             relay_map,
             node_map,
             discovery,
+            discovery_user_data,
             dns_resolver,
             proxy_url,
             server_config,
@@ -6110,6 +6158,7 @@
             ip_mapped_addrs,
             udp_disco_sender,
             discovery,
+            discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs: Default::default(),
             pending_call_me_maybes: Default::default(),
             direct_addr_update_state: DirectAddrUpdateState::new(),
@@ -8456,6 +8505,7 @@
             relay_map: RelayMap::empty(),
             node_map: <span class="prelude-val">None</span>,
             discovery: <span class="prelude-val">None</span>,
+            discovery_user_data: <span class="prelude-val">None</span>,
             dns_resolver,
             proxy_url: <span class="prelude-val">None</span>,
             server_config,

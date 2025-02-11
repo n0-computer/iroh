@@ -2184,7 +2184,26 @@
 <a href="#2183" id="2183">2183</a>
 <a href="#2184" id="2184">2184</a>
 <a href="#2185" id="2185">2185</a>
-<a href="#2186" id="2186">2186</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2186" id="2186">2186</a>
+<a href="#2187" id="2187">2187</a>
+<a href="#2188" id="2188">2188</a>
+<a href="#2189" id="2189">2189</a>
+<a href="#2190" id="2190">2190</a>
+<a href="#2191" id="2191">2191</a>
+<a href="#2192" id="2192">2192</a>
+<a href="#2193" id="2193">2193</a>
+<a href="#2194" id="2194">2194</a>
+<a href="#2195" id="2195">2195</a>
+<a href="#2196" id="2196">2196</a>
+<a href="#2197" id="2197">2197</a>
+<a href="#2198" id="2198">2198</a>
+<a href="#2199" id="2199">2199</a>
+<a href="#2200" id="2200">2200</a>
+<a href="#2201" id="2201">2201</a>
+<a href="#2202" id="2202">2202</a>
+<a href="#2203" id="2203">2203</a>
+<a href="#2204" id="2204">2204</a>
+<a href="#2205" id="2205">2205</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2218,6 +2237,7 @@
 <span class="kw">use crate</span>::{
     discovery::{
         dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
+        UserData,
     },
     dns::DnsResolver,
     magicsock::{<span class="self">self</span>, Handle, NodeIdMappedAddr},
@@ -2285,6 +2305,7 @@
     keylog: bool,
     <span class="attr">#[debug(skip)]
     </span>discovery: Vec&lt;DiscoveryBuilder&gt;,
+    discovery_user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;,
     proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
     <span class="doccomment">/// List of known nodes. See [`Builder::known_nodes`].
     </span>node_map: <span class="prelude-ty">Option</span>&lt;Vec&lt;NodeAddr&gt;&gt;,
@@ -2308,6 +2329,7 @@
             transport_config,
             keylog: Default::default(),
             discovery: Default::default(),
+            discovery_user_data: Default::default(),
             proxy_url: <span class="prelude-val">None</span>,
             node_map: <span class="prelude-val">None</span>,
             dns_resolver: <span class="prelude-val">None</span>,
@@ -2358,6 +2380,7 @@
             relay_map,
             node_map: <span class="self">self</span>.node_map,
             discovery,
+            discovery_user_data: <span class="self">self</span>.discovery_user_data,
             proxy_url: <span class="self">self</span>.proxy_url,
             dns_resolver,
             server_config,
@@ -2550,6 +2573,13 @@
                 .map(|x| Box::new(x) <span class="kw">as _</span>)
                 .ok()
         }));
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Set the user-defined data published with this node's addresses
+    /// to the configured discovery services.
+    </span><span class="kw">pub fn </span>user_data_for_discovery(<span class="kw-2">mut </span><span class="self">self</span>, user_data: UserData) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.discovery_user_data = <span class="prelude-val">Some</span>(user_data);
         <span class="self">self
     </span>}
 
@@ -3166,6 +3196,14 @@
     /// the network change itself, there is no harm in calling this function.
     </span><span class="kw">pub async fn </span>network_change(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="self">self</span>.msock.network_change().<span class="kw">await</span>;
+    }
+
+    <span class="comment">// # Methods to update internal state.
+
+    </span><span class="doccomment">/// Set the user-defined data published with this node's addresses
+    /// to the configured discovery services.
+    </span><span class="kw">pub fn </span>set_user_data_for_discovery(<span class="kw-2">&amp;</span><span class="self">self</span>, user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;) {
+        <span class="self">self</span>.msock.set_user_data_for_discovery(user_data);
     }
 
     <span class="comment">// # Methods for terminating the endpoint.
