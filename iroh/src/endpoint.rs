@@ -1238,7 +1238,6 @@ impl IntoFuture for Incoming {
         IncomingFuture {
             inner: self.inner.into_future(),
             ep: self.ep,
-            remote_node_id: None,
         }
     }
 }
@@ -1250,7 +1249,6 @@ pub struct IncomingFuture {
     #[pin]
     inner: quinn::IncomingFuture,
     ep: Endpoint,
-    remote_node_id: Option<NodeId>,
 }
 
 impl Future for IncomingFuture {
@@ -1263,7 +1261,7 @@ impl Future for IncomingFuture {
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
                 let conn = Connection { inner };
-                try_send_rtt_msg(&conn, this.ep, *this.remote_node_id);
+                try_send_rtt_msg(&conn, this.ep, None);
                 Poll::Ready(Ok(conn))
             }
         }
@@ -1681,10 +1679,6 @@ impl Connection {
 /// If we can't notify the actor that will impact performance a little, but we can still
 /// function.
 fn try_send_rtt_msg(conn: &Connection, magic_ep: &Endpoint, remote_node_id: Option<NodeId>) {
-    match (remote_node_id, conn.remote_node_id().ok()) {
-        (Some(x), None) => panic!("Ah - I thought I would've been able to remove this"),
-        _ => {}
-    };
     // If we can't notify the rtt-actor that's not great but not critical.
     let Some(node_id) = remote_node_id.or_else(|| conn.remote_node_id().ok()) else {
         warn!(?conn, "failed to get remote node id");
