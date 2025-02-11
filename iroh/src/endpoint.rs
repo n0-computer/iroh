@@ -1293,6 +1293,12 @@ impl Connecting {
                     inner: zrtt_accepted,
                     _discovery_drop_guard: self._discovery_drop_guard,
                 };
+                // This call is why `self.remote_node_id` was introduced.
+                // When we `Connecting::into_0rtt`, then we don't yet have `handshake_data`
+                // in our `Connection`, thus `try_send_rtt_msg` won't be able to pick up
+                // `Connection::remote_node_id`.
+                // Instead, we provide `self.remote_node_id` here - we know it in advance,
+                // after all.
                 try_send_rtt_msg(&conn, &self.ep, self.remote_node_id);
                 Ok((conn, zrtt_accepted))
             }
@@ -1675,6 +1681,10 @@ impl Connection {
 /// If we can't notify the actor that will impact performance a little, but we can still
 /// function.
 fn try_send_rtt_msg(conn: &Connection, magic_ep: &Endpoint, remote_node_id: Option<NodeId>) {
+    match (remote_node_id, conn.remote_node_id().ok()) {
+        (Some(x), None) => panic!("Ah - I thought I would've been able to remove this"),
+        _ => {}
+    };
     // If we can't notify the rtt-actor that's not great but not critical.
     let Some(node_id) = remote_node_id.or_else(|| conn.remote_node_id().ok()) else {
         warn!(?conn, "failed to get remote node id");
