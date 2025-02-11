@@ -4404,7 +4404,11 @@
 <a href="#4403" id="4403">4403</a>
 <a href="#4404" id="4404">4404</a>
 <a href="#4405" id="4405">4405</a>
-<a href="#4406" id="4406">4406</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4406" id="4406">4406</a>
+<a href="#4407" id="4407">4407</a>
+<a href="#4408" id="4408">4408</a>
+<a href="#4409" id="4409">4409</a>
+<a href="#4410" id="4410">4410</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4525,8 +4529,8 @@
 
     <span class="doccomment">/// A DNS resolver to use for resolving relay URLs.
     ///
-    /// You can use [`crate::dns::default_resolver`] for a resolver that uses the system's DNS
-    /// configuration.
+    /// You can use [`crate::dns::DnsResolver::new`] for a resolver
+    /// that uses the system's DNS configuration.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) dns_resolver: DnsResolver,
 
     <span class="doccomment">/// Proxy configuration.
@@ -4546,7 +4550,8 @@
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) path_selection: PathSelection,
 }
 
-<span class="kw">impl </span>Default <span class="kw">for </span>Options {
+<span class="attr">#[cfg(test)]
+</span><span class="kw">impl </span>Default <span class="kw">for </span>Options {
     <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>secret_key = SecretKey::generate(rand::rngs::OsRng);
         <span class="kw">let </span>server_config = make_default_server_config(<span class="kw-2">&amp;</span>secret_key);
@@ -4558,7 +4563,7 @@
             node_map: <span class="prelude-val">None</span>,
             discovery: <span class="prelude-val">None</span>,
             proxy_url: <span class="prelude-val">None</span>,
-            dns_resolver: <span class="kw">crate</span>::dns::default_resolver().clone(),
+            dns_resolver: DnsResolver::new(),
             server_config,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
@@ -4569,6 +4574,7 @@
 }
 
 <span class="doccomment">/// Generate a server config with no ALPNS and a default transport configuration
+</span><span class="attr">#[cfg(test)]
 </span><span class="kw">fn </span>make_default_server_config(secret_key: <span class="kw-2">&amp;</span>SecretKey) -&gt; ServerConfig {
     <span class="kw">let </span>quic_server_config = <span class="kw">crate</span>::tls::make_server_config(secret_key, <span class="macro">vec!</span>[], <span class="bool-val">false</span>)
         .expect(<span class="string">"should generate valid config"</span>);
@@ -7553,6 +7559,7 @@
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{
         defaults::staging::{<span class="self">self</span>, EU_RELAY_HOSTNAME},
+        dns::DnsResolver,
         tls, Endpoint, RelayMode,
     };
 
@@ -8435,6 +8442,7 @@
             Arc::new(quinn::TransportConfig::default()),
             <span class="bool-val">true</span>,
         )<span class="question-mark">?</span>;
+        <span class="kw">let </span>dns_resolver = DnsResolver::new();
         <span class="kw">let </span>opts = Options {
             addr_v4: <span class="prelude-val">None</span>,
             addr_v6: <span class="prelude-val">None</span>,
@@ -8442,7 +8450,7 @@
             relay_map: RelayMap::empty(),
             node_map: <span class="prelude-val">None</span>,
             discovery: <span class="prelude-val">None</span>,
-            dns_resolver: <span class="kw">crate</span>::dns::default_resolver().clone(),
+            dns_resolver,
             proxy_url: <span class="prelude-val">None</span>,
             server_config,
             insecure_skip_relay_cert_verify: <span class="bool-val">true</span>,

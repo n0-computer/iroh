@@ -1552,11 +1552,11 @@
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
-<span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span>hickory_resolver::TokioResolver <span class="kw">as </span>DnsResolver;
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span>iroh_metrics::inc;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">use </span>iroh_relay::dns::DnsResolver;
 <span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
 <span class="kw">use </span>n0_future::{
     task::{<span class="self">self</span>, AbortOnDropHandle},
