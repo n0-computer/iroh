@@ -25,7 +25,7 @@ use anyhow::{bail, Context, Result};
 use data_encoding::BASE32_DNSSEC;
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
-use n0_future::time::Duration;
+use n0_future::{time::Duration, Stream};
 use pin_project::pin_project;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
@@ -33,7 +33,7 @@ use url::Url;
 use crate::{
     discovery::{
         dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem,
-        DiscoverySubscribers, DiscoveryTask,
+        DiscoverySubscribers, DiscoveryTask, Lagged,
     },
     dns::DnsResolver,
     magicsock::{self, Handle, NodeIdMappedAddr},
@@ -953,11 +953,16 @@ impl Endpoint {
         self.msock.list_remote_infos().into_iter()
     }
 
-    /// Returns a stream that yield all items from node discovery, both active and passive.
-    pub fn watch_discovery(&self) -> impl n0_future::Stream<Item = DiscoveryItem> {
-        use n0_future::StreamExt;
-        let recv = self.msock.discovery_subscribers.subscribe();
-        tokio_stream::wrappers::BroadcastStream::new(recv).filter_map(|item| item.ok())
+    /// Returns a stream that yields information for all nodes discovered by this endpoint.
+    ///
+    /// Whenever a node is discovered via the endpoint's discovery service, the corresponding
+    /// [`DiscoveryItem`] is yielded from the stream returned from this function. If the stream
+    /// is not processed fast enough, [`Lagged`] may be yielded, indicating that items were missed.
+    ///
+    /// This yields both nodes discovered actively when attempting to connect and [`Discovery::resolve`]
+    /// is invoked, and nodes discovered passively from the endpoint's subscription to [`Discovery::subscribe`].
+    pub fn discovery_stream(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> {
+        self.msock.discovery_subscribers().subscribe()
     }
 
     // # Methods for less common getters.
@@ -1135,8 +1140,9 @@ impl Endpoint {
         }
     }
 
+    /// Returns a reference to the subscribers channel for discovery events.
     pub(crate) fn discovery_subscribers(&self) -> &DiscoverySubscribers {
-        &self.msock.discovery_subscribers
+        self.msock.discovery_subscribers()
     }
 
     #[cfg(test)]

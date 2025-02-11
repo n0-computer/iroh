@@ -114,6 +114,7 @@ use n0_future::{
     stream::{Boxed as BoxStream, StreamExt},
     task::{self, AbortOnDropHandle},
     time::{self, Duration},
+    Stream, TryStreamExt,
 };
 use tokio::sync::oneshot;
 use tracing::{debug, error_span, warn, Instrument};
@@ -503,6 +504,18 @@ impl Drop for DiscoveryTask {
     }
 }
 
+/// Error returned when a discovery watch stream lagged too far behind.
+///
+/// The stream returned from [`Endpoint::watch_discovery`] yields this error
+/// if the loop in which the stream is processed cannot keep up with the emitted
+/// discovery events. Attempting to read the next item from the channel afterwards
+/// will return the oldest discovery event that is still retained.
+///
+/// Includes the number of skipped messages.
+#[derive(Debug, thiserror::Error)]
+#[error("channel lagged by {0}")]
+pub struct Lagged(u64);
+
 #[derive(Clone, Debug)]
 pub(super) struct DiscoverySubscribers {
     inner: tokio::sync::broadcast::Sender<DiscoveryItem>,
@@ -510,15 +523,26 @@ pub(super) struct DiscoverySubscribers {
 
 impl DiscoverySubscribers {
     pub(crate) fn new() -> Self {
+        // TODO: Make capacity configurable from the endpoint builder?
+        // This is the maximum number of [`DiscoveryItem`]s held by the channel if
+        // subscribers are stalled.
+        const CAPACITY: usize = 128;
         Self {
-            inner: tokio::sync::broadcast::Sender::new(1024),
+            inner: tokio::sync::broadcast::Sender::new(CAPACITY),
         }
     }
-    pub(crate) fn subscribe(&self) -> tokio::sync::broadcast::Receiver<DiscoveryItem> {
-        self.inner.subscribe()
+
+    pub(crate) fn subscribe(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> {
+        let recv = self.inner.subscribe();
+        tokio_stream::wrappers::BroadcastStream::new(recv).map_err(|err| {
+            let tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n) = err;
+            Lagged(n)
+        })
     }
 
     pub(crate) fn send(&self, item: DiscoveryItem) {
+        // `broadcast::Sender::send` returns an error if the channel has no subscribers,
+        // which we don't care about.
         self.inner.send(item).ok();
     }
 }
@@ -826,7 +850,7 @@ mod tests {
             new_endpoint(secret, disco).await
         };
 
-        let stream = ep1.watch_discovery();
+        let stream = ep1.discovery_stream();
 
         // wait for ep2 node addr to be updated and connect from ep1 -> discovery via resolve
         ep2.node_addr().await?;
@@ -845,11 +869,13 @@ mod tests {
         assert_eq!(discovered.len(), 2);
         let discovered_active = discovered
             .iter()
+            .map(|item| item.as_ref().expect("unexpected lag"))
             .find(|x| x.provenance == "test-disco")
             .unwrap();
         assert_eq!(discovered_active.node_addr.node_id, ep2.node_id());
         let discovered_passive = discovered
             .iter()
+            .map(|item| item.as_ref().expect("unexpected lag"))
             .find(|x| x.provenance == "test-disco-passive")
             .unwrap();
         assert_eq!(discovered_passive.node_addr, passive_item.node_addr);

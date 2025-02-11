@@ -278,7 +278,8 @@ pub(crate) struct MagicSock {
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
 
-    pub(crate) discovery_subscribers: DiscoverySubscribers,
+    /// Broadcast channel for listening to discovery updates.
+    discovery_subscribers: DiscoverySubscribers,
 }
 
 impl MagicSock {
@@ -434,6 +435,11 @@ impl MagicSock {
             .send(ActorMessage::NetworkChange)
             .await
             .ok();
+    }
+
+    /// Returns a reference to the subscribers channel for discovery events.
+    pub(crate) fn discovery_subscribers(&self) -> &DiscoverySubscribers {
+        &self.discovery_subscribers
     }
 
     #[cfg(test)]
