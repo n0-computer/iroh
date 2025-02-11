@@ -149,47 +149,6 @@ pub(crate) struct Options {
     pub(crate) path_selection: PathSelection,
 }
 
-#[cfg(test)]
-impl Default for Options {
-    fn default() -> Self {
-        let secret_key = SecretKey::generate(rand::rngs::OsRng);
-        // TODO: make configurable
-        let tls_auth = crate::tls::Authentication::X509;
-        let server_config = make_default_server_config(&secret_key, tls_auth);
-        Options {
-            addr_v4: None,
-            addr_v6: None,
-            secret_key,
-            relay_map: RelayMap::empty(),
-            node_map: None,
-            discovery: None,
-            discovery_user_data: None,
-            proxy_url: None,
-            #[cfg(not(wasm_browser))]
-            dns_resolver: DnsResolver::new(),
-            server_config,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify: false,
-            #[cfg(any(test, feature = "test-utils"))]
-            path_selection: PathSelection::default(),
-        }
-    }
-}
-
-/// Generate a server config with no ALPNS and a default transport configuration
-#[cfg(test)]
-fn make_default_server_config(
-    secret_key: &SecretKey,
-    tls_auth: crate::tls::Authentication,
-) -> ServerConfig {
-    let quic_server_config = tls_auth
-        .make_server_config(secret_key, vec![], false)
-        .expect("should generate valid config");
-    let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
-    server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
-    server_config
-}
-
 /// Contents of a relay message. Use a SmallVec to avoid allocations for the very
 /// common case of a single packet.
 type RelayContents = SmallVec<[Bytes; 1]>;
@@ -3436,6 +3395,42 @@ mod tests {
 
     const ALPN: &[u8] = b"n0/test/1";
 
+    impl Default for Options {
+        fn default() -> Self {
+            let secret_key = SecretKey::generate(rand::rngs::OsRng);
+            let tls_auth = crate::tls::Authentication::RawPublicKey;
+            let server_config = make_default_server_config(&secret_key, tls_auth);
+            Options {
+                addr_v4: None,
+                addr_v6: None,
+                secret_key,
+                relay_map: RelayMap::empty(),
+                node_map: None,
+                discovery: None,
+                proxy_url: None,
+                dns_resolver: DnsResolver::new(),
+                server_config,
+                #[cfg(any(test, feature = "test-utils"))]
+                insecure_skip_relay_cert_verify: false,
+                #[cfg(any(test, feature = "test-utils"))]
+                path_selection: PathSelection::default(),
+            }
+        }
+    }
+
+    /// Generate a server config with no ALPNS and a default transport configuration
+    fn make_default_server_config(
+        secret_key: &SecretKey,
+        tls_auth: crate::tls::Authentication,
+    ) -> ServerConfig {
+        let quic_server_config = tls_auth
+            .make_server_config(secret_key, vec![], false)
+            .expect("should generate valid config");
+        let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
+        server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
+        server_config
+    }
+
     impl MagicSock {
         #[track_caller]
         pub fn add_test_addr(&self, node_addr: NodeAddr) {
@@ -4109,7 +4104,7 @@ mod tests {
             Ok(quic_ep)
         }
 
-        let tls_auth = tls::Authentication::X509;
+        let tls_auth = tls::Authentication::RawPublicKey;
         let m1 = make_conn("127.0.0.1:7770".parse().unwrap(), tls_auth)?;
         let m2 = make_conn("127.0.0.1:7771".parse().unwrap(), tls_auth)?;
 
@@ -4414,7 +4409,7 @@ mod tests {
         // Regression test: if there is no send_addr we should keep being able to use the
         // Endpoint.
 
-        let tls_auth = tls::Authentication::X509;
+        let tls_auth = tls::Authentication::RawPublicKey;
 
         let secret_key_1 = SecretKey::from_bytes(&[1u8; 32]);
         let secret_key_2 = SecretKey::from_bytes(&[2u8; 32]);
@@ -4515,7 +4510,7 @@ mod tests {
         // This specifically tests the `if udp_addr.is_none() && relay_url.is_none()`
         // behaviour of MagicSock::try_send.
 
-        let tls_auth = tls::Authentication::X509;
+        let tls_auth = tls::Authentication::RawPublicKey;
 
         let secret_key_1 = SecretKey::from_bytes(&[1u8; 32]);
         let secret_key_2 = SecretKey::from_bytes(&[2u8; 32]);
