@@ -194,7 +194,11 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
 
 impl<T: Discovery> Discovery for Arc<T> {}
 
-/// The results returned from [`Discovery::resolve`].
+/// Node discovery results from [`Discovery`] services.
+///
+/// This is the item in the streams returned from [`Discovery::resolve`] and
+/// [`Discovery::subscribe`]. It contains the [`NodeData`] about the discovered node,
+/// and some additional metadata about the discovery.
 ///
 /// This struct derefs to [`NodeData`], so you can access the methods from [`NodeData`]
 /// directly from [`DiscoveryItem`].
