@@ -944,7 +944,11 @@
 <a href="#943" id="943">943</a>
 <a href="#944" id="944">944</a>
 <a href="#945" id="945">945</a>
-<a href="#946" id="946">946</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a>
+<a href="#948" id="948">948</a>
+<a href="#949" id="949">949</a>
+<a href="#950" id="950">950</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1140,7 +1144,11 @@
 
 <span class="kw">impl</span>&lt;T: Discovery&gt; Discovery <span class="kw">for </span>Arc&lt;T&gt; {}
 
-<span class="doccomment">/// The results returned from [`Discovery::resolve`].
+<span class="doccomment">/// Node discovery results from [`Discovery`] services.
+///
+/// This is the item in the streams returned from [`Discovery::resolve`] and
+/// [`Discovery::subscribe`]. It contains the [`NodeData`] about the discovered node,
+/// and some additional metadata about the discovery.
 ///
 /// This struct derefs to [`NodeData`], so you can access the methods from [`NodeData`]
 /// directly from [`DiscoveryItem`].
