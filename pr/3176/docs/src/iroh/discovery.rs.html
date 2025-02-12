@@ -948,7 +948,8 @@
 <a href="#947" id="947">947</a>
 <a href="#948" id="948">948</a>
 <a href="#949" id="949">949</a>
-<a href="#950" id="950">950</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#950" id="950">950</a>
+<a href="#951" id="951">951</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1838,10 +1839,11 @@
             relay_url,
             direct_addresses: Default::default(),
         };
-        <span class="kw">let </span>(resolved_addr, resolved_user_data) = resolved.into_node_addr_and_user_data();
+        <span class="kw">let </span>resolved_user_data = resolved.user_data();
+        <span class="kw">let </span>resolved_addr = resolved.node_addr();
 
         <span class="macro">assert_eq!</span>(resolved_addr, expected);
-        <span class="macro">assert_eq!</span>(resolved_user_data, <span class="prelude-val">Some</span>(user_data));
+        <span class="macro">assert_eq!</span>(resolved_user_data, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>user_data));
         <span class="prelude-val">Ok</span>(())
     }
 
