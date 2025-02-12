@@ -86,6 +86,9 @@ pub(super) struct Client {
     _drop_guard: AbortOnDropHandle<()>,
 }
 
+/// Any state that depends on sockets being available in the current environment.
+///
+/// Factored out so it can be disabled easily in browsers.
 #[cfg(not(wasm_browser))]
 #[derive(Debug, Clone)]
 pub(crate) struct SocketState {
@@ -208,6 +211,7 @@ struct Actor {
     protocols: BTreeSet<ProbeProto>,
     /// Optional [`IpMappedAddresses`] used to enable QAD in iroh
 
+    /// Any socket-related state that doesn't exist/work in browsers
     #[cfg(not(wasm_browser))]
     socket_state: SocketState,
     /// The hairpin actor.
