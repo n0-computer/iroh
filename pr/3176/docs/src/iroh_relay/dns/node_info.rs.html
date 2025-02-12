@@ -896,7 +896,7 @@
 
     <span class="doccomment">/// Adds direct addresses to the node data.
     </span><span class="kw">pub fn </span>add_direct_addresses(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addrs: <span class="kw">impl </span>IntoIterator&lt;Item = SocketAddr&gt;) {
-        <span class="self">self</span>.direct_addresses.extend(addrs.into_iter())
+        <span class="self">self</span>.direct_addresses.extend(addrs)
     }
 
     <span class="doccomment">/// Sets the relay URL of the node data.
