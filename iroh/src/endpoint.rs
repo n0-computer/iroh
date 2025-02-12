@@ -71,6 +71,16 @@ pub use super::magicsock::{
 /// is still no connection the configured [`Discovery`] will be used however.
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
+/// Maximum amount of TLS tickets we will cache (by default) for 0-RTT connection
+/// establishment.
+///
+/// 8 tickets per remote endpoint, 32 different endpoints would max out the required storage:
+/// ~200 bytes per session + certificates (which are ~387 bytes)
+/// So 8 * 32 * (200 + 387) = 150.272 bytes, assuming pointers to certificates
+/// are never aliased pointers (they're Arc'ed).
+/// I think 150KB is an acceptable default upper limit for such a cache.
+const MAX_TLS_TICKETS: usize = 8 * 32;
+
 type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync>;
 
 /// Defines the mode of path selection for all traffic flowing through
@@ -550,12 +560,9 @@ impl Endpoint {
             msock: msock.clone(),
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
             static_config: Arc::new(static_config),
-            // 8 tickets per remote endpoint, 32 different endpoints
-            // ~200 bytes per session + certificates (which are ~387 bytes)
-            // So 8 * 32 * (200 + 387) = 150.272 bytes, assuming pointers to certificates
-            // are never aliased pointers (they're Arc'ed).
-            // I think 150KB is an acceptable default upper limit for such a cache.
-            session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(8 * 32)),
+            session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(
+                MAX_TLS_TICKETS,
+            )),
         };
         Ok(ep)
     }
@@ -692,6 +699,15 @@ impl Endpoint {
             client_config
         };
 
+        // We used to use a constant "localhost" for this - however, that would put all of
+        // the TLS session tickets we receive into the same bucket in the TLS session ticket cache.
+        // So we choose something that'd dependent on the NodeId.
+        // We cannot use hex to encode the NodeId, as that'd encode to 64 characters, but we only
+        // have 63 maximum per DNS subdomain. Base32 is the next best alternative.
+        // We use the `.invalid` TLD, as that's specified (in RFC 2606) to never actually resolve
+        // "for real", unlike `.localhost` which is allowed to resolve to `127.0.0.1`.
+        // We also add "iroh" as a subdomain, although those 5 bytes might not be neccessary.
+        // We *could* decide to remove that indicator in the future likely without breakage.
         let server_name = &format!("{}.iroh.invalid", BASE32_DNSSEC.encode(node_id.as_bytes()));
         let connect =
             self.msock
@@ -2263,105 +2279,115 @@ mod tests {
             .unwrap();
     }
 
+    async fn spawn_0rtt_server() -> Result<Endpoint> {
+        let server = Endpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+
+        // Gets aborted via the endpoint closing causing an `Err`
+        // a simple echo server
+        tokio::spawn({
+            let server = server.clone();
+            async move {
+                while let Some(incoming) = server.accept().await {
+                    let connecting = incoming.accept()?;
+                    let conn = match connecting.into_0rtt() {
+                        Ok((conn, _)) => {
+                            info!("0rtt accepted");
+                            conn
+                        }
+                        Err(connecting) => {
+                            info!("0rtt denied");
+                            connecting.await?
+                        }
+                    };
+                    let (mut send, mut recv) = conn.accept_bi().await?;
+                    let data = recv.read_to_end(10_000_000).await?;
+                    send.write_all(&data).await?;
+                    send.finish()?;
+
+                    // Stay alive until the other side closes the connection.
+                    conn.closed().await;
+                }
+                anyhow::Ok(())
+            }
+        });
+
+        Ok(server)
+    }
+
+    async fn connect_client_0rtt(
+        client: &Endpoint,
+        server_addr: NodeAddr,
+        expect_0rtt: bool,
+    ) -> Result<()> {
+        let result = client
+            .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
+            .await?
+            .into_0rtt();
+
+        let (conn, zero_rtt_expectation) = if expect_0rtt {
+            let (conn, zrtt) = result.map_err(|_| "0rtt failed").unwrap();
+            (conn, n0_future::Either::Left(zrtt))
+        } else {
+            let conn = result.expect_err("expected 0rtt to fail");
+            // we just fake the ZeroRttExpected value so the assert is true
+            let zrtt = n0_future::Either::Right(n0_future::future::ready(true));
+            (conn.await?, zrtt)
+        };
+
+        let (mut send, mut recv) = conn.open_bi().await?;
+        send.write_all(b"hello").await?;
+        send.finish()?;
+        assert!(zero_rtt_expectation.await);
+        let received = recv.read_to_end(1_000).await?;
+        assert_eq!(&received, b"hello");
+        conn.close(0u32.into(), b"thx");
+        Ok(())
+    }
+
     #[tokio::test]
     #[traced_test]
     async fn test_connect_with_opts_0rtt() -> TestResult {
-        async fn spawn_server() -> Result<Endpoint> {
-            let server = Endpoint::builder()
-                .alpns(vec![TEST_ALPN.to_vec()])
-                .relay_mode(RelayMode::Disabled)
-                .bind()
-                .await?;
-
-            // Gets aborted via the endpoint closing causing an `Err`
-            tokio::spawn({
-                let server = server.clone();
-                async move {
-                    while let Some(incoming) = server.accept().await {
-                        let connecting = incoming.accept()?;
-                        let conn = match connecting.into_0rtt() {
-                            Ok((conn, _)) => {
-                                info!("0rtt accepted");
-                                conn
-                            }
-                            Err(connecting) => {
-                                info!("0rtt denied");
-                                connecting.await?
-                            }
-                        };
-                        let mut recv = conn.accept_uni().await?;
-                        let _ = recv.read_to_end(1_000).await?;
-
-                        let mut send = conn.open_uni().await?;
-                        send.write_all(b"thank you").await?;
-                        send.finish()?;
-
-                        // Gracefully close the connection
-                        conn.closed().await;
-                    }
-                    anyhow::Ok(())
-                }
-            });
-
-            Ok(server)
-        }
-
-        async fn connect_client_expect_0rtt_err(
-            client: &Endpoint,
-            server_addr: NodeAddr,
-        ) -> Result<()> {
-            let conn = client
-                .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
-                .await?
-                .into_0rtt()
-                .expect_err("0rtt doesn't have keys on first connection yet")
-                .await?;
-
-            let mut send = conn.open_uni().await?;
-            send.write_all(b"hello").await?;
-            send.finish()?;
-            let mut recv = conn.accept_uni().await?;
-            recv.read_to_end(1_000).await?;
-            conn.close(0u32.into(), b"thx");
-            Ok(())
-        }
-
-        async fn connect_client_expect_0rtt_ok(
-            client: &Endpoint,
-            server_addr: NodeAddr,
-        ) -> Result<()> {
-            let (conn, zero_rtt_accepted) = client
-                .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
-                .await?
-                .into_0rtt()
-                .map_err(|_| "0rtt failed")
-                .unwrap();
-
-            let mut send = conn.open_uni().await?;
-            send.write_all(b"hello").await?;
-            send.finish()?;
-            assert!(zero_rtt_accepted.await);
-            let mut recv = conn.accept_uni().await?;
-            recv.read_to_end(1_000).await?;
-            conn.close(0u32.into(), b"thx");
-            Ok(())
-        }
-
         let client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
-        let server = spawn_server().await?;
+        let server = spawn_0rtt_server().await?;
 
-        connect_client_expect_0rtt_err(&client, server.node_addr().await?).await?;
+        connect_client_0rtt(&client, server.node_addr().await?, false).await?;
+        // The second 0rtt attempt should work
+        connect_client_0rtt(&client, server.node_addr().await?, true).await?;
+
+        client.close().await;
+        server.close().await;
+
+        Ok(())
+    }
+
+    // We have this test, as this would've failed at some point.
+    // This effectively tests that we correctly categorize the TLS session tickets we
+    // receive into the respective "bucket" for the recipient.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_connect_with_opts_0rtt_non_consecutive() -> TestResult {
+        let client = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+        let server = spawn_0rtt_server().await?;
+
+        connect_client_0rtt(&client, server.node_addr().await?, false).await?;
 
         // connecting with another endpoint should not interfere with our
         // TLS session ticket cache for the first endpoint:
-        let another = spawn_server().await?;
-        connect_client_expect_0rtt_err(&client, another.node_addr().await?).await?;
+        let another = spawn_0rtt_server().await?;
+        connect_client_0rtt(&client, another.node_addr().await?, false).await?;
         another.close().await;
 
-        connect_client_expect_0rtt_ok(&client, server.node_addr().await?).await?;
+        connect_client_0rtt(&client, server.node_addr().await?, true).await?;
 
         client.close().await;
         server.close().await;
