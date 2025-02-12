@@ -97,7 +97,9 @@ pub fn make_server_config(
         warn!("enabling SSLKEYLOGFILE for TLS pre-master keys");
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
-    crypto.max_early_data_size = u32::MAX; // must be u32::MAX or 0 (the default). Any other value panics with QUIC
+    // must be u32::MAX or 0 (the default). Any other value panics with QUIC
+    // This is specified in RFC 9001: https://www.rfc-editor.org/rfc/rfc9001#section-4.6.1
+    crypto.max_early_data_size = u32::MAX;
     let config = crypto.try_into()?;
     Ok(config)
 }

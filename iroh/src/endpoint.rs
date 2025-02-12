@@ -2288,7 +2288,7 @@ mod tests {
             .unwrap();
     }
 
-    async fn spawn_0rtt_server() -> Result<Endpoint> {
+    async fn spawn_0rtt_server(log_span: tracing::Span) -> Result<Endpoint> {
         let server = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled)
@@ -2322,6 +2322,7 @@ mod tests {
                 }
                 anyhow::Ok(())
             }
+            .instrument(log_span)
         });
 
         Ok(server)
@@ -2372,7 +2373,7 @@ mod tests {
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
-        let server = spawn_0rtt_server().await?;
+        let server = spawn_0rtt_server(info_span!("server")).await?;
 
         connect_client_0rtt_expect_err(&client, server.node_addr().await?).await?;
         // The second 0rtt attempt should work
@@ -2394,13 +2395,13 @@ mod tests {
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
-        let server = spawn_0rtt_server().await?;
+        let server = spawn_0rtt_server(info_span!("server")).await?;
 
         connect_client_0rtt_expect_err(&client, server.node_addr().await?).await?;
 
         // connecting with another endpoint should not interfere with our
         // TLS session ticket cache for the first endpoint:
-        let another = spawn_0rtt_server().await?;
+        let another = spawn_0rtt_server(info_span!("another")).await?;
         connect_client_0rtt_expect_err(&client, another.node_addr().await?).await?;
         another.close().await;
 
