@@ -17,7 +17,7 @@
 - [ ] Tests if relevant.
 - [ ] All breaking changes documented.
   - [ ] List all breaking changes in the above "Breaking Changes" section.
-  - [ ] Open an issue or PR on any number0 repos that are affected by this breaking change. The major ones are:
+  - [ ] Open an issue or PR on any number0 repos that are affected by this breaking change. Give guidance on how the updates should be handled or do the actual updates themselves. The major ones are:
     - [ ] `quic-rpc`
     - [ ] `iroh-gossip`
     - [ ] `iroh-blobs`
