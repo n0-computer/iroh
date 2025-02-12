@@ -525,33 +525,14 @@ struct StaticConfig {
 impl StaticConfig {
     /// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
     fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> Result<ServerConfig> {
-        let server_config = make_server_config(
-            self.tls_auth,
-            &self.secret_key,
-            alpn_protocols,
-            self.transport_config.clone(),
-            self.keylog,
-        )?;
+        let quic_server_config =
+            self.tls_auth
+                .make_server_config(&self.secret_key, alpn_protocols, self.keylog)?;
+        let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
+        server_config.transport_config(self.transport_config.clone());
+
         Ok(server_config)
     }
-}
-
-/// Creates a [`ServerConfig`] with the given secret key and limits.
-// This return type can not longer be used anywhere in our public API.  It is however still
-// used by iroh::node::Node (or rather iroh::node::Builder) to create a plain Quinn
-// endpoint.
-pub fn make_server_config(
-    tls_auth: tls::Authentication,
-    secret_key: &SecretKey,
-    alpn_protocols: Vec<Vec<u8>>,
-    transport_config: Arc<TransportConfig>,
-    keylog: bool,
-) -> Result<ServerConfig> {
-    let quic_server_config = tls_auth.make_server_config(secret_key, alpn_protocols, keylog)?;
-    let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
-    server_config.transport_config(transport_config);
-
-    Ok(server_config)
 }
 
 /// Controls an iroh node, establishing connections with other nodes.
@@ -750,7 +731,7 @@ impl Endpoint {
             let alpn_protocols = vec![alpn.to_vec()];
             let quic_client_config = self.static_config.tls_auth.make_client_config(
                 &self.static_config.secret_key,
-                Some(node_id),
+                node_id,
                 alpn_protocols,
                 Some(self.session_store.clone()),
                 self.static_config.keylog,
