@@ -22,9 +22,9 @@ mod verifier;
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Authentication {
     /// Self signed certificates, based on libp2p-tls
-    #[default]
     X509,
     /// RFC 7250 TLS extension: Raw Public Keys.
+    #[default]
     RawPublicKey,
 }
 
@@ -37,7 +37,7 @@ impl Authentication {
     pub fn make_client_config(
         self,
         secret_key: &SecretKey,
-        remote_peer_id: Option<PublicKey>,
+        remote_peer_id: PublicKey,
         alpn_protocols: Vec<Vec<u8>>,
         session_store: Option<Arc<dyn rustls::client::ClientSessionStore>>,
         keylog: bool,
@@ -53,7 +53,7 @@ impl Authentication {
         .expect("version supported by ring")
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(
-            verifier::CertificateVerifier::with_remote_peer_id(self, remote_peer_id),
+            verifier::ServerCertificateVerifier::with_remote_peer_id(self, remote_peer_id),
         ))
         .with_client_cert_resolver(cert_resolver);
         crypto.alpn_protocols = alpn_protocols;
@@ -90,7 +90,7 @@ impl Authentication {
         ))
         .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
         .expect("fixed config")
-        .with_client_cert_verifier(Arc::new(verifier::CertificateVerifier::new(self)))
+        .with_client_cert_verifier(Arc::new(verifier::ClientCertificateVerifier::new(self)))
         .with_cert_resolver(cert_resolver);
         crypto.alpn_protocols = alpn_protocols;
         if keylog {
