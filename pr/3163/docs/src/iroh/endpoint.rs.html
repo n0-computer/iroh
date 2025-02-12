@@ -2369,7 +2369,33 @@
 <a href="#2368" id="2368">2368</a>
 <a href="#2369" id="2369">2369</a>
 <a href="#2370" id="2370">2370</a>
-<a href="#2371" id="2371">2371</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2371" id="2371">2371</a>
+<a href="#2372" id="2372">2372</a>
+<a href="#2373" id="2373">2373</a>
+<a href="#2374" id="2374">2374</a>
+<a href="#2375" id="2375">2375</a>
+<a href="#2376" id="2376">2376</a>
+<a href="#2377" id="2377">2377</a>
+<a href="#2378" id="2378">2378</a>
+<a href="#2379" id="2379">2379</a>
+<a href="#2380" id="2380">2380</a>
+<a href="#2381" id="2381">2381</a>
+<a href="#2382" id="2382">2382</a>
+<a href="#2383" id="2383">2383</a>
+<a href="#2384" id="2384">2384</a>
+<a href="#2385" id="2385">2385</a>
+<a href="#2386" id="2386">2386</a>
+<a href="#2387" id="2387">2387</a>
+<a href="#2388" id="2388">2388</a>
+<a href="#2389" id="2389">2389</a>
+<a href="#2390" id="2390">2390</a>
+<a href="#2391" id="2391">2391</a>
+<a href="#2392" id="2392">2392</a>
+<a href="#2393" id="2393">2393</a>
+<a href="#2394" id="2394">2394</a>
+<a href="#2395" id="2395">2395</a>
+<a href="#2396" id="2396">2396</a>
+<a href="#2397" id="2397">2397</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2441,6 +2467,16 @@
 /// [`Endpoint`] assumes one of those addresses probably works.  If after this delay there
 /// is still no connection the configured [`Discovery`] will be used however.
 </span><span class="kw">const </span>DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(<span class="number">500</span>);
+
+<span class="doccomment">/// Maximum amount of TLS tickets we will cache (by default) for 0-RTT connection
+/// establishment.
+///
+/// 8 tickets per remote endpoint, 32 different endpoints would max out the required storage:
+/// ~200 bytes per session + certificates (which are ~387 bytes)
+/// So 8 * 32 * (200 + 387) = 150.272 bytes, assuming pointers to certificates
+/// are never aliased pointers (they're Arc'ed).
+/// I think 150KB is an acceptable default upper limit for such a cache.
+</span><span class="kw">const </span>MAX_TLS_TICKETS: usize = <span class="number">8 </span>* <span class="number">32</span>;
 
 <span class="kw">type </span>DiscoveryBuilder = Box&lt;<span class="kw">dyn </span>FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; + Send + Sync&gt;;
 
@@ -2921,12 +2957,9 @@
             msock: msock.clone(),
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
             static_config: Arc::new(static_config),
-            <span class="comment">// 8 tickets per remote endpoint, 32 different endpoints
-            // ~200 bytes per session + certificates (which are ~387 bytes)
-            // So 8 * 32 * (200 + 387) = 150.272 bytes, assuming pointers to certificates
-            // are never aliased pointers (they're Arc'ed).
-            // I think 150KB is an acceptable default upper limit for such a cache.
-            </span>session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(<span class="number">8 </span>* <span class="number">32</span>)),
+            session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(
+                MAX_TLS_TICKETS,
+            )),
         };
         <span class="prelude-val">Ok</span>(ep)
     }
@@ -3063,7 +3096,16 @@
             client_config
         };
 
-        <span class="kw">let </span>server_name = <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{}.iroh.invalid"</span>, BASE32_DNSSEC.encode(node_id.as_bytes()));
+        <span class="comment">// We used to use a constant "localhost" for this - however, that would put all of
+        // the TLS session tickets we receive into the same bucket in the TLS session ticket cache.
+        // So we choose something that'd dependent on the NodeId.
+        // We cannot use hex to encode the NodeId, as that'd encode to 64 characters, but we only
+        // have 63 maximum per DNS subdomain. Base32 is the next best alternative.
+        // We use the `.invalid` TLD, as that's specified (in RFC 2606) to never actually resolve
+        // "for real", unlike `.localhost` which is allowed to resolve to `127.0.0.1`.
+        // We also add "iroh" as a subdomain, although those 5 bytes might not be neccessary.
+        // We *could* decide to remove that indicator in the future likely without breakage.
+        </span><span class="kw">let </span>server_name = <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{}.iroh.invalid"</span>, BASE32_DNSSEC.encode(node_id.as_bytes()));
         <span class="kw">let </span>connect =
             <span class="self">self</span>.msock
                 .endpoint()
@@ -4634,105 +4676,115 @@
             .unwrap();
     }
 
+    <span class="kw">async fn </span>spawn_0rtt_server() -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint&gt; {
+        <span class="kw">let </span>server = Endpoint::builder()
+            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="comment">// Gets aborted via the endpoint closing causing an `Err`
+        // a simple echo server
+        </span>tokio::spawn({
+            <span class="kw">let </span>server = server.clone();
+            <span class="kw">async move </span>{
+                <span class="kw">while let </span><span class="prelude-val">Some</span>(incoming) = server.accept().<span class="kw">await </span>{
+                    <span class="kw">let </span>connecting = incoming.accept()<span class="question-mark">?</span>;
+                    <span class="kw">let </span>conn = <span class="kw">match </span>connecting.into_0rtt() {
+                        <span class="prelude-val">Ok</span>((conn, <span class="kw">_</span>)) =&gt; {
+                            <span class="macro">info!</span>(<span class="string">"0rtt accepted"</span>);
+                            conn
+                        }
+                        <span class="prelude-val">Err</span>(connecting) =&gt; {
+                            <span class="macro">info!</span>(<span class="string">"0rtt denied"</span>);
+                            connecting.<span class="kw">await</span><span class="question-mark">?
+                        </span>}
+                    };
+                    <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+                    <span class="kw">let </span>data = recv.read_to_end(<span class="number">10_000_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+                    send.write_all(<span class="kw-2">&amp;</span>data).<span class="kw">await</span><span class="question-mark">?</span>;
+                    send.finish()<span class="question-mark">?</span>;
+
+                    <span class="comment">// Stay alive until the other side closes the connection.
+                    </span>conn.closed().<span class="kw">await</span>;
+                }
+                anyhow::Ok(())
+            }
+        });
+
+        <span class="prelude-val">Ok</span>(server)
+    }
+
+    <span class="kw">async fn </span>connect_client_0rtt(
+        client: <span class="kw-2">&amp;</span>Endpoint,
+        server_addr: NodeAddr,
+        expect_0rtt: bool,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">let </span>result = client
+            .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
+            .<span class="kw">await</span><span class="question-mark">?
+            </span>.into_0rtt();
+
+        <span class="kw">let </span>(conn, zero_rtt_expectation) = <span class="kw">if </span>expect_0rtt {
+            <span class="kw">let </span>(conn, zrtt) = result.map_err(|<span class="kw">_</span>| <span class="string">"0rtt failed"</span>).unwrap();
+            (conn, n0_future::Either::Left(zrtt))
+        } <span class="kw">else </span>{
+            <span class="kw">let </span>conn = result.expect_err(<span class="string">"expected 0rtt to fail"</span>);
+            <span class="comment">// we just fake the ZeroRttExpected value so the assert is true
+            </span><span class="kw">let </span>zrtt = n0_future::Either::Right(n0_future::future::ready(<span class="bool-val">true</span>));
+            (conn.<span class="kw">await</span><span class="question-mark">?</span>, zrtt)
+        };
+
+        <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+        send.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        send.finish()<span class="question-mark">?</span>;
+        <span class="macro">assert!</span>(zero_rtt_expectation.<span class="kw">await</span>);
+        <span class="kw">let </span>received = recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>received, <span class="string">b"hello"</span>);
+        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"thx"</span>);
+        <span class="prelude-val">Ok</span>(())
+    }
+
     <span class="attr">#[tokio::test]
     #[traced_test]
     </span><span class="kw">async fn </span>test_connect_with_opts_0rtt() -&gt; TestResult {
-        <span class="kw">async fn </span>spawn_server() -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint&gt; {
-            <span class="kw">let </span>server = Endpoint::builder()
-                .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-                .relay_mode(RelayMode::Disabled)
-                .bind()
-                .<span class="kw">await</span><span class="question-mark">?</span>;
-
-            <span class="comment">// Gets aborted via the endpoint closing causing an `Err`
-            </span>tokio::spawn({
-                <span class="kw">let </span>server = server.clone();
-                <span class="kw">async move </span>{
-                    <span class="kw">while let </span><span class="prelude-val">Some</span>(incoming) = server.accept().<span class="kw">await </span>{
-                        <span class="kw">let </span>connecting = incoming.accept()<span class="question-mark">?</span>;
-                        <span class="kw">let </span>conn = <span class="kw">match </span>connecting.into_0rtt() {
-                            <span class="prelude-val">Ok</span>((conn, <span class="kw">_</span>)) =&gt; {
-                                <span class="macro">info!</span>(<span class="string">"0rtt accepted"</span>);
-                                conn
-                            }
-                            <span class="prelude-val">Err</span>(connecting) =&gt; {
-                                <span class="macro">info!</span>(<span class="string">"0rtt denied"</span>);
-                                connecting.<span class="kw">await</span><span class="question-mark">?
-                            </span>}
-                        };
-                        <span class="kw">let </span><span class="kw-2">mut </span>recv = conn.accept_uni().<span class="kw">await</span><span class="question-mark">?</span>;
-                        <span class="kw">let _ </span>= recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-
-                        <span class="kw">let </span><span class="kw-2">mut </span>send = conn.open_uni().<span class="kw">await</span><span class="question-mark">?</span>;
-                        send.write_all(<span class="string">b"thank you"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-                        send.finish()<span class="question-mark">?</span>;
-
-                        <span class="comment">// Gracefully close the connection
-                        </span>conn.closed().<span class="kw">await</span>;
-                    }
-                    anyhow::Ok(())
-                }
-            });
-
-            <span class="prelude-val">Ok</span>(server)
-        }
-
-        <span class="kw">async fn </span>connect_client_expect_0rtt_err(
-            client: <span class="kw-2">&amp;</span>Endpoint,
-            server_addr: NodeAddr,
-        ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-            <span class="kw">let </span>conn = client
-                .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
-                .<span class="kw">await</span><span class="question-mark">?
-                </span>.into_0rtt()
-                .expect_err(<span class="string">"0rtt doesn't have keys on first connection yet"</span>)
-                .<span class="kw">await</span><span class="question-mark">?</span>;
-
-            <span class="kw">let </span><span class="kw-2">mut </span>send = conn.open_uni().<span class="kw">await</span><span class="question-mark">?</span>;
-            send.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-            send.finish()<span class="question-mark">?</span>;
-            <span class="kw">let </span><span class="kw-2">mut </span>recv = conn.accept_uni().<span class="kw">await</span><span class="question-mark">?</span>;
-            recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-            conn.close(<span class="number">0u32</span>.into(), <span class="string">b"thx"</span>);
-            <span class="prelude-val">Ok</span>(())
-        }
-
-        <span class="kw">async fn </span>connect_client_expect_0rtt_ok(
-            client: <span class="kw-2">&amp;</span>Endpoint,
-            server_addr: NodeAddr,
-        ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-            <span class="kw">let </span>(conn, zero_rtt_accepted) = client
-                .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
-                .<span class="kw">await</span><span class="question-mark">?
-                </span>.into_0rtt()
-                .map_err(|<span class="kw">_</span>| <span class="string">"0rtt failed"</span>)
-                .unwrap();
-
-            <span class="kw">let </span><span class="kw-2">mut </span>send = conn.open_uni().<span class="kw">await</span><span class="question-mark">?</span>;
-            send.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-            send.finish()<span class="question-mark">?</span>;
-            <span class="macro">assert!</span>(zero_rtt_accepted.<span class="kw">await</span>);
-            <span class="kw">let </span><span class="kw-2">mut </span>recv = conn.accept_uni().<span class="kw">await</span><span class="question-mark">?</span>;
-            recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-            conn.close(<span class="number">0u32</span>.into(), <span class="string">b"thx"</span>);
-            <span class="prelude-val">Ok</span>(())
-        }
-
         <span class="kw">let </span>client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>server = spawn_server().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server = spawn_0rtt_server().<span class="kw">await</span><span class="question-mark">?</span>;
 
-        connect_client_expect_0rtt_err(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        connect_client_0rtt(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="comment">// The second 0rtt attempt should work
+        </span>connect_client_0rtt(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        client.close().<span class="kw">await</span>;
+        server.close().<span class="kw">await</span>;
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="comment">// We have this test, as this would've failed at some point.
+    // This effectively tests that we correctly categorize the TLS session tickets we
+    // receive into the respective "bucket" for the recipient.
+    </span><span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>test_connect_with_opts_0rtt_non_consecutive() -&gt; TestResult {
+        <span class="kw">let </span>client = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server = spawn_0rtt_server().<span class="kw">await</span><span class="question-mark">?</span>;
+
+        connect_client_0rtt(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// connecting with another endpoint should not interfere with our
         // TLS session ticket cache for the first endpoint:
-        </span><span class="kw">let </span>another = spawn_server().<span class="kw">await</span><span class="question-mark">?</span>;
-        connect_client_expect_0rtt_err(<span class="kw-2">&amp;</span>client, another.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        </span><span class="kw">let </span>another = spawn_0rtt_server().<span class="kw">await</span><span class="question-mark">?</span>;
+        connect_client_0rtt(<span class="kw-2">&amp;</span>client, another.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         another.close().<span class="kw">await</span>;
 
-        connect_client_expect_0rtt_ok(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        connect_client_0rtt(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
         client.close().<span class="kw">await</span>;
         server.close().<span class="kw">await</span>;
