@@ -130,7 +130,7 @@ impl NodeData {
 
     /// Adds direct addresses to the node data.
     pub fn add_direct_addresses(&mut self, addrs: impl IntoIterator<Item = SocketAddr>) {
-        self.direct_addresses.extend(addrs.into_iter())
+        self.direct_addresses.extend(addrs)
     }
 
     /// Sets the relay URL of the node data.
