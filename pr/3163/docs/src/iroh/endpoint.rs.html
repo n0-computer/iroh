@@ -2450,7 +2450,64 @@
 <a href="#2449" id="2449">2449</a>
 <a href="#2450" id="2450">2450</a>
 <a href="#2451" id="2451">2451</a>
-<a href="#2452" id="2452">2452</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2452" id="2452">2452</a>
+<a href="#2453" id="2453">2453</a>
+<a href="#2454" id="2454">2454</a>
+<a href="#2455" id="2455">2455</a>
+<a href="#2456" id="2456">2456</a>
+<a href="#2457" id="2457">2457</a>
+<a href="#2458" id="2458">2458</a>
+<a href="#2459" id="2459">2459</a>
+<a href="#2460" id="2460">2460</a>
+<a href="#2461" id="2461">2461</a>
+<a href="#2462" id="2462">2462</a>
+<a href="#2463" id="2463">2463</a>
+<a href="#2464" id="2464">2464</a>
+<a href="#2465" id="2465">2465</a>
+<a href="#2466" id="2466">2466</a>
+<a href="#2467" id="2467">2467</a>
+<a href="#2468" id="2468">2468</a>
+<a href="#2469" id="2469">2469</a>
+<a href="#2470" id="2470">2470</a>
+<a href="#2471" id="2471">2471</a>
+<a href="#2472" id="2472">2472</a>
+<a href="#2473" id="2473">2473</a>
+<a href="#2474" id="2474">2474</a>
+<a href="#2475" id="2475">2475</a>
+<a href="#2476" id="2476">2476</a>
+<a href="#2477" id="2477">2477</a>
+<a href="#2478" id="2478">2478</a>
+<a href="#2479" id="2479">2479</a>
+<a href="#2480" id="2480">2480</a>
+<a href="#2481" id="2481">2481</a>
+<a href="#2482" id="2482">2482</a>
+<a href="#2483" id="2483">2483</a>
+<a href="#2484" id="2484">2484</a>
+<a href="#2485" id="2485">2485</a>
+<a href="#2486" id="2486">2486</a>
+<a href="#2487" id="2487">2487</a>
+<a href="#2488" id="2488">2488</a>
+<a href="#2489" id="2489">2489</a>
+<a href="#2490" id="2490">2490</a>
+<a href="#2491" id="2491">2491</a>
+<a href="#2492" id="2492">2492</a>
+<a href="#2493" id="2493">2493</a>
+<a href="#2494" id="2494">2494</a>
+<a href="#2495" id="2495">2495</a>
+<a href="#2496" id="2496">2496</a>
+<a href="#2497" id="2497">2497</a>
+<a href="#2498" id="2498">2498</a>
+<a href="#2499" id="2499">2499</a>
+<a href="#2500" id="2500">2500</a>
+<a href="#2501" id="2501">2501</a>
+<a href="#2502" id="2502">2502</a>
+<a href="#2503" id="2503">2503</a>
+<a href="#2504" id="2504">2504</a>
+<a href="#2505" id="2505">2505</a>
+<a href="#2506" id="2506">2506</a>
+<a href="#2507" id="2507">2507</a>
+<a href="#2508" id="2508">2508</a>
+<a href="#2509" id="2509">2509</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -4777,8 +4834,9 @@
             .unwrap();
     }
 
-    <span class="kw">async fn </span>spawn_0rtt_server(log_span: tracing::Span) -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint&gt; {
+    <span class="kw">async fn </span>spawn_0rtt_server(secret_key: SecretKey, log_span: tracing::Span) -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint&gt; {
         <span class="kw">let </span>server = Endpoint::builder()
+            .secret_key(secret_key)
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -4837,7 +4895,11 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">async fn </span>connect_client_0rtt_expect_ok(client: <span class="kw-2">&amp;</span>Endpoint, server_addr: NodeAddr) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">async fn </span>connect_client_0rtt_expect_ok(
+        client: <span class="kw-2">&amp;</span>Endpoint,
+        server_addr: NodeAddr,
+        expect_server_accepts: bool,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>(conn, accepted_0rtt) = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .<span class="kw">await</span><span class="question-mark">?
@@ -4845,10 +4907,22 @@
             .map_err(|<span class="kw">_</span>| <span class="string">"0rtt failed"</span>)
             .unwrap();
 
-        <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="comment">// This is how we send data in 0-RTT:
+        </span><span class="kw">let </span>(<span class="kw-2">mut </span>send, recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
         send.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         send.finish()<span class="question-mark">?</span>;
-        <span class="macro">assert!</span>(accepted_0rtt.<span class="kw">await</span>);
+        <span class="comment">// When this resolves, we've gotten a response from the server about whether the 0-RTT data above was accepted:
+        </span><span class="kw">let </span>accepted = accepted_0rtt.<span class="kw">await</span>;
+        <span class="macro">assert_eq!</span>(accepted, expect_server_accepts);
+        <span class="kw">let </span><span class="kw-2">mut </span>recv = <span class="kw">if </span>accepted {
+            recv
+        } <span class="kw">else </span>{
+            <span class="comment">// in this case we need to re-send data by re-creating the connection.
+            </span><span class="kw">let </span>(<span class="kw-2">mut </span>send, recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+            send.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            send.finish()<span class="question-mark">?</span>;
+            recv
+        };
         <span class="kw">let </span>received = recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>received, <span class="string">b"hello"</span>);
         conn.close(<span class="number">0u32</span>.into(), <span class="string">b"thx"</span>);
@@ -4857,16 +4931,20 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_connect_with_opts_0rtt() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_0rtt() -&gt; TestResult {
         <span class="kw">let </span>client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>server = spawn_0rtt_server(<span class="macro">info_span!</span>(<span class="string">"server"</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server = spawn_0rtt_server(
+            SecretKey::generate(rand::thread_rng()),
+            <span class="macro">info_span!</span>(<span class="string">"server"</span>),
+        )
+        .<span class="kw">await</span><span class="question-mark">?</span>;
 
         connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="comment">// The second 0rtt attempt should work
-        </span>connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        </span>connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
         client.close().<span class="kw">await</span>;
         server.close().<span class="kw">await</span>;
@@ -4879,25 +4957,61 @@
     // receive into the respective "bucket" for the recipient.
     </span><span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_connect_with_opts_0rtt_non_consecutive() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_0rtt_non_consecutive() -&gt; TestResult {
         <span class="kw">let </span>client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>server = spawn_0rtt_server(<span class="macro">info_span!</span>(<span class="string">"server"</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server = spawn_0rtt_server(
+            SecretKey::generate(rand::thread_rng()),
+            <span class="macro">info_span!</span>(<span class="string">"server"</span>),
+        )
+        .<span class="kw">await</span><span class="question-mark">?</span>;
 
         connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// connecting with another endpoint should not interfere with our
         // TLS session ticket cache for the first endpoint:
-        </span><span class="kw">let </span>another = spawn_0rtt_server(<span class="macro">info_span!</span>(<span class="string">"another"</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
+        </span><span class="kw">let </span>another = spawn_0rtt_server(
+            SecretKey::generate(rand::thread_rng()),
+            <span class="macro">info_span!</span>(<span class="string">"another"</span>),
+        )
+        .<span class="kw">await</span><span class="question-mark">?</span>;
         connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, another.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         another.close().<span class="kw">await</span>;
 
-        connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
         client.close().<span class="kw">await</span>;
         server.close().<span class="kw">await</span>;
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="comment">// Test whether 0-RTT is possible after a restart:
+    </span><span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>test_0rtt_after_server_restart() -&gt; TestResult {
+        <span class="kw">let </span>client = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server_key = SecretKey::generate(rand::thread_rng());
+        <span class="kw">let </span>server = spawn_0rtt_server(server_key.clone(), <span class="macro">info_span!</span>(<span class="string">"server-initial"</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        server.close().<span class="kw">await</span>;
+
+        <span class="kw">let </span>server = spawn_0rtt_server(server_key, <span class="macro">info_span!</span>(<span class="string">"server-restart"</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="comment">// we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
+        // but the server will reject the early data because it discarded necessary state
+        // to decrypt it when restarting.
+        </span>connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        client.close().<span class="kw">await</span>;
 
         <span class="prelude-val">Ok</span>(())
     }
