@@ -1753,8 +1753,7 @@
 <a href="#1752" id="1752">1752</a>
 <a href="#1753" id="1753">1753</a>
 <a href="#1754" id="1754">1754</a>
-<a href="#1755" id="1755">1755</a>
-<a href="#1756" id="1756">1756</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1755" id="1755">1755</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1964,9 +1963,8 @@
     <span class="doccomment">/// Protocols we should attempt to create probes for, if we have the correct
     /// configuration for that protocol.
     </span>protocols: BTreeSet&lt;ProbeProto&gt;,
-    <span class="doccomment">/// Optional [`IpMappedAddresses`] used to enable QAD in iroh
 
-    /// Any socket-related state that doesn't exist/work in browsers
+    <span class="doccomment">/// Any socket-related state that doesn't exist/work in browsers
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>socket_state: SocketState,
     <span class="doccomment">/// The hairpin actor.
