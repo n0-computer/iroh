@@ -3166,7 +3166,7 @@
         // have 63 maximum per DNS subdomain. Base32 is the next best alternative.
         // We use the `.invalid` TLD, as that's specified (in RFC 2606) to never actually resolve
         // "for real", unlike `.localhost` which is allowed to resolve to `127.0.0.1`.
-        // We also add "iroh" as a subdomain, although those 5 bytes might not be neccessary.
+        // We also add "iroh" as a subdomain, although those 5 bytes might not be necessary.
         // We *could* decide to remove that indicator in the future likely without breakage.
         </span><span class="kw">let </span>server_name = <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{}.iroh.invalid"</span>, BASE32_DNSSEC.encode(node_id.as_bytes()));
         <span class="kw">let </span>connect = <span class="self">self</span>.msock.endpoint().connect_with(
