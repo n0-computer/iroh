@@ -2325,8 +2325,9 @@ mod tests {
             .unwrap();
     }
 
-    async fn spawn_0rtt_server(log_span: tracing::Span) -> Result<Endpoint> {
+    async fn spawn_0rtt_server(secret_key: SecretKey, log_span: tracing::Span) -> Result<Endpoint> {
         let server = Endpoint::builder()
+            .secret_key(secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -2385,7 +2386,11 @@ mod tests {
         Ok(())
     }
 
-    async fn connect_client_0rtt_expect_ok(client: &Endpoint, server_addr: NodeAddr) -> Result<()> {
+    async fn connect_client_0rtt_expect_ok(
+        client: &Endpoint,
+        server_addr: NodeAddr,
+        expect_server_accepts: bool,
+    ) -> Result<()> {
         let (conn, accepted_0rtt) = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .await?
@@ -2393,10 +2398,22 @@ mod tests {
             .map_err(|_| "0rtt failed")
             .unwrap();
 
-        let (mut send, mut recv) = conn.open_bi().await?;
+        // This is how we send data in 0-RTT:
+        let (mut send, recv) = conn.open_bi().await?;
         send.write_all(b"hello").await?;
         send.finish()?;
-        assert!(accepted_0rtt.await);
+        // When this resolves, we've gotten a response from the server about whether the 0-RTT data above was accepted:
+        let accepted = accepted_0rtt.await;
+        assert_eq!(accepted, expect_server_accepts);
+        let mut recv = if accepted {
+            recv
+        } else {
+            // in this case we need to re-send data by re-creating the connection.
+            let (mut send, recv) = conn.open_bi().await?;
+            send.write_all(b"hello").await?;
+            send.finish()?;
+            recv
+        };
         let received = recv.read_to_end(1_000).await?;
         assert_eq!(&received, b"hello");
         conn.close(0u32.into(), b"thx");
@@ -2405,16 +2422,20 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_connect_with_opts_0rtt() -> TestResult {
+    async fn test_0rtt() -> TestResult {
         let client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
-        let server = spawn_0rtt_server(info_span!("server")).await?;
+        let server = spawn_0rtt_server(
+            SecretKey::generate(rand::thread_rng()),
+            info_span!("server"),
+        )
+        .await?;
 
         connect_client_0rtt_expect_err(&client, server.node_addr().await?).await?;
         // The second 0rtt attempt should work
-        connect_client_0rtt_expect_ok(&client, server.node_addr().await?).await?;
+        connect_client_0rtt_expect_ok(&client, server.node_addr().await?, true).await?;
 
         client.close().await;
         server.close().await;
@@ -2427,25 +2448,61 @@ mod tests {
     // receive into the respective "bucket" for the recipient.
     #[tokio::test]
     #[traced_test]
-    async fn test_connect_with_opts_0rtt_non_consecutive() -> TestResult {
+    async fn test_0rtt_non_consecutive() -> TestResult {
         let client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
-        let server = spawn_0rtt_server(info_span!("server")).await?;
+        let server = spawn_0rtt_server(
+            SecretKey::generate(rand::thread_rng()),
+            info_span!("server"),
+        )
+        .await?;
 
         connect_client_0rtt_expect_err(&client, server.node_addr().await?).await?;
 
         // connecting with another endpoint should not interfere with our
         // TLS session ticket cache for the first endpoint:
-        let another = spawn_0rtt_server(info_span!("another")).await?;
+        let another = spawn_0rtt_server(
+            SecretKey::generate(rand::thread_rng()),
+            info_span!("another"),
+        )
+        .await?;
         connect_client_0rtt_expect_err(&client, another.node_addr().await?).await?;
         another.close().await;
 
-        connect_client_0rtt_expect_ok(&client, server.node_addr().await?).await?;
+        connect_client_0rtt_expect_ok(&client, server.node_addr().await?, true).await?;
 
         client.close().await;
         server.close().await;
+
+        Ok(())
+    }
+
+    // Test whether 0-RTT is possible after a restart:
+    #[tokio::test]
+    #[traced_test]
+    async fn test_0rtt_after_server_restart() -> TestResult {
+        let client = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+        let server_key = SecretKey::generate(rand::thread_rng());
+        let server = spawn_0rtt_server(server_key.clone(), info_span!("server-initial")).await?;
+
+        connect_client_0rtt_expect_err(&client, server.node_addr().await?).await?;
+        connect_client_0rtt_expect_ok(&client, server.node_addr().await?, true).await?;
+
+        server.close().await;
+
+        let server = spawn_0rtt_server(server_key, info_span!("server-restart")).await?;
+
+        // we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
+        // but the server will reject the early data because it discarded necessary state
+        // to decrypt it when restarting.
+        connect_client_0rtt_expect_ok(&client, server.node_addr().await?, false).await?;
+
+        client.close().await;
 
         Ok(())
     }
