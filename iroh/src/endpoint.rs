@@ -528,9 +528,13 @@ pub fn make_server_config(
 /// [QUIC]: https://quicwg.org
 #[derive(Clone, Debug)]
 pub struct Endpoint {
+    /// Handle to the magicsocket/actor
     msock: Handle,
+    /// Handle to the actor that resets the quinn RTT estimator
     rtt_actor: Arc<rtt_actor::RttHandle>,
+    /// Configuration structs for quinn, holds the transport config, certificate setup, secret key etc.
     static_config: Arc<StaticConfig>,
+    /// Cache for TLS session keys we receive.
     session_store: Arc<dyn rustls::client::ClientSessionStore>,
 }
 
@@ -660,12 +664,13 @@ impl Endpoint {
         }
         let node_id = node_addr.node_id;
         let direct_addresses = node_addr.direct_addresses.clone();
+        let relay_url = node_addr.relay_url.clone();
 
         // Get the mapped IPv6 address from the magic socket. Quinn will connect to this
         // address.  Start discovery for this node if it's enabled and we have no valid or
         // verified address information for this node.  Dropping the discovery cancels any
         // still running task.
-        let (addr, _discovery_drop_guard) = self
+        let (mapped_addr, _discovery_drop_guard) = self
             .get_mapping_addr_and_maybe_start_discovery(node_addr)
             .await
             .with_context(|| {
@@ -675,8 +680,6 @@ impl Endpoint {
                 )
             })?;
 
-        debug!("connecting via {addr} - {direct_addresses:?}",);
-
         let transport_config = options
             .transport_config
             .unwrap_or(self.static_config.transport_config.clone());
@@ -684,7 +687,12 @@ impl Endpoint {
         // Start connecting via quinn. This will time out after 10 seconds if no reachable
         // address is available.
 
-        debug!("Attempting connection...");
+        debug!(
+            ?mapped_addr,
+            ?direct_addresses,
+            ?relay_url,
+            "Attempting connection..."
+        );
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
             let quic_client_config = tls::make_client_config(
@@ -709,10 +717,11 @@ impl Endpoint {
         // We also add "iroh" as a subdomain, although those 5 bytes might not be neccessary.
         // We *could* decide to remove that indicator in the future likely without breakage.
         let server_name = &format!("{}.iroh.invalid", BASE32_DNSSEC.encode(node_id.as_bytes()));
-        let connect =
-            self.msock
-                .endpoint()
-                .connect_with(client_config, addr.socket_addr(), server_name)?;
+        let connect = self.msock.endpoint().connect_with(
+            client_config,
+            mapped_addr.socket_addr(),
+            server_name,
+        )?;
 
         Ok(Connecting {
             inner: connect,
@@ -1362,7 +1371,7 @@ impl Future for Connecting {
     }
 }
 
-/// Future that completes when a connection is fully established
+/// Future that completes when a connection is fully established.
 ///
 /// For clients, the resulting value indicates if 0-RTT was accepted. For servers, the resulting
 /// value is meaningless.
@@ -2318,30 +2327,38 @@ mod tests {
         Ok(server)
     }
 
-    async fn connect_client_0rtt(
+    async fn connect_client_0rtt_expect_err(
         client: &Endpoint,
         server_addr: NodeAddr,
-        expect_0rtt: bool,
     ) -> Result<()> {
-        let result = client
+        let conn = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .await?
-            .into_0rtt();
-
-        let (conn, zero_rtt_expectation) = if expect_0rtt {
-            let (conn, zrtt) = result.map_err(|_| "0rtt failed").unwrap();
-            (conn, n0_future::Either::Left(zrtt))
-        } else {
-            let conn = result.expect_err("expected 0rtt to fail");
-            // we just fake the ZeroRttExpected value so the assert is true
-            let zrtt = n0_future::Either::Right(n0_future::future::ready(true));
-            (conn.await?, zrtt)
-        };
+            .into_0rtt()
+            .expect_err("expected 0rtt to fail")
+            .await?;
 
         let (mut send, mut recv) = conn.open_bi().await?;
         send.write_all(b"hello").await?;
         send.finish()?;
-        assert!(zero_rtt_expectation.await);
+        let received = recv.read_to_end(1_000).await?;
+        assert_eq!(&received, b"hello");
+        conn.close(0u32.into(), b"thx");
+        Ok(())
+    }
+
+    async fn connect_client_0rtt_expect_ok(client: &Endpoint, server_addr: NodeAddr) -> Result<()> {
+        let (conn, accepted_0rtt) = client
+            .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
+            .await?
+            .into_0rtt()
+            .map_err(|_| "0rtt failed")
+            .unwrap();
+
+        let (mut send, mut recv) = conn.open_bi().await?;
+        send.write_all(b"hello").await?;
+        send.finish()?;
+        assert!(accepted_0rtt.await);
         let received = recv.read_to_end(1_000).await?;
         assert_eq!(&received, b"hello");
         conn.close(0u32.into(), b"thx");
@@ -2357,9 +2374,9 @@ mod tests {
             .await?;
         let server = spawn_0rtt_server().await?;
 
-        connect_client_0rtt(&client, server.node_addr().await?, false).await?;
+        connect_client_0rtt_expect_err(&client, server.node_addr().await?).await?;
         // The second 0rtt attempt should work
-        connect_client_0rtt(&client, server.node_addr().await?, true).await?;
+        connect_client_0rtt_expect_ok(&client, server.node_addr().await?).await?;
 
         client.close().await;
         server.close().await;
@@ -2379,15 +2396,15 @@ mod tests {
             .await?;
         let server = spawn_0rtt_server().await?;
 
-        connect_client_0rtt(&client, server.node_addr().await?, false).await?;
+        connect_client_0rtt_expect_err(&client, server.node_addr().await?).await?;
 
         // connecting with another endpoint should not interfere with our
         // TLS session ticket cache for the first endpoint:
         let another = spawn_0rtt_server().await?;
-        connect_client_0rtt(&client, another.node_addr().await?, false).await?;
+        connect_client_0rtt_expect_err(&client, another.node_addr().await?).await?;
         another.close().await;
 
-        connect_client_0rtt(&client, server.node_addr().await?, true).await?;
+        connect_client_0rtt_expect_ok(&client, server.node_addr().await?).await?;
 
         client.close().await;
         server.close().await;
