@@ -1524,15 +1524,7 @@
 <a href="#1523" id="1523">1523</a>
 <a href="#1524" id="1524">1524</a>
 <a href="#1525" id="1525">1525</a>
-<a href="#1526" id="1526">1526</a>
-<a href="#1527" id="1527">1527</a>
-<a href="#1528" id="1528">1528</a>
-<a href="#1529" id="1529">1529</a>
-<a href="#1530" id="1530">1530</a>
-<a href="#1531" id="1531">1531</a>
-<a href="#1532" id="1532">1532</a>
-<a href="#1533" id="1533">1533</a>
-<a href="#1534" id="1534">1534</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1526" id="1526">1526</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -1580,8 +1572,8 @@
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">pub use </span>ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddresses, MAPPED_ADDR_PORT};
 <span class="kw">pub use </span>metrics::Metrics;
-<span class="kw">use </span>reportgen::ProbeProto;
 <span class="kw">pub use </span>reportgen::QuicConfig;
+<span class="kw">use </span>reportgen::{ProbeProto, SocketState};
 <span class="attr">#[cfg(feature = <span class="string">"stun-utils"</span>)]
 </span><span class="kw">pub use </span>stun_utils::bind_local_stun_socket;
 
@@ -2235,12 +2227,14 @@
     ) {
         <span class="kw">let </span>protocols = opts.to_protocols();
         <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>Options {
-            stun_sock_v4,
-            stun_sock_v6,
-            quic_config,
-            ..
-        } = opts;
+        </span><span class="kw">let </span>socket_state = SocketState {
+            port_mapper: <span class="self">self</span>.port_mapper.clone(),
+            stun_sock4: opts.stun_sock_v4,
+            stun_sock6: opts.stun_sock_v6,
+            quic_config: opts.quic_config,
+            dns_resolver: <span class="self">self</span>.dns_resolver.clone(),
+            ip_mapped_addrs: <span class="self">self</span>.ip_mapped_addrs.clone(),
+        };
         <span class="macro">trace!</span>(<span class="string">"Attempting probes for protocols {protocols:#?}"</span>);
         <span class="kw">if </span><span class="self">self</span>.current_report_run.is_some() {
             response_tx
@@ -2277,20 +2271,10 @@
         <span class="kw">let </span>actor = reportgen::Client::new(
             <span class="self">self</span>.addr(),
             <span class="self">self</span>.reports.last.clone(),
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span><span class="self">self</span>.port_mapper.clone(),
             relay_map,
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span>stun_sock_v4,
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span>stun_sock_v6,
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span>quic_config,
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span><span class="self">self</span>.dns_resolver.clone(),
             protocols,
             <span class="attr">#[cfg(not(wasm_browser))]
-            </span><span class="self">self</span>.ip_mapped_addrs.clone(),
+            </span>socket_state,
         );
 
         <span class="self">self</span>.current_report_run = <span class="prelude-val">Some</span>(ReportRun {
