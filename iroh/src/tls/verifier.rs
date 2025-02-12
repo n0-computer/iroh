@@ -53,13 +53,13 @@ static SUPPORTED_SIG_ALGS: WebPkiSupportedAlgorithms = WebPkiSupportedAlgorithms
     ],
 };
 
-/// Implementation of the `rustls` certificate verification traits.
+/// Implementation of the `rustls` certificate verification traits
 ///
 /// Only TLS 1.3 is supported. TLS 1.2 should be disabled in the configuration of `rustls`.
 #[derive(Debug)]
-pub struct CertificateVerifier {
+pub struct ServerCertificateVerifier {
     /// The peer we intend to connect to.
-    remote_peer_id: Option<PublicKey>,
+    remote_peer_id: PublicKey,
     /// Which TLS authentication mode to operate in.
     auth: Authentication,
     trusted_spki: Vec<SubjectPublicKeyInfoDer<'static>>,
@@ -73,19 +73,13 @@ pub struct CertificateVerifier {
 /// - The certificate must have a valid libp2p extension that includes a signature of its public key.
 ///
 /// or a raw public key.
-impl CertificateVerifier {
-    pub fn new(auth: Authentication) -> Self {
-        Self::with_remote_peer_id(auth, None)
-    }
-
-    pub fn with_remote_peer_id(auth: Authentication, remote_peer_id: Option<PublicKey>) -> Self {
+impl ServerCertificateVerifier {
+    pub fn with_remote_peer_id(auth: Authentication, remote_peer_id: PublicKey) -> Self {
         let mut trusted_spki = Vec::new();
-        if let Some(key) = remote_peer_id {
-            let pem_key = key.serialize_public_pem();
-            let remote_key = SubjectPublicKeyInfoDer::from_pem_slice(pem_key.as_bytes())
-                .expect("cannot remote open pub key");
-            trusted_spki.push(remote_key);
-        }
+        let pem_key = remote_peer_id.serialize_public_pem();
+        let remote_key = SubjectPublicKeyInfoDer::from_pem_slice(pem_key.as_bytes())
+            .expect("cannot remote open pub key");
+        trusted_spki.push(remote_key);
 
         Self {
             remote_peer_id,
@@ -95,7 +89,7 @@ impl CertificateVerifier {
     }
 }
 
-impl ServerCertVerifier for CertificateVerifier {
+impl ServerCertVerifier for ServerCertificateVerifier {
     fn verify_server_cert(
         &self,
         end_entity: &Certificate,
@@ -108,17 +102,16 @@ impl ServerCertVerifier for CertificateVerifier {
             Authentication::X509 => {
                 let peer_id = verify_presented_certs(end_entity, intermediates)?;
 
-                if let Some(ref remote_peer_id) = self.remote_peer_id {
-                    // The public host key allows the peer to calculate the peer ID of the peer
-                    // it is connecting to. Clients MUST verify that the peer ID derived from
-                    // the certificate matches the peer ID they intended to connect to,
-                    // and MUST abort the connection if there is a mismatch.
-                    if remote_peer_id != &peer_id {
-                        return Err(rustls::Error::PeerMisbehaved(
-                            PeerMisbehaved::BadCertChainExtensions,
-                        ));
-                    }
+                // The public host key allows the peer to calculate the peer ID of the peer
+                // it is connecting to. Clients MUST verify that the peer ID derived from
+                // the certificate matches the peer ID they intended to connect to,
+                // and MUST abort the connection if there is a mismatch.
+                if self.remote_peer_id != peer_id {
+                    return Err(rustls::Error::PeerMisbehaved(
+                        PeerMisbehaved::BadCertChainExtensions,
+                    ));
                 }
+
                 Ok(ServerCertVerified::assertion())
             }
             Authentication::RawPublicKey => {
@@ -127,9 +120,7 @@ impl ServerCertVerifier for CertificateVerifier {
                         CertificateError::UnknownIssuer,
                     ));
                 }
-                if self.trusted_spki.is_empty() {
-                    return Ok(ServerCertVerified::assertion());
-                }
+
                 let end_entity_as_spki = SubjectPublicKeyInfoDer::from(end_entity.as_ref());
 
                 match self.trusted_spki.contains(&end_entity_as_spki) {
@@ -181,6 +172,29 @@ impl ServerCertVerifier for CertificateVerifier {
     }
 }
 
+/// Implementation of the `rustls` certificate verification traits.
+///
+/// Only TLS 1.3 is supported. TLS 1.2 should be disabled in the configuration of `rustls`.
+#[derive(Debug)]
+pub struct ClientCertificateVerifier {
+    /// Which TLS authentication mode to operate in.
+    auth: Authentication,
+}
+
+/// We require the following
+/// Either X.509 server certificate chains:
+///
+/// - Exactly one certificate must be presented.
+/// - The certificate must be self-signed.
+/// - The certificate must have a valid libp2p extension that includes a signature of its public key.
+///
+/// or a raw public key.
+impl ClientCertificateVerifier {
+    pub fn new(auth: Authentication) -> Self {
+        Self { auth }
+    }
+}
+
 /// We requires either following of X.509 client certificate chains:
 ///
 /// - Exactly one certificate must be presented. In particular, client
@@ -190,7 +204,7 @@ impl ServerCertVerifier for CertificateVerifier {
 ///   signature of its public key.
 ///
 /// or a valid raw public key configuration
-impl ClientCertVerifier for CertificateVerifier {
+impl ClientCertVerifier for ClientCertificateVerifier {
     fn offer_client_auth(&self) -> bool {
         true
     }
@@ -212,16 +226,8 @@ impl ClientCertVerifier for CertificateVerifier {
                         CertificateError::UnknownIssuer,
                     ));
                 }
-                if self.trusted_spki.is_empty() {
-                    return Ok(ClientCertVerified::assertion());
-                }
-                let end_entity_as_spki = SubjectPublicKeyInfoDer::from(end_entity.as_ref());
-                match self.trusted_spki.contains(&end_entity_as_spki) {
-                    false => Err(rustls::Error::InvalidCertificate(
-                        CertificateError::UnknownIssuer,
-                    )),
-                    true => Ok(ClientCertVerified::assertion()),
-                }
+
+                Ok(ClientCertVerified::assertion())
             }
         }
     }
