@@ -1544,7 +1544,13 @@
 <a href="#1543" id="1543">1543</a>
 <a href="#1544" id="1544">1544</a>
 <a href="#1545" id="1545">1545</a>
-<a href="#1546" id="1546">1546</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1546" id="1546">1546</a>
+<a href="#1547" id="1547">1547</a>
+<a href="#1548" id="1548">1548</a>
+<a href="#1549" id="1549">1549</a>
+<a href="#1550" id="1550">1550</a>
+<a href="#1551" id="1551">1551</a>
+<a href="#1552" id="1552">1552</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -2494,6 +2500,12 @@
 </span><span class="kw">pub fn </span>os_has_ipv6() -&gt; bool {
     UdpSocket::bind_local_v6(<span class="number">0</span>).is_ok()
 }
+
+<span class="doccomment">/// Always returns false in browsers
+</span><span class="attr">#[cfg(wasm_browser)]
+</span><span class="kw">pub fn </span>os_has_ipv6() -&gt; bool {
+    <span class="bool-val">false
+</span>}
 
 <span class="attr">#[cfg(any(test, feature = <span class="string">"stun-utils"</span>))]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>stun_utils {

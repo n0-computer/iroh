@@ -1756,10 +1756,7 @@
 <a href="#1755" id="1755">1755</a>
 <a href="#1756" id="1756">1756</a>
 <a href="#1757" id="1757">1757</a>
-<a href="#1758" id="1758">1758</a>
-<a href="#1759" id="1759">1759</a>
-<a href="#1760" id="1760">1760</a>
-<a href="#1761" id="1761">1761</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1758" id="1758">1758</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -2018,10 +2015,7 @@
         </span><span class="kw">let </span>port_mapper = <span class="bool-val">false</span>;
         <span class="macro">debug!</span>(%port_mapper, <span class="string">"reportstate actor starting"</span>);
 
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span>{
-            <span class="self">self</span>.report.os_has_ipv6 = <span class="kw">super</span>::os_has_ipv6();
-        }
+        <span class="self">self</span>.report.os_has_ipv6 = <span class="kw">super</span>::os_has_ipv6();
 
         <span class="kw">let </span><span class="kw-2">mut </span>port_mapping = <span class="self">self</span>.prepare_portmapper_task();
         <span class="kw">let </span><span class="kw-2">mut </span>captive_task = <span class="self">self</span>.prepare_captive_portal_task();
