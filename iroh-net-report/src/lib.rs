@@ -46,8 +46,8 @@ mod reportgen;
 #[cfg(not(wasm_browser))]
 pub use ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddresses, MAPPED_ADDR_PORT};
 pub use metrics::Metrics;
-use reportgen::ProbeProto;
 pub use reportgen::QuicConfig;
+use reportgen::{ProbeProto, SocketState};
 #[cfg(feature = "stun-utils")]
 pub use stun_utils::bind_local_stun_socket;
 
@@ -701,12 +701,14 @@ impl Actor {
     ) {
         let protocols = opts.to_protocols();
         #[cfg(not(wasm_browser))]
-        let Options {
-            stun_sock_v4,
-            stun_sock_v6,
-            quic_config,
-            ..
-        } = opts;
+        let socket_state = SocketState {
+            port_mapper: self.port_mapper.clone(),
+            stun_sock4: opts.stun_sock_v4,
+            stun_sock6: opts.stun_sock_v6,
+            quic_config: opts.quic_config,
+            dns_resolver: self.dns_resolver.clone(),
+            ip_mapped_addrs: self.ip_mapped_addrs.clone(),
+        };
         trace!("Attempting probes for protocols {protocols:#?}");
         if self.current_report_run.is_some() {
             response_tx
@@ -743,20 +745,10 @@ impl Actor {
         let actor = reportgen::Client::new(
             self.addr(),
             self.reports.last.clone(),
-            #[cfg(not(wasm_browser))]
-            self.port_mapper.clone(),
             relay_map,
-            #[cfg(not(wasm_browser))]
-            stun_sock_v4,
-            #[cfg(not(wasm_browser))]
-            stun_sock_v6,
-            #[cfg(not(wasm_browser))]
-            quic_config,
-            #[cfg(not(wasm_browser))]
-            self.dns_resolver.clone(),
             protocols,
             #[cfg(not(wasm_browser))]
-            self.ip_mapped_addrs.clone(),
+            socket_state,
         );
 
         self.current_report_run = Some(ReportRun {
