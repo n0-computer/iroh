@@ -208,7 +208,6 @@ struct Actor {
     /// Protocols we should attempt to create probes for, if we have the correct
     /// configuration for that protocol.
     protocols: BTreeSet<ProbeProto>,
-    /// Optional [`IpMappedAddresses`] used to enable QAD in iroh
 
     /// Any socket-related state that doesn't exist/work in browsers
     #[cfg(not(wasm_browser))]
