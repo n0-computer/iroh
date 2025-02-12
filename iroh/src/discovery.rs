@@ -196,8 +196,8 @@ impl<T: Discovery> Discovery for Arc<T> {}
 
 /// The results returned from [`Discovery::resolve`].
 ///
-/// This struct derefs to [`NodeData`], which that you can access the methods
-/// of [`NodeData`] directly from [`DiscoveryItem`].
+/// This struct derefs to [`NodeData`], so you can access the methods from [`NodeData`]
+/// directly from [`DiscoveryItem`].
 #[derive(Debug, Clone)]
 pub struct DiscoveryItem {
     /// The node info for the node, as discovered by the the discovery service.

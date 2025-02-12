@@ -78,11 +78,12 @@ impl NodeIdExt for NodeId {
     }
 }
 
-/// The information that can be published about a node in discovery services.
+/// Data about a node that may be published to and resolved from discovery services.
 ///
 /// This includes an optional [`RelayUrl`] and a set of direct addresses.
 ///
-/// The struct is non-exhaustive, more fields may be added in the future.
+/// This struct does not include the node's [`NodeId`], only the data *about* a certain
+/// node. See [`NodeInfo`] for a struct that contains a [`NodeId`] with associated [`NodeData`].
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct NodeData {
     /// URL of the home relay of this node.
@@ -147,7 +148,9 @@ impl From<NodeAddr> for NodeData {
     }
 }
 
-/// Information about the iroh node contained in an [`IROH_TXT_NAME`] TXT resource record.
+/// Information about a node that may be published to and resolved from discovery services.
+///
+/// This struct couples a [`NodeId`] with its associated [`NodeData`].
 #[derive(derive_more::Debug, Clone, Eq, PartialEq)]
 pub struct NodeInfo {
     /// The [`NodeId`].
