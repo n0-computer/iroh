@@ -82,15 +82,13 @@ impl NodeIdExt for NodeId {
 ///
 /// This includes an optional [`RelayUrl`] and a set of direct addresses.
 ///
-/// The fields are not public, but there are setter and getter functions for all fields
-/// contained in the struct.
+/// The struct is non-exhaustive, more fields may be added in the future.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-#[non_exhaustive]
 pub struct NodeData {
     /// URL of the home relay of this node.
-    pub relay_url: Option<RelayUrl>,
+    relay_url: Option<RelayUrl>,
     /// Direct addresses where this node can be reached.
-    pub direct_addresses: BTreeSet<SocketAddr>,
+    direct_addresses: BTreeSet<SocketAddr>,
 }
 
 impl NodeData {
@@ -102,30 +100,41 @@ impl NodeData {
         }
     }
 
-    /// Sets the relay URL.
+    /// Sets the relay URL and returns the updated node data.
     pub fn with_relay_url(mut self, relay_url: impl Into<RelayUrl>) -> Self {
         self.relay_url = Some(relay_url.into());
         self
     }
 
-    /// Sets the direct addresses.
+    /// Sets the direct addresses and returns the updated node data.
     pub fn with_direct_addrs(mut self, direct_addrs: BTreeSet<SocketAddr>) -> Self {
         self.direct_addresses = direct_addrs;
         self
     }
 
-    /// Removes all direct addresses.
+    /// Returns the relay URL of the node.
+    pub fn relay_url(&self) -> Option<&RelayUrl> {
+        self.relay_url.as_ref()
+    }
+
+    /// Returns the direct addresses of the node.
+    pub fn direct_addresses(&self) -> &BTreeSet<SocketAddr> {
+        &self.direct_addresses
+    }
+
+    /// Removes all direct addresses from the node data.
     pub fn clear_direct_addresses(&mut self) {
         self.direct_addresses = Default::default();
     }
 
-    /// Converts into a [`NodeAddr`].
-    pub fn into_node_addr(self, node_id: NodeId) -> NodeAddr {
-        NodeAddr {
-            node_id,
-            relay_url: self.relay_url,
-            direct_addresses: self.direct_addresses,
-        }
+    /// Adds direct addresses to the node data.
+    pub fn add_direct_addresses(&mut self, addrs: impl IntoIterator<Item = SocketAddr>) {
+        self.direct_addresses.extend(addrs.into_iter())
+    }
+
+    /// Sets the relay URL of the node data.
+    pub fn set_relay_url(&mut self, relay_url: Option<RelayUrl>) {
+        self.relay_url = relay_url
     }
 }
 
@@ -179,7 +188,17 @@ impl From<&TxtAttrs<IrohAttr>> for NodeInfo {
 
 impl From<NodeInfo> for NodeAddr {
     fn from(value: NodeInfo) -> Self {
-        value.data.into_node_addr(value.node_id)
+        value.into_node_addr()
+    }
+}
+
+impl From<NodeAddr> for NodeInfo {
+    fn from(value: NodeAddr) -> Self {
+        let data = NodeData {
+            direct_addresses: value.direct_addresses,
+            relay_url: value.relay_url,
+        };
+        Self::new(value.node_id, data)
     }
 }
 
@@ -187,6 +206,24 @@ impl NodeInfo {
     /// Creates a new [`NodeInfo`] from its parts.
     pub fn new(node_id: NodeId, data: NodeData) -> Self {
         Self { node_id, data }
+    }
+
+    /// Converts into a [`NodeAddr`] by cloning the needed fields.
+    pub fn node_addr(&self) -> NodeAddr {
+        NodeAddr {
+            node_id: self.node_id,
+            relay_url: self.data.relay_url.clone(),
+            direct_addresses: self.data.direct_addresses.clone(),
+        }
+    }
+
+    /// Converts into a [`NodeAddr`] without cloning.
+    pub fn into_node_addr(self) -> NodeAddr {
+        NodeAddr {
+            node_id: self.node_id,
+            relay_url: self.data.relay_url,
+            direct_addresses: self.data.direct_addresses,
+        }
     }
 
     fn to_attrs(&self) -> TxtAttrs<IrohAttr> {
@@ -219,6 +256,13 @@ impl NodeInfo {
     /// Converts into a list of `{key}={value}` strings.
     pub fn to_txt_strings(&self) -> Vec<String> {
         self.to_attrs().to_txt_strings().collect()
+    }
+}
+
+impl std::ops::Deref for NodeInfo {
+    type Target = NodeData;
+    fn deref(&self) -> &Self::Target {
+        &self.data
     }
 }
 

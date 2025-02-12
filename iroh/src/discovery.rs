@@ -93,6 +93,7 @@
 //! # }
 //! ```
 //!
+//! [`NodeAddr`]: iroh_base::NodeAddr
 //! [`RelayUrl`]: crate::RelayUrl
 //! [`Builder::discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: dns::DnsDiscovery
@@ -194,49 +195,73 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
 impl<T: Discovery> Discovery for Arc<T> {}
 
 /// The results returned from [`Discovery::resolve`].
+///
+/// This struct derefs to [`NodeData`], which that you can access the methods
+/// of [`NodeData`] directly from [`DiscoveryItem`].
 #[derive(Debug, Clone)]
 pub struct DiscoveryItem {
-    /// The [`NodeId`] whose address we have discovered
-    pub node_addr: NodeAddr,
+    /// The node info for the node, as discovered by the the discovery service.
+    node_info: NodeInfo,
     /// A static string to identify the discovery source.
     ///
     /// Should be uniform per discovery service.
-    pub provenance: &'static str,
+    provenance: &'static str,
     /// Optional timestamp when this node address info was last updated.
     ///
     /// Must be microseconds since the unix epoch.
     // TODO(ramfox): this is currently unused. As we develop more `DiscoveryService`s, we may discover that we do not need this. It is only truly relevant when comparing `relay_urls`, since we can attempt to dial any number of socket addresses, but expect each node to have one "home relay" that we will attempt to contact them on. This means we would need some way to determine which relay url to choose between, if more than one relay url is reported.
-    pub last_updated: Option<u64>,
+    last_updated: Option<u64>,
+}
+
+impl std::ops::Deref for DiscoveryItem {
+    type Target = NodeData;
+    fn deref(&self) -> &Self::Target {
+        &self.node_info.data
+    }
 }
 
 impl DiscoveryItem {
     /// Creates a new [`DiscoveryItem`] from a [`NodeInfo`].
-    pub fn from_node_info(
-        node_info: NodeInfo,
-        provenance: &'static str,
-        last_updated: Option<u64>,
-    ) -> Self {
-        let node_addr = node_info.into();
+    pub fn new(node_info: NodeInfo, provenance: &'static str, last_updated: Option<u64>) -> Self {
         Self {
-            node_addr,
+            node_info,
             provenance,
             last_updated,
         }
     }
 
-    /// Creates a new [`DiscoveryItem`] from a [`NodeData`].
-    pub fn from_node_data(
-        node_id: NodeId,
-        node_data: NodeData,
-        provenance: &'static str,
-        last_updated: Option<u64>,
-    ) -> Self {
-        let node_addr = node_data.into_node_addr(node_id);
-        Self {
-            node_addr,
-            provenance,
-            last_updated,
-        }
+    /// Returns the node id of the discovered node.
+    pub fn node_id(&self) -> NodeId {
+        self.node_info.node_id
+    }
+
+    /// Returns the [`NodeInfo`] for the discovered node.
+    pub fn node_info(&self) -> &NodeInfo {
+        &self.node_info
+    }
+
+    /// Returns the provenance of this discovery item.
+    ///
+    /// The provenance is a static string to identify the discovery source.
+    pub fn provenance(&self) -> &'static str {
+        &self.provenance
+    }
+
+    /// Returns the optional timestamp when this node address info was last updated.
+    ///
+    /// The value is microseconds since the unix epoch.
+    pub fn last_updated(&self) -> Option<u64> {
+        self.last_updated
+    }
+
+    /// Converts into a [`NodeAddr`] by cloning the needed fields.
+    pub fn to_node_addr(&self) -> NodeAddr {
+        self.node_info.node_addr()
+    }
+
+    /// Converts into a [`NodeAddr`] without cloning.
+    pub fn into_node_addr(self) -> NodeAddr {
+        self.node_info.into_node_addr()
     }
 }
 
@@ -434,12 +459,14 @@ impl DiscoveryTask {
         loop {
             match stream.next().await {
                 Some(Ok(r)) => {
-                    if r.node_addr.is_empty() {
-                        debug!(provenance = %r.provenance, "discovery: empty address found");
+                    let provenance = r.provenance;
+                    let node_addr = r.into_node_addr();
+                    if node_addr.is_empty() {
+                        debug!(%provenance, "discovery: empty address found");
                         continue;
                     }
-                    debug!(provenance = %r.provenance, addr = ?r.node_addr, "discovery: new address found");
-                    ep.add_node_addr_with_source(r.node_addr, r.provenance).ok();
+                    debug!(%provenance, addr = ?node_addr, "discovery: new address found");
+                    ep.add_node_addr_with_source(node_addr, provenance).ok();
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
                     }
@@ -474,7 +501,7 @@ mod tests {
     };
 
     use anyhow::Context;
-    use iroh_base::SecretKey;
+    use iroh_base::{NodeAddr, SecretKey};
     use rand::Rng;
     use testresult::TestResult;
     use tokio_util::task::AbortOnDropHandle;
@@ -552,7 +579,8 @@ mod tests {
             };
             let stream = match addr_info {
                 Some((data, ts)) => {
-                    let item = DiscoveryItem::from_node_data(node_id, data, "test-disco", Some(ts));
+                    let item =
+                        DiscoveryItem::new(NodeInfo::new(node_id, data), "test-disco", Some(ts));
                     let delay = self.delay;
                     let fut = async move {
                         time::sleep(delay).await;
@@ -853,7 +881,7 @@ mod test_dns_pkarr {
             direct_addresses: Default::default(),
         };
 
-        assert_eq!(resolved, expected);
+        assert_eq!(resolved.node_addr(), expected);
         Ok(())
     }
 

@@ -195,7 +195,7 @@ impl PkarrPublisher {
     /// This is a nonblocking function, the actual update is performed in the background.
     pub fn update_addr_info(&self, data: &NodeData) {
         let mut data = data.clone();
-        if data.relay_url.is_some() {
+        if data.relay_url().is_some() {
             // If relay url is set: only publish relay url, and no direct addrs.
             data.clear_direct_addresses();
         }
@@ -327,7 +327,7 @@ impl Discovery for PkarrResolver {
         let fut = async move {
             let signed_packet = pkarr_client.resolve(node_id).await?;
             let info = NodeInfo::from_pkarr_signed_packet(&signed_packet)?;
-            let item = DiscoveryItem::from_node_info(info, "pkarr", None);
+            let item = DiscoveryItem::new(info, "pkarr", None);
             Ok(item)
         };
         let stream = n0_future::stream::once_future(fut);

@@ -8,7 +8,7 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use iroh_base::{NodeAddr, NodeId, SecretKey};
+use iroh_base::{NodeId, SecretKey};
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -102,14 +102,8 @@ impl Inner {
         match maybe_packet {
             Ok(Some(signed_packet)) => match NodeInfo::from_pkarr_signed_packet(&signed_packet) {
                 Ok(node_info) => {
-                    let node_addr: NodeAddr = node_info.into();
-
-                    tracing::info!("discovered node info from relay {:?}", node_addr);
-                    Some(Ok(DiscoveryItem {
-                        node_addr,
-                        provenance: "relay",
-                        last_updated: None,
-                    }))
+                    tracing::info!("discovered node info from relay {:?}", node_info);
+                    Some(Ok(DiscoveryItem::new(node_info, "relay", None)))
                 }
                 Err(_err) => {
                     tracing::debug!("failed to parse signed packet as node info");
@@ -134,9 +128,7 @@ impl Inner {
             Ok(Some(signed_packet)) => match NodeInfo::from_pkarr_signed_packet(&signed_packet) {
                 Ok(node_info) => {
                     tracing::info!("discovered node info from DHT {:?}", &node_info);
-                    Some(Ok(DiscoveryItem::from_node_info(
-                        node_info, "mainline", None,
-                    )))
+                    Some(Ok(DiscoveryItem::new(node_info, "mainline", None)))
                 }
                 Err(_err) => {
                     tracing::debug!("failed to parse signed packet as node info");
@@ -439,8 +431,8 @@ mod tests {
                     .collect::<Vec<_>>()
                     .await;
                 for item in items.into_iter().flatten() {
-                    if let Some(url) = item.node_addr.relay_url {
-                        found_relay_urls.insert(url);
+                    if let Some(url) = item.relay_url() {
+                        found_relay_urls.insert(url.clone());
                     }
                 }
                 if found_relay_urls.contains(&relay_url) {

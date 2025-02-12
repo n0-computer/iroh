@@ -2326,12 +2326,14 @@ impl Actor {
                 // forever like we do with the other branches that yield `Option`s
                 Some(discovery_item) = discovery_events.next() => {
                     trace!("tick: discovery event, address discovered: {discovery_item:?}");
+                    let provenance = discovery_item.provenance();
+                    let node_addr = discovery_item.into_node_addr();
                     if let Err(e) = self.msock.add_node_addr(
-                        discovery_item.node_addr.clone(),
+                        node_addr.clone(),
                         Source::Discovery {
-                            name: discovery_item.provenance.into()
+                            name: provenance.to_string()
                         }) {
-                        warn!(?discovery_item.node_addr, "unable to add discovered node address to the node map: {e:?}");
+                        warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
                     }
                 }
             }
