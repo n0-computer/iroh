@@ -949,6 +949,12 @@ pub fn os_has_ipv6() -> bool {
     UdpSocket::bind_local_v6(0).is_ok()
 }
 
+/// Always returns false in browsers
+#[cfg(wasm_browser)]
+pub fn os_has_ipv6() -> bool {
+    false
+}
+
 #[cfg(any(test, feature = "stun-utils"))]
 pub(crate) mod stun_utils {
     use anyhow::Context as _;

@@ -257,10 +257,7 @@ impl Actor {
         let port_mapper = false;
         debug!(%port_mapper, "reportstate actor starting");
 
-        #[cfg(not(wasm_browser))]
-        {
-            self.report.os_has_ipv6 = super::os_has_ipv6();
-        }
+        self.report.os_has_ipv6 = super::os_has_ipv6();
 
         let mut port_mapping = self.prepare_portmapper_task();
         let mut captive_task = self.prepare_captive_portal_task();
