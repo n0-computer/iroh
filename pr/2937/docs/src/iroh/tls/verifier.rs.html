@@ -328,7 +328,13 @@
 <a href="#327" id="327">327</a>
 <a href="#328" id="328">328</a>
 <a href="#329" id="329">329</a>
-<a href="#330" id="330">330</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS 1.3 certificates and handshakes handling.
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
+<a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS 1.3 certificates and handshakes handling.
 //!
 //! This module handles a verification of a client/server certificate chain
 //! and signatures allegedly by the given certificates, or using raw public keys.
@@ -383,13 +389,13 @@
     ],
 };
 
-<span class="doccomment">/// Implementation of the `rustls` certificate verification traits.
+<span class="doccomment">/// Implementation of the `rustls` certificate verification traits
 ///
 /// Only TLS 1.3 is supported. TLS 1.2 should be disabled in the configuration of `rustls`.
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>CertificateVerifier {
+</span><span class="kw">pub struct </span>ServerCertificateVerifier {
     <span class="doccomment">/// The peer we intend to connect to.
-    </span>remote_peer_id: <span class="prelude-ty">Option</span>&lt;PublicKey&gt;,
+    </span>remote_peer_id: PublicKey,
     <span class="doccomment">/// Which TLS authentication mode to operate in.
     </span>auth: Authentication,
     trusted_spki: Vec&lt;SubjectPublicKeyInfoDer&lt;<span class="lifetime">'static</span>&gt;&gt;,
@@ -403,19 +409,13 @@
 /// - The certificate must have a valid libp2p extension that includes a signature of its public key.
 ///
 /// or a raw public key.
-</span><span class="kw">impl </span>CertificateVerifier {
-    <span class="kw">pub fn </span>new(auth: Authentication) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::with_remote_peer_id(auth, <span class="prelude-val">None</span>)
-    }
-
-    <span class="kw">pub fn </span>with_remote_peer_id(auth: Authentication, remote_peer_id: <span class="prelude-ty">Option</span>&lt;PublicKey&gt;) -&gt; <span class="self">Self </span>{
+</span><span class="kw">impl </span>ServerCertificateVerifier {
+    <span class="kw">pub fn </span>with_remote_peer_id(auth: Authentication, remote_peer_id: PublicKey) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>trusted_spki = Vec::new();
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(key) = remote_peer_id {
-            <span class="kw">let </span>pem_key = key.serialize_public_pem();
-            <span class="kw">let </span>remote_key = SubjectPublicKeyInfoDer::from_pem_slice(pem_key.as_bytes())
-                .expect(<span class="string">"cannot remote open pub key"</span>);
-            trusted_spki.push(remote_key);
-        }
+        <span class="kw">let </span>pem_key = remote_peer_id.serialize_public_pem();
+        <span class="kw">let </span>remote_key = SubjectPublicKeyInfoDer::from_pem_slice(pem_key.as_bytes())
+            .expect(<span class="string">"cannot remote open pub key"</span>);
+        trusted_spki.push(remote_key);
 
         <span class="self">Self </span>{
             remote_peer_id,
@@ -425,7 +425,7 @@
     }
 }
 
-<span class="kw">impl </span>ServerCertVerifier <span class="kw">for </span>CertificateVerifier {
+<span class="kw">impl </span>ServerCertVerifier <span class="kw">for </span>ServerCertificateVerifier {
     <span class="kw">fn </span>verify_server_cert(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         end_entity: <span class="kw-2">&amp;</span>Certificate,
@@ -438,17 +438,16 @@
             Authentication::X509 =&gt; {
                 <span class="kw">let </span>peer_id = verify_presented_certs(end_entity, intermediates)<span class="question-mark">?</span>;
 
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>remote_peer_id) = <span class="self">self</span>.remote_peer_id {
-                    <span class="comment">// The public host key allows the peer to calculate the peer ID of the peer
-                    // it is connecting to. Clients MUST verify that the peer ID derived from
-                    // the certificate matches the peer ID they intended to connect to,
-                    // and MUST abort the connection if there is a mismatch.
-                    </span><span class="kw">if </span>remote_peer_id != <span class="kw-2">&amp;</span>peer_id {
-                        <span class="kw">return </span><span class="prelude-val">Err</span>(rustls::Error::PeerMisbehaved(
-                            PeerMisbehaved::BadCertChainExtensions,
-                        ));
-                    }
+                <span class="comment">// The public host key allows the peer to calculate the peer ID of the peer
+                // it is connecting to. Clients MUST verify that the peer ID derived from
+                // the certificate matches the peer ID they intended to connect to,
+                // and MUST abort the connection if there is a mismatch.
+                </span><span class="kw">if </span><span class="self">self</span>.remote_peer_id != peer_id {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(rustls::Error::PeerMisbehaved(
+                        PeerMisbehaved::BadCertChainExtensions,
+                    ));
                 }
+
                 <span class="prelude-val">Ok</span>(ServerCertVerified::assertion())
             }
             Authentication::RawPublicKey =&gt; {
@@ -457,9 +456,7 @@
                         CertificateError::UnknownIssuer,
                     ));
                 }
-                <span class="kw">if </span><span class="self">self</span>.trusted_spki.is_empty() {
-                    <span class="kw">return </span><span class="prelude-val">Ok</span>(ServerCertVerified::assertion());
-                }
+
                 <span class="kw">let </span>end_entity_as_spki = SubjectPublicKeyInfoDer::from(end_entity.as_ref());
 
                 <span class="kw">match </span><span class="self">self</span>.trusted_spki.contains(<span class="kw-2">&amp;</span>end_entity_as_spki) {
@@ -511,6 +508,29 @@
     }
 }
 
+<span class="doccomment">/// Implementation of the `rustls` certificate verification traits.
+///
+/// Only TLS 1.3 is supported. TLS 1.2 should be disabled in the configuration of `rustls`.
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">pub struct </span>ClientCertificateVerifier {
+    <span class="doccomment">/// Which TLS authentication mode to operate in.
+    </span>auth: Authentication,
+}
+
+<span class="doccomment">/// We require the following
+/// Either X.509 server certificate chains:
+///
+/// - Exactly one certificate must be presented.
+/// - The certificate must be self-signed.
+/// - The certificate must have a valid libp2p extension that includes a signature of its public key.
+///
+/// or a raw public key.
+</span><span class="kw">impl </span>ClientCertificateVerifier {
+    <span class="kw">pub fn </span>new(auth: Authentication) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{ auth }
+    }
+}
+
 <span class="doccomment">/// We requires either following of X.509 client certificate chains:
 ///
 /// - Exactly one certificate must be presented. In particular, client
@@ -520,7 +540,7 @@
 ///   signature of its public key.
 ///
 /// or a valid raw public key configuration
-</span><span class="kw">impl </span>ClientCertVerifier <span class="kw">for </span>CertificateVerifier {
+</span><span class="kw">impl </span>ClientCertVerifier <span class="kw">for </span>ClientCertificateVerifier {
     <span class="kw">fn </span>offer_client_auth(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="bool-val">true
     </span>}
@@ -542,16 +562,8 @@
                         CertificateError::UnknownIssuer,
                     ));
                 }
-                <span class="kw">if </span><span class="self">self</span>.trusted_spki.is_empty() {
-                    <span class="kw">return </span><span class="prelude-val">Ok</span>(ClientCertVerified::assertion());
-                }
-                <span class="kw">let </span>end_entity_as_spki = SubjectPublicKeyInfoDer::from(end_entity.as_ref());
-                <span class="kw">match </span><span class="self">self</span>.trusted_spki.contains(<span class="kw-2">&amp;</span>end_entity_as_spki) {
-                    <span class="bool-val">false </span>=&gt; <span class="prelude-val">Err</span>(rustls::Error::InvalidCertificate(
-                        CertificateError::UnknownIssuer,
-                    )),
-                    <span class="bool-val">true </span>=&gt; <span class="prelude-val">Ok</span>(ClientCertVerified::assertion()),
-                }
+
+                <span class="prelude-val">Ok</span>(ClientCertVerified::assertion())
             }
         }
     }

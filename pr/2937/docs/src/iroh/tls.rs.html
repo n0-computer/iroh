@@ -133,9 +133,9 @@
 </span><span class="attr">#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 </span><span class="kw">pub enum </span>Authentication {
     <span class="doccomment">/// Self signed certificates, based on libp2p-tls
-    </span><span class="attr">#[default]
     </span>X509,
     <span class="doccomment">/// RFC 7250 TLS extension: Raw Public Keys.
+    </span><span class="attr">#[default]
     </span>RawPublicKey,
 }
 
@@ -148,7 +148,7 @@
     </span><span class="kw">pub fn </span>make_client_config(
         <span class="self">self</span>,
         secret_key: <span class="kw-2">&amp;</span>SecretKey,
-        remote_peer_id: <span class="prelude-ty">Option</span>&lt;PublicKey&gt;,
+        remote_peer_id: PublicKey,
         alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;,
         keylog: bool,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;QuicClientConfig, CreateConfigError&gt; {
@@ -163,7 +163,7 @@
         .expect(<span class="string">"version supported by ring"</span>)
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(
-            verifier::CertificateVerifier::with_remote_peer_id(<span class="self">self</span>, remote_peer_id),
+            verifier::ServerCertificateVerifier::with_remote_peer_id(<span class="self">self</span>, remote_peer_id),
         ))
         .with_client_cert_resolver(cert_resolver);
         crypto.alpn_protocols = alpn_protocols;
@@ -195,7 +195,7 @@
         ))
         .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
         .expect(<span class="string">"fixed config"</span>)
-        .with_client_cert_verifier(Arc::new(verifier::CertificateVerifier::new(<span class="self">self</span>)))
+        .with_client_cert_verifier(Arc::new(verifier::ClientCertificateVerifier::new(<span class="self">self</span>)))
         .with_cert_resolver(cert_resolver);
         crypto.alpn_protocols = alpn_protocols;
         <span class="kw">if </span>keylog {

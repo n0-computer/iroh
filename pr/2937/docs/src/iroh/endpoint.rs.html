@@ -2221,26 +2221,7 @@
 <a href="#2220" id="2220">2220</a>
 <a href="#2221" id="2221">2221</a>
 <a href="#2222" id="2222">2222</a>
-<a href="#2223" id="2223">2223</a>
-<a href="#2224" id="2224">2224</a>
-<a href="#2225" id="2225">2225</a>
-<a href="#2226" id="2226">2226</a>
-<a href="#2227" id="2227">2227</a>
-<a href="#2228" id="2228">2228</a>
-<a href="#2229" id="2229">2229</a>
-<a href="#2230" id="2230">2230</a>
-<a href="#2231" id="2231">2231</a>
-<a href="#2232" id="2232">2232</a>
-<a href="#2233" id="2233">2233</a>
-<a href="#2234" id="2234">2234</a>
-<a href="#2235" id="2235">2235</a>
-<a href="#2236" id="2236">2236</a>
-<a href="#2237" id="2237">2237</a>
-<a href="#2238" id="2238">2238</a>
-<a href="#2239" id="2239">2239</a>
-<a href="#2240" id="2240">2240</a>
-<a href="#2241" id="2241">2241</a>
-<a href="#2242" id="2242">2242</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2223" id="2223">2223</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2721,33 +2702,14 @@
 <span class="kw">impl </span>StaticConfig {
     <span class="doccomment">/// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
     </span><span class="kw">fn </span>create_server_config(<span class="kw-2">&amp;</span><span class="self">self</span>, alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;ServerConfig&gt; {
-        <span class="kw">let </span>server_config = make_server_config(
-            <span class="self">self</span>.tls_auth,
-            <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key,
-            alpn_protocols,
-            <span class="self">self</span>.transport_config.clone(),
-            <span class="self">self</span>.keylog,
-        )<span class="question-mark">?</span>;
+        <span class="kw">let </span>quic_server_config =
+            <span class="self">self</span>.tls_auth
+                .make_server_config(<span class="kw-2">&amp;</span><span class="self">self</span>.secret_key, alpn_protocols, <span class="self">self</span>.keylog)<span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
+        server_config.transport_config(<span class="self">self</span>.transport_config.clone());
+
         <span class="prelude-val">Ok</span>(server_config)
     }
-}
-
-<span class="doccomment">/// Creates a [`ServerConfig`] with the given secret key and limits.
-</span><span class="comment">// This return type can not longer be used anywhere in our public API.  It is however still
-// used by iroh::node::Node (or rather iroh::node::Builder) to create a plain Quinn
-// endpoint.
-</span><span class="kw">pub fn </span>make_server_config(
-    tls_auth: tls::Authentication,
-    secret_key: <span class="kw-2">&amp;</span>SecretKey,
-    alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;,
-    transport_config: Arc&lt;TransportConfig&gt;,
-    keylog: bool,
-) -&gt; <span class="prelude-ty">Result</span>&lt;ServerConfig&gt; {
-    <span class="kw">let </span>quic_server_config = tls_auth.make_server_config(secret_key, alpn_protocols, keylog)<span class="question-mark">?</span>;
-    <span class="kw">let </span><span class="kw-2">mut </span>server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
-    server_config.transport_config(transport_config);
-
-    <span class="prelude-val">Ok</span>(server_config)
 }
 
 <span class="doccomment">/// Controls an iroh node, establishing connections with other nodes.
@@ -2926,7 +2888,7 @@
             <span class="kw">let </span>alpn_protocols = <span class="macro">vec!</span>[alpn.to_vec()];
             <span class="kw">let </span>quic_client_config = <span class="self">self</span>.static_config.tls_auth.make_client_config(
                 <span class="kw-2">&amp;</span><span class="self">self</span>.static_config.secret_key,
-                <span class="prelude-val">Some</span>(node_id),
+                node_id,
                 alpn_protocols,
                 <span class="self">self</span>.static_config.keylog,
             )<span class="question-mark">?</span>;
