@@ -275,9 +275,7 @@
 <a href="#274" id="274">274</a>
 <a href="#275" id="275">275</a>
 <a href="#276" id="276">276</a>
-<a href="#277" id="277">277</a>
-<a href="#278" id="278">278</a>
-<a href="#279" id="279">279</a></pre></div><pre class="rust"><code><span class="doccomment">//! A static node discovery to manually add node addressing information.
+<a href="#277" id="277">277</a></pre></div><pre class="rust"><code><span class="doccomment">//! A static node discovery to manually add node addressing information.
 //!
 //! Often an application might get node addressing information out-of-band in an
 //! application-specific way.  [`NodeTicket`]'s are one common way used to achieve this.
@@ -300,7 +298,7 @@
     time::SystemTime,
 };
 
-<span class="kw">use super</span>::{Discovery, DiscoveryItem, NodeData, UserData};
+<span class="kw">use super</span>::{Discovery, DiscoveryItem, NodeData, NodeInfo, UserData};
 
 <span class="doccomment">/// A static node discovery to manually add node addressing information.
 ///
@@ -350,11 +348,11 @@
 </span><span class="attr">#[derive(Debug, Default, Clone)]
 #[repr(transparent)]
 </span><span class="kw">pub struct </span>StaticProvider {
-    nodes: Arc&lt;RwLock&lt;BTreeMap&lt;NodeId, NodeInfo&gt;&gt;&gt;,
+    nodes: Arc&lt;RwLock&lt;BTreeMap&lt;NodeId, StoredNodeInfo&gt;&gt;&gt;,
 }
 
 <span class="attr">#[derive(Debug)]
-</span><span class="kw">struct </span>NodeInfo {
+</span><span class="kw">struct </span>StoredNodeInfo {
     data: NodeData,
     last_updated: SystemTime,
 }
@@ -421,8 +419,8 @@
         <span class="kw">let </span>node_id = node_addr.node_id;
         <span class="kw">let </span>data = NodeData::from(node_addr).with_user_data(user_data);
         <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.nodes.write().expect(<span class="string">"poisoned"</span>);
-        <span class="kw">let </span>previous = guard.insert(node_id, NodeInfo { data, last_updated });
-        previous.map(|x| x.data.into_node_addr(node_id))
+        <span class="kw">let </span>previous = guard.insert(node_id, StoredNodeInfo { data, last_updated });
+        previous.map(|x| NodeInfo::new(node_id, x.data).into_node_addr())
     }
 
     <span class="doccomment">/// Augments node addressing information for the given node ID.
@@ -439,14 +437,13 @@
                 <span class="kw">let </span>existing = entry.get_mut();
                 existing
                     .data
-                    .direct_addresses
-                    .extend(node_addr.direct_addresses);
-                existing.data.relay_url = node_addr.relay_url;
-                existing.data.user_data = user_data;
+                    .add_direct_addresses(node_addr.direct_addresses);
+                existing.data.set_relay_url(node_addr.relay_url);
+                existing.data.set_user_data(user_data);
                 existing.last_updated = last_updated;
             }
             Entry::Vacant(entry) =&gt; {
-                entry.insert(NodeInfo {
+                entry.insert(StoredNodeInfo {
                     data: NodeData::from(node_addr).with_user_data(user_data),
                     last_updated,
                 });
@@ -458,14 +455,14 @@
     </span><span class="kw">pub fn </span>get_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;NodeAddr&gt; {
         <span class="kw">let </span>guard = <span class="self">self</span>.nodes.read().expect(<span class="string">"poisoned"</span>);
         <span class="kw">let </span>info = guard.get(<span class="kw-2">&amp;</span>node_id)<span class="question-mark">?</span>;
-        <span class="prelude-val">Some</span>(info.data.clone().into_node_addr(node_id))
+        <span class="prelude-val">Some</span>(NodeInfo::new(node_id, info.data.clone()).into_node_addr())
     }
 
     <span class="doccomment">/// Returns the optional user-defined data for the given node ID.
     </span><span class="kw">pub fn </span>get_user_data(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;UserData&gt; {
         <span class="kw">let </span>guard = <span class="self">self</span>.nodes.read().expect(<span class="string">"poisoned"</span>);
         <span class="kw">let </span>info = guard.get(<span class="kw-2">&amp;</span>node_id)<span class="question-mark">?</span>;
-        info.data.user_data.clone()
+        info.data.user_data().cloned()
     }
 
     <span class="doccomment">/// Removes all node addressing information for the given node ID.
@@ -474,7 +471,7 @@
     </span><span class="kw">pub fn </span>remove_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;NodeAddr&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.nodes.write().expect(<span class="string">"poisoned"</span>);
         <span class="kw">let </span>info = guard.remove(<span class="kw-2">&amp;</span>node_id)<span class="question-mark">?</span>;
-        <span class="prelude-val">Some</span>(info.data.into_node_addr(node_id))
+        <span class="prelude-val">Some</span>(NodeInfo::new(node_id, info.data).into_node_addr())
     }
 }
 
@@ -495,9 +492,8 @@
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .expect(<span class="string">"time drift"</span>)
                     .as_micros() <span class="kw">as </span>u64;
-                <span class="kw">let </span>item = DiscoveryItem::from_node_data(
-                    node_id,
-                    node_info.data.clone(),
+                <span class="kw">let </span>item = DiscoveryItem::new(
+                    NodeInfo::new(node_id, node_info.data.clone()),
                     <span class="self">Self</span>::PROVENANCE,
                     <span class="prelude-val">Some</span>(last_updated),
                 );

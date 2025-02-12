@@ -629,14 +629,14 @@
     </span><span class="kw">pub async fn </span>lookup_node_by_id(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: <span class="kw-2">&amp;</span>NodeId, origin: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;NodeInfo&gt; {
         <span class="kw">let </span>attrs =
             node_info::TxtAttrs::&lt;node_info::IrohAttr&gt;::lookup_by_id(<span class="self">self</span>, node_id, origin).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>info: node_info::NodeInfo = attrs.into();
+        <span class="kw">let </span>info = attrs.into();
         <span class="prelude-val">Ok</span>(info)
     }
 
     <span class="doccomment">/// Looks up node info by DNS name.
     </span><span class="kw">pub async fn </span>lookup_node_by_domain_name(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;NodeInfo&gt; {
         <span class="kw">let </span>attrs = node_info::TxtAttrs::&lt;node_info::IrohAttr&gt;::lookup_by_name(<span class="self">self</span>, name).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>info: node_info::NodeInfo = attrs.into();
+        <span class="kw">let </span>info = attrs.into();
         <span class="prelude-val">Ok</span>(info)
     }
 
