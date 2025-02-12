@@ -107,7 +107,6 @@ pub(crate) struct SocketState {
 }
 
 impl Client {
-    #[allow(clippy::too_many_arguments)]
     /// Creates a new actor generating a single report.
     ///
     /// The actor starts running immediately and only generates a single report, after which
@@ -751,7 +750,6 @@ pub struct QuicConfig {
 /// Executes a particular [`Probe`], including using a delayed start if needed.
 ///
 /// If *stun_sock4* and *stun_sock6* are `None` the STUN probes are disabled.
-#[allow(clippy::too_many_arguments)]
 async fn run_probe(
     reportstate: Addr,
     relay_node: Arc<RelayNode>,
