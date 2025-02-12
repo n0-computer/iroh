@@ -1550,7 +1550,28 @@
 <a href="#1549" id="1549">1549</a>
 <a href="#1550" id="1550">1550</a>
 <a href="#1551" id="1551">1551</a>
-<a href="#1552" id="1552">1552</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1552" id="1552">1552</a>
+<a href="#1553" id="1553">1553</a>
+<a href="#1554" id="1554">1554</a>
+<a href="#1555" id="1555">1555</a>
+<a href="#1556" id="1556">1556</a>
+<a href="#1557" id="1557">1557</a>
+<a href="#1558" id="1558">1558</a>
+<a href="#1559" id="1559">1559</a>
+<a href="#1560" id="1560">1560</a>
+<a href="#1561" id="1561">1561</a>
+<a href="#1562" id="1562">1562</a>
+<a href="#1563" id="1563">1563</a>
+<a href="#1564" id="1564">1564</a>
+<a href="#1565" id="1565">1565</a>
+<a href="#1566" id="1566">1566</a>
+<a href="#1567" id="1567">1567</a>
+<a href="#1568" id="1568">1568</a>
+<a href="#1569" id="1569">1569</a>
+<a href="#1570" id="1570">1570</a>
+<a href="#1571" id="1571">1571</a>
+<a href="#1572" id="1572">1572</a>
+<a href="#1573" id="1573">1573</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -1796,7 +1817,8 @@
 ///
 /// Use [`Options::stun_v4`], [`Options::stun_v6`], and [`Options::quic_config`]
 /// to enable STUN over IPv4, STUN over IPv6, and QUIC address discovery.
-</span><span class="attr">#[derive(Debug, Clone)]
+</span><span class="attr">#[cfg(not(wasm_browser))]
+#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>Options {
     <span class="doccomment">/// Socket to send IPv4 STUN probes from.
     ///
@@ -1805,7 +1827,6 @@
     /// other packets from in the magicsocket (`MagicSock`).
     ///
     /// If not provided, STUN probes will not be sent over IPv4.
-    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>stun_sock_v4: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
     <span class="doccomment">/// Socket to send IPv6 STUN probes from.
     ///
@@ -1814,22 +1835,18 @@
     /// other packets from in the magicsocket (`MagicSock`).
     ///
     /// If not provided, STUN probes will not be sent over IPv6.
-    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>stun_sock_v6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
     <span class="doccomment">/// The configuration needed to launch QUIC address discovery probes.
     ///
     /// If not provided, will not run QUIC address discovery.
-    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>quic_config: <span class="prelude-ty">Option</span>&lt;QuicConfig&gt;,
     <span class="doccomment">/// Enable icmp_v4 probes
     ///
     /// On by default
-    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>icmp_v4: bool,
     <span class="doccomment">/// Enable icmp_v6 probes
     ///
     /// On by default
-    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>icmp_v6: bool,
     <span class="doccomment">/// Enable https probes
     ///
@@ -1837,72 +1854,59 @@
     </span>https: bool,
 }
 
-<span class="kw">impl </span>Default <span class="kw">for </span>Options {
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">impl </span>Default <span class="kw">for </span>Options {
     <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span>stun_sock_v4: <span class="prelude-val">None</span>,
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span>stun_sock_v6: <span class="prelude-val">None</span>,
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span>quic_config: <span class="prelude-val">None</span>,
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span>icmp_v4: <span class="bool-val">true</span>,
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span>icmp_v6: <span class="bool-val">true</span>,
+            stun_sock_v4: <span class="prelude-val">None</span>,
+            stun_sock_v6: <span class="prelude-val">None</span>,
+            quic_config: <span class="prelude-val">None</span>,
+            icmp_v4: <span class="bool-val">true</span>,
+            icmp_v6: <span class="bool-val">true</span>,
             https: <span class="bool-val">true</span>,
         }
     }
 }
 
-<span class="kw">impl </span>Options {
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">impl </span>Options {
     <span class="doccomment">/// Create an [`Options`] that disables all probes
     </span><span class="kw">pub fn </span>disabled() -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span>stun_sock_v4: <span class="prelude-val">None</span>,
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span>stun_sock_v6: <span class="prelude-val">None</span>,
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span>quic_config: <span class="prelude-val">None</span>,
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span>icmp_v4: <span class="bool-val">false</span>,
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span>icmp_v6: <span class="bool-val">false</span>,
+            stun_sock_v4: <span class="prelude-val">None</span>,
+            stun_sock_v6: <span class="prelude-val">None</span>,
+            quic_config: <span class="prelude-val">None</span>,
+            icmp_v4: <span class="bool-val">false</span>,
+            icmp_v6: <span class="bool-val">false</span>,
             https: <span class="bool-val">false</span>,
         }
     }
 
     <span class="doccomment">/// Set the ipv4 stun socket and enable ipv4 stun probes
-    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub fn </span>stun_v4(<span class="kw-2">mut </span><span class="self">self</span>, sock: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.stun_sock_v4 = sock;
         <span class="self">self
     </span>}
 
     <span class="doccomment">/// Set the ipv6 stun socket and enable ipv6 stun probes
-    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub fn </span>stun_v6(<span class="kw-2">mut </span><span class="self">self</span>, sock: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.stun_sock_v6 = sock;
         <span class="self">self
     </span>}
 
     <span class="doccomment">/// Enable quic probes
-    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub fn </span>quic_config(<span class="kw-2">mut </span><span class="self">self</span>, quic_config: <span class="prelude-ty">Option</span>&lt;QuicConfig&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.quic_config = quic_config;
         <span class="self">self
     </span>}
 
     <span class="doccomment">/// Enable or disable icmp_v4 probe
-    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub fn </span>icmp_v4(<span class="kw-2">mut </span><span class="self">self</span>, enable: bool) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.icmp_v4 = enable;
         <span class="self">self
     </span>}
 
     <span class="doccomment">/// Enable or disable icmp_v6 probe
-    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub fn </span>icmp_v6(<span class="kw-2">mut </span><span class="self">self</span>, enable: bool) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.icmp_v6 = enable;
         <span class="self">self
@@ -1917,16 +1921,13 @@
     <span class="doccomment">/// Turn the options into set of valid protocols
     </span><span class="kw">fn </span>to_protocols(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BTreeSet&lt;ProbeProto&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>protocols = BTreeSet::new();
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">if </span><span class="self">self</span>.stun_sock_v4.is_some() {
+        <span class="kw">if </span><span class="self">self</span>.stun_sock_v4.is_some() {
             protocols.insert(ProbeProto::StunIpv4);
         }
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">if </span><span class="self">self</span>.stun_sock_v6.is_some() {
+        <span class="kw">if </span><span class="self">self</span>.stun_sock_v6.is_some() {
             protocols.insert(ProbeProto::StunIpv6);
         }
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>quic) = <span class="self">self</span>.quic_config {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>quic) = <span class="self">self</span>.quic_config {
             <span class="kw">if </span>quic.ipv4 {
                 protocols.insert(ProbeProto::QuicIpv4);
             }
@@ -1934,14 +1935,55 @@
                 protocols.insert(ProbeProto::QuicIpv6);
             }
         }
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">if </span><span class="self">self</span>.icmp_v4 {
+        <span class="kw">if </span><span class="self">self</span>.icmp_v4 {
             protocols.insert(ProbeProto::IcmpV4);
         }
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">if </span><span class="self">self</span>.icmp_v6 {
+        <span class="kw">if </span><span class="self">self</span>.icmp_v6 {
             protocols.insert(ProbeProto::IcmpV6);
         }
+        <span class="kw">if </span><span class="self">self</span>.https {
+            protocols.insert(ProbeProto::Https);
+        }
+        protocols
+    }
+}
+
+<span class="doccomment">/// Options for running probes (in browsers).
+///
+/// Only HTTPS probes are supported in browsers.
+/// These are run by default.
+</span><span class="attr">#[cfg(wasm_browser)]
+#[derive(Debug, Clone)]
+</span><span class="kw">pub struct </span>Options {
+    <span class="doccomment">/// Enable https probes
+    ///
+    /// On by default
+    </span>https: bool,
+}
+
+<span class="attr">#[cfg(wasm_browser)]
+</span><span class="kw">impl </span>Default <span class="kw">for </span>Options {
+    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{ https: <span class="bool-val">true </span>}
+    }
+}
+
+<span class="attr">#[cfg(wasm_browser)]
+</span><span class="kw">impl </span>Options {
+    <span class="doccomment">/// Create an [`Options`] that disables all probes
+    </span><span class="kw">pub fn </span>disabled() -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{ https: <span class="bool-val">false </span>}
+    }
+
+    <span class="doccomment">/// Enable or disable https probe
+    </span><span class="kw">pub fn </span>https(<span class="kw-2">mut </span><span class="self">self</span>, enable: bool) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.https = enable;
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Turn the options into set of valid protocols
+    </span><span class="kw">fn </span>to_protocols(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BTreeSet&lt;ProbeProto&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>protocols = BTreeSet::new();
         <span class="kw">if </span><span class="self">self</span>.https {
             protocols.insert(ProbeProto::Https);
         }

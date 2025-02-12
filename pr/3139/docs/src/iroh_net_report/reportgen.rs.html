@@ -1754,9 +1754,7 @@
 <a href="#1753" id="1753">1753</a>
 <a href="#1754" id="1754">1754</a>
 <a href="#1755" id="1755">1755</a>
-<a href="#1756" id="1756">1756</a>
-<a href="#1757" id="1757">1757</a>
-<a href="#1758" id="1758">1758</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1756" id="1756">1756</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1865,8 +1863,7 @@
 }
 
 <span class="kw">impl </span>Client {
-    <span class="attr">#[allow(clippy::too_many_arguments)]
-    </span><span class="doccomment">/// Creates a new actor generating a single report.
+    <span class="doccomment">/// Creates a new actor generating a single report.
     ///
     /// The actor starts running immediately and only generates a single report, after which
     /// it shuts down.  Dropping this handle will abort the actor.
@@ -2509,7 +2506,6 @@
 <span class="doccomment">/// Executes a particular [`Probe`], including using a delayed start if needed.
 ///
 /// If *stun_sock4* and *stun_sock6* are `None` the STUN probes are disabled.
-</span><span class="attr">#[allow(clippy::too_many_arguments)]
 </span><span class="kw">async fn </span>run_probe(
     reportstate: Addr,
     relay_node: Arc&lt;RelayNode&gt;,
