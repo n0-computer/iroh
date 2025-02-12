@@ -249,8 +249,8 @@ impl ProbePlan {
     #[cfg(not(wasm_browser))]
     pub(super) fn initial(
         relay_map: &RelayMap,
-        if_state: &interfaces::State,
         protocols: &BTreeSet<ProbeProto>,
+        if_state: &interfaces::State,
     ) -> Self {
         let mut plan = Self {
             set: BTreeSet::new(),
@@ -349,7 +349,9 @@ impl ProbePlan {
         plan
     }
 
-    /// Creates an initial probe plan.
+    /// Creates an initial probe plan for browsers.
+    ///
+    /// Here, we essentially only run HTTPS probes without any delays waiting for STUN.
     #[cfg(wasm_browser)]
     pub(super) fn initial(relay_map: &RelayMap, protocols: &BTreeSet<ProbeProto>) -> Self {
         let mut plan = Self {
@@ -357,22 +359,11 @@ impl ProbePlan {
             protocols: protocols.clone(),
         };
 
-        // The first time we need add probes after the STUN we record this delay, so that
-        // further relay server can reuse this delay.
-        let mut max_high_prio_delay: Option<Duration> = None;
-
         for relay_node in relay_map.nodes() {
             let mut https_probes = ProbeSet::new(ProbeProto::Https);
 
-            for attempt in 0..3 {
-                let mut start = *max_high_prio_delay.get_or_insert_with(|| plan.max_delay());
-                // if there are high priority probes, ensure there is a buffer between
-                // the highest probe delay and the next probes we create
-                // if there are no high priority probes, we don't need a buffer
-                if plan.has_priority_probes() {
-                    start += DEFAULT_INITIAL_RETRANSMIT;
-                }
-                let delay = start + DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
+            for attempt in 0u32..3 {
+                let delay = DEFAULT_INITIAL_RETRANSMIT * attempt;
                 https_probes
                     .push(Probe::Https {
                         delay,
@@ -386,16 +377,18 @@ impl ProbePlan {
         plan
     }
 
-    /// Creates a follow up probe plan using a previous net_report report.
+    /// Creates a follow up probe plan using a previous net_report report in browsers.
+    ///
+    /// This will only schedule HTTPS probes.
     #[cfg(not(wasm_browser))]
     pub(super) fn with_last_report(
         relay_map: &RelayMap,
-        if_state: &interfaces::State,
         last_report: &Report,
         protocols: &BTreeSet<ProbeProto>,
+        if_state: &interfaces::State,
     ) -> Self {
         if last_report.relay_latency.is_empty() {
-            return Self::initial(relay_map, if_state, protocols);
+            return Self::initial(relay_map, protocols, if_state);
         }
         let mut plan = Self {
             set: Default::default(),
@@ -543,22 +536,16 @@ impl ProbePlan {
             protocols: protocols.clone(),
         };
 
-        // The first time we need add probes after the STUN we record this delay, so that
-        // further relay servers can reuse this delay.
-        let mut max_stun_delay: Option<Duration> = None;
-
         let sorted_relays = sort_relays(relay_map, last_report);
         for (ri, (url, relay_node)) in sorted_relays.into_iter().enumerate() {
             if ri == NUM_INCREMENTAL_RELAYS {
                 break;
             }
 
-            // By default, each node only gets one STUN packet sent,
+            // By default, each node only gets one probe sent,
+            let mut attempts: u32 = 1;
             // except the fastest two from the previous round.
-            let mut attempts = 1;
-            let is_fastest_two = ri < 2;
-
-            if is_fastest_two {
+            if ri < 2 {
                 attempts = 2;
             }
             if Some(url) == last_report.preferred_relay.as_ref() {
@@ -573,11 +560,9 @@ impl ProbePlan {
                 .unwrap_or(DEFAULT_ACTIVE_RETRANSMIT_DELAY);
 
             let mut https_probes = ProbeSet::new(ProbeProto::Https);
-            let start = *max_stun_delay.get_or_insert_with(|| plan.max_delay());
             for attempt in 0..attempts {
-                let delay = start
-                    + (retransmit_delay * attempt as u32)
-                    + (ACTIVE_RETRANSMIT_EXTRA_DELAY * (attempt as u32 + 1));
+                let delay =
+                    (retransmit_delay * attempt) + (ACTIVE_RETRANSMIT_EXTRA_DELAY * (attempt + 1));
                 https_probes
                     .push(Probe::Https {
                         delay,
@@ -736,7 +721,7 @@ mod tests {
         let relay_node_1 = relay_map.nodes().next().unwrap();
         let relay_node_2 = relay_map.nodes().nth(1).unwrap();
         let if_state = interfaces::State::fake();
-        let plan = ProbePlan::initial(&relay_map, &if_state, &default_protocols());
+        let plan = ProbePlan::initial(&relay_map, &default_protocols(), &if_state);
 
         let mut expected_plan: ProbePlan = [
             probeset! {
@@ -860,8 +845,8 @@ mod tests {
         let if_state = interfaces::State::fake();
         let plan = ProbePlan::initial(
             &relay_map,
-            &if_state,
             &BTreeSet::from([ProbeProto::Https, ProbeProto::IcmpV4, ProbeProto::IcmpV6]),
+            &if_state,
         );
 
         let mut expected_plan: ProbePlan = [
@@ -959,9 +944,9 @@ mod tests {
             };
             let plan = ProbePlan::with_last_report(
                 &relay_map,
-                &if_state,
                 &last_report,
                 &default_protocols(),
+                &if_state,
             );
             let mut expected_plan: ProbePlan = [
                 probeset! {

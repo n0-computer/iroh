@@ -37,6 +37,8 @@ use iroh_relay::{
     protos::stun,
     RelayMap, RelayNode,
 };
+#[cfg(wasm_browser)]
+use n0_future::future::Pending;
 use n0_future::{
     task::{self, AbortOnDropHandle, JoinSet},
     time::{self, Duration, Instant},
@@ -49,6 +51,8 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
 use url::Host;
 
+#[cfg(wasm_browser)]
+use crate::portmapper; // We stub the library
 #[cfg(feature = "metrics")]
 use crate::Metrics;
 use crate::{self as net_report, Report};
@@ -82,8 +86,9 @@ pub(super) struct Client {
     _drop_guard: AbortOnDropHandle<()>,
 }
 
+#[cfg(not(wasm_browser))]
 #[derive(Debug, Clone)]
-pub struct SocketState {
+pub(crate) struct SocketState {
     /// The portmapper client, if there is one.
     pub(crate) port_mapper: Option<portmapper::Client>,
     /// Socket to send IPv4 STUN requests from.
@@ -463,7 +468,14 @@ impl Actor {
     fn prepare_portmapper_task(
         &mut self,
     ) -> MaybeFuture<Pin<Box<impl Future<Output = Option<portmapper::ProbeOutput>>>>> {
+        // In the browser, the compiler struggles to infer the type of future inside, because it's never set.
+        #[cfg(wasm_browser)]
+        let port_mapping: MaybeFuture<Pin<Box<Pending<Option<portmapper::ProbeOutput>>>>> =
+            MaybeFuture::default();
+
+        #[cfg(not(wasm_browser))]
         let mut port_mapping = MaybeFuture::default();
+
         #[cfg(not(wasm_browser))]
         if let Some(port_mapper) = self.socket_state.port_mapper.clone() {
             port_mapping.inner = Some(Box::pin(async move {
@@ -488,6 +500,13 @@ impl Actor {
     fn prepare_captive_portal_task(
         &mut self,
     ) -> MaybeFuture<Pin<Box<impl Future<Output = Option<bool>>>>> {
+        // In the browser case the compiler cannot infer the type of the future, because it's never set:
+        #[cfg(wasm_browser)]
+        let captive_task: MaybeFuture<Pin<Box<Pending<Option<bool>>>>> = MaybeFuture::default();
+
+        #[cfg(not(wasm_browser))]
+        let mut captive_task = MaybeFuture::default();
+
         // If we're doing a full probe, also check for a captive portal. We
         // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
         // it's unnecessary.
@@ -503,39 +522,37 @@ impl Actor {
             let dns_resolver = self.socket_state.dns_resolver.clone();
             let dm = self.relay_map.clone();
             self.outstanding_tasks.captive_task = true;
-            return MaybeFuture {
-                inner: Some(Box::pin(async move {
-                    time::sleep(CAPTIVE_PORTAL_DELAY).await;
-                    debug!("Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}");
-                    let captive_portal_check = time::timeout(
-                        CAPTIVE_PORTAL_TIMEOUT,
-                        check_captive_portal(&dns_resolver, &dm, preferred_relay)
-                            .instrument(debug_span!("captive-portal")),
-                    );
-                    match captive_portal_check.await {
-                        Ok(Ok(found)) => Some(found),
-                        Ok(Err(err)) => {
-                            let err: Result<reqwest::Error, _> = err.downcast();
-                            match err {
-                                Ok(req_err) if req_err.is_connect() => {
-                                    debug!("check_captive_portal failed: {req_err:#}");
-                                }
-                                Ok(req_err) => warn!("check_captive_portal error: {req_err:#}"),
-                                Err(any_err) => warn!("check_captive_portal error: {any_err:#}"),
+            captive_task.inner = Some(Box::pin(async move {
+                time::sleep(CAPTIVE_PORTAL_DELAY).await;
+                debug!("Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}");
+                let captive_portal_check = time::timeout(
+                    CAPTIVE_PORTAL_TIMEOUT,
+                    check_captive_portal(&dns_resolver, &dm, preferred_relay)
+                        .instrument(debug_span!("captive-portal")),
+                );
+                match captive_portal_check.await {
+                    Ok(Ok(found)) => Some(found),
+                    Ok(Err(err)) => {
+                        let err: Result<reqwest::Error, _> = err.downcast();
+                        match err {
+                            Ok(req_err) if req_err.is_connect() => {
+                                debug!("check_captive_portal failed: {req_err:#}");
                             }
-                            None
+                            Ok(req_err) => warn!("check_captive_portal error: {req_err:#}"),
+                            Err(any_err) => warn!("check_captive_portal error: {any_err:#}"),
                         }
-                        Err(_) => {
-                            warn!("check_captive_portal timed out");
-                            None
-                        }
+                        None
                     }
-                })),
-            };
+                    Err(_) => {
+                        warn!("check_captive_portal timed out");
+                        None
+                    }
+                }
+            }));
         }
 
         self.outstanding_tasks.captive_task = false;
-        MaybeFuture::default()
+        captive_task
     }
 
     /// Prepares the future which will run all the probes as per generated ProbePlan.
@@ -564,16 +581,16 @@ impl Actor {
         let plan = match self.last_report {
             Some(ref report) => ProbePlan::with_last_report(
                 &self.relay_map,
-                #[cfg(not(wasm_browser))]
-                &if_state,
                 report,
                 &self.protocols,
+                #[cfg(not(wasm_browser))]
+                &if_state,
             ),
             None => ProbePlan::initial(
                 &self.relay_map,
+                &self.protocols,
                 #[cfg(not(wasm_browser))]
                 &if_state,
-                &self.protocols,
             ),
         };
         trace!(%plan, "probe plan");
@@ -1148,6 +1165,7 @@ async fn get_relay_addr(
 /// Do a staggared ipv4 DNS lookup based on [`RelayNode`]
 ///
 /// `port` is combined with the resolved [`std::net::Ipv4Addr`] to return a [`SocketAddr`]
+#[cfg(not(wasm_browser))]
 async fn relay_lookup_ipv4_staggered(
     dns_resolver: &DnsResolver,
     relay: &RelayNode,
@@ -1177,6 +1195,7 @@ async fn relay_lookup_ipv4_staggered(
 /// Do a staggared ipv6 DNS lookup based on [`RelayNode`]
 ///
 /// `port` is combined with the resolved [`std::net::Ipv6Addr`] to return a [`SocketAddr`]
+#[cfg(not(wasm_browser))]
 async fn relay_lookup_ipv6_staggered(
     dns_resolver: &DnsResolver,
     relay: &RelayNode,

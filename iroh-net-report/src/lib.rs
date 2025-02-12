@@ -43,11 +43,32 @@ mod metrics;
 mod ping;
 mod reportgen;
 
+/// We "vendor" what we need of the library in browsers for simplicity.
+///
+/// We could consider making `portmapper` compile to wasm in the future,
+/// but what we need is so little it's likely not worth it.
+#[cfg(wasm_browser)]
+pub mod portmapper {
+    /// Output of a port mapping probe.
+    #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+    #[display("portmap={{ UPnP: {upnp}, PMP: {nat_pmp}, PCP: {pcp} }}")]
+    pub struct ProbeOutput {
+        /// If UPnP can be considered available.
+        pub upnp: bool,
+        /// If PCP can be considered available.
+        pub pcp: bool,
+        /// If PMP can be considered available.
+        pub nat_pmp: bool,
+    }
+}
+
 #[cfg(not(wasm_browser))]
 pub use ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddresses, MAPPED_ADDR_PORT};
 pub use metrics::Metrics;
+use reportgen::ProbeProto;
 pub use reportgen::QuicConfig;
-use reportgen::{ProbeProto, SocketState};
+#[cfg(not(wasm_browser))]
+use reportgen::SocketState;
 #[cfg(feature = "stun-utils")]
 pub use stun_utils::bind_local_stun_socket;
 
@@ -94,7 +115,6 @@ pub struct Report {
     /// public IP address (on IPv4).
     pub hair_pinning: Option<bool>,
     /// Probe indicating the presence of port mapping protocols on the LAN.
-    #[cfg(not(wasm_browser))]
     pub portmap_probe: Option<portmapper::ProbeOutput>,
     /// `None` for unknown
     pub preferred_relay: Option<RelayUrl>,
