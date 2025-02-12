@@ -1524,7 +1524,27 @@
 <a href="#1523" id="1523">1523</a>
 <a href="#1524" id="1524">1524</a>
 <a href="#1525" id="1525">1525</a>
-<a href="#1526" id="1526">1526</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1526" id="1526">1526</a>
+<a href="#1527" id="1527">1527</a>
+<a href="#1528" id="1528">1528</a>
+<a href="#1529" id="1529">1529</a>
+<a href="#1530" id="1530">1530</a>
+<a href="#1531" id="1531">1531</a>
+<a href="#1532" id="1532">1532</a>
+<a href="#1533" id="1533">1533</a>
+<a href="#1534" id="1534">1534</a>
+<a href="#1535" id="1535">1535</a>
+<a href="#1536" id="1536">1536</a>
+<a href="#1537" id="1537">1537</a>
+<a href="#1538" id="1538">1538</a>
+<a href="#1539" id="1539">1539</a>
+<a href="#1540" id="1540">1540</a>
+<a href="#1541" id="1541">1541</a>
+<a href="#1542" id="1542">1542</a>
+<a href="#1543" id="1543">1543</a>
+<a href="#1544" id="1544">1544</a>
+<a href="#1545" id="1545">1545</a>
+<a href="#1546" id="1546">1546</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -1569,11 +1589,32 @@
 </span><span class="kw">mod </span>ping;
 <span class="kw">mod </span>reportgen;
 
+<span class="doccomment">/// We "vendor" what we need of the library in browsers for simplicity.
+///
+/// We could consider making `portmapper` compile to wasm in the future,
+/// but what we need is so little it's likely not worth it.
+</span><span class="attr">#[cfg(wasm_browser)]
+</span><span class="kw">pub mod </span>portmapper {
+    <span class="doccomment">/// Output of a port mapping probe.
+    </span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+    #[display(<span class="string">"portmap={{ UPnP: {upnp}, PMP: {nat_pmp}, PCP: {pcp} }}"</span>)]
+    </span><span class="kw">pub struct </span>ProbeOutput {
+        <span class="doccomment">/// If UPnP can be considered available.
+        </span><span class="kw">pub </span>upnp: bool,
+        <span class="doccomment">/// If PCP can be considered available.
+        </span><span class="kw">pub </span>pcp: bool,
+        <span class="doccomment">/// If PMP can be considered available.
+        </span><span class="kw">pub </span>nat_pmp: bool,
+    }
+}
+
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">pub use </span>ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddresses, MAPPED_ADDR_PORT};
 <span class="kw">pub use </span>metrics::Metrics;
+<span class="kw">use </span>reportgen::ProbeProto;
 <span class="kw">pub use </span>reportgen::QuicConfig;
-<span class="kw">use </span>reportgen::{ProbeProto, SocketState};
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">use </span>reportgen::SocketState;
 <span class="attr">#[cfg(feature = <span class="string">"stun-utils"</span>)]
 </span><span class="kw">pub use </span>stun_utils::bind_local_stun_socket;
 
@@ -1620,7 +1661,6 @@
     /// public IP address (on IPv4).
     </span><span class="kw">pub </span>hair_pinning: <span class="prelude-ty">Option</span>&lt;bool&gt;,
     <span class="doccomment">/// Probe indicating the presence of port mapping protocols on the LAN.
-    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub </span>portmap_probe: <span class="prelude-ty">Option</span>&lt;portmapper::ProbeOutput&gt;,
     <span class="doccomment">/// `None` for unknown
     </span><span class="kw">pub </span>preferred_relay: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,

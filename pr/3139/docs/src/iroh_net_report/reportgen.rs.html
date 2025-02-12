@@ -1736,7 +1736,26 @@
 <a href="#1735" id="1735">1735</a>
 <a href="#1736" id="1736">1736</a>
 <a href="#1737" id="1737">1737</a>
-<a href="#1738" id="1738">1738</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1738" id="1738">1738</a>
+<a href="#1739" id="1739">1739</a>
+<a href="#1740" id="1740">1740</a>
+<a href="#1741" id="1741">1741</a>
+<a href="#1742" id="1742">1742</a>
+<a href="#1743" id="1743">1743</a>
+<a href="#1744" id="1744">1744</a>
+<a href="#1745" id="1745">1745</a>
+<a href="#1746" id="1746">1746</a>
+<a href="#1747" id="1747">1747</a>
+<a href="#1748" id="1748">1748</a>
+<a href="#1749" id="1749">1749</a>
+<a href="#1750" id="1750">1750</a>
+<a href="#1751" id="1751">1751</a>
+<a href="#1752" id="1752">1752</a>
+<a href="#1753" id="1753">1753</a>
+<a href="#1754" id="1754">1754</a>
+<a href="#1755" id="1755">1755</a>
+<a href="#1756" id="1756">1756</a>
+<a href="#1757" id="1757">1757</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1775,6 +1794,8 @@
     protos::stun,
     RelayMap, RelayNode,
 };
+<span class="attr">#[cfg(wasm_browser)]
+</span><span class="kw">use </span>n0_future::future::Pending;
 <span class="kw">use </span>n0_future::{
     task::{<span class="self">self</span>, AbortOnDropHandle, JoinSet},
     time::{<span class="self">self</span>, Duration, Instant},
@@ -1787,7 +1808,9 @@
 <span class="kw">use </span>tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
 <span class="kw">use </span>url::Host;
 
-<span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+<span class="attr">#[cfg(wasm_browser)]
+</span><span class="kw">use </span><span class="kw">crate</span>::portmapper; <span class="comment">// We stub the library
+</span><span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span><span class="kw">crate</span>::Metrics;
 <span class="kw">use crate</span>::{<span class="self">self </span><span class="kw">as </span>net_report, Report};
 <span class="attr">#[cfg(not(wasm_browser))]
@@ -1820,8 +1843,9 @@
     </span>_drop_guard: AbortOnDropHandle&lt;()&gt;,
 }
 
-<span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>SocketState {
+<span class="attr">#[cfg(not(wasm_browser))]
+#[derive(Debug, Clone)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>SocketState {
     <span class="doccomment">/// The portmapper client, if there is one.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;,
     <span class="doccomment">/// Socket to send IPv4 STUN requests from.
@@ -2201,7 +2225,14 @@
     </span><span class="kw">fn </span>prepare_portmapper_task(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
     ) -&gt; MaybeFuture&lt;Pin&lt;Box&lt;<span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Option</span>&lt;portmapper::ProbeOutput&gt;&gt;&gt;&gt;&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>port_mapping = MaybeFuture::default();
+        <span class="comment">// In the browser, the compiler struggles to infer the type of future inside, because it's never set.
+        </span><span class="attr">#[cfg(wasm_browser)]
+        </span><span class="kw">let </span>port_mapping: MaybeFuture&lt;Pin&lt;Box&lt;Pending&lt;<span class="prelude-ty">Option</span>&lt;portmapper::ProbeOutput&gt;&gt;&gt;&gt;&gt; =
+            MaybeFuture::default();
+
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span><span class="kw-2">mut </span>port_mapping = MaybeFuture::default();
+
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(port_mapper) = <span class="self">self</span>.socket_state.port_mapper.clone() {
             port_mapping.inner = <span class="prelude-val">Some</span>(Box::pin(<span class="kw">async move </span>{
@@ -2226,6 +2257,13 @@
     </span><span class="kw">fn </span>prepare_captive_portal_task(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
     ) -&gt; MaybeFuture&lt;Pin&lt;Box&lt;<span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Option</span>&lt;bool&gt;&gt;&gt;&gt;&gt; {
+        <span class="comment">// In the browser case the compiler cannot infer the type of the future, because it's never set:
+        </span><span class="attr">#[cfg(wasm_browser)]
+        </span><span class="kw">let </span>captive_task: MaybeFuture&lt;Pin&lt;Box&lt;Pending&lt;<span class="prelude-ty">Option</span>&lt;bool&gt;&gt;&gt;&gt;&gt; = MaybeFuture::default();
+
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span><span class="kw-2">mut </span>captive_task = MaybeFuture::default();
+
         <span class="comment">// If we're doing a full probe, also check for a captive portal. We
         // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
         // it's unnecessary.
@@ -2241,39 +2279,37 @@
             <span class="kw">let </span>dns_resolver = <span class="self">self</span>.socket_state.dns_resolver.clone();
             <span class="kw">let </span>dm = <span class="self">self</span>.relay_map.clone();
             <span class="self">self</span>.outstanding_tasks.captive_task = <span class="bool-val">true</span>;
-            <span class="kw">return </span>MaybeFuture {
-                inner: <span class="prelude-val">Some</span>(Box::pin(<span class="kw">async move </span>{
-                    time::sleep(CAPTIVE_PORTAL_DELAY).<span class="kw">await</span>;
-                    <span class="macro">debug!</span>(<span class="string">"Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}"</span>);
-                    <span class="kw">let </span>captive_portal_check = time::timeout(
-                        CAPTIVE_PORTAL_TIMEOUT,
-                        check_captive_portal(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>dm, preferred_relay)
-                            .instrument(<span class="macro">debug_span!</span>(<span class="string">"captive-portal"</span>)),
-                    );
-                    <span class="kw">match </span>captive_portal_check.<span class="kw">await </span>{
-                        <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(found)) =&gt; <span class="prelude-val">Some</span>(found),
-                        <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
-                            <span class="kw">let </span>err: <span class="prelude-ty">Result</span>&lt;reqwest::Error, <span class="kw">_</span>&gt; = err.downcast();
-                            <span class="kw">match </span>err {
-                                <span class="prelude-val">Ok</span>(req_err) <span class="kw">if </span>req_err.is_connect() =&gt; {
-                                    <span class="macro">debug!</span>(<span class="string">"check_captive_portal failed: {req_err:#}"</span>);
-                                }
-                                <span class="prelude-val">Ok</span>(req_err) =&gt; <span class="macro">warn!</span>(<span class="string">"check_captive_portal error: {req_err:#}"</span>),
-                                <span class="prelude-val">Err</span>(any_err) =&gt; <span class="macro">warn!</span>(<span class="string">"check_captive_portal error: {any_err:#}"</span>),
+            captive_task.inner = <span class="prelude-val">Some</span>(Box::pin(<span class="kw">async move </span>{
+                time::sleep(CAPTIVE_PORTAL_DELAY).<span class="kw">await</span>;
+                <span class="macro">debug!</span>(<span class="string">"Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}"</span>);
+                <span class="kw">let </span>captive_portal_check = time::timeout(
+                    CAPTIVE_PORTAL_TIMEOUT,
+                    check_captive_portal(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>dm, preferred_relay)
+                        .instrument(<span class="macro">debug_span!</span>(<span class="string">"captive-portal"</span>)),
+                );
+                <span class="kw">match </span>captive_portal_check.<span class="kw">await </span>{
+                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(found)) =&gt; <span class="prelude-val">Some</span>(found),
+                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
+                        <span class="kw">let </span>err: <span class="prelude-ty">Result</span>&lt;reqwest::Error, <span class="kw">_</span>&gt; = err.downcast();
+                        <span class="kw">match </span>err {
+                            <span class="prelude-val">Ok</span>(req_err) <span class="kw">if </span>req_err.is_connect() =&gt; {
+                                <span class="macro">debug!</span>(<span class="string">"check_captive_portal failed: {req_err:#}"</span>);
                             }
-                            <span class="prelude-val">None
-                        </span>}
-                        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
-                            <span class="macro">warn!</span>(<span class="string">"check_captive_portal timed out"</span>);
-                            <span class="prelude-val">None
-                        </span>}
-                    }
-                })),
-            };
+                            <span class="prelude-val">Ok</span>(req_err) =&gt; <span class="macro">warn!</span>(<span class="string">"check_captive_portal error: {req_err:#}"</span>),
+                            <span class="prelude-val">Err</span>(any_err) =&gt; <span class="macro">warn!</span>(<span class="string">"check_captive_portal error: {any_err:#}"</span>),
+                        }
+                        <span class="prelude-val">None
+                    </span>}
+                    <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
+                        <span class="macro">warn!</span>(<span class="string">"check_captive_portal timed out"</span>);
+                        <span class="prelude-val">None
+                    </span>}
+                }
+            }));
         }
 
         <span class="self">self</span>.outstanding_tasks.captive_task = <span class="bool-val">false</span>;
-        MaybeFuture::default()
+        captive_task
     }
 
     <span class="doccomment">/// Prepares the future which will run all the probes as per generated ProbePlan.
@@ -2302,16 +2338,16 @@
         <span class="kw">let </span>plan = <span class="kw">match </span><span class="self">self</span>.last_report {
             <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>report) =&gt; ProbePlan::with_last_report(
                 <span class="kw-2">&amp;</span><span class="self">self</span>.relay_map,
-                <span class="attr">#[cfg(not(wasm_browser))]
-                </span><span class="kw-2">&amp;</span>if_state,
                 report,
                 <span class="kw-2">&amp;</span><span class="self">self</span>.protocols,
+                <span class="attr">#[cfg(not(wasm_browser))]
+                </span><span class="kw-2">&amp;</span>if_state,
             ),
             <span class="prelude-val">None </span>=&gt; ProbePlan::initial(
                 <span class="kw-2">&amp;</span><span class="self">self</span>.relay_map,
+                <span class="kw-2">&amp;</span><span class="self">self</span>.protocols,
                 <span class="attr">#[cfg(not(wasm_browser))]
                 </span><span class="kw-2">&amp;</span>if_state,
-                <span class="kw-2">&amp;</span><span class="self">self</span>.protocols,
             ),
         };
         <span class="macro">trace!</span>(%plan, <span class="string">"probe plan"</span>);
@@ -2886,6 +2922,7 @@
 <span class="doccomment">/// Do a staggared ipv4 DNS lookup based on [`RelayNode`]
 ///
 /// `port` is combined with the resolved [`std::net::Ipv4Addr`] to return a [`SocketAddr`]
+</span><span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">async fn </span>relay_lookup_ipv4_staggered(
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     relay: <span class="kw-2">&amp;</span>RelayNode,
@@ -2915,6 +2952,7 @@
 <span class="doccomment">/// Do a staggared ipv6 DNS lookup based on [`RelayNode`]
 ///
 /// `port` is combined with the resolved [`std::net::Ipv6Addr`] to return a [`SocketAddr`]
+</span><span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">async fn </span>relay_lookup_ipv6_staggered(
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     relay: <span class="kw-2">&amp;</span>RelayNode,

@@ -1177,22 +1177,7 @@
 <a href="#1176" id="1176">1176</a>
 <a href="#1177" id="1177">1177</a>
 <a href="#1178" id="1178">1178</a>
-<a href="#1179" id="1179">1179</a>
-<a href="#1180" id="1180">1180</a>
-<a href="#1181" id="1181">1181</a>
-<a href="#1182" id="1182">1182</a>
-<a href="#1183" id="1183">1183</a>
-<a href="#1184" id="1184">1184</a>
-<a href="#1185" id="1185">1185</a>
-<a href="#1186" id="1186">1186</a>
-<a href="#1187" id="1187">1187</a>
-<a href="#1188" id="1188">1188</a>
-<a href="#1189" id="1189">1189</a>
-<a href="#1190" id="1190">1190</a>
-<a href="#1191" id="1191">1191</a>
-<a href="#1192" id="1192">1192</a>
-<a href="#1193" id="1193">1193</a>
-<a href="#1194" id="1194">1194</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay probes.
+<a href="#1179" id="1179">1179</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay probes.
 //!
 //! All the probes try and establish the latency to the relay servers.  Preferably the STUN
 //! probes work and we also learn about our public IP addresses and ports.  But fallback
@@ -1443,8 +1428,8 @@
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>initial(
         relay_map: <span class="kw-2">&amp;</span>RelayMap,
-        if_state: <span class="kw-2">&amp;</span>interfaces::State,
         protocols: <span class="kw-2">&amp;</span>BTreeSet&lt;ProbeProto&gt;,
+        if_state: <span class="kw-2">&amp;</span>interfaces::State,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>plan = <span class="self">Self </span>{
             set: BTreeSet::new(),
@@ -1543,7 +1528,9 @@
         plan
     }
 
-    <span class="doccomment">/// Creates an initial probe plan.
+    <span class="doccomment">/// Creates an initial probe plan for browsers.
+    ///
+    /// Here, we essentially only run HTTPS probes without any delays waiting for STUN.
     </span><span class="attr">#[cfg(wasm_browser)]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>initial(relay_map: <span class="kw-2">&amp;</span>RelayMap, protocols: <span class="kw-2">&amp;</span>BTreeSet&lt;ProbeProto&gt;) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>plan = <span class="self">Self </span>{
@@ -1551,22 +1538,11 @@
             protocols: protocols.clone(),
         };
 
-        <span class="comment">// The first time we need add probes after the STUN we record this delay, so that
-        // further relay server can reuse this delay.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>max_high_prio_delay: <span class="prelude-ty">Option</span>&lt;Duration&gt; = <span class="prelude-val">None</span>;
-
         <span class="kw">for </span>relay_node <span class="kw">in </span>relay_map.nodes() {
             <span class="kw">let </span><span class="kw-2">mut </span>https_probes = ProbeSet::new(ProbeProto::Https);
 
-            <span class="kw">for </span>attempt <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
-                <span class="kw">let </span><span class="kw-2">mut </span>start = <span class="kw-2">*</span>max_high_prio_delay.get_or_insert_with(|| plan.max_delay());
-                <span class="comment">// if there are high priority probes, ensure there is a buffer between
-                // the highest probe delay and the next probes we create
-                // if there are no high priority probes, we don't need a buffer
-                </span><span class="kw">if </span>plan.has_priority_probes() {
-                    start += DEFAULT_INITIAL_RETRANSMIT;
-                }
-                <span class="kw">let </span>delay = start + DEFAULT_INITIAL_RETRANSMIT * attempt <span class="kw">as </span>u32;
+            <span class="kw">for </span>attempt <span class="kw">in </span><span class="number">0u32</span>..<span class="number">3 </span>{
+                <span class="kw">let </span>delay = DEFAULT_INITIAL_RETRANSMIT * attempt;
                 https_probes
                     .push(Probe::Https {
                         delay,
@@ -1580,16 +1556,18 @@
         plan
     }
 
-    <span class="doccomment">/// Creates a follow up probe plan using a previous net_report report.
+    <span class="doccomment">/// Creates a follow up probe plan using a previous net_report report in browsers.
+    ///
+    /// This will only schedule HTTPS probes.
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>with_last_report(
         relay_map: <span class="kw-2">&amp;</span>RelayMap,
-        if_state: <span class="kw-2">&amp;</span>interfaces::State,
         last_report: <span class="kw-2">&amp;</span>Report,
         protocols: <span class="kw-2">&amp;</span>BTreeSet&lt;ProbeProto&gt;,
+        if_state: <span class="kw-2">&amp;</span>interfaces::State,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">if </span>last_report.relay_latency.is_empty() {
-            <span class="kw">return </span><span class="self">Self</span>::initial(relay_map, if_state, protocols);
+            <span class="kw">return </span><span class="self">Self</span>::initial(relay_map, protocols, if_state);
         }
         <span class="kw">let </span><span class="kw-2">mut </span>plan = <span class="self">Self </span>{
             set: Default::default(),
@@ -1737,22 +1715,16 @@
             protocols: protocols.clone(),
         };
 
-        <span class="comment">// The first time we need add probes after the STUN we record this delay, so that
-        // further relay servers can reuse this delay.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>max_stun_delay: <span class="prelude-ty">Option</span>&lt;Duration&gt; = <span class="prelude-val">None</span>;
-
         <span class="kw">let </span>sorted_relays = sort_relays(relay_map, last_report);
         <span class="kw">for </span>(ri, (url, relay_node)) <span class="kw">in </span>sorted_relays.into_iter().enumerate() {
             <span class="kw">if </span>ri == NUM_INCREMENTAL_RELAYS {
                 <span class="kw">break</span>;
             }
 
-            <span class="comment">// By default, each node only gets one STUN packet sent,
-            // except the fastest two from the previous round.
-            </span><span class="kw">let </span><span class="kw-2">mut </span>attempts = <span class="number">1</span>;
-            <span class="kw">let </span>is_fastest_two = ri &lt; <span class="number">2</span>;
-
-            <span class="kw">if </span>is_fastest_two {
+            <span class="comment">// By default, each node only gets one probe sent,
+            </span><span class="kw">let </span><span class="kw-2">mut </span>attempts: u32 = <span class="number">1</span>;
+            <span class="comment">// except the fastest two from the previous round.
+            </span><span class="kw">if </span>ri &lt; <span class="number">2 </span>{
                 attempts = <span class="number">2</span>;
             }
             <span class="kw">if </span><span class="prelude-val">Some</span>(url) == last_report.preferred_relay.as_ref() {
@@ -1767,11 +1739,9 @@
                 </span>.unwrap_or(DEFAULT_ACTIVE_RETRANSMIT_DELAY);
 
             <span class="kw">let </span><span class="kw-2">mut </span>https_probes = ProbeSet::new(ProbeProto::Https);
-            <span class="kw">let </span>start = <span class="kw-2">*</span>max_stun_delay.get_or_insert_with(|| plan.max_delay());
             <span class="kw">for </span>attempt <span class="kw">in </span><span class="number">0</span>..attempts {
-                <span class="kw">let </span>delay = start
-                    + (retransmit_delay * attempt <span class="kw">as </span>u32)
-                    + (ACTIVE_RETRANSMIT_EXTRA_DELAY * (attempt <span class="kw">as </span>u32 + <span class="number">1</span>));
+                <span class="kw">let </span>delay =
+                    (retransmit_delay * attempt) + (ACTIVE_RETRANSMIT_EXTRA_DELAY * (attempt + <span class="number">1</span>));
                 https_probes
                     .push(Probe::Https {
                         delay,
@@ -1930,7 +1900,7 @@
         <span class="kw">let </span>relay_node_1 = relay_map.nodes().next().unwrap();
         <span class="kw">let </span>relay_node_2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
         <span class="kw">let </span>if_state = interfaces::State::fake();
-        <span class="kw">let </span>plan = ProbePlan::initial(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>if_state, <span class="kw-2">&amp;</span>default_protocols());
+        <span class="kw">let </span>plan = ProbePlan::initial(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>default_protocols(), <span class="kw-2">&amp;</span>if_state);
 
         <span class="kw">let </span><span class="kw-2">mut </span>expected_plan: ProbePlan = [
             <span class="macro">probeset!</span> {
@@ -2054,8 +2024,8 @@
         <span class="kw">let </span>if_state = interfaces::State::fake();
         <span class="kw">let </span>plan = ProbePlan::initial(
             <span class="kw-2">&amp;</span>relay_map,
-            <span class="kw-2">&amp;</span>if_state,
             <span class="kw-2">&amp;</span>BTreeSet::from([ProbeProto::Https, ProbeProto::IcmpV4, ProbeProto::IcmpV6]),
+            <span class="kw-2">&amp;</span>if_state,
         );
 
         <span class="kw">let </span><span class="kw-2">mut </span>expected_plan: ProbePlan = [
@@ -2153,9 +2123,9 @@
             };
             <span class="kw">let </span>plan = ProbePlan::with_last_report(
                 <span class="kw-2">&amp;</span>relay_map,
-                <span class="kw-2">&amp;</span>if_state,
                 <span class="kw-2">&amp;</span>last_report,
                 <span class="kw-2">&amp;</span>default_protocols(),
+                <span class="kw-2">&amp;</span>if_state,
             );
             <span class="kw">let </span><span class="kw-2">mut </span>expected_plan: ProbePlan = [
                 <span class="macro">probeset!</span> {
