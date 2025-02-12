@@ -910,7 +910,35 @@
 <a href="#909" id="909">909</a>
 <a href="#910" id="910">910</a>
 <a href="#911" id="911">911</a>
-<a href="#912" id="912">912</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#912" id="912">912</a>
+<a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
+<a href="#916" id="916">916</a>
+<a href="#917" id="917">917</a>
+<a href="#918" id="918">918</a>
+<a href="#919" id="919">919</a>
+<a href="#920" id="920">920</a>
+<a href="#921" id="921">921</a>
+<a href="#922" id="922">922</a>
+<a href="#923" id="923">923</a>
+<a href="#924" id="924">924</a>
+<a href="#925" id="925">925</a>
+<a href="#926" id="926">926</a>
+<a href="#927" id="927">927</a>
+<a href="#928" id="928">928</a>
+<a href="#929" id="929">929</a>
+<a href="#930" id="930">930</a>
+<a href="#931" id="931">931</a>
+<a href="#932" id="932">932</a>
+<a href="#933" id="933">933</a>
+<a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a>
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a>
+<a href="#938" id="938">938</a>
+<a href="#939" id="939">939</a>
+<a href="#940" id="940">940</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1005,6 +1033,7 @@
 //! # }
 //! ```
 //!
+//! [`NodeAddr`]: iroh_base::NodeAddr
 //! [`RelayUrl`]: crate::RelayUrl
 //! [`Builder::discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: dns::DnsDiscovery
@@ -1106,49 +1135,73 @@
 <span class="kw">impl</span>&lt;T: Discovery&gt; Discovery <span class="kw">for </span>Arc&lt;T&gt; {}
 
 <span class="doccomment">/// The results returned from [`Discovery::resolve`].
+///
+/// This struct derefs to [`NodeData`], so you can access the methods from [`NodeData`]
+/// directly from [`DiscoveryItem`].
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>DiscoveryItem {
-    <span class="doccomment">/// The [`NodeId`] whose address we have discovered
-    </span><span class="kw">pub </span>node_addr: NodeAddr,
+    <span class="doccomment">/// The node info for the node, as discovered by the the discovery service.
+    </span>node_info: NodeInfo,
     <span class="doccomment">/// A static string to identify the discovery source.
     ///
     /// Should be uniform per discovery service.
-    </span><span class="kw">pub </span>provenance: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+    </span>provenance: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
     <span class="doccomment">/// Optional timestamp when this node address info was last updated.
     ///
     /// Must be microseconds since the unix epoch.
     </span><span class="comment">// TODO(ramfox): this is currently unused. As we develop more `DiscoveryService`s, we may discover that we do not need this. It is only truly relevant when comparing `relay_urls`, since we can attempt to dial any number of socket addresses, but expect each node to have one "home relay" that we will attempt to contact them on. This means we would need some way to determine which relay url to choose between, if more than one relay url is reported.
-    </span><span class="kw">pub </span>last_updated: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+    </span>last_updated: <span class="prelude-ty">Option</span>&lt;u64&gt;,
+}
+
+<span class="kw">impl </span>std::ops::Deref <span class="kw">for </span>DiscoveryItem {
+    <span class="kw">type </span>Target = NodeData;
+    <span class="kw">fn </span>deref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="self">Self</span>::Target {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.node_info.data
+    }
 }
 
 <span class="kw">impl </span>DiscoveryItem {
     <span class="doccomment">/// Creates a new [`DiscoveryItem`] from a [`NodeInfo`].
-    </span><span class="kw">pub fn </span>from_node_info(
-        node_info: NodeInfo,
-        provenance: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
-        last_updated: <span class="prelude-ty">Option</span>&lt;u64&gt;,
-    ) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>node_addr = node_info.into();
+    </span><span class="kw">pub fn </span>new(node_info: NodeInfo, provenance: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, last_updated: <span class="prelude-ty">Option</span>&lt;u64&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            node_addr,
+            node_info,
             provenance,
             last_updated,
         }
     }
 
-    <span class="doccomment">/// Creates a new [`DiscoveryItem`] from a [`NodeData`].
-    </span><span class="kw">pub fn </span>from_node_data(
-        node_id: NodeId,
-        node_data: NodeData,
-        provenance: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
-        last_updated: <span class="prelude-ty">Option</span>&lt;u64&gt;,
-    ) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>node_addr = node_data.into_node_addr(node_id);
-        <span class="self">Self </span>{
-            node_addr,
-            provenance,
-            last_updated,
-        }
+    <span class="doccomment">/// Returns the node id of the discovered node.
+    </span><span class="kw">pub fn </span>node_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeId {
+        <span class="self">self</span>.node_info.node_id
+    }
+
+    <span class="doccomment">/// Returns the [`NodeInfo`] for the discovered node.
+    </span><span class="kw">pub fn </span>node_info(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>NodeInfo {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.node_info
+    }
+
+    <span class="doccomment">/// Returns the provenance of this discovery item.
+    ///
+    /// The provenance is a static string to identify the discovery source.
+    </span><span class="kw">pub fn </span>provenance(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.provenance
+    }
+
+    <span class="doccomment">/// Returns the optional timestamp when this node address info was last updated.
+    ///
+    /// The value is microseconds since the unix epoch.
+    </span><span class="kw">pub fn </span>last_updated(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
+        <span class="self">self</span>.last_updated
+    }
+
+    <span class="doccomment">/// Converts into a [`NodeAddr`] by cloning the needed fields.
+    </span><span class="kw">pub fn </span>to_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeAddr {
+        <span class="self">self</span>.node_info.node_addr()
+    }
+
+    <span class="doccomment">/// Converts into a [`NodeAddr`] without cloning.
+    </span><span class="kw">pub fn </span>into_node_addr(<span class="self">self</span>) -&gt; NodeAddr {
+        <span class="self">self</span>.node_info.into_node_addr()
     }
 }
 
@@ -1346,12 +1399,14 @@
         <span class="kw">loop </span>{
             <span class="kw">match </span>stream.next().<span class="kw">await </span>{
                 <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(r)) =&gt; {
-                    <span class="kw">if </span>r.node_addr.is_empty() {
-                        <span class="macro">debug!</span>(provenance = %r.provenance, <span class="string">"discovery: empty address found"</span>);
+                    <span class="kw">let </span>provenance = r.provenance;
+                    <span class="kw">let </span>node_addr = r.into_node_addr();
+                    <span class="kw">if </span>node_addr.is_empty() {
+                        <span class="macro">debug!</span>(%provenance, <span class="string">"discovery: empty address found"</span>);
                         <span class="kw">continue</span>;
                     }
-                    <span class="macro">debug!</span>(provenance = %r.provenance, addr = <span class="question-mark">?</span>r.node_addr, <span class="string">"discovery: new address found"</span>);
-                    ep.add_node_addr_with_source(r.node_addr, r.provenance).ok();
+                    <span class="macro">debug!</span>(%provenance, addr = <span class="question-mark">?</span>node_addr, <span class="string">"discovery: new address found"</span>);
+                    ep.add_node_addr_with_source(node_addr, provenance).ok();
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(tx) = on_first_tx.take() {
                         tx.send(<span class="prelude-val">Ok</span>(())).ok();
                     }
@@ -1386,7 +1441,7 @@
     };
 
     <span class="kw">use </span>anyhow::Context;
-    <span class="kw">use </span>iroh_base::SecretKey;
+    <span class="kw">use </span>iroh_base::{NodeAddr, SecretKey};
     <span class="kw">use </span>rand::Rng;
     <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
@@ -1464,7 +1519,8 @@
             };
             <span class="kw">let </span>stream = <span class="kw">match </span>addr_info {
                 <span class="prelude-val">Some</span>((data, ts)) =&gt; {
-                    <span class="kw">let </span>item = DiscoveryItem::from_node_data(node_id, data, <span class="string">"test-disco"</span>, <span class="prelude-val">Some</span>(ts));
+                    <span class="kw">let </span>item =
+                        DiscoveryItem::new(NodeInfo::new(node_id, data), <span class="string">"test-disco"</span>, <span class="prelude-val">Some</span>(ts));
                     <span class="kw">let </span>delay = <span class="self">self</span>.delay;
                     <span class="kw">let </span>fut = <span class="kw">async move </span>{
                         time::sleep(delay).<span class="kw">await</span>;
@@ -1765,7 +1821,7 @@
             direct_addresses: Default::default(),
         };
 
-        <span class="macro">assert_eq!</span>(resolved, expected);
+        <span class="macro">assert_eq!</span>(resolved.node_addr(), expected);
         <span class="prelude-val">Ok</span>(())
     }
 

@@ -595,7 +595,7 @@
     /// This is a nonblocking function, the actual update is performed in the background.
     </span><span class="kw">pub fn </span>update_addr_info(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>NodeData) {
         <span class="kw">let </span><span class="kw-2">mut </span>data = data.clone();
-        <span class="kw">if </span>data.relay_url.is_some() {
+        <span class="kw">if </span>data.relay_url().is_some() {
             <span class="comment">// If relay url is set: only publish relay url, and no direct addrs.
             </span>data.clear_direct_addresses();
         }
@@ -727,7 +727,7 @@
         <span class="kw">let </span>fut = <span class="kw">async move </span>{
             <span class="kw">let </span>signed_packet = pkarr_client.resolve(node_id).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">let </span>info = NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet)<span class="question-mark">?</span>;
-            <span class="kw">let </span>item = DiscoveryItem::from_node_info(info, <span class="string">"pkarr"</span>, <span class="prelude-val">None</span>);
+            <span class="kw">let </span>item = DiscoveryItem::new(info, <span class="string">"pkarr"</span>, <span class="prelude-val">None</span>);
             <span class="prelude-val">Ok</span>(item)
         };
         <span class="kw">let </span>stream = n0_future::stream::once_future(fut);

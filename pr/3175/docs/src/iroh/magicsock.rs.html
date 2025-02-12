@@ -4411,7 +4411,9 @@
 <a href="#4410" id="4410">4410</a>
 <a href="#4411" id="4411">4411</a>
 <a href="#4412" id="4412">4412</a>
-<a href="#4413" id="4413">4413</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4413" id="4413">4413</a>
+<a href="#4414" id="4414">4414</a>
+<a href="#4415" id="4415">4415</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -6739,12 +6741,14 @@
                 // forever like we do with the other branches that yield `Option`s
                 </span><span class="prelude-val">Some</span>(discovery_item) = discovery_events.next() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: discovery event, address discovered: {discovery_item:?}"</span>);
+                    <span class="kw">let </span>provenance = discovery_item.provenance();
+                    <span class="kw">let </span>node_addr = discovery_item.into_node_addr();
                     <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.msock.add_node_addr(
-                        discovery_item.node_addr.clone(),
+                        node_addr.clone(),
                         Source::Discovery {
-                            name: discovery_item.provenance.into()
+                            name: provenance.to_string()
                         }) {
-                        <span class="macro">warn!</span>(<span class="question-mark">?</span>discovery_item.node_addr, <span class="string">"unable to add discovered node address to the node map: {e:?}"</span>);
+                        <span class="macro">warn!</span>(<span class="question-mark">?</span>node_addr, <span class="string">"unable to add discovered node address to the node map: {e:?}"</span>);
                     }
                 }
             }

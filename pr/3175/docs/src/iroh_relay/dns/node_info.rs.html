@@ -584,7 +584,54 @@
 <a href="#583" id="583">583</a>
 <a href="#584" id="584">584</a>
 <a href="#585" id="585">585</a>
-<a href="#586" id="586">586</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#586" id="586">586</a>
+<a href="#587" id="587">587</a>
+<a href="#588" id="588">588</a>
+<a href="#589" id="589">589</a>
+<a href="#590" id="590">590</a>
+<a href="#591" id="591">591</a>
+<a href="#592" id="592">592</a>
+<a href="#593" id="593">593</a>
+<a href="#594" id="594">594</a>
+<a href="#595" id="595">595</a>
+<a href="#596" id="596">596</a>
+<a href="#597" id="597">597</a>
+<a href="#598" id="598">598</a>
+<a href="#599" id="599">599</a>
+<a href="#600" id="600">600</a>
+<a href="#601" id="601">601</a>
+<a href="#602" id="602">602</a>
+<a href="#603" id="603">603</a>
+<a href="#604" id="604">604</a>
+<a href="#605" id="605">605</a>
+<a href="#606" id="606">606</a>
+<a href="#607" id="607">607</a>
+<a href="#608" id="608">608</a>
+<a href="#609" id="609">609</a>
+<a href="#610" id="610">610</a>
+<a href="#611" id="611">611</a>
+<a href="#612" id="612">612</a>
+<a href="#613" id="613">613</a>
+<a href="#614" id="614">614</a>
+<a href="#615" id="615">615</a>
+<a href="#616" id="616">616</a>
+<a href="#617" id="617">617</a>
+<a href="#618" id="618">618</a>
+<a href="#619" id="619">619</a>
+<a href="#620" id="620">620</a>
+<a href="#621" id="621">621</a>
+<a href="#622" id="622">622</a>
+<a href="#623" id="623">623</a>
+<a href="#624" id="624">624</a>
+<a href="#625" id="625">625</a>
+<a href="#626" id="626">626</a>
+<a href="#627" id="627">627</a>
+<a href="#628" id="628">628</a>
+<a href="#629" id="629">629</a>
+<a href="#630" id="630">630</a>
+<a href="#631" id="631">631</a>
+<a href="#632" id="632">632</a>
+<a href="#633" id="633">633</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -664,19 +711,18 @@
     }
 }
 
-<span class="doccomment">/// The information that can be published about a node in discovery services.
+<span class="doccomment">/// Data about a node that may be published to and resolved from discovery services.
 ///
 /// This includes an optional [`RelayUrl`] and a set of direct addresses.
 ///
-/// The fields are not public, but there are setter and getter functions for all fields
-/// contained in the struct.
+/// This struct does not include the node's [`NodeId`], only the data *about* a certain
+/// node. See [`NodeInfo`] for a struct that contains a [`NodeId`] with associated [`NodeData`].
 </span><span class="attr">#[derive(Debug, Clone, Default, Eq, PartialEq)]
-#[non_exhaustive]
 </span><span class="kw">pub struct </span>NodeData {
     <span class="doccomment">/// URL of the home relay of this node.
-    </span><span class="kw">pub </span>relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
+    </span>relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
     <span class="doccomment">/// Direct addresses where this node can be reached.
-    </span><span class="kw">pub </span>direct_addresses: BTreeSet&lt;SocketAddr&gt;,
+    </span>direct_addresses: BTreeSet&lt;SocketAddr&gt;,
 }
 
 <span class="kw">impl </span>NodeData {
@@ -688,30 +734,41 @@
         }
     }
 
-    <span class="doccomment">/// Sets the relay URL.
+    <span class="doccomment">/// Sets the relay URL and returns the updated node data.
     </span><span class="kw">pub fn </span>with_relay_url(<span class="kw-2">mut </span><span class="self">self</span>, relay_url: <span class="kw">impl </span>Into&lt;RelayUrl&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.relay_url = <span class="prelude-val">Some</span>(relay_url.into());
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Sets the direct addresses.
+    <span class="doccomment">/// Sets the direct addresses and returns the updated node data.
     </span><span class="kw">pub fn </span>with_direct_addrs(<span class="kw-2">mut </span><span class="self">self</span>, direct_addrs: BTreeSet&lt;SocketAddr&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.direct_addresses = direct_addrs;
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Removes all direct addresses.
+    <span class="doccomment">/// Returns the relay URL of the node.
+    </span><span class="kw">pub fn </span>relay_url(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt; {
+        <span class="self">self</span>.relay_url.as_ref()
+    }
+
+    <span class="doccomment">/// Returns the direct addresses of the node.
+    </span><span class="kw">pub fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt; {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.direct_addresses
+    }
+
+    <span class="doccomment">/// Removes all direct addresses from the node data.
     </span><span class="kw">pub fn </span>clear_direct_addresses(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="self">self</span>.direct_addresses = Default::default();
     }
 
-    <span class="doccomment">/// Converts into a [`NodeAddr`].
-    </span><span class="kw">pub fn </span>into_node_addr(<span class="self">self</span>, node_id: NodeId) -&gt; NodeAddr {
-        NodeAddr {
-            node_id,
-            relay_url: <span class="self">self</span>.relay_url,
-            direct_addresses: <span class="self">self</span>.direct_addresses,
-        }
+    <span class="doccomment">/// Adds direct addresses to the node data.
+    </span><span class="kw">pub fn </span>add_direct_addresses(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addrs: <span class="kw">impl </span>IntoIterator&lt;Item = SocketAddr&gt;) {
+        <span class="self">self</span>.direct_addresses.extend(addrs.into_iter())
+    }
+
+    <span class="doccomment">/// Sets the relay URL of the node data.
+    </span><span class="kw">pub fn </span>set_relay_url(<span class="kw-2">&amp;mut </span><span class="self">self</span>, relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;) {
+        <span class="self">self</span>.relay_url = relay_url
     }
 }
 
@@ -724,7 +781,9 @@
     }
 }
 
-<span class="doccomment">/// Information about the iroh node contained in an [`IROH_TXT_NAME`] TXT resource record.
+<span class="doccomment">/// Information about a node that may be published to and resolved from discovery services.
+///
+/// This struct couples a [`NodeId`] with its associated [`NodeData`].
 </span><span class="attr">#[derive(derive_more::Debug, Clone, Eq, PartialEq)]
 </span><span class="kw">pub struct </span>NodeInfo {
     <span class="doccomment">/// The [`NodeId`].
@@ -765,7 +824,17 @@
 
 <span class="kw">impl </span>From&lt;NodeInfo&gt; <span class="kw">for </span>NodeAddr {
     <span class="kw">fn </span>from(value: NodeInfo) -&gt; <span class="self">Self </span>{
-        value.data.into_node_addr(value.node_id)
+        value.into_node_addr()
+    }
+}
+
+<span class="kw">impl </span>From&lt;NodeAddr&gt; <span class="kw">for </span>NodeInfo {
+    <span class="kw">fn </span>from(value: NodeAddr) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>data = NodeData {
+            direct_addresses: value.direct_addresses,
+            relay_url: value.relay_url,
+        };
+        <span class="self">Self</span>::new(value.node_id, data)
     }
 }
 
@@ -773,6 +842,24 @@
     <span class="doccomment">/// Creates a new [`NodeInfo`] from its parts.
     </span><span class="kw">pub fn </span>new(node_id: NodeId, data: NodeData) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{ node_id, data }
+    }
+
+    <span class="doccomment">/// Converts into a [`NodeAddr`] by cloning the needed fields.
+    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeAddr {
+        NodeAddr {
+            node_id: <span class="self">self</span>.node_id,
+            relay_url: <span class="self">self</span>.data.relay_url.clone(),
+            direct_addresses: <span class="self">self</span>.data.direct_addresses.clone(),
+        }
+    }
+
+    <span class="doccomment">/// Converts into a [`NodeAddr`] without cloning.
+    </span><span class="kw">pub fn </span>into_node_addr(<span class="self">self</span>) -&gt; NodeAddr {
+        NodeAddr {
+            node_id: <span class="self">self</span>.node_id,
+            relay_url: <span class="self">self</span>.data.relay_url,
+            direct_addresses: <span class="self">self</span>.data.direct_addresses,
+        }
     }
 
     <span class="kw">fn </span>to_attrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; TxtAttrs&lt;IrohAttr&gt; {
@@ -805,6 +892,13 @@
     <span class="doccomment">/// Converts into a list of `{key}={value}` strings.
     </span><span class="kw">pub fn </span>to_txt_strings(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;String&gt; {
         <span class="self">self</span>.to_attrs().to_txt_strings().collect()
+    }
+}
+
+<span class="kw">impl </span>std::ops::Deref <span class="kw">for </span>NodeInfo {
+    <span class="kw">type </span>Target = NodeData;
+    <span class="kw">fn </span>deref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="self">Self</span>::Target {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.data
     }
 }
 

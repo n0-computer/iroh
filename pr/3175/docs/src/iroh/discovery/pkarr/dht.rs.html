@@ -445,15 +445,7 @@
 <a href="#444" id="444">444</a>
 <a href="#445" id="445">445</a>
 <a href="#446" id="446">446</a>
-<a href="#447" id="447">447</a>
-<a href="#448" id="448">448</a>
-<a href="#449" id="449">449</a>
-<a href="#450" id="450">450</a>
-<a href="#451" id="451">451</a>
-<a href="#452" id="452">452</a>
-<a href="#453" id="453">453</a>
-<a href="#454" id="454">454</a>
-<a href="#455" id="455">455</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
+<a href="#447" id="447">447</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
 //!
 //! This module contains pkarr-based node discovery for iroh which can use both pkarr
 //! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
@@ -463,7 +455,7 @@
 </span><span class="kw">use </span>std::sync::{Arc, Mutex};
 
 <span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, SecretKey};
+<span class="kw">use </span>iroh_base::{NodeId, SecretKey};
 <span class="kw">use </span>n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -557,14 +549,8 @@
         <span class="kw">match </span>maybe_packet {
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(signed_packet)) =&gt; <span class="kw">match </span>NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet) {
                 <span class="prelude-val">Ok</span>(node_info) =&gt; {
-                    <span class="kw">let </span>node_addr: NodeAddr = node_info.into();
-
-                    <span class="macro">tracing::info!</span>(<span class="string">"discovered node info from relay {:?}"</span>, node_addr);
-                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(DiscoveryItem {
-                        node_addr,
-                        provenance: <span class="string">"relay"</span>,
-                        last_updated: <span class="prelude-val">None</span>,
-                    }))
+                    <span class="macro">tracing::info!</span>(<span class="string">"discovered node info from relay {:?}"</span>, node_info);
+                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(DiscoveryItem::new(node_info, <span class="string">"relay"</span>, <span class="prelude-val">None</span>)))
                 }
                 <span class="prelude-val">Err</span>(_err) =&gt; {
                     <span class="macro">tracing::debug!</span>(<span class="string">"failed to parse signed packet as node info"</span>);
@@ -589,9 +575,7 @@
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(signed_packet)) =&gt; <span class="kw">match </span>NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet) {
                 <span class="prelude-val">Ok</span>(node_info) =&gt; {
                     <span class="macro">tracing::info!</span>(<span class="string">"discovered node info from DHT {:?}"</span>, <span class="kw-2">&amp;</span>node_info);
-                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(DiscoveryItem::from_node_info(
-                        node_info, <span class="string">"mainline"</span>, <span class="prelude-val">None</span>,
-                    )))
+                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(DiscoveryItem::new(node_info, <span class="string">"mainline"</span>, <span class="prelude-val">None</span>)))
                 }
                 <span class="prelude-val">Err</span>(_err) =&gt; {
                     <span class="macro">tracing::debug!</span>(<span class="string">"failed to parse signed packet as node info"</span>);
@@ -894,8 +878,8 @@
                     .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
                     .<span class="kw">await</span>;
                 <span class="kw">for </span>item <span class="kw">in </span>items.into_iter().flatten() {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(url) = item.node_addr.relay_url {
-                        found_relay_urls.insert(url);
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(url) = item.relay_url() {
+                        found_relay_urls.insert(url.clone());
                     }
                 }
                 <span class="kw">if </span>found_relay_urls.contains(<span class="kw-2">&amp;</span>relay_url) {
