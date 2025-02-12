@@ -2412,7 +2412,8 @@
 <a href="#2411" id="2411">2411</a>
 <a href="#2412" id="2412">2412</a>
 <a href="#2413" id="2413">2413</a>
-<a href="#2414" id="2414">2414</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2414" id="2414">2414</a>
+<a href="#2415" id="2415">2415</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -4702,7 +4703,7 @@
             .unwrap();
     }
 
-    <span class="kw">async fn </span>spawn_0rtt_server() -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint&gt; {
+    <span class="kw">async fn </span>spawn_0rtt_server(log_span: tracing::Span) -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint&gt; {
         <span class="kw">let </span>server = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled)
@@ -4736,6 +4737,7 @@
                 }
                 anyhow::Ok(())
             }
+            .instrument(log_span)
         });
 
         <span class="prelude-val">Ok</span>(server)
@@ -4786,7 +4788,7 @@
             .relay_mode(RelayMode::Disabled)
             .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>server = spawn_0rtt_server().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server = spawn_0rtt_server(<span class="macro">info_span!</span>(<span class="string">"server"</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
 
         connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="comment">// The second 0rtt attempt should work
@@ -4808,13 +4810,13 @@
             .relay_mode(RelayMode::Disabled)
             .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>server = spawn_0rtt_server().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server = spawn_0rtt_server(<span class="macro">info_span!</span>(<span class="string">"server"</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
 
         connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// connecting with another endpoint should not interfere with our
         // TLS session ticket cache for the first endpoint:
-        </span><span class="kw">let </span>another = spawn_0rtt_server().<span class="kw">await</span><span class="question-mark">?</span>;
+        </span><span class="kw">let </span>another = spawn_0rtt_server(<span class="macro">info_span!</span>(<span class="string">"another"</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
         connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, another.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         another.close().<span class="kw">await</span>;
 
