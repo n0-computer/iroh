@@ -631,7 +631,19 @@
 <a href="#630" id="630">630</a>
 <a href="#631" id="631">631</a>
 <a href="#632" id="632">632</a>
-<a href="#633" id="633">633</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#633" id="633">633</a>
+<a href="#634" id="634">634</a>
+<a href="#635" id="635">635</a>
+<a href="#636" id="636">636</a>
+<a href="#637" id="637">637</a>
+<a href="#638" id="638">638</a>
+<a href="#639" id="639">639</a>
+<a href="#640" id="640">640</a>
+<a href="#641" id="641">641</a>
+<a href="#642" id="642">642</a>
+<a href="#643" id="643">643</a>
+<a href="#644" id="644">644</a>
+<a href="#645" id="645">645</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -843,6 +855,18 @@
     </span><span class="kw">pub fn </span>new(node_id: NodeId, data: NodeData) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{ node_id, data }
     }
+
+    <span class="doccomment">/// Sets the relay URL and returns the updated node info.
+    </span><span class="kw">pub fn </span>with_relay_url(<span class="kw-2">mut </span><span class="self">self</span>, relay_url: <span class="kw">impl </span>Into&lt;RelayUrl&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.data = <span class="self">self</span>.data.with_relay_url(relay_url);
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Sets the direct addresses and returns the updated node info.
+    </span><span class="kw">pub fn </span>with_direct_addrs(<span class="kw-2">mut </span><span class="self">self</span>, direct_addrs: BTreeSet&lt;SocketAddr&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.data = <span class="self">self</span>.data.with_direct_addrs(direct_addrs);
+        <span class="self">self
+    </span>}
 
     <span class="doccomment">/// Converts into a [`NodeAddr`] by cloning the needed fields.
     </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeAddr {

@@ -1192,7 +1192,7 @@
     ///
     /// The provenance is a static string to identify the discovery source.
     </span><span class="kw">pub fn </span>provenance(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.provenance
+        <span class="self">self</span>.provenance
     }
 
     <span class="doccomment">/// Returns the optional timestamp when this node address info was last updated.
@@ -1797,7 +1797,7 @@
             .lookup_node_by_id(<span class="kw-2">&amp;</span>node_info.node_id, <span class="kw-2">&amp;</span>origin)
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="macro">assert_eq!</span>(resolved, node_info.into());
+        <span class="macro">assert_eq!</span>(resolved, node_info);
 
         <span class="prelude-val">Ok</span>(())
     }
