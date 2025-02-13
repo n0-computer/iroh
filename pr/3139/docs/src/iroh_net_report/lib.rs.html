@@ -1393,7 +1393,8 @@
 <a href="#1392" id="1392">1392</a>
 <a href="#1393" id="1393">1393</a>
 <a href="#1394" id="1394">1394</a>
-<a href="#1395" id="1395">1395</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1395" id="1395">1395</a>
+<a href="#1396" id="1396">1396</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -1403,6 +1404,7 @@
 </span><span class="attr">#![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(wasm_browser, allow(unused))]
 
 </span><span class="kw">use </span>std::{
     collections::{BTreeMap, HashMap},
