@@ -583,8 +583,11 @@ mod tests {
             };
             let stream = match addr_info {
                 Some((data, ts)) => {
-                    let item =
-                        DiscoveryItem::new(NodeInfo::new(node_id, data), "test-disco", Some(ts));
+                    let item = DiscoveryItem::new(
+                        NodeInfo::from_parts(node_id, data),
+                        "test-disco",
+                        Some(ts),
+                    );
                     let delay = self.delay;
                     let fut = async move {
                         time::sleep(delay).await;
@@ -838,13 +841,8 @@ mod test_dns_pkarr {
         let (nameserver, _dns_drop_guard) = run_dns_server(state.clone()).await?;
 
         let secret_key = SecretKey::generate(rand::thread_rng());
-        let node_info = NodeInfo::new(
-            secret_key.public(),
-            NodeData::new(
-                Some("https://relay.example".parse().unwrap()),
-                Default::default(),
-            ),
-        );
+        let node_info = NodeInfo::new(secret_key.public())
+            .with_relay_url(Some("https://relay.example".parse().unwrap()));
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
         state.upsert(signed_packet)?;
 

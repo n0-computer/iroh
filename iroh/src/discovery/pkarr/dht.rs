@@ -343,11 +343,10 @@ impl Discovery for DhtDiscovery {
             return;
         };
         tracing::debug!("publishing {data:?}");
-        let mut data = data.clone();
+        let mut info = NodeInfo::from_parts(keypair.public(), data.clone());
         if !self.0.include_direct_addresses {
-            data.clear_direct_addresses();
+            info.clear_direct_addresses();
         }
-        let info = NodeInfo::new(keypair.public(), data);
         let Ok(signed_packet) = info.to_pkarr_signed_packet(keypair, self.0.ttl) else {
             tracing::warn!("failed to create signed packet");
             return;
@@ -417,7 +416,7 @@ mod tests {
             .build()?;
         let relay_url: RelayUrl = Url::parse("https://example.com")?.into();
 
-        let data = NodeData::default().with_relay_url(relay_url.clone());
+        let data = NodeData::default().with_relay_url(Some(relay_url.clone()));
         discovery.publish(&data);
 
         // publish is fire and forget, so we have no way to wait until it is done.

@@ -23,14 +23,13 @@ mod tests {
 
     use anyhow::Result;
     use iroh::{
-        discovery::{pkarr::PkarrRelayClient, NodeData},
+        discovery::pkarr::PkarrRelayClient,
         dns::{node_info::NodeInfo, DnsResolver},
         RelayUrl, SecretKey,
     };
     use pkarr::{PkarrClient, SignedPacket};
     use testresult::TestResult;
     use tracing_test::traced_test;
-    use url::Url;
 
     use crate::{
         config::BootstrapOption,
@@ -172,8 +171,7 @@ mod tests {
         let node_id = secret_key.public();
         let pkarr = PkarrRelayClient::new(pkarr_relay);
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
-        let node_data = NodeData::default().with_relay_url(relay_url.clone());
-        let node_info = NodeInfo::new(node_id, node_data);
+        let node_info = NodeInfo::new(node_id).with_relay_url(Some(relay_url.clone()));
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
 
         pkarr.publish(&signed_packet).await?;
@@ -236,8 +234,7 @@ mod tests {
         let secret_key = SecretKey::generate(rand::thread_rng());
         let node_id = secret_key.public();
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
-        let node_data = NodeData::default().with_relay_url(relay_url.clone());
-        let node_info = NodeInfo::new(node_id, node_data);
+        let node_info = NodeInfo::new(node_id).with_relay_url(Some(relay_url.clone()));
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
 
         // publish the signed packet to our DHT
@@ -270,9 +267,8 @@ mod tests {
     fn random_signed_packet() -> Result<SignedPacket> {
         let secret_key = SecretKey::generate(rand::thread_rng());
         let node_id = secret_key.public();
-        let relay_url: Url = "https://relay.example.".parse()?;
-        let node_data = NodeData::default().with_relay_url(relay_url.clone());
-        let node_info = NodeInfo::new(node_id, node_data);
+        let relay_url: RelayUrl = "https://relay.example.".parse()?;
+        let node_info = NodeInfo::new(node_id).with_relay_url(Some(relay_url.clone()));
         node_info.to_pkarr_signed_packet(&secret_key, 30)
     }
 }

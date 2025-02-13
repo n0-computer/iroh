@@ -102,8 +102,8 @@ impl NodeData {
     }
 
     /// Sets the relay URL and returns the updated node data.
-    pub fn with_relay_url(mut self, relay_url: impl Into<RelayUrl>) -> Self {
-        self.relay_url = Some(relay_url.into());
+    pub fn with_relay_url(mut self, relay_url: Option<RelayUrl>) -> Self {
+        self.relay_url = relay_url;
         self
     }
 
@@ -196,23 +196,26 @@ impl From<NodeInfo> for NodeAddr {
 }
 
 impl From<NodeAddr> for NodeInfo {
-    fn from(value: NodeAddr) -> Self {
-        let data = NodeData {
-            direct_addresses: value.direct_addresses,
-            relay_url: value.relay_url,
-        };
-        Self::new(value.node_id, data)
+    fn from(addr: NodeAddr) -> Self {
+        Self::new(addr.node_id)
+            .with_relay_url(addr.relay_url)
+            .with_direct_addrs(addr.direct_addresses)
     }
 }
 
 impl NodeInfo {
+    /// Creates a new [`NodeInfo`] with an empty [`NodeData`].
+    pub fn new(node_id: NodeId) -> Self {
+        Self::from_parts(node_id, Default::default())
+    }
+
     /// Creates a new [`NodeInfo`] from its parts.
-    pub fn new(node_id: NodeId, data: NodeData) -> Self {
+    pub fn from_parts(node_id: NodeId, data: NodeData) -> Self {
         Self { node_id, data }
     }
 
     /// Sets the relay URL and returns the updated node info.
-    pub fn with_relay_url(mut self, relay_url: impl Into<RelayUrl>) -> Self {
+    pub fn with_relay_url(mut self, relay_url: Option<RelayUrl>) -> Self {
         self.data = self.data.with_relay_url(relay_url);
         self
     }
@@ -278,6 +281,12 @@ impl std::ops::Deref for NodeInfo {
     type Target = NodeData;
     fn deref(&self) -> &Self::Target {
         &self.data
+    }
+}
+
+impl std::ops::DerefMut for NodeInfo {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.data
     }
 }
 
@@ -547,7 +556,7 @@ mod tests {
         let node_id = "vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
             .parse()
             .unwrap();
-        let expected = NodeInfo::new(node_id, node_data);
+        let expected = NodeInfo::from_parts(node_id, node_data);
         let attrs = expected.to_attrs();
         let actual = NodeInfo::from(&attrs);
         assert_eq!(expected, actual);
@@ -561,7 +570,7 @@ mod tests {
             Some("https://example.com".parse().unwrap()),
             ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
         );
-        let expected = NodeInfo::new(secret_key.public(), node_data);
+        let expected = NodeInfo::from_parts(secret_key.public(), node_data);
         let packet = expected.to_pkarr_signed_packet(&secret_key, 30).unwrap();
         let actual = NodeInfo::from_pkarr_signed_packet(&packet).unwrap();
         assert_eq!(expected, actual);
@@ -627,17 +636,16 @@ mod tests {
         let lookup = hickory_resolver::lookup::TxtLookup::from(lookup);
 
         let node_info = NodeInfo::from_txt_lookup(lookup.into())?;
-        let expected_node_info = NodeInfo::new(
-            NodeId::from_str("1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18")
-                .unwrap(),
-            NodeData::new(
-                Some("https://euw1-1.relay.iroh.network./".parse()?),
-                BTreeSet::from([
-                    "192.168.96.145:60165".parse()?,
-                    "213.208.157.87:60165".parse()?,
-                ]),
-            ),
-        );
+
+        let expected_node_info = NodeInfo::new(NodeId::from_str(
+            "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18",
+        )?)
+        .with_relay_url(Some("https://euw1-1.relay.iroh.network./".parse()?))
+        .with_direct_addrs(BTreeSet::from([
+            "192.168.96.145:60165".parse()?,
+            "213.208.157.87:60165".parse()?,
+        ]));
+
         assert_eq!(node_info, expected_node_info);
 
         Ok(())

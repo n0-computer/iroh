@@ -137,7 +137,7 @@ impl StaticProvider {
         let NodeInfo { node_id, data } = node_info.into();
         let mut guard = self.nodes.write().expect("poisoned");
         let previous = guard.insert(node_id, StoredNodeInfo { data, last_updated });
-        previous.map(|x| NodeInfo::new(node_id, x.data).into_node_addr())
+        previous.map(|x| NodeInfo::from_parts(node_id, x.data).into_node_addr())
     }
 
     /// Augments node addressing information for the given node ID.
@@ -168,7 +168,7 @@ impl StaticProvider {
     pub fn get_node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
         let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id)?;
-        Some(NodeInfo::new(node_id, info.data.clone()))
+        Some(NodeInfo::from_parts(node_id, info.data.clone()))
     }
 
     /// Removes all node addressing information for the given node ID.
@@ -177,7 +177,7 @@ impl StaticProvider {
     pub fn remove_node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
         let mut guard = self.nodes.write().expect("poisoned");
         let info = guard.remove(&node_id)?;
-        Some(NodeInfo::new(node_id, info.data))
+        Some(NodeInfo::from_parts(node_id, info.data))
     }
 }
 
@@ -199,7 +199,7 @@ impl Discovery for StaticProvider {
                     .expect("time drift")
                     .as_micros() as u64;
                 let item = DiscoveryItem::new(
-                    NodeInfo::new(node_id, node_info.data.clone()),
+                    NodeInfo::from_parts(node_id, node_info.data.clone()),
                     Self::PROVENANCE,
                     Some(last_updated),
                 );

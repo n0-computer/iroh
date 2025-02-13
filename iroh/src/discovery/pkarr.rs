@@ -199,7 +199,7 @@ impl PkarrPublisher {
             // If relay url is set: only publish relay url, and no direct addrs.
             data.clear_direct_addresses();
         }
-        let info = NodeInfo::new(self.node_id, data);
+        let info = NodeInfo::from_parts(self.node_id, data);
         self.watchable.set(Some(info)).ok();
     }
 }

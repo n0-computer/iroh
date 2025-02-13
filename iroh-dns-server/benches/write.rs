@@ -1,10 +1,6 @@
 use anyhow::Result;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use iroh::{
-    discovery::{pkarr::PkarrRelayClient, NodeData},
-    dns::node_info::NodeInfo,
-    RelayUrl, SecretKey,
-};
+use iroh::{discovery::pkarr::PkarrRelayClient, dns::node_info::NodeInfo, RelayUrl, SecretKey};
 use iroh_dns_server::{config::Config, server::Server, ZoneStore};
 use rand_chacha::rand_core::SeedableRng;
 use tokio::runtime::Runtime;
@@ -35,8 +31,7 @@ fn benchmark_dns_server(c: &mut Criterion) {
                     let pkarr_relay = LOCALHOST_PKARR.parse().expect("valid url");
                     let pkarr = PkarrRelayClient::new(pkarr_relay);
                     let relay_url: RelayUrl = "http://localhost:8080".parse().unwrap();
-                    let node_data = NodeData::default().with_relay_url(relay_url);
-                    let node_info = NodeInfo::new(node_id, node_data);
+                    let node_info = NodeInfo::new(node_id).with_relay_url(Some(relay_url));
                     let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30).unwrap();
 
                     let start = std::time::Instant::now();
