@@ -272,11 +272,7 @@
 <a href="#271" id="271">271</a>
 <a href="#272" id="272">272</a>
 <a href="#273" id="273">273</a>
-<a href="#274" id="274">274</a>
-<a href="#275" id="275">275</a>
-<a href="#276" id="276">276</a>
-<a href="#277" id="277">277</a>
-<a href="#278" id="278">278</a></pre></div><pre class="rust"><code><span class="doccomment">//! A DNS server and pkarr relay
+<a href="#274" id="274">274</a></pre></div><pre class="rust"><code><span class="doccomment">//! A DNS server and pkarr relay
 
 </span><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
@@ -301,14 +297,13 @@
 
     <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>iroh::{
-        discovery::{pkarr::PkarrRelayClient, NodeData},
+        discovery::pkarr::PkarrRelayClient,
         dns::{node_info::NodeInfo, DnsResolver},
         RelayUrl, SecretKey,
     };
     <span class="kw">use </span>pkarr::{PkarrClient, SignedPacket};
     <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tracing_test::traced_test;
-    <span class="kw">use </span>url::Url;
 
     <span class="kw">use crate</span>::{
         config::BootstrapOption,
@@ -450,8 +445,7 @@
         <span class="kw">let </span>node_id = secret_key.public();
         <span class="kw">let </span>pkarr = PkarrRelayClient::new(pkarr_relay);
         <span class="kw">let </span>relay_url: RelayUrl = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;
-        <span class="kw">let </span>node_data = NodeData::default().with_relay_url(relay_url.clone());
-        <span class="kw">let </span>node_info = NodeInfo::new(node_id, node_data);
+        <span class="kw">let </span>node_info = NodeInfo::new(node_id).with_relay_url(<span class="prelude-val">Some</span>(relay_url.clone()));
         <span class="kw">let </span>signed_packet = node_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
 
         pkarr.publish(<span class="kw-2">&amp;</span>signed_packet).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -514,8 +508,7 @@
         </span><span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>node_id = secret_key.public();
         <span class="kw">let </span>relay_url: RelayUrl = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;
-        <span class="kw">let </span>node_data = NodeData::default().with_relay_url(relay_url.clone());
-        <span class="kw">let </span>node_info = NodeInfo::new(node_id, node_data);
+        <span class="kw">let </span>node_info = NodeInfo::new(node_id).with_relay_url(<span class="prelude-val">Some</span>(relay_url.clone()));
         <span class="kw">let </span>signed_packet = node_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// publish the signed packet to our DHT
@@ -548,9 +541,8 @@
     <span class="kw">fn </span>random_signed_packet() -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket&gt; {
         <span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>node_id = secret_key.public();
-        <span class="kw">let </span>relay_url: Url = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;
-        <span class="kw">let </span>node_data = NodeData::default().with_relay_url(relay_url.clone());
-        <span class="kw">let </span>node_info = NodeInfo::new(node_id, node_data);
+        <span class="kw">let </span>relay_url: RelayUrl = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;
+        <span class="kw">let </span>node_info = NodeInfo::new(node_id).with_relay_url(<span class="prelude-val">Some</span>(relay_url.clone()));
         node_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)
     }
 }
