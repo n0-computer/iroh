@@ -154,7 +154,7 @@ impl StaticProvider {
                 let existing = entry.get_mut();
                 existing
                     .data
-                    .add_direct_addresses(data.direct_addresses().iter().map(|x| *x));
+                    .add_direct_addresses(data.direct_addresses().iter().copied());
                 existing.data.set_relay_url(data.relay_url().cloned());
                 existing.last_updated = last_updated;
             }
