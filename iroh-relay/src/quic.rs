@@ -3,6 +3,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Result;
+use n0_future::time::Duration;
 use quinn::{crypto::rustls::QuicClientConfig, VarInt};
 
 /// ALPN for our quic addr discovery
@@ -212,6 +213,17 @@ impl QuicClient {
 
         // enable the receive side of address discovery
         let mut transport = quinn_proto::TransportConfig::default();
+        // Setting the initial RTT estimate to a low value means
+        // we're sacrificing initial throughput, which is fine for
+        // QAD, which doesn't require us to have good initial throughput.
+        // It also implies a 999ms probe timeout, which means that
+        // if the packet gets lots (e.g. because we're probing ipv6, but
+        // ipv6 packets always get lost in our network configuration) we
+        // time out *closing the connection* after only 999ms.
+        // Even if the round trip time is bigger than 999ms, this doesn't
+        // prevent us from connecting, since that's dependent on the idle
+        // timeout (set to 30s by default).
+        transport.initial_rtt(Duration::from_millis(111));
         transport.receive_observed_address_reports(true);
         client_config.transport_config(Arc::new(transport));
 
@@ -272,6 +284,8 @@ impl QuicClient {
 mod tests {
     use std::net::Ipv4Addr;
 
+    use n0_future::task::AbortOnDropHandle;
+    use tokio::time::Instant;
     use tracing_test::traced_test;
 
     use super::{
@@ -310,6 +324,45 @@ mod tests {
         quic_server.shutdown().await?;
 
         assert_eq!(client_addr, addr);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn quic_endpoint_closes_fast() -> anyhow::Result<()> {
+        let host: Ipv4Addr = "127.0.0.1".parse()?;
+
+        // create a client-side endpoint
+        let client_endpoint = quinn::Endpoint::client(SocketAddr::new(host.into(), 0))?;
+
+        // create the client configuration used for the client endpoint when they
+        // initiate a connection with the server
+        let client_config = crate::client::make_dangerous_client_config();
+        let quic_client = QuicClient::new(client_endpoint.clone(), client_config)?;
+
+        // Start a connection attempt with nirvana - this will fail
+        let task = AbortOnDropHandle::new(tokio::spawn({
+            async move {
+                quic_client
+                    .get_addr_and_latency((host, 3456u16).into(), &host.to_string())
+                    .await
+            }
+        }));
+
+        // Even if we wait longer than the probe timeout, we will still be attempting to connect:
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        assert!(!task.is_finished());
+
+        // time the closing of the client endpoint
+        let before = Instant::now();
+        client_endpoint.close(0u32.into(), b"byeeeee");
+        client_endpoint.wait_idle().await;
+        let time = Instant::now().duration_since(before);
+
+        println!("Closed in {time:?}");
+        assert!(Duration::from_millis(900) < time);
+        assert!(time < Duration::from_millis(1100));
+
         Ok(())
     }
 }
