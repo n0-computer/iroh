@@ -1,3 +1,5 @@
+//! Options for creating a report gen client.
+
 pub use imp::Options;
 
 #[cfg(not(wasm_browser))]
