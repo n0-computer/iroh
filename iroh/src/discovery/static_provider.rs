@@ -52,13 +52,16 @@ use super::{Discovery, DiscoveryItem, NodeData, NodeInfo};
 ///     .bind()
 ///     .await?;
 ///
-/// /// Sometime later add a RelayUrl for a fake NodeId.
-/// let key = SecretKey::from_bytes(&[0u8; 32]); // Do not use fake secret keys!
-/// discovery.add_node_addr(NodeAddr {
-///     node_id: key.public(),
-///     relay_url: Some("https://example.com".parse()?),
-///     direct_addresses: Default::default(),
-/// });
+/// // Sometime later add a RelayUrl for a fake NodeId.
+/// let node_id = SecretKey::from_bytes(&[0u8; 32]).public(); // Do not use fake secret keys!
+/// // You can pass either `NodeInfo` or `NodeAddr` to `add_node_info`.
+/// discovery.add_node_info(
+///     NodeAddr {
+///         node_id,
+///         relay_url: Some("https://example.com".parse()?),
+///         direct_addresses: Default::default(),
+///     },
+/// );
 ///
 /// # Ok(())
 /// # }
@@ -109,7 +112,7 @@ impl StaticProvider {
     /// let addrs = get_addrs();
     ///
     /// // create a StaticProvider from the list of addrs.
-    /// let discovery = StaticProvider::from_node_addrs(addrs);
+    /// let discovery = StaticProvider::from_node_info(addrs);
     /// // create an endpoint with the discovery
     /// let endpoint = Endpoint::builder()
     ///     .add_discovery(|_| Some(discovery))
@@ -118,10 +121,10 @@ impl StaticProvider {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn from_node_addrs(infos: impl IntoIterator<Item = impl Into<NodeAddr>>) -> Self {
+    pub fn from_node_info(infos: impl IntoIterator<Item = impl Into<NodeInfo>>) -> Self {
         let res = Self::default();
         for info in infos {
-            res.add_node_addr(info);
+            res.add_node_info(info);
         }
         res
     }
@@ -129,11 +132,9 @@ impl StaticProvider {
     /// Sets node addressing information for the given node ID.
     ///
     /// This will completely overwrite any existing info for the node.
-    pub fn set_node_addr(&self, info: impl Into<NodeAddr>) -> Option<NodeAddr> {
+    pub fn set_node_info(&self, node_info: impl Into<NodeInfo>) -> Option<NodeAddr> {
         let last_updated = SystemTime::now();
-        let node_addr: NodeAddr = info.into();
-        let node_id = node_addr.node_id;
-        let data: NodeData = node_addr.into();
+        let NodeInfo { node_id, data } = node_info.into();
         let mut guard = self.nodes.write().expect("poisoned");
         let previous = guard.insert(node_id, StoredNodeInfo { data, last_updated });
         previous.map(|x| NodeInfo::new(node_id, x.data).into_node_addr())
@@ -144,42 +145,39 @@ impl StaticProvider {
     /// The provided addressing information is combined with the existing info in the static
     /// provider.  Any new direct addresses are added to those already present while the
     /// relay URL is overwritten.
-    pub fn add_node_addr(&self, info: impl Into<NodeAddr>) {
-        let node_addr: NodeAddr = info.into();
+    pub fn add_node_info(&self, node_info: impl Into<NodeInfo>) {
         let last_updated = SystemTime::now();
+        let NodeInfo { node_id, data } = node_info.into();
         let mut guard = self.nodes.write().expect("poisoned");
-        match guard.entry(node_addr.node_id) {
+        match guard.entry(node_id) {
             Entry::Occupied(mut entry) => {
                 let existing = entry.get_mut();
                 existing
                     .data
-                    .add_direct_addresses(node_addr.direct_addresses);
-                existing.data.set_relay_url(node_addr.relay_url);
+                    .add_direct_addresses(data.direct_addresses().iter().map(|x| *x));
+                existing.data.set_relay_url(data.relay_url().cloned());
                 existing.last_updated = last_updated;
             }
             Entry::Vacant(entry) => {
-                entry.insert(StoredNodeInfo {
-                    data: NodeData::from(node_addr),
-                    last_updated,
-                });
+                entry.insert(StoredNodeInfo { data, last_updated });
             }
         }
     }
 
     /// Returns node addressing information for the given node ID.
-    pub fn get_node_addr(&self, node_id: NodeId) -> Option<NodeAddr> {
+    pub fn get_node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
         let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id)?;
-        Some(NodeInfo::new(node_id, info.data.clone()).into_node_addr())
+        Some(NodeInfo::new(node_id, info.data.clone()))
     }
 
     /// Removes all node addressing information for the given node ID.
     ///
     /// Any removed information is returned.
-    pub fn remove_node_addr(&self, node_id: NodeId) -> Option<NodeAddr> {
+    pub fn remove_node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
         let mut guard = self.nodes.write().expect("poisoned");
         let info = guard.remove(&node_id)?;
-        Some(NodeInfo::new(node_id, info.data).into_node_addr())
+        Some(NodeInfo::new(node_id, info.data))
     }
 }
 
@@ -239,17 +237,19 @@ mod tests {
             relay_url: Some("https://example.com".parse()?),
             direct_addresses: Default::default(),
         };
-        discovery.add_node_addr(addr.clone());
+        let node_info = NodeInfo::from(addr.clone());
+        discovery.add_node_info(node_info.clone());
 
-        let back = discovery.get_node_addr(key.public()).context("no addr")?;
+        let back = discovery.get_node_info(key.public()).context("no addr")?;
 
-        assert_eq!(back, addr);
+        assert_eq!(back, node_info);
+        assert_eq!(back.into_node_addr(), addr);
 
         let removed = discovery
-            .remove_node_addr(key.public())
+            .remove_node_info(key.public())
             .context("nothing removed")?;
-        assert_eq!(removed, addr);
-        let res = discovery.get_node_addr(key.public());
+        assert_eq!(removed, node_info);
+        let res = discovery.get_node_info(key.public());
         assert!(res.is_none());
 
         Ok(())
