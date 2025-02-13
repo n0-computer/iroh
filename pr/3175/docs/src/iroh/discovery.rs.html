@@ -1828,7 +1828,7 @@
         <span class="kw">let </span>publisher = PkarrPublisher::new(secret_key, dns_pkarr_server.pkarr_url.clone());
         <span class="kw">let </span>data = NodeData::new(relay_url.clone(), Default::default());
         <span class="comment">// does not block, update happens in background task
-        </span>publisher.update_addr_info(<span class="kw-2">&amp;</span>data);
+        </span>publisher.update_node_data(<span class="kw-2">&amp;</span>data);
         <span class="comment">// wait until our shared state received the update from pkarr publishing
         </span>dns_pkarr_server.on_node(<span class="kw-2">&amp;</span>node_id, PUBLISH_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>resolved = resolver.lookup_node_by_id(<span class="kw-2">&amp;</span>node_id, <span class="kw-2">&amp;</span>origin).<span class="kw">await</span><span class="question-mark">?</span>;

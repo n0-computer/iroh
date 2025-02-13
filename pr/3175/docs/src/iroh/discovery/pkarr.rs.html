@@ -593,7 +593,7 @@
     <span class="doccomment">/// Publishes the addressing information about this node to a pkarr relay.
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
-    </span><span class="kw">pub fn </span>update_addr_info(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>NodeData) {
+    </span><span class="kw">pub fn </span>update_node_data(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>NodeData) {
         <span class="kw">let </span><span class="kw-2">mut </span>data = data.clone();
         <span class="kw">if </span>data.relay_url().is_some() {
             <span class="comment">// If relay url is set: only publish relay url, and no direct addrs.
@@ -606,7 +606,7 @@
 
 <span class="kw">impl </span>Discovery <span class="kw">for </span>PkarrPublisher {
     <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>NodeData) {
-        <span class="self">self</span>.update_addr_info(data);
+        <span class="self">self</span>.update_node_data(data);
     }
 }
 
