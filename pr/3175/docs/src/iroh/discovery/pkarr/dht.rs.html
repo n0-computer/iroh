@@ -444,8 +444,7 @@
 <a href="#443" id="443">443</a>
 <a href="#444" id="444">444</a>
 <a href="#445" id="445">445</a>
-<a href="#446" id="446">446</a>
-<a href="#447" id="447">447</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
+<a href="#446" id="446">446</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
 //!
 //! This module contains pkarr-based node discovery for iroh which can use both pkarr
 //! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
@@ -790,11 +789,10 @@
             <span class="kw">return</span>;
         };
         <span class="macro">tracing::debug!</span>(<span class="string">"publishing {data:?}"</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>data = data.clone();
+        <span class="kw">let </span><span class="kw-2">mut </span>info = NodeInfo::from_parts(keypair.public(), data.clone());
         <span class="kw">if </span>!<span class="self">self</span>.<span class="number">0</span>.include_direct_addresses {
-            data.clear_direct_addresses();
+            info.clear_direct_addresses();
         }
-        <span class="kw">let </span>info = NodeInfo::new(keypair.public(), data);
         <span class="kw">let </span><span class="prelude-val">Ok</span>(signed_packet) = info.to_pkarr_signed_packet(keypair, <span class="self">self</span>.<span class="number">0</span>.ttl) <span class="kw">else </span>{
             <span class="macro">tracing::warn!</span>(<span class="string">"failed to create signed packet"</span>);
             <span class="kw">return</span>;
@@ -864,7 +862,7 @@
             .build()<span class="question-mark">?</span>;
         <span class="kw">let </span>relay_url: RelayUrl = Url::parse(<span class="string">"https://example.com"</span>)<span class="question-mark">?</span>.into();
 
-        <span class="kw">let </span>data = NodeData::default().with_relay_url(relay_url.clone());
+        <span class="kw">let </span>data = NodeData::default().with_relay_url(<span class="prelude-val">Some</span>(relay_url.clone()));
         discovery.publish(<span class="kw-2">&amp;</span>data);
 
         <span class="comment">// publish is fire and forget, so we have no way to wait until it is done.

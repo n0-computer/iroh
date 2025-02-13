@@ -599,7 +599,7 @@
             <span class="comment">// If relay url is set: only publish relay url, and no direct addrs.
             </span>data.clear_direct_addresses();
         }
-        <span class="kw">let </span>info = NodeInfo::new(<span class="self">self</span>.node_id, data);
+        <span class="kw">let </span>info = NodeInfo::from_parts(<span class="self">self</span>.node_id, data);
         <span class="self">self</span>.watchable.set(<span class="prelude-val">Some</span>(info)).ok();
     }
 }

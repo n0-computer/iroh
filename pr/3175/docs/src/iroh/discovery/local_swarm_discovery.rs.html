@@ -475,8 +475,7 @@
 <a href="#474" id="474">474</a>
 <a href="#475" id="475">475</a>
 <a href="#476" id="476">476</a>
-<a href="#477" id="477">477</a>
-<a href="#478" id="478">478</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
+<a href="#477" id="477">477</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
@@ -826,8 +825,7 @@
         .iter()
         .map(|(ip, port)| SocketAddr::new(<span class="kw-2">*</span>ip, <span class="kw-2">*</span>port))
         .collect();
-    <span class="kw">let </span>node_data = NodeData::new(<span class="prelude-val">None</span>, direct_addresses);
-    <span class="kw">let </span>node_info = NodeInfo::new(<span class="kw-2">*</span>node_id, node_data);
+    <span class="kw">let </span>node_info = NodeInfo::new(<span class="kw-2">*</span>node_id).with_direct_addrs(direct_addresses);
     DiscoveryItem::new(node_info, NAME, <span class="prelude-val">None</span>)
 }
 

@@ -394,7 +394,7 @@
         <span class="kw">let </span>NodeInfo { node_id, data } = node_info.into();
         <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.nodes.write().expect(<span class="string">"poisoned"</span>);
         <span class="kw">let </span>previous = guard.insert(node_id, StoredNodeInfo { data, last_updated });
-        previous.map(|x| NodeInfo::new(node_id, x.data).into_node_addr())
+        previous.map(|x| NodeInfo::from_parts(node_id, x.data).into_node_addr())
     }
 
     <span class="doccomment">/// Augments node addressing information for the given node ID.
@@ -425,7 +425,7 @@
     </span><span class="kw">pub fn </span>get_node_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;NodeInfo&gt; {
         <span class="kw">let </span>guard = <span class="self">self</span>.nodes.read().expect(<span class="string">"poisoned"</span>);
         <span class="kw">let </span>info = guard.get(<span class="kw-2">&amp;</span>node_id)<span class="question-mark">?</span>;
-        <span class="prelude-val">Some</span>(NodeInfo::new(node_id, info.data.clone()))
+        <span class="prelude-val">Some</span>(NodeInfo::from_parts(node_id, info.data.clone()))
     }
 
     <span class="doccomment">/// Removes all node addressing information for the given node ID.
@@ -434,7 +434,7 @@
     </span><span class="kw">pub fn </span>remove_node_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;NodeInfo&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.nodes.write().expect(<span class="string">"poisoned"</span>);
         <span class="kw">let </span>info = guard.remove(<span class="kw-2">&amp;</span>node_id)<span class="question-mark">?</span>;
-        <span class="prelude-val">Some</span>(NodeInfo::new(node_id, info.data))
+        <span class="prelude-val">Some</span>(NodeInfo::from_parts(node_id, info.data))
     }
 }
 
@@ -456,7 +456,7 @@
                     .expect(<span class="string">"time drift"</span>)
                     .as_micros() <span class="kw">as </span>u64;
                 <span class="kw">let </span>item = DiscoveryItem::new(
-                    NodeInfo::new(node_id, node_info.data.clone()),
+                    NodeInfo::from_parts(node_id, node_info.data.clone()),
                     <span class="self">Self</span>::PROVENANCE,
                     <span class="prelude-val">Some</span>(last_updated),
                 );

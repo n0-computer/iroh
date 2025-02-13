@@ -940,9 +940,7 @@
 <a href="#939" id="939">939</a>
 <a href="#940" id="940">940</a>
 <a href="#941" id="941">941</a>
-<a href="#942" id="942">942</a>
-<a href="#943" id="943">943</a>
-<a href="#944" id="944">944</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#942" id="942">942</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1204,7 +1202,7 @@
 
     <span class="doccomment">/// Converts into a [`NodeAddr`] by cloning the needed fields.
     </span><span class="kw">pub fn </span>to_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeAddr {
-        <span class="self">self</span>.node_info.node_addr()
+        <span class="self">self</span>.node_info.to_node_addr()
     }
 
     <span class="doccomment">/// Converts into a [`NodeAddr`] without cloning.
@@ -1527,8 +1525,11 @@
             };
             <span class="kw">let </span>stream = <span class="kw">match </span>addr_info {
                 <span class="prelude-val">Some</span>((data, ts)) =&gt; {
-                    <span class="kw">let </span>item =
-                        DiscoveryItem::new(NodeInfo::new(node_id, data), <span class="string">"test-disco"</span>, <span class="prelude-val">Some</span>(ts));
+                    <span class="kw">let </span>item = DiscoveryItem::new(
+                        NodeInfo::from_parts(node_id, data),
+                        <span class="string">"test-disco"</span>,
+                        <span class="prelude-val">Some</span>(ts),
+                    );
                     <span class="kw">let </span>delay = <span class="self">self</span>.delay;
                     <span class="kw">let </span>fut = <span class="kw">async move </span>{
                         time::sleep(delay).<span class="kw">await</span>;
@@ -1782,13 +1783,8 @@
         <span class="kw">let </span>(nameserver, _dns_drop_guard) = run_dns_server(state.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
-        <span class="kw">let </span>node_info = NodeInfo::new(
-            secret_key.public(),
-            NodeData::new(
-                <span class="prelude-val">Some</span>(<span class="string">"https://relay.example"</span>.parse().unwrap()),
-                Default::default(),
-            ),
-        );
+        <span class="kw">let </span>node_info = NodeInfo::new(secret_key.public())
+            .with_relay_url(<span class="prelude-val">Some</span>(<span class="string">"https://relay.example"</span>.parse().unwrap()));
         <span class="kw">let </span>signed_packet = node_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
         state.upsert(signed_packet)<span class="question-mark">?</span>;
 
@@ -1829,7 +1825,7 @@
             direct_addresses: Default::default(),
         };
 
-        <span class="macro">assert_eq!</span>(resolved.node_addr(), expected);
+        <span class="macro">assert_eq!</span>(resolved.to_node_addr(), expected);
         <span class="prelude-val">Ok</span>(())
     }
 
