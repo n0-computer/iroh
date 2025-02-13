@@ -260,7 +260,7 @@ impl DiscoveryItem {
 
     /// Converts into a [`NodeAddr`] by cloning the needed fields.
     pub fn to_node_addr(&self) -> NodeAddr {
-        self.node_info.node_addr()
+        self.node_info.to_node_addr()
     }
 
     /// Converts into a [`NodeAddr`] without cloning.
@@ -883,7 +883,7 @@ mod test_dns_pkarr {
             direct_addresses: Default::default(),
         };
 
-        assert_eq!(resolved.node_addr(), expected);
+        assert_eq!(resolved.to_node_addr(), expected);
         Ok(())
     }
 

@@ -153,7 +153,7 @@ impl From<NodeAddr> for NodeData {
 /// This struct couples a [`NodeId`] with its associated [`NodeData`].
 #[derive(derive_more::Debug, Clone, Eq, PartialEq)]
 pub struct NodeInfo {
-    /// The [`NodeId`].
+    /// The [`NodeId`] of the node this is about.
     pub node_id: NodeId,
     /// The information published about the node.
     pub data: NodeData,
@@ -227,7 +227,7 @@ impl NodeInfo {
     }
 
     /// Converts into a [`NodeAddr`] by cloning the needed fields.
-    pub fn node_addr(&self) -> NodeAddr {
+    pub fn to_node_addr(&self) -> NodeAddr {
         NodeAddr {
             node_id: self.node_id,
             relay_url: self.data.relay_url.clone(),
