@@ -278,7 +278,7 @@
     sync::{Arc, RwLock},
 };
 
-<span class="kw">use </span>iroh_base::{NodeAddr, NodeId};
+<span class="kw">use </span>iroh_base::NodeId;
 <span class="kw">use </span>n0_future::{
     stream::{<span class="self">self</span>, StreamExt},
     time::SystemTime,
@@ -480,7 +480,7 @@
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>anyhow::Context;
-    <span class="kw">use </span>iroh_base::SecretKey;
+    <span class="kw">use </span>iroh_base::{NodeAddr, SecretKey};
     <span class="kw">use </span>testresult::TestResult;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
