@@ -940,7 +940,14 @@
 <a href="#939" id="939">939</a>
 <a href="#940" id="940">940</a>
 <a href="#941" id="941">941</a>
-<a href="#942" id="942">942</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#942" id="942">942</a>
+<a href="#943" id="943">943</a>
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a>
+<a href="#948" id="948">948</a>
+<a href="#949" id="949">949</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1159,13 +1166,6 @@
     </span>last_updated: <span class="prelude-ty">Option</span>&lt;u64&gt;,
 }
 
-<span class="kw">impl </span>std::ops::Deref <span class="kw">for </span>DiscoveryItem {
-    <span class="kw">type </span>Target = NodeData;
-    <span class="kw">fn </span>deref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="self">Self</span>::Target {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.node_info.data
-    }
-}
-
 <span class="kw">impl </span>DiscoveryItem {
     <span class="doccomment">/// Creates a new [`DiscoveryItem`] from a [`NodeInfo`].
     </span><span class="kw">pub fn </span>new(node_info: NodeInfo, provenance: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, last_updated: <span class="prelude-ty">Option</span>&lt;u64&gt;) -&gt; <span class="self">Self </span>{
@@ -1188,12 +1188,13 @@
 
     <span class="doccomment">/// Returns the provenance of this discovery item.
     ///
-    /// The provenance is a static string to identify the discovery source.
+    /// The provenance is a static string which identifies the discovery service that produced
+    /// this discovery item.
     </span><span class="kw">pub fn </span>provenance(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
         <span class="self">self</span>.provenance
     }
 
-    <span class="doccomment">/// Returns the optional timestamp when this node address info was last updated.
+    <span class="doccomment">/// Returns the optional timestamp when this node info was last updated.
     ///
     /// The value is microseconds since the unix epoch.
     </span><span class="kw">pub fn </span>last_updated(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
@@ -1208,6 +1209,19 @@
     <span class="doccomment">/// Converts into a [`NodeAddr`] without cloning.
     </span><span class="kw">pub fn </span>into_node_addr(<span class="self">self</span>) -&gt; NodeAddr {
         <span class="self">self</span>.node_info.into_node_addr()
+    }
+}
+
+<span class="kw">impl </span>std::ops::Deref <span class="kw">for </span>DiscoveryItem {
+    <span class="kw">type </span>Target = NodeData;
+    <span class="kw">fn </span>deref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="self">Self</span>::Target {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.node_info.data
+    }
+}
+
+<span class="kw">impl </span>From&lt;DiscoveryItem&gt; <span class="kw">for </span>NodeInfo {
+    <span class="kw">fn </span>from(item: DiscoveryItem) -&gt; <span class="self">Self </span>{
+        item.node_info
     }
 }
 
