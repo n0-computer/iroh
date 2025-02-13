@@ -670,7 +670,7 @@
                         }
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(user_data) = data.user_data() {
                             <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = discovery.set_txt_attribute(USER_DATA_ATTRIBUTE.to_string(), <span class="prelude-val">Some</span>(user_data.to_string())) {
-                                <span class="macro">warn!</span>(<span class="string">"Failed to set user data in local swarm discovery: {err:?}"</span>);
+                                <span class="macro">warn!</span>(<span class="string">"Failed to set the user-defined data in local swarm discovery: {err:?}"</span>);
                             }
                         }
                         <span class="kw">continue</span>;

@@ -742,7 +742,12 @@
 <a href="#741" id="741">741</a>
 <a href="#742" id="742">742</a>
 <a href="#743" id="743">743</a>
-<a href="#744" id="744">744</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#744" id="744">744</a>
+<a href="#745" id="745">745</a>
+<a href="#746" id="746">746</a>
+<a href="#747" id="747">747</a>
+<a href="#748" id="748">748</a>
+<a href="#749" id="749">749</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -862,7 +867,7 @@
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Sets the user data.
+    <span class="doccomment">/// Sets the user-defined data and returns the updated node data.
     </span><span class="kw">pub fn </span>with_user_data(<span class="kw-2">mut </span><span class="self">self</span>, user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.user_data = user_data;
         <span class="self">self
@@ -898,7 +903,7 @@
         <span class="self">self</span>.relay_url = relay_url
     }
 
-    <span class="doccomment">/// Sets the user data of the node data.
+    <span class="doccomment">/// Sets the user-defined data of the node data.
     </span><span class="kw">pub fn </span>set_user_data(<span class="kw-2">&amp;mut </span><span class="self">self</span>, user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;) {
         <span class="self">self</span>.user_data = user_data;
     }
@@ -914,21 +919,25 @@
     }
 }
 
-<span class="comment">// User defined data that can be published and resolved through node discovery.
+<span class="comment">// User-defined data that can be published and resolved through node discovery.
 </span><span class="doccomment">///
-/// Under the hood this is a UTF-8 String that is less than or equal to
-/// [`USER_DATA_MAX_LENGTH`] bytes.
+/// Under the hood this is a UTF-8 String is no longer than [`UserData::MAX_LENGTH`] bytes.
 ///
-/// Iroh does not keep track of or examine user defined data.
+/// Iroh does not keep track of or examine the user-defined data.
+///
+/// `UserData` implements [`FromStr`] and [`TryFrom&lt;String&gt;`], so you can
+/// convert `&amp;str` and `String` into `UserData` easily.
 </span><span class="attr">#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 </span><span class="kw">pub struct </span>UserData(String);
 
-<span class="doccomment">/// The max byte length allowed for user defined data.
-///
-/// In DNS discovery services, the user data is stored in a TXT record character string,
-/// which has a max length of 255 bytes. We need to subtract "user-data=", which leaves
-/// 245 bytes for the actual user data.
-</span><span class="kw">pub const </span>USER_DATA_MAX_LENGTH: usize = <span class="number">245</span>;
+<span class="kw">impl </span>UserData {
+    <span class="doccomment">/// The max byte length allowed for user-defined data.
+    ///
+    /// In DNS discovery services, the user-defined data is stored in a TXT record character string,
+    /// which has a max length of 255 bytes. We need to subtract the `user-data=` prefix,
+    /// which leaves 245 bytes for the actual user-defined data.
+    </span><span class="kw">pub const </span>MAX_LENGTH: usize = <span class="number">245</span>;
+}
 
 <span class="doccomment">/// Error returned when an input value is too long for [`UserData`].
 </span><span class="attr">#[derive(Debug, thiserror::Error)]
@@ -937,8 +946,9 @@
 
 <span class="kw">impl </span>TryFrom&lt;String&gt; <span class="kw">for </span>UserData {
     <span class="kw">type </span>Error = MaxLengthExceededError;
+
     <span class="kw">fn </span>try_from(value: String) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
-        <span class="kw">if </span>value.len() &gt; USER_DATA_MAX_LENGTH {
+        <span class="kw">if </span>value.len() &gt; <span class="self">Self</span>::MAX_LENGTH {
             <span class="prelude-val">Err</span>(MaxLengthExceededError)
         } <span class="kw">else </span>{
             <span class="prelude-val">Ok</span>(<span class="self">Self</span>(value))
@@ -950,7 +960,7 @@
     <span class="kw">type </span><span class="prelude-val">Err </span>= MaxLengthExceededError;
 
     <span class="kw">fn </span>from_str(s: <span class="kw-2">&amp;</span>str) -&gt; std::result::Result&lt;<span class="self">Self</span>, <span class="self">Self</span>::Err&gt; {
-        <span class="kw">if </span>s.len() &gt; USER_DATA_MAX_LENGTH {
+        <span class="kw">if </span>s.len() &gt; <span class="self">Self</span>::MAX_LENGTH {
             <span class="prelude-val">Err</span>(MaxLengthExceededError)
         } <span class="kw">else </span>{
             <span class="prelude-val">Ok</span>(<span class="self">Self</span>(s.to_string()))
@@ -1053,7 +1063,7 @@
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Sets the user data.
+    <span class="doccomment">/// Sets the user-defined data and returns the updated node info.
     </span><span class="kw">pub fn </span>with_user_data(<span class="kw-2">mut </span><span class="self">self</span>, user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.data = <span class="self">self</span>.data.with_user_data(user_data);
         <span class="self">self

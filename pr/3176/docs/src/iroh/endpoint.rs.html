@@ -2209,7 +2209,8 @@
 <a href="#2208" id="2208">2208</a>
 <a href="#2209" id="2209">2209</a>
 <a href="#2210" id="2210">2210</a>
-<a href="#2211" id="2211">2211</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2211" id="2211">2211</a>
+<a href="#2212" id="2212">2212</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2586,9 +2587,10 @@
     ///
     /// When using discovery services, this string of [`UserData`] will be published together
     /// with the node's addresses and relay URL. When other nodes discover this node,
-    /// they can also access this string.
+    /// they retrieve the [`UserData`] in addition to the addressing info.
     ///
-    /// Iroh itself does not interpret the user data in any way, it is purely left to applications.
+    /// Iroh itself does not interpret the user-defined data in any way, it is purely left
+    /// for applications to parse and use.
     </span><span class="kw">pub fn </span>user_data_for_discovery(<span class="kw-2">mut </span><span class="self">self</span>, user_data: UserData) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.discovery_user_data = <span class="prelude-val">Some</span>(user_data);
         <span class="self">self
