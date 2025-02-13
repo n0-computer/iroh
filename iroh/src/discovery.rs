@@ -217,13 +217,6 @@ pub struct DiscoveryItem {
     last_updated: Option<u64>,
 }
 
-impl std::ops::Deref for DiscoveryItem {
-    type Target = NodeData;
-    fn deref(&self) -> &Self::Target {
-        &self.node_info.data
-    }
-}
-
 impl DiscoveryItem {
     /// Creates a new [`DiscoveryItem`] from a [`NodeInfo`].
     pub fn new(node_info: NodeInfo, provenance: &'static str, last_updated: Option<u64>) -> Self {
@@ -246,12 +239,13 @@ impl DiscoveryItem {
 
     /// Returns the provenance of this discovery item.
     ///
-    /// The provenance is a static string to identify the discovery source.
+    /// The provenance is a static string which identifies the discovery service that produced
+    /// this discovery item.
     pub fn provenance(&self) -> &'static str {
         self.provenance
     }
 
-    /// Returns the optional timestamp when this node address info was last updated.
+    /// Returns the optional timestamp when this node info was last updated.
     ///
     /// The value is microseconds since the unix epoch.
     pub fn last_updated(&self) -> Option<u64> {
@@ -266,6 +260,19 @@ impl DiscoveryItem {
     /// Converts into a [`NodeAddr`] without cloning.
     pub fn into_node_addr(self) -> NodeAddr {
         self.node_info.into_node_addr()
+    }
+}
+
+impl std::ops::Deref for DiscoveryItem {
+    type Target = NodeData;
+    fn deref(&self) -> &Self::Target {
+        &self.node_info.data
+    }
+}
+
+impl From<DiscoveryItem> for NodeInfo {
+    fn from(item: DiscoveryItem) -> Self {
+        item.node_info
     }
 }
 
