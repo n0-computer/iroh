@@ -258,7 +258,10 @@
 <a href="#257" id="257">257</a>
 <a href="#258" id="258">258</a>
 <a href="#259" id="259">259</a>
-<a href="#260" id="260">260</a></pre></div><pre class="rust"><code><span class="doccomment">//! A static node discovery to manually add node addressing information.
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a></pre></div><pre class="rust"><code><span class="doccomment">//! A static node discovery to manually add node addressing information.
 //!
 //! Often an application might get node addressing information out-of-band in an
 //! application-specific way.  [`NodeTicket`]'s are one common way used to achieve this.
@@ -392,12 +395,15 @@
     <span class="doccomment">/// Sets node addressing information for the given node ID.
     ///
     /// This will completely overwrite any existing info for the node.
-    </span><span class="kw">pub fn </span>set_node_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_info: <span class="kw">impl </span>Into&lt;NodeInfo&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;NodeAddr&gt; {
+    ///
+    /// Returns the [`NodeData`] of the previous entry, or `None` if there was no previous
+    /// entry for this node ID.
+    </span><span class="kw">pub fn </span>set_node_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_info: <span class="kw">impl </span>Into&lt;NodeInfo&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;NodeData&gt; {
         <span class="kw">let </span>last_updated = SystemTime::now();
         <span class="kw">let </span>NodeInfo { node_id, data } = node_info.into();
         <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.nodes.write().expect(<span class="string">"poisoned"</span>);
         <span class="kw">let </span>previous = guard.insert(node_id, StoredNodeInfo { data, last_updated });
-        previous.map(|x| NodeInfo::from_parts(node_id, x.data).into_node_addr())
+        previous.map(|x| x.data)
     }
 
     <span class="doccomment">/// Augments node addressing information for the given node ID.
