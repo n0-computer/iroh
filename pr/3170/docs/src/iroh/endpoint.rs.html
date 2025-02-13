@@ -2225,8 +2225,7 @@
 <a href="#2224" id="2224">2224</a>
 <a href="#2225" id="2225">2225</a>
 <a href="#2226" id="2226">2226</a>
-<a href="#2227" id="2227">2227</a>
-<a href="#2228" id="2228">2228</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2227" id="2227">2227</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2261,7 +2260,7 @@
     discovery::{
         dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
     },
-    dns::{default_resolver, DnsResolver},
+    dns::DnsResolver,
     magicsock::{<span class="self">self</span>, Handle, NodeIdMappedAddr},
     tls,
     watchable::Watcher,
@@ -2380,9 +2379,7 @@
             keylog: <span class="self">self</span>.keylog,
             secret_key: secret_key.clone(),
         };
-        <span class="kw">let </span>dns_resolver = <span class="self">self
-            </span>.dns_resolver
-            .unwrap_or_else(|| default_resolver().clone());
+        <span class="kw">let </span>dns_resolver = <span class="self">self</span>.dns_resolver.unwrap_or_default();
         <span class="kw">let </span>discovery = <span class="self">self
             </span>.discovery
             .into_iter()
@@ -2626,9 +2623,10 @@
     /// The DNS resolver is used to resolve relay hostnames, and node addresses if
     /// [`crate::discovery::dns::DnsDiscovery`] is configured.
     ///
-    /// By default, all endpoints share a DNS resolver, which is configured to use the
+    /// By default, a new DNS resolver is created which is configured to use the
     /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
-    /// here to use a differently configured DNS resolver for this endpoint.
+    /// here to use a differently configured DNS resolver for this endpoint, or to share
+    /// a [`DnsResolver`] between multiple endpoints.
     </span><span class="kw">pub fn </span>dns_resolver(<span class="kw-2">mut </span><span class="self">self</span>, dns_resolver: DnsResolver) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.dns_resolver = <span class="prelude-val">Some</span>(dns_resolver);
         <span class="self">self
