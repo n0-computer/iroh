@@ -211,6 +211,18 @@ impl NodeInfo {
         Self { node_id, data }
     }
 
+    /// Sets the relay URL and returns the updated node info.
+    pub fn with_relay_url(mut self, relay_url: impl Into<RelayUrl>) -> Self {
+        self.data = self.data.with_relay_url(relay_url);
+        self
+    }
+
+    /// Sets the direct addresses and returns the updated node info.
+    pub fn with_direct_addrs(mut self, direct_addrs: BTreeSet<SocketAddr>) -> Self {
+        self.data = self.data.with_direct_addrs(direct_addrs);
+        self
+    }
+
     /// Converts into a [`NodeAddr`] by cloning the needed fields.
     pub fn node_addr(&self) -> NodeAddr {
         NodeAddr {
