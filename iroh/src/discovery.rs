@@ -248,7 +248,7 @@ impl DiscoveryItem {
     ///
     /// The provenance is a static string to identify the discovery source.
     pub fn provenance(&self) -> &'static str {
-        &self.provenance
+        self.provenance
     }
 
     /// Returns the optional timestamp when this node address info was last updated.
@@ -853,7 +853,7 @@ mod test_dns_pkarr {
             .lookup_node_by_id(&node_info.node_id, &origin)
             .await?;
 
-        assert_eq!(resolved, node_info.into());
+        assert_eq!(resolved, node_info);
 
         Ok(())
     }
