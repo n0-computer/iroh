@@ -2203,7 +2203,13 @@
 <a href="#2202" id="2202">2202</a>
 <a href="#2203" id="2203">2203</a>
 <a href="#2204" id="2204">2204</a>
-<a href="#2205" id="2205">2205</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2205" id="2205">2205</a>
+<a href="#2206" id="2206">2206</a>
+<a href="#2207" id="2207">2207</a>
+<a href="#2208" id="2208">2208</a>
+<a href="#2209" id="2209">2209</a>
+<a href="#2210" id="2210">2210</a>
+<a href="#2211" id="2211">2211</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2576,8 +2582,13 @@
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Set the user-defined data published with this node's addresses
-    /// to the configured discovery services.
+    <span class="doccomment">/// Sets the user-defined data to be published in discovery services with this node's addresses.
+    ///
+    /// When using discovery services, this string of [`UserData`] will be published together
+    /// with the node's addresses and relay URL. When other nodes discover this node,
+    /// they can also access this string.
+    ///
+    /// Iroh itself does not interpret the user data in any way, it is purely left to applications.
     </span><span class="kw">pub fn </span>user_data_for_discovery(<span class="kw-2">mut </span><span class="self">self</span>, user_data: UserData) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.discovery_user_data = <span class="prelude-val">Some</span>(user_data);
         <span class="self">self
@@ -3200,8 +3211,9 @@
 
     <span class="comment">// # Methods to update internal state.
 
-    </span><span class="doccomment">/// Set the user-defined data published with this node's addresses
-    /// to the configured discovery services.
+    </span><span class="doccomment">/// Sets the user-defined data to be published in discovery services with this node's addresses.
+    ///
+    /// See [`Builder::user_data_for_discovery`] for details.
     </span><span class="kw">pub fn </span>set_user_data_for_discovery(<span class="kw-2">&amp;</span><span class="self">self</span>, user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;) {
         <span class="self">self</span>.msock.set_user_data_for_discovery(user_data);
     }
