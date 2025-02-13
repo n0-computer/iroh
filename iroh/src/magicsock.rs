@@ -1814,6 +1814,22 @@ impl Handle {
         trace!("magicsock closing...");
         // Initiate closing all connections, and refuse future connections.
         self.endpoint.close(0u16.into(), b"");
+
+        // In the history of this code, this call had been
+        // - removed: https://github.com/n0-computer/iroh/pull/1753
+        // - then added back in: https://github.com/n0-computer/iroh/pull/2227/files#diff-ba27e40e2986a3919b20f6b412ad4fe63154af648610ea5d9ed0b5d5b0e2d780R573
+        // - then removed again: https://github.com/n0-computer/iroh/pull/3165
+        // and finally added back in together with this comment.
+        // So before removing this call, please consider carefully.
+        // Among other things, this call tries its best to make sure that any queued close frames
+        // (e.g. via the call to `endpoint.close(...)` above), are flushed out to the sockets
+        // *and acknowledged* (or time out with the "probe timeout" of usually 3 seconds).
+        // This allows the other endpoints for these connections to be notified to release
+        // their resources, or - depending on the protocol - that all data was received.
+        // With the current quinn API, this is the only way to ensure protocol code can use
+        // connection close codes, and close the endpoint properly.
+        // If this call is skipped, then connections that protocols close just shortly before the
+        // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
         self.endpoint.wait_idle().await;
 
         if self.msock.is_closed() {
