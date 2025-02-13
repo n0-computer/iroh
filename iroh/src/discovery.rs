@@ -879,7 +879,7 @@ mod test_dns_pkarr {
         let publisher = PkarrPublisher::new(secret_key, dns_pkarr_server.pkarr_url.clone());
         let data = NodeData::new(relay_url.clone(), Default::default());
         // does not block, update happens in background task
-        publisher.update_addr_info(&data);
+        publisher.update_node_data(&data);
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server.on_node(&node_id, PUBLISH_TIMEOUT).await?;
         let resolved = resolver.lookup_node_by_id(&node_id, &origin).await?;

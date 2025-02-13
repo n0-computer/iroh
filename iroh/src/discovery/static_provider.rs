@@ -15,7 +15,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use iroh_base::{NodeAddr, NodeId};
+use iroh_base::NodeId;
 use n0_future::{
     stream::{self, StreamExt},
     time::SystemTime,
@@ -132,12 +132,15 @@ impl StaticProvider {
     /// Sets node addressing information for the given node ID.
     ///
     /// This will completely overwrite any existing info for the node.
-    pub fn set_node_info(&self, node_info: impl Into<NodeInfo>) -> Option<NodeAddr> {
+    ///
+    /// Returns the [`NodeData`] of the previous entry, or `None` if there was no previous
+    /// entry for this node ID.
+    pub fn set_node_info(&self, node_info: impl Into<NodeInfo>) -> Option<NodeData> {
         let last_updated = SystemTime::now();
         let NodeInfo { node_id, data } = node_info.into();
         let mut guard = self.nodes.write().expect("poisoned");
         let previous = guard.insert(node_id, StoredNodeInfo { data, last_updated });
-        previous.map(|x| NodeInfo::from_parts(node_id, x.data).into_node_addr())
+        previous.map(|x| x.data)
     }
 
     /// Augments node addressing information for the given node ID.
@@ -213,7 +216,7 @@ impl Discovery for StaticProvider {
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
-    use iroh_base::SecretKey;
+    use iroh_base::{NodeAddr, SecretKey};
     use testresult::TestResult;
 
     use super::*;
