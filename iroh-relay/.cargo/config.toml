@@ -1,3 +1,2 @@
-# It's recommended to set the flag on a per-target basis:
 [target.wasm32-unknown-unknown]
 rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
