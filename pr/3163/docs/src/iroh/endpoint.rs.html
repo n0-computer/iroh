@@ -2507,7 +2507,14 @@
 <a href="#2506" id="2506">2506</a>
 <a href="#2507" id="2507">2507</a>
 <a href="#2508" id="2508">2508</a>
-<a href="#2509" id="2509">2509</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2509" id="2509">2509</a>
+<a href="#2510" id="2510">2510</a>
+<a href="#2511" id="2511">2511</a>
+<a href="#2512" id="2512">2512</a>
+<a href="#2513" id="2513">2513</a>
+<a href="#2514" id="2514">2514</a>
+<a href="#2515" id="2515">2515</a>
+<a href="#2516" id="2516">2516</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3826,6 +3833,10 @@
     /// complete, at which point subsequently opened streams and written data will have full
     /// cryptographic protection.
     ///
+    /// Once the [`ZeroRttAccepted`] future completed, a full handshake has been carried through
+    /// and any data sent and any streams opened on the [`Connection`] will operate with the same
+    /// security as on normal 1-RTT connections.
+    ///
     /// ## Outgoing
     ///
     /// For outgoing connections, the initial attempt to convert to a [`Connection`] which sends
@@ -3854,6 +3865,9 @@
     /// On incoming connections, this enables transmission of 0.5-RTT data, which may be sent
     /// before TLS client authentication has occurred, and should therefore not be used to send
     /// data for which client authentication is being used.
+    ///
+    /// You can use [`RecvStream::is_0rtt`] to check whether a stream has been opened in 0-RTT
+    /// and thus whether parts of the stream are operating under this reduced security level.
     </span><span class="kw">pub fn </span>into_0rtt(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(Connection, ZeroRttAccepted), <span class="self">Self</span>&gt; {
         <span class="kw">match </span><span class="self">self</span>.inner.into_0rtt() {
             <span class="prelude-val">Ok</span>((inner, zrtt_accepted)) =&gt; {
