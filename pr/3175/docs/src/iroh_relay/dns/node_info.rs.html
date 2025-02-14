@@ -761,8 +761,8 @@
     </span>}
 
     <span class="doccomment">/// Sets the direct addresses and returns the updated node data.
-    </span><span class="kw">pub fn </span>with_direct_addrs(<span class="kw-2">mut </span><span class="self">self</span>, direct_addrs: BTreeSet&lt;SocketAddr&gt;) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.direct_addresses = direct_addrs;
+    </span><span class="kw">pub fn </span>with_direct_addresses(<span class="kw-2">mut </span><span class="self">self</span>, direct_addresses: BTreeSet&lt;SocketAddr&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.direct_addresses = direct_addresses;
         <span class="self">self
     </span>}
 
@@ -852,7 +852,7 @@
     <span class="kw">fn </span>from(addr: NodeAddr) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::new(addr.node_id)
             .with_relay_url(addr.relay_url)
-            .with_direct_addrs(addr.direct_addresses)
+            .with_direct_addresses(addr.direct_addresses)
     }
 }
 
@@ -874,8 +874,8 @@
     </span>}
 
     <span class="doccomment">/// Sets the direct addresses and returns the updated node info.
-    </span><span class="kw">pub fn </span>with_direct_addrs(<span class="kw-2">mut </span><span class="self">self</span>, direct_addrs: BTreeSet&lt;SocketAddr&gt;) -&gt; <span class="self">Self </span>{
-        <span class="self">self</span>.data = <span class="self">self</span>.data.with_direct_addrs(direct_addrs);
+    </span><span class="kw">pub fn </span>with_direct_addresses(<span class="kw-2">mut </span><span class="self">self</span>, direct_addresses: BTreeSet&lt;SocketAddr&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.data = <span class="self">self</span>.data.with_direct_addresses(direct_addresses);
         <span class="self">self
     </span>}
 
@@ -1294,7 +1294,7 @@
             <span class="string">"1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18"</span>,
         )<span class="question-mark">?</span>)
         .with_relay_url(<span class="prelude-val">Some</span>(<span class="string">"https://euw1-1.relay.iroh.network./"</span>.parse()<span class="question-mark">?</span>))
-        .with_direct_addrs(BTreeSet::from([
+        .with_direct_addresses(BTreeSet::from([
             <span class="string">"192.168.96.145:60165"</span>.parse()<span class="question-mark">?</span>,
             <span class="string">"213.208.157.87:60165"</span>.parse()<span class="question-mark">?</span>,
         ]));

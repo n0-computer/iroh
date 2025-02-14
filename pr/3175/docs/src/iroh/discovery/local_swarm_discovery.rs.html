@@ -825,7 +825,7 @@
         .iter()
         .map(|(ip, port)| SocketAddr::new(<span class="kw-2">*</span>ip, <span class="kw-2">*</span>port))
         .collect();
-    <span class="kw">let </span>node_info = NodeInfo::new(<span class="kw-2">*</span>node_id).with_direct_addrs(direct_addresses);
+    <span class="kw">let </span>node_info = NodeInfo::new(<span class="kw-2">*</span>node_id).with_direct_addresses(direct_addresses);
     DiscoveryItem::new(node_info, NAME, <span class="prelude-val">None</span>)
 }
 
