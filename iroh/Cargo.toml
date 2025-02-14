@@ -37,7 +37,7 @@ derive_more = { version = "1.0.0", features = [
 ed25519-dalek = "2.0"
 n0-future = "0.1.2"
 governor = "0.7.0"
-hickory-resolver = { version = "=0.25.0-alpha.4" }
+hickory-resolver = { version = "=0.25.0-alpha.5" }
 http = "1"
 http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
@@ -97,7 +97,7 @@ net-report = { package = "iroh-net-report", path = "../iroh-net-report", version
 iroh-metrics = { version = "0.31", default-features = false }
 
 # local-swarm-discovery
-swarm-discovery = { version = "0.3.0-alpha.1", optional = true }
+swarm-discovery = { version = "0.3.0-alpha.2", optional = true }
 futures-util = "0.3"
 
 # Examples
