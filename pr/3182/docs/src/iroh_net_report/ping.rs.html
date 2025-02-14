@@ -167,10 +167,10 @@
     fmt::Debug,
     net::IpAddr,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>n0_future::time::Duration;
 <span class="kw">use </span>surge_ping::{Client, Config, IcmpPacket, PingIdentifier, PingSequence, ICMP};
 <span class="kw">use </span>tracing::debug;
 
