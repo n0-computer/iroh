@@ -268,8 +268,7 @@
 <a href="#267" id="267">267</a>
 <a href="#268" id="268">268</a>
 <a href="#269" id="269">269</a>
-<a href="#270" id="270">270</a>
-<a href="#271" id="271">271</a></pre></div><pre class="rust"><code><span class="doccomment">//! A DNS server and pkarr relay
+<a href="#270" id="270">270</a></pre></div><pre class="rust"><code><span class="doccomment">//! A DNS server and pkarr relay
 
 </span><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
@@ -524,7 +523,6 @@
         <span class="macro">assert_eq!</span>(res.relay_url.map(Url::from), <span class="prelude-val">Some</span>(relay_url));
 
         server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
-        drop(testnet);
         <span class="prelude-val">Ok</span>(())
     }
 
