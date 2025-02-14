@@ -25,7 +25,7 @@ derive_more = { version = "1.0.0", features = [
 ] }
 dirs-next = "2.0.0"
 governor = "0.6.3" #needs new release of tower_governor for 0.7.0
-hickory-server = { version = "=0.25.0-alpha.4", features = ["dns-over-rustls", "dns-over-https-rustls"] }
+hickory-server = { version = "=0.25.0-alpha.5", features = ["dns-over-rustls", "dns-over-https-rustls"] }
 http = "1.0.0"
 humantime-serde = "1.1.1"
 iroh-metrics = { version = "0.31.0" }
@@ -59,7 +59,7 @@ z32 = "1.1.1"
 
 [dev-dependencies]
 criterion = "0.5.1"
-hickory-resolver = "=0.25.0-alpha.4"
+hickory-resolver = "=0.25.0-alpha.5"
 iroh = { path = "../iroh" }
 pkarr = { version = "2.3.1", features = ["rand"] }
 rand = "0.8"
