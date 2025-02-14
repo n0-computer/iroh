@@ -97,7 +97,7 @@ net-report = { package = "iroh-net-report", path = "../iroh-net-report", version
 iroh-metrics = { version = "0.31", default-features = false }
 
 # local-swarm-discovery
-swarm-discovery = { version = "0.3.0-alpha.1", optional = true }
+swarm-discovery = { version = "0.3.0-alpha.2", optional = true }
 futures-util = "0.3"
 
 # Examples
