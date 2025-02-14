@@ -1575,8 +1575,6 @@ impl Future for ZeroRttAccepted {
 /// connection without losing application data.
 ///
 /// May be cloned to obtain another handle to the same connection.
-// This has repr(transparent) as it opens the door to potentially allow casting it to a
-// quinn::Connection in the future.  Right now however that'd be iroh_quinn::Connection.
 #[derive(Debug, Clone)]
 pub struct Connection {
     inner: quinn::Connection,
