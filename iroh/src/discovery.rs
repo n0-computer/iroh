@@ -466,17 +466,17 @@ impl DiscoveryTask {
             }
         };
         let mut on_first_tx = Some(on_first_tx);
-        debug!("discovery: start");
+        debug!("starting");
         loop {
             match stream.next().await {
                 Some(Ok(r)) => {
                     let provenance = r.provenance;
                     let node_addr = r.into_node_addr();
                     if node_addr.is_empty() {
-                        debug!(%provenance, "discovery: empty address found");
+                        debug!(%provenance, "empty address found");
                         continue;
                     }
-                    debug!(%provenance, addr = ?node_addr, "discovery: new address found");
+                    debug!(%provenance, addr = ?node_addr, "new address found");
                     ep.add_node_addr_with_source(node_addr, provenance).ok();
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
@@ -513,13 +513,14 @@ mod tests {
 
     use anyhow::Context;
     use iroh_base::{NodeAddr, SecretKey};
+    use quinn::{IdleTimeout, TransportConfig};
     use rand::Rng;
     use testresult::TestResult;
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::RelayMode;
+    use crate::{endpoint::ConnectOptions, RelayMode};
 
     type InfoStore = HashMap<NodeId, (NodeData, u64)>;
 
@@ -577,16 +578,15 @@ mod tests {
             endpoint: Endpoint,
             node_id: NodeId,
         ) -> Option<BoxStream<Result<DiscoveryItem>>> {
-            let addr_info = match self.resolve_wrong {
-                false => self.shared.nodes.lock().unwrap().get(&node_id).cloned(),
-                true => {
-                    let ts = system_time_now() - 100_000;
-                    let port: u16 = rand::thread_rng().gen_range(10_000..20_000);
-                    // "240.0.0.0/4" is reserved and unreachable
-                    let addr: SocketAddr = format!("240.0.0.1:{port}").parse().unwrap();
-                    let data = NodeData::new(None, BTreeSet::from([addr]));
-                    Some((data, ts))
-                }
+            let addr_info = if self.resolve_wrong {
+                let ts = system_time_now() - 100_000;
+                let port: u16 = rand::thread_rng().gen_range(10_000..20_000);
+                // "240.0.0.0/4" is reserved and unreachable
+                let addr: SocketAddr = format!("240.0.0.1:{port}").parse().unwrap();
+                let data = NodeData::new(None, BTreeSet::from([addr]));
+                Some((data, ts))
+            } else {
+                self.shared.nodes.lock().unwrap().get(&node_id).cloned()
             };
             let stream = match addr_info {
                 Some((data, ts)) => {
@@ -703,10 +703,9 @@ mod tests {
             disco.add(disco3);
             new_endpoint(secret, disco).await
         };
-        let ep1_addr = NodeAddr::new(ep1.node_id());
         // wait for out address to be updated and thus published at least once
         ep1.node_addr().await?;
-        let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
+        let _conn = ep2.connect(ep1.node_id(), TEST_ALPN).await?;
         Ok(())
     }
 
@@ -726,10 +725,19 @@ mod tests {
             let disco = ConcurrentDiscovery::from_services(vec![Box::new(disco1)]);
             new_endpoint(secret, disco).await
         };
-        let ep1_addr = NodeAddr::new(ep1.node_id());
         // wait for out address to be updated and thus published at least once
         ep1.node_addr().await?;
-        let res = ep2.connect(ep1_addr, TEST_ALPN).await;
+
+        // 10x faster test via a 3s idle timeout instead of the 30s default
+        let mut config = TransportConfig::default();
+        config.keep_alive_interval(Some(Duration::from_secs(1)));
+        config.max_idle_timeout(Some(IdleTimeout::try_from(Duration::from_secs(3))?));
+        let opts = ConnectOptions::new().with_transport_config(Arc::new(config));
+
+        let res = ep2
+            .connect_with_opts(ep1.node_id(), TEST_ALPN, opts)
+            .await? // -> Connecting works
+            .await; // -> Connection is expected to fail
         assert!(res.is_err());
         Ok(())
     }

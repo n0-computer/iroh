@@ -3658,7 +3658,7 @@ mod tests {
             )?;
 
             let quic_client_config =
-                tls::make_client_config(&key, None, vec![ALPN.to_vec()], false)?;
+                tls::make_client_config(&key, None, vec![ALPN.to_vec()], None, false)?;
             let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
@@ -3806,7 +3806,7 @@ mod tests {
             )?;
 
             let quic_client_config =
-                tls::make_client_config(&key, None, vec![ALPN.to_vec()], false)?;
+                tls::make_client_config(&key, None, vec![ALPN.to_vec()], None, false)?;
             let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
@@ -4094,7 +4094,7 @@ mod tests {
     ) -> Result<quinn::Connection> {
         let alpns = vec![ALPN.to_vec()];
         let quic_client_config =
-            tls::make_client_config(&ep_secret_key, Some(node_id), alpns, true)?;
+            tls::make_client_config(&ep_secret_key, Some(node_id), alpns, None, true)?;
         let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
         let connect = ep.connect_with(client_config, mapped_addr.socket_addr(), "localhost")?;

@@ -174,7 +174,7 @@ impl RequestHandler for DnsHandler {
             Protocol::Https => inc!(Metrics, dns_requests_https),
             _ => {}
         }
-        debug!(protocol=%request.protocol(), query=%request.query(), "incoming DNS request");
+        debug!(protocol=%request.protocol(), queries=?request.queries(), "incoming DNS request");
 
         let res = self.catalog.handle_request(request, response_handle).await;
         match &res.response_code() {
