@@ -438,7 +438,7 @@
 
 <span class="doccomment">/// Generates a self-signed TLS certificate that includes a libp2p-specific
 /// certificate extension containing the public key of the given secret key.
-</span><span class="kw">pub fn </span>generate(
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>generate(
     identity_secret_key: <span class="kw-2">&amp;</span>SecretKey,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;
     (
@@ -475,7 +475,7 @@
 ///
 /// For this to succeed, the certificate must contain the specified extension and the signature must
 /// match the embedded public key.
-</span><span class="kw">pub fn </span>parse&lt;<span class="lifetime">'a</span>&gt;(
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>parse&lt;<span class="lifetime">'a</span>&gt;(
     certificate: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>rustls::pki_types::CertificateDer&lt;<span class="lifetime">'_</span>&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;P2pCertificate&lt;<span class="lifetime">'a</span>&gt;, ParseError&gt; {
     <span class="kw">let </span>certificate = parse_unverified(certificate.as_ref())<span class="question-mark">?</span>;
@@ -488,7 +488,7 @@
 <span class="doccomment">/// An X.509 certificate with a libp2p-specific extension
 /// is used to secure libp2p connections.
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>P2pCertificate&lt;<span class="lifetime">'a</span>&gt; {
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>P2pCertificate&lt;<span class="lifetime">'a</span>&gt; {
     certificate: X509Certificate&lt;<span class="lifetime">'a</span>&gt;,
     <span class="doccomment">/// This is a specific libp2p Public Key Extension with two values:
     /// * the public host key
@@ -499,7 +499,7 @@
 <span class="doccomment">/// The contents of the specific libp2p extension, containing the public host key
 /// and a signature performed using the private host key.
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>P2pExtension {
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>P2pExtension {
     public_key: PublicKey,
     <span class="doccomment">/// This signature provides cryptographic proof that the peer was
     /// in possession of the private host key at the time the certificate was signed.
@@ -509,17 +509,17 @@
 <span class="doccomment">/// An error that occurs during certificate generation.
 </span><span class="attr">#[derive(Debug, thiserror::Error)]
 #[error(transparent)]
-</span><span class="kw">pub struct </span>GenError(<span class="attr">#[from] </span>rcgen::Error);
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>GenError(<span class="attr">#[from] </span>rcgen::Error);
 
 <span class="doccomment">/// An error that occurs during certificate parsing.
 </span><span class="attr">#[derive(Debug, thiserror::Error)]
 #[error(transparent)]
-</span><span class="kw">pub struct </span>ParseError(<span class="attr">#[from] </span><span class="kw">pub</span>(<span class="kw">crate</span>) webpki::Error);
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ParseError(<span class="attr">#[from] </span><span class="kw">pub</span>(<span class="kw">crate</span>) webpki::Error);
 
 <span class="doccomment">/// An error that occurs during signature verification.
 </span><span class="attr">#[derive(Debug, thiserror::Error)]
 #[error(transparent)]
-</span><span class="kw">pub struct </span>VerificationError(<span class="attr">#[from] </span><span class="kw">pub</span>(<span class="kw">crate</span>) webpki::Error);
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>VerificationError(<span class="attr">#[from] </span><span class="kw">pub</span>(<span class="kw">crate</span>) webpki::Error);
 
 <span class="doccomment">/// Internal function that only parses but does not verify the certificate.
 ///
@@ -617,13 +617,13 @@
 
 <span class="kw">impl </span>P2pCertificate&lt;<span class="lifetime">'_</span>&gt; {
     <span class="doccomment">/// The [`PublicKey`] of the remote peer.
-    </span><span class="kw">pub fn </span>peer_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PublicKey {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>peer_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PublicKey {
         <span class="self">self</span>.extension.public_key
     }
 
     <span class="doccomment">/// Verify the `signature` of the `message` signed by the secret key corresponding to the public key stored
     /// in the certificate.
-    </span><span class="kw">pub fn </span>verify_signature(
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>verify_signature(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         signature_scheme: rustls::SignatureScheme,
         message: <span class="kw-2">&amp;</span>[u8],

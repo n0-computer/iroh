@@ -136,7 +136,7 @@
 
 <span class="kw">use </span><span class="self">self</span>::resolver::AlwaysResolvesCert;
 
-<span class="kw">pub mod </span>certificate;
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>certificate;
 <span class="kw">mod </span>resolver;
 <span class="kw">mod </span>verifier;
 
@@ -156,7 +156,7 @@
     /// If *keylog* is `true` this will enable logging of the pre-master key to the file in the
     /// `SSLKEYLOGFILE` environment variable.  This can be used to inspect the traffic for
     /// debugging purposes.
-    </span><span class="kw">pub fn </span>make_client_config(
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>make_client_config(
         <span class="self">self</span>,
         secret_key: <span class="kw-2">&amp;</span>SecretKey,
         remote_peer_id: PublicKey,
@@ -197,7 +197,7 @@
     /// If *keylog* is `true` this will enable logging of the pre-master key to the file in the
     /// `SSLKEYLOGFILE` environment variable.  This can be used to inspect the traffic for
     /// debugging purposes.
-    </span><span class="kw">pub fn </span>make_server_config(
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>make_server_config(
         <span class="self">self</span>,
         secret_key: <span class="kw-2">&amp;</span>SecretKey,
         alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;,
@@ -231,7 +231,7 @@
 
 <span class="doccomment">/// Error for generating TLS configs.
 </span><span class="attr">#[derive(Debug, thiserror::Error)]
-</span><span class="kw">pub enum </span>CreateConfigError {
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>CreateConfigError {
     <span class="doccomment">/// Error generating the certificate.
     </span><span class="attr">#[error(<span class="string">"Error generating the certificate"</span>)]
     </span>CertError(<span class="attr">#[from] </span>certificate::GenError),

@@ -334,7 +334,8 @@
 <a href="#333" id="333">333</a>
 <a href="#334" id="334">334</a>
 <a href="#335" id="335">335</a>
-<a href="#336" id="336">336</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS 1.3 certificates and handshakes handling.
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS 1.3 certificates and handshakes handling.
 //!
 //! This module handles a verification of a client/server certificate chain
 //! and signatures allegedly by the given certificates, or using raw public keys.
@@ -359,7 +360,7 @@
 <span class="kw">use super</span>::{certificate, Authentication};
 
 <span class="doccomment">/// The only TLS version we support is 1.3
-</span><span class="kw">pub static </span>PROTOCOL_VERSIONS: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>SupportedProtocolVersion] = <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>rustls::version::TLS13];
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">static </span>PROTOCOL_VERSIONS: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>SupportedProtocolVersion] = <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>rustls::version::TLS13];
 
 <span class="kw">static </span>SUPPORTED_SIG_ALGS: WebPkiSupportedAlgorithms = WebPkiSupportedAlgorithms {
     all: <span class="kw-2">&amp;</span>[
@@ -393,7 +394,7 @@
 ///
 /// Only TLS 1.3 is supported. TLS 1.2 should be disabled in the configuration of `rustls`.
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>ServerCertificateVerifier {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ServerCertificateVerifier {
     <span class="doccomment">/// The peer we intend to connect to.
     </span>remote_peer_id: PublicKey,
     <span class="doccomment">/// Which TLS authentication mode to operate in.
@@ -410,7 +411,7 @@
 ///
 /// or a raw public key.
 </span><span class="kw">impl </span>ServerCertificateVerifier {
-    <span class="kw">pub fn </span>with_remote_peer_id(auth: Authentication, remote_peer_id: PublicKey) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>with_remote_peer_id(auth: Authentication, remote_peer_id: PublicKey) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>trusted_spki = Vec::new();
         <span class="kw">let </span>pem_key = remote_peer_id.serialize_public_pem();
         <span class="kw">let </span>remote_key = SubjectPublicKeyInfoDer::from_pem_slice(pem_key.as_bytes())
@@ -459,12 +460,13 @@
 
                 <span class="kw">let </span>end_entity_as_spki = SubjectPublicKeyInfoDer::from(end_entity.as_ref());
 
-                <span class="kw">match </span><span class="self">self</span>.trusted_spki.contains(<span class="kw-2">&amp;</span>end_entity_as_spki) {
-                    <span class="bool-val">false </span>=&gt; <span class="prelude-val">Err</span>(rustls::Error::InvalidCertificate(
+                <span class="kw">if </span>!<span class="self">self</span>.trusted_spki.contains(<span class="kw-2">&amp;</span>end_entity_as_spki) {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(rustls::Error::InvalidCertificate(
                         CertificateError::UnknownIssuer,
-                    )),
-                    <span class="bool-val">true </span>=&gt; <span class="prelude-val">Ok</span>(ServerCertVerified::assertion()),
+                    ));
                 }
+
+                <span class="prelude-val">Ok</span>(ServerCertVerified::assertion())
             }
         }
     }
@@ -512,7 +514,7 @@
 ///
 /// Only TLS 1.3 is supported. TLS 1.2 should be disabled in the configuration of `rustls`.
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>ClientCertificateVerifier {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ClientCertificateVerifier {
     <span class="doccomment">/// Which TLS authentication mode to operate in.
     </span>auth: Authentication,
 }
@@ -526,7 +528,7 @@
 ///
 /// or a raw public key.
 </span><span class="kw">impl </span>ClientCertificateVerifier {
-    <span class="kw">pub fn </span>new(auth: Authentication) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(auth: Authentication) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{ auth }
     }
 }

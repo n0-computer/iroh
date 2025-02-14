@@ -94,13 +94,13 @@
 <span class="kw">use </span><span class="kw">crate</span>::tls::Authentication;
 
 <span class="attr">#[derive(Debug)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>AlwaysResolvesCert {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>AlwaysResolvesCert {
     key: Arc&lt;rustls::sign::CertifiedKey&gt;,
     auth: Authentication,
 }
 
 <span class="kw">impl </span>AlwaysResolvesCert {
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
         auth: Authentication,
         secret_key: <span class="kw-2">&amp;</span>SecretKey,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, CreateConfigError&gt; {

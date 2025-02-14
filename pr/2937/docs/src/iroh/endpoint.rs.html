@@ -2546,9 +2546,7 @@
 <a href="#2545" id="2545">2545</a>
 <a href="#2546" id="2546">2546</a>
 <a href="#2547" id="2547">2547</a>
-<a href="#2548" id="2548">2548</a>
-<a href="#2549" id="2549">2549</a>
-<a href="#2550" id="2550">2550</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2548" id="2548">2548</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -4011,8 +4009,6 @@
 /// connection without losing application data.
 ///
 /// May be cloned to obtain another handle to the same connection.
-</span><span class="comment">// This has repr(transparent) as it opens the door to potentially allow casting it to a
-// quinn::Connection in the future.  Right now however that'd be iroh_quinn::Connection.
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>Connection {
     inner: quinn::Connection,
