@@ -375,8 +375,8 @@ mod tests {
     }
 
     /// Makes sure that, even though the RTT was set to some fairly low value,
-    /// we *do* try to connect longer than the probe timeout (1s), as long as
-    /// we haven't closed the connection.
+    /// we *do* try to connect for longer than what the time out would be after closing
+    /// the connection, when we *don't* close the connection.
     ///
     /// In this case we don't simulate it via synthetically high RTT, but by dropping
     /// all packets on the server-side for 2 seconds.
