@@ -1317,6 +1317,10 @@ impl Connecting {
     /// complete, at which point subsequently opened streams and written data will have full
     /// cryptographic protection.
     ///
+    /// Once the [`ZeroRttAccepted`] future completed, a full handshake has been carried through
+    /// and any data sent and any streams opened on the [`Connection`] will operate with the same
+    /// security as on normal 1-RTT connections.
+    ///
     /// ## Outgoing
     ///
     /// For outgoing connections, the initial attempt to convert to a [`Connection`] which sends
@@ -1345,6 +1349,9 @@ impl Connecting {
     /// On incoming connections, this enables transmission of 0.5-RTT data, which may be sent
     /// before TLS client authentication has occurred, and should therefore not be used to send
     /// data for which client authentication is being used.
+    ///
+    /// You can use [`RecvStream::is_0rtt`] to check whether a stream has been opened in 0-RTT
+    /// and thus whether parts of the stream are operating under this reduced security level.
     pub fn into_0rtt(self) -> Result<(Connection, ZeroRttAccepted), Self> {
         match self.inner.into_0rtt() {
             Ok((inner, zrtt_accepted)) => {
