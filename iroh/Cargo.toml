@@ -48,9 +48,8 @@ iroh-relay = { version = "0.32", path = "../iroh-relay", default-features = fals
 netdev = "0.31.0"
 netwatch = { version = "0.3" }
 pin-project = "1"
-pkarr = { version = "2", default-features = false, features = [
-    "async",
-    "relay",
+pkarr = { version = "3", default-features = false, features = [
+    "relays",
 ] }
 portmapper = { version = "0.3", default-features = false }
 quinn = { package = "iroh-quinn", version = "0.13.0" }
@@ -129,6 +128,7 @@ serde_json = "1"
 testresult = "0.4.0"
 iroh-relay = { path = "../iroh-relay", default-features = false, features = ["test-utils", "server"] }
 tracing-test = "0.2.5"
+mainline = "5.2.0"
 
 [features]
 default = ["metrics"]

@@ -27,7 +27,7 @@ mod tests {
         dns::{node_info::NodeInfo, DnsResolver},
         SecretKey,
     };
-    use pkarr::{PkarrClient, SignedPacket};
+    use pkarr::{SignedPacket, Timestamp};
     use testresult::TestResult;
     use tracing_test::traced_test;
     use url::Url;
@@ -103,13 +103,13 @@ mod tests {
                 30,
                 dns::rdata::RData::AAAA(Ipv6Addr::LOCALHOST.into()),
             ));
-            SignedPacket::from_packet(&keypair, &packet)?
+            SignedPacket::new(&keypair, &packet.answers, Timestamp::now())?
         };
-        let pkarr_client = pkarr::PkarrRelayClient::new(pkarr::RelaySettings {
-            relays: vec![pkarr_relay_url.to_string()],
-            ..Default::default()
-        })?;
-        pkarr_client.as_async().publish(&signed_packet).await?;
+        let pkarr_client = pkarr::Client::builder()
+            .no_default_network()
+            .relays(&[pkarr_relay_url])?
+            .build()?;
+        pkarr_client.publish(&signed_packet, None).await?;
 
         use hickory_server::proto::rr::Name;
         let pubkey = signed_packet.public_key().to_z32();
@@ -221,7 +221,7 @@ mod tests {
     #[traced_test]
     async fn integration_mainline() -> Result<()> {
         // run a mainline testnet
-        let testnet = pkarr::mainline::dht::Testnet::new(5);
+        let testnet = mainline::Testnet::new(5)?;
         let bootstrap = testnet.bootstrap.clone();
 
         // spawn our server with mainline support
@@ -239,13 +239,11 @@ mod tests {
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
 
         // publish the signed packet to our DHT
-        let pkarr = PkarrClient::builder()
-            .dht_settings(pkarr::mainline::dht::DhtSettings {
-                bootstrap: Some(testnet.bootstrap),
-                ..Default::default()
-            })
+        let pkarr = pkarr::Client::builder()
+            .no_default_network()
+            .dht(|builder| builder.bootstrap(&testnet.bootstrap))
             .build()?;
-        pkarr.publish(&signed_packet)?;
+        pkarr.publish(&signed_packet, None).await?;
 
         // resolve via DNS from our server, which will lookup from our DHT
         let resolver = test_resolver(nameserver);
@@ -255,9 +253,6 @@ mod tests {
         assert_eq!(res.relay_url.map(Url::from), Some(relay_url));
 
         server.shutdown().await?;
-        for mut node in testnet.nodes {
-            node.shutdown()?;
-        }
         Ok(())
     }
 
