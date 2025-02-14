@@ -284,9 +284,13 @@ impl QuicClient {
 mod tests {
     use std::net::Ipv4Addr;
 
-    use n0_future::task::AbortOnDropHandle;
+    use anyhow::Context;
+    use n0_future::{task::AbortOnDropHandle, time};
+    use quinn::crypto::rustls::QuicServerConfig;
     use tokio::time::Instant;
+    use tracing::{debug, info, info_span, Instrument};
     use tracing_test::traced_test;
+    use webpki::types::PrivatePkcs8KeyDer;
 
     use super::{
         server::{QuicConfig, QuicServer},
@@ -330,10 +334,14 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn quic_endpoint_closes_fast() -> anyhow::Result<()> {
-        let host: Ipv4Addr = "127.0.0.1".parse()?;
-
         // create a client-side endpoint
-        let client_endpoint = quinn::Endpoint::client(SocketAddr::new(host.into(), 0))?;
+        let client_endpoint =
+            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))?;
+
+        // create an socket that does not respond.
+        let server_socket =
+            tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).await?;
+        let server_addr = server_socket.local_addr()?;
 
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
@@ -344,7 +352,7 @@ mod tests {
         let task = AbortOnDropHandle::new(tokio::spawn({
             async move {
                 quic_client
-                    .get_addr_and_latency((host, 3456u16).into(), &host.to_string())
+                    .get_addr_and_latency(server_addr, "localhost")
                     .await
             }
         }));
@@ -362,6 +370,86 @@ mod tests {
         println!("Closed in {time:?}");
         assert!(Duration::from_millis(900) < time);
         assert!(time < Duration::from_millis(1100));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn quic_endpoint_unresponsive() -> anyhow::Result<()> {
+        // Create a socket for our QAD server.  We need the socket separately because we
+        // need to pop off messages before we attach it to the Quinn Endpoint.
+        let socket =
+            tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).await?;
+        let server_addr = socket.local_addr()?;
+        info!(addr = ?server_addr, "server socket bound");
+
+        // Create a QAD server with a self-signed cert, all manually.
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
+        let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+        let mut server_crypto = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert.cert.into()], key.into())?;
+        server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
+        server_crypto.alpn_protocols = vec![ALPN_QUIC_ADDR_DISC.to_vec()];
+        let mut server_config =
+            quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto)?));
+        let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
+        transport_config.send_observed_address_reports(true);
+
+        let start = Instant::now();
+        let server_task = tokio::spawn(
+            async move {
+                info!("Dropping all packets");
+                time::timeout(Duration::from_secs(1), async {
+                    let mut buf = [0u8; 1500];
+                    loop {
+                        let (len, src) = socket.recv_from(&mut buf).await.unwrap();
+                        debug!(%len, ?src, "Dropped a packet");
+                    }
+                })
+                .await
+                .ok();
+                info!("starting server");
+                let server = quinn::Endpoint::new(
+                    Default::default(),
+                    Some(server_config),
+                    socket.into_std()?,
+                    Arc::new(quinn::TokioRuntime),
+                )?;
+                info!("accepting conn");
+                let incoming = server.accept().await.context("no conn")?;
+                info!("incoming!");
+                let conn = incoming.await?;
+                conn.closed().await;
+                server.wait_idle().await;
+                Ok::<(), anyhow::Error>(())
+            }
+            .instrument(info_span!("server")),
+        );
+        let server_task = AbortOnDropHandle::new(server_task);
+
+        info!("starting client");
+        let client_endpoint =
+            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))?;
+
+        // create the client configuration used for the client endpoint when they
+        // initiate a connection with the server
+        let client_config = crate::client::make_dangerous_client_config();
+        let quic_client = QuicClient::new(client_endpoint.clone(), client_config)?;
+
+        // Now we should still connect, but it should take more than 1s.
+        info!("making QAD request");
+        let (addr, latency) = time::timeout(
+            Duration::from_secs(10),
+            quic_client.get_addr_and_latency(server_addr, "localhost"),
+        )
+        .await??;
+        let duration = start.elapsed();
+        info!(?duration, ?addr, ?latency, "QAD succeeded");
+        assert!(duration >= Duration::from_secs(1));
+
+        time::timeout(Duration::from_secs(10), server_task).await???;
 
         Ok(())
     }
