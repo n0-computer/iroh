@@ -4,10 +4,10 @@ use std::{
     fmt::Debug,
     net::IpAddr,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 
 use anyhow::{Context, Result};
+use n0_future::time::Duration;
 use surge_ping::{Client, Config, IcmpPacket, PingIdentifier, PingSequence, ICMP};
 use tracing::debug;
 

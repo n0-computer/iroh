@@ -12,6 +12,9 @@ keywords = ["networking"]
 # Sadly this also needs to be updated in .github/workflows/ci.yml
 rust-version = "1.81"
 
+[lib]
+crate-type = ["lib", "cdylib"] # cdylib is needed for Wasm support
+
 [lints]
 workspace = true
 
@@ -19,30 +22,38 @@ workspace = true
 anyhow = "1"
 bytes = "1.7"
 derive_more = { version = "1.0.0", features = ["display"] }
-hickory-resolver = "=0.25.0-alpha.5"
 iroh-base = { version = "0.32.0", path = "../iroh-base", default-features = false, features = ["relay"] }
 iroh-metrics = { version = "0.31", default-features = false }
-iroh-relay = { version = "0.32", path = "../iroh-relay" }
+iroh-relay = { version = "0.32", default-features = false, path = "../iroh-relay" }
 n0-future = "0.1.2"
-netwatch = { version = "0.3" }
-portmapper = { version = "0.3", default-features = false }
-quinn = { package = "iroh-quinn", version = "0.13.0" }
+quinn = { package = "iroh-quinn", version = "0.13.0", default-features = false }
 rand = "0.8"
-reqwest = { version = "0.12", default-features = false }
+reqwest = { version = "0.12", default-features = false, features = ["stream"] }
 rustls = { version = "0.23", default-features = false }
-surge-ping = "0.8.0"
 thiserror = "2"
 tokio = { version = "1", default-features = false, features = ["sync", "time", "macros", "rt"] }
 tokio-util = { version = "0.7.12", default-features = false }
 tracing = "0.1"
 url = { version = "2.4" }
 
+# non-wasm-in-browser dependencies
+[target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
+hickory-resolver = "=0.25.0-alpha.5"
+netwatch = { version = "0.3" }
+portmapper = { version = "0.3", default-features = false }
+surge-ping = "0.8.0"
+
 [dev-dependencies]
+futures-lite = "2.3"
 iroh-relay = { path = "../iroh-relay", features = ["test-utils", "server"] }
 pretty_assertions = "1.4"
+quinn = { package = "iroh-quinn", version = "0.13.0" }
 testresult = "0.4.0"
 tokio = { version = "1", default-features = false, features = ["test-util"] }
 tracing-test = "0.2.5"
+
+[build-dependencies]
+cfg_aliases = { version = "0.2" }
 
 [features]
 default = ["metrics"]
