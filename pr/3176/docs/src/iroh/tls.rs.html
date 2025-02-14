@@ -94,7 +94,16 @@
 <a href="#93" id="93">93</a>
 <a href="#94" id="94">94</a>
 <a href="#95" id="95">95</a>
-<a href="#96" id="96">96</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS configuration based on libp2p TLS specs.
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS configuration based on libp2p TLS specs.
 //!
 //! See &lt;https://github.com/libp2p/specs/blob/master/tls/tls.md&gt;.
 //! Based on rust-libp2p/transports/tls
@@ -130,6 +139,7 @@
     secret_key: <span class="kw-2">&amp;</span>SecretKey,
     remote_peer_id: <span class="prelude-ty">Option</span>&lt;PublicKey&gt;,
     alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;,
+    session_store: <span class="prelude-ty">Option</span>&lt;Arc&lt;<span class="kw">dyn </span>rustls::client::ClientSessionStore&gt;&gt;,
     keylog: bool,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;QuicClientConfig, CreateConfigError&gt; {
     <span class="kw">let </span>(certificate, secret_key) = certificate::generate(secret_key)<span class="question-mark">?</span>;
@@ -150,6 +160,11 @@
     ))
     .with_client_cert_resolver(cert_resolver);
     crypto.alpn_protocols = alpn_protocols;
+
+    <span class="kw">if let </span><span class="prelude-val">Some</span>(store) = session_store {
+        crypto.resumption = rustls::client::Resumption::store(store);
+        crypto.enable_early_data = <span class="bool-val">true</span>;
+    }
     <span class="kw">if </span>keylog {
         <span class="macro">warn!</span>(<span class="string">"enabling SSLKEYLOGFILE for TLS pre-master keys"</span>);
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
@@ -187,6 +202,9 @@
         <span class="macro">warn!</span>(<span class="string">"enabling SSLKEYLOGFILE for TLS pre-master keys"</span>);
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
+    <span class="comment">// must be u32::MAX or 0 (the default). Any other value panics with QUIC
+    // This is specified in RFC 9001: https://www.rfc-editor.org/rfc/rfc9001#section-4.6.1
+    </span>crypto.max_early_data_size = u32::MAX;
     <span class="kw">let </span>config = crypto.try_into()<span class="question-mark">?</span>;
     <span class="prelude-val">Ok</span>(config)
 }

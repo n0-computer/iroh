@@ -494,7 +494,10 @@
 <a href="#493" id="493">493</a>
 <a href="#494" id="494">494</a>
 <a href="#495" id="495">495</a>
-<a href="#496" id="496">496</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
+<a href="#496" id="496">496</a>
+<a href="#497" id="497">497</a>
+<a href="#498" id="498">498</a>
+<a href="#499" id="499">499</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
@@ -851,12 +854,15 @@
         .iter()
         .map(|(ip, port)| SocketAddr::new(<span class="kw-2">*</span>ip, <span class="kw-2">*</span>port))
         .collect();
-    <span class="kw">let </span>user_data = <span class="kw">match </span>peer.txt_attribute(USER_DATA_ATTRIBUTE) {
-        <span class="prelude-val">Some</span>(<span class="prelude-val">Some</span>(user_data)) =&gt; user_data.parse().ok(),
-        <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-    };
+    <span class="comment">// Get the user-defined data from the resolved peer info. We expect an attribute with a value
+    // that parses as `UserData`. Otherwise, omit.
+    </span><span class="kw">let </span>user_data = <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="prelude-val">Some</span>(user_data)) = peer.txt_attribute(USER_DATA_ATTRIBUTE) {
+        user_data.parse().ok()
+    } <span class="kw">else </span>{
+        <span class="prelude-val">None
+    </span>};
     <span class="kw">let </span>node_info = NodeInfo::new(<span class="kw-2">*</span>node_id)
-        .with_direct_addrs(direct_addresses)
+        .with_direct_addresses(direct_addresses)
         .with_user_data(user_data);
     DiscoveryItem::new(node_info, NAME, <span class="prelude-val">None</span>)
 }

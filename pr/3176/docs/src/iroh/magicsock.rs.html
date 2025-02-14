@@ -8122,7 +8122,7 @@
             )<span class="question-mark">?</span>;
 
             <span class="kw">let </span>quic_client_config =
-                tls::make_client_config(<span class="kw-2">&amp;</span>key, <span class="prelude-val">None</span>, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">false</span>)<span class="question-mark">?</span>;
+                tls::make_client_config(<span class="kw-2">&amp;</span>key, <span class="prelude-val">None</span>, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="prelude-val">None</span>, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
             <span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(<span class="prelude-val">Some</span>(Duration::from_secs(<span class="number">10</span>).try_into().unwrap()));
@@ -8270,7 +8270,7 @@
             )<span class="question-mark">?</span>;
 
             <span class="kw">let </span>quic_client_config =
-                tls::make_client_config(<span class="kw-2">&amp;</span>key, <span class="prelude-val">None</span>, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">false</span>)<span class="question-mark">?</span>;
+                tls::make_client_config(<span class="kw-2">&amp;</span>key, <span class="prelude-val">None</span>, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="prelude-val">None</span>, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
             <span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(<span class="prelude-val">Some</span>(Duration::from_secs(<span class="number">10</span>).try_into().unwrap()));
@@ -8559,7 +8559,7 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection&gt; {
         <span class="kw">let </span>alpns = <span class="macro">vec!</span>[ALPN.to_vec()];
         <span class="kw">let </span>quic_client_config =
-            tls::make_client_config(<span class="kw-2">&amp;</span>ep_secret_key, <span class="prelude-val">Some</span>(node_id), alpns, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
+            tls::make_client_config(<span class="kw-2">&amp;</span>ep_secret_key, <span class="prelude-val">Some</span>(node_id), alpns, <span class="prelude-val">None</span>, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
         <span class="kw">let </span>connect = ep.connect_with(client_config, mapped_addr.socket_addr(), <span class="string">"localhost"</span>)<span class="question-mark">?</span>;
