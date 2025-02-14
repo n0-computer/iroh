@@ -108,8 +108,8 @@ impl NodeData {
     }
 
     /// Sets the direct addresses and returns the updated node data.
-    pub fn with_direct_addrs(mut self, direct_addrs: BTreeSet<SocketAddr>) -> Self {
-        self.direct_addresses = direct_addrs;
+    pub fn with_direct_addresses(mut self, direct_addresses: BTreeSet<SocketAddr>) -> Self {
+        self.direct_addresses = direct_addresses;
         self
     }
 
@@ -199,7 +199,7 @@ impl From<NodeAddr> for NodeInfo {
     fn from(addr: NodeAddr) -> Self {
         Self::new(addr.node_id)
             .with_relay_url(addr.relay_url)
-            .with_direct_addrs(addr.direct_addresses)
+            .with_direct_addresses(addr.direct_addresses)
     }
 }
 
@@ -221,8 +221,8 @@ impl NodeInfo {
     }
 
     /// Sets the direct addresses and returns the updated node info.
-    pub fn with_direct_addrs(mut self, direct_addrs: BTreeSet<SocketAddr>) -> Self {
-        self.data = self.data.with_direct_addrs(direct_addrs);
+    pub fn with_direct_addresses(mut self, direct_addresses: BTreeSet<SocketAddr>) -> Self {
+        self.data = self.data.with_direct_addresses(direct_addresses);
         self
     }
 
@@ -641,7 +641,7 @@ mod tests {
             "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18",
         )?)
         .with_relay_url(Some("https://euw1-1.relay.iroh.network./".parse()?))
-        .with_direct_addrs(BTreeSet::from([
+        .with_direct_addresses(BTreeSet::from([
             "192.168.96.145:60165".parse()?,
             "213.208.157.87:60165".parse()?,
         ]));

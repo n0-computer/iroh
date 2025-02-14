@@ -348,7 +348,7 @@ fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
         .iter()
         .map(|(ip, port)| SocketAddr::new(*ip, *port))
         .collect();
-    let node_info = NodeInfo::new(*node_id).with_direct_addrs(direct_addresses);
+    let node_info = NodeInfo::new(*node_id).with_direct_addresses(direct_addresses);
     DiscoveryItem::new(node_info, NAME, None)
 }
 
