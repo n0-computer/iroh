@@ -947,7 +947,15 @@
 <a href="#946" id="946">946</a>
 <a href="#947" id="947">947</a>
 <a href="#948" id="948">948</a>
-<a href="#949" id="949">949</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#949" id="949">949</a>
+<a href="#950" id="950">950</a>
+<a href="#951" id="951">951</a>
+<a href="#952" id="952">952</a>
+<a href="#953" id="953">953</a>
+<a href="#954" id="954">954</a>
+<a href="#955" id="955">955</a>
+<a href="#956" id="956">956</a>
+<a href="#957" id="957">957</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1415,17 +1423,17 @@
             }
         };
         <span class="kw">let </span><span class="kw-2">mut </span>on_first_tx = <span class="prelude-val">Some</span>(on_first_tx);
-        <span class="macro">debug!</span>(<span class="string">"discovery: start"</span>);
+        <span class="macro">debug!</span>(<span class="string">"starting"</span>);
         <span class="kw">loop </span>{
             <span class="kw">match </span>stream.next().<span class="kw">await </span>{
                 <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(r)) =&gt; {
                     <span class="kw">let </span>provenance = r.provenance;
                     <span class="kw">let </span>node_addr = r.into_node_addr();
                     <span class="kw">if </span>node_addr.is_empty() {
-                        <span class="macro">debug!</span>(%provenance, <span class="string">"discovery: empty address found"</span>);
+                        <span class="macro">debug!</span>(%provenance, <span class="string">"empty address found"</span>);
                         <span class="kw">continue</span>;
                     }
-                    <span class="macro">debug!</span>(%provenance, addr = <span class="question-mark">?</span>node_addr, <span class="string">"discovery: new address found"</span>);
+                    <span class="macro">debug!</span>(%provenance, addr = <span class="question-mark">?</span>node_addr, <span class="string">"new address found"</span>);
                     ep.add_node_addr_with_source(node_addr, provenance).ok();
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(tx) = on_first_tx.take() {
                         tx.send(<span class="prelude-val">Ok</span>(())).ok();
@@ -1462,13 +1470,14 @@
 
     <span class="kw">use </span>anyhow::Context;
     <span class="kw">use </span>iroh_base::{NodeAddr, SecretKey};
+    <span class="kw">use </span>quinn::{IdleTimeout, TransportConfig};
     <span class="kw">use </span>rand::Rng;
     <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
     <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::RelayMode;
+    <span class="kw">use crate</span>::{endpoint::ConnectOptions, RelayMode};
 
     <span class="kw">type </span>InfoStore = HashMap&lt;NodeId, (NodeData, u64)&gt;;
 
@@ -1526,16 +1535,15 @@
             endpoint: Endpoint,
             node_id: NodeId,
         ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
-            <span class="kw">let </span>addr_info = <span class="kw">match </span><span class="self">self</span>.resolve_wrong {
-                <span class="bool-val">false </span>=&gt; <span class="self">self</span>.shared.nodes.lock().unwrap().get(<span class="kw-2">&amp;</span>node_id).cloned(),
-                <span class="bool-val">true </span>=&gt; {
-                    <span class="kw">let </span>ts = system_time_now() - <span class="number">100_000</span>;
-                    <span class="kw">let </span>port: u16 = rand::thread_rng().gen_range(<span class="number">10_000</span>..<span class="number">20_000</span>);
-                    <span class="comment">// "240.0.0.0/4" is reserved and unreachable
-                    </span><span class="kw">let </span>addr: SocketAddr = <span class="macro">format!</span>(<span class="string">"240.0.0.1:{port}"</span>).parse().unwrap();
-                    <span class="kw">let </span>data = NodeData::new(<span class="prelude-val">None</span>, BTreeSet::from([addr]));
-                    <span class="prelude-val">Some</span>((data, ts))
-                }
+            <span class="kw">let </span>addr_info = <span class="kw">if </span><span class="self">self</span>.resolve_wrong {
+                <span class="kw">let </span>ts = system_time_now() - <span class="number">100_000</span>;
+                <span class="kw">let </span>port: u16 = rand::thread_rng().gen_range(<span class="number">10_000</span>..<span class="number">20_000</span>);
+                <span class="comment">// "240.0.0.0/4" is reserved and unreachable
+                </span><span class="kw">let </span>addr: SocketAddr = <span class="macro">format!</span>(<span class="string">"240.0.0.1:{port}"</span>).parse().unwrap();
+                <span class="kw">let </span>data = NodeData::new(<span class="prelude-val">None</span>, BTreeSet::from([addr]));
+                <span class="prelude-val">Some</span>((data, ts))
+            } <span class="kw">else </span>{
+                <span class="self">self</span>.shared.nodes.lock().unwrap().get(<span class="kw-2">&amp;</span>node_id).cloned()
             };
             <span class="kw">let </span>stream = <span class="kw">match </span>addr_info {
                 <span class="prelude-val">Some</span>((data, ts)) =&gt; {
@@ -1652,10 +1660,9 @@
             disco.add(disco3);
             new_endpoint(secret, disco).<span class="kw">await
         </span>};
-        <span class="kw">let </span>ep1_addr = NodeAddr::new(ep1.node_id());
         <span class="comment">// wait for out address to be updated and thus published at least once
         </span>ep1.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>_conn = ep2.connect(ep1_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>_conn = ep2.connect(ep1.node_id(), TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 
@@ -1675,11 +1682,20 @@
             <span class="kw">let </span>disco = ConcurrentDiscovery::from_services(<span class="macro">vec!</span>[Box::new(disco1)]);
             new_endpoint(secret, disco).<span class="kw">await
         </span>};
-        <span class="kw">let </span>ep1_addr = NodeAddr::new(ep1.node_id());
         <span class="comment">// wait for out address to be updated and thus published at least once
         </span>ep1.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>res = ep2.connect(ep1_addr, TEST_ALPN).<span class="kw">await</span>;
-        <span class="macro">assert!</span>(res.is_err());
+
+        <span class="comment">// 10x faster test via a 3s idle timeout instead of the 30s default
+        </span><span class="kw">let </span><span class="kw-2">mut </span>config = TransportConfig::default();
+        config.keep_alive_interval(<span class="prelude-val">Some</span>(Duration::from_secs(<span class="number">1</span>)));
+        config.max_idle_timeout(<span class="prelude-val">Some</span>(IdleTimeout::try_from(Duration::from_secs(<span class="number">3</span>))<span class="question-mark">?</span>));
+        <span class="kw">let </span>opts = ConnectOptions::new().with_transport_config(Arc::new(config));
+
+        <span class="kw">let </span>res = ep2
+            .connect_with_opts(ep1.node_id(), TEST_ALPN, opts)
+            .<span class="kw">await</span><span class="question-mark">? </span><span class="comment">// -&gt; Connecting works
+            </span>.<span class="kw">await</span>; <span class="comment">// -&gt; Connection is expected to fail
+        </span><span class="macro">assert!</span>(res.is_err());
         <span class="prelude-val">Ok</span>(())
     }
 
