@@ -1065,7 +1065,119 @@
 <a href="#1064" id="1064">1064</a>
 <a href="#1065" id="1065">1065</a>
 <a href="#1066" id="1066">1066</a>
-<a href="#1067" id="1067">1067</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay probes.
+<a href="#1067" id="1067">1067</a>
+<a href="#1068" id="1068">1068</a>
+<a href="#1069" id="1069">1069</a>
+<a href="#1070" id="1070">1070</a>
+<a href="#1071" id="1071">1071</a>
+<a href="#1072" id="1072">1072</a>
+<a href="#1073" id="1073">1073</a>
+<a href="#1074" id="1074">1074</a>
+<a href="#1075" id="1075">1075</a>
+<a href="#1076" id="1076">1076</a>
+<a href="#1077" id="1077">1077</a>
+<a href="#1078" id="1078">1078</a>
+<a href="#1079" id="1079">1079</a>
+<a href="#1080" id="1080">1080</a>
+<a href="#1081" id="1081">1081</a>
+<a href="#1082" id="1082">1082</a>
+<a href="#1083" id="1083">1083</a>
+<a href="#1084" id="1084">1084</a>
+<a href="#1085" id="1085">1085</a>
+<a href="#1086" id="1086">1086</a>
+<a href="#1087" id="1087">1087</a>
+<a href="#1088" id="1088">1088</a>
+<a href="#1089" id="1089">1089</a>
+<a href="#1090" id="1090">1090</a>
+<a href="#1091" id="1091">1091</a>
+<a href="#1092" id="1092">1092</a>
+<a href="#1093" id="1093">1093</a>
+<a href="#1094" id="1094">1094</a>
+<a href="#1095" id="1095">1095</a>
+<a href="#1096" id="1096">1096</a>
+<a href="#1097" id="1097">1097</a>
+<a href="#1098" id="1098">1098</a>
+<a href="#1099" id="1099">1099</a>
+<a href="#1100" id="1100">1100</a>
+<a href="#1101" id="1101">1101</a>
+<a href="#1102" id="1102">1102</a>
+<a href="#1103" id="1103">1103</a>
+<a href="#1104" id="1104">1104</a>
+<a href="#1105" id="1105">1105</a>
+<a href="#1106" id="1106">1106</a>
+<a href="#1107" id="1107">1107</a>
+<a href="#1108" id="1108">1108</a>
+<a href="#1109" id="1109">1109</a>
+<a href="#1110" id="1110">1110</a>
+<a href="#1111" id="1111">1111</a>
+<a href="#1112" id="1112">1112</a>
+<a href="#1113" id="1113">1113</a>
+<a href="#1114" id="1114">1114</a>
+<a href="#1115" id="1115">1115</a>
+<a href="#1116" id="1116">1116</a>
+<a href="#1117" id="1117">1117</a>
+<a href="#1118" id="1118">1118</a>
+<a href="#1119" id="1119">1119</a>
+<a href="#1120" id="1120">1120</a>
+<a href="#1121" id="1121">1121</a>
+<a href="#1122" id="1122">1122</a>
+<a href="#1123" id="1123">1123</a>
+<a href="#1124" id="1124">1124</a>
+<a href="#1125" id="1125">1125</a>
+<a href="#1126" id="1126">1126</a>
+<a href="#1127" id="1127">1127</a>
+<a href="#1128" id="1128">1128</a>
+<a href="#1129" id="1129">1129</a>
+<a href="#1130" id="1130">1130</a>
+<a href="#1131" id="1131">1131</a>
+<a href="#1132" id="1132">1132</a>
+<a href="#1133" id="1133">1133</a>
+<a href="#1134" id="1134">1134</a>
+<a href="#1135" id="1135">1135</a>
+<a href="#1136" id="1136">1136</a>
+<a href="#1137" id="1137">1137</a>
+<a href="#1138" id="1138">1138</a>
+<a href="#1139" id="1139">1139</a>
+<a href="#1140" id="1140">1140</a>
+<a href="#1141" id="1141">1141</a>
+<a href="#1142" id="1142">1142</a>
+<a href="#1143" id="1143">1143</a>
+<a href="#1144" id="1144">1144</a>
+<a href="#1145" id="1145">1145</a>
+<a href="#1146" id="1146">1146</a>
+<a href="#1147" id="1147">1147</a>
+<a href="#1148" id="1148">1148</a>
+<a href="#1149" id="1149">1149</a>
+<a href="#1150" id="1150">1150</a>
+<a href="#1151" id="1151">1151</a>
+<a href="#1152" id="1152">1152</a>
+<a href="#1153" id="1153">1153</a>
+<a href="#1154" id="1154">1154</a>
+<a href="#1155" id="1155">1155</a>
+<a href="#1156" id="1156">1156</a>
+<a href="#1157" id="1157">1157</a>
+<a href="#1158" id="1158">1158</a>
+<a href="#1159" id="1159">1159</a>
+<a href="#1160" id="1160">1160</a>
+<a href="#1161" id="1161">1161</a>
+<a href="#1162" id="1162">1162</a>
+<a href="#1163" id="1163">1163</a>
+<a href="#1164" id="1164">1164</a>
+<a href="#1165" id="1165">1165</a>
+<a href="#1166" id="1166">1166</a>
+<a href="#1167" id="1167">1167</a>
+<a href="#1168" id="1168">1168</a>
+<a href="#1169" id="1169">1169</a>
+<a href="#1170" id="1170">1170</a>
+<a href="#1171" id="1171">1171</a>
+<a href="#1172" id="1172">1172</a>
+<a href="#1173" id="1173">1173</a>
+<a href="#1174" id="1174">1174</a>
+<a href="#1175" id="1175">1175</a>
+<a href="#1176" id="1176">1176</a>
+<a href="#1177" id="1177">1177</a>
+<a href="#1178" id="1178">1178</a>
+<a href="#1179" id="1179">1179</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay probes.
 //!
 //! All the probes try and establish the latency to the relay servers.  Preferably the STUN
 //! probes work and we also learn about our public IP addresses and ports.  But fallback
@@ -1077,7 +1189,8 @@
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="kw">use </span>iroh_relay::{RelayMap, RelayNode};
 <span class="kw">use </span>n0_future::time::Duration;
-<span class="kw">use </span>netwatch::interfaces;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">use </span>netwatch::interfaces;
 
 <span class="kw">use </span><span class="kw">crate</span>::Report;
 
@@ -1114,24 +1227,31 @@
 #[repr(u8)]
 </span><span class="kw">pub enum </span>ProbeProto {
     <span class="doccomment">/// STUN IPv4
+    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>StunIpv4,
     <span class="doccomment">/// STUN IPv6
+    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>StunIpv6,
     <span class="doccomment">/// HTTPS
     </span>Https,
     <span class="doccomment">/// ICMP IPv4
+    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>IcmpV4,
     <span class="doccomment">/// ICMP IPv6
+    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>IcmpV6,
     <span class="doccomment">/// QUIC Address Discovery Ipv4
+    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>QuicIpv4,
     <span class="doccomment">/// QUIC Address Discovery Ipv6
+    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>QuicIpv6,
 }
 
 <span class="attr">#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>Probe {
     <span class="attr">#[display(<span class="string">"STUN Ipv4 after {delay:?} to {node}"</span>)]
+    #[cfg(not(wasm_browser))]
     </span>StunIpv4 {
         <span class="doccomment">/// When the probe is started, relative to the time that `get_report` is called.
         /// One probe in each `ProbePlan` should have a delay of 0. Non-zero values
@@ -1142,6 +1262,7 @@
         </span>node: Arc&lt;RelayNode&gt;,
     },
     <span class="attr">#[display(<span class="string">"STUN Ipv6 after {delay:?} to {node}"</span>)]
+    #[cfg(not(wasm_browser))]
     </span>StunIpv6 {
         delay: Duration,
         node: Arc&lt;RelayNode&gt;,
@@ -1152,21 +1273,25 @@
         node: Arc&lt;RelayNode&gt;,
     },
     <span class="attr">#[display(<span class="string">"ICMPv4 after {delay:?} to {node}"</span>)]
+    #[cfg(not(wasm_browser))]
     </span>IcmpV4 {
         delay: Duration,
         node: Arc&lt;RelayNode&gt;,
     },
     <span class="attr">#[display(<span class="string">"ICMPv6 after {delay:?} to {node}"</span>)]
+    #[cfg(not(wasm_browser))]
     </span>IcmpV6 {
         delay: Duration,
         node: Arc&lt;RelayNode&gt;,
     },
     <span class="attr">#[display(<span class="string">"QAD Ipv4 after {delay:?} to {node}"</span>)]
+    #[cfg(not(wasm_browser))]
     </span>QuicIpv4 {
         delay: Duration,
         node: Arc&lt;RelayNode&gt;,
     },
     <span class="attr">#[display(<span class="string">"QAD Ipv6 after {delay:?} to {node}"</span>)]
+    #[cfg(not(wasm_browser))]
     </span>QuicIpv6 {
         delay: Duration,
         node: Arc&lt;RelayNode&gt;,
@@ -1176,37 +1301,49 @@
 <span class="kw">impl </span>Probe {
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>delay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Duration {
         <span class="kw">match </span><span class="self">self </span>{
-            Probe::StunIpv4 { delay, .. }
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>Probe::StunIpv4 { delay, .. }
             | Probe::StunIpv6 { delay, .. }
             | Probe::Https { delay, .. }
             | Probe::IcmpV4 { delay, .. }
             | Probe::IcmpV6 { delay, .. }
             | Probe::QuicIpv4 { delay, .. }
             | Probe::QuicIpv6 { delay, .. } =&gt; <span class="kw-2">*</span>delay,
+            <span class="attr">#[cfg(wasm_browser)]
+            </span>Probe::Https { delay, .. } =&gt; <span class="kw-2">*</span>delay,
         }
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>proto(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ProbeProto {
         <span class="kw">match </span><span class="self">self </span>{
-            Probe::StunIpv4 { .. } =&gt; ProbeProto::StunIpv4,
-            Probe::StunIpv6 { .. } =&gt; ProbeProto::StunIpv6,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>Probe::StunIpv4 { .. } =&gt; ProbeProto::StunIpv4,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>Probe::StunIpv6 { .. } =&gt; ProbeProto::StunIpv6,
             Probe::Https { .. } =&gt; ProbeProto::Https,
-            Probe::IcmpV4 { .. } =&gt; ProbeProto::IcmpV4,
-            Probe::IcmpV6 { .. } =&gt; ProbeProto::IcmpV6,
-            Probe::QuicIpv4 { .. } =&gt; ProbeProto::QuicIpv4,
-            Probe::QuicIpv6 { .. } =&gt; ProbeProto::QuicIpv6,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>Probe::IcmpV4 { .. } =&gt; ProbeProto::IcmpV4,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>Probe::IcmpV6 { .. } =&gt; ProbeProto::IcmpV6,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>Probe::QuicIpv4 { .. } =&gt; ProbeProto::QuicIpv4,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>Probe::QuicIpv6 { .. } =&gt; ProbeProto::QuicIpv6,
         }
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>node(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>Arc&lt;RelayNode&gt; {
         <span class="kw">match </span><span class="self">self </span>{
-            Probe::StunIpv4 { node, .. }
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>Probe::StunIpv4 { node, .. }
             | Probe::StunIpv6 { node, .. }
             | Probe::Https { node, .. }
             | Probe::IcmpV4 { node, .. }
             | Probe::IcmpV6 { node, .. }
             | Probe::QuicIpv4 { node, .. }
             | Probe::QuicIpv6 { node, .. } =&gt; node,
+            <span class="attr">#[cfg(wasm_browser)]
+            </span>Probe::Https { node, .. } =&gt; node,
         }
     }
 }
@@ -1288,10 +1425,11 @@
 
 <span class="kw">impl </span>ProbePlan {
     <span class="doccomment">/// Creates an initial probe plan.
+    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>initial(
         relay_map: <span class="kw-2">&amp;</span>RelayMap,
-        if_state: <span class="kw-2">&amp;</span>interfaces::State,
         protocols: <span class="kw-2">&amp;</span>BTreeSet&lt;ProbeProto&gt;,
+        if_state: <span class="kw-2">&amp;</span>interfaces::State,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>plan = <span class="self">Self </span>{
             set: BTreeSet::new(),
@@ -1390,15 +1528,46 @@
         plan
     }
 
-    <span class="doccomment">/// Creates a follow up probe plan using a previous net_report report.
+    <span class="doccomment">/// Creates an initial probe plan for browsers.
+    ///
+    /// Here, we essentially only run HTTPS probes without any delays waiting for STUN.
+    </span><span class="attr">#[cfg(wasm_browser)]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>initial(relay_map: <span class="kw-2">&amp;</span>RelayMap, protocols: <span class="kw-2">&amp;</span>BTreeSet&lt;ProbeProto&gt;) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span><span class="kw-2">mut </span>plan = <span class="self">Self </span>{
+            set: BTreeSet::new(),
+            protocols: protocols.clone(),
+        };
+
+        <span class="kw">for </span>relay_node <span class="kw">in </span>relay_map.nodes() {
+            <span class="kw">let </span><span class="kw-2">mut </span>https_probes = ProbeSet::new(ProbeProto::Https);
+
+            <span class="kw">for </span>attempt <span class="kw">in </span><span class="number">0u32</span>..<span class="number">3 </span>{
+                <span class="kw">let </span>delay = DEFAULT_INITIAL_RETRANSMIT * attempt;
+                https_probes
+                    .push(Probe::Https {
+                        delay,
+                        node: relay_node.clone(),
+                    })
+                    .expect(<span class="string">"adding Https probe to a Https probe set"</span>);
+            }
+
+            plan.add_if_enabled(https_probes);
+        }
+        plan
+    }
+
+    <span class="doccomment">/// Creates a follow up probe plan using a previous net_report report in browsers.
+    ///
+    /// This will only schedule HTTPS probes.
+    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>with_last_report(
         relay_map: <span class="kw-2">&amp;</span>RelayMap,
-        if_state: <span class="kw-2">&amp;</span>interfaces::State,
         last_report: <span class="kw-2">&amp;</span>Report,
         protocols: <span class="kw-2">&amp;</span>BTreeSet&lt;ProbeProto&gt;,
+        if_state: <span class="kw-2">&amp;</span>interfaces::State,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">if </span>last_report.relay_latency.is_empty() {
-            <span class="kw">return </span><span class="self">Self</span>::initial(relay_map, if_state, protocols);
+            <span class="kw">return </span><span class="self">Self</span>::initial(relay_map, protocols, if_state);
         }
         <span class="kw">let </span><span class="kw-2">mut </span>plan = <span class="self">Self </span>{
             set: Default::default(),
@@ -1532,6 +1701,60 @@
         plan
     }
 
+    <span class="attr">#[cfg(wasm_browser)]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>with_last_report(
+        relay_map: <span class="kw-2">&amp;</span>RelayMap,
+        last_report: <span class="kw-2">&amp;</span>Report,
+        protocols: <span class="kw-2">&amp;</span>BTreeSet&lt;ProbeProto&gt;,
+    ) -&gt; <span class="self">Self </span>{
+        <span class="kw">if </span>last_report.relay_latency.is_empty() {
+            <span class="kw">return </span><span class="self">Self</span>::initial(relay_map, protocols);
+        }
+        <span class="kw">let </span><span class="kw-2">mut </span>plan = <span class="self">Self </span>{
+            set: Default::default(),
+            protocols: protocols.clone(),
+        };
+
+        <span class="kw">let </span>sorted_relays = sort_relays(relay_map, last_report);
+        <span class="kw">for </span>(ri, (url, relay_node)) <span class="kw">in </span>sorted_relays.into_iter().enumerate() {
+            <span class="kw">if </span>ri == NUM_INCREMENTAL_RELAYS {
+                <span class="kw">break</span>;
+            }
+
+            <span class="comment">// By default, each node only gets one probe sent,
+            </span><span class="kw">let </span><span class="kw-2">mut </span>attempts: u32 = <span class="number">1</span>;
+            <span class="comment">// except the fastest two from the previous round.
+            </span><span class="kw">if </span>ri &lt; <span class="number">2 </span>{
+                attempts = <span class="number">2</span>;
+            }
+            <span class="kw">if </span><span class="prelude-val">Some</span>(url) == last_report.preferred_relay.as_ref() {
+                <span class="comment">// But if we already had a relay home, try extra hard to
+                // make sure it's there so we don't flip flop around.
+                </span>attempts = <span class="number">4</span>;
+            }
+            <span class="kw">let </span>retransmit_delay = last_report
+                .relay_latency
+                .get(url)
+                .map(|l| l * <span class="number">120 </span>/ <span class="number">100</span>) <span class="comment">// increases latency by 20%, why?
+                </span>.unwrap_or(DEFAULT_ACTIVE_RETRANSMIT_DELAY);
+
+            <span class="kw">let </span><span class="kw-2">mut </span>https_probes = ProbeSet::new(ProbeProto::Https);
+            <span class="kw">for </span>attempt <span class="kw">in </span><span class="number">0</span>..attempts {
+                <span class="kw">let </span>delay =
+                    (retransmit_delay * attempt) + (ACTIVE_RETRANSMIT_EXTRA_DELAY * (attempt + <span class="number">1</span>));
+                https_probes
+                    .push(Probe::Https {
+                        delay,
+                        node: relay_node.clone(),
+                    })
+                    .expect(<span class="string">"Pushing Https Probe to an Https ProbeSet"</span>);
+            }
+
+            plan.add_if_enabled(https_probes);
+        }
+        plan
+    }
+
     <span class="doccomment">/// Returns an iterator over the [`ProbeSet`]s in this plan.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>ProbeSet&gt; {
         <span class="self">self</span>.set.iter()
@@ -1557,7 +1780,8 @@
 
     <span class="doccomment">/// Stun &amp; Quic probes are "priority" probes
     </span><span class="kw">fn </span>has_priority_probes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="kw">for </span>probe <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.set {
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">for </span>probe <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.set {
             <span class="kw">if </span><span class="macro">matches!</span>(
                 probe.proto,
                 ProbeProto::StunIpv4
@@ -1676,7 +1900,7 @@
         <span class="kw">let </span>relay_node_1 = relay_map.nodes().next().unwrap();
         <span class="kw">let </span>relay_node_2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
         <span class="kw">let </span>if_state = interfaces::State::fake();
-        <span class="kw">let </span>plan = ProbePlan::initial(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>if_state, <span class="kw-2">&amp;</span>default_protocols());
+        <span class="kw">let </span>plan = ProbePlan::initial(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>default_protocols(), <span class="kw-2">&amp;</span>if_state);
 
         <span class="kw">let </span><span class="kw-2">mut </span>expected_plan: ProbePlan = [
             <span class="macro">probeset!</span> {
@@ -1800,8 +2024,8 @@
         <span class="kw">let </span>if_state = interfaces::State::fake();
         <span class="kw">let </span>plan = ProbePlan::initial(
             <span class="kw-2">&amp;</span>relay_map,
-            <span class="kw-2">&amp;</span>if_state,
             <span class="kw-2">&amp;</span>BTreeSet::from([ProbeProto::Https, ProbeProto::IcmpV4, ProbeProto::IcmpV6]),
+            <span class="kw-2">&amp;</span>if_state,
         );
 
         <span class="kw">let </span><span class="kw-2">mut </span>expected_plan: ProbePlan = [
@@ -1899,9 +2123,9 @@
             };
             <span class="kw">let </span>plan = ProbePlan::with_last_report(
                 <span class="kw-2">&amp;</span>relay_map,
-                <span class="kw-2">&amp;</span>if_state,
                 <span class="kw-2">&amp;</span>last_report,
                 <span class="kw-2">&amp;</span>default_protocols(),
+                <span class="kw-2">&amp;</span>if_state,
             );
             <span class="kw">let </span><span class="kw-2">mut </span>expected_plan: ProbePlan = [
                 <span class="macro">probeset!</span> {
