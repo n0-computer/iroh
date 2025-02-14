@@ -333,7 +333,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn quic_endpoint_closes_fast() -> anyhow::Result<()> {
+    async fn test_qad_client_closes_unresponsive_fast() -> anyhow::Result<()> {
         // create a client-side endpoint
         let client_endpoint =
             quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))?;
@@ -374,9 +374,15 @@ mod tests {
         Ok(())
     }
 
+    /// Makes sure that, even though the RTT was set to some fairly low value,
+    /// we *do* try to connect longer than the probe timeout (1s), as long as
+    /// we haven't closed the connection.
+    ///
+    /// In this case we don't simulate it via synthetically high RTT, but by dropping
+    /// all packets on the server-side for 2 seconds.
     #[tokio::test]
     #[traced_test]
-    async fn quic_endpoint_unresponsive() -> anyhow::Result<()> {
+    async fn test_qad_connect_delayed() -> anyhow::Result<()> {
         // Create a socket for our QAD server.  We need the socket separately because we
         // need to pop off messages before we attach it to the Quinn Endpoint.
         let socket =
@@ -401,7 +407,7 @@ mod tests {
         let server_task = tokio::spawn(
             async move {
                 info!("Dropping all packets");
-                time::timeout(Duration::from_secs(1), async {
+                time::timeout(Duration::from_secs(2), async {
                     let mut buf = [0u8; 1500];
                     loop {
                         let (len, src) = socket.recv_from(&mut buf).await.unwrap();
