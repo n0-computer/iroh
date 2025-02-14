@@ -22,6 +22,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
+use data_encoding::BASE32_DNSSEC;
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use n0_future::time::Duration;
@@ -47,7 +48,7 @@ pub use quinn::{
     ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
     ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError, RetryError,
     SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId, TransportConfig, VarInt,
-    WeakConnectionHandle, WriteError, ZeroRttAccepted,
+    WeakConnectionHandle, WriteError,
 };
 pub use quinn_proto::{
     congestion::{Controller, ControllerFactory},
@@ -69,6 +70,16 @@ pub use super::magicsock::{
 /// [`Endpoint`] assumes one of those addresses probably works.  If after this delay there
 /// is still no connection the configured [`Discovery`] will be used however.
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
+
+/// Maximum amount of TLS tickets we will cache (by default) for 0-RTT connection
+/// establishment.
+///
+/// 8 tickets per remote endpoint, 32 different endpoints would max out the required storage:
+/// ~200 bytes per session + certificates (which are ~387 bytes)
+/// So 8 * 32 * (200 + 387) = 150.272 bytes, assuming pointers to certificates
+/// are never aliased pointers (they're Arc'ed).
+/// I think 150KB is an acceptable default upper limit for such a cache.
+const MAX_TLS_TICKETS: usize = 8 * 32;
 
 type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync>;
 
@@ -517,9 +528,14 @@ pub fn make_server_config(
 /// [QUIC]: https://quicwg.org
 #[derive(Clone, Debug)]
 pub struct Endpoint {
+    /// Handle to the magicsocket/actor
     msock: Handle,
+    /// Handle to the actor that resets the quinn RTT estimator
     rtt_actor: Arc<rtt_actor::RttHandle>,
+    /// Configuration structs for quinn, holds the transport config, certificate setup, secret key etc.
     static_config: Arc<StaticConfig>,
+    /// Cache for TLS session keys we receive.
+    session_store: Arc<dyn rustls::client::ClientSessionStore>,
 }
 
 impl Endpoint {
@@ -543,10 +559,14 @@ impl Endpoint {
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
         trace!("created magicsock");
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
+
         let ep = Self {
             msock: msock.clone(),
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
             static_config: Arc::new(static_config),
+            session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(
+                MAX_TLS_TICKETS,
+            )),
         };
         Ok(ep)
     }
@@ -586,26 +606,51 @@ impl Endpoint {
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
     pub async fn connect(&self, node_addr: impl Into<NodeAddr>, alpn: &[u8]) -> Result<Connection> {
-        self.connect_with(node_addr, alpn, self.static_config.transport_config.clone())
+        let node_addr = node_addr.into();
+        let remote = node_addr.node_id;
+        let connecting = self
+            .connect_with_opts(node_addr, alpn, Default::default())
+            .await?;
+        let conn = connecting
             .await
+            .context("failed connecting to remote endpoint")?;
+        debug!(
+            me = %self.node_id().fmt_short(),
+            remote = %remote.fmt_short(),
+            alpn = %String::from_utf8_lossy(alpn),
+            "Connection established."
+        );
+        Ok(conn)
     }
 
-    /// Connects to a remote [`Endpoint`] using a custom [`TransportConfig`].
+    /// Starts a connection attempt with a remote [`Endpoint`].
     ///
-    /// Like [`Endpoint::connect`], but allows providing a custom for the connection.  See
-    /// the docs of [`Endpoint::connect`] for details.
-    ///
-    /// Please be aware that changing some settings may have adverse effects on establishing
-    /// and maintaining direct connections.  Carefully test settings you use and consider
-    /// this currently as still rather experimental.
-    pub async fn connect_with(
+    /// Like [`Endpoint::connect`] (see also its docs for general details), but allows for a more
+    /// advanced connection setup with more customization in two aspects:
+    /// 1. The returned future resolves to a [`Connecting`], which can be further processed into
+    ///    a [`Connection`] by awaiting, or alternatively allows connecting with 0RTT via
+    ///    [`Connecting::into_0rtt`].
+    ///    **Note:** Please read the documentation for `into_0rtt` carefully to assess
+    ///    security concerns.
+    /// 2. The [`TransportConfig`] for the connection can be modified via the provided
+    ///    [`ConnectOptions`].
+    ///    **Note:** Please be aware that changing transport config settings may have adverse effects on
+    ///    establishing and maintaining direct connections.  Carefully test settings you use and
+    ///    consider this currently as still rather experimental.
+    #[instrument(name = "connect", skip_all, fields(
+        me = self.node_id().fmt_short(),
+        remote = tracing::field::Empty,
+        alpn = String::from_utf8_lossy(alpn).to_string(),
+    ))]
+    pub async fn connect_with_opts(
         &self,
         node_addr: impl Into<NodeAddr>,
         alpn: &[u8],
-        transport_config: Arc<TransportConfig>,
-    ) -> Result<Connection> {
+        options: ConnectOptions,
+    ) -> Result<Connecting> {
         let node_addr: NodeAddr = node_addr.into();
         tracing::Span::current().record("remote", node_addr.node_id.fmt_short());
+
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
             bail!(
@@ -619,12 +664,13 @@ impl Endpoint {
         }
         let node_id = node_addr.node_id;
         let direct_addresses = node_addr.direct_addresses.clone();
+        let relay_url = node_addr.relay_url.clone();
 
         // Get the mapped IPv6 address from the magic socket. Quinn will connect to this
         // address.  Start discovery for this node if it's enabled and we have no valid or
         // verified address information for this node.  Dropping the discovery cancels any
         // still running task.
-        let (addr, _discovery_drop_guard) = self
+        let (mapped_addr, _discovery_drop_guard) = self
             .get_mapping_addr_and_maybe_start_discovery(node_addr)
             .await
             .with_context(|| {
@@ -634,40 +680,26 @@ impl Endpoint {
                 )
             })?;
 
-        debug!(
-            "connecting to {}: (via {} - {:?})",
-            node_id, addr, direct_addresses
-        );
+        let transport_config = options
+            .transport_config
+            .unwrap_or(self.static_config.transport_config.clone());
 
         // Start connecting via quinn. This will time out after 10 seconds if no reachable
         // address is available.
-        self.connect_quinn(node_id, alpn, addr, transport_config)
-            .await
-    }
 
-    #[instrument(
-        name = "connect",
-        skip_all,
-        fields(
-            me = %self.node_id().fmt_short(),
-            remote_node = node_id.fmt_short(),
-            alpn = %String::from_utf8_lossy(alpn),
-        )
-    )]
-    async fn connect_quinn(
-        &self,
-        node_id: NodeId,
-        alpn: &[u8],
-        addr: NodeIdMappedAddr,
-        transport_config: Arc<TransportConfig>,
-    ) -> Result<Connection> {
-        debug!("Attempting connection...");
+        debug!(
+            ?mapped_addr,
+            ?direct_addresses,
+            ?relay_url,
+            "Attempting connection..."
+        );
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
             let quic_client_config = tls::make_client_config(
                 &self.static_config.secret_key,
                 Some(node_id),
                 alpn_protocols,
+                Some(self.session_store.clone()),
                 self.static_config.keylog,
             )?;
             let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
@@ -675,27 +707,28 @@ impl Endpoint {
             client_config
         };
 
-        // TODO: We'd eventually want to replace "localhost" with something that makes more sense.
-        let connect =
-            self.msock
-                .endpoint()
-                .connect_with(client_config, addr.socket_addr(), "localhost")?;
+        // We used to use a constant "localhost" for this - however, that would put all of
+        // the TLS session tickets we receive into the same bucket in the TLS session ticket cache.
+        // So we choose something that'd dependent on the NodeId.
+        // We cannot use hex to encode the NodeId, as that'd encode to 64 characters, but we only
+        // have 63 maximum per DNS subdomain. Base32 is the next best alternative.
+        // We use the `.invalid` TLD, as that's specified (in RFC 2606) to never actually resolve
+        // "for real", unlike `.localhost` which is allowed to resolve to `127.0.0.1`.
+        // We also add "iroh" as a subdomain, although those 5 bytes might not be necessary.
+        // We *could* decide to remove that indicator in the future likely without breakage.
+        let server_name = &format!("{}.iroh.invalid", BASE32_DNSSEC.encode(node_id.as_bytes()));
+        let connect = self.msock.endpoint().connect_with(
+            client_config,
+            mapped_addr.socket_addr(),
+            server_name,
+        )?;
 
-        let connection = connect
-            .await
-            .context("failed connecting to remote endpoint")?;
-
-        let rtt_msg = RttMessage::NewConnection {
-            connection: connection.weak_handle(),
-            conn_type_changes: self.conn_type(node_id)?.stream(),
-            node_id,
-        };
-        if let Err(err) = self.rtt_actor.msg_tx.send(rtt_msg).await {
-            // If this actor is dead, that's not great but we can still function.
-            warn!("rtt-actor not reachable: {err:#}");
-        }
-        debug!("Connection established");
-        Ok(Connection { inner: connection })
+        Ok(Connecting {
+            inner: connect,
+            ep: self.clone(),
+            remote_node_id: Some(node_id),
+            _discovery_drop_guard,
+        })
     }
 
     /// Accepts an incoming connection on the endpoint.
@@ -1089,6 +1122,28 @@ impl Endpoint {
     }
 }
 
+/// Options for the [`Endpoint::connect_with_opts`] function.
+#[derive(Default, Debug, Clone)]
+pub struct ConnectOptions {
+    transport_config: Option<Arc<TransportConfig>>,
+}
+
+impl ConnectOptions {
+    /// Initializes new connection options.
+    ///
+    /// By default, the connection will use the same options
+    /// as [`Endpoint::connect`], e.g. a default [`TransportConfig`].
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the QUIC transport config options for this connection.
+    pub fn with_transport_config(mut self, transport_config: Arc<TransportConfig>) -> Self {
+        self.transport_config = Some(transport_config);
+        self
+    }
+}
+
 /// Future produced by [`Endpoint::accept`].
 #[derive(derive_more::Debug)]
 #[pin_project]
@@ -1137,6 +1192,8 @@ impl Incoming {
         self.inner.accept().map(|conn| Connecting {
             inner: conn,
             ep: self.ep,
+            remote_node_id: None,
+            _discovery_drop_guard: None,
         })
     }
 
@@ -1154,6 +1211,8 @@ impl Incoming {
             .map(|conn| Connecting {
                 inner: conn,
                 ep: self.ep,
+                remote_node_id: None,
+                _discovery_drop_guard: None,
             })
     }
 
@@ -1227,7 +1286,7 @@ impl Future for IncomingFuture {
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
                 let conn = Connection { inner };
-                try_send_rtt_msg(&conn, this.ep);
+                try_send_rtt_msg(&conn, this.ep, None);
                 Poll::Ready(Ok(conn))
             }
         }
@@ -1235,24 +1294,87 @@ impl Future for IncomingFuture {
 }
 
 /// In-progress connection attempt future
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 #[pin_project]
 pub struct Connecting {
     #[pin]
     inner: quinn::Connecting,
     ep: Endpoint,
+    remote_node_id: Option<NodeId>,
+    /// We run discovery as long as we haven't established a connection yet.
+    #[debug("Option<DiscoveryTask>")]
+    _discovery_drop_guard: Option<DiscoveryTask>,
 }
 
 impl Connecting {
-    /// Convert into a 0-RTT or 0.5-RTT connection at the cost of weakened security.
+    /// Converts this [`Connecting`] into a 0-RTT or 0.5-RTT connection at the cost of weakened
+    /// security.
+    ///
+    /// Returns `Ok` immediately if the local endpoint is able to attempt sending 0/0.5-RTT data.
+    /// If so, the returned [`Connection`] can be used to send application data without waiting for
+    /// the rest of the handshake to complete, at the cost of weakened cryptographic security
+    /// guarantees. The returned [`ZeroRttAccepted`] future resolves when the handshake does
+    /// complete, at which point subsequently opened streams and written data will have full
+    /// cryptographic protection.
+    ///
+    /// Once the [`ZeroRttAccepted`] future completed, a full handshake has been carried through
+    /// and any data sent and any streams opened on the [`Connection`] will operate with the same
+    /// security as on normal 1-RTT connections.
+    ///
+    /// ## Outgoing
+    ///
+    /// For outgoing connections, the initial attempt to convert to a [`Connection`] which sends
+    /// 0-RTT data will attempt to resume a previous TLS session. However, **the remote endpoint
+    /// may not actually _accept_ the 0-RTT data**--yet still accept the connection attempt in
+    /// general. This possibility is conveyed through the [`ZeroRttAccepted`] future--when the
+    /// handshake completes, it resolves to true if the 0-RTT data was accepted and false if it was
+    /// rejected. If it was rejected, the existence of streams opened and other application data
+    /// sent prior to the handshake completing will not be conveyed to the remote application, and
+    /// local operations on them will return `ZeroRttRejected` errors.
+    ///
+    /// A server may reject 0-RTT data at its discretion, but accepting 0-RTT data requires the
+    /// relevant resumption state to be stored in the server, which servers may limit or lose for
+    /// various reasons including not persisting resumption state across server restarts.
+    ///
+    /// ## Incoming
+    ///
+    /// For incoming connections, conversion to 0.5-RTT will always fully succeed. `into_0rtt` will
+    /// always return `Ok` and the [`ZeroRttAccepted`] will always resolve to true.
+    ///
+    /// ## Security
+    ///
+    /// On outgoing connections, this enables transmission of 0-RTT data, which is vulnerable to
+    /// replay attacks, and should therefore never invoke non-idempotent operations.
+    ///
+    /// On incoming connections, this enables transmission of 0.5-RTT data, which may be sent
+    /// before TLS client authentication has occurred, and should therefore not be used to send
+    /// data for which client authentication is being used.
+    ///
+    /// You can use [`RecvStream::is_0rtt`] to check whether a stream has been opened in 0-RTT
+    /// and thus whether parts of the stream are operating under this reduced security level.
     pub fn into_0rtt(self) -> Result<(Connection, ZeroRttAccepted), Self> {
         match self.inner.into_0rtt() {
             Ok((inner, zrtt_accepted)) => {
                 let conn = Connection { inner };
-                try_send_rtt_msg(&conn, &self.ep);
+                let zrtt_accepted = ZeroRttAccepted {
+                    inner: zrtt_accepted,
+                    _discovery_drop_guard: self._discovery_drop_guard,
+                };
+                // This call is why `self.remote_node_id` was introduced.
+                // When we `Connecting::into_0rtt`, then we don't yet have `handshake_data`
+                // in our `Connection`, thus `try_send_rtt_msg` won't be able to pick up
+                // `Connection::remote_node_id`.
+                // Instead, we provide `self.remote_node_id` here - we know it in advance,
+                // after all.
+                try_send_rtt_msg(&conn, &self.ep, self.remote_node_id);
                 Ok((conn, zrtt_accepted))
             }
-            Err(inner) => Err(Self { inner, ep: self.ep }),
+            Err(inner) => Err(Self {
+                inner,
+                ep: self.ep,
+                remote_node_id: self.remote_node_id,
+                _discovery_drop_guard: self._discovery_drop_guard,
+            }),
         }
     }
 
@@ -1286,10 +1408,35 @@ impl Future for Connecting {
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
                 let conn = Connection { inner };
-                try_send_rtt_msg(&conn, this.ep);
+                try_send_rtt_msg(&conn, this.ep, *this.remote_node_id);
                 Poll::Ready(Ok(conn))
             }
         }
+    }
+}
+
+/// Future that completes when a connection is fully established.
+///
+/// For clients, the resulting value indicates if 0-RTT was accepted. For servers, the resulting
+/// value is meaningless.
+#[derive(derive_more::Debug)]
+#[debug("ZeroRttAccepted")]
+pub struct ZeroRttAccepted {
+    inner: quinn::ZeroRttAccepted,
+    /// When we call `Connecting::into_0rtt`, we don't want to stop discovery, so we transfer the task
+    /// to this future.
+    /// When `quinn::ZeroRttAccepted` resolves, we've successfully received data from the remote.
+    /// Thus, that's the right time to drop discovery to preserve the behaviour similar to
+    /// `Connecting` -> `Connection` without 0-RTT.
+    /// Should we eventually decide to keep the discovery task alive for the duration of the whole
+    /// `Connection`, then this task should be transferred to the `Connection` instead of here.
+    _discovery_drop_guard: Option<DiscoveryTask>,
+}
+
+impl Future for ZeroRttAccepted {
+    type Output = bool;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.inner).poll(cx)
     }
 }
 
@@ -1600,9 +1747,9 @@ impl Connection {
 ///
 /// If we can't notify the actor that will impact performance a little, but we can still
 /// function.
-fn try_send_rtt_msg(conn: &Connection, magic_ep: &Endpoint) {
+fn try_send_rtt_msg(conn: &Connection, magic_ep: &Endpoint, remote_node_id: Option<NodeId>) {
     // If we can't notify the rtt-actor that's not great but not critical.
-    let Ok(node_id) = conn.remote_node_id() else {
+    let Some(node_id) = remote_node_id.or_else(|| conn.remote_node_id().ok()) else {
         warn!(?conn, "failed to get remote node id");
         return;
     };
@@ -1723,6 +1870,7 @@ mod tests {
 
     use n0_future::StreamExt;
     use rand::SeedableRng;
+    use testresult::TestResult;
     use tracing::{error_span, info, info_span, Instrument};
     use tracing_test::traced_test;
 
@@ -2182,5 +2330,187 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    async fn spawn_0rtt_server(secret_key: SecretKey, log_span: tracing::Span) -> Result<Endpoint> {
+        let server = Endpoint::builder()
+            .secret_key(secret_key)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+
+        // Gets aborted via the endpoint closing causing an `Err`
+        // a simple echo server
+        tokio::spawn({
+            let server = server.clone();
+            async move {
+                while let Some(incoming) = server.accept().await {
+                    let connecting = incoming.accept()?;
+                    let conn = match connecting.into_0rtt() {
+                        Ok((conn, _)) => {
+                            info!("0rtt accepted");
+                            conn
+                        }
+                        Err(connecting) => {
+                            info!("0rtt denied");
+                            connecting.await?
+                        }
+                    };
+                    let (mut send, mut recv) = conn.accept_bi().await?;
+                    let data = recv.read_to_end(10_000_000).await?;
+                    send.write_all(&data).await?;
+                    send.finish()?;
+
+                    // Stay alive until the other side closes the connection.
+                    conn.closed().await;
+                }
+                anyhow::Ok(())
+            }
+            .instrument(log_span)
+        });
+
+        Ok(server)
+    }
+
+    async fn connect_client_0rtt_expect_err(
+        client: &Endpoint,
+        server_addr: NodeAddr,
+    ) -> Result<()> {
+        let conn = client
+            .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
+            .await?
+            .into_0rtt()
+            .expect_err("expected 0rtt to fail")
+            .await?;
+
+        let (mut send, mut recv) = conn.open_bi().await?;
+        send.write_all(b"hello").await?;
+        send.finish()?;
+        let received = recv.read_to_end(1_000).await?;
+        assert_eq!(&received, b"hello");
+        conn.close(0u32.into(), b"thx");
+        Ok(())
+    }
+
+    async fn connect_client_0rtt_expect_ok(
+        client: &Endpoint,
+        server_addr: NodeAddr,
+        expect_server_accepts: bool,
+    ) -> Result<()> {
+        let (conn, accepted_0rtt) = client
+            .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
+            .await?
+            .into_0rtt()
+            .map_err(|_| "0rtt failed")
+            .unwrap();
+
+        // This is how we send data in 0-RTT:
+        let (mut send, recv) = conn.open_bi().await?;
+        send.write_all(b"hello").await?;
+        send.finish()?;
+        // When this resolves, we've gotten a response from the server about whether the 0-RTT data above was accepted:
+        let accepted = accepted_0rtt.await;
+        assert_eq!(accepted, expect_server_accepts);
+        let mut recv = if accepted {
+            recv
+        } else {
+            // in this case we need to re-send data by re-creating the connection.
+            let (mut send, recv) = conn.open_bi().await?;
+            send.write_all(b"hello").await?;
+            send.finish()?;
+            recv
+        };
+        let received = recv.read_to_end(1_000).await?;
+        assert_eq!(&received, b"hello");
+        conn.close(0u32.into(), b"thx");
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_0rtt() -> TestResult {
+        let client = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+        let server = spawn_0rtt_server(
+            SecretKey::generate(rand::thread_rng()),
+            info_span!("server"),
+        )
+        .await?;
+
+        connect_client_0rtt_expect_err(&client, server.node_addr().await?).await?;
+        // The second 0rtt attempt should work
+        connect_client_0rtt_expect_ok(&client, server.node_addr().await?, true).await?;
+
+        client.close().await;
+        server.close().await;
+
+        Ok(())
+    }
+
+    // We have this test, as this would've failed at some point.
+    // This effectively tests that we correctly categorize the TLS session tickets we
+    // receive into the respective "bucket" for the recipient.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_0rtt_non_consecutive() -> TestResult {
+        let client = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+        let server = spawn_0rtt_server(
+            SecretKey::generate(rand::thread_rng()),
+            info_span!("server"),
+        )
+        .await?;
+
+        connect_client_0rtt_expect_err(&client, server.node_addr().await?).await?;
+
+        // connecting with another endpoint should not interfere with our
+        // TLS session ticket cache for the first endpoint:
+        let another = spawn_0rtt_server(
+            SecretKey::generate(rand::thread_rng()),
+            info_span!("another"),
+        )
+        .await?;
+        connect_client_0rtt_expect_err(&client, another.node_addr().await?).await?;
+        another.close().await;
+
+        connect_client_0rtt_expect_ok(&client, server.node_addr().await?, true).await?;
+
+        client.close().await;
+        server.close().await;
+
+        Ok(())
+    }
+
+    // Test whether 0-RTT is possible after a restart:
+    #[tokio::test]
+    #[traced_test]
+    async fn test_0rtt_after_server_restart() -> TestResult {
+        let client = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+        let server_key = SecretKey::generate(rand::thread_rng());
+        let server = spawn_0rtt_server(server_key.clone(), info_span!("server-initial")).await?;
+
+        connect_client_0rtt_expect_err(&client, server.node_addr().await?).await?;
+        connect_client_0rtt_expect_ok(&client, server.node_addr().await?, true).await?;
+
+        server.close().await;
+
+        let server = spawn_0rtt_server(server_key, info_span!("server-restart")).await?;
+
+        // we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
+        // but the server will reject the early data because it discarded necessary state
+        // to decrypt it when restarting.
+        connect_client_0rtt_expect_ok(&client, server.node_addr().await?, false).await?;
+
+        client.close().await;
+
+        Ok(())
     }
 }
