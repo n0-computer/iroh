@@ -382,13 +382,6 @@ mod tests {
         let socket =
             tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).await?;
         let server_addr = socket.local_addr()?;
-        // let socket = socket2::Socket::new(
-        //     socket2::Domain::IPV4,
-        //     socket2::Type::DGRAM,
-        //     Some(socket2::Protocol::UDP),
-        // )?;
-        // socket.bind(&SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0).into())?;
-        // let server_addr = socket.local_addr()?.as_socket().context("AF_INET")?;
         info!(addr = ?server_addr, "server socket bound");
 
         // Create a QAD server with a self-signed cert, all manually.
