@@ -592,7 +592,7 @@
                         <span class="kw">match </span>msg {
                             Message::Get { key, res } =&gt; {
                                 <span class="macro">trace!</span>(<span class="string">"get {}"</span>, key);
-                                <span class="kw">let </span>packet = get_packet(<span class="kw-2">&amp;</span>tables.signed_packets, <span class="kw-2">&amp;</span>key)<span class="question-mark">?</span>;
+                                <span class="kw">let </span>packet = get_packet(<span class="kw-2">&amp;</span>tables.signed_packets, <span class="kw-2">&amp;</span>key).context(<span class="string">"get packet failed"</span>)<span class="question-mark">?</span>;
                                 res.send(packet).ok();
                             }
                             Message::Upsert { packet, res } =&gt; {
@@ -610,7 +610,7 @@
                                 } <span class="kw">else </span>{
                                     <span class="bool-val">false
                                 </span>};
-                                <span class="kw">let </span>value = packet.as_bytes();
+                                <span class="kw">let </span>value = packet.serialize();
                                 tables.signed_packets.insert(key.as_bytes(), <span class="kw-2">&amp;</span>value[..])<span class="question-mark">?</span>;
                                 tables.update_time.insert(<span class="kw-2">&amp;</span>packet.timestamp().to_bytes(), key.as_bytes())<span class="question-mark">?</span>;
                                 <span class="kw">if </span>replaced {
@@ -771,10 +771,10 @@
     table: <span class="kw-2">&amp;</span><span class="kw">impl </span>ReadableTable&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>SignedPacketsKey, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>[u8]&gt;,
     key: <span class="kw-2">&amp;</span>PublicKeyBytes,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;SignedPacket&gt;&gt; {
-    <span class="kw">let </span><span class="prelude-val">Some</span>(row) = table.get(key.as_ref())<span class="question-mark">? </span><span class="kw">else </span>{
+    <span class="kw">let </span><span class="prelude-val">Some</span>(row) = table.get(key.as_ref()).context(<span class="string">"database fetch failed"</span>)<span class="question-mark">? </span><span class="kw">else </span>{
         <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
     };
-    <span class="kw">let </span>packet = SignedPacket::deserialize(row.value())<span class="question-mark">?</span>;
+    <span class="kw">let </span>packet = SignedPacket::deserialize(row.value()).context(<span class="string">"parsing signed packet failed"</span>)<span class="question-mark">?</span>;
     <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(packet))
 }
 
