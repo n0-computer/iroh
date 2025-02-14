@@ -14,7 +14,7 @@ use tracing::warn;
 
 use self::resolver::AlwaysResolvesCert;
 
-pub mod certificate;
+pub(crate) mod certificate;
 mod resolver;
 mod verifier;
 
@@ -34,7 +34,7 @@ impl Authentication {
     /// If *keylog* is `true` this will enable logging of the pre-master key to the file in the
     /// `SSLKEYLOGFILE` environment variable.  This can be used to inspect the traffic for
     /// debugging purposes.
-    pub fn make_client_config(
+    pub(crate) fn make_client_config(
         self,
         secret_key: &SecretKey,
         remote_peer_id: PublicKey,
@@ -75,7 +75,7 @@ impl Authentication {
     /// If *keylog* is `true` this will enable logging of the pre-master key to the file in the
     /// `SSLKEYLOGFILE` environment variable.  This can be used to inspect the traffic for
     /// debugging purposes.
-    pub fn make_server_config(
+    pub(crate) fn make_server_config(
         self,
         secret_key: &SecretKey,
         alpn_protocols: Vec<Vec<u8>>,
@@ -109,7 +109,7 @@ impl Authentication {
 
 /// Error for generating TLS configs.
 #[derive(Debug, thiserror::Error)]
-pub enum CreateConfigError {
+pub(crate) enum CreateConfigError {
     /// Error generating the certificate.
     #[error("Error generating the certificate")]
     CertError(#[from] certificate::GenError),

@@ -23,7 +23,7 @@ use webpki::{ring as webpki_algs, types::SubjectPublicKeyInfoDer};
 use super::{certificate, Authentication};
 
 /// The only TLS version we support is 1.3
-pub static PROTOCOL_VERSIONS: &[&SupportedProtocolVersion] = &[&rustls::version::TLS13];
+pub(super) static PROTOCOL_VERSIONS: &[&SupportedProtocolVersion] = &[&rustls::version::TLS13];
 
 static SUPPORTED_SIG_ALGS: WebPkiSupportedAlgorithms = WebPkiSupportedAlgorithms {
     all: &[
@@ -57,7 +57,7 @@ static SUPPORTED_SIG_ALGS: WebPkiSupportedAlgorithms = WebPkiSupportedAlgorithms
 ///
 /// Only TLS 1.3 is supported. TLS 1.2 should be disabled in the configuration of `rustls`.
 #[derive(Debug)]
-pub struct ServerCertificateVerifier {
+pub(super) struct ServerCertificateVerifier {
     /// The peer we intend to connect to.
     remote_peer_id: PublicKey,
     /// Which TLS authentication mode to operate in.
@@ -74,7 +74,7 @@ pub struct ServerCertificateVerifier {
 ///
 /// or a raw public key.
 impl ServerCertificateVerifier {
-    pub fn with_remote_peer_id(auth: Authentication, remote_peer_id: PublicKey) -> Self {
+    pub(super) fn with_remote_peer_id(auth: Authentication, remote_peer_id: PublicKey) -> Self {
         let mut trusted_spki = Vec::new();
         let pem_key = remote_peer_id.serialize_public_pem();
         let remote_key = SubjectPublicKeyInfoDer::from_pem_slice(pem_key.as_bytes())
@@ -123,12 +123,13 @@ impl ServerCertVerifier for ServerCertificateVerifier {
 
                 let end_entity_as_spki = SubjectPublicKeyInfoDer::from(end_entity.as_ref());
 
-                match self.trusted_spki.contains(&end_entity_as_spki) {
-                    false => Err(rustls::Error::InvalidCertificate(
+                if !self.trusted_spki.contains(&end_entity_as_spki) {
+                    return Err(rustls::Error::InvalidCertificate(
                         CertificateError::UnknownIssuer,
-                    )),
-                    true => Ok(ServerCertVerified::assertion()),
+                    ));
                 }
+
+                Ok(ServerCertVerified::assertion())
             }
         }
     }
@@ -176,7 +177,7 @@ impl ServerCertVerifier for ServerCertificateVerifier {
 ///
 /// Only TLS 1.3 is supported. TLS 1.2 should be disabled in the configuration of `rustls`.
 #[derive(Debug)]
-pub struct ClientCertificateVerifier {
+pub(super) struct ClientCertificateVerifier {
     /// Which TLS authentication mode to operate in.
     auth: Authentication,
 }
@@ -190,7 +191,7 @@ pub struct ClientCertificateVerifier {
 ///
 /// or a raw public key.
 impl ClientCertificateVerifier {
-    pub fn new(auth: Authentication) -> Self {
+    pub(super) fn new(auth: Authentication) -> Self {
         Self { auth }
     }
 }

@@ -7,13 +7,13 @@ use super::{certificate, CreateConfigError};
 use crate::tls::Authentication;
 
 #[derive(Debug)]
-pub(crate) struct AlwaysResolvesCert {
+pub(super) struct AlwaysResolvesCert {
     key: Arc<rustls::sign::CertifiedKey>,
     auth: Authentication,
 }
 
 impl AlwaysResolvesCert {
-    pub(crate) fn new(
+    pub(super) fn new(
         auth: Authentication,
         secret_key: &SecretKey,
     ) -> Result<Self, CreateConfigError> {
