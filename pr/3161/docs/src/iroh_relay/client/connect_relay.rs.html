@@ -343,7 +343,30 @@
 <a href="#342" id="342">342</a>
 <a href="#343" id="343">343</a>
 <a href="#344" id="344">344</a>
-<a href="#345" id="345">345</a></pre></div><pre class="rust"><code><span class="doccomment">//! Functionality related to `ClientBuilder::connect_relay`.
+<a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
+<a href="#347" id="347">347</a>
+<a href="#348" id="348">348</a>
+<a href="#349" id="349">349</a>
+<a href="#350" id="350">350</a>
+<a href="#351" id="351">351</a>
+<a href="#352" id="352">352</a>
+<a href="#353" id="353">353</a>
+<a href="#354" id="354">354</a>
+<a href="#355" id="355">355</a>
+<a href="#356" id="356">356</a>
+<a href="#357" id="357">357</a>
+<a href="#358" id="358">358</a>
+<a href="#359" id="359">359</a>
+<a href="#360" id="360">360</a>
+<a href="#361" id="361">361</a>
+<a href="#362" id="362">362</a>
+<a href="#363" id="363">363</a>
+<a href="#364" id="364">364</a>
+<a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a></pre></div><pre class="rust"><code><span class="doccomment">//! Functionality related to `ClientBuilder::connect_relay`.
 //!
 //! This is (1) likely to be phased out over time in favor of websockets, and
 //! (2) doesn't work in the browser - thus separated into its own file.
@@ -383,7 +406,7 @@
     /// set to [`HTTP_UPGRADE_PROTOCOL`].
     ///
     /// [`HTTP_UPGRADE_PROTOCOL`]: crate::http::HTTP_UPGRADE_PROTOCOL
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>connect_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(Conn, SocketAddr), Error&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>connect_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(Conn, SocketAddr), ConnectError&gt; {
         <span class="kw">let </span>roots = rustls::RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
         };
@@ -407,15 +430,23 @@
         <span class="kw">let </span>url = <span class="self">self</span>.url.clone();
         <span class="kw">let </span>tcp_stream = <span class="self">self</span>.dial_url(<span class="kw-2">&amp;</span>tls_connector).<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">let </span>local_addr = tcp_stream.local_addr()<span class="question-mark">?</span>;
+        <span class="kw">let </span>local_addr = tcp_stream
+            .local_addr()
+            .map_err(|<span class="kw">_</span>| ConnectError::NoLocalAddr)<span class="question-mark">?</span>;
 
         <span class="macro">debug!</span>(server_addr = <span class="question-mark">?</span>tcp_stream.peer_addr(), %local_addr, <span class="string">"TCP stream connected"</span>);
 
         <span class="kw">let </span>response = <span class="kw">if </span><span class="self">self</span>.use_tls() {
             <span class="macro">debug!</span>(<span class="string">"Starting TLS handshake"</span>);
-            <span class="kw">let </span>hostname = <span class="self">self</span>.tls_servername()<span class="question-mark">?</span>;
+            <span class="kw">let </span>hostname = <span class="self">self
+                </span>.tls_servername()
+                .ok_or(ConnectError::InvalidTlsServername)<span class="question-mark">?</span>;
+
             <span class="kw">let </span>hostname = hostname.to_owned();
-            <span class="kw">let </span>tls_stream = tls_connector.connect(hostname, tcp_stream).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>tls_stream = tls_connector
+                .connect(hostname, tcp_stream)
+                .<span class="kw">await
+                </span>.map_err(ConnectError::Tls)<span class="question-mark">?</span>;
             <span class="macro">debug!</span>(<span class="string">"tls_connector connect success"</span>);
             <span class="self">Self</span>::start_upgrade(tls_stream, url).<span class="kw">await</span><span class="question-mark">?
         </span>} <span class="kw">else </span>{
@@ -424,11 +455,13 @@
         </span>};
 
         <span class="kw">if </span>response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::UnexpectedUpgradeStatus(response.status()));
+            <span class="kw">return </span><span class="prelude-val">Err</span>(ConnectError::UnexpectedUpgradeStatus(response.status()));
         }
 
         <span class="macro">debug!</span>(<span class="string">"starting upgrade"</span>);
-        <span class="kw">let </span>upgraded = hyper::upgrade::on(response).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>upgraded = hyper::upgrade::on(response)
+            .<span class="kw">await
+            </span>.map_err(ConnectError::Upgrade)<span class="question-mark">?</span>;
 
         <span class="macro">debug!</span>(<span class="string">"connection upgraded"</span>);
         <span class="kw">let </span>conn = downcast_upgrade(upgraded).expect(<span class="string">"must use TcpStream or client::TlsStream"</span>);
@@ -442,17 +475,19 @@
     </span><span class="kw">async fn </span>start_upgrade&lt;T&gt;(
         io: T,
         relay_url: RelayUrl,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;hyper::Response&lt;Incoming&gt;, Error&gt;
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;hyper::Response&lt;Incoming&gt;, ConnectError&gt;
     <span class="kw">where
         </span>T: AsyncRead + AsyncWrite + Send + Unpin + <span class="lifetime">'static</span>,
     {
         <span class="kw">use </span>hyper_util::rt::TokioIo;
-        <span class="kw">let </span>host_header_value = host_header_value(relay_url)<span class="question-mark">?</span>;
+        <span class="kw">let </span>host_header_value = host_header_value(relay_url.clone())
+            .ok_or_else(|| ConnectError::InvalidRelayUrl(relay_url.into()))<span class="question-mark">?</span>;
 
         <span class="kw">let </span>io = TokioIo::new(io);
         <span class="kw">let </span>(<span class="kw-2">mut </span>request_sender, connection) = hyper::client::conn::http1::Builder::new()
             .handshake(io)
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+            .<span class="kw">await
+            </span>.map_err(ConnectError::Upgrade)<span class="question-mark">?</span>;
         task::spawn(
             <span class="comment">// This task drives the HTTP exchange, completes once connection is upgraded.
             </span><span class="kw">async move </span>{
@@ -472,23 +507,24 @@
             // &gt; A client MUST include a Host header field in all HTTP/1.1 request messages.
             // This header value helps reverse proxies identify how to forward requests.
             </span>.header(HOST, host_header_value)
-            .body(http_body_util::Empty::&lt;hyper::body::Bytes&gt;::new())<span class="question-mark">?</span>;
-        request_sender.send_request(req).<span class="kw">await</span>.map_err(From::from)
+            .body(http_body_util::Empty::&lt;hyper::body::Bytes&gt;::new())
+            .expect(<span class="string">"fixed config"</span>);
+        request_sender
+            .send_request(req)
+            .<span class="kw">await
+            </span>.map_err(ConnectError::Upgrade)
     }
 
-    <span class="kw">fn </span>tls_servername(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;rustls::pki_types::ServerName, Error&gt; {
-        <span class="kw">let </span>host_str = <span class="self">self
-            </span>.url
-            .host_str()
-            .ok_or_else(|| Error::InvalidUrl(<span class="self">self</span>.url.clone().into()))<span class="question-mark">?</span>;
-        <span class="kw">let </span>servername = rustls::pki_types::ServerName::try_from(host_str)<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(servername)
+    <span class="kw">fn </span>tls_servername(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;rustls::pki_types::ServerName&gt; {
+        <span class="kw">let </span>host_str = <span class="self">self</span>.url.host_str()<span class="question-mark">?</span>;
+        <span class="kw">let </span>servername = rustls::pki_types::ServerName::try_from(host_str).ok()<span class="question-mark">?</span>;
+        <span class="prelude-val">Some</span>(servername)
     }
 
     <span class="kw">async fn </span>dial_url(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         tls_connector: <span class="kw-2">&amp;</span>tokio_rustls::TlsConnector,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;ProxyStream, Error&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;ProxyStream, DialError&gt; {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>proxy) = <span class="self">self</span>.proxy_url {
             <span class="kw">let </span>stream = <span class="self">self</span>.dial_url_proxy(proxy.clone(), tls_connector).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="prelude-val">Ok</span>(ProxyStream::Proxied(stream))
@@ -498,7 +534,7 @@
         }
     }
 
-    <span class="kw">async fn </span>dial_url_direct(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;tokio::net::TcpStream, Error&gt; {
+    <span class="kw">async fn </span>dial_url_direct(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;tokio::net::TcpStream, DialError&gt; {
         <span class="kw">use </span>tokio::net::TcpStream;
         <span class="macro">debug!</span>(%<span class="self">self</span>.url, <span class="string">"dial url"</span>);
         <span class="kw">let </span>prefer_ipv6 = <span class="self">self</span>.prefer_ipv6();
@@ -507,7 +543,7 @@
             .resolve_host(<span class="kw-2">&amp;</span><span class="self">self</span>.url, prefer_ipv6, DNS_TIMEOUT)
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">let </span>port = url_port(<span class="kw-2">&amp;</span><span class="self">self</span>.url).ok_or(Error::InvalidTargetPort)<span class="question-mark">?</span>;
+        <span class="kw">let </span>port = url_port(<span class="kw-2">&amp;</span><span class="self">self</span>.url).ok_or(DialError::InvalidTargetPort)<span class="question-mark">?</span>;
         <span class="kw">let </span>addr = SocketAddr::new(dst_ip, port);
 
         <span class="macro">debug!</span>(<span class="string">"connecting to {}"</span>, addr);
@@ -526,7 +562,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         proxy_url: Url,
         tls_connector: <span class="kw-2">&amp;</span>tokio_rustls::TlsConnector,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;util::Chain&lt;std::io::Cursor&lt;Bytes&gt;, MaybeTlsStream&gt;, Error&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;util::Chain&lt;std::io::Cursor&lt;Bytes&gt;, MaybeTlsStream&gt;, DialError&gt; {
         <span class="kw">use </span>hyper_util::rt::TokioIo;
         <span class="kw">use </span>tokio::net::TcpStream;
         <span class="macro">debug!</span>(%<span class="self">self</span>.url, %proxy_url, <span class="string">"dial url via proxy"</span>);
@@ -538,7 +574,7 @@
             .resolve_host(<span class="kw-2">&amp;</span>proxy_url, prefer_ipv6, DNS_TIMEOUT)
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">let </span>proxy_port = url_port(<span class="kw-2">&amp;</span>proxy_url).ok_or(Error::InvalidTargetPort)<span class="question-mark">?</span>;
+        <span class="kw">let </span>proxy_port = url_port(<span class="kw-2">&amp;</span>proxy_url).ok_or(DialError::ProxyInvalidTargetPort)<span class="question-mark">?</span>;
         <span class="kw">let </span>proxy_addr = SocketAddr::new(proxy_ip, proxy_port);
 
         <span class="macro">debug!</span>(%proxy_addr, <span class="string">"connecting to proxy"</span>);
@@ -556,8 +592,9 @@
         } <span class="kw">else </span>{
             <span class="kw">let </span>hostname = proxy_url
                 .host_str()
-                .ok_or_else(|| Error::InvalidProxyUrl(proxy_url.clone()))<span class="question-mark">?</span>;
-            <span class="kw">let </span>hostname = rustls::pki_types::ServerName::try_from(hostname.to_string())<span class="question-mark">?</span>;
+                .ok_or_else(|| DialError::ProxyInvalidUrl(proxy_url.clone()))<span class="question-mark">?</span>;
+            <span class="kw">let </span>hostname = rustls::pki_types::ServerName::try_from(hostname.to_string())
+                .map_err(|<span class="kw">_</span>| DialError::ProxyInvalidTlsServername)<span class="question-mark">?</span>;
             <span class="kw">let </span>tls_stream = tls_connector.connect(hostname, tcp_stream).<span class="kw">await</span><span class="question-mark">?</span>;
             MaybeTlsStream::Tls(tls_stream)
         };
@@ -566,9 +603,9 @@
         <span class="kw">let </span>target_host = <span class="self">self
             </span>.url
             .host_str()
-            .ok_or_else(|| Error::InvalidUrl(<span class="self">self</span>.url.clone().into()))<span class="question-mark">?</span>;
+            .ok_or_else(|| DialError::InvalidUrl(<span class="self">self</span>.url.clone().into()))<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>port = url_port(<span class="kw-2">&amp;</span><span class="self">self</span>.url).ok_or(Error::InvalidTargetPort)<span class="question-mark">?</span>;
+        <span class="kw">let </span>port = url_port(<span class="kw-2">&amp;</span><span class="self">self</span>.url).ok_or(DialError::InvalidTargetPort)<span class="question-mark">?</span>;
 
         <span class="comment">// Establish Proxy Tunnel
         </span><span class="kw">let </span><span class="kw-2">mut </span>req_builder = Request::builder()
@@ -591,23 +628,32 @@
             <span class="kw">let </span>encoded = BASE64URL.encode(to_encode.as_bytes());
             req_builder = req_builder.header(<span class="string">"Proxy-Authorization"</span>, <span class="macro">format!</span>(<span class="string">"Basic {}"</span>, encoded));
         }
-        <span class="kw">let </span>req = req_builder.body(Empty::&lt;Bytes&gt;::new())<span class="question-mark">?</span>;
+        <span class="kw">let </span>req = req_builder
+            .body(Empty::&lt;Bytes&gt;::new())
+            .expect(<span class="string">"fixed config"</span>);
 
         <span class="macro">debug!</span>(<span class="string">"Sending proxy request: {:?}"</span>, req);
 
-        <span class="kw">let </span>(<span class="kw-2">mut </span>sender, conn) = hyper::client::conn::http1::handshake(io).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>sender, conn) = hyper::client::conn::http1::handshake(io)
+            .<span class="kw">await
+            </span>.map_err(DialError::ProxyConnect)<span class="question-mark">?</span>;
         task::spawn(<span class="kw">async move </span>{
             <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = conn.with_upgrades().<span class="kw">await </span>{
                 <span class="macro">error!</span>(<span class="string">"Proxy connection failed: {:?}"</span>, err);
             }
         });
 
-        <span class="kw">let </span>res = sender.send_request(req).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>res = sender
+            .send_request(req)
+            .<span class="kw">await
+            </span>.map_err(DialError::ProxyConnect)<span class="question-mark">?</span>;
         <span class="kw">if </span>!res.status().is_success() {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(Error::FailedProxyConnection(res.status()));
+            <span class="kw">return </span><span class="prelude-val">Err</span>(DialError::ProxyConnectInvalidStatus(res.status()));
         }
 
-        <span class="kw">let </span>upgraded = hyper::upgrade::on(res).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>upgraded = hyper::upgrade::on(res)
+            .<span class="kw">await
+            </span>.map_err(DialError::ProxyConnect)<span class="question-mark">?</span>;
         <span class="kw">let </span>Parts { io, read_buf, .. } = upgraded
             .downcast::&lt;TokioIo&lt;MaybeTlsStream&gt;&gt;()
             .expect(<span class="string">"only this upgrade used"</span>);
@@ -630,11 +676,11 @@
     }
 }
 
-<span class="kw">fn </span>host_header_value(relay_url: RelayUrl) -&gt; <span class="prelude-ty">Result</span>&lt;String, Error&gt; {
+<span class="doccomment">/// Returns none if no valid url host was found.
+</span><span class="kw">fn </span>host_header_value(relay_url: RelayUrl) -&gt; <span class="prelude-ty">Option</span>&lt;String&gt; {
     <span class="comment">// grab the host, turns e.g. https://example.com:8080/xyz -&gt; example.com.
-    </span><span class="kw">let </span>relay_url_host = relay_url
-        .host_str()
-        .ok_or_else(|| Error::InvalidUrl(relay_url.clone().into()))<span class="question-mark">?</span>;
+    </span><span class="kw">let </span>relay_url_host = relay_url.host_str()<span class="question-mark">?</span>;
+
     <span class="comment">// strip the trailing dot, if present: example.com. -&gt; example.com
     </span><span class="kw">let </span>relay_url_host = relay_url_host.strip_suffix(<span class="string">'.'</span>).unwrap_or(relay_url_host);
     <span class="comment">// build the host header value (reserve up to 6 chars for the ":" and port digits):
@@ -644,7 +690,7 @@
         host_header_value += <span class="string">":"</span>;
         host_header_value += <span class="kw-2">&amp;</span>port.to_string();
     }
-    <span class="prelude-val">Ok</span>(host_header_value)
+    <span class="prelude-val">Some</span>(host_header_value)
 }
 
 <span class="kw">fn </span>url_port(url: <span class="kw-2">&amp;</span>Url) -&gt; <span class="prelude-ty">Option</span>&lt;u16&gt; {
@@ -681,7 +727,7 @@
 
         <span class="kw">for </span>(url, expected_host) <span class="kw">in </span>cases {
             <span class="kw">let </span>relay_url = RelayUrl::from_str(url)<span class="question-mark">?</span>;
-            <span class="kw">let </span>host = host_header_value(relay_url)<span class="question-mark">?</span>;
+            <span class="kw">let </span>host = host_header_value(relay_url).unwrap();
             <span class="macro">assert_eq!</span>(host, expected_host);
         }
 
