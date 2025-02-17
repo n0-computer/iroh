@@ -1544,7 +1544,8 @@
 <a href="#1543" id="1543">1543</a>
 <a href="#1544" id="1544">1544</a>
 <a href="#1545" id="1545">1545</a>
-<a href="#1546" id="1546">1546</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1546" id="1546">1546</a>
+<a href="#1547" id="1547">1547</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -2746,9 +2747,10 @@
     <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
     <span class="kw">use </span>tracing::info;
+    <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::test_utils;
+    <span class="kw">use crate</span>::{dns::DnsResolver, test_utils};
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_packetize_iter() {
@@ -2801,7 +2803,7 @@
             relay_datagrams_recv,
             connection_opts: RelayConnectionOptions {
                 secret_key,
-                dns_resolver: <span class="kw">crate</span>::dns::default_resolver().clone(),
+                dns_resolver: DnsResolver::new(),
                 proxy_url: <span class="prelude-val">None</span>,
                 prefer_ipv6: Arc::new(AtomicBool::new(<span class="bool-val">true</span>)),
                 insecure_skip_cert_verify: <span class="bool-val">true</span>,
@@ -2906,8 +2908,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_active_relay_reconnect() -&gt; TestResult {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>(_relay_map, relay_url, _server) = test_utils::run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>(peer_node, _echo_node_task) = start_echo_node(relay_url.clone());
 
@@ -2993,8 +2995,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_active_relay_inactive() -&gt; TestResult {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">let </span>(_relay_map, relay_url, _server) = test_utils::run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);

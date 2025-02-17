@@ -223,7 +223,9 @@
 <a href="#222" id="222">222</a>
 <a href="#223" id="223">223</a>
 <a href="#224" id="224">224</a>
-<a href="#225" id="225">225</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#225" id="225">225</a>
+<a href="#226" id="226">226</a>
+<a href="#227" id="227">227</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     fmt::Debug,
     io,
     net::SocketAddr,
@@ -361,6 +363,7 @@
     <span class="kw">use </span>netwatch::IpFamily;
     <span class="kw">use </span>tokio::sync::mpsc;
     <span class="kw">use </span>tracing::{info_span, Instrument};
+    <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span><span class="kw">crate</span>::tls;
@@ -378,21 +381,22 @@
             Arc::new(quinn::TokioRuntime),
         )<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>quic_client_config = tls::make_client_config(<span class="kw-2">&amp;</span>key, <span class="prelude-val">None</span>, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">false</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>quic_client_config =
+            tls::make_client_config(<span class="kw-2">&amp;</span>key, <span class="prelude-val">None</span>, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="prelude-val">None</span>, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         quic_ep.set_default_client_config(client_config);
         <span class="prelude-val">Ok</span>((quic_ep, key))
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_rebinding_conn_send_recv_ipv4() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         rebinding_conn_send_recv(IpFamily::V4).<span class="kw">await
     </span>}
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_rebinding_conn_send_recv_ipv6() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
         <span class="kw">if </span>!net_report::os_has_ipv6() {
             <span class="kw">return </span><span class="prelude-val">Ok</span>(());
         }

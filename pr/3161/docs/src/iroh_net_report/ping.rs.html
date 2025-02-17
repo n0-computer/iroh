@@ -161,46 +161,16 @@
 <a href="#160" id="160">160</a>
 <a href="#161" id="161">161</a>
 <a href="#162" id="162">162</a>
-<a href="#163" id="163">163</a>
-<a href="#164" id="164">164</a>
-<a href="#165" id="165">165</a>
-<a href="#166" id="166">166</a>
-<a href="#167" id="167">167</a>
-<a href="#168" id="168">168</a>
-<a href="#169" id="169">169</a>
-<a href="#170" id="170">170</a>
-<a href="#171" id="171">171</a>
-<a href="#172" id="172">172</a>
-<a href="#173" id="173">173</a>
-<a href="#174" id="174">174</a>
-<a href="#175" id="175">175</a>
-<a href="#176" id="176">176</a>
-<a href="#177" id="177">177</a>
-<a href="#178" id="178">178</a>
-<a href="#179" id="179">179</a>
-<a href="#180" id="180">180</a>
-<a href="#181" id="181">181</a>
-<a href="#182" id="182">182</a>
-<a href="#183" id="183">183</a>
-<a href="#184" id="184">184</a>
-<a href="#185" id="185">185</a>
-<a href="#186" id="186">186</a>
-<a href="#187" id="187">187</a>
-<a href="#188" id="188">188</a>
-<a href="#189" id="189">189</a>
-<a href="#190" id="190">190</a>
-<a href="#191" id="191">191</a>
-<a href="#192" id="192">192</a>
-<a href="#193" id="193">193</a></pre></div><pre class="rust"><code><span class="doccomment">//! Allows sending ICMP echo requests to a host in order to determine network latency.
+<a href="#163" id="163">163</a></pre></div><pre class="rust"><code><span class="doccomment">//! Allows sending ICMP echo requests to a host in order to determine network latency.
 
 </span><span class="kw">use </span>std::{
     fmt::Debug,
     net::IpAddr,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>n0_future::time::Duration;
 <span class="kw">use </span>surge_ping::{Client, Config, IcmpPacket, PingIdentifier, PingSequence, ICMP};
 <span class="kw">use </span>tracing::debug;
 
@@ -317,44 +287,14 @@
     <span class="kw">use </span>std::net::{Ipv4Addr, Ipv6Addr};
 
     <span class="kw">use </span>tracing::error;
+    <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
-    <span class="attr">#[tokio::test]
-    #[ignore] </span><span class="comment">// Doesn't work in CI
-    </span><span class="kw">async fn </span>test_ping_google() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
-
-        <span class="comment">// Public DNS addrs from google based on
-        // https://developers.google.com/speed/public-dns/docs/using
-
-        </span><span class="kw">let </span>pinger = Pinger::new();
-
-        <span class="comment">// IPv4
-        </span><span class="kw">let </span>dur = pinger.send(<span class="string">"8.8.8.8"</span>.parse()<span class="question-mark">?</span>, <span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">8</span>]).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="macro">assert!</span>(!dur.is_zero());
-
-        <span class="comment">// IPv6
-        </span><span class="kw">match </span>pinger
-            .send(<span class="string">"2001:4860:4860:0:0:0:0:8888"</span>.parse()<span class="question-mark">?</span>, <span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">8</span>])
-            .<span class="kw">await
-        </span>{
-            <span class="prelude-val">Ok</span>(dur) =&gt; {
-                <span class="macro">assert!</span>(!dur.is_zero());
-            }
-            <span class="prelude-val">Err</span>(err) =&gt; {
-                <span class="macro">tracing::error!</span>(<span class="string">"IPv6 is not available: {:?}"</span>, err);
-            }
-        }
-
-        <span class="prelude-val">Ok</span>(())
-    }
-
     <span class="comment">// See net_report::reportgen::tests::test_icmp_probe_eu_relay for permissions to ping.
     </span><span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_ping_localhost() {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
-
         <span class="kw">let </span>pinger = Pinger::new();
 
         <span class="kw">match </span>pinger.send(Ipv4Addr::LOCALHOST.into(), <span class="string">b"data"</span>).<span class="kw">await </span>{

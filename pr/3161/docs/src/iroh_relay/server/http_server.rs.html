@@ -1151,14 +1151,7 @@
 <a href="#1150" id="1150">1150</a>
 <a href="#1151" id="1151">1151</a>
 <a href="#1152" id="1152">1152</a>
-<a href="#1153" id="1153">1153</a>
-<a href="#1154" id="1154">1154</a>
-<a href="#1155" id="1155">1155</a>
-<a href="#1156" id="1156">1156</a>
-<a href="#1157" id="1157">1157</a>
-<a href="#1158" id="1158">1158</a>
-<a href="#1159" id="1159">1159</a>
-<a href="#1160" id="1160">1160</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1153" id="1153">1153</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -1865,13 +1858,16 @@
     <span class="kw">use </span>n0_future::{SinkExt, StreamExt};
     <span class="kw">use </span>reqwest::Url;
     <span class="kw">use </span>tracing::info;
-    <span class="kw">use </span>tracing_subscriber::{prelude::<span class="kw-2">*</span>, EnvFilter};
+    <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::client::{
-        conn::{Conn, ReceivedMessage, SendMessage},
-        streams::MaybeTlsStreamChained,
-        Client, ClientBuilder,
+    <span class="kw">use crate</span>::{
+        client::{
+            conn::{Conn, ReceivedMessage, SendMessage},
+            streams::MaybeTlsStreamChained,
+            Client, ClientBuilder,
+        },
+        dns::DnsResolver,
     };
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>make_tls_config() -&gt; TlsConfig {
@@ -1899,9 +1895,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_http_clients_and_server() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
-
         <span class="kw">let </span>a_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>b_key = SecretKey::generate(rand::thread_rng());
 
@@ -1971,9 +1966,8 @@
 
     <span class="kw">async fn </span>create_test_client(key: SecretKey, server_url: Url) -&gt; <span class="prelude-ty">Result</span>&lt;(PublicKey, Client)&gt; {
         <span class="kw">let </span>public_key = key.public();
-        <span class="kw">let </span>dns_resolver = <span class="kw">crate</span>::dns::default_resolver();
-        <span class="kw">let </span>client = ClientBuilder::new(server_url, key, dns_resolver.clone())
-            .insecure_skip_cert_verify(<span class="bool-val">true</span>);
+        <span class="kw">let </span>client =
+            ClientBuilder::new(server_url, key, DnsResolver::new()).insecure_skip_cert_verify(<span class="bool-val">true</span>);
         <span class="kw">let </span>client = client.connect().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>((public_key, client))
@@ -2007,9 +2001,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_https_clients_and_server() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>_logging = iroh_test::logging::setup();
-
         <span class="kw">let </span>a_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>b_key = SecretKey::generate(rand::thread_rng());
 
@@ -2090,9 +2083,8 @@
     }
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>test_server_basic() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
-
         <span class="macro">info!</span>(<span class="string">"Create the server."</span>);
         <span class="kw">let </span>service = RelayService::new(
             Default::default(),
@@ -2180,12 +2172,6 @@
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_server_replace_client() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
-
         <span class="macro">info!</span>(<span class="string">"Create the server."</span>);
         <span class="kw">let </span>service = RelayService::new(
             Default::default(),
