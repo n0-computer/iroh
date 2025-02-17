@@ -422,33 +422,7 @@
 <a href="#421" id="421">421</a>
 <a href="#422" id="422">422</a>
 <a href="#423" id="423">423</a>
-<a href="#424" id="424">424</a>
-<a href="#425" id="425">425</a>
-<a href="#426" id="426">426</a>
-<a href="#427" id="427">427</a>
-<a href="#428" id="428">428</a>
-<a href="#429" id="429">429</a>
-<a href="#430" id="430">430</a>
-<a href="#431" id="431">431</a>
-<a href="#432" id="432">432</a>
-<a href="#433" id="433">433</a>
-<a href="#434" id="434">434</a>
-<a href="#435" id="435">435</a>
-<a href="#436" id="436">436</a>
-<a href="#437" id="437">437</a>
-<a href="#438" id="438">438</a>
-<a href="#439" id="439">439</a>
-<a href="#440" id="440">440</a>
-<a href="#441" id="441">441</a>
-<a href="#442" id="442">442</a>
-<a href="#443" id="443">443</a>
-<a href="#444" id="444">444</a>
-<a href="#445" id="445">445</a>
-<a href="#446" id="446">446</a>
-<a href="#447" id="447">447</a>
-<a href="#448" id="448">448</a>
-<a href="#449" id="449">449</a>
-<a href="#450" id="450">450</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#424" id="424">424</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -511,6 +485,9 @@
     </span>NoLocalAddr,
     <span class="attr">#[error(<span class="string">"tls connection failed"</span>)]
     </span>Tls(<span class="attr">#[source] </span>std::io::Error),
+    <span class="attr">#[cfg(wasm_browser)]
+    #[error(<span class="string">"The relay protocol is not available in browsers"</span>)]
+    </span>RelayProtoNotAvailable,
 }
 
 <span class="doccomment">/// Dialing errors
@@ -538,35 +515,6 @@
     </span>ProxyInvalidTlsServername,
     <span class="attr">#[error(<span class="string">"Invliad proxy target port"</span>)]
     </span>ProxyInvalidTargetPort,
-}
-
-<span class="doccomment">/// Client related errors
-</span><span class="attr">#[allow(missing_docs)]
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-</span><span class="kw">pub enum </span>Error {
-    <span class="attr">#[cfg(not(wasm_browser))]
-    #[error(transparent)]
-    </span>Dns(<span class="attr">#[from] </span>DnsError),
-    <span class="attr">#[error(transparent)]
-    </span>Hyper(<span class="attr">#[from] </span>hyper::Error),
-    <span class="attr">#[error(transparent)]
-    </span>InvalidDnsName(<span class="attr">#[from] </span>rustls::pki_types::InvalidDnsNameError),
-    <span class="attr">#[error(transparent)]
-    </span>ProtoRelay(<span class="attr">#[from] </span><span class="kw">crate</span>::protos::relay::Error),
-    <span class="attr">#[error(transparent)]
-    </span>Io(<span class="attr">#[from] </span>std::io::Error),
-    <span class="attr">#[error(<span class="string">"Timeout"</span>)]
-    </span>Timeout(<span class="attr">#[from] </span>time::Elapsed),
-    <span class="attr">#[error(transparent)]
-    </span>Http(<span class="attr">#[from] </span>hyper::http::Error),
-    <span class="attr">#[error(transparent)]
-    </span>Utf8(<span class="attr">#[from] </span>std::str::Utf8Error),
-    <span class="attr">#[cfg(wasm_browser)]
-    #[error(<span class="string">"The relay protocol is not available in browsers"</span>)]
-    </span>RelayProtoNotAvailable,
-    <span class="attr">#[error(transparent)]
-    </span>Websocket(<span class="attr">#[from] </span>tokio_tungstenite_wasm::Error),
 }
 
 <span class="doccomment">/// Build a Client.
@@ -683,7 +631,7 @@
                 (conn, <span class="prelude-val">Some</span>(local_addr))
             }
             <span class="attr">#[cfg(wasm_browser)]
-            </span>Protocol::Relay =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(Error::RelayProtoNotAvailable),
+            </span>Protocol::Relay =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(ConnectError::RelayProtoNotAvailable),
         };
 
         <span class="macro">event!</span>(
