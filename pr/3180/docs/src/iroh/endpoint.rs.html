@@ -2184,7 +2184,337 @@
 <a href="#2183" id="2183">2183</a>
 <a href="#2184" id="2184">2184</a>
 <a href="#2185" id="2185">2185</a>
-<a href="#2186" id="2186">2186</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2186" id="2186">2186</a>
+<a href="#2187" id="2187">2187</a>
+<a href="#2188" id="2188">2188</a>
+<a href="#2189" id="2189">2189</a>
+<a href="#2190" id="2190">2190</a>
+<a href="#2191" id="2191">2191</a>
+<a href="#2192" id="2192">2192</a>
+<a href="#2193" id="2193">2193</a>
+<a href="#2194" id="2194">2194</a>
+<a href="#2195" id="2195">2195</a>
+<a href="#2196" id="2196">2196</a>
+<a href="#2197" id="2197">2197</a>
+<a href="#2198" id="2198">2198</a>
+<a href="#2199" id="2199">2199</a>
+<a href="#2200" id="2200">2200</a>
+<a href="#2201" id="2201">2201</a>
+<a href="#2202" id="2202">2202</a>
+<a href="#2203" id="2203">2203</a>
+<a href="#2204" id="2204">2204</a>
+<a href="#2205" id="2205">2205</a>
+<a href="#2206" id="2206">2206</a>
+<a href="#2207" id="2207">2207</a>
+<a href="#2208" id="2208">2208</a>
+<a href="#2209" id="2209">2209</a>
+<a href="#2210" id="2210">2210</a>
+<a href="#2211" id="2211">2211</a>
+<a href="#2212" id="2212">2212</a>
+<a href="#2213" id="2213">2213</a>
+<a href="#2214" id="2214">2214</a>
+<a href="#2215" id="2215">2215</a>
+<a href="#2216" id="2216">2216</a>
+<a href="#2217" id="2217">2217</a>
+<a href="#2218" id="2218">2218</a>
+<a href="#2219" id="2219">2219</a>
+<a href="#2220" id="2220">2220</a>
+<a href="#2221" id="2221">2221</a>
+<a href="#2222" id="2222">2222</a>
+<a href="#2223" id="2223">2223</a>
+<a href="#2224" id="2224">2224</a>
+<a href="#2225" id="2225">2225</a>
+<a href="#2226" id="2226">2226</a>
+<a href="#2227" id="2227">2227</a>
+<a href="#2228" id="2228">2228</a>
+<a href="#2229" id="2229">2229</a>
+<a href="#2230" id="2230">2230</a>
+<a href="#2231" id="2231">2231</a>
+<a href="#2232" id="2232">2232</a>
+<a href="#2233" id="2233">2233</a>
+<a href="#2234" id="2234">2234</a>
+<a href="#2235" id="2235">2235</a>
+<a href="#2236" id="2236">2236</a>
+<a href="#2237" id="2237">2237</a>
+<a href="#2238" id="2238">2238</a>
+<a href="#2239" id="2239">2239</a>
+<a href="#2240" id="2240">2240</a>
+<a href="#2241" id="2241">2241</a>
+<a href="#2242" id="2242">2242</a>
+<a href="#2243" id="2243">2243</a>
+<a href="#2244" id="2244">2244</a>
+<a href="#2245" id="2245">2245</a>
+<a href="#2246" id="2246">2246</a>
+<a href="#2247" id="2247">2247</a>
+<a href="#2248" id="2248">2248</a>
+<a href="#2249" id="2249">2249</a>
+<a href="#2250" id="2250">2250</a>
+<a href="#2251" id="2251">2251</a>
+<a href="#2252" id="2252">2252</a>
+<a href="#2253" id="2253">2253</a>
+<a href="#2254" id="2254">2254</a>
+<a href="#2255" id="2255">2255</a>
+<a href="#2256" id="2256">2256</a>
+<a href="#2257" id="2257">2257</a>
+<a href="#2258" id="2258">2258</a>
+<a href="#2259" id="2259">2259</a>
+<a href="#2260" id="2260">2260</a>
+<a href="#2261" id="2261">2261</a>
+<a href="#2262" id="2262">2262</a>
+<a href="#2263" id="2263">2263</a>
+<a href="#2264" id="2264">2264</a>
+<a href="#2265" id="2265">2265</a>
+<a href="#2266" id="2266">2266</a>
+<a href="#2267" id="2267">2267</a>
+<a href="#2268" id="2268">2268</a>
+<a href="#2269" id="2269">2269</a>
+<a href="#2270" id="2270">2270</a>
+<a href="#2271" id="2271">2271</a>
+<a href="#2272" id="2272">2272</a>
+<a href="#2273" id="2273">2273</a>
+<a href="#2274" id="2274">2274</a>
+<a href="#2275" id="2275">2275</a>
+<a href="#2276" id="2276">2276</a>
+<a href="#2277" id="2277">2277</a>
+<a href="#2278" id="2278">2278</a>
+<a href="#2279" id="2279">2279</a>
+<a href="#2280" id="2280">2280</a>
+<a href="#2281" id="2281">2281</a>
+<a href="#2282" id="2282">2282</a>
+<a href="#2283" id="2283">2283</a>
+<a href="#2284" id="2284">2284</a>
+<a href="#2285" id="2285">2285</a>
+<a href="#2286" id="2286">2286</a>
+<a href="#2287" id="2287">2287</a>
+<a href="#2288" id="2288">2288</a>
+<a href="#2289" id="2289">2289</a>
+<a href="#2290" id="2290">2290</a>
+<a href="#2291" id="2291">2291</a>
+<a href="#2292" id="2292">2292</a>
+<a href="#2293" id="2293">2293</a>
+<a href="#2294" id="2294">2294</a>
+<a href="#2295" id="2295">2295</a>
+<a href="#2296" id="2296">2296</a>
+<a href="#2297" id="2297">2297</a>
+<a href="#2298" id="2298">2298</a>
+<a href="#2299" id="2299">2299</a>
+<a href="#2300" id="2300">2300</a>
+<a href="#2301" id="2301">2301</a>
+<a href="#2302" id="2302">2302</a>
+<a href="#2303" id="2303">2303</a>
+<a href="#2304" id="2304">2304</a>
+<a href="#2305" id="2305">2305</a>
+<a href="#2306" id="2306">2306</a>
+<a href="#2307" id="2307">2307</a>
+<a href="#2308" id="2308">2308</a>
+<a href="#2309" id="2309">2309</a>
+<a href="#2310" id="2310">2310</a>
+<a href="#2311" id="2311">2311</a>
+<a href="#2312" id="2312">2312</a>
+<a href="#2313" id="2313">2313</a>
+<a href="#2314" id="2314">2314</a>
+<a href="#2315" id="2315">2315</a>
+<a href="#2316" id="2316">2316</a>
+<a href="#2317" id="2317">2317</a>
+<a href="#2318" id="2318">2318</a>
+<a href="#2319" id="2319">2319</a>
+<a href="#2320" id="2320">2320</a>
+<a href="#2321" id="2321">2321</a>
+<a href="#2322" id="2322">2322</a>
+<a href="#2323" id="2323">2323</a>
+<a href="#2324" id="2324">2324</a>
+<a href="#2325" id="2325">2325</a>
+<a href="#2326" id="2326">2326</a>
+<a href="#2327" id="2327">2327</a>
+<a href="#2328" id="2328">2328</a>
+<a href="#2329" id="2329">2329</a>
+<a href="#2330" id="2330">2330</a>
+<a href="#2331" id="2331">2331</a>
+<a href="#2332" id="2332">2332</a>
+<a href="#2333" id="2333">2333</a>
+<a href="#2334" id="2334">2334</a>
+<a href="#2335" id="2335">2335</a>
+<a href="#2336" id="2336">2336</a>
+<a href="#2337" id="2337">2337</a>
+<a href="#2338" id="2338">2338</a>
+<a href="#2339" id="2339">2339</a>
+<a href="#2340" id="2340">2340</a>
+<a href="#2341" id="2341">2341</a>
+<a href="#2342" id="2342">2342</a>
+<a href="#2343" id="2343">2343</a>
+<a href="#2344" id="2344">2344</a>
+<a href="#2345" id="2345">2345</a>
+<a href="#2346" id="2346">2346</a>
+<a href="#2347" id="2347">2347</a>
+<a href="#2348" id="2348">2348</a>
+<a href="#2349" id="2349">2349</a>
+<a href="#2350" id="2350">2350</a>
+<a href="#2351" id="2351">2351</a>
+<a href="#2352" id="2352">2352</a>
+<a href="#2353" id="2353">2353</a>
+<a href="#2354" id="2354">2354</a>
+<a href="#2355" id="2355">2355</a>
+<a href="#2356" id="2356">2356</a>
+<a href="#2357" id="2357">2357</a>
+<a href="#2358" id="2358">2358</a>
+<a href="#2359" id="2359">2359</a>
+<a href="#2360" id="2360">2360</a>
+<a href="#2361" id="2361">2361</a>
+<a href="#2362" id="2362">2362</a>
+<a href="#2363" id="2363">2363</a>
+<a href="#2364" id="2364">2364</a>
+<a href="#2365" id="2365">2365</a>
+<a href="#2366" id="2366">2366</a>
+<a href="#2367" id="2367">2367</a>
+<a href="#2368" id="2368">2368</a>
+<a href="#2369" id="2369">2369</a>
+<a href="#2370" id="2370">2370</a>
+<a href="#2371" id="2371">2371</a>
+<a href="#2372" id="2372">2372</a>
+<a href="#2373" id="2373">2373</a>
+<a href="#2374" id="2374">2374</a>
+<a href="#2375" id="2375">2375</a>
+<a href="#2376" id="2376">2376</a>
+<a href="#2377" id="2377">2377</a>
+<a href="#2378" id="2378">2378</a>
+<a href="#2379" id="2379">2379</a>
+<a href="#2380" id="2380">2380</a>
+<a href="#2381" id="2381">2381</a>
+<a href="#2382" id="2382">2382</a>
+<a href="#2383" id="2383">2383</a>
+<a href="#2384" id="2384">2384</a>
+<a href="#2385" id="2385">2385</a>
+<a href="#2386" id="2386">2386</a>
+<a href="#2387" id="2387">2387</a>
+<a href="#2388" id="2388">2388</a>
+<a href="#2389" id="2389">2389</a>
+<a href="#2390" id="2390">2390</a>
+<a href="#2391" id="2391">2391</a>
+<a href="#2392" id="2392">2392</a>
+<a href="#2393" id="2393">2393</a>
+<a href="#2394" id="2394">2394</a>
+<a href="#2395" id="2395">2395</a>
+<a href="#2396" id="2396">2396</a>
+<a href="#2397" id="2397">2397</a>
+<a href="#2398" id="2398">2398</a>
+<a href="#2399" id="2399">2399</a>
+<a href="#2400" id="2400">2400</a>
+<a href="#2401" id="2401">2401</a>
+<a href="#2402" id="2402">2402</a>
+<a href="#2403" id="2403">2403</a>
+<a href="#2404" id="2404">2404</a>
+<a href="#2405" id="2405">2405</a>
+<a href="#2406" id="2406">2406</a>
+<a href="#2407" id="2407">2407</a>
+<a href="#2408" id="2408">2408</a>
+<a href="#2409" id="2409">2409</a>
+<a href="#2410" id="2410">2410</a>
+<a href="#2411" id="2411">2411</a>
+<a href="#2412" id="2412">2412</a>
+<a href="#2413" id="2413">2413</a>
+<a href="#2414" id="2414">2414</a>
+<a href="#2415" id="2415">2415</a>
+<a href="#2416" id="2416">2416</a>
+<a href="#2417" id="2417">2417</a>
+<a href="#2418" id="2418">2418</a>
+<a href="#2419" id="2419">2419</a>
+<a href="#2420" id="2420">2420</a>
+<a href="#2421" id="2421">2421</a>
+<a href="#2422" id="2422">2422</a>
+<a href="#2423" id="2423">2423</a>
+<a href="#2424" id="2424">2424</a>
+<a href="#2425" id="2425">2425</a>
+<a href="#2426" id="2426">2426</a>
+<a href="#2427" id="2427">2427</a>
+<a href="#2428" id="2428">2428</a>
+<a href="#2429" id="2429">2429</a>
+<a href="#2430" id="2430">2430</a>
+<a href="#2431" id="2431">2431</a>
+<a href="#2432" id="2432">2432</a>
+<a href="#2433" id="2433">2433</a>
+<a href="#2434" id="2434">2434</a>
+<a href="#2435" id="2435">2435</a>
+<a href="#2436" id="2436">2436</a>
+<a href="#2437" id="2437">2437</a>
+<a href="#2438" id="2438">2438</a>
+<a href="#2439" id="2439">2439</a>
+<a href="#2440" id="2440">2440</a>
+<a href="#2441" id="2441">2441</a>
+<a href="#2442" id="2442">2442</a>
+<a href="#2443" id="2443">2443</a>
+<a href="#2444" id="2444">2444</a>
+<a href="#2445" id="2445">2445</a>
+<a href="#2446" id="2446">2446</a>
+<a href="#2447" id="2447">2447</a>
+<a href="#2448" id="2448">2448</a>
+<a href="#2449" id="2449">2449</a>
+<a href="#2450" id="2450">2450</a>
+<a href="#2451" id="2451">2451</a>
+<a href="#2452" id="2452">2452</a>
+<a href="#2453" id="2453">2453</a>
+<a href="#2454" id="2454">2454</a>
+<a href="#2455" id="2455">2455</a>
+<a href="#2456" id="2456">2456</a>
+<a href="#2457" id="2457">2457</a>
+<a href="#2458" id="2458">2458</a>
+<a href="#2459" id="2459">2459</a>
+<a href="#2460" id="2460">2460</a>
+<a href="#2461" id="2461">2461</a>
+<a href="#2462" id="2462">2462</a>
+<a href="#2463" id="2463">2463</a>
+<a href="#2464" id="2464">2464</a>
+<a href="#2465" id="2465">2465</a>
+<a href="#2466" id="2466">2466</a>
+<a href="#2467" id="2467">2467</a>
+<a href="#2468" id="2468">2468</a>
+<a href="#2469" id="2469">2469</a>
+<a href="#2470" id="2470">2470</a>
+<a href="#2471" id="2471">2471</a>
+<a href="#2472" id="2472">2472</a>
+<a href="#2473" id="2473">2473</a>
+<a href="#2474" id="2474">2474</a>
+<a href="#2475" id="2475">2475</a>
+<a href="#2476" id="2476">2476</a>
+<a href="#2477" id="2477">2477</a>
+<a href="#2478" id="2478">2478</a>
+<a href="#2479" id="2479">2479</a>
+<a href="#2480" id="2480">2480</a>
+<a href="#2481" id="2481">2481</a>
+<a href="#2482" id="2482">2482</a>
+<a href="#2483" id="2483">2483</a>
+<a href="#2484" id="2484">2484</a>
+<a href="#2485" id="2485">2485</a>
+<a href="#2486" id="2486">2486</a>
+<a href="#2487" id="2487">2487</a>
+<a href="#2488" id="2488">2488</a>
+<a href="#2489" id="2489">2489</a>
+<a href="#2490" id="2490">2490</a>
+<a href="#2491" id="2491">2491</a>
+<a href="#2492" id="2492">2492</a>
+<a href="#2493" id="2493">2493</a>
+<a href="#2494" id="2494">2494</a>
+<a href="#2495" id="2495">2495</a>
+<a href="#2496" id="2496">2496</a>
+<a href="#2497" id="2497">2497</a>
+<a href="#2498" id="2498">2498</a>
+<a href="#2499" id="2499">2499</a>
+<a href="#2500" id="2500">2500</a>
+<a href="#2501" id="2501">2501</a>
+<a href="#2502" id="2502">2502</a>
+<a href="#2503" id="2503">2503</a>
+<a href="#2504" id="2504">2504</a>
+<a href="#2505" id="2505">2505</a>
+<a href="#2506" id="2506">2506</a>
+<a href="#2507" id="2507">2507</a>
+<a href="#2508" id="2508">2508</a>
+<a href="#2509" id="2509">2509</a>
+<a href="#2510" id="2510">2510</a>
+<a href="#2511" id="2511">2511</a>
+<a href="#2512" id="2512">2512</a>
+<a href="#2513" id="2513">2513</a>
+<a href="#2514" id="2514">2514</a>
+<a href="#2515" id="2515">2515</a>
+<a href="#2516" id="2516">2516</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2208,6 +2538,7 @@
 };
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>data_encoding::BASE32_DNSSEC;
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_relay::RelayMap;
 <span class="kw">use </span>n0_future::time::Duration;
@@ -2233,7 +2564,7 @@
     ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
     ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError, RetryError,
     SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId, TransportConfig, VarInt,
-    WeakConnectionHandle, WriteError, ZeroRttAccepted,
+    WeakConnectionHandle, WriteError,
 };
 <span class="kw">pub use </span>quinn_proto::{
     congestion::{Controller, ControllerFactory},
@@ -2255,6 +2586,16 @@
 /// [`Endpoint`] assumes one of those addresses probably works.  If after this delay there
 /// is still no connection the configured [`Discovery`] will be used however.
 </span><span class="kw">const </span>DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(<span class="number">500</span>);
+
+<span class="doccomment">/// Maximum amount of TLS tickets we will cache (by default) for 0-RTT connection
+/// establishment.
+///
+/// 8 tickets per remote endpoint, 32 different endpoints would max out the required storage:
+/// ~200 bytes per session + certificates (which are ~387 bytes)
+/// So 8 * 32 * (200 + 387) = 150.272 bytes, assuming pointers to certificates
+/// are never aliased pointers (they're Arc'ed).
+/// I think 150KB is an acceptable default upper limit for such a cache.
+</span><span class="kw">const </span>MAX_TLS_TICKETS: usize = <span class="number">8 </span>* <span class="number">32</span>;
 
 <span class="kw">type </span>DiscoveryBuilder = Box&lt;<span class="kw">dyn </span>FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; + Send + Sync&gt;;
 
@@ -2703,9 +3044,14 @@
 /// [QUIC]: https://quicwg.org
 </span><span class="attr">#[derive(Clone, Debug)]
 </span><span class="kw">pub struct </span>Endpoint {
-    msock: Handle,
-    rtt_actor: Arc&lt;rtt_actor::RttHandle&gt;,
-    static_config: Arc&lt;StaticConfig&gt;,
+    <span class="doccomment">/// Handle to the magicsocket/actor
+    </span>msock: Handle,
+    <span class="doccomment">/// Handle to the actor that resets the quinn RTT estimator
+    </span>rtt_actor: Arc&lt;rtt_actor::RttHandle&gt;,
+    <span class="doccomment">/// Configuration structs for quinn, holds the transport config, certificate setup, secret key etc.
+    </span>static_config: Arc&lt;StaticConfig&gt;,
+    <span class="doccomment">/// Cache for TLS session keys we receive.
+    </span>session_store: Arc&lt;<span class="kw">dyn </span>rustls::client::ClientSessionStore&gt;,
 }
 
 <span class="kw">impl </span>Endpoint {
@@ -2729,10 +3075,14 @@
         <span class="kw">let </span>msock = magicsock::MagicSock::spawn(msock_opts).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">trace!</span>(<span class="string">"created magicsock"</span>);
         <span class="macro">debug!</span>(version = <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>), <span class="string">"iroh Endpoint created"</span>);
+
         <span class="kw">let </span>ep = <span class="self">Self </span>{
             msock: msock.clone(),
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
             static_config: Arc::new(static_config),
+            session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(
+                MAX_TLS_TICKETS,
+            )),
         };
         <span class="prelude-val">Ok</span>(ep)
     }
@@ -2772,26 +3122,51 @@
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
     </span><span class="kw">pub async fn </span>connect(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: <span class="kw">impl </span>Into&lt;NodeAddr&gt;, alpn: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;Connection&gt; {
-        <span class="self">self</span>.connect_with(node_addr, alpn, <span class="self">self</span>.static_config.transport_config.clone())
+        <span class="kw">let </span>node_addr = node_addr.into();
+        <span class="kw">let </span>remote = node_addr.node_id;
+        <span class="kw">let </span>connecting = <span class="self">self
+            </span>.connect_with_opts(node_addr, alpn, Default::default())
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>conn = connecting
             .<span class="kw">await
-    </span>}
+            </span>.context(<span class="string">"failed connecting to remote endpoint"</span>)<span class="question-mark">?</span>;
+        <span class="macro">debug!</span>(
+            me = %<span class="self">self</span>.node_id().fmt_short(),
+            remote = %remote.fmt_short(),
+            alpn = %String::from_utf8_lossy(alpn),
+            <span class="string">"Connection established."
+        </span>);
+        <span class="prelude-val">Ok</span>(conn)
+    }
 
-    <span class="doccomment">/// Connects to a remote [`Endpoint`] using a custom [`TransportConfig`].
+    <span class="doccomment">/// Starts a connection attempt with a remote [`Endpoint`].
     ///
-    /// Like [`Endpoint::connect`], but allows providing a custom for the connection.  See
-    /// the docs of [`Endpoint::connect`] for details.
-    ///
-    /// Please be aware that changing some settings may have adverse effects on establishing
-    /// and maintaining direct connections.  Carefully test settings you use and consider
-    /// this currently as still rather experimental.
-    </span><span class="kw">pub async fn </span>connect_with(
+    /// Like [`Endpoint::connect`] (see also its docs for general details), but allows for a more
+    /// advanced connection setup with more customization in two aspects:
+    /// 1. The returned future resolves to a [`Connecting`], which can be further processed into
+    ///    a [`Connection`] by awaiting, or alternatively allows connecting with 0RTT via
+    ///    [`Connecting::into_0rtt`].
+    ///    **Note:** Please read the documentation for `into_0rtt` carefully to assess
+    ///    security concerns.
+    /// 2. The [`TransportConfig`] for the connection can be modified via the provided
+    ///    [`ConnectOptions`].
+    ///    **Note:** Please be aware that changing transport config settings may have adverse effects on
+    ///    establishing and maintaining direct connections.  Carefully test settings you use and
+    ///    consider this currently as still rather experimental.
+    </span><span class="attr">#[instrument(name = <span class="string">"connect"</span>, skip_all, fields(
+        me = <span class="self">self</span>.node_id().fmt_short(),
+        remote = tracing::field::Empty,
+        alpn = String::from_utf8_lossy(alpn).to_string(),
+    ))]
+    </span><span class="kw">pub async fn </span>connect_with_opts(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_addr: <span class="kw">impl </span>Into&lt;NodeAddr&gt;,
         alpn: <span class="kw-2">&amp;</span>[u8],
-        transport_config: Arc&lt;TransportConfig&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;Connection&gt; {
+        options: ConnectOptions,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;Connecting&gt; {
         <span class="kw">let </span>node_addr: NodeAddr = node_addr.into();
         tracing::Span::current().record(<span class="string">"remote"</span>, node_addr.node_id.fmt_short());
+
         <span class="comment">// Connecting to ourselves is not supported.
         </span><span class="kw">if </span>node_addr.node_id == <span class="self">self</span>.node_id() {
             <span class="macro">bail!</span>(
@@ -2805,12 +3180,13 @@
         }
         <span class="kw">let </span>node_id = node_addr.node_id;
         <span class="kw">let </span>direct_addresses = node_addr.direct_addresses.clone();
+        <span class="kw">let </span>relay_url = node_addr.relay_url.clone();
 
         <span class="comment">// Get the mapped IPv6 address from the magic socket. Quinn will connect to this
         // address.  Start discovery for this node if it's enabled and we have no valid or
         // verified address information for this node.  Dropping the discovery cancels any
         // still running task.
-        </span><span class="kw">let </span>(addr, _discovery_drop_guard) = <span class="self">self
+        </span><span class="kw">let </span>(mapped_addr, _discovery_drop_guard) = <span class="self">self
             </span>.get_mapping_addr_and_maybe_start_discovery(node_addr)
             .<span class="kw">await
             </span>.with_context(|| {
@@ -2820,40 +3196,26 @@
                 )
             })<span class="question-mark">?</span>;
 
-        <span class="macro">debug!</span>(
-            <span class="string">"connecting to {}: (via {} - {:?})"</span>,
-            node_id, addr, direct_addresses
-        );
+        <span class="kw">let </span>transport_config = options
+            .transport_config
+            .unwrap_or(<span class="self">self</span>.static_config.transport_config.clone());
 
         <span class="comment">// Start connecting via quinn. This will time out after 10 seconds if no reachable
         // address is available.
-        </span><span class="self">self</span>.connect_quinn(node_id, alpn, addr, transport_config)
-            .<span class="kw">await
-    </span>}
 
-    <span class="attr">#[instrument(
-        name = <span class="string">"connect"</span>,
-        skip_all,
-        fields(
-            me = %<span class="self">self</span>.node_id().fmt_short(),
-            remote_node = node_id.fmt_short(),
-            alpn = %String::from_utf8_lossy(alpn),
-        )
-    )]
-    </span><span class="kw">async fn </span>connect_quinn(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        node_id: NodeId,
-        alpn: <span class="kw-2">&amp;</span>[u8],
-        addr: NodeIdMappedAddr,
-        transport_config: Arc&lt;TransportConfig&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;Connection&gt; {
-        <span class="macro">debug!</span>(<span class="string">"Attempting connection..."</span>);
+        </span><span class="macro">debug!</span>(
+            <span class="question-mark">?</span>mapped_addr,
+            <span class="question-mark">?</span>direct_addresses,
+            <span class="question-mark">?</span>relay_url,
+            <span class="string">"Attempting connection..."
+        </span>);
         <span class="kw">let </span>client_config = {
             <span class="kw">let </span>alpn_protocols = <span class="macro">vec!</span>[alpn.to_vec()];
             <span class="kw">let </span>quic_client_config = tls::make_client_config(
                 <span class="kw-2">&amp;</span><span class="self">self</span>.static_config.secret_key,
                 <span class="prelude-val">Some</span>(node_id),
                 alpn_protocols,
+                <span class="prelude-val">Some</span>(<span class="self">self</span>.session_store.clone()),
                 <span class="self">self</span>.static_config.keylog,
             )<span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
@@ -2861,27 +3223,28 @@
             client_config
         };
 
-        <span class="comment">// TODO: We'd eventually want to replace "localhost" with something that makes more sense.
-        </span><span class="kw">let </span>connect =
-            <span class="self">self</span>.msock
-                .endpoint()
-                .connect_with(client_config, addr.socket_addr(), <span class="string">"localhost"</span>)<span class="question-mark">?</span>;
+        <span class="comment">// We used to use a constant "localhost" for this - however, that would put all of
+        // the TLS session tickets we receive into the same bucket in the TLS session ticket cache.
+        // So we choose something that'd dependent on the NodeId.
+        // We cannot use hex to encode the NodeId, as that'd encode to 64 characters, but we only
+        // have 63 maximum per DNS subdomain. Base32 is the next best alternative.
+        // We use the `.invalid` TLD, as that's specified (in RFC 2606) to never actually resolve
+        // "for real", unlike `.localhost` which is allowed to resolve to `127.0.0.1`.
+        // We also add "iroh" as a subdomain, although those 5 bytes might not be necessary.
+        // We *could* decide to remove that indicator in the future likely without breakage.
+        </span><span class="kw">let </span>server_name = <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{}.iroh.invalid"</span>, BASE32_DNSSEC.encode(node_id.as_bytes()));
+        <span class="kw">let </span>connect = <span class="self">self</span>.msock.endpoint().connect_with(
+            client_config,
+            mapped_addr.socket_addr(),
+            server_name,
+        )<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>connection = connect
-            .<span class="kw">await
-            </span>.context(<span class="string">"failed connecting to remote endpoint"</span>)<span class="question-mark">?</span>;
-
-        <span class="kw">let </span>rtt_msg = RttMessage::NewConnection {
-            connection: connection.weak_handle(),
-            conn_type_changes: <span class="self">self</span>.conn_type(node_id)<span class="question-mark">?</span>.stream(),
-            node_id,
-        };
-        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.rtt_actor.msg_tx.send(rtt_msg).<span class="kw">await </span>{
-            <span class="comment">// If this actor is dead, that's not great but we can still function.
-            </span><span class="macro">warn!</span>(<span class="string">"rtt-actor not reachable: {err:#}"</span>);
-        }
-        <span class="macro">debug!</span>(<span class="string">"Connection established"</span>);
-        <span class="prelude-val">Ok</span>(Connection { inner: connection })
+        <span class="prelude-val">Ok</span>(Connecting {
+            inner: connect,
+            ep: <span class="self">self</span>.clone(),
+            remote_node_id: <span class="prelude-val">Some</span>(node_id),
+            _discovery_drop_guard,
+        })
     }
 
     <span class="doccomment">/// Accepts an incoming connection on the endpoint.
@@ -3275,6 +3638,28 @@
     }
 }
 
+<span class="doccomment">/// Options for the [`Endpoint::connect_with_opts`] function.
+</span><span class="attr">#[derive(Default, Debug, Clone)]
+</span><span class="kw">pub struct </span>ConnectOptions {
+    transport_config: <span class="prelude-ty">Option</span>&lt;Arc&lt;TransportConfig&gt;&gt;,
+}
+
+<span class="kw">impl </span>ConnectOptions {
+    <span class="doccomment">/// Initializes new connection options.
+    ///
+    /// By default, the connection will use the same options
+    /// as [`Endpoint::connect`], e.g. a default [`TransportConfig`].
+    </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>::default()
+    }
+
+    <span class="doccomment">/// Sets the QUIC transport config options for this connection.
+    </span><span class="kw">pub fn </span>with_transport_config(<span class="kw-2">mut </span><span class="self">self</span>, transport_config: Arc&lt;TransportConfig&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.transport_config = <span class="prelude-val">Some</span>(transport_config);
+        <span class="self">self
+    </span>}
+}
+
 <span class="doccomment">/// Future produced by [`Endpoint::accept`].
 </span><span class="attr">#[derive(derive_more::Debug)]
 #[pin_project]
@@ -3323,6 +3708,8 @@
         <span class="self">self</span>.inner.accept().map(|conn| Connecting {
             inner: conn,
             ep: <span class="self">self</span>.ep,
+            remote_node_id: <span class="prelude-val">None</span>,
+            _discovery_drop_guard: <span class="prelude-val">None</span>,
         })
     }
 
@@ -3340,6 +3727,8 @@
             .map(|conn| Connecting {
                 inner: conn,
                 ep: <span class="self">self</span>.ep,
+                remote_node_id: <span class="prelude-val">None</span>,
+                _discovery_drop_guard: <span class="prelude-val">None</span>,
             })
     }
 
@@ -3413,7 +3802,7 @@
             Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(err)),
             Poll::Ready(<span class="prelude-val">Ok</span>(inner)) =&gt; {
                 <span class="kw">let </span>conn = Connection { inner };
-                try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, this.ep);
+                try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, this.ep, <span class="prelude-val">None</span>);
                 Poll::Ready(<span class="prelude-val">Ok</span>(conn))
             }
         }
@@ -3421,24 +3810,87 @@
 }
 
 <span class="doccomment">/// In-progress connection attempt future
-</span><span class="attr">#[derive(Debug)]
+</span><span class="attr">#[derive(derive_more::Debug)]
 #[pin_project]
 </span><span class="kw">pub struct </span>Connecting {
     <span class="attr">#[pin]
     </span>inner: quinn::Connecting,
     ep: Endpoint,
+    remote_node_id: <span class="prelude-ty">Option</span>&lt;NodeId&gt;,
+    <span class="doccomment">/// We run discovery as long as we haven't established a connection yet.
+    </span><span class="attr">#[debug(<span class="string">"Option&lt;DiscoveryTask&gt;"</span>)]
+    </span>_discovery_drop_guard: <span class="prelude-ty">Option</span>&lt;DiscoveryTask&gt;,
 }
 
 <span class="kw">impl </span>Connecting {
-    <span class="doccomment">/// Convert into a 0-RTT or 0.5-RTT connection at the cost of weakened security.
+    <span class="doccomment">/// Converts this [`Connecting`] into a 0-RTT or 0.5-RTT connection at the cost of weakened
+    /// security.
+    ///
+    /// Returns `Ok` immediately if the local endpoint is able to attempt sending 0/0.5-RTT data.
+    /// If so, the returned [`Connection`] can be used to send application data without waiting for
+    /// the rest of the handshake to complete, at the cost of weakened cryptographic security
+    /// guarantees. The returned [`ZeroRttAccepted`] future resolves when the handshake does
+    /// complete, at which point subsequently opened streams and written data will have full
+    /// cryptographic protection.
+    ///
+    /// Once the [`ZeroRttAccepted`] future completed, a full handshake has been carried through
+    /// and any data sent and any streams opened on the [`Connection`] will operate with the same
+    /// security as on normal 1-RTT connections.
+    ///
+    /// ## Outgoing
+    ///
+    /// For outgoing connections, the initial attempt to convert to a [`Connection`] which sends
+    /// 0-RTT data will attempt to resume a previous TLS session. However, **the remote endpoint
+    /// may not actually _accept_ the 0-RTT data**--yet still accept the connection attempt in
+    /// general. This possibility is conveyed through the [`ZeroRttAccepted`] future--when the
+    /// handshake completes, it resolves to true if the 0-RTT data was accepted and false if it was
+    /// rejected. If it was rejected, the existence of streams opened and other application data
+    /// sent prior to the handshake completing will not be conveyed to the remote application, and
+    /// local operations on them will return `ZeroRttRejected` errors.
+    ///
+    /// A server may reject 0-RTT data at its discretion, but accepting 0-RTT data requires the
+    /// relevant resumption state to be stored in the server, which servers may limit or lose for
+    /// various reasons including not persisting resumption state across server restarts.
+    ///
+    /// ## Incoming
+    ///
+    /// For incoming connections, conversion to 0.5-RTT will always fully succeed. `into_0rtt` will
+    /// always return `Ok` and the [`ZeroRttAccepted`] will always resolve to true.
+    ///
+    /// ## Security
+    ///
+    /// On outgoing connections, this enables transmission of 0-RTT data, which is vulnerable to
+    /// replay attacks, and should therefore never invoke non-idempotent operations.
+    ///
+    /// On incoming connections, this enables transmission of 0.5-RTT data, which may be sent
+    /// before TLS client authentication has occurred, and should therefore not be used to send
+    /// data for which client authentication is being used.
+    ///
+    /// You can use [`RecvStream::is_0rtt`] to check whether a stream has been opened in 0-RTT
+    /// and thus whether parts of the stream are operating under this reduced security level.
     </span><span class="kw">pub fn </span>into_0rtt(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(Connection, ZeroRttAccepted), <span class="self">Self</span>&gt; {
         <span class="kw">match </span><span class="self">self</span>.inner.into_0rtt() {
             <span class="prelude-val">Ok</span>((inner, zrtt_accepted)) =&gt; {
                 <span class="kw">let </span>conn = Connection { inner };
-                try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, <span class="kw-2">&amp;</span><span class="self">self</span>.ep);
+                <span class="kw">let </span>zrtt_accepted = ZeroRttAccepted {
+                    inner: zrtt_accepted,
+                    _discovery_drop_guard: <span class="self">self</span>._discovery_drop_guard,
+                };
+                <span class="comment">// This call is why `self.remote_node_id` was introduced.
+                // When we `Connecting::into_0rtt`, then we don't yet have `handshake_data`
+                // in our `Connection`, thus `try_send_rtt_msg` won't be able to pick up
+                // `Connection::remote_node_id`.
+                // Instead, we provide `self.remote_node_id` here - we know it in advance,
+                // after all.
+                </span>try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, <span class="kw-2">&amp;</span><span class="self">self</span>.ep, <span class="self">self</span>.remote_node_id);
                 <span class="prelude-val">Ok</span>((conn, zrtt_accepted))
             }
-            <span class="prelude-val">Err</span>(inner) =&gt; <span class="prelude-val">Err</span>(<span class="self">Self </span>{ inner, ep: <span class="self">self</span>.ep }),
+            <span class="prelude-val">Err</span>(inner) =&gt; <span class="prelude-val">Err</span>(<span class="self">Self </span>{
+                inner,
+                ep: <span class="self">self</span>.ep,
+                remote_node_id: <span class="self">self</span>.remote_node_id,
+                _discovery_drop_guard: <span class="self">self</span>._discovery_drop_guard,
+            }),
         }
     }
 
@@ -3472,10 +3924,35 @@
             Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(err)),
             Poll::Ready(<span class="prelude-val">Ok</span>(inner)) =&gt; {
                 <span class="kw">let </span>conn = Connection { inner };
-                try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, this.ep);
+                try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, this.ep, <span class="kw-2">*</span>this.remote_node_id);
                 Poll::Ready(<span class="prelude-val">Ok</span>(conn))
             }
         }
+    }
+}
+
+<span class="doccomment">/// Future that completes when a connection is fully established.
+///
+/// For clients, the resulting value indicates if 0-RTT was accepted. For servers, the resulting
+/// value is meaningless.
+</span><span class="attr">#[derive(derive_more::Debug)]
+#[debug(<span class="string">"ZeroRttAccepted"</span>)]
+</span><span class="kw">pub struct </span>ZeroRttAccepted {
+    inner: quinn::ZeroRttAccepted,
+    <span class="doccomment">/// When we call `Connecting::into_0rtt`, we don't want to stop discovery, so we transfer the task
+    /// to this future.
+    /// When `quinn::ZeroRttAccepted` resolves, we've successfully received data from the remote.
+    /// Thus, that's the right time to drop discovery to preserve the behaviour similar to
+    /// `Connecting` -&gt; `Connection` without 0-RTT.
+    /// Should we eventually decide to keep the discovery task alive for the duration of the whole
+    /// `Connection`, then this task should be transferred to the `Connection` instead of here.
+    </span>_discovery_drop_guard: <span class="prelude-ty">Option</span>&lt;DiscoveryTask&gt;,
+}
+
+<span class="kw">impl </span>Future <span class="kw">for </span>ZeroRttAccepted {
+    <span class="kw">type </span>Output = bool;
+    <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
+        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner).poll(cx)
     }
 }
 
@@ -3786,9 +4263,9 @@
 ///
 /// If we can't notify the actor that will impact performance a little, but we can still
 /// function.
-</span><span class="kw">fn </span>try_send_rtt_msg(conn: <span class="kw-2">&amp;</span>Connection, magic_ep: <span class="kw-2">&amp;</span>Endpoint) {
+</span><span class="kw">fn </span>try_send_rtt_msg(conn: <span class="kw-2">&amp;</span>Connection, magic_ep: <span class="kw-2">&amp;</span>Endpoint, remote_node_id: <span class="prelude-ty">Option</span>&lt;NodeId&gt;) {
     <span class="comment">// If we can't notify the rtt-actor that's not great but not critical.
-    </span><span class="kw">let </span><span class="prelude-val">Ok</span>(node_id) = conn.remote_node_id() <span class="kw">else </span>{
+    </span><span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = remote_node_id.or_else(|| conn.remote_node_id().ok()) <span class="kw">else </span>{
         <span class="macro">warn!</span>(<span class="question-mark">?</span>conn, <span class="string">"failed to get remote node id"</span>);
         <span class="kw">return</span>;
     };
@@ -3909,6 +4386,7 @@
 
     <span class="kw">use </span>n0_future::StreamExt;
     <span class="kw">use </span>rand::SeedableRng;
+    <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tracing::{error_span, info, info_span, Instrument};
     <span class="kw">use </span>tracing_test::traced_test;
 
@@ -4368,6 +4846,188 @@
             .<span class="kw">await
             </span>.unwrap()
             .unwrap();
+    }
+
+    <span class="kw">async fn </span>spawn_0rtt_server(secret_key: SecretKey, log_span: tracing::Span) -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint&gt; {
+        <span class="kw">let </span>server = Endpoint::builder()
+            .secret_key(secret_key)
+            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="comment">// Gets aborted via the endpoint closing causing an `Err`
+        // a simple echo server
+        </span>tokio::spawn({
+            <span class="kw">let </span>server = server.clone();
+            <span class="kw">async move </span>{
+                <span class="kw">while let </span><span class="prelude-val">Some</span>(incoming) = server.accept().<span class="kw">await </span>{
+                    <span class="kw">let </span>connecting = incoming.accept()<span class="question-mark">?</span>;
+                    <span class="kw">let </span>conn = <span class="kw">match </span>connecting.into_0rtt() {
+                        <span class="prelude-val">Ok</span>((conn, <span class="kw">_</span>)) =&gt; {
+                            <span class="macro">info!</span>(<span class="string">"0rtt accepted"</span>);
+                            conn
+                        }
+                        <span class="prelude-val">Err</span>(connecting) =&gt; {
+                            <span class="macro">info!</span>(<span class="string">"0rtt denied"</span>);
+                            connecting.<span class="kw">await</span><span class="question-mark">?
+                        </span>}
+                    };
+                    <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+                    <span class="kw">let </span>data = recv.read_to_end(<span class="number">10_000_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+                    send.write_all(<span class="kw-2">&amp;</span>data).<span class="kw">await</span><span class="question-mark">?</span>;
+                    send.finish()<span class="question-mark">?</span>;
+
+                    <span class="comment">// Stay alive until the other side closes the connection.
+                    </span>conn.closed().<span class="kw">await</span>;
+                }
+                anyhow::Ok(())
+            }
+            .instrument(log_span)
+        });
+
+        <span class="prelude-val">Ok</span>(server)
+    }
+
+    <span class="kw">async fn </span>connect_client_0rtt_expect_err(
+        client: <span class="kw-2">&amp;</span>Endpoint,
+        server_addr: NodeAddr,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">let </span>conn = client
+            .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
+            .<span class="kw">await</span><span class="question-mark">?
+            </span>.into_0rtt()
+            .expect_err(<span class="string">"expected 0rtt to fail"</span>)
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+        send.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        send.finish()<span class="question-mark">?</span>;
+        <span class="kw">let </span>received = recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>received, <span class="string">b"hello"</span>);
+        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"thx"</span>);
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="kw">async fn </span>connect_client_0rtt_expect_ok(
+        client: <span class="kw-2">&amp;</span>Endpoint,
+        server_addr: NodeAddr,
+        expect_server_accepts: bool,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">let </span>(conn, accepted_0rtt) = client
+            .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
+            .<span class="kw">await</span><span class="question-mark">?
+            </span>.into_0rtt()
+            .map_err(|<span class="kw">_</span>| <span class="string">"0rtt failed"</span>)
+            .unwrap();
+
+        <span class="comment">// This is how we send data in 0-RTT:
+        </span><span class="kw">let </span>(<span class="kw-2">mut </span>send, recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+        send.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        send.finish()<span class="question-mark">?</span>;
+        <span class="comment">// When this resolves, we've gotten a response from the server about whether the 0-RTT data above was accepted:
+        </span><span class="kw">let </span>accepted = accepted_0rtt.<span class="kw">await</span>;
+        <span class="macro">assert_eq!</span>(accepted, expect_server_accepts);
+        <span class="kw">let </span><span class="kw-2">mut </span>recv = <span class="kw">if </span>accepted {
+            recv
+        } <span class="kw">else </span>{
+            <span class="comment">// in this case we need to re-send data by re-creating the connection.
+            </span><span class="kw">let </span>(<span class="kw-2">mut </span>send, recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+            send.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            send.finish()<span class="question-mark">?</span>;
+            recv
+        };
+        <span class="kw">let </span>received = recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>received, <span class="string">b"hello"</span>);
+        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"thx"</span>);
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>test_0rtt() -&gt; TestResult {
+        <span class="kw">let </span>client = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server = spawn_0rtt_server(
+            SecretKey::generate(rand::thread_rng()),
+            <span class="macro">info_span!</span>(<span class="string">"server"</span>),
+        )
+        .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="comment">// The second 0rtt attempt should work
+        </span>connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        client.close().<span class="kw">await</span>;
+        server.close().<span class="kw">await</span>;
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="comment">// We have this test, as this would've failed at some point.
+    // This effectively tests that we correctly categorize the TLS session tickets we
+    // receive into the respective "bucket" for the recipient.
+    </span><span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>test_0rtt_non_consecutive() -&gt; TestResult {
+        <span class="kw">let </span>client = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server = spawn_0rtt_server(
+            SecretKey::generate(rand::thread_rng()),
+            <span class="macro">info_span!</span>(<span class="string">"server"</span>),
+        )
+        .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="comment">// connecting with another endpoint should not interfere with our
+        // TLS session ticket cache for the first endpoint:
+        </span><span class="kw">let </span>another = spawn_0rtt_server(
+            SecretKey::generate(rand::thread_rng()),
+            <span class="macro">info_span!</span>(<span class="string">"another"</span>),
+        )
+        .<span class="kw">await</span><span class="question-mark">?</span>;
+        connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, another.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        another.close().<span class="kw">await</span>;
+
+        connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        client.close().<span class="kw">await</span>;
+        server.close().<span class="kw">await</span>;
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="comment">// Test whether 0-RTT is possible after a restart:
+    </span><span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>test_0rtt_after_server_restart() -&gt; TestResult {
+        <span class="kw">let </span>client = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server_key = SecretKey::generate(rand::thread_rng());
+        <span class="kw">let </span>server = spawn_0rtt_server(server_key.clone(), <span class="macro">info_span!</span>(<span class="string">"server-initial"</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        server.close().<span class="kw">await</span>;
+
+        <span class="kw">let </span>server = spawn_0rtt_server(server_key, <span class="macro">info_span!</span>(<span class="string">"server-restart"</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="comment">// we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
+        // but the server will reject the early data because it discarded necessary state
+        // to decrypt it when restarting.
+        </span>connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        client.close().<span class="kw">await</span>;
+
+        <span class="prelude-val">Ok</span>(())
     }
 }
 </code></pre></div></section></main></body></html>
