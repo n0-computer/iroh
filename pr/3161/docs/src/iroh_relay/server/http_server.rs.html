@@ -1974,7 +1974,7 @@
     }
 
     <span class="kw">fn </span>process_msg(
-        msg: <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;ReceivedMessage, <span class="kw">crate</span>::client::Error&gt;&gt;,
+        msg: <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;ReceivedMessage, <span class="kw">crate</span>::client::RecvError&gt;&gt;,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;(PublicKey, Bytes)&gt; {
         <span class="kw">match </span>msg {
             <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e)) =&gt; {

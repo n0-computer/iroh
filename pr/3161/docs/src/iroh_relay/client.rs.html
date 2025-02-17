@@ -448,9 +448,7 @@
 <a href="#447" id="447">447</a>
 <a href="#448" id="448">448</a>
 <a href="#449" id="449">449</a>
-<a href="#450" id="450">450</a>
-<a href="#451" id="451">451</a>
-<a href="#452" id="452">452</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#450" id="450">450</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -472,7 +470,7 @@
 <span class="kw">use </span>tracing::{debug, event, trace, Level};
 <span class="kw">use </span>url::Url;
 
-<span class="kw">pub use </span><span class="self">self</span>::conn::{ConnSendError, HandshakeError, ReceivedMessage, SendMessage};
+<span class="kw">pub use </span><span class="self">self</span>::conn::{ConnSendError, HandshakeError, ReceivedMessage, RecvError, SendMessage};
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span><span class="kw">crate</span>::dns::{DnsResolver, Error <span class="kw">as </span>DnsError};
 <span class="kw">use crate</span>::{
@@ -562,8 +560,6 @@
     </span>Timeout(<span class="attr">#[from] </span>time::Elapsed),
     <span class="attr">#[error(transparent)]
     </span>Http(<span class="attr">#[from] </span>hyper::http::Error),
-    <span class="attr">#[error(<span class="string">"Unexpected frame received {0}"</span>)]
-    </span>UnexpectedFrame(<span class="kw">crate</span>::protos::relay::FrameType),
     <span class="attr">#[error(transparent)]
     </span>Utf8(<span class="attr">#[from] </span>std::str::Utf8Error),
     <span class="attr">#[cfg(wasm_browser)]
@@ -750,7 +746,7 @@
 }
 
 <span class="kw">impl </span>Stream <span class="kw">for </span>Client {
-    <span class="kw">type </span>Item = <span class="prelude-ty">Result</span>&lt;ReceivedMessage, Error&gt;;
+    <span class="kw">type </span>Item = <span class="prelude-ty">Result</span>&lt;ReceivedMessage, RecvError&gt;;
 
     <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
         Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn).poll_next(cx)
@@ -836,7 +832,7 @@
 }
 
 <span class="kw">impl </span>Stream <span class="kw">for </span>ClientStream {
-    <span class="kw">type </span>Item = <span class="prelude-ty">Result</span>&lt;ReceivedMessage, Error&gt;;
+    <span class="kw">type </span>Item = <span class="prelude-ty">Result</span>&lt;ReceivedMessage, RecvError&gt;;
 
     <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
         Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.stream).poll_next(cx)

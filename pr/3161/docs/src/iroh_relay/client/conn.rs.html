@@ -363,7 +363,26 @@
 <a href="#362" id="362">362</a>
 <a href="#363" id="363">363</a>
 <a href="#364" id="364">364</a>
-<a href="#365" id="365">365</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
+<a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
+<a href="#377" id="377">377</a>
+<a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a>
+<a href="#382" id="382">382</a>
+<a href="#383" id="383">383</a>
+<a href="#384" id="384">384</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
 //!
 //! based on tailscale/derp/derp_client.go
 
@@ -381,7 +400,7 @@
 </span><span class="kw">use </span>tokio_util::codec::Framed;
 <span class="kw">use </span>tracing::debug;
 
-<span class="kw">use super</span>::{ConnectError, Error, KeyCache};
+<span class="kw">use super</span>::{ConnectError, KeyCache};
 <span class="kw">use </span><span class="kw">crate</span>::protos::{
     <span class="self">self</span>,
     relay::{ClientInfo, Frame, MAX_PACKET_SIZE, PROTOCOL_VERSION},
@@ -393,7 +412,7 @@
 </span><span class="attr">#[derive(Debug, thiserror::Error)]
 </span><span class="kw">pub enum </span>ConnSendError {
     <span class="doccomment">/// An IO error.
-    </span><span class="attr">#[error(<span class="string">"IO error"</span>)]
+    </span><span class="attr">#[error(transparent)]
     </span>Io(<span class="attr">#[from] </span>io::Error),
     <span class="doccomment">/// A protocol error.
     </span><span class="attr">#[error(<span class="string">"Protocol error"</span>)]
@@ -406,6 +425,23 @@
     <span class="doccomment">/// An IO error.
     </span><span class="attr">#[error(<span class="string">"failed to send handshake message to the relay"</span>)]
     </span>Send(<span class="attr">#[from] </span>protos::relay::Error),
+}
+
+<span class="doccomment">/// Errors when receiving messages from the relay server.
+</span><span class="attr">#[derive(Debug, thiserror::Error)]
+#[allow(missing_docs)]
+</span><span class="kw">pub enum </span>RecvError {
+    <span class="doccomment">/// An IO error.
+    </span><span class="attr">#[error(transparent)]
+    </span>Io(<span class="attr">#[from] </span>io::Error),
+    <span class="attr">#[error(transparent)]
+    </span>Protocol(<span class="attr">#[from] </span><span class="kw">crate</span>::protos::relay::Error),
+    <span class="attr">#[error(transparent)]
+    </span>Websocket(<span class="attr">#[from] </span>tokio_tungstenite_wasm::Error),
+    <span class="attr">#[error(<span class="string">"invalid protocol message encoding"</span>)]
+    </span>InvalidProtocolMessageEncoding,
+    <span class="attr">#[error(<span class="string">"Unexpected frame received {0}"</span>)]
+    </span>UnexpectedFrame(<span class="kw">crate</span>::protos::relay::FrameType),
 }
 
 <span class="kw">impl </span>From&lt;tokio_tungstenite_wasm::Error&gt; <span class="kw">for </span>ConnSendError {
@@ -490,7 +526,7 @@
 }
 
 <span class="kw">impl </span>Stream <span class="kw">for </span>Conn {
-    <span class="kw">type </span>Item = <span class="prelude-ty">Result</span>&lt;ReceivedMessage, Error&gt;;
+    <span class="kw">type </span>Item = <span class="prelude-ty">Result</span>&lt;ReceivedMessage, RecvError&gt;;
 
     <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
@@ -668,7 +704,7 @@
 }
 
 <span class="kw">impl </span>TryFrom&lt;Frame&gt; <span class="kw">for </span>ReceivedMessage {
-    <span class="kw">type </span>Error = Error;
+    <span class="kw">type </span>Error = RecvError;
 
     <span class="kw">fn </span>try_from(frame: Frame) -&gt; std::result::Result&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
         <span class="kw">match </span>frame {
@@ -688,7 +724,9 @@
             Frame::Ping { data } =&gt; <span class="prelude-val">Ok</span>(ReceivedMessage::Ping(data)),
             Frame::Pong { data } =&gt; <span class="prelude-val">Ok</span>(ReceivedMessage::Pong(data)),
             Frame::Health { problem } =&gt; {
-                <span class="kw">let </span>problem = std::str::from_utf8(<span class="kw-2">&amp;</span>problem)<span class="question-mark">?</span>.to_owned();
+                <span class="kw">let </span>problem = std::str::from_utf8(<span class="kw-2">&amp;</span>problem)
+                    .map_err(|<span class="kw">_</span>| RecvError::InvalidProtocolMessageEncoding)<span class="question-mark">?
+                    </span>.to_owned();
                 <span class="kw">let </span>problem = <span class="prelude-val">Some</span>(problem);
                 <span class="prelude-val">Ok</span>(ReceivedMessage::Health { problem })
             }
@@ -703,7 +741,7 @@
                     try_for,
                 })
             }
-            <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(Error::UnexpectedFrame(frame.typ())),
+            <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(RecvError::UnexpectedFrame(frame.typ())),
         }
     }
 }
