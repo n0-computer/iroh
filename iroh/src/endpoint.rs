@@ -1026,11 +1026,29 @@ impl Endpoint {
     /// It will then make a best effort to wait for all close notifications to be
     /// acknowledged by the peers, re-transmitting them if needed. This ensures the
     /// peers are aware of the closed connections instead of having to wait for a timeout
-    /// on the connection. Once all connections are closed or timed out, the magic socket is closed.
+    /// on the connection. Once all connections are closed or timed out, the future
+    /// finishes.
     ///
-    /// Be aware however that the underlying UDP sockets are only closed
-    /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
-    /// are dropped.
+    /// The maximum time-out that this future will wait for depends on QUIC transport
+    /// configurations of non-drained connections at the time of calling, and their current
+    /// estimates of round trip time. With default parameters and a conservative estimate
+    /// of round trip time, this call's future should take 3 seconds to resolve in cases of
+    /// bad connectivity or failed connections. In the usual case, this call's future should
+    /// return much more quickly.
+    ///
+    /// It is highly recommended you *do* wait for this close call to finish, if possible.
+    /// Not doing so will make connections that were still open while closing the endpoint
+    /// time out on the remote end. Thus remote ends will assume connections to have failed
+    /// even if all application data was transmitted successfully.
+    ///
+    /// Note: Someone used to closing TCP sockets might wonder why it is necessary to wait
+    /// for timeouts when closing QUIC endpoints, while they don't have to do this for TCP
+    /// sockets. This is due to QUIC and its acknowledgments being implemented in user-land,
+    /// while TCP sockets usually get closed and drained by the operating system in the
+    /// kernel during the "Time-Wait" period of the TCP socket.
+    ///
+    /// Be aware however that the underlying UDP sockets are only closed once all clones of
+    /// the the respective [`Endpoint`] are dropped.
     pub async fn close(&self) {
         if self.is_closed() {
             return;
