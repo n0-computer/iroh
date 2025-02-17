@@ -2555,7 +2555,25 @@
 <a href="#2554" id="2554">2554</a>
 <a href="#2555" id="2555">2555</a>
 <a href="#2556" id="2556">2556</a>
-<a href="#2557" id="2557">2557</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2557" id="2557">2557</a>
+<a href="#2558" id="2558">2558</a>
+<a href="#2559" id="2559">2559</a>
+<a href="#2560" id="2560">2560</a>
+<a href="#2561" id="2561">2561</a>
+<a href="#2562" id="2562">2562</a>
+<a href="#2563" id="2563">2563</a>
+<a href="#2564" id="2564">2564</a>
+<a href="#2565" id="2565">2565</a>
+<a href="#2566" id="2566">2566</a>
+<a href="#2567" id="2567">2567</a>
+<a href="#2568" id="2568">2568</a>
+<a href="#2569" id="2569">2569</a>
+<a href="#2570" id="2570">2570</a>
+<a href="#2571" id="2571">2571</a>
+<a href="#2572" id="2572">2572</a>
+<a href="#2573" id="2573">2573</a>
+<a href="#2574" id="2574">2574</a>
+<a href="#2575" id="2575">2575</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3583,11 +3601,29 @@
     /// It will then make a best effort to wait for all close notifications to be
     /// acknowledged by the peers, re-transmitting them if needed. This ensures the
     /// peers are aware of the closed connections instead of having to wait for a timeout
-    /// on the connection. Once all connections are closed or timed out, the magic socket is closed.
+    /// on the connection. Once all connections are closed or timed out, the future
+    /// finishes.
     ///
-    /// Be aware however that the underlying UDP sockets are only closed
-    /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
-    /// are dropped.
+    /// The maximum time-out that this future will wait for depends on QUIC transport
+    /// configurations of non-drained connections at the time of calling, and their current
+    /// estimates of round trip time. With default parameters and a conservative estimate
+    /// of round trip time, this call's future should take 3 seconds to resolve in cases of
+    /// bad connectivity or failed connections. In the usual case, this call's future should
+    /// return much more quickly.
+    ///
+    /// It is highly recommended you *do* wait for this close call to finish, if possible.
+    /// Not doing so will make connections that were still open while closing the endpoint
+    /// time out on the remote end. Thus remote ends will assume connections to have failed
+    /// even if all application data was transmitted successfully.
+    ///
+    /// Note: Someone used to closing TCP sockets might wonder why it is necessary to wait
+    /// for timeouts when closing QUIC endpoints, while they don't have to do this for TCP
+    /// sockets. This is due to QUIC and its acknowledgments being implemented in user-land,
+    /// while TCP sockets usually get closed and drained by the operating system in the
+    /// kernel during the "Time-Wait" period of the TCP socket.
+    ///
+    /// Be aware however that the underlying UDP sockets are only closed once all clones of
+    /// the the respective [`Endpoint`] are dropped.
     </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="kw">if </span><span class="self">self</span>.is_closed() {
             <span class="kw">return</span>;
