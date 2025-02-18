@@ -422,7 +422,8 @@
 <a href="#421" id="421">421</a>
 <a href="#422" id="422">422</a>
 <a href="#423" id="423">423</a>
-<a href="#424" id="424">424</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -498,6 +499,7 @@
     <span class="attr">#[error(<span class="string">"Invliad target port"</span>)]
     </span>InvalidTargetPort,
     <span class="attr">#[error(transparent)]
+    #[cfg(not(wasm_browser))]
     </span>Dns(<span class="attr">#[from] </span>DnsError),
     <span class="attr">#[error(<span class="string">"Timeout"</span>)]
     </span>Timeout(<span class="attr">#[from] </span>time::Elapsed),
