@@ -63,11 +63,6 @@ tokio = { version = "1", features = [
     "macros",
     "sync",
     "rt",
-    "net",
-    "fs",
-    "io-std",
-    "signal",
-    "process",
 ] }
 tokio-util = { version = "0.7", features = ["io-util", "io", "rt"] }
 tracing = "0.1"

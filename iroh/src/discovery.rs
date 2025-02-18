@@ -828,7 +828,7 @@ mod tests {
 mod test_dns_pkarr {
     use anyhow::Result;
     use iroh_base::{NodeAddr, SecretKey};
-    use iroh_relay::{node_info::NodeInfo, RelayMap};
+    use iroh_relay::RelayMap;
     use n0_future::time::Duration;
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;

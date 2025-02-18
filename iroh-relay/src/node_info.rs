@@ -44,9 +44,11 @@ use anyhow::{anyhow, Result};
 #[cfg(not(wasm_browser))]
 use hickory_resolver::{proto::ProtoError, Name};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
+#[cfg(not(wasm_browser))]
 use tracing::warn;
 use url::Url;
 
+#[cfg(not(wasm_browser))]
 use crate::{defaults::timeouts::DNS_TIMEOUT, dns::DnsResolver};
 
 /// The DNS name for the iroh TXT record.

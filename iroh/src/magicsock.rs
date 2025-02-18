@@ -42,6 +42,7 @@ use n0_future::{
     time::{self, Duration, Instant},
     FutureExt, StreamExt,
 };
+#[cfg(not(wasm_browser))]
 use net_report::{IpMappedAddr, IpMappedAddresses, QuicConfig, MAPPED_ADDR_PORT};
 #[cfg(not(wasm_browser))]
 use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
@@ -252,6 +253,7 @@ pub(crate) struct MagicSock {
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
     /// Tracks the mapped IP addresses
+    #[cfg(not(wasm_browser))]
     ip_mapped_addrs: IpMappedAddresses,
     /// UDP IPv4 socket
     #[cfg(not(wasm_browser))]
@@ -516,7 +518,7 @@ impl MagicSock {
                         }
 
                         let mut udp_sent = false;
-                        let mut udp_error = None;
+                        let mut udp_error: Option<io::Error> = None;
                         let mut relay_sent = false;
                         let mut relay_error = None;
 
@@ -617,6 +619,7 @@ impl MagicSock {
                     }
                 }
             }
+            #[cfg(not(wasm_browser))]
             MappedAddr::Ip(dest) => {
                 trace!(
                     dst = %dest,
@@ -1530,6 +1533,7 @@ impl MagicSock {
 #[derive(Clone, Debug)]
 enum MappedAddr {
     NodeId(NodeIdMappedAddr),
+    #[cfg(not(wasm_browser))]
     Ip(IpMappedAddr),
     None(SocketAddr),
 }
@@ -1540,12 +1544,13 @@ impl From<SocketAddr> for MappedAddr {
             IpAddr::V4(_) => MappedAddr::None(value),
             IpAddr::V6(addr) => {
                 if let Ok(node_id_mapped_addr) = NodeIdMappedAddr::try_from(addr) {
-                    MappedAddr::NodeId(node_id_mapped_addr)
-                } else if let Ok(ip_mapped_addr) = IpMappedAddr::try_from(addr) {
-                    MappedAddr::Ip(ip_mapped_addr)
-                } else {
-                    MappedAddr::None(value)
+                    return MappedAddr::NodeId(node_id_mapped_addr);
                 }
+                #[cfg(not(wasm_browser))]
+                if let Ok(ip_mapped_addr) = IpMappedAddr::try_from(addr) {
+                    return MappedAddr::Ip(ip_mapped_addr);
+                }
+                MappedAddr::None(value)
             }
         }
     }
@@ -1751,6 +1756,7 @@ impl Handle {
             pconn6,
             disco_secrets: DiscoSecrets::default(),
             node_map,
+            #[cfg(not(wasm_browser))]
             ip_mapped_addrs,
             udp_disco_sender,
             discovery,
@@ -1823,6 +1829,8 @@ impl Handle {
         .expect("ring supports these")
         .with_root_certificates(root_store)
         .with_no_client_auth();
+
+        #[cfg(not(wasm_browser))]
         let quic_config = Some(QuicConfig {
             ep: qad_endpoint,
             client_config,
@@ -3113,6 +3121,9 @@ fn split_packets(transmit: &quinn_udp::Transmit) -> RelayContents {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct NodeIdMappedAddr(Ipv6Addr);
 
+/// The dummy port used for all [`NodeIdMappedAddr`]s
+pub const NODE_ID_MAPPED_PORT: u16 = 12345;
+
 /// Can occur when converting a [`SocketAddr`] to an [`NodeIdMappedAddr`]
 #[derive(Debug, thiserror::Error)]
 #[error("Failed to convert")]
@@ -3146,7 +3157,7 @@ impl NodeIdMappedAddr {
 
     /// Return the [`SocketAddr`] from the [`NodeIdMappedAddr`]
     pub(crate) fn socket_addr(&self) -> SocketAddr {
-        SocketAddr::new(IpAddr::from(self.0), MAPPED_ADDR_PORT)
+        SocketAddr::new(IpAddr::from(self.0), NODE_ID_MAPPED_PORT)
     }
 }
 
