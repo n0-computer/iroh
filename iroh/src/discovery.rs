@@ -114,6 +114,7 @@ use n0_future::{
     stream::{Boxed as BoxStream, StreamExt},
     task::{self, AbortOnDropHandle},
     time::{self, Duration},
+    Stream, TryStreamExt,
 };
 use tokio::sync::oneshot;
 use tracing::{debug, error_span, warn, Instrument};
@@ -471,7 +472,7 @@ impl DiscoveryTask {
             match stream.next().await {
                 Some(Ok(r)) => {
                     let provenance = r.provenance;
-                    let node_addr = r.into_node_addr();
+                    let node_addr = r.to_node_addr();
                     if node_addr.is_empty() {
                         debug!(%provenance, "empty address found");
                         continue;
@@ -481,6 +482,8 @@ impl DiscoveryTask {
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
                     }
+                    // Send the discovery item to the subscribers of the discovery broadcast stream.
+                    ep.discovery_subscribers().send(r);
                 }
                 Some(Err(err)) => {
                     warn!(?err, "discovery service produced error");
@@ -499,6 +502,47 @@ impl DiscoveryTask {
 impl Drop for DiscoveryTask {
     fn drop(&mut self) {
         self.task.abort();
+    }
+}
+
+/// Error returned when a discovery watch stream lagged too far behind.
+///
+/// The stream returned from [`Endpoint::discovery_stream`] yields this error
+/// if the loop in which the stream is processed cannot keep up with the emitted
+/// discovery events. Attempting to read the next item from the channel afterwards
+/// will return the oldest [`DiscoveryItem`] that is still retained.
+///
+/// Includes the number of skipped messages.
+#[derive(Debug, thiserror::Error)]
+#[error("channel lagged by {0}")]
+pub struct Lagged(pub u64);
+
+#[derive(Clone, Debug)]
+pub(super) struct DiscoverySubscribers {
+    inner: tokio::sync::broadcast::Sender<DiscoveryItem>,
+}
+
+impl DiscoverySubscribers {
+    pub(crate) fn new() -> Self {
+        // TODO: Make capacity configurable from the endpoint builder?
+        // This is the maximum number of [`DiscoveryItem`]s held by the channel if
+        // subscribers are stalled.
+        const CAPACITY: usize = 128;
+        Self {
+            inner: tokio::sync::broadcast::Sender::new(CAPACITY),
+        }
+    }
+
+    pub(crate) fn subscribe(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> {
+        use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
+        let recv = self.inner.subscribe();
+        BroadcastStream::new(recv).map_err(|BroadcastStreamRecvError::Lagged(n)| Lagged(n))
+    }
+
+    pub(crate) fn send(&self, item: DiscoveryItem) {
+        // `broadcast::Sender::send` returns an error if the channel has no subscribers,
+        // which we don't care about.
+        self.inner.send(item).ok();
     }
 }
 
@@ -524,9 +568,19 @@ mod tests {
 
     type InfoStore = HashMap<NodeId, (NodeData, u64)>;
 
-    #[derive(Debug, Clone, Default)]
+    #[derive(Debug, Clone)]
     struct TestDiscoveryShared {
         nodes: Arc<Mutex<InfoStore>>,
+        watchers: tokio::sync::broadcast::Sender<DiscoveryItem>,
+    }
+
+    impl Default for TestDiscoveryShared {
+        fn default() -> Self {
+            Self {
+                nodes: Default::default(),
+                watchers: tokio::sync::broadcast::Sender::new(1024),
+            }
+        }
     }
 
     impl TestDiscoveryShared {
@@ -548,6 +602,10 @@ mod tests {
                 resolve_wrong: true,
                 delay: Duration::from_millis(100),
             }
+        }
+
+        pub fn send_passive(&self, item: DiscoveryItem) {
+            self.watchers.send(item).ok();
         }
     }
 
@@ -610,6 +668,13 @@ mod tests {
                 None => n0_future::stream::empty().boxed(),
             };
             Some(stream)
+        }
+
+        fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+            let recv = self.shared.watchers.subscribe();
+            let stream =
+                tokio_stream::wrappers::BroadcastStream::new(recv).filter_map(|item| item.ok());
+            Some(Box::pin(stream))
         }
     }
 
@@ -766,6 +831,52 @@ mod tests {
             direct_addresses: BTreeSet::from(["240.0.0.1:1000".parse().unwrap()]),
         };
         let _conn = ep2.connect(ep1_wrong_addr, TEST_ALPN).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn endpoint_discovery_watch() -> anyhow::Result<()> {
+        let disco_shared = TestDiscoveryShared::default();
+        let (ep1, _guard1) = {
+            let secret = SecretKey::generate(rand::thread_rng());
+            let disco = disco_shared.create_discovery(secret.public());
+            new_endpoint(secret, disco).await
+        };
+        let (ep2, _guard2) = {
+            let secret = SecretKey::generate(rand::thread_rng());
+            let disco = disco_shared.create_discovery(secret.public());
+            new_endpoint(secret, disco).await
+        };
+
+        let mut stream = ep1.discovery_stream();
+
+        // wait for ep2 node addr to be updated and connect from ep1 -> discovery via resolve
+        ep2.node_addr().await?;
+        let _ = ep1.connect(ep2.node_id(), TEST_ALPN).await?;
+
+        let item = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("timeout")
+            .expect("stream closed")
+            .expect("stream lagged");
+        assert_eq!(item.node_id(), ep2.node_id());
+        assert_eq!(item.provenance(), "test-disco");
+
+        // inject item into discovery passively
+        let passive_node_id = SecretKey::generate(rand::thread_rng()).public();
+        let node_info = NodeInfo::new(passive_node_id);
+        let passive_item = DiscoveryItem::new(node_info, "test-disco-passive", None);
+        disco_shared.send_passive(passive_item.clone());
+
+        let item = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("timeout")
+            .expect("stream closed")
+            .expect("stream lagged");
+        assert_eq!(item.node_id(), passive_node_id);
+        assert_eq!(item.provenance(), "test-disco-passive");
+
         Ok(())
     }
 

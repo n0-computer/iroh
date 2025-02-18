@@ -25,14 +25,15 @@ use anyhow::{bail, Context, Result};
 use data_encoding::BASE32_DNSSEC;
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
-use n0_future::time::Duration;
+use n0_future::{time::Duration, Stream};
 use pin_project::pin_project;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
 use crate::{
     discovery::{
-        dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
+        dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem,
+        DiscoverySubscribers, DiscoveryTask, Lagged,
     },
     dns::DnsResolver,
     magicsock::{self, Handle, NodeIdMappedAddr},
@@ -952,6 +953,31 @@ impl Endpoint {
         self.msock.list_remote_infos().into_iter()
     }
 
+    /// Returns a stream of all remote nodes discovered through the endpoint's discovery services.
+    ///
+    /// Whenever a node is discovered via the endpoint's discovery service, the corresponding
+    /// [`DiscoveryItem`] is yielded from this stream. This includes nodes discovered actively
+    /// through [`Discovery::resolve`], which is invoked automatically when calling
+    /// [`Endpoint::connect`] for a [`NodeId`] unknown to the endpoint. It also includes
+    /// nodes that the endpoint discovers passively from discovery services that implement
+    /// [`Discovery::subscribe`], which e.g. [`LocalSwarmDiscovery`] does.
+    ///
+    /// The stream does not yield information about nodes that are added manually to the endpoint's
+    /// addressbook by calling [`Endpoint::add_node_addr`] or by supplying a full [`NodeAddr`] to
+    /// [`Endpoint::connect`]. It also does not yield information about nodes that we only
+    /// know about because they connected to us.
+    ///
+    /// The stream should be processed in a loop. If the stream is not processed fast enough,
+    /// [`Lagged`] may be yielded, indicating that items were missed.
+    ///
+    /// See also [`Endpoint::remote_info_iter`], which returns an iterator over all remotes
+    /// the endpoint knows about at a specific point in time.
+    ///
+    /// [`LocalSwarmDiscovery`]: crate::discovery::local_swarm_discovery::LocalSwarmDiscovery
+    pub fn discovery_stream(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> {
+        self.msock.discovery_subscribers().subscribe()
+    }
+
     // # Methods for less common getters.
     //
     // Partially they return things passed into the builder.
@@ -1125,6 +1151,11 @@ impl Endpoint {
                 }
             }
         }
+    }
+
+    /// Returns a reference to the subscribers channel for discovery events.
+    pub(crate) fn discovery_subscribers(&self) -> &DiscoverySubscribers {
+        self.msock.discovery_subscribers()
     }
 
     #[cfg(test)]
