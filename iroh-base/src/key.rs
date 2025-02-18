@@ -9,8 +9,8 @@ use std::{
 };
 
 use curve25519_dalek::edwards::CompressedEdwardsY;
-pub use ed25519_dalek::Signature;
-use ed25519_dalek::{SignatureError, SigningKey, VerifyingKey};
+pub use ed25519_dalek::{Signature, SignatureError};
+use ed25519_dalek::{SigningKey, VerifyingKey};
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 

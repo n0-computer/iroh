@@ -9,21 +9,20 @@ use std::{
     task::{self, Poll},
 };
 
-use anyhow::{anyhow, bail, Result};
 use conn::Conn;
 use iroh_base::{RelayUrl, SecretKey};
 use n0_future::{
     split::{split, SplitSink, SplitStream},
-    Sink, Stream,
+    time, Sink, Stream,
 };
 #[cfg(any(test, feature = "test-utils"))]
 use tracing::warn;
 use tracing::{debug, event, trace, Level};
 use url::Url;
 
-pub use self::conn::{ConnSendError, ReceivedMessage, SendMessage};
+pub use self::conn::{ConnSendError, HandshakeError, ReceivedMessage, RecvError, SendMessage};
 #[cfg(not(wasm_browser))]
-use crate::dns::DnsResolver;
+use crate::dns::{DnsResolver, Error as DnsError};
 use crate::{
     http::{Protocol, RELAY_PATH},
     KeyCache,
@@ -36,6 +35,64 @@ mod connect_relay;
 pub(crate) mod streams;
 #[cfg(not(wasm_browser))]
 mod util;
+
+/// Connection errors
+#[allow(missing_docs)]
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ConnectError {
+    #[error("Invalid URL for websocket {0}")]
+    InvalidWebsocketUrl(Url),
+    #[error("Invalid relay URL {0}")]
+    InvalidRelayUrl(Url),
+    #[error(transparent)]
+    Websocket(#[from] tokio_tungstenite_wasm::Error),
+    #[error(transparent)]
+    Handshake(#[from] HandshakeError),
+    #[error(transparent)]
+    Dial(#[from] DialError),
+    #[error("Unexpected status during upgrade: {0}")]
+    UnexpectedUpgradeStatus(hyper::StatusCode),
+    #[error("Failed to upgrade response")]
+    Upgrade(#[source] hyper::Error),
+    #[error("Invalid TLS servername")]
+    InvalidTlsServername,
+    #[error("No local address available")]
+    NoLocalAddr,
+    #[error("tls connection failed")]
+    Tls(#[source] std::io::Error),
+    #[cfg(wasm_browser)]
+    #[error("The relay protocol is not available in browsers")]
+    RelayProtoNotAvailable,
+}
+
+/// Dialing errors
+#[allow(missing_docs)]
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum DialError {
+    #[error("Invliad target port")]
+    InvalidTargetPort,
+    #[error(transparent)]
+    #[cfg(not(wasm_browser))]
+    Dns(#[from] DnsError),
+    #[error("Timeout")]
+    Timeout(#[from] time::Elapsed),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error("Invalid URL {0}")]
+    InvalidUrl(Url),
+    #[error("Failed proxy connection: {0}")]
+    ProxyConnectInvalidStatus(hyper::StatusCode),
+    #[error("Invalid Proxy URL {0}")]
+    ProxyInvalidUrl(Url),
+    #[error("failed to establish proxy connection")]
+    ProxyConnect(#[source] hyper::Error),
+    #[error("Invalid proxy TLS servername")]
+    ProxyInvalidTlsServername,
+    #[error("Invliad proxy target port")]
+    ProxyInvalidTargetPort,
+}
 
 /// Build a Client.
 #[derive(derive_more::Debug, Clone)]
@@ -138,7 +195,7 @@ impl ClientBuilder {
     }
 
     /// Establishes a new connection to the relay server.
-    pub async fn connect(&self) -> Result<Client> {
+    pub async fn connect(&self) -> Result<Client, ConnectError> {
         let (conn, local_addr) = match self.protocol {
             Protocol::Websocket => {
                 let conn = self.connect_ws().await?;
@@ -151,9 +208,7 @@ impl ClientBuilder {
                 (conn, Some(local_addr))
             }
             #[cfg(wasm_browser)]
-            Protocol::Relay => {
-                bail!("Can only connect to relay using websockets in browsers.");
-            }
+            Protocol::Relay => return Err(ConnectError::RelayProtoNotAvailable),
         };
 
         event!(
@@ -167,14 +222,14 @@ impl ClientBuilder {
         Ok(Client { conn, local_addr })
     }
 
-    async fn connect_ws(&self) -> Result<Conn> {
+    async fn connect_ws(&self) -> Result<Conn, ConnectError> {
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
         // We need to use the ws:// or wss:// schemes when connecting with websockets, though.
         dial_url
             .set_scheme(if self.use_tls() { "wss" } else { "ws" })
-            .map_err(|()| anyhow!("Invalid URL"))?;
+            .map_err(|_| ConnectError::InvalidWebsocketUrl(dial_url.clone()))?;
 
         debug!(%dial_url, "Dialing relay by websocket");
 
@@ -216,7 +271,7 @@ impl Client {
 }
 
 impl Stream for Client {
-    type Item = Result<ReceivedMessage>;
+    type Item = Result<ReceivedMessage, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.conn).poll_next(cx)
@@ -302,7 +357,7 @@ impl ClientStream {
 }
 
 impl Stream for ClientStream {
-    type Item = Result<ReceivedMessage>;
+    type Item = Result<ReceivedMessage, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.stream).poll_next(cx)

@@ -270,6 +270,7 @@ mod tests {
         let node_id = secret_key.public();
         let relay_url: Url = "https://relay.example.".parse()?;
         let node_info = NodeInfo::new(node_id, Some(relay_url.clone()), Default::default());
-        node_info.to_pkarr_signed_packet(&secret_key, 30)
+        let packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
+        Ok(packet)
     }
 }

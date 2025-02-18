@@ -998,11 +998,11 @@ async fn run_quic_probe(
         }
     };
     let quic_client = iroh_relay::quic::QuicClient::new(quic_config.ep, quic_config.client_config)
-        .map_err(|e| ProbeError::Error(e, probe.clone()))?;
+        .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
     let (addr, latency) = quic_client
         .get_addr_and_latency(relay_addr, host)
         .await
-        .map_err(|e| ProbeError::Error(e, probe.clone()))?;
+        .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
     let mut result = ProbeReport::new(probe.clone());
     if matches!(probe, Probe::QuicIpv4 { .. }) {
         result.ipv4_can_send = true;
@@ -1181,7 +1181,7 @@ async fn relay_lookup_ipv4_staggered(
                     .map(|ip| ip.to_canonical())
                     .map(|addr| SocketAddr::new(addr, port))
                     .ok_or(anyhow!("No suitable relay addr found")),
-                Err(err) => Err(err.context("No suitable relay addr found")),
+                Err(err) => Err(anyhow::Error::from(err).context("No suitable relay addr found")),
             }
         }
         Some(url::Host::Ipv4(addr)) => Ok(SocketAddr::new(addr.into(), port)),
@@ -1211,7 +1211,7 @@ async fn relay_lookup_ipv6_staggered(
                     .map(|ip| ip.to_canonical())
                     .map(|addr| SocketAddr::new(addr, port))
                     .ok_or(anyhow!("No suitable relay addr found")),
-                Err(err) => Err(err.context("No suitable relay addr found")),
+                Err(err) => Err(anyhow::Error::from(err).context("No suitable relay addr found")),
             }
         }
         Some(url::Host::Ipv4(_addr)) => Err(anyhow!("No suitable relay addr found")),

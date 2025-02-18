@@ -4,7 +4,6 @@ use std::{
     task::{Context, Poll},
 };
 
-use anyhow::{bail, Result};
 use bytes::Bytes;
 use hyper::upgrade::{Parts, Upgraded};
 use hyper_util::rt::TokioIo;
@@ -89,13 +88,13 @@ impl AsyncWrite for MaybeTlsStreamChained {
     }
 }
 
-pub fn downcast_upgrade(upgraded: Upgraded) -> Result<MaybeTlsStreamChained> {
+pub fn downcast_upgrade(upgraded: Upgraded) -> Option<MaybeTlsStreamChained> {
     match upgraded.downcast::<TokioIo<ProxyStream>>() {
         Ok(Parts { read_buf, io, .. }) => {
             let conn = io.into_inner();
             // Prepend data to the reader to avoid data loss
             let conn = util::chain(std::io::Cursor::new(read_buf), conn);
-            Ok(MaybeTlsStreamChained::Raw(conn))
+            Some(MaybeTlsStreamChained::Raw(conn))
         }
         Err(upgraded) => {
             if let Ok(Parts { read_buf, io, .. }) =
@@ -105,12 +104,10 @@ pub fn downcast_upgrade(upgraded: Upgraded) -> Result<MaybeTlsStreamChained> {
 
                 // Prepend data to the reader to avoid data loss
                 let conn = util::chain(std::io::Cursor::new(read_buf), conn);
-                return Ok(MaybeTlsStreamChained::Tls(conn));
+                return Some(MaybeTlsStreamChained::Tls(conn));
             }
 
-            bail!(
-                "could not downcast the upgraded connection to a TcpStream or client::TlsStream<TcpStream>"
-            )
+            None
         }
     }
 }
