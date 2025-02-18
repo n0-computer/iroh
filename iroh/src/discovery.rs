@@ -860,16 +860,13 @@ mod tests {
             .expect("timeout")
             .expect("stream closed")
             .expect("stream lagged");
-        assert_eq!(item.node_addr.node_id, ep2.node_id());
-        assert_eq!(item.provenance, "test-disco");
+        assert_eq!(item.node_id(), ep2.node_id());
+        assert_eq!(item.provenance(), "test-disco");
 
         // inject item into discovery passively
         let passive_node_id = SecretKey::generate(rand::thread_rng()).public();
-        let passive_item = DiscoveryItem {
-            node_addr: NodeAddr::from(passive_node_id),
-            provenance: "test-disco-passive",
-            last_updated: None,
-        };
+        let node_info = NodeInfo::new(passive_node_id);
+        let passive_item = DiscoveryItem::new(node_info, "test-disco-passive", None);
         disco_shared.send_passive(passive_item.clone());
 
         let item = tokio::time::timeout(Duration::from_secs(1), stream.next())
@@ -877,8 +874,8 @@ mod tests {
             .expect("timeout")
             .expect("stream closed")
             .expect("stream lagged");
-        assert_eq!(item.node_addr.node_id, passive_node_id);
-        assert_eq!(item.provenance, "test-disco-passive");
+        assert_eq!(item.node_id(), passive_node_id);
+        assert_eq!(item.provenance(), "test-disco-passive");
 
         Ok(())
     }
