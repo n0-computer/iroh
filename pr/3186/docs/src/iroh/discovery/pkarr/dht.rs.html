@@ -365,35 +365,17 @@
 <a href="#364" id="364">364</a>
 <a href="#365" id="365">365</a>
 <a href="#366" id="366">366</a>
-<a href="#367" id="367">367</a>
-<a href="#368" id="368">368</a>
-<a href="#369" id="369">369</a>
-<a href="#370" id="370">370</a>
-<a href="#371" id="371">371</a>
-<a href="#372" id="372">372</a>
-<a href="#373" id="373">373</a>
-<a href="#374" id="374">374</a>
-<a href="#375" id="375">375</a>
-<a href="#376" id="376">376</a>
-<a href="#377" id="377">377</a>
-<a href="#378" id="378">378</a>
-<a href="#379" id="379">379</a>
-<a href="#380" id="380">380</a>
-<a href="#381" id="381">381</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
+<a href="#367" id="367">367</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
 //!
 //! This module contains pkarr-based node discovery for iroh which can use both pkarr
 //! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
 //! overview of pkarr.
 //!
 //! [pkarr module]: super
-</span><span class="kw">use </span>std::{
-    collections::BTreeSet,
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
+</span><span class="kw">use </span>std::sync::{Arc, Mutex};
 
 <span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
+<span class="kw">use </span>iroh_base::{NodeId, SecretKey};
 <span class="kw">use </span>n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -406,7 +388,7 @@
 <span class="kw">use crate</span>::{
     discovery::{
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
-        Discovery, DiscoveryItem,
+        Discovery, DiscoveryItem, NodeData,
     },
     dns::node_info::NodeInfo,
     Endpoint,
@@ -477,14 +459,8 @@
         <span class="kw">match </span>maybe_packet {
             <span class="prelude-val">Some</span>(signed_packet) =&gt; <span class="kw">match </span>NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet) {
                 <span class="prelude-val">Ok</span>(node_info) =&gt; {
-                    <span class="kw">let </span>node_addr: NodeAddr = node_info.into();
-
-                    <span class="macro">tracing::info!</span>(<span class="string">"discovered node info from relay {:?}"</span>, node_addr);
-                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(DiscoveryItem {
-                        node_addr,
-                        provenance: <span class="string">"relay"</span>,
-                        last_updated: <span class="prelude-val">None</span>,
-                    }))
+                    <span class="macro">tracing::info!</span>(<span class="string">"discovered node info from relay {:?}"</span>, node_info);
+                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(DiscoveryItem::new(node_info, <span class="string">"relay"</span>, <span class="prelude-val">None</span>)))
                 }
                 <span class="prelude-val">Err</span>(_err) =&gt; {
                     <span class="macro">tracing::debug!</span>(<span class="string">"failed to parse signed packet as node info"</span>);
@@ -662,21 +638,16 @@
 }
 
 <span class="kw">impl </span>Discovery <span class="kw">for </span>DhtDiscovery {
-    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {
+    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>NodeData) {
         <span class="kw">let </span><span class="prelude-val">Some</span>(keypair) = <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>.secret_key <span class="kw">else </span>{
             <span class="macro">tracing::debug!</span>(<span class="string">"no keypair set, not publishing"</span>);
             <span class="kw">return</span>;
         };
-        <span class="macro">tracing::debug!</span>(<span class="string">"publishing {:?}, {:?}"</span>, url, addrs);
-        <span class="kw">let </span>info = NodeInfo {
-            node_id: keypair.public(),
-            relay_url: url.cloned().map(Url::from),
-            direct_addresses: <span class="kw">if </span><span class="self">self</span>.<span class="number">0</span>.include_direct_addresses {
-                addrs.clone()
-            } <span class="kw">else </span>{
-                Default::default()
-            },
-        };
+        <span class="macro">tracing::debug!</span>(<span class="string">"publishing {data:?}"</span>);
+        <span class="kw">let </span><span class="kw-2">mut </span>info = NodeInfo::from_parts(keypair.public(), data.clone());
+        <span class="kw">if </span>!<span class="self">self</span>.<span class="number">0</span>.include_direct_addresses {
+            info.clear_direct_addresses();
+        }
         <span class="kw">let </span><span class="prelude-val">Ok</span>(signed_packet) = info.to_pkarr_signed_packet(keypair, <span class="self">self</span>.<span class="number">0</span>.ttl) <span class="kw">else </span>{
             <span class="macro">tracing::warn!</span>(<span class="string">"failed to create signed packet"</span>);
             <span class="kw">return</span>;
@@ -733,7 +704,8 @@
 
         <span class="kw">let </span>relay_url: RelayUrl = Url::parse(<span class="string">"https://example.com"</span>)<span class="question-mark">?</span>.into();
 
-        discovery.publish(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>relay_url), <span class="kw-2">&amp;</span>Default::default());
+        <span class="kw">let </span>data = NodeData::default().with_relay_url(<span class="prelude-val">Some</span>(relay_url.clone()));
+        discovery.publish(<span class="kw-2">&amp;</span>data);
 
         <span class="comment">// publish is fire and forget, so we have no way to wait until it is done.
         </span>tokio::time::timeout(Duration::from_secs(<span class="number">30</span>), <span class="kw">async move </span>{
@@ -746,8 +718,8 @@
                     .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
                     .<span class="kw">await</span>;
                 <span class="kw">for </span>item <span class="kw">in </span>items.into_iter().flatten() {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(url) = item.node_addr.relay_url {
-                        found_relay_urls.insert(url);
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(url) = item.relay_url() {
+                        found_relay_urls.insert(url.clone());
                     }
                 }
                 <span class="kw">if </span>found_relay_urls.contains(<span class="kw-2">&amp;</span>relay_url) {

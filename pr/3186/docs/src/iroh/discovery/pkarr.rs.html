@@ -398,16 +398,7 @@
 <a href="#397" id="397">397</a>
 <a href="#398" id="398">398</a>
 <a href="#399" id="399">399</a>
-<a href="#400" id="400">400</a>
-<a href="#401" id="401">401</a>
-<a href="#402" id="402">402</a>
-<a href="#403" id="403">403</a>
-<a href="#404" id="404">404</a>
-<a href="#405" id="405">405</a>
-<a href="#406" id="406">406</a>
-<a href="#407" id="407">407</a>
-<a href="#408" id="408">408</a>
-<a href="#409" id="409">409</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
+<a href="#400" id="400">400</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
 //! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
@@ -453,21 +444,21 @@
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
 //! [`DhtDiscovery`]: dht::DhtDiscovery
 
-</span><span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr, sync::Arc};
+</span><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>anyhow::{anyhow, bail, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>iroh_base::{NodeId, RelayUrl, SecretKey};
+<span class="kw">use </span>iroh_base::{NodeId, SecretKey};
 <span class="kw">use </span>n0_future::{
     boxed::BoxStream,
     task::{<span class="self">self</span>, AbortOnDropHandle},
     time::{<span class="self">self</span>, Duration, Instant},
 };
 <span class="kw">use </span>pkarr::SignedPacket;
-<span class="kw">use </span>tracing::{debug, error_span, info, warn, Instrument};
+<span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
 <span class="kw">use </span>url::Url;
 
 <span class="kw">use crate</span>::{
-    discovery::{Discovery, DiscoveryItem},
+    discovery::{Discovery, DiscoveryItem, NodeData},
     dns::node_info::NodeInfo,
     endpoint::force_staging_infra,
     watchable::{Disconnected, Watchable, Watcher},
@@ -602,22 +593,20 @@
     <span class="doccomment">/// Publishes the addressing information about this node to a pkarr relay.
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
-    </span><span class="kw">pub fn </span>update_addr_info(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {
-        <span class="kw">let </span>(relay_url, direct_addresses) = <span class="kw">if let </span><span class="prelude-val">Some</span>(relay_url) = url {
-            <span class="comment">// Only publish relay url, and no direct addrs
-            </span><span class="kw">let </span>url = relay_url.clone();
-            (<span class="prelude-val">Some</span>(url.into()), Default::default())
-        } <span class="kw">else </span>{
-            (<span class="prelude-val">None</span>, addrs.clone())
-        };
-        <span class="kw">let </span>info = NodeInfo::new(<span class="self">self</span>.node_id, relay_url, direct_addresses);
+    </span><span class="kw">pub fn </span>update_node_data(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>NodeData) {
+        <span class="kw">let </span><span class="kw-2">mut </span>data = data.clone();
+        <span class="kw">if </span>data.relay_url().is_some() {
+            <span class="comment">// If relay url is set: only publish relay url, and no direct addrs.
+            </span>data.clear_direct_addresses();
+        }
+        <span class="kw">let </span>info = NodeInfo::from_parts(<span class="self">self</span>.node_id, data);
         <span class="self">self</span>.watchable.set(<span class="prelude-val">Some</span>(info)).ok();
     }
 }
 
 <span class="kw">impl </span>Discovery <span class="kw">for </span>PkarrPublisher {
-    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {
-        <span class="self">self</span>.update_addr_info(url, addrs);
+    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>NodeData) {
+        <span class="self">self</span>.update_node_data(data);
     }
 }
 
@@ -675,11 +664,8 @@
     }
 
     <span class="kw">async fn </span>publish_current(<span class="kw-2">&amp;</span><span class="self">self</span>, info: NodeInfo) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="macro">info!</span>(
-            relay_url = <span class="question-mark">?</span>info
-                .relay_url
-                .as_ref()
-                .map(|s| s.as_str()),
+        <span class="macro">debug!</span>(
+            data = <span class="question-mark">?</span>info.data,
             pkarr_relay = %<span class="self">self</span>.pkarr_client.pkarr_relay_url,
             <span class="string">"Publish node info to pkarr"
         </span>);
@@ -741,11 +727,7 @@
         <span class="kw">let </span>fut = <span class="kw">async move </span>{
             <span class="kw">let </span>signed_packet = pkarr_client.resolve(node_id).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">let </span>info = NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet)<span class="question-mark">?</span>;
-            <span class="kw">let </span>item = DiscoveryItem {
-                node_addr: info.into(),
-                provenance: <span class="string">"pkarr"</span>,
-                last_updated: <span class="prelude-val">None</span>,
-            };
+            <span class="kw">let </span>item = DiscoveryItem::new(info, <span class="string">"pkarr"</span>, <span class="prelude-val">None</span>);
             <span class="prelude-val">Ok</span>(item)
         };
         <span class="kw">let </span>stream = n0_future::stream::once_future(fut);
