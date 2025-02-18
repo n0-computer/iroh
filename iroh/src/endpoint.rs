@@ -1023,17 +1023,32 @@ impl Endpoint {
     /// of `0` and an empty reason.  Though it is best practice to close those
     /// explicitly before with a custom error code and reason.
     ///
-    /// This will not wait for the [`quinn::Endpoint`] to drain connections.
+    /// It will then make a best effort to wait for all close notifications to be
+    /// acknowledged by the peers, re-transmitting them if needed. This ensures the
+    /// peers are aware of the closed connections instead of having to wait for a timeout
+    /// on the connection. Once all connections are closed or timed out, the future
+    /// finishes.
     ///
-    /// To ensure no data is lost, design protocols so that the last *sender*
-    /// of data in the protocol calls [`Connection::closed`], and `await`s until
-    /// it receives a "close" message from the *receiver*. Once the *receiver*
-    /// gets the last data in the protocol, it should call [`Connection::close`]
-    /// to inform the *sender* that all data has been received.
+    /// The maximum time-out that this future will wait for depends on QUIC transport
+    /// configurations of non-drained connections at the time of calling, and their current
+    /// estimates of round trip time. With default parameters and a conservative estimate
+    /// of round trip time, this call's future should take 3 seconds to resolve in cases of
+    /// bad connectivity or failed connections. In the usual case, this call's future should
+    /// return much more quickly.
     ///
-    /// Be aware however that the underlying UDP sockets are only closed
-    /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
-    /// are dropped.
+    /// It is highly recommended you *do* wait for this close call to finish, if possible.
+    /// Not doing so will make connections that were still open while closing the endpoint
+    /// time out on the remote end. Thus remote ends will assume connections to have failed
+    /// even if all application data was transmitted successfully.
+    ///
+    /// Note: Someone used to closing TCP sockets might wonder why it is necessary to wait
+    /// for timeouts when closing QUIC endpoints, while they don't have to do this for TCP
+    /// sockets. This is due to QUIC and its acknowledgments being implemented in user-land,
+    /// while TCP sockets usually get closed and drained by the operating system in the
+    /// kernel during the "Time-Wait" period of the TCP socket.
+    ///
+    /// Be aware however that the underlying UDP sockets are only closed once all clones of
+    /// the the respective [`Endpoint`] are dropped.
     pub async fn close(&self) {
         if self.is_closed() {
             return;
@@ -1542,16 +1557,21 @@ impl Connection {
     ///
     /// # Gracefully closing a connection
     ///
-    /// Only the peer last **receiving** application data can be certain that all data is
-    /// delivered.
+    /// Only the peer last receiving application data can be certain that all data is
+    /// delivered. The only reliable action it can then take is to close the connection,
+    /// potentially with a custom error code. The delivery of the final CONNECTION_CLOSE
+    /// frame is very likely if both endpoints stay online long enough, calling
+    /// [`Endpoint::close`] will wait to provide sufficient time. Otherwise, the remote peer
+    /// will time out the connection, provided that the idle timeout is not disabled.
     ///
-    /// To communicate to the last **sender** of the application data that all the data was received, we recommend designing protocols that follow this pattern:
+    /// The sending side can not guarantee all stream data is delivered to the remote
+    /// application. It only knows the data is delivered to the QUIC stack of the remote
+    /// endpoint. Once the local side sends a CONNECTION_CLOSE frame in response to calling
+    /// [`close`] the remote endpoint may drop any data it received but is as yet
+    /// undelivered to the application, including data that was acknowledged as received to
+    /// the local endpoint.
     ///
-    /// 1) The **sender** sends the last data. It then calls [`Connection::closed`]. This will wait until it receives a CONNECTION_CLOSE frame from the other side.
-    /// 2) The **receiver** receives the last data. It then calls [`Connection::close`] and provides an error_code and/or reason.
-    /// 3) The **sender** checks that the error_code is the expected error code.
-    ///
-    /// If the `close`/`closed` dance is not done, or is interrupted at any point, the connection will eventually time out, provided that the idle timeout is not disabled.
+    /// [`close`]: Connection::close
     #[inline]
     pub fn close(&self, error_code: VarInt, reason: &[u8]) {
         self.inner.close(error_code, reason)
@@ -2510,6 +2530,45 @@ mod tests {
         connect_client_0rtt_expect_ok(&client, server.node_addr().await?, false).await?;
 
         client.close().await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn graceful_close() -> testresult::TestResult {
+        let client = Endpoint::builder().bind().await?;
+        let server = Endpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .await?;
+        let server_addr = server.node_addr().await?;
+        let server_task = tokio::spawn(async move {
+            let incoming = server.accept().await.unwrap();
+            let conn = incoming.await?;
+            let (mut send, mut recv) = conn.accept_bi().await?;
+            let msg = recv.read_to_end(1_000).await?;
+            send.write_all(&msg).await?;
+            send.finish()?;
+            let close_reason = conn.closed().await;
+            testresult::TestResult::Ok(close_reason)
+        });
+
+        let conn = client.connect(server_addr, TEST_ALPN).await?;
+        let (mut send, mut recv) = conn.open_bi().await?;
+        send.write_all(b"Hello, world!").await?;
+        send.finish()?;
+        recv.read_to_end(1_000).await?;
+        conn.close(42u32.into(), b"thanks, bye!");
+        client.close().await;
+
+        let close_err = server_task.await??;
+        let ConnectionError::ApplicationClosed(app_close) = close_err else {
+            panic!("Unexpected close reason: {close_err:?}");
+        };
+
+        assert_eq!(app_close.error_code, 42u32.into());
+        assert_eq!(app_close.reason.as_ref(), b"thanks, bye!");
 
         Ok(())
     }
