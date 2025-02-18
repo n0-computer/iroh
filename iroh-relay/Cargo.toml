@@ -89,13 +89,6 @@ toml = { version = "0.8", optional = true }
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
 ], optional = true }
-# needed by pkarr to enable wasm_js feature
-getrandom = { version = "0.3.1", default-features = false }
-
-# wasm-in-browser
-[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
-# enable wasm_js feature in getrandom
-getrandom = { version = "0.3.1", default-features = false, features = ["wasm_js"] }
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
