@@ -67,6 +67,7 @@ pub async fn run_relay_server_with(
     quic: bool,
 ) -> Result<(RelayMap, RelayUrl, Server)> {
     let (certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
+
     let tls = TlsConfig {
         cert: CertConfig::<(), ()>::Manual { certs },
         https_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
